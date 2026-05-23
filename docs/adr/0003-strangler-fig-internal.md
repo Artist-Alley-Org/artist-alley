@@ -38,11 +38,12 @@ Apply the **Strangler Fig** pattern internally to our fork. Concretely:
    artist-facing pages (upload, browse, asset detail, review) as each is
    reimplemented.
 
-4. **A second database (PostgreSQL + pgvector) is added alongside RS's
-   MySQL**, not as a replacement. New-feature data (review sessions,
+4. ~~A second database (PostgreSQL + pgvector) is added alongside RS's
+   MySQL, not as a replacement. New-feature data (review sessions,
    embeddings, modern annotations, comments v2) lives in Postgres, linked
    to RS resources by `resource_id`. No cross-DB joins; composition lives
-   at the application layer.
+   at the application layer.~~ **(Superseded by ADR 0005 — single Postgres
+   for both RS and artist-alley additions; MySQL dropped entirely.)**
 
 5. **RS PHP is modified in place** when a sidecar needs to integrate
    (e.g. hooks that publish events when resources are uploaded). We
