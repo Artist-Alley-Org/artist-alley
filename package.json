@@ -1,0 +1,48 @@
+{
+    "name": "resourcespace",
+    "version": "1.0.0",
+    "description": "ResourceSpace is the Digital Asset Management software offering a convenient, productive and easy to use solution for organising and sharing files.",
+    "keywords": ["DAM", "digital asset management"],
+    "homepage": "https://www.resourcespace.com",
+    "bugs": {
+        "url": "https://www.resourcespace.com/bug_report"
+    },
+    "license": "documentation/licenses/resourcespace.txt",
+    "main": "index.js",
+    "packageManager": "pnpm@10.25.0",
+    "dependencies": {
+        "Leaflet.StyledLayerControl": "github:davicustodio/Leaflet.StyledLayerControl",
+        "capslockstate-jquery-plugin#1.2.1": "github:nosilleg/capslockstate-jquery-plugin#1.2.1",
+        "chart.js": "^4.5.1",
+        "chartjs-adapter-date-fns": "^3.0.0",
+        "chosen-js": "^1.8.7",
+        "date-fns": "^2.30.0",
+        "dompurify": "^3.3.1",
+        "heatmap.js": "^2.0.5",
+        "jcrop": "github:tapmodo/Jcrop#v0.9.15",
+        "jquery": "^3.6.0",
+        "jquery-tageditor": "^1.0.1",
+        "jquery-ui": "1.13.2",
+        "jquery-ui-touch-punch": "0.2.3",
+        "jquery-validation": "^1.22.0",
+        "jstree": "^3.3.17",
+        "leaflet": "^1.9.4",
+        "leaflet-control-geocoder": "1.10.0",
+        "leaflet-providers": "1.10.2",
+        "leaflet-shades": "^0.1.4",
+        "leaflet.markercluster": "^1.5.3",
+        "lightbox2": "^2.11.5",
+        "openseadragon": "^2.4.2",
+        "tinymce": "^7.3.0",
+        "toastify-js": "^1.12.0",
+        "uppy": "3.17.0",
+        "video.js": "7.14.3",
+        "videojs-resolution-switcher-for-videojs-version-7": "github:mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7"
+    },
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "dev:bump_cache_busting_version": "node js/build_bump_cache_busting_version.js",
+        "build:dependencies": "node js/build_js_dependencies.js && node js/build_bump_cache_busting_version.js",
+        "postinstall": "pnpm run build:dependencies"
+    }
+}

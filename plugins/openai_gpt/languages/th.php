@@ -1,0 +1,41 @@
+<?php
+
+
+$lang["openai_gpt_api_key"]='OpenAI API key. รับ API key ของคุณจาก <a href=\'https://openai.com/api\' target=\'_blank\' >https://openai.com/api</a>';
+$lang["openai_gpt_temperature"]='อุณหภูมิการสุ่มระหว่าง 0 และ 1 (ค่าที่สูงกว่าจะหมายถึงโมเดลจะเสี่ยงมากขึ้น)';
+$lang["openai_gpt_max_tokens"]='จำนวนสูงสุดของโทเค็น';
+$lang["openai_gpt_advanced"]='คำเตือน - ส่วนนี้ใช้เพื่อการทดสอบเท่านั้นและไม่ควรเปลี่ยนแปลงในระบบที่ใช้งานจริง การเปลี่ยนแปลงตัวเลือกของปลั๊กอินใด ๆ ที่นี่จะมีผลต่อพฤติกรรมของฟิลด์เมตาดาต้าทั้งหมดที่ได้ถูกกำหนดค่าไว้ โปรดเปลี่ยนแปลงด้วยความระมัดระวัง!';
+$lang["openai_gpt_system_message"]='ข้อความเริ่มต้นของระบบ ข้อมูลแทนที่ %%IN_TYPE%% และ %%OUT_TYPE%% จะถูกแทนที่ด้วย \'text\' หรือ \'json\' ขึ้นอยู่กับประเภทฟิลด์ต้นทาง/ปลายทาง';
+$lang["openai_gpt_model_override"]='โมเดลถูกล็อคในค่าคอนฟิกทั่วโลกเป็น: [model]';
+$lang["openai_gpt_processing_multiple_resources"]='หลายทรัพยากร';
+$lang["openai_gpt_processing_resource"]='ทรัพยากร [resource]';
+$lang["openai_gpt_processing_field"]='การสร้างข้อมูลเมตาดาต้าด้วย AI สำหรับฟิลด์ \'[field]\'';
+$lang["openai_gpt_language"] = 'ภาษาเอาต์พุต';
+$lang["openai_gpt_language_user"] = 'ภาษาของผู้ใช้ปัจจุบัน';
+$lang["openai_gpt_overwrite_data"] = 'เขียนทับข้อมูลที่มีอยู่ในฟิลด์ที่กำหนดไว้หรือไม่?';
+$lang["openai_gpt_title"] = 'การประมวลผลข้อมูลเมตาของ OpenAI/Ollama';
+$lang["openai_gpt_intro"] = 'เพิ่มเมตาดาทาที่สร้างขึ้นโดยการส่งข้อมูลที่มีอยู่หรือภาพตัวอย่างของทรัพยากรไปยัง OpenAI API (หรือที่เข้ากันได้ เช่น Ollama) พร้อมกับพรอมต์ที่ปรับแต่งได้ ดูข้อมูลเพิ่มเติมได้ที่ <a href=\'https://platform.openai.com/docs/introduction\' target=\'_blank\'>เอกสารประกอบของ OpenAI</a>';
+$lang["property-openai_gpt_prompt"] = 'คำสั่งการประมวลผล AI';
+$lang["property-openai_gpt_input_field"] = 'การประมวลผล AI ข้อมูลนำเข้า';
+$lang["openai_gpt_model"] = 'OpenAI model ที่จะใช้ (เช่น \'gpt-4o\')';
+$lang["property-gpt_source"] = 'GPT Source';
+$lang["openai_gpt"] = 'OpenAI GPT';
+$lang["openai_gpt_process_existing"] = 'ประมวลผลฟิลด์ AI ที่มีอยู่';
+$lang["openai_gpt_process_existing_configure"] = 'กำหนดงานเพื่อประมวลผลฟิลด์ AI ที่มีอยู่';
+$lang["openai_gpt_process_existing_field_ref"] = 'ฟิลด์ AI';
+$lang["openai_gpt_process_existing_overwrite"] = 'เขียนทับ';
+$lang["openai_gpt_process_existing_field_ref_help"] = 'นี่คือฟิลด์เป้าหมายที่จะต้องอัปเดต';
+$lang["openai_gpt_process_existing_collection_refs_help"] = 'การตั้งค่าตัวเลือกนี้จะหมายความว่าเฉพาะทรัพยากรในคอลเลกชันที่ระบุไว้เท่านั้นที่จะถูกประมวลผล หากไม่มีการระบุคอลเลกชันใด ๆ จะมีการประมวลผลทรัพยากรที่เหมาะสมทั้งหมด คอลเลกชันสามารถระบุได้โดยใช้รายการที่คั่นด้วยเครื่องหมายจุลภาครวมถึงช่วง เช่น 100,105,110-115';
+$lang["openai_gpt_process_existing_overwrite_help"] = 'การตั้งค่าเลือกนี้จะหมายความว่าข้อมูลที่มีอยู่ในฟิลด์เป้าหมายจะถูกเขียนทับ โปรดทราบว่าหากเปิดใช้งานการเขียนทับและฟิลด์ข้อมูลไม่มีข้อมูล ฟิลด์เป้าหมายจะถูกล้าง';
+$lang["openai_gpt_limit_warning"] = 'คำเตือน - ขีดจำกัดโทเค็นถูกเกิน ดังนั้นการเรียกใช้ OpenAI API เพิ่มเติมจะไม่ทำงาน ฟิลด์ GPT จะไม่ได้รับการประมวลผล';
+$lang["openai_gpt_limit_warning_short"] = 'คำเตือน - ขีดจำกัดโทเค็นถูกเกิน ดังนั้นฟิลด์ GPT จะไม่ได้รับการประมวลผล';
+$lang["openai_gpt_usage_days"] = 'การใช้โทเค็นในช่วง %%DAYS%% วันที่ผ่านมา';
+$lang["openai_gpt_token_limit"] = 'ขีดจำกัดโทเค็น';
+$lang["openai_gpt_no_token_limit"] = 'ไม่มีการกำหนดขีดจำกัดโทเค็น';
+$lang["openai_gpt_configured_limit"] = '%%TOKEN_LIMIT%% ต่อ %%DAYS%% วัน';
+$lang["openai_gpt_token_count"] = '%%TOKEN_COUNT%% โทเค็น';
+$lang["openai_gpt_provider"] = 'ผู้ให้บริการ AI';
+$lang["openai_gpt_provider_override"] = 'ผู้ให้บริการถูกล็อคในการกำหนดค่าทั่วโลกเป็น: [provider]';
+$lang["ollama_name"] = 'Ollama';
+$lang["ollama_model"] = 'Ollama model to use (e.g. \'gemma3:12b\')';
+$lang["ollama_endpoint"] = 'โปรดแปล: จุดปลายทาง Ollama ที่ใช้ (เช่น http://[IP]:11434/v1/chat/completions';

@@ -1,0 +1,41 @@
+#remote_assist {
+  display: flex;
+  margin: 24px 20px;
+  min-height: var(--space-24, 24px);
+  padding: var(--space-12, 12px);
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--space-4, 4px);
+  border: 1px solid var(--colour-feedback-warning-default);
+  background: var(--colour-feedback-warning-50);
+  box-shadow: 0 4px 8px 8px rgba(0, 0, 0, 0.10);
+}
+
+#remote_assist p,
+#remote_assist a {
+  color: var(--colour-feedback-warning-200);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+#remote_assist p {
+  padding: 0;
+}
+
+#remote_assist a {
+  text-decoration: underline;
+}
+
+#remote_assist i {
+  color: var(--colour-feedback-warning-200);
+  display: flex;
+  font-size: 24px;
+}
+
+#remote_assist i.icon-x {
+  font-size: 14px !important;
+  padding: 5px;
+  margin-left: auto;
+  cursor: pointer;
+}

@@ -1,0 +1,43 @@
+<?php
+
+
+$lang["openai_gpt_temperature"]='0 और 1 के बीच नमूना तापमान (उच्च मान का मतलब है कि मॉडल अधिक जोखिम उठाएगा)';
+$lang["openai_gpt_max_tokens"]='अधिकतम टोकन';
+$lang["openai_gpt_advanced"]='चेतावनी - यह अनुभाग केवल परीक्षण उद्देश्यों के लिए है और इसे लाइव सिस्टम पर नहीं बदला जाना चाहिए। यहां किसी भी प्लगइन विकल्प को बदलने से उन सभी मेटाडेटा फ़ील्ड्स के व्यवहार पर प्रभाव पड़ेगा जिन्हें कॉन्फ़िगर किया गया है। सावधानी से परिवर्तन करें!';
+$lang["openai_gpt_system_message"]='प्रारंभिक सिस्टम संदेश पाठ। प्लेसहोल्डर %%IN_TYPE%% और %%OUT_TYPE%% को स्रोत/लक्ष्य फ़ील्ड प्रकारों के आधार पर \'text\' या \'json\' से बदला जाएगा';
+$lang["openai_gpt_api_key"]='ओपनएआई एपीआई कुंजी। अपनी एपीआई कुंजी <a href=\'https://openai.com/api\' target=\'_blank\' >https://openai.com/api</a> से प्राप्त करें';
+$lang["plugin-openai_gpt-title"]='ओपनएआई एपीआई जीपीटी एकीकरण';
+$lang["plugin-openai_gpt-desc"]='OpenAI द्वारा उत्पन्न मेटाडेटा। कॉन्फ़िगर किए गए फ़ील्ड डेटा को OpenAI API को पास करता है और लौटाई गई जानकारी को संग्रहीत करता है।';
+$lang["openai_gpt_model_override"]='मॉडल को वैश्विक कॉन्फ़िगरेशन में लॉक कर दिया गया है: [model]';
+$lang["openai_gpt_processing_multiple_resources"]='कई संसाधन';
+$lang["openai_gpt_processing_resource"]='संसाधन [resource]';
+$lang["openai_gpt_processing_field"]='फ़ील्ड \'[field]\' के लिए एआई प्रोसेसिंग';
+$lang["openai_gpt_language"] = 'आउटपुट भाषा';
+$lang["openai_gpt_language_user"] = 'वर्तमान उपयोगकर्ता की भाषा';
+$lang["openai_gpt_overwrite_data"] = 'क्या आप कॉन्फ़िगर की गई फ़ील्ड में मौजूदा डेटा को ओवरराइट करना चाहते हैं?';
+$lang["openai_gpt_title"] = 'OpenAI/Ollama मेटाडेटा प्रोसेसिंग';
+$lang["openai_gpt_intro"] = 'मौजूदा डेटा या संसाधन पूर्वावलोकन छवि को OpenAI API (या संगत, जैसे Ollama) के साथ एक अनुकूलन योग्य प्रॉम्प्ट के माध्यम से पास करके उत्पन्न मेटाडेटा जोड़ता है। अधिक विस्तृत जानकारी के लिए <a href=\'https://platform.openai.com/docs/introduction\' target=\'_blank\'>OpenAI दस्तावेज़</a> देखें।';
+$lang["property-openai_gpt_prompt"] = 'एआई प्रोसेसिंग प्रॉम्प्ट';
+$lang["property-openai_gpt_input_field"] = 'एआई प्रोसेसिंग इनपुट';
+$lang["openai_gpt_model"] = 'OpenAI मॉडल का उपयोग करें (जैसे \'gpt-4o\')';
+$lang["property-gpt_source"] = 'GPT Source';
+$lang["openai_gpt"] = 'OpenAI GPT';
+$lang["openai_gpt_process_existing"] = 'मौजूदा एआई क्षेत्रों को संसाधित करें';
+$lang["openai_gpt_process_existing_configure"] = 'मौजूदा AI फ़ील्ड्स को प्रोसेस करने के लिए नौकरी कॉन्फ़िगर करें';
+$lang["openai_gpt_process_existing_field_ref"] = 'एआई क्षेत्र';
+$lang["openai_gpt_process_existing_overwrite"] = 'ओवरराइट';
+$lang["openai_gpt_process_existing_field_ref_help"] = 'यह अद्यतन करने के लिए लक्षित क्षेत्र है।';
+$lang["openai_gpt_process_existing_collection_refs_help"] = 'इस विकल्प को सेट करने का मतलब है कि केवल सूचीबद्ध संग्रहों में संसाधनों को संसाधित किया जाएगा। यदि कोई संग्रह निर्दिष्ट नहीं किया गया है, तो सभी उपयुक्त संसाधनों को संसाधित किया जाएगा। संग्रहों को अल्पविराम से पृथक सूची के साथ-साथ रेंज का उपयोग करके निर्दिष्ट किया जा सकता है जैसे 100,105,110-115';
+$lang["openai_gpt_process_existing_overwrite_help"] = 'इस विकल्प को सेट करने का मतलब है कि लक्ष्य क्षेत्र में कोई भी मौजूदा डेटा ओवरराइट कर दिया जाएगा। कृपया ध्यान दें कि यदि ओवरराइट सक्षम है और इनपुट क्षेत्र में कोई डेटा नहीं है, तो लक्ष्य क्षेत्र को साफ कर दिया जाएगा।';
+$lang["openai_gpt_limit_warning"] = 'चेतावनी - टोकन सीमा पार हो गई है इसलिए आगे के OpenAI API कॉल काम नहीं करेंगे। GPT फ़ील्ड संसाधित नहीं किए जाएंगे।';
+$lang["openai_gpt_limit_warning_short"] = 'चेतावनी - टोकन सीमा पार हो गई है इसलिए GPT फ़ील्ड्स को संसाधित नहीं किया जाएगा।';
+$lang["openai_gpt_usage_days"] = 'पिछले %%DAYS%% दिनों में टोकन का उपयोग';
+$lang["openai_gpt_token_limit"] = 'टोकन सीमा';
+$lang["openai_gpt_no_token_limit"] = 'कोई टोकन सीमा निर्धारित नहीं की गई';
+$lang["openai_gpt_configured_limit"] = '%%TOKEN_LIMIT%% प्रति %%DAYS%% दिन';
+$lang["openai_gpt_token_count"] = '%%TOKEN_COUNT%% टोकन';
+$lang["openai_gpt_provider"] = 'एआई प्रदाता';
+$lang["openai_gpt_provider_override"] = 'प्रदाता को वैश्विक कॉन्फ़िगरेशन में लॉक कर दिया गया है: [provider]';
+$lang["ollama_name"] = 'Ollama';
+$lang["ollama_model"] = 'Ollama मॉडल का उपयोग करें (जैसे \'gemma3:12b\')';
+$lang["ollama_endpoint"] = 'Ollama एंडपॉइंट का उपयोग करें (जैसे http://[IP]:11434/v1/chat/completions)';

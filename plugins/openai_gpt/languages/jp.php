@@ -1,0 +1,43 @@
+<?php
+
+
+$lang["openai_gpt_temperature"]='0から1の間で温度をサンプリングします（値が高いほど、モデルはより多くのリスクを取ります）。';
+$lang["openai_gpt_max_tokens"]='最大トークン数';
+$lang["openai_gpt_advanced"]='警告 - このセクションはテスト目的でのみ使用され、ライブシステムで変更しないでください。ここでプラグインオプションを変更すると、構成されたすべてのメタデータフィールドの動作に影響を与えます。注意して変更してください！';
+$lang["openai_gpt_system_message"]='初期システムメッセージテキスト。プレースホルダー %%IN_TYPE%% と %%OUT_TYPE%% は、ソース/ターゲットフィールドのタイプに応じて「text」または「json」に置き換えられます';
+$lang["openai_gpt_api_key"]='OpenAI APIキー。APIキーは<a href=\'https://openai.com/api\' target=\'_blank\' >https://openai.com/api</a>から取得してください';
+$lang["plugin-openai_gpt-title"]='OpenAI API GPT 統合';
+$lang["plugin-openai_gpt-desc"]='OpenAI生成のメタデータ。設定されたフィールドデータをOpenAI APIに渡し、返された情報を保存します。';
+$lang["openai_gpt_model_override"]='モデルはグローバル設定でロックされています: [model]';
+$lang["openai_gpt_processing_multiple_resources"]='複数のリソース';
+$lang["openai_gpt_processing_resource"]='リソース [resource]';
+$lang["openai_gpt_processing_field"]='フィールド \'[field]\' のAI処理';
+$lang["openai_gpt_language"] = '出力言語';
+$lang["openai_gpt_language_user"] = '現在のユーザーの言語';
+$lang["openai_gpt_overwrite_data"] = '設定されたフィールドの既存データを上書きしますか？';
+$lang["openai_gpt_title"] = 'OpenAI/Ollama メタデータ処理';
+$lang["openai_gpt_intro"] = '既存のデータまたはリソースプレビュー画像をカスタマイズ可能なプロンプトでOpenAI API（または互換性のあるOllamaなど）に渡すことによって生成されたメタデータを追加します。詳細な情報については、<a href=\'https://platform.openai.com/docs/introduction\' target=\'_blank\'>OpenAIのドキュメント</a>を参照してください。';
+$lang["property-openai_gpt_prompt"] = 'AI処理プロンプト';
+$lang["property-openai_gpt_input_field"] = 'AI処理入力';
+$lang["openai_gpt_model"] = 'OpenAIモデルを使用する（例：\'gpt-4o\'）';
+$lang["property-gpt_source"] = 'GPT Source';
+$lang["openai_gpt"] = 'OpenAI GPT';
+$lang["openai_gpt_process_existing"] = '既存のAIフィールドを処理する';
+$lang["openai_gpt_process_existing_configure"] = '既存のAIフィールドを処理するジョブを設定する';
+$lang["openai_gpt_process_existing_field_ref"] = 'AIフィールド';
+$lang["openai_gpt_process_existing_overwrite"] = '上書き';
+$lang["openai_gpt_process_existing_field_ref_help"] = 'これは更新される対象フィールドです。';
+$lang["openai_gpt_process_existing_collection_refs_help"] = 'このオプションを設定すると、リストされたコレクション内のリソースのみが処理されます。コレクションが指定されていない場合は、すべての適切なリソースが処理されます。コレクションは、カンマ区切りのリストや範囲（例：100,105,110-115）を使用して指定できます。';
+$lang["openai_gpt_process_existing_overwrite_help"] = 'このオプションを設定すると、ターゲットフィールド内の既存のデータが上書きされます。上書きが有効になっていて、入力フィールドにデータが含まれていない場合、ターゲットフィールドはクリアされることに注意してください。';
+$lang["openai_gpt_limit_warning"] = '警告 - トークン制限を超えたため、さらにOpenAI APIの呼び出しは機能しません。GPTフィールドは処理されません。';
+$lang["openai_gpt_limit_warning_short"] = '警告 - トークン制限を超えたため、GPTフィールドは処理されません。';
+$lang["openai_gpt_usage_days"] = '過去%%DAYS%%日間のトークン使用状況';
+$lang["openai_gpt_token_limit"] = 'トークン制限';
+$lang["openai_gpt_no_token_limit"] = 'トークン制限が設定されていません';
+$lang["openai_gpt_configured_limit"] = '%%TOKEN_LIMIT%% ごとに %%DAYS%% 日間';
+$lang["openai_gpt_token_count"] = '%%TOKEN_COUNT%% トークン';
+$lang["openai_gpt_provider"] = 'AIプロバイダー';
+$lang["openai_gpt_provider_override"] = 'プロバイダーはグローバル設定でロックされています: [provider]';
+$lang["ollama_name"] = 'Ollama';
+$lang["ollama_model"] = 'Ollamaモデルの使用 (例: \'gemma3:12b\')';
+$lang["ollama_endpoint"] = 'Ollama エンドポイントの使用 (例: http://[IP]:11434/v1/chat/completions';

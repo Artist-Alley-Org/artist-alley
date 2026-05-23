@@ -1,0 +1,5 @@
+vendor
+node_modules
+.pnpm-store
+.vscode
+*.code-workspace

@@ -1,0 +1,1265 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      Leaflet.StyledLayerControl:
+        specifier: github:davicustodio/Leaflet.StyledLayerControl
+        version: https://codeload.github.com/davicustodio/Leaflet.StyledLayerControl/tar.gz/4cf339decb09f8e5b8091cfa1e263caa76fc3045
+      capslockstate-jquery-plugin#1.2.1:
+        specifier: github:nosilleg/capslockstate-jquery-plugin#1.2.1
+        version: https://codeload.github.com/nosilleg/capslockstate-jquery-plugin/tar.gz/5974328bf43f030474e00f17acf3a557269b9903
+      chart.js:
+        specifier: ^4.5.1
+        version: 4.5.1
+      chartjs-adapter-date-fns:
+        specifier: ^3.0.0
+        version: 3.0.0(chart.js@4.5.1)(date-fns@2.30.0)
+      chosen-js:
+        specifier: ^1.8.7
+        version: 1.8.7
+      date-fns:
+        specifier: ^2.30.0
+        version: 2.30.0
+      dompurify:
+        specifier: ^3.3.1
+        version: 3.3.1
+      heatmap.js:
+        specifier: ^2.0.5
+        version: 2.0.5
+      jcrop:
+        specifier: github:tapmodo/Jcrop#v0.9.15
+        version: https://codeload.github.com/tapmodo/Jcrop/tar.gz/43c396817f992cbbfd010f35c07e2f1f58d6a7ac
+      jquery:
+        specifier: ^3.6.0
+        version: 3.7.1
+      jquery-tageditor:
+        specifier: ^1.0.1
+        version: 1.0.1
+      jquery-ui:
+        specifier: 1.13.2
+        version: 1.13.2
+      jquery-ui-touch-punch:
+        specifier: 0.2.3
+        version: 0.2.3
+      jquery-validation:
+        specifier: ^1.22.0
+        version: 1.22.0(jquery@3.7.1)
+      jstree:
+        specifier: ^3.3.17
+        version: 3.3.17
+      leaflet:
+        specifier: ^1.9.4
+        version: 1.9.4
+      leaflet-control-geocoder:
+        specifier: 1.10.0
+        version: 1.10.0
+      leaflet-providers:
+        specifier: 1.10.2
+        version: 1.10.2
+      leaflet-shades:
+        specifier: ^0.1.4
+        version: 0.1.4
+      leaflet.markercluster:
+        specifier: ^1.5.3
+        version: 1.5.3(leaflet@1.9.4)
+      lightbox2:
+        specifier: ^2.11.5
+        version: 2.11.5
+      openseadragon:
+        specifier: ^2.4.2
+        version: 2.4.2
+      tinymce:
+        specifier: ^7.3.0
+        version: 7.9.2
+      toastify-js:
+        specifier: ^1.12.0
+        version: 1.12.0
+      uppy:
+        specifier: 3.17.0
+        version: 3.17.0
+      video.js:
+        specifier: 7.14.3
+        version: 7.14.3
+      videojs-resolution-switcher-for-videojs-version-7:
+        specifier: github:mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7
+        version: https://codeload.github.com/mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7/tar.gz/f5d3e77ee3e23ea9ae29c0838751fa8a30267a7f
+
+packages:
+
+  '@babel/runtime@7.28.6':
+    resolution: {integrity: sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA==}
+    engines: {node: '>=6.9.0'}
+
+  '@kurkle/color@0.3.4':
+    resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
+
+  '@transloadit/prettier-bytes@0.3.5':
+    resolution: {integrity: sha512-xF4A3d/ZyX2LJWeQZREZQw+qFX4TGQ8bGVP97OLRt6sPO6T0TNHBFTuRHOJh7RNmYOBmQ9MHxpolD9bXihpuVA==}
+
+  '@types/retry@0.12.2':
+    resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
+
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+
+  '@uppy/audio@1.1.9':
+    resolution: {integrity: sha512-PuA6RhTBr8KEATouWQ/PLyw/8LY+rxy2jcI/gzkQg36ohBCS/UouzmawFFI+WqEwztlLVGcKeUUH5Yd9ePUD5A==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/aws-s3-multipart@3.12.0':
+    resolution: {integrity: sha512-l6/TlRjde/mP4LMFWdJIRBEUUceYXtAiNAHukfyzM3VbY3/+YrEJTAchsa4DrqAiyToJJu6b+xxvL2H46cDs3Q==}
+    deprecated: Use @uppy/aws-s3 instead.
+    peerDependencies:
+      '@uppy/core': ^3.12.0
+
+  '@uppy/aws-s3@3.6.2':
+    resolution: {integrity: sha512-pXXSfJbPLR9tmmLFckKU3lyp7Zx4AVvamH/Y5MU2WHKj8TQMrGeM0/M/nXn8SIa7roYEaskY6dVYT/DcHLdO9A==}
+    peerDependencies:
+      '@uppy/core': ^3.9.1
+
+  '@uppy/box@2.4.0':
+    resolution: {integrity: sha512-7KEXzljhYcw0dMycJ4rEvLc6wkH9+yLmRQ69PQ+iPYzWe4q27DD7ux3lAhEqRocRFqqzFCt6M3pW79WfnqjkCA==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/companion-client@3.8.2':
+    resolution: {integrity: sha512-WLjZ0Y6Fe7lzwU1YPvvQ/YqooejcgIZkT2TC39xr+QQ7Y1FwJECsyUdlKwgi1ee8TNpjoCrj3Q1Hjel/+p0VhA==}
+    peerDependencies:
+      '@uppy/core': ^3.13.1
+
+  '@uppy/compressor@1.1.4':
+    resolution: {integrity: sha512-ZB8nsJQz9cZXQKFAiKVZjD9REiFXF5woeAQKrJvTTFdxhvH8PVn8EKmOFZDt1f2XuwgsIXdhsbfI6BzmLVFYYg==}
+    peerDependencies:
+      '@uppy/core': ^3.11.2
+
+  '@uppy/core@3.13.1':
+    resolution: {integrity: sha512-iQGAUO4ziQRpfv7kix6tO6JOWqjI0K4vt8AynvHWzDPZxYSba3zd6RojGNPsYWSR7Xv+dRXYx+GU8oTiK1FRUA==}
+
+  '@uppy/dashboard@3.9.1':
+    resolution: {integrity: sha512-zZp+5Dwqu1jUdAZEu0Os2kC/8bF3cdrkve8CYEwqP/12yjNe8PF+XUQKF1RCYITjDE4hPSXcTh0MWw6t2LONuw==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/drag-drop@3.1.1':
+    resolution: {integrity: sha512-ujUBswJ/Acvg1UQUPtfWO6PekPzFgQAEtDW7yxsi81wy1/WNIYjY36bxKVpM/cz5PjmWOTWoqdjBQa4LIJCdyw==}
+    peerDependencies:
+      '@uppy/core': ^3.13.1
+
+  '@uppy/drop-target@2.1.0':
+    resolution: {integrity: sha512-s05stmY2u6BK0X7c/jMAxnTigUj08ccesoD9kmkkfPZh+J0icgokJa+P/KwwAiPAyReBoJSS1ZBzjHjuAM0v9Q==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/dropbox@3.4.0':
+    resolution: {integrity: sha512-KcYb40b5qCnOJVB+2wNHG+DY/s2sLtW6vyp7jJNrQR87AtNaLXd1dIoYXgM5HrCTJ52IrnfrTgNcUb+EhaRisw==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/facebook@3.3.1':
+    resolution: {integrity: sha512-AUZKJc8XrGaAcCos8XFCvx5hsAO6cGNXJkxjFJrkMsj7z+dUCxkVumAlztZh/5SYyhymZj20Y8cUIjRI0gvpiw==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/file-input@3.1.2':
+    resolution: {integrity: sha512-IgZhK3EfO2bEqmEwpqfo3N9k8OxV2pmuGdKU4IuwJFv3Q1s1F6ceSDhWX8ivtVXlDvnbJIkqZbZjnvWwJxfjng==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/form@3.2.2':
+    resolution: {integrity: sha512-dS54AtSicF7pA0wupt09t/xrz0kH/HS0dIaGnQaxhnk3a5TMUaF5/HVXvzdHli7udfiT8jzWfpOOlvgL7+YbQQ==}
+    peerDependencies:
+      '@uppy/core': ^3.13.1
+
+  '@uppy/golden-retriever@3.2.0':
+    resolution: {integrity: sha512-r2U76tXLjGKQCR8mtCmuncqAZYwQR7Hwx6AiWGts+fbmwFTLI2sj5GbjEPonB6jfNqqHleqvihQnqPFGTKIAlw==}
+    peerDependencies:
+      '@uppy/core': ^3.10.0
+
+  '@uppy/google-drive@3.6.0':
+    resolution: {integrity: sha512-7Db98dJW/7ajvKUjJxQbL7D5MarJHG7T958jZhmy0jRugx19r9HqBcM88bsIn+A3ljmnrqzb9IfsRwTZ2W6D5A==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/google-photos@0.1.0':
+    resolution: {integrity: sha512-Ia61UjMJxItZXkPBZiSCXvr2tCHq5s4GTUdWFKAe+nDzNndcO0J4FvGR0wFq5lA7yJ0lGofIq7yvVGk3G64/nQ==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/image-editor@2.4.6':
+    resolution: {integrity: sha512-uQ8k4pUSsYBv6ZBoICwKq3M1DqiKg6AFM/nbvxL/q5KpRkRTszzPvP4hyvjY2zDLLf/NlK3E45N2IcWraV87dQ==}
+    peerDependencies:
+      '@uppy/core': ^3.11.3
+
+  '@uppy/informer@3.1.0':
+    resolution: {integrity: sha512-vmpTLqzSLmZSuIVDZV0o19yXVqyTh5/uCbKUEiyfBhR726kQiuYQLP/ZHaKcvW3c1ESQGbNg53iNHbFBqF681w==}
+    peerDependencies:
+      '@uppy/core': ^3.9.3
+
+  '@uppy/instagram@3.3.1':
+    resolution: {integrity: sha512-lD1abtGslNmZ3RA4UHKYYLeRllxhCMHD60HvRdud9LL6k/M6AvlWupG8Q5jnA6c+OcWdeCdIKCkSWsF+N795LA==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/onedrive@3.4.0':
+    resolution: {integrity: sha512-UXNdvL62aT8RTYCK3rUVwtWapRP5UIJad/TRmkllavr9cLkhLnAd8jZNXjru2P2l7sRO6Zcd44EwMTHij0Aa8A==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/progress-bar@3.1.1':
+    resolution: {integrity: sha512-c7Wcv6/gvrdxICnZUaU/cZG6wUtS0V/GYGssGFQ6OW84h0smuzGGA+KOh9zKqr6HBHxgKRxmCDtrlTlSSvAuQQ==}
+    peerDependencies:
+      '@uppy/core': ^3.10.0
+
+  '@uppy/provider-views@3.13.0':
+    resolution: {integrity: sha512-Z2oI88A+GC2zIPk8beoeFN/miHKkhtF58mYjvb5miGCMMZM7p7LRj98sgb5OOdKsGrfeiuTavtgL424BvcVd8w==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/redux-dev-tools@3.0.3':
+    resolution: {integrity: sha512-WwAF+Yp+C3k0tbeLN+AnQDsZZsSpbt0nPUyCTtvUrGXK4p05tI8vEFheVmChgZKud038nZ/ULPGsKNFmuOm81Q==}
+    peerDependencies:
+      '@uppy/core': ^3.4.0
+
+  '@uppy/remote-sources@1.3.0':
+    resolution: {integrity: sha512-jhxnwCvj5LYCPWd7k5dGFKlBcJqITG4GhZfZaWszRDYHtpYSC5blw+5AxKkBitvERoXk/su17x3VFo8jkiCG0g==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/screen-capture@3.2.0':
+    resolution: {integrity: sha512-bwrIpp9nlymjMVD3DpULurAUfvVUVkOfZfGWH2xtaVGZbXU1Q7rwNM1jwn4ilqSLCRWbDNi8VSy81WOruKv/9g==}
+    peerDependencies:
+      '@uppy/core': ^3.10.0
+
+  '@uppy/status-bar@3.3.3':
+    resolution: {integrity: sha512-TCcnBjTDbq/AmnGOcWbCpQNsv05Z6Y36zdmTCt/xNe2/gTVAYAzGRoGOrkeb6jf/E4AAi25VyOolSqL2ibB8Kw==}
+    peerDependencies:
+      '@uppy/core': ^3.11.2
+
+  '@uppy/store-default@3.2.2':
+    resolution: {integrity: sha512-OiSgT++Jj4nLK0N9WTeod3UNjCH81OXE5BcMJCd9oWzl2d0xPNq2T/E9Y6O72XVd+6Y7+tf5vZlPElutfMB3KQ==}
+
+  '@uppy/store-redux@3.0.7':
+    resolution: {integrity: sha512-6+RDxoi6YBd6kmO5bh29zeHZXSObR8xxzHNGY3MYowSgxfPTidFvDvOepWRcx9+GPIK4Gux1AIYC6R2cnUNCBQ==}
+
+  '@uppy/thumbnail-generator@3.1.0':
+    resolution: {integrity: sha512-tDKK/cukC0CrM0F/OlHFmvpGGUq+Db4YfakhIGPKtT7ZO8aWOiIu5JIvaYUnKRxGq3RGsk4zhkxYXuoxVzzsGA==}
+    peerDependencies:
+      '@uppy/core': ^3.10.0
+
+  '@uppy/transloadit@3.8.1':
+    resolution: {integrity: sha512-HpK2y8/Pbnsih+HOYvJ2plpdwtjZ8QwEwAZIPLym0yYyTT+pv/+YTXy0Y+MVR1FXzW4Z+3ficZdXMhc9omw5hg==}
+    peerDependencies:
+      '@uppy/core': ^3.13.1
+
+  '@uppy/tus@3.5.5':
+    resolution: {integrity: sha512-Dcvqc897tSWRe9oiJo2ZCiyebn0G3j8FMYa99GYeLV9AeL37V/7akMAPG5ama4mTQLBXHcpziLqosTrf07ZMYQ==}
+    peerDependencies:
+      '@uppy/core': ^3.11.3
+
+  '@uppy/unsplash@3.3.1':
+    resolution: {integrity: sha512-MQ2l3Rg7tyc4ntqQzjsGQAff1nyIku0w96yAYXZAEWGk9GzLq4H2Te1lXgL1tauh9+5zrzglGe2GQv7A2H4wgQ==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/url@3.6.1':
+    resolution: {integrity: sha512-EqnhNSHv7HYY8T9pQ3Cc7/SlSs1eD9rIoNd0GH7axPrJiR1KNwinN3EKnipIlUQgKvjpmrqAdPpHzkAyUVQqDw==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@uppy/utils@5.9.0':
+    resolution: {integrity: sha512-9Ubddd3orCOLYjf0KobwgJ+aTrABSxk9t4X/QdM4qJHVZuMIftkaMplrViRUO+kvIBCXEZDIP2AmS060siDNGw==}
+
+  '@uppy/webcam@3.4.2':
+    resolution: {integrity: sha512-exp6YZN8eu8hJjJ48/O84htMwwGKLwMzuLTEWrXmu710Z3kU7Zu3+jN1PiajnRcGykXl9iwj3iXR2z1uEu+dbw==}
+    peerDependencies:
+      '@uppy/core': ^3.12.0
+
+  '@uppy/xhr-upload@3.6.8':
+    resolution: {integrity: sha512-zr3OHrIdo08jmCqTYKS0C7o3E0XQpjtZI40wmB6VvXYzu4x/aZankG9QqKxLiY0n8KbZ9aCIvO8loxBGoL7Kaw==}
+    peerDependencies:
+      '@uppy/core': ^3.13.0
+
+  '@uppy/zoom@2.3.1':
+    resolution: {integrity: sha512-rhoNua3zAXt2grzHha09N2pGKyZdnI9h/TLHU8X/LQTswdIhxNmr772AVci2R2p/IwO18xGXB/VXIkh4t3/Nww==}
+    peerDependencies:
+      '@uppy/core': ^3.11.0
+
+  '@videojs/http-streaming@2.9.2':
+    resolution: {integrity: sha512-2ZsxJn4/nZZ6k6jIhic2l9ynGmKwprtuI5b3+M6JgqOSLvQQ/ah+heVs/0g2Ze7qJxodqR+aSY948JwJIz1gCw==}
+    engines: {node: '>=8', npm: '>=5'}
+    peerDependencies:
+      video.js: ^6 || ^7
+
+  '@videojs/vhs-utils@3.0.5':
+    resolution: {integrity: sha512-PKVgdo8/GReqdx512F+ombhS+Bzogiofy1LgAj4tN8PfdBx3HSS7V5WfJotKTqtOWGwVfSWsrYN/t09/DSryrw==}
+    engines: {node: '>=8', npm: '>=5'}
+
+  '@videojs/xhr@2.5.1':
+    resolution: {integrity: sha512-wV9nGESHseSK+S9ePEru2+OJZ1jq/ZbbzniGQ4weAmTIepuBMSYPx5zrxxQA0E786T5ykpO8ts+LayV+3/oI2w==}
+
+  Leaflet.StyledLayerControl@https://codeload.github.com/davicustodio/Leaflet.StyledLayerControl/tar.gz/4cf339decb09f8e5b8091cfa1e263caa76fc3045:
+    resolution: {tarball: https://codeload.github.com/davicustodio/Leaflet.StyledLayerControl/tar.gz/4cf339decb09f8e5b8091cfa1e263caa76fc3045}
+    version: 0.0.0
+
+  aes-decrypter@3.1.2:
+    resolution: {integrity: sha512-42nRwfQuPRj9R1zqZBdoxnaAmnIFyDi0MNyTVhjdFOd8fifXKKRfwIHIZ6AMn1or4x5WONzjwRTbTWcsIQ0O4A==}
+
+  blueimp-canvas-to-blob@3.29.0:
+    resolution: {integrity: sha512-0pcSSGxC0QxT+yVkivxIqW0Y4VlO2XSDPofBAqoJ1qJxgH9eiUDLv50Rixij2cDuEfx4M6DpD9UGZpRhT5Q8qg==}
+
+  buffer-from@1.1.2:
+    resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
+
+  cached-path-relative@1.1.0:
+    resolution: {integrity: sha512-WF0LihfemtesFcJgO7xfOoOcnWzY/QHR4qeDqV44jPU3HTI54+LnfXK3SA27AVVGCdZFgjjFFaqUA9Jx7dMJZA==}
+
+  capslockstate-jquery-plugin#1.2.1@https://codeload.github.com/nosilleg/capslockstate-jquery-plugin/tar.gz/5974328bf43f030474e00f17acf3a557269b9903:
+    resolution: {tarball: https://codeload.github.com/nosilleg/capslockstate-jquery-plugin/tar.gz/5974328bf43f030474e00f17acf3a557269b9903}
+    version: 0.0.0
+
+  chart.js@4.5.1:
+    resolution: {integrity: sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw==}
+    engines: {pnpm: '>=8'}
+
+  chartjs-adapter-date-fns@3.0.0:
+    resolution: {integrity: sha512-Rs3iEB3Q5pJ973J93OBTpnP7qoGwvq3nUnoMdtxO+9aoJof7UFcRbWcIDteXuYd1fgAvct/32T9qaLyLuZVwCg==}
+    peerDependencies:
+      chart.js: '>=2.8.0'
+      date-fns: '>=2.0.0'
+
+  chosen-js@1.8.7:
+    resolution: {integrity: sha512-eVdrZJ2U5ISdObkgsi0od5vIJdLwq1P1Xa/Vj/mgxkMZf14DlgobfB6nrlFi3kW4kkvKLsKk4NDqZj1MU1DCpw==}
+
+  classnames@2.5.1:
+    resolution: {integrity: sha512-saHYOzhIQs6wy2sVxTM6bUDsQO4F50V9RQ22qBpEdCW+I+/Wmke2HOl6lS6dTpdxVhb88/I6+Hs+438c3lfUow==}
+
+  combine-errors@3.0.3:
+    resolution: {integrity: sha512-C8ikRNRMygCwaTx+Ek3Yr+OuZzgZjduCOfSQBjbM8V3MfgcjSTeto/GXP6PAwKvJz/v15b7GHZvx5rOlczFw/Q==}
+
+  component-emitter@1.3.1:
+    resolution: {integrity: sha512-T0+barUSQRTUQASh8bx02dl+DhF54GtIDY13Y3m9oWTklKbb3Wv974meRpeZ3lp1JpLVECWWNHC4vaG2XHXouQ==}
+
+  compressorjs@1.2.1:
+    resolution: {integrity: sha512-+geIjeRnPhQ+LLvvA7wxBQE5ddeLU7pJ3FsKFWirDw6veY3s9iLxAQEw7lXGHnhCJvBujEQWuNnGzZcvCvdkLQ==}
+
+  cropperjs@1.5.7:
+    resolution: {integrity: sha512-sGj+G/ofKh+f6A4BtXLJwtcKJgMUsXYVUubfTo9grERiDGXncttefmue/fyQFvn8wfdyoD1KhDRYLfjkJFl0yw==}
+
+  custom-error-instance@2.1.1:
+    resolution: {integrity: sha512-p6JFxJc3M4OTD2li2qaHkDCw9SfMw82Ldr6OC9Je1aXiGfhx2W8p3GaoeaGrPJTUN9NirTM/KTxHWMUdR1rsUg==}
+
+  date-fns@2.30.0:
+    resolution: {integrity: sha512-fnULvOpxnC5/Vg3NCiWelDsLiUc9bRwAPs/+LfTLNvetFCtCTN+yQz15C/fs4AwX1R9K5GLtLfn8QW+dWisaAw==}
+    engines: {node: '>=0.11'}
+
+  dom-walk@0.1.2:
+    resolution: {integrity: sha512-6QvTW9mrGeIegrFXdtQi9pk7O/nSK6lSdXW2eqUspN5LWD7UTji2Fqw5V2YLjBpHEoU9Xl/eUWNpDeZvoyOv2w==}
+
+  dompurify@3.3.1:
+    resolution: {integrity: sha512-qkdCKzLNtrgPFP1Vo+98FRzJnBRGe4ffyCea9IwHB1fyxPOeNTHpLKYGd4Uk9xvNoH0ZoOjwZxNptyMwqrId1Q==}
+
+  eventemitter3@5.0.4:
+    resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
+
+  exifr@7.1.3:
+    resolution: {integrity: sha512-g/aje2noHivrRSLbAUtBPWFbxKdKhgj/xr1vATDdUXPOFYJlQ62Ft0oy+72V6XLIpDJfHs6gXLbBLAolqOXYRw==}
+
+  get-form-data@3.0.0:
+    resolution: {integrity: sha512-1d53Kn08wlPuLu31/boF1tW2WRYKw3xAWae3mqcjqpDjoqVBtXolbQnudbbEFyFWL7+2SLGRAFdotxNY06V7MA==}
+
+  global@4.4.0:
+    resolution: {integrity: sha512-wv/LAoHdRE3BeTGz53FAamhGlPLhlssK45usmGFThIi4XqnBmjKQ16u+RNbP7WvigRZDxUsM0J3gcQ5yicaL0w==}
+
+  graceful-fs@4.2.11:
+    resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  heatmap.js@2.0.5:
+    resolution: {integrity: sha512-CG2gYFP5Cv9IQCXEg3ZRxnJDyAilhWnQlAuHYGuWVzv6mFtQelS1bR9iN80IyDmFECbFPbg6I0LR5uAFHgCthw==}
+
+  individual@2.0.0:
+    resolution: {integrity: sha512-pWt8hBCqJsUWI/HtcfWod7+N9SgAqyPEaF7JQjwzjn5vGrpg6aQ5qeAFQ7dx//UH4J1O+7xqew+gCeeFt6xN/g==}
+
+  is-blob@2.1.0:
+    resolution: {integrity: sha512-SZ/fTft5eUhQM6oF/ZaASFDEdbFVe89Imltn9uZr03wdKMcWNVYSMjQPFtg05QuNkt5l5c135ElvXEQG0rk4tw==}
+    engines: {node: '>=6'}
+
+  is-function@1.0.2:
+    resolution: {integrity: sha512-lw7DUp0aWXYg+CBCN+JKkcE0Q2RayZnSvnZBlwgxHBQhqt5pZNVy4Ri7H9GmmXkdu7LUthszM+Tor1u/2iBcpQ==}
+
+  is-mobile@3.1.1:
+    resolution: {integrity: sha512-RRoXXR2HNFxNkUnxtaBdGBXtFlUMFa06S0NUKf/LCF+MuGLu13gi9iBCkoEmc6+rpXuwi5Mso5V8Zf7mNynMBQ==}
+
+  is-network-error@1.3.0:
+    resolution: {integrity: sha512-6oIwpsgRfnDiyEDLMay/GqCl3HoAtH5+RUKW29gYkL0QA+ipzpDLA16yQs7/RHCSu+BwgbJaOUqa4A99qNVQVw==}
+    engines: {node: '>=16'}
+
+  is-shallow-equal@1.0.1:
+    resolution: {integrity: sha512-lq5RvK+85Hs5J3p4oA4256M1FEffzmI533ikeDHvJd42nouRRx5wBzt36JuviiGe5dIPyHON/d0/Up+PBo6XkQ==}
+
+  is-stream@2.0.1:
+    resolution: {integrity: sha512-hFoiJiTl63nn+kstHGBtewWSKnQLpyb155KHheA1l39uvtO9nWIop1p3udqPcUd/xbF1VLMO4n7OI6p7RbngDg==}
+    engines: {node: '>=8'}
+
+  jcrop@https://codeload.github.com/tapmodo/Jcrop/tar.gz/43c396817f992cbbfd010f35c07e2f1f58d6a7ac:
+    resolution: {tarball: https://codeload.github.com/tapmodo/Jcrop/tar.gz/43c396817f992cbbfd010f35c07e2f1f58d6a7ac}
+    version: 0.9.15
+
+  jquery-tageditor@1.0.1:
+    resolution: {integrity: sha512-PrTZ8PlHQvn5s4xRuUrEDMV5Z2whwXcsknNTdc9sNC3UEtqkJt+s1p4/xsu67iZwHwcS7pwDyY0RAlzBzPv6oA==}
+
+  jquery-ui-touch-punch@0.2.3:
+    resolution: {integrity: sha512-Q/7aAd+SjbV0SspHO7Kuk96NJIbLwJAS0lD81U1PKcU2T5ZKayXMORH+Y5qvYLuy41xqVQbWimsRKDn1v3oI2Q==}
+
+  jquery-ui@1.13.2:
+    resolution: {integrity: sha512-wBZPnqWs5GaYJmo1Jj0k/mrSkzdQzKDwhXNtHKcBdAcKVxMM3KNYFq+iJ2i1rwiG53Z8M4mTn3Qxrm17uH1D4Q==}
+
+  jquery-validation@1.22.0:
+    resolution: {integrity: sha512-W/e+/suHHWHxdE9Byt9eMtYchy6a+RG9pqGTDiqz6DWcgwhrxVh2OVl8jCi3NSkmACeOW/wiPgLN3KM63+aSWg==}
+    peerDependencies:
+      jquery: ^1.7 || ^2.0 || ^3.1 || ^4.0
+
+  jquery@3.7.1:
+    resolution: {integrity: sha512-m4avr8yL8kmFN8psrbFFFmB/If14iN5o9nw/NgnnM+kybDJpRsAynV2BsfpTYrTRysYUdADVD7CkUUizgkpLfg==}
+
+  js-base64@3.7.8:
+    resolution: {integrity: sha512-hNngCeKxIUQiEUN3GPJOkz4wF/YvdUdbNL9hsBcMQTkKzboD7T/q3OYOuuPZLUE6dBxSGpwhk5mwuDud7JVAow==}
+
+  jstree@3.3.17:
+    resolution: {integrity: sha512-V0Pl1B6BIaxHUQMiWkol37QlhlBKoZA9RUeUmm95+UnV2QeZsj2QP1sOQl/m2EIOyZXOOxOHvR0SYZLSDC7EFw==}
+
+  keycode@2.2.1:
+    resolution: {integrity: sha512-Rdgz9Hl9Iv4QKi8b0OlCRQEzp4AgVxyCtz5S/+VIHezDmrDhkp2N2TqBWOLz0/gbeREXOOiI9/4b8BY9uw2vFg==}
+
+  leaflet-control-geocoder@1.10.0:
+    resolution: {integrity: sha512-ff8+wAifAg/NQetICfjpca8YD2fEYO2totnFUdtOH2JG7ufQeMLG38U2aqJTJ3Oz9g4hpIpng2f5QtlGOG8HYw==}
+
+  leaflet-editable@1.3.2:
+    resolution: {integrity: sha512-iDTXR0byKWRiPliNrQrmZtbHHrr/ONZwoFoIzUHP2MQJQwgqzeblc1OKrT0ryOEzf0PFtrClk9SksAbeQpsmXw==}
+
+  leaflet-providers@1.10.2:
+    resolution: {integrity: sha512-1l867LObxwuFBeyPeBewip8PAXKOnvEoujq4/9y2TKTiZNHH76ksBD6dfktGjgUrOF+IdjsGHkpASPE+v2DQLw==}
+
+  leaflet-shades@0.1.4:
+    resolution: {integrity: sha512-XwB65YWV5dti4bWBcce0A3RVNHzWAP1NTaRCbZ890ePsdmmygg21FAjjfgZae3lgvk6xjvb2PnGwiD8UeWuWug==}
+
+  leaflet.markercluster@1.5.3:
+    resolution: {integrity: sha512-vPTw/Bndq7eQHjLBVlWpnGeLa3t+3zGiuM7fJwCkiMFq+nmRuG3RI3f7f4N4TDX7T4NpbAXpR2+NTRSEGfCSeA==}
+    peerDependencies:
+      leaflet: ^1.3.1
+
+  leaflet.path.drag@0.0.6:
+    resolution: {integrity: sha512-U6jp7sqX4kZss2FCm7bGPltOl8URWd+c4DPcRnEO9mYoZ1hfrteZ3XXVJ6zcEU8zxjnWeu1YywF08EDYbelmFg==}
+
+  leaflet@1.9.4:
+    resolution: {integrity: sha512-nxS1ynzJOmOlHp+iL3FyWqK89GtNL8U8rvlMOsQdTTssxZwCXh8N2NB3GDQOL+YR3XnWyZAxwQixURb+FA74PA==}
+
+  lightbox2@2.11.5:
+    resolution: {integrity: sha512-IsDqv/D9pjgh7GvwTNvmHF98+nrIcOD17fraXgtx8ivq469y95l5ycLi6SeZAZHdeyD3cGLjYwbDX8SRfWx5fA==}
+
+  lodash._baseiteratee@4.7.0:
+    resolution: {integrity: sha512-nqB9M+wITz0BX/Q2xg6fQ8mLkyfF7MU7eE+MNBNjTHFKeKaZAPEzEg+E8LWxKWf1DQVflNEn9N49yAuqKh2mWQ==}
+
+  lodash._basetostring@4.12.0:
+    resolution: {integrity: sha512-SwcRIbyxnN6CFEEK4K1y+zuApvWdpQdBHM/swxP962s8HIxPO3alBH5t3m/dl+f4CMUug6sJb7Pww8d13/9WSw==}
+
+  lodash._baseuniq@4.6.0:
+    resolution: {integrity: sha512-Ja1YevpHZctlI5beLA7oc5KNDhGcPixFhcqSiORHNsp/1QTv7amAXzw+gu4YOvErqVlMVyIJGgtzeepCnnur0A==}
+
+  lodash._createset@4.0.3:
+    resolution: {integrity: sha512-GTkC6YMprrJZCYU3zcqZj+jkXkrXzq3IPBcF/fIPpNEAB4hZEtXU8zp/RwKOvZl43NUmwDbyRk3+ZTbeRdEBXA==}
+
+  lodash._root@3.0.1:
+    resolution: {integrity: sha512-O0pWuFSK6x4EXhM1dhZ8gchNtG7JMqBtrHdoUFUWXD7dJnNSUze1GuyQr5sOs0aCvgGeI3o/OJW8f4ca7FDxmQ==}
+
+  lodash._stringtopath@4.8.0:
+    resolution: {integrity: sha512-SXL66C731p0xPDC5LZg4wI5H+dJo/EO4KTqOMwLYCH3+FmmfAKJEZCm6ohGpI+T1xwsDsJCfL4OnhorllvlTPQ==}
+
+  lodash.throttle@4.1.1:
+    resolution: {integrity: sha512-wIkUCfVKpVsWo3JSZlc+8MB5it+2AN5W8J7YVMST30UrvcQNZ1Okbj+rbVniijTWE6FGYy4XJq/rHkas8qJMLQ==}
+
+  lodash.uniqby@4.5.0:
+    resolution: {integrity: sha512-IRt7cfTtHy6f1aRVA5n7kT8rgN3N1nH6MOWLcHfpWG2SH19E3JksLK38MktLxZDhlAjCP9jpIXkOnRXlu6oByQ==}
+
+  lodash@4.17.23:
+    resolution: {integrity: sha512-LgVTMpQtIopCi79SJeDiP0TfWi5CNEc/L/aRdTh3yIvmZXTnheWpKjSZhnvMl8iXbC1tFg9gdHHDMLoV7CnG+w==}
+
+  m3u8-parser@4.7.0:
+    resolution: {integrity: sha512-48l/OwRyjBm+QhNNigEEcRcgbRvnUjL7rxs597HmW9QSNbyNvt+RcZ9T/d9vxi9A9z7EZrB1POtZYhdRlwYQkQ==}
+
+  memoize-one@6.0.0:
+    resolution: {integrity: sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==}
+
+  mime-match@1.0.2:
+    resolution: {integrity: sha512-VXp/ugGDVh3eCLOBCiHZMYWQaTNUHv2IJrut+yXA6+JbLPXHglHwfS/5A5L0ll+jkCY7fIzRJcH6OIunF+c6Cg==}
+
+  min-document@2.19.2:
+    resolution: {integrity: sha512-8S5I8db/uZN8r9HSLFVWPdJCvYOejMcEC82VIzNUc6Zkklf/d1gg2psfE79/vyhWOj4+J8MtwmoOz3TmvaGu5A==}
+
+  mpd-parser@0.17.0:
+    resolution: {integrity: sha512-oKS5G0jCcHHJ3sHYlcLeM9Xcbuixl08eAx7QW0Th7ChlZiI0YvLtGaHE/L0aKUBJFNvtkeksIr8XgJgSBBsS4g==}
+    hasBin: true
+
+  mux.js@5.12.2:
+    resolution: {integrity: sha512-9OY1lrFIo7FxMeIC6aLUftiNv97AztufDfi30N7qDll1Pcy7bCxlHztyHp1Ce0KQwy2XqchGeENPS4v1NJngHQ==}
+    engines: {node: '>=8', npm: '>=5'}
+    hasBin: true
+
+  namespace-emitter@2.0.1:
+    resolution: {integrity: sha512-N/sMKHniSDJBjfrkbS/tpkPj4RAbvW3mr8UAzvlMHyun93XEm83IAvhWtJVHo+RHn/oO8Job5YN4b+wRjSVp5g==}
+
+  nanoid@4.0.2:
+    resolution: {integrity: sha512-7ZtY5KTCNheRGfEFxnedV5zFiORN1+Y1N6zvPTnHQd8ENUvfaDBeuJDZb2bN/oXwXxu3qkTXDzy57W5vAmDTBw==}
+    engines: {node: ^14 || ^16 || >=18}
+    hasBin: true
+
+  open-location-code@1.0.3:
+    resolution: {integrity: sha512-DBm14BSn40Ee241n80zIFXIT6+y8Tb0I+jTdosLJ8Sidvr2qONvymwqymVbHV2nS+1gkDZ5eTNpnOIVV0Kn2fw==}
+
+  openseadragon@2.4.2:
+    resolution: {integrity: sha512-398KbZwRtOYA6OmeWRY4Q0737NTacQ9Q6whmr9Lp1MNQO3p0eBz5LIASRne+4gwequcSM1vcHcjfy3dIndQziw==}
+
+  p-queue@7.4.1:
+    resolution: {integrity: sha512-vRpMXmIkYF2/1hLBKisKeVYJZ8S2tZ0zEAmIJgdVKP2nq0nh4qCdf8bgw+ZgKrkh71AOCaqzwbJJk1WtdcF3VA==}
+    engines: {node: '>=12'}
+
+  p-retry@6.2.1:
+    resolution: {integrity: sha512-hEt02O4hUct5wtwg4H4KcWgDdm+l1bOaEy/hWzd8xtXB9BqxTWBBhb+2ImAtH4Cv4rPjV76xN3Zumqk3k3AhhQ==}
+    engines: {node: '>=16.17'}
+
+  p-timeout@5.1.0:
+    resolution: {integrity: sha512-auFDyzzzGZZZdHz3BtET9VEz0SE/uMEAx7uWfGPucfzEwwe/xH0iVeZibQmANYE/hp9T2+UUZT5m+BKyrDp3Ew==}
+    engines: {node: '>=12'}
+
+  pkcs7@1.0.4:
+    resolution: {integrity: sha512-afRERtHn54AlwaF2/+LFszyAANTCggGilmcmILUzEjvs3XgFZT+xE6+QWQcAGmu4xajy+Xtj7acLOPdx5/eXWQ==}
+    hasBin: true
+
+  preact@10.28.3:
+    resolution: {integrity: sha512-tCmoRkPQLpBeWzpmbhryairGnhW9tKV6c6gr/w+RhoRoKEJwsjzipwp//1oCpGPOchvSLaAPlpcJi9MwMmoPyA==}
+
+  process@0.11.10:
+    resolution: {integrity: sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==}
+    engines: {node: '>= 0.6.0'}
+
+  promise-queue@2.2.5:
+    resolution: {integrity: sha512-p/iXrPSVfnqPft24ZdNNLECw/UrtLTpT3jpAAMzl/o5/rDsGCPo3/CQS2611flL6LkoEJ3oQZw7C8Q80ZISXRQ==}
+    engines: {node: '>= 0.8.0'}
+
+  proper-lockfile@4.1.2:
+    resolution: {integrity: sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA==}
+
+  querystringify@2.2.0:
+    resolution: {integrity: sha512-FIqgj2EUvTa7R50u0rGsyTftzjYmv/a3hO345bZNrqabNqjtgiDMgmo4mkUjd+nzU5oF3dClKqFIPUKybUyqoQ==}
+
+  requires-port@1.0.0:
+    resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
+
+  retry@0.12.0:
+    resolution: {integrity: sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==}
+    engines: {node: '>= 4'}
+
+  retry@0.13.1:
+    resolution: {integrity: sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg==}
+    engines: {node: '>= 4'}
+
+  rust-result@1.0.0:
+    resolution: {integrity: sha512-6cJzSBU+J/RJCF063onnQf0cDUOHs9uZI1oroSGnHOph+CQTIJ5Pp2hK5kEQq1+7yE/EEWfulSNXAQ2jikPthA==}
+
+  safe-json-parse@4.0.0:
+    resolution: {integrity: sha512-RjZPPHugjK0TOzFrLZ8inw44s9bKox99/0AZW9o/BEQVrJfhI+fIHMErnPyRa89/yRXUUr93q+tiN6zhoVV4wQ==}
+
+  signal-exit@3.0.7:
+    resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
+
+  tinymce@7.9.2:
+    resolution: {integrity: sha512-zS2gn2CPQmZhUqLzkhwYH+WGsx/DIRY/mS18RVzsIcuQg2lN2uzaqoHSJU6DdMUpvXBtBFnLNpumC3QrDwLBzA==}
+
+  toastify-js@1.12.0:
+    resolution: {integrity: sha512-HeMHCO9yLPvP9k0apGSdPUWrUbLnxUKNFzgUoZp1PHCLploIX/4DSQ7V8H25ef+h4iO9n0he7ImfcndnN6nDrQ==}
+
+  tus-js-client@3.1.3:
+    resolution: {integrity: sha512-n9k6rI/nPOuP2TaqPG6Ogz3a3V1cSH9en7N0VH4gh95jmG8JA58TJzLms2lBfb7aKVb3fdUunqYEG3WnQnZRvQ==}
+
+  uppy@3.17.0:
+    resolution: {integrity: sha512-vazJ6Ye4tKlO5U77jSVv743Ll9qHQrTMqzooDkfZOkTFbkgYm/TCyVD+6Xc/M5CwHar4fXsDARvZ/Py4my3liQ==}
+
+  url-parse@1.5.10:
+    resolution: {integrity: sha512-WypcfiRhfeUP9vvF0j6rw0J3hrWrw6iZv3+22h6iRMJ/8z1Tj6XfLP4DsUix5MhMPnXpiHDoKyoZ/bdCkwBCiQ==}
+
+  url-toolkit@2.2.5:
+    resolution: {integrity: sha512-mtN6xk+Nac+oyJ/PrI7tzfmomRVNFIWKUbG8jdYFt52hxbiReFAXIjYskvu64/dvuW71IcB7lV8l0HvZMac6Jg==}
+
+  video.js@7.14.3:
+    resolution: {integrity: sha512-6avCdSIfn5ss5NOgoQfY/xEfPNcz9DXSw+ZN80NwPguCdRd4VL4y40b/d7osYJwyCdF+YkvhqAW7dw4s0vBigg==}
+
+  videojs-font@3.2.0:
+    resolution: {integrity: sha512-g8vHMKK2/JGorSfqAZQUmYYNnXmfec4MLhwtEFS+mMs2IDY398GLysy6BH6K+aS1KMNu/xWZ8Sue/X/mdQPliA==}
+
+  videojs-resolution-switcher-for-videojs-version-7@https://codeload.github.com/mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7/tar.gz/f5d3e77ee3e23ea9ae29c0838751fa8a30267a7f:
+    resolution: {tarball: https://codeload.github.com/mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7/tar.gz/f5d3e77ee3e23ea9ae29c0838751fa8a30267a7f}
+    version: 0.0.0
+
+  videojs-vtt.js@0.15.5:
+    resolution: {integrity: sha512-yZbBxvA7QMYn15Lr/ZfhhLPrNpI/RmCSCqgIff57GC2gIrV5YfyzLfLyZMj0NnZSAz8syB4N0nHXpZg9MyrMOQ==}
+
+  wildcard@1.1.2:
+    resolution: {integrity: sha512-DXukZJxpHA8LuotRwL0pP1+rS6CS7FF2qStDDE1C7DDg2rLud2PXRMuEDYIPhgEezwnlHNL4c+N6MfMTjCGTng==}
+
+  xmldom@0.5.0:
+    resolution: {integrity: sha512-Foaj5FXVzgn7xFzsKeNIde9g6aFBxTPi37iwsno8QvApmtg7KYrr+OPyRHcJF7dud2a5nGRBXK3n0dL62Gf7PA==}
+    engines: {node: '>=10.0.0'}
+
+snapshots:
+
+  '@babel/runtime@7.28.6': {}
+
+  '@kurkle/color@0.3.4': {}
+
+  '@transloadit/prettier-bytes@0.3.5': {}
+
+  '@types/retry@0.12.2': {}
+
+  '@types/trusted-types@2.0.7':
+    optional: true
+
+  '@uppy/audio@1.1.9(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/aws-s3-multipart@3.12.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+
+  '@uppy/aws-s3@3.6.2(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/aws-s3-multipart': 3.12.0(@uppy/core@3.13.1)
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      '@uppy/xhr-upload': 3.6.8(@uppy/core@3.13.1)
+      nanoid: 4.0.2
+
+  '@uppy/box@2.4.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/companion-client@3.8.2(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      namespace-emitter: 2.0.1
+      p-retry: 6.2.1
+
+  '@uppy/compressor@1.1.4(@uppy/core@3.13.1)':
+    dependencies:
+      '@transloadit/prettier-bytes': 0.3.5
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      compressorjs: 1.2.1
+      preact: 10.28.3
+      promise-queue: 2.2.5
+
+  '@uppy/core@3.13.1':
+    dependencies:
+      '@transloadit/prettier-bytes': 0.3.5
+      '@uppy/store-default': 3.2.2
+      '@uppy/utils': 5.9.0
+      lodash: 4.17.23
+      mime-match: 1.0.2
+      namespace-emitter: 2.0.1
+      nanoid: 4.0.2
+      preact: 10.28.3
+
+  '@uppy/dashboard@3.9.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@transloadit/prettier-bytes': 0.3.5
+      '@uppy/core': 3.13.1
+      '@uppy/informer': 3.1.0(@uppy/core@3.13.1)
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/status-bar': 3.3.3(@uppy/core@3.13.1)
+      '@uppy/thumbnail-generator': 3.1.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      classnames: 2.5.1
+      is-shallow-equal: 1.0.1
+      lodash: 4.17.23
+      memoize-one: 6.0.0
+      nanoid: 4.0.2
+      preact: 10.28.3
+
+  '@uppy/drag-drop@3.1.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/drop-target@2.1.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+
+  '@uppy/dropbox@3.4.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/facebook@3.3.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/file-input@3.1.2(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/form@3.2.2(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      get-form-data: 3.0.0
+
+  '@uppy/golden-retriever@3.2.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      lodash: 4.17.23
+
+  '@uppy/google-drive@3.6.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/google-photos@0.1.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/image-editor@2.4.6(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      cropperjs: 1.5.7
+      preact: 10.28.3
+
+  '@uppy/informer@3.1.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/instagram@3.3.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/onedrive@3.4.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/progress-bar@3.1.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/provider-views@3.13.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      classnames: 2.5.1
+      nanoid: 4.0.2
+      p-queue: 7.4.1
+      preact: 10.28.3
+
+  '@uppy/redux-dev-tools@3.0.3(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+
+  '@uppy/remote-sources@1.3.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/box': 2.4.0(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/dashboard': 3.9.1(@uppy/core@3.13.1)
+      '@uppy/dropbox': 3.4.0(@uppy/core@3.13.1)
+      '@uppy/facebook': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/google-drive': 3.6.0(@uppy/core@3.13.1)
+      '@uppy/google-photos': 0.1.0(@uppy/core@3.13.1)
+      '@uppy/instagram': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/onedrive': 3.4.0(@uppy/core@3.13.1)
+      '@uppy/unsplash': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/url': 3.6.1(@uppy/core@3.13.1)
+      '@uppy/zoom': 2.3.1(@uppy/core@3.13.1)
+
+  '@uppy/screen-capture@3.2.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/status-bar@3.3.3(@uppy/core@3.13.1)':
+    dependencies:
+      '@transloadit/prettier-bytes': 0.3.5
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      classnames: 2.5.1
+      preact: 10.28.3
+
+  '@uppy/store-default@3.2.2': {}
+
+  '@uppy/store-redux@3.0.7':
+    dependencies:
+      nanoid: 4.0.2
+
+  '@uppy/thumbnail-generator@3.1.0(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      exifr: 7.1.3
+
+  '@uppy/transloadit@3.8.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/tus': 3.5.5(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      component-emitter: 1.3.1
+
+  '@uppy/tus@3.5.5(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      tus-js-client: 3.1.3
+
+  '@uppy/unsplash@3.3.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@uppy/url@3.6.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      nanoid: 4.0.2
+      preact: 10.28.3
+
+  '@uppy/utils@5.9.0':
+    dependencies:
+      lodash: 4.17.23
+      preact: 10.28.3
+
+  '@uppy/webcam@3.4.2(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+      is-mobile: 3.1.1
+      preact: 10.28.3
+
+  '@uppy/xhr-upload@3.6.8(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/utils': 5.9.0
+
+  '@uppy/zoom@2.3.1(@uppy/core@3.13.1)':
+    dependencies:
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/utils': 5.9.0
+      preact: 10.28.3
+
+  '@videojs/http-streaming@2.9.2(video.js@7.14.3)':
+    dependencies:
+      '@babel/runtime': 7.28.6
+      '@videojs/vhs-utils': 3.0.5
+      aes-decrypter: 3.1.2
+      global: 4.4.0
+      m3u8-parser: 4.7.0
+      mpd-parser: 0.17.0
+      mux.js: 5.12.2
+      video.js: 7.14.3
+
+  '@videojs/vhs-utils@3.0.5':
+    dependencies:
+      '@babel/runtime': 7.28.6
+      global: 4.4.0
+      url-toolkit: 2.2.5
+
+  '@videojs/xhr@2.5.1':
+    dependencies:
+      '@babel/runtime': 7.28.6
+      global: 4.4.0
+      is-function: 1.0.2
+
+  Leaflet.StyledLayerControl@https://codeload.github.com/davicustodio/Leaflet.StyledLayerControl/tar.gz/4cf339decb09f8e5b8091cfa1e263caa76fc3045: {}
+
+  aes-decrypter@3.1.2:
+    dependencies:
+      '@babel/runtime': 7.28.6
+      '@videojs/vhs-utils': 3.0.5
+      global: 4.4.0
+      pkcs7: 1.0.4
+
+  blueimp-canvas-to-blob@3.29.0: {}
+
+  buffer-from@1.1.2: {}
+
+  cached-path-relative@1.1.0: {}
+
+  capslockstate-jquery-plugin#1.2.1@https://codeload.github.com/nosilleg/capslockstate-jquery-plugin/tar.gz/5974328bf43f030474e00f17acf3a557269b9903: {}
+
+  chart.js@4.5.1:
+    dependencies:
+      '@kurkle/color': 0.3.4
+
+  chartjs-adapter-date-fns@3.0.0(chart.js@4.5.1)(date-fns@2.30.0):
+    dependencies:
+      chart.js: 4.5.1
+      date-fns: 2.30.0
+
+  chosen-js@1.8.7: {}
+
+  classnames@2.5.1: {}
+
+  combine-errors@3.0.3:
+    dependencies:
+      custom-error-instance: 2.1.1
+      lodash.uniqby: 4.5.0
+
+  component-emitter@1.3.1: {}
+
+  compressorjs@1.2.1:
+    dependencies:
+      blueimp-canvas-to-blob: 3.29.0
+      is-blob: 2.1.0
+
+  cropperjs@1.5.7: {}
+
+  custom-error-instance@2.1.1: {}
+
+  date-fns@2.30.0:
+    dependencies:
+      '@babel/runtime': 7.28.6
+
+  dom-walk@0.1.2: {}
+
+  dompurify@3.3.1:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
+
+  eventemitter3@5.0.4: {}
+
+  exifr@7.1.3: {}
+
+  get-form-data@3.0.0: {}
+
+  global@4.4.0:
+    dependencies:
+      min-document: 2.19.2
+      process: 0.11.10
+
+  graceful-fs@4.2.11: {}
+
+  heatmap.js@2.0.5: {}
+
+  individual@2.0.0: {}
+
+  is-blob@2.1.0: {}
+
+  is-function@1.0.2: {}
+
+  is-mobile@3.1.1: {}
+
+  is-network-error@1.3.0: {}
+
+  is-shallow-equal@1.0.1: {}
+
+  is-stream@2.0.1: {}
+
+  jcrop@https://codeload.github.com/tapmodo/Jcrop/tar.gz/43c396817f992cbbfd010f35c07e2f1f58d6a7ac: {}
+
+  jquery-tageditor@1.0.1: {}
+
+  jquery-ui-touch-punch@0.2.3: {}
+
+  jquery-ui@1.13.2:
+    dependencies:
+      jquery: 3.7.1
+
+  jquery-validation@1.22.0(jquery@3.7.1):
+    dependencies:
+      jquery: 3.7.1
+
+  jquery@3.7.1: {}
+
+  js-base64@3.7.8: {}
+
+  jstree@3.3.17:
+    dependencies:
+      jquery: 3.7.1
+
+  keycode@2.2.1: {}
+
+  leaflet-control-geocoder@1.10.0:
+    optionalDependencies:
+      open-location-code: 1.0.3
+
+  leaflet-editable@1.3.2: {}
+
+  leaflet-providers@1.10.2: {}
+
+  leaflet-shades@0.1.4:
+    dependencies:
+      cached-path-relative: 1.1.0
+      leaflet-editable: 1.3.2
+      leaflet.path.drag: 0.0.6
+
+  leaflet.markercluster@1.5.3(leaflet@1.9.4):
+    dependencies:
+      leaflet: 1.9.4
+
+  leaflet.path.drag@0.0.6: {}
+
+  leaflet@1.9.4: {}
+
+  lightbox2@2.11.5: {}
+
+  lodash._baseiteratee@4.7.0:
+    dependencies:
+      lodash._stringtopath: 4.8.0
+
+  lodash._basetostring@4.12.0: {}
+
+  lodash._baseuniq@4.6.0:
+    dependencies:
+      lodash._createset: 4.0.3
+      lodash._root: 3.0.1
+
+  lodash._createset@4.0.3: {}
+
+  lodash._root@3.0.1: {}
+
+  lodash._stringtopath@4.8.0:
+    dependencies:
+      lodash._basetostring: 4.12.0
+
+  lodash.throttle@4.1.1: {}
+
+  lodash.uniqby@4.5.0:
+    dependencies:
+      lodash._baseiteratee: 4.7.0
+      lodash._baseuniq: 4.6.0
+
+  lodash@4.17.23: {}
+
+  m3u8-parser@4.7.0:
+    dependencies:
+      '@babel/runtime': 7.28.6
+      '@videojs/vhs-utils': 3.0.5
+      global: 4.4.0
+
+  memoize-one@6.0.0: {}
+
+  mime-match@1.0.2:
+    dependencies:
+      wildcard: 1.1.2
+
+  min-document@2.19.2:
+    dependencies:
+      dom-walk: 0.1.2
+
+  mpd-parser@0.17.0:
+    dependencies:
+      '@babel/runtime': 7.28.6
+      '@videojs/vhs-utils': 3.0.5
+      global: 4.4.0
+      xmldom: 0.5.0
+
+  mux.js@5.12.2:
+    dependencies:
+      '@babel/runtime': 7.28.6
+
+  namespace-emitter@2.0.1: {}
+
+  nanoid@4.0.2: {}
+
+  open-location-code@1.0.3:
+    optional: true
+
+  openseadragon@2.4.2: {}
+
+  p-queue@7.4.1:
+    dependencies:
+      eventemitter3: 5.0.4
+      p-timeout: 5.1.0
+
+  p-retry@6.2.1:
+    dependencies:
+      '@types/retry': 0.12.2
+      is-network-error: 1.3.0
+      retry: 0.13.1
+
+  p-timeout@5.1.0: {}
+
+  pkcs7@1.0.4:
+    dependencies:
+      '@babel/runtime': 7.28.6
+
+  preact@10.28.3: {}
+
+  process@0.11.10: {}
+
+  promise-queue@2.2.5: {}
+
+  proper-lockfile@4.1.2:
+    dependencies:
+      graceful-fs: 4.2.11
+      retry: 0.12.0
+      signal-exit: 3.0.7
+
+  querystringify@2.2.0: {}
+
+  requires-port@1.0.0: {}
+
+  retry@0.12.0: {}
+
+  retry@0.13.1: {}
+
+  rust-result@1.0.0:
+    dependencies:
+      individual: 2.0.0
+
+  safe-json-parse@4.0.0:
+    dependencies:
+      rust-result: 1.0.0
+
+  signal-exit@3.0.7: {}
+
+  tinymce@7.9.2: {}
+
+  toastify-js@1.12.0: {}
+
+  tus-js-client@3.1.3:
+    dependencies:
+      buffer-from: 1.1.2
+      combine-errors: 3.0.3
+      is-stream: 2.0.1
+      js-base64: 3.7.8
+      lodash.throttle: 4.1.1
+      proper-lockfile: 4.1.2
+      url-parse: 1.5.10
+
+  uppy@3.17.0:
+    dependencies:
+      '@uppy/audio': 1.1.9(@uppy/core@3.13.1)
+      '@uppy/aws-s3': 3.6.2(@uppy/core@3.13.1)
+      '@uppy/aws-s3-multipart': 3.12.0(@uppy/core@3.13.1)
+      '@uppy/box': 2.4.0(@uppy/core@3.13.1)
+      '@uppy/companion-client': 3.8.2(@uppy/core@3.13.1)
+      '@uppy/compressor': 1.1.4(@uppy/core@3.13.1)
+      '@uppy/core': 3.13.1
+      '@uppy/dashboard': 3.9.1(@uppy/core@3.13.1)
+      '@uppy/drag-drop': 3.1.1(@uppy/core@3.13.1)
+      '@uppy/drop-target': 2.1.0(@uppy/core@3.13.1)
+      '@uppy/dropbox': 3.4.0(@uppy/core@3.13.1)
+      '@uppy/facebook': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/file-input': 3.1.2(@uppy/core@3.13.1)
+      '@uppy/form': 3.2.2(@uppy/core@3.13.1)
+      '@uppy/golden-retriever': 3.2.0(@uppy/core@3.13.1)
+      '@uppy/google-drive': 3.6.0(@uppy/core@3.13.1)
+      '@uppy/image-editor': 2.4.6(@uppy/core@3.13.1)
+      '@uppy/informer': 3.1.0(@uppy/core@3.13.1)
+      '@uppy/instagram': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/onedrive': 3.4.0(@uppy/core@3.13.1)
+      '@uppy/progress-bar': 3.1.1(@uppy/core@3.13.1)
+      '@uppy/provider-views': 3.13.0(@uppy/core@3.13.1)
+      '@uppy/redux-dev-tools': 3.0.3(@uppy/core@3.13.1)
+      '@uppy/remote-sources': 1.3.0(@uppy/core@3.13.1)
+      '@uppy/screen-capture': 3.2.0(@uppy/core@3.13.1)
+      '@uppy/status-bar': 3.3.3(@uppy/core@3.13.1)
+      '@uppy/store-default': 3.2.2
+      '@uppy/store-redux': 3.0.7
+      '@uppy/thumbnail-generator': 3.1.0(@uppy/core@3.13.1)
+      '@uppy/transloadit': 3.8.1(@uppy/core@3.13.1)
+      '@uppy/tus': 3.5.5(@uppy/core@3.13.1)
+      '@uppy/unsplash': 3.3.1(@uppy/core@3.13.1)
+      '@uppy/url': 3.6.1(@uppy/core@3.13.1)
+      '@uppy/webcam': 3.4.2(@uppy/core@3.13.1)
+      '@uppy/xhr-upload': 3.6.8(@uppy/core@3.13.1)
+      '@uppy/zoom': 2.3.1(@uppy/core@3.13.1)
+
+  url-parse@1.5.10:
+    dependencies:
+      querystringify: 2.2.0
+      requires-port: 1.0.0
+
+  url-toolkit@2.2.5: {}
+
+  video.js@7.14.3:
+    dependencies:
+      '@babel/runtime': 7.28.6
+      '@videojs/http-streaming': 2.9.2(video.js@7.14.3)
+      '@videojs/vhs-utils': 3.0.5
+      '@videojs/xhr': 2.5.1
+      aes-decrypter: 3.1.2
+      global: 4.4.0
+      keycode: 2.2.1
+      m3u8-parser: 4.7.0
+      mpd-parser: 0.17.0
+      mux.js: 5.12.2
+      safe-json-parse: 4.0.0
+      videojs-font: 3.2.0
+      videojs-vtt.js: 0.15.5
+
+  videojs-font@3.2.0: {}
+
+  videojs-resolution-switcher-for-videojs-version-7@https://codeload.github.com/mzulkiakbari/videojs-resolution-switcher-for-videojs-version-7/tar.gz/f5d3e77ee3e23ea9ae29c0838751fa8a30267a7f: {}
+
+  videojs-vtt.js@0.15.5:
+    dependencies:
+      global: 4.4.0
+
+  wildcard@1.1.2: {}
+
+  xmldom@0.5.0: {}

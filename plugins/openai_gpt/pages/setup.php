@@ -1,0 +1,105 @@
+<?php
+
+// Do the include and authorization checking ritual
+include '../../../include/boot.php';
+include '../../../include/authenticate.php'; if (!checkperm('a')) {exit ($lang['error-permissiondenied']);}
+
+// Specify the name of this plugin and the heading to display for the page.
+$plugin_name = 'openai_gpt';
+if (!in_array($plugin_name, $plugins)) {
+    plugin_activate_for_setup($plugin_name);
+}
+
+$page_heading = $lang['openai_gpt_title'];
+
+$page_intro = "<p>" . $lang['openai_gpt_intro'] . "</p>";
+
+if (!(isset($openai_gpt_provider_override) && $openai_gpt_provider_override)) {
+    $page_def[] = config_add_single_select("openai_gpt_provider", $lang["openai_gpt_provider"], ["openai" => $lang["openai_gpt"], "ollama" => $lang["ollama_name"]]);
+    $provider = $openai_gpt_provider;
+} else {
+    $page_def[] = config_add_html("<div class='Question'><label>" . escape($lang["openai_gpt_provider"]) . "</label><div class='Fixed'>" . escape(str_replace("[provider]", $openai_gpt_provider_override, escape($lang["openai_gpt_provider_override"]))) . "</div><div class='clearerleft'></div></div>");
+    $provider = $openai_gpt_provider_override;
+}
+
+// OpenAI specific setup
+$page_def[] = config_add_section_header($lang["openai_gpt"]);
+
+// Handle token limiting
+$token_limit_days = ($openai_gpt_token_limit_days == 0) ? 30 : $openai_gpt_token_limit_days;
+
+$tokens_used = openai_gpt_get_tokens_used($token_limit_days);
+
+if ($openai_gpt_token_limit == 0 || $openai_gpt_token_limit_days == 0) {
+    $token_limit = $lang["openai_gpt_no_token_limit"];
+} else {
+    $token_limit = str_replace(["%%TOKEN_LIMIT%%", "%%DAYS%%"], [number_format($openai_gpt_token_limit), $token_limit_days], $lang["openai_gpt_configured_limit"]);
+}
+
+$tokens_used_label = str_replace("%%DAYS%%", $token_limit_days, $lang["openai_gpt_usage_days"]);
+$tokens_used_text = str_replace("%%TOKEN_COUNT%%", number_format($tokens_used), $lang["openai_gpt_token_count"]);
+
+
+if ($provider == "openai" && $openai_gpt_token_limit !== 0 && $openai_gpt_token_limit_days !== 0 && $tokens_used > $openai_gpt_token_limit) {
+    $page_def[] = config_add_html("<div class='Question'><strong>" . escape($lang["openai_gpt_limit_warning"]) . "</strong><div class='clearerleft'></div></div>");
+}
+
+// Can't use old model since move to chat API
+if (trim($openai_gpt_model) == "text-davinci-003") {
+    $openai_gpt_model = $openai_gpt_fallback_model;
+}
+
+// Build configuration variable descriptions
+if (!(isset($openai_gpt_hide_api_key) && $openai_gpt_hide_api_key)) {
+ 	// Allow key to be hidden from UI via config
+	$page_def[] = config_add_text_input("openai_gpt_api_key", $lang["openai_gpt_api_key"]);
+}
+
+ // Can be forced in configuration
+if (!isset($openai_gpt_model_override)) {
+    $page_def[] = config_add_text_input("openai_gpt_model", $lang["openai_gpt_model"]);
+} else {
+    $page_def[] = config_add_html("<div class='Question'><label>" . escape($lang["openai_gpt_model"]) . "</label><div class='Fixed'>" . escape(str_replace("[model]", $openai_gpt_model_override, escape($lang["openai_gpt_model_override"]))) . "</div><div class='clearerleft'></div></div>");
+}
+
+$page_def[] = config_add_html("<div class='Question'><label>" . escape($lang["openai_gpt_token_limit"]) . "</label><div class='Fixed'>" . escape($token_limit) . "</div><div class='clearerleft'></div></div>");
+$page_def[] = config_add_html("<div class='Question'><label>" . escape($tokens_used_label) . "</label><div class='Fixed'>" . escape($tokens_used_text) . "</div><div class='clearerleft'></div></div>");
+
+// Ollama specific setup
+$page_def[] = config_add_section_header($lang["ollama_name"]);
+
+if (!(isset($ollama_hide_endpoint) && $ollama_hide_endpoint)) {
+ 	// Allow key to be hidden from UI via config
+	$page_def[] = config_add_text_input("ollama_endpoint", $lang["ollama_endpoint"]);
+}
+
+ // Can be forced in configuration
+if (!isset($ollama_model_override)) {
+    $page_def[] = config_add_text_input("ollama_model", $lang["ollama_model"]);
+} else {
+    $page_def[] = config_add_html("<div class='Question'><label>" . escape($lang["ollama_model"]) . "</label><div class='Fixed'>" . escape(str_replace("[model]", $ollama_model_override, escape($lang["openai_gpt_model_override"]))) . "</div><div class='clearerleft'></div></div>");
+}
+
+
+$page_def[] = config_add_section_header($lang["plugin_category_advanced"]);
+$page_def[] = config_add_html("<div class='Question'><strong>" . escape($lang["openai_gpt_advanced"]) . "</strong><div class='clearerleft'></div></div>");
+
+
+
+$page_def[] = config_add_text_input("openai_gpt_system_message",$lang["openai_gpt_system_message"]);
+$page_def[] = config_add_text_input("openai_gpt_temperature",$lang["openai_gpt_temperature"]);
+$page_def[] = config_add_text_input("openai_gpt_max_tokens",$lang["openai_gpt_max_tokens"]);
+$page_def[] = config_add_single_select("openai_gpt_language",$lang["openai_gpt_language"],array_merge([""=>$lang["openai_gpt_language_user"]],$languages));
+$page_def[] = config_add_boolean_select("openai_gpt_overwrite_data", $lang['openai_gpt_overwrite_data']); 
+
+if (job_trigger_permission_check()) {
+    $page_def[] = config_add_section_header("Offline Jobs");
+    $page_def[] = config_add_html("<p>" . escape($lang["openai_gpt_process_existing_configure"]) . " <input type=\"button\" value=\"" . escape($lang["job_configure"]) . "\" onclick=\"window.location.href='" . 
+                                    generateURL($baseurl_short . "plugins/openai_gpt/pages/offline_jobs/process_gpt_existing.php", ['job_user' => 0, 'plugin' => 1]) . "'\"></p>");
+}
+
+// Do the page generation ritual
+config_gen_setup_post($page_def, $plugin_name);
+include '../../../include/header.php';
+config_gen_setup_html($page_def, $plugin_name, null, $page_heading, $page_intro);
+include '../../../include/footer.php';

@@ -1,0 +1,19 @@
+#CookiesUseWrapper {
+    background-color: var(--colour-transparency-black-60);
+    z-index: 2;
+    position: absolute;
+    width: inherit;
+    backdrop-filter: blur(10px);
+}
+
+#CookieUseMessage {
+    padding: var(--space-24);
+    float: left;
+    text-align: left;
+    color: var(--colour-typography-50);
+}
+
+#CookiesUseActions {
+    float: right;
+    padding: var(--space-16);
+}

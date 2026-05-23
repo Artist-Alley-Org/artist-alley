@@ -1,0 +1,41 @@
+<?php
+
+
+$lang["openai_gpt_api_key"]='OpenAI API کلید۔ اپنا API کلید حاصل کریں <a href=\'https://openai.com/api\' target=\'_blank\' >https://openai.com/api</a> سے۔';
+$lang["openai_gpt_temperature"]='0 اور 1 کے درمیان نمونہ درجہ حرارت (زیادہ قدریں ماڈل کو زیادہ خطرات لینے کا مطلب دیتی ہیں)';
+$lang["openai_gpt_max_tokens"]='زیادہ سے زیادہ ٹوکنز';
+$lang["openai_gpt_advanced"]='انتباہ - یہ سیکشن صرف جانچ کے مقاصد کے لیے ہے اور اسے لائیو سسٹمز پر تبدیل نہیں کیا جانا چاہیے۔ یہاں پلگ ان کے کسی بھی اختیارات کو تبدیل کرنے سے ان تمام میٹا ڈیٹا فیلڈز کے رویے پر اثر پڑے گا جو ترتیب دیے گئے ہیں۔ احتیاط سے تبدیل کریں!';
+$lang["openai_gpt_system_message"]='ابتدائی نظام پیغام کا متن۔ جگہ دار %%IN_TYPE%% اور %%OUT_TYPE%% کو \'text\' یا \'json\' سے تبدیل کیا جائے گا، جو ماخذ/ہدف فیلڈ کی اقسام پر منحصر ہوگا۔';
+$lang["openai_gpt_model_override"]='ماڈل کو عالمی ترتیب میں مقفل کر دیا گیا ہے: [model]';
+$lang["openai_gpt_processing_multiple_resources"]='متعدد وسائل';
+$lang["openai_gpt_processing_resource"]='وسیلہ [resource]';
+$lang["openai_gpt_processing_field"]='فیلڈ \'[field]\' کے لیے AI میٹا ڈیٹا جنریشن';
+$lang["openai_gpt_language"] = 'آؤٹ پٹ زبان';
+$lang["openai_gpt_language_user"] = 'موجودہ صارف کی زبان';
+$lang["openai_gpt_overwrite_data"] = 'کیا ترتیب دیے گئے فیلڈز میں موجودہ ڈیٹا کو اوور رائٹ کریں؟';
+$lang["openai_gpt_title"] = 'OpenAI/Ollama میٹاڈیٹا پروسیسنگ';
+$lang["openai_gpt_intro"] = 'موجودہ ڈیٹا یا ایک وسائل کے پیش نظارہ تصویر کو OpenAI API (یا ہم آہنگ، جیسے کہ Ollama) کے ساتھ ایک حسب ضرورت پرامپٹ کے ذریعے گزار کر تیار کردہ میٹا ڈیٹا شامل کرتا ہے۔ مزید تفصیلی معلومات کے لیے <a href=\'https://platform.openai.com/docs/introduction\' target=\'_blank\'>OpenAI دستاویزات</a> کا حوالہ دیں۔';
+$lang["property-openai_gpt_prompt"] = 'AI پروسیسنگ پرامپٹ';
+$lang["property-openai_gpt_input_field"] = 'AI پروسیسنگ ان پٹ';
+$lang["openai_gpt_model"] = 'OpenAI ماڈل استعمال کرنے کے لئے (مثال کے طور پر \'gpt-4o\')';
+$lang["property-gpt_source"] = 'GPT Source';
+$lang["openai_gpt"] = 'OpenAI GPT';
+$lang["openai_gpt_process_existing"] = 'موجودہ AI فیلڈز کو پروسیس کریں';
+$lang["openai_gpt_process_existing_configure"] = 'موجودہ AI فیلڈز کو پروسیس کرنے کے لیے کام کی تشکیل کریں';
+$lang["openai_gpt_process_existing_field_ref"] = 'AI فیلڈ';
+$lang["openai_gpt_process_existing_overwrite"] = 'اووررائٹ';
+$lang["openai_gpt_process_existing_field_ref_help"] = 'یہ وہ ہدف کا میدان ہے جسے اپ ڈیٹ کیا جانا ہے۔';
+$lang["openai_gpt_process_existing_collection_refs_help"] = 'اس اختیار کو ترتیب دینے کا مطلب یہ ہوگا کہ صرف فہرست میں شامل مجموعوں میں موجود وسائل کو پروسیس کیا جائے گا۔ اگر کوئی مجموعے مخصوص نہیں کیے گئے تو تمام موزوں وسائل کو پروسیس کیا جائے گا۔ مجموعے کو کاما سے جدا کردہ فہرست کے ساتھ ساتھ رینجز جیسے 100,105,110-115 کا استعمال کرتے ہوئے مخصوص کیا جا سکتا ہے۔';
+$lang["openai_gpt_process_existing_overwrite_help"] = 'اس اختیار کو ترتیب دینے کا مطلب یہ ہوگا کہ ہدف کے میدان میں موجود کوئی بھی موجودہ ڈیٹا اوور رائٹ کر دیا جائے گا۔ براہ کرم نوٹ کریں کہ اگر اوور رائٹ فعال ہے اور ان پٹ فیلڈ میں کوئی ڈیٹا موجود نہیں ہے تو ہدف کا میدان صاف کر دیا جائے گا۔';
+$lang["openai_gpt_limit_warning"] = 'خبردار - ٹوکن کی حد سے تجاوز کر لیا گیا ہے لہذا مزید OpenAI API کالز کام نہیں کریں گی۔ GPT کے شعبے پروسیس نہیں کیے جائیں گے۔';
+$lang["openai_gpt_limit_warning_short"] = 'خبردار - ٹوکن کی حد سے تجاوز کر لیا گیا ہے لہذا GPT کے شعبے پروسیس نہیں کیے جائیں گے۔';
+$lang["openai_gpt_usage_days"] = 'ماضی %%DAYS%% دنوں میں ٹوکن کا استعمال';
+$lang["openai_gpt_token_limit"] = 'ٹوکین کی حد';
+$lang["openai_gpt_no_token_limit"] = 'کوئی ٹوکن کی حد ترتیب نہیں دی گئی';
+$lang["openai_gpt_configured_limit"] = '%%TOKEN_LIMIT%% فی %%DAYS%% دن';
+$lang["openai_gpt_token_count"] = '%%TOKEN_COUNT%% ٹوکن';
+$lang["openai_gpt_provider"] = 'AI فراہم کنندہ';
+$lang["openai_gpt_provider_override"] = 'مہیا کنندہ عالمی ترتیب میں بند کر دیا گیا ہے: [provider]';
+$lang["ollama_name"] = 'Ollama';
+$lang["ollama_model"] = 'Ollama ماڈل استعمال کرنے کے لیے (مثلاً \'gemma3:12b\')';
+$lang["ollama_endpoint"] = 'Ollama اینڈ پوائنٹ استعمال کرنے کے لیے (مثلاً http://[IP]:11434/v1/chat/completions';

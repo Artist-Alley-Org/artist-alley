@@ -1,0 +1,56 @@
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Local reference materials (not part of the project) ---
+_docker_reference/
+*.zip
+
+# --- ResourceSpace local state ---
+# RS writes per-install secrets into include/config.php
+include/config.php
+# Local asset storage. Bind-mounted into containers; never committed.
+filestore/
+# RS-generated cache and log dirs
+gfx/homeanim/
+/logs/
+*.log
+
+# --- PHP / Composer ---
+vendor/
+.phpunit.cache/
+.phpunit.result.cache
+.phpcs-cache
+coverage/
+
+# --- Node / pnpm / build outputs ---
+node_modules/
+.svelte-kit/
+dist/
+build/
+.vite/
+.turbo/
+
+# --- Go ---
+services/**/bin/
+services/**/*.exe
+services/**/coverage.out
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- IDE / OS / Claude state ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
+
+# --- Docker / runtime ---
+*.pid
+.docker-data/
