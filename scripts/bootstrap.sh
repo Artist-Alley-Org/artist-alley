@@ -43,6 +43,15 @@ fi
 step "Building and starting containers"
 docker compose up --build -d
 
+if [ ! -f vendor/autoload.php ]; then
+    step "Installing PHP dependencies (vendor/ missing)"
+    # COMPOSER_PROCESS_TIMEOUT bumped because google/apiclient-services is huge
+    # and routinely exceeds the default 300s unzip window.
+    docker compose exec -T \
+        -e COMPOSER_PROCESS_TIMEOUT=1800 \
+        php composer install --no-interaction --prefer-dist
+fi
+
 step "Waiting for services to report healthy"
 attempts=0
 while true; do

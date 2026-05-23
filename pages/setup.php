@@ -629,13 +629,13 @@ if (get_post_bool('ajax')) {
                 }
 
                 if ((isset($baseurl)) && ($baseurl != '') && ($baseurl != 'http://my.site/resourcespace') && ($filterresult)) {
-                    //Check that the base url seems correct by attempting to fetch the license file
-                    if (url_exists($baseurl . '/license.txt')) {
-                        $config_output .= "# Base URL of the installation\r\n";
-                        $config_output .= "\$baseurl = '$baseurl';\r\n\r\n";
-                    } else { //Under certain circumstances this test may fail, but the URL is still correct, so warn the user.
-                        $warnings['baseurlverify'] = true;
-                    }
+                    // ARTIST-ALLEY: removed url_exists() check on $baseurl.
+                    // Inside docker-compose the PHP service usually cannot
+                    // reach the user-facing host:port (loopback resolves to
+                    // the container, not the host), so the upstream check
+                    // produced false negatives. Trust the user's input.
+                    $config_output .= "# Base URL of the installation\r\n";
+                    $config_output .= "\$baseurl = '$baseurl';\r\n\r\n";
                 } else {
                     $errors['baseurl'] = true;
                 }

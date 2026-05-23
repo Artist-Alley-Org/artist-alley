@@ -55,6 +55,9 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
 RUN pecl install apcu \
     && docker-php-ext-enable apcu
 
+# Composer (RS dependencies live in vendor/, populated by `composer install`)
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
 # php.ini — production baseline with RS-friendly upload limits
 RUN cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini \
     && sed -i \
