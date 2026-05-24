@@ -208,9 +208,34 @@ function db_clear_connection_mode()
 
 /**
 * @var  array  Holds database connections for different users (e.g read-write and/or read-only). NULL if no connection
-*              has been registered.
+*              has been registered. Values are PDO instances.
 */
 $db = null;
+
+// ARTIST-ALLEY: mysqli → PDO+pgsql.
+// Connection settings live under $db_* globals (renamed from upstream
+// $mysql_*). MySQL-only knobs ($mysql_charset, $mysql_sort_buffer_size,
+// $use_mysqli_ssl, $mysqli_ssl_*) are gone — Postgres has no equivalents
+// or uses different mechanisms (SSL via DSN params, work_mem via system
+// config, etc.).
+
+/**
+ * Translate ResourceSpace's parameter type char ('i', 'd', 's', 'b') to a
+ * PDO::PARAM_* constant.
+ *
+ * @internal ARTIST-ALLEY helper added during the Postgres migration.
+ */
+function aa_pdo_param_type(string $rs_type): int
+{
+    switch ($rs_type) {
+        case 'i': return PDO::PARAM_INT;
+        case 'b': return PDO::PARAM_LOB;
+        case 'd': // PDO has no float type; pass as string and let pg coerce
+        case 's':
+        default:  return PDO::PARAM_STR;
+    }
+}
+
 /**
  * Connect to the database using the configured settings.
  *
@@ -218,70 +243,54 @@ $db = null;
  */
 function sql_connect()
 {
-    global $db,$mysql_server,$mysql_username,$mysql_password,$mysql_db,$mysql_charset, $mysql_sort_buffer_size,
-           $mysql_server_port, $use_mysqli_ssl, $mysqli_ssl_server_cert, $mysqli_ssl_ca_cert, $mysqli_ssl_ca_path,
-           $mysqli_ssl_verify_server_cert;
+    global $db, $db_server, $db_username, $db_password, $db_name, $db_port;
 
     $init_connection = function (
-        $mysql_server,
-        $mysql_server_port,
-        $mysql_username,
-        $mysql_password,
-        $mysql_db
-    ) use (
-        $mysql_charset,
-        $use_mysqli_ssl,
-        $mysqli_ssl_server_cert,
-        $mysqli_ssl_ca_cert,
-        $mysqli_ssl_ca_path,
-        $mysqli_ssl_verify_server_cert
-) {
-        $db_connection = mysqli_init();
+        $host,
+        $port,
+        $user,
+        $password,
+        $dbname
+    ) {
+        $dsn = sprintf(
+            'pgsql:host=%s;port=%s;dbname=%s',
+            $host,
+            ($port !== '' && $port !== null) ? $port : 5432,
+            $dbname
+        );
 
-        if ($use_mysqli_ssl) {
-            mysqli_ssl_set($db_connection, null, $mysqli_ssl_server_cert ?? null, $mysqli_ssl_ca_cert ?? null, $mysqli_ssl_ca_path ?? null, null);
-        }
-        $connectflags = $mysqli_ssl_verify_server_cert ? 0 : MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT;
-        mysqli_real_connect($db_connection, $mysql_server, $mysql_username, $mysql_password, $mysql_db, $mysql_server_port, null, $connectflags);
-        if (isset($mysql_charset) && is_string($mysql_charset) && trim($mysql_charset) !== "") {
-            mysqli_set_charset($db_connection, $mysql_charset);
-        }
+        $pdo = new PDO($dsn, $user, $password, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ]);
 
-        return $db_connection;
+        return $pdo;
     };
 
-    $db["read_write"] = $init_connection($mysql_server, $mysql_server_port, $mysql_username, $mysql_password, $mysql_db);
+    $db["read_write"] = $init_connection(
+        $db_server,
+        $db_port ?? null,
+        $db_username,
+        $db_password,
+        $db_name
+    );
 
     if (db_use_multiple_connection_modes()) {
         $db["read_only"] = $init_connection(
-            $mysql_server,
-            $mysql_server_port,
+            $db_server,
+            $db_port ?? null,
             $GLOBALS["read_only_db_username"],
             $GLOBALS["read_only_db_password"],
-            $mysql_db
+            $db_name
         );
     }
 
-    foreach ($db as $db_connection_mode => $db_connection) {
-        db_set_connection_mode($db_connection_mode);
-        if (
-            is_int($mysql_sort_buffer_size)
-            && $mysql_sort_buffer_size > 32768
-            && $mysql_sort_buffer_size < 4294967295
-        ) {
-            ps_query('SET SESSION sort_buffer_size = ?', ['i', $mysql_sort_buffer_size], '', -1, false);
-        }
-
-        db_set_connection_mode($db_connection_mode);
-        db_set_connection_mode($db_connection_mode);
-        $sql_mode_current = ps_query('select @@SESSION.sql_mode');
-        $sql_mode_string = implode(" ", $sql_mode_current[0]);
-        $sql_mode_array_new = array_diff(explode(",", $sql_mode_string), array("ONLY_FULL_GROUP_BY", "NO_ZERO_IN_DATE", "NO_ZERO_DATE"));
-        $sql_mode_string_new = implode(",", $sql_mode_array_new);
-
-        db_set_connection_mode($db_connection_mode);
-        ps_query("SET SESSION sql_mode = '$sql_mode_string_new'", [], '', -1, false, 0);
-    }
+    // ARTIST-ALLEY: skipped the MySQL-specific session init that the
+    // upstream connection performed:
+    //   - SET SESSION sort_buffer_size = N  (MySQL InnoDB knob)
+    //   - SELECT @@SESSION.sql_mode + relax modes (MySQL only concept)
+    // Postgres has no equivalents; default behaviour matches what RS needs.
 
     db_clear_connection_mode();
 }
@@ -293,6 +302,13 @@ function sql_connect()
 *
 * @return boolean Returns TRUE on success or FALSE on failure.
 */
+// ARTIST-ALLEY: PDO has no native nested transactions, so we maintain an
+// explicit stack of in-flight transaction frames. The outermost begin
+// becomes BEGIN/COMMIT; any nested begin becomes SAVEPOINT /
+// RELEASE SAVEPOINT. Each end_transaction or rollback pops the most
+// recent frame.
+$GLOBALS['aa_tx_stack'] = [];
+
 function db_begin_transaction($name)
 {
     global $db, $use_db_transaction;
@@ -301,19 +317,33 @@ function db_begin_transaction($name)
         return false;
     }
 
-    if (!is_string($name)) {
-        $name = null;
-    }
+    db_set_connection_mode('read_write');
+    $conn = $db["read_write"];
 
-    if (function_exists('mysqli_begin_transaction')) {
-        db_set_connection_mode('read_write');
+    debug("SQL: begin transaction '{$name}'");
+
+    if ($conn->inTransaction()) {
+        // Nested: use a SAVEPOINT. Auto-generate a stable name if the
+        // caller didn't supply one so end/rollback can match it back.
+        $sp = is_string($name) && $name !== ''
+            ? $name
+            : 'aa_sp_' . count($GLOBALS['aa_tx_stack']);
+        $conn->exec('SAVEPOINT ' . aa_quote_ident($sp));
+        $GLOBALS['aa_tx_stack'][] = ['type' => 'savepoint', 'name' => $sp];
         $GLOBALS['sql_transaction_in_progress'] = true;
-
-        debug("SQL: begin transaction '{$name}'");
-        return mysqli_begin_transaction($db["read_write"], 0, $name);
+        return true;
     }
 
-    return false;
+    // Top-level: real BEGIN/COMMIT.
+    $ok = $conn->beginTransaction();
+    if ($ok) {
+        $GLOBALS['aa_tx_stack'][] = [
+            'type' => 'tx',
+            'name' => is_string($name) ? $name : null,
+        ];
+        $GLOBALS['sql_transaction_in_progress'] = true;
+    }
+    return $ok;
 }
 
 
@@ -332,19 +362,34 @@ function db_end_transaction($name)
         return false;
     }
 
-    if (!is_string($name)) {
-        $name = null;
-    }
+    $conn = $db["read_write"];
 
-    if (function_exists('mysqli_commit')) {
-        unset($GLOBALS['sql_transaction_in_progress']);
+    if (empty($GLOBALS['aa_tx_stack'])) {
+        // Nothing to commit. Matches upstream's behaviour of silently
+        // returning false rather than throwing.
         db_clear_connection_mode();
-
-        debug("SQL: commit transaction '{$name}'");
-        return mysqli_commit($db["read_write"], 0, $name);
+        return false;
     }
 
-    return false;
+    $frame = array_pop($GLOBALS['aa_tx_stack']);
+    debug("SQL: commit {$frame['type']} '{$frame['name']}'");
+
+    if ($frame['type'] === 'savepoint') {
+        $conn->exec('RELEASE SAVEPOINT ' . aa_quote_ident($frame['name']));
+        if (empty($GLOBALS['aa_tx_stack'])) {
+            unset($GLOBALS['sql_transaction_in_progress']);
+        }
+        db_clear_connection_mode();
+        return true;
+    }
+
+    // Top-level commit. The transaction may have been aborted by an error
+    // earlier in the block; in that case PDO will report not-in-transaction
+    // after the implicit rollback.
+    $ok = $conn->inTransaction() ? $conn->commit() : false;
+    unset($GLOBALS['sql_transaction_in_progress']);
+    db_clear_connection_mode();
+    return $ok;
 }
 
 /**
@@ -362,19 +407,79 @@ function db_rollback_transaction($name)
         return false;
     }
 
-    if (!is_string($name)) {
-        $name = null;
-    }
+    $conn = $db["read_write"];
 
-    if (function_exists('mysqli_rollback')) {
-        unset($GLOBALS['sql_transaction_in_progress']);
+    if (empty($GLOBALS['aa_tx_stack'])) {
         db_clear_connection_mode();
-
-        debug("SQL: rollback transaction '{$name}'");
-        return mysqli_rollback($db["read_write"], 0, $name);
+        return false;
     }
 
-    return false;
+    $frame = array_pop($GLOBALS['aa_tx_stack']);
+    debug("SQL: rollback {$frame['type']} '{$frame['name']}'");
+
+    if ($frame['type'] === 'savepoint') {
+        try {
+            $conn->exec('ROLLBACK TO SAVEPOINT ' . aa_quote_ident($frame['name']));
+            $conn->exec('RELEASE SAVEPOINT ' . aa_quote_ident($frame['name']));
+        } catch (PDOException $e) {
+            debug("SQL: savepoint rollback failed: " . $e->getMessage());
+        }
+        if (empty($GLOBALS['aa_tx_stack'])) {
+            unset($GLOBALS['sql_transaction_in_progress']);
+        }
+        db_clear_connection_mode();
+        return true;
+    }
+
+    // Top-level rollback.
+    $ok = $conn->inTransaction() ? $conn->rollBack() : false;
+    unset($GLOBALS['sql_transaction_in_progress']);
+    db_clear_connection_mode();
+    return $ok;
+}
+
+/**
+ * Quote an identifier (table or column name) for Postgres.
+ *
+ * @internal ARTIST-ALLEY helper added during the Postgres migration.
+ */
+function aa_quote_ident(string $name): string
+{
+    return '"' . str_replace('"', '""', $name) . '"';
+}
+
+/**
+ * Translate MySQL-isms in a query string to their Postgres equivalents.
+ *
+ * This is intentionally a small, narrow rule set. We don't try to parse
+ * SQL — these are regex substitutions for the handful of MySQL-specific
+ * constructs RS uses heavily. Anything subtle (ON DUPLICATE KEY,
+ * DATE_FORMAT, MATCH AGAINST) is patched at the call site.
+ *
+ * Each rule is opt-in to keep behaviour predictable.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.C — will be deleted with the rest of
+ *           database_functions.php when the Go server retires the PHP path.
+ */
+function aa_translate_mysql_to_pg(string $sql): string
+{
+    // Backtick identifier quoting -> Postgres double quotes.
+    $sql = str_replace('`', '"', $sql);
+
+    // IFNULL(a, b) -> COALESCE(a, b). Functionally identical; Postgres
+    // does not have IFNULL.
+    $sql = preg_replace('/\bIFNULL\s*\(/i', 'COALESCE(', $sql);
+
+    // MySQL "LIMIT offset, count" -> Postgres "LIMIT count OFFSET offset".
+    // Only matches literal numbers (and placeholders) to keep the regex
+    // unambiguous — fancier two-arg LIMITs are rare in RS.
+    $sql = preg_replace(
+        '/\bLIMIT\s+(\d+|\?)\s*,\s*(\d+|\?)\b/i',
+        'LIMIT $2 OFFSET $1',
+        $sql
+    );
+
+    return $sql;
 }
 
 /**
@@ -468,121 +573,109 @@ function ps_query($sql, array $parameters = array(), $cache = "", $fetchrows = -
         db_clear_connection_mode();
     }
 
-    if (count($parameters) > 0) {
-        // Execute prepared statement
-        if (!isset($prepared_statement_cache[$sql])) {
-            if (!isset($prepared_statement_cache)) {
-                $prepared_statement_cache = array();
-            }
+    // ARTIST-ALLEY: unified PDO+pgsql execution path. The upstream code
+    // split into two branches (prepared statement with bind, or direct
+    // mysqli_query for no-param queries). With PDO we always prepare and
+    // execute, which is cleaner and lets us cache the PDOStatement
+    // regardless of whether parameters were supplied.
+    //
+    // SQL dialect translation pass (mysql -> postgres). The PHP backend
+    // is being retired (ADR 0006); rather than patch ~50 call sites
+    // that use these MySQL-isms, we translate them at the boundary.
+    // Each rule is intentionally narrow to avoid surprising rewrites.
+    $sql_translated = aa_translate_mysql_to_pg($sql);
 
-            $use_error_exception_cache = $GLOBALS['use_error_exception'] ?? false;
-            try {
-                $prepared_statement_cache[$sql] = $db_connection->prepare($sql);
-            } catch (Throwable $t) {
-                $prepared_statement_cache[$sql] = false;
-                debug("Failed to prepare the database statement. {$t}");
-            }
-            $GLOBALS['use_error_exception'] = $use_error_exception_cache;
+    if (!isset($prepared_statement_cache)) {
+        $prepared_statement_cache = array();
+    }
 
-            if ($prepared_statement_cache[$sql] === false) {
-                if ($dbstruct) {
-                    // Clear out the cache for this query before running check_db_structs()
-                    unset($prepared_statement_cache[$sql]);
-                    db_clear_connection_mode();
-                    check_db_structs();
-                    db_set_connection_mode($db_connection_mode);
-                    # Try again (no dbstruct this time to prevent an endless loop)
-                    return ps_query($sql, $parameters, $cache, $fetchrows, false, $logthis, $reconnect, $fetch_specific_columns);
-                }
-                $error = "Bad prepared SQL statement: " . $sql . "  Parameters: " . json_encode($parameters) . " - " . $db_connection->error;
+    // Cache key combines connection mode and statement; statements are bound
+    // to a specific PDO connection.
+    $stmt_cache_key = $db_connection_mode . '::' . $sql_translated;
 
-                // Get the details of the problematic query. It is useful to find the first call that was not
-                // from this file so as to avoid CheckDBStruct() confusing matters
-                $backtrace = debug_backtrace();
-                foreach ($backtrace as $backtracedetail) {
-                        $errorfile = $backtracedetail["file"];
-                        $errorline = $backtracedetail["line"];
-                    if ($backtracedetail["file"] != __FILE__) {
-                        break;
-                    }
-                }
-                errorhandler(E_ERROR, $error, $errorfile, $errorline);
-                exit();
-            }
-        }
-        $params_array = array();
-        $types = "";
-        for ($n = 0; $n < count($parameters); $n += 2) {
-            $types .= $parameters[$n];
-            if (!array_key_exists($n + 1, $parameters)) {
-                trigger_error("Count of \$parameters array must be even (ensure types specified) for query: $sql" . print_r($parameters, true));
-            }
-            $params_array[] = $parameters[$n + 1];
-        }
-
-        if ($error == "") {
-            // Results section
-            $use_error_exception_cache = $GLOBALS["use_error_exception"] ?? false;
-            $GLOBALS["use_error_exception"] = true;
-            try {
-                mysqli_stmt_bind_param($prepared_statement_cache[$sql], $types, ...$params_array); // splat operator
-                mysqli_stmt_execute($prepared_statement_cache[$sql]);
-            } catch (Exception $e) {
-                $error = $e->getMessage();
-            }
-            $GLOBALS["use_error_exception"] = $use_error_exception_cache;
-
-            $error = $error ?? mysqli_stmt_error($prepared_statement_cache[$sql]);
-        }
-
-        if ($error == "") {
-            // Results section
-
-            // Buffering of result set
-            $prepared_statement_cache[$sql]->store_result();
-
-            // Fetch result set
-            $metadata = $prepared_statement_cache[$sql]->result_metadata();
-            if ($metadata === false) {
-                // Did not return a result set, execution of an update/insert etc.
-                $result = true;
-            } else {
-                // Bind results -> standard associative array
-                $fields = $metadata->fetch_fields();
-                $args = array();
-                foreach ($fields as $field) {
-                    $key = str_replace(' ', '_', $field->name);
-                    $args[$key] = &$field->name;
-                }
-                call_user_func_array(array($prepared_statement_cache[$sql], "bind_result"), array_values($args));
-                $result = array();
-                $count = 0;
-                while ($prepared_statement_cache[$sql]->fetch() && ($fetchrows == -1 || $count < $fetchrows)) { // Return requested no. of rows
-                    $count++;
-                    $result[] = array_map("copy_value", $args);
-                }
-                $prepared_statement_cache[$sql]->free_result();
-            }
-        }
-    } else {
-        $use_error_exception_cache = $GLOBALS["use_error_exception"] ?? false;
-        $GLOBALS["use_error_exception"] = true;
+    if (!isset($prepared_statement_cache[$stmt_cache_key])) {
         try {
-            // No parameters, this cannot be executed as a prepared statement. Execute in the standard way.
-            $result = $result_set = mysqli_query($db_connection, $sql);
-        } catch (Throwable $e) {
+            $prepared_statement_cache[$stmt_cache_key] = $db_connection->prepare($sql_translated);
+        } catch (PDOException $e) {
+            $prepared_statement_cache[$stmt_cache_key] = false;
             $error = $e->getMessage();
         }
-        $GLOBALS["use_error_exception"] = $use_error_exception_cache;
-        $return_row_count = 0;
-        $error = $error ?? mysqli_error($db_connection);
-        if ($error == "" && $result_set instanceof mysqli_result) {
-            $result = [];
-            while (($fetchrows == -1 || $return_row_count < $fetchrows) && $result_row = mysqli_fetch_assoc($result_set)) {
-                $return_row_count++;
-                $result[] = $result_row;
+
+        if ($prepared_statement_cache[$stmt_cache_key] === false) {
+            if ($dbstruct) {
+                unset($prepared_statement_cache[$stmt_cache_key]);
+                db_clear_connection_mode();
+                check_db_structs();
+                db_set_connection_mode($db_connection_mode);
+                # Try again (no dbstruct this time to prevent an endless loop)
+                return ps_query($sql, $parameters, $cache, $fetchrows, false, $logthis, $reconnect, $fetch_specific_columns);
             }
-            mysqli_free_result($result_set);
+            $error = "Bad prepared SQL statement: " . $sql . "  Parameters: " . json_encode($parameters) . " - " . ($error ?? 'unknown');
+
+            $backtrace = debug_backtrace();
+            foreach ($backtrace as $backtracedetail) {
+                    $errorfile = $backtracedetail["file"];
+                    $errorline = $backtracedetail["line"];
+                if ($backtracedetail["file"] != __FILE__) {
+                    break;
+                }
+            }
+            errorhandler(E_ERROR, $error, $errorfile, $errorline);
+            exit();
+        }
+    }
+
+    $stmt = $prepared_statement_cache[$stmt_cache_key];
+
+    if ($error === null) {
+        try {
+            // Close any previously open cursor before re-executing the cached
+            // statement.
+            $stmt->closeCursor();
+
+            // Bind parameters using ResourceSpace's [type, value, type, value, ...]
+            // convention. Positional PDO placeholders are 1-indexed.
+            $position = 1;
+            for ($n = 0; $n < count($parameters); $n += 2) {
+                if (!array_key_exists($n + 1, $parameters)) {
+                    trigger_error("Count of \$parameters array must be even (ensure types specified) for query: $sql" . print_r($parameters, true));
+                    break;
+                }
+                $type_char = $parameters[$n];
+                $value     = $parameters[$n + 1];
+                $stmt->bindValue($position, $value, aa_pdo_param_type($type_char));
+                $position++;
+            }
+
+            $stmt->execute();
+        } catch (PDOException $e) {
+            $error = $e->getMessage();
+        }
+    }
+
+    if ($error === null) {
+        // PDOStatement::columnCount() returns 0 for non-result-producing
+        // queries (INSERT/UPDATE/DELETE/DDL) and >0 for SELECT-like queries.
+        if ($stmt->columnCount() === 0) {
+            $result = true;
+        } else {
+            $result = [];
+            $return_row_count = 0;
+            while (
+                ($fetchrows == -1 || $return_row_count < $fetchrows)
+                && ($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false
+            ) {
+                $return_row_count++;
+                // mysqli's bind_result replaced spaces in aliased column
+                // names with underscores. Preserve that behaviour so callers
+                // using "AS my column" keep working.
+                $normalized = [];
+                foreach ($row as $k => $v) {
+                    $normalized[str_replace(' ', '_', $k)] = $v;
+                }
+                $result[] = $normalized;
+            }
+            $stmt->closeCursor();
         }
     }
 
@@ -770,12 +863,18 @@ function ps_array($query, $parameters = array(), $cache = "")
 /**
  * Return the ID of the previously inserted row.
  *
+ * ARTIST-ALLEY: PDO::lastInsertId() without arguments calls lastval() on the
+ * connection, returning the most recent sequence value generated in this
+ * session. This matches mysqli_insert_id's "last id from any INSERT" semantics
+ * as long as the inserting INSERT actually touched a sequence-backed column.
+ *
  * @return integer
  */
 function sql_insert_id()
 {
     global $db;
-    return mysqli_insert_id($db["read_write"]);
+    $id = $db["read_write"]->lastInsertId();
+    return $id === false || $id === '' ? 0 : (int) $id;
 }
 
 /**
@@ -871,10 +970,21 @@ function check_db_structs($verbose = false)
  */
 function CheckDBStruct($path, $verbose = false)
 {
-    global $mysql_db, $resource_field_column_limit;
+    // ARTIST-ALLEY (Phase 0.5.B): Postgres-emitting reimplementation of
+    // the upstream MySQL-DDL-from-dbstruct loader.
+    //
+    // Reads the same on-disk CSV format as upstream (table_*.txt,
+    // index_*.txt, data_*.txt) so RS plugins and any third-party
+    // dbstruct directories continue to work unchanged. The DDL we emit
+    // is Postgres-native: BIGINT instead of int(N), BOOLEAN for
+    // tinyint(1), TIMESTAMPTZ for datetime/timestamp, IDENTITY columns
+    // instead of AUTO_INCREMENT, double-quoted identifiers, etc. See
+    // aa_mysql_to_pg_type() for the full mapping.
+    //
+    // FULLTEXT indexes are deferred (skipped with a debug note) pending
+    // the tsvector-based search rewrite in a later phase.
     if (!file_exists($path)) {
-        # Check for path
-        $path = __DIR__ . "/../" . $path; # Make sure this works when called from non-root files..
+        $path = __DIR__ . "/../" . $path;
         if (!file_exists($path)) {
             return false;
         }
@@ -882,254 +992,483 @@ function CheckDBStruct($path, $verbose = false)
 
     db_begin_transaction("CheckDBStruct");
 
-    # Tables first.
-    # Load existing tables list
-    $ts = ps_query("show tables", [], '', -1, false);
-    $tables = array();
-    for ($n = 0; $n < count($ts); $n++) {
-        $tables[] = $ts[$n]["Tables_in_" . $mysql_db];
-    }
+    $existing_tables = aa_pg_list_tables();
     $dh = opendir($path);
+    if ($dh === false) {
+        db_rollback_transaction("CheckDBStruct");
+        return false;
+    }
+
     while (($file = readdir($dh)) !== false) {
-        if (substr($file, 0, 6) == "table_") {
-            $table = str_replace(".txt", "", substr($file, 6));
+        if (substr($file, 0, 6) !== "table_" || substr($file, -4) !== ".txt") {
+            continue;
+        }
+        $table = substr($file, 6, -4);
+        $column_defs = aa_parse_table_def($path . "/" . $file);
 
-            # Check table exists
-            if (!in_array($table, $tables)) {
-                # Create Table
-                $sql = "";
-                $f = fopen($path . "/" . $file, "r");
-                $hasPrimaryKey = false;
-                $pk_sql = "PRIMARY KEY (";
-                $n = 0;
-                while (($col = fgetcsv($f, 5000)) !== false) {
-                    if ($sql .= "") {
-                        $sql .= ", ";
-                    }
-                    $sql .= "`{$col[0]}` " . str_replace("§", ",", $col[1]);
+        if (!in_array($table, $existing_tables, true)) {
+            aa_pg_create_table($table, $column_defs, $verbose);
 
-                    if (
-                        strtolower(substr($col[1], 0, 3)) == "int"
-                        || strtolower(substr($col[1], 0, 6)) == "bigint"
-                        || strtolower(substr($col[1], 0, 7)) == "tinyint"
-                        || strtolower(substr($col[1], 0, 8)) == "smallint"
-                    ) {
-                        # Integer
-                        $column_types[$n] = "i";
-                    } elseif (
-                        strtolower(substr($col[1], 0, 5)) == "float"
-                        || strtolower(substr($col[1], 0, 7)) == "decimal"
-                        || strtolower(substr($col[1], 0, 6)) == "double"
-                    ) {
-                        # Double
-                        $column_types[$n] = "d";
-                    } elseif (
-                        strtolower(substr($col[1], 0, 8)) == "tinyblob"
-                        || strtolower(substr($col[1], 0, 4)) == "blob"
-                        || strtolower(substr($col[1], 0, 10)) == "mediumblob"
-                        || strtolower(substr($col[1], 0, 8)) == "longblob"
-                    ) {
-                        # Blob
-                        $column_types[$n] = "b";
-                    } else {
-                        # String
-                        $column_types[$n] = "s";
-                    }
-
-                    $n++;
-
-                    if ($col[4] != "") {
-                        $sql .= " default " . $col[4];
-                    }
-                    if ($col[3] == "PRI") {
-                        if ($hasPrimaryKey) {
-                            $pk_sql .= ",";
-                        }
-                        $pk_sql .= $col[0];
-                        $hasPrimaryKey = true;
-                    }
-                    if ($col[5] == "auto_increment") {
-                        $sql .= " auto_increment ";
-                    }
-                }
-                $pk_sql .= ")";
-                if ($hasPrimaryKey) {
-                    $sql .= "," . $pk_sql;
-                }
-                debug($sql);
-
-                # Verbose mode, used for better output from the test script.
-                if ($verbose) {
-                    echo "$table ";
-                    ob_flush();
-                }
-
-                ps_query("create table $table ($sql)", [], '', -1, false);
-
-                # Add initial data
-                $data = str_replace("table_", "data_", $file);
-                if (file_exists($path . "/" . $data)) {
-                    $f = fopen($path . "/" . $data, "r");
-                    while (($row = fgetcsv($f, 5000)) !== false) {
-                        $sql_params = [];
-                        for ($n = 0; $n < count($row); $n++) {
-                            // Get type from table file
-                            $sql_params[] = $column_types[$n];
-                            // dbstruct/data_*.txt files normally have nothing if the column value was null when using
-                            // the pages/tools/dbstruct_create.php script.
-                            if ($row[$n] === '') {
-                                $sql_params[] = null;
-                            }
-                            // Legacy? I couldn't find any dbstruct/data_*.txt file containing '' for a column value
-                            elseif ($row[$n] == "''") {
-                                $sql_params[] = null;
-                            } else {
-                                $sql_params[] = $row[$n];
-                            }
-                        }
-
-                        ps_query(
-                            "insert into `$table` values (" . ps_param_insert(count($row)) . ")",
-                            $sql_params,
-                            '',
-                            -1,
-                            false
-                        );
-                    }
-                }
-            } else {
-                # Table already exists, so check all columns exist
-
-                # Load existing table definition
-                $existing = ps_query("describe $table", [], '', -1, false);
-
-                ##########
-                # Copy needed resource_data into resource for search displays
-                if ($table == "resource") {
-                    $joins = get_resource_table_joins();
-                    for ($m = 0; $m < count($joins); $m++) {
-                        # Look for this column in the existing columns.
-                        $found = false;
-
-                        for ($n = 0; $n < count($existing); $n++) {
-                            if ("field" . $joins[$m] == $existing[$n]["Field"]) {
-                                $found = true;
-                            }
-                        }
-
-                        if (!$found) {
-                            # Add this column.
-                            $sql = "alter table $table add column ";
-                            $sql .= "field" . $joins[$m] . " VARCHAR(" . $resource_field_column_limit . ")";
-                            ps_query($sql, [], '', -1, false);
-                        }
-                    }
-                }
-                ##########
-
-                if (file_exists($path . "/" . $file)) {
-                    $f = fopen($path . "/" . $file, "r");
-                    while (($col = fgetcsv($f, 5000)) !== false) {
-                        if (count($col) > 1) {
-                            # Look for this column in the existing columns.
-                            $found = false;
-                            for ($n = 0; $n < count($existing); $n++) {
-                                if ($existing[$n]["Field"] == $col[0]) {
-                                    $found = true;
-                                    $existingcoltype = strtoupper($existing[$n]["Type"]);
-                                    $basecoltype = strtoupper(str_replace("§", ",", $col[1]));
-                                    # Check the column is of the correct type
-                                    preg_match('/\s*(\w+)\s*\((\d+)\)/i', $basecoltype, $matchbase);
-                                    preg_match('/\s*(\w+)\s*\((\d+)\)/i', $existingcoltype, $matchexisting);
-
-                                    // Checks added so that we don't trim off data if a varchar size has been increased manually or by a plugin.
-                                    // - If column is of same type but smaller number, update
-                                    // - If target column is of type text, update
-                                    // - If target column is of type varchar and currently int, update (e.g. the 'archive' column in collection_savedsearch moved from a single state to a multiple)
-                                    // - If target column is of type mediumtext and currently is text, update
-                                    // - If target column is of type longtext and currently is text
-                                    if (
-                                        (count($matchbase) == 3 && count($matchexisting) == 3 && $matchbase[1] == $matchexisting[1] && $matchbase[2] > $matchexisting[2])
-                                        || (stripos($basecoltype, "text") !== false && stripos($existingcoltype, "text") === false)
-                                        || (strtoupper(substr($basecoltype, 0, 6)) == "BIGINT" && strtoupper(substr($existingcoltype, 0, 3) == "INT"))
-                                        || (
-                                        strtoupper(substr($basecoltype, 0, 3)) == "INT"
-                                        && (strtoupper(substr($existingcoltype, 0, 7)) == "TINYINT" || strtoupper(substr($existingcoltype, 0, 8)) == "SMALLINT")
-                                        )
-                                        || (strtoupper(substr($basecoltype, 0, 7)) == "VARCHAR" && strtoupper(substr($existingcoltype, 0, 3) == "INT"))
-                                        || (strtoupper(substr($basecoltype, 0, 10)) == "MEDIUMTEXT" && strtoupper(substr($existingcoltype, 0, 4) == "TEXT"))
-                                        || (strtoupper(substr($basecoltype, 0, 8)) == "LONGTEXT" && strtoupper(substr($existingcoltype, 0, 4) == "TEXT"))
-                                    ) {
-                                        debug("DBSTRUCT - updating column " . $col[0] . " in table " . $table . " from " . $existing[$n]["Type"] . " to " . str_replace("§", ",", $col[1]));
-                                        // Update the column type
-                                        ps_query("alter table $table modify `" . $col[0] . "` " .  $col[1]);
-                                    }
-                                }
-                            }
-                            if (!$found) {
-                                # Add this column.
-                                $sql = "alter table `$table` add column ";
-                                $sql .= $col[0] . " " . str_replace("§", ",", $col[1]); # Allow commas to be entered using '§', necessary for a type such as decimal(2,10)
-                                if ($col[4] != "") {
-                                    $sql .= " default " . $col[4];
-                                }
-                                if ($col[3] == "PRI") {
-                                    $sql .= " primary key";
-                                }
-                                if ($col[5] == "auto_increment") {
-                                    $sql .= " auto_increment ";
-                                }
-                                ps_query($sql, [], '', -1, false);
-                            }
-                        }
-                    }
-                }
+            // Seed data, if present.
+            $data_file = $path . "/data_" . $table . ".txt";
+            if (file_exists($data_file)) {
+                aa_pg_load_seed_data($table, $column_defs, $data_file);
             }
+        } else {
+            aa_pg_alter_existing_table($table, $column_defs);
+        }
 
-            # Check all indices exist
-            # Load existing indexes
-            $existing = ps_query("show index from $table", [], '', -1, false);
-
-            $file = str_replace("table_", "index_", $file);
-            if (file_exists($path . "/" . $file)) {
-                $done = array(); # List of indices already processed.
-                $f = fopen($path . "/" . $file, "r");
-                while (($col = fgetcsv($f, 5000)) !== false) {
-                    # Look for this index in the existing indices.
-                    $found = false;
-                    for ($n = 0; $n < count($existing); $n++) {
-                        if ($existing[$n]["Key_name"] == $col[2]) {
-                            $found = true;
-                        }
-                    }
-                    if (!$found && !in_array($col[2], $done)) {
-                        # Add this index.
-
-                        # Fetch list of columns for this index
-                        $cols = array();
-                        $f2 = fopen($path . "/" . $file, "r");
-                        while (($col2 = fgetcsv($f2, 5000)) !== false) {
-                            if ($col2[2] == $col[2]) { # Matching column
-                                # Add an index size if present, for indexing text fields
-                                $indexsize = "";
-                                if (trim($col2[7]) != "") {
-                                    $indexsize = "(" . $col2[7] . ")";
-                                }
-
-                                $cols[] = $col2[4] . $indexsize;
-                            }
-                        }
-
-                        $sql = "CREATE " . ($col[10] == "FULLTEXT" ? "FULLTEXT" : "") . " INDEX " . $col[2] . " ON $table (" . join(",", $cols) . ")";
-                        ps_query($sql, [], '', -1, false);
-                        $done[] = $col[2];
-                    }
-                }
-            }
+        // Indexes.
+        $index_file = $path . "/index_" . $table . ".txt";
+        if (file_exists($index_file)) {
+            aa_pg_apply_indexes($table, $index_file, $verbose);
         }
     }
+    closedir($dh);
+
     db_end_transaction("CheckDBStruct");
+    return true;
 }
+
+/**
+ * Translate a MySQL column type string into a Postgres-native equivalent
+ * plus metadata the caller needs (parameter binding type, boolean flag).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ *
+ * @return array{type:string, param_type:string, is_boolean:bool}
+ */
+function aa_mysql_to_pg_type(string $mysql_type): array
+{
+    // RS uses '§' as an in-CSV escape for ',' so types like
+    // "decimal(17,4)" survive the fgetcsv parser.
+    $t = str_replace("§", ",", trim($mysql_type));
+    $t = preg_replace('/\s+unsigned\b/i', '', $t);
+    $lc = strtolower($t);
+
+    // ARTIST-ALLEY: tinyint(1) is MySQL's conventional boolean. We map it
+    // to SMALLINT (not BOOLEAN) so RS's many `WHERE x = 1` / `WHERE x = 0`
+    // comparisons keep working without per-call-site patches. The PHP
+    // backend is being retired (see ADR 0006) — when we own the schema
+    // from Go we'll re-introduce proper BOOLEAN types. Until then,
+    // 0/1 semantics save us patching a dozen files just for typing.
+    if ($lc === 'tinyint(1)') {
+        return ['type' => 'SMALLINT', 'param_type' => 'i', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tinyint|smallint|mediumint|int|bigint)(\(\d+\))?$/', $lc)) {
+        return ['type' => 'BIGINT', 'param_type' => 'i', 'is_boolean' => false];
+    }
+    if (preg_match('/^varchar\((\d+)\)$/', $lc, $m)) {
+        return ['type' => "VARCHAR({$m[1]})", 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (preg_match('/^char\((\d+)\)$/', $lc, $m)) {
+        return ['type' => "CHAR({$m[1]})", 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tiny|medium|long)?text$/', $lc)) {
+        return ['type' => 'TEXT', 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (in_array($lc, ['datetime', 'timestamp'], true)) {
+        return ['type' => 'TIMESTAMPTZ', 'param_type' => 's', 'is_boolean' => false];
+    }
+    if ($lc === 'date') {
+        return ['type' => 'DATE',  'param_type' => 's', 'is_boolean' => false];
+    }
+    if ($lc === 'time') {
+        return ['type' => 'TIME',  'param_type' => 's', 'is_boolean' => false];
+    }
+    if (in_array($lc, ['float', 'double'], true)) {
+        return ['type' => 'DOUBLE PRECISION', 'param_type' => 'd', 'is_boolean' => false];
+    }
+    if (preg_match('/^decimal\((\d+),(\d+)\)$/', $lc, $m)) {
+        return ['type' => "NUMERIC({$m[1]},{$m[2]})", 'param_type' => 'd', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tiny|medium|long)?blob$/', $lc)) {
+        return ['type' => 'BYTEA', 'param_type' => 'b', 'is_boolean' => false];
+    }
+
+    // Unknown type — fall back to TEXT with a debug note so we notice.
+    debug("aa_mysql_to_pg_type: unrecognised type '{$mysql_type}', falling back to TEXT");
+    return ['type' => 'TEXT', 'param_type' => 's', 'is_boolean' => false];
+}
+
+/**
+ * Parse a dbstruct/table_*.txt file into an array of column definitions.
+ * Each row is [name, mysql_type, nullable('YES'|'NO'), key, default, extra].
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_parse_table_def(string $file): array
+{
+    $rows = [];
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return [];
+    }
+    while (($col = fgetcsv($f, 5000)) !== false) {
+        if (count($col) < 6) {
+            continue;
+        }
+        $rows[] = $col;
+    }
+    fclose($f);
+    return $rows;
+}
+
+/**
+ * Return the list of base tables in the public schema.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_tables(): array
+{
+    $r = ps_query(
+        "SELECT tablename AS value FROM pg_tables WHERE schemaname = current_schema()",
+        [],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Return existing index names on a given table (in the public schema).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_indexes(string $table): array
+{
+    $r = ps_query(
+        "SELECT indexname AS value FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ?",
+        ['s', $table],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Return existing column names on a given table.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_columns(string $table): array
+{
+    $r = ps_query(
+        "SELECT column_name AS value FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = ?",
+        ['s', $table],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Type-appropriate implicit default for a NOT NULL column the dbstruct
+ * didn't give an explicit DEFAULT to. Mirrors MySQL's sql_mode=""
+ * behaviour so RS code's "INSERT without listing every column" pattern
+ * keeps working on Postgres.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_implicit_default(array $type_info): string
+{
+    if ($type_info['is_boolean']) {
+        return 'FALSE';
+    }
+    if (in_array($type_info['param_type'], ['i', 'd'], true)) {
+        return '0';
+    }
+    if ($type_info['param_type'] === 'b') {
+        return "''::bytea";
+    }
+    return "''";
+}
+
+/**
+ * Format a DEFAULT clause value as a Postgres literal.
+ *
+ * SQL keywords and function calls (CURRENT_TIMESTAMP, NULL, NOW(), etc.)
+ * are passed through unquoted — they are not string literals and quoting
+ * them produces "invalid input syntax for type X" errors at table
+ * creation time.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_format_default(string $value, array $type_info): string
+{
+    $trimmed = trim($value);
+
+    // Bare SQL keywords/functions allowed by RS dbstruct files.
+    // (Postgres accepts the same spelling Postgres uses; no translation
+    // needed beyond keeping them unquoted.)
+    static $bare_keywords = ['NULL', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'LOCALTIMESTAMP'];
+    foreach ($bare_keywords as $kw) {
+        if (strcasecmp($trimmed, $kw) === 0) {
+            return strtoupper($trimmed);
+        }
+    }
+    // NOW() or other function-with-parens — recognise the pattern.
+    if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*\s*\(\s*\)$/', $trimmed)) {
+        return $trimmed;
+    }
+
+    if ($type_info['is_boolean']) {
+        $v = trim($value, "'\"");
+        return ($v === '0' || strcasecmp($v, 'false') === 0) ? 'FALSE' : 'TRUE';
+    }
+    if (in_array($type_info['param_type'], ['i', 'd'], true)) {
+        return is_numeric($value) ? (string) $value : "'" . str_replace("'", "''", $value) . "'";
+    }
+    // String / date / blob — always quote.
+    return "'" . str_replace("'", "''", $value) . "'";
+}
+
+/**
+ * Build and execute CREATE TABLE for a new table.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_create_table(string $table, array $columns, bool $verbose): void
+{
+    $col_sql = [];
+    $pk_cols = [];
+
+    foreach ($columns as $col) {
+        $name      = $col[0];
+        $mysql_t   = $col[1];
+        $nullable  = $col[2] ?? 'YES';
+        $key       = $col[3] ?? '';
+        $default   = $col[4] ?? '';
+        $extra     = $col[5] ?? '';
+
+        $info = aa_mysql_to_pg_type($mysql_t);
+
+        $line = aa_quote_ident($name) . ' ' . $info['type'];
+
+        if (stripos($extra, 'auto_increment') !== false) {
+            // GENERATED BY DEFAULT (not ALWAYS) so seed-data rows can
+            // supply explicit ID values.
+            $line .= ' GENERATED BY DEFAULT AS IDENTITY';
+        }
+        if ($nullable === 'NO') {
+            $line .= ' NOT NULL';
+        }
+
+        // ARTIST-ALLEY: NOT NULL columns without an explicit DEFAULT get an
+        // implicit type-appropriate one. RS code base routinely does INSERTs
+        // that omit columns it expects MySQL's sql_mode="" to backfill with
+        // the type's implicit default ('' for varchar/text, 0 for numeric).
+        // Postgres rejects this by default; emitting the DEFAULT in the
+        // schema is the one-place fix that keeps every such INSERT working.
+        // IDENTITY columns are not given a DEFAULT — the sequence is their
+        // default.
+        $needs_implicit_default = (
+            $nullable === 'NO'
+            && ($default === '' || $default === null)
+            && stripos($extra, 'auto_increment') === false
+            && $key !== 'PRI' // primary keys must be explicitly set
+        );
+
+        if ($default !== '' && $default !== null) {
+            $line .= ' DEFAULT ' . aa_pg_format_default((string) $default, $info);
+        } elseif ($needs_implicit_default) {
+            $line .= ' DEFAULT ' . aa_pg_implicit_default($info);
+        }
+
+        $col_sql[] = $line;
+
+        if ($key === 'PRI') {
+            $pk_cols[] = aa_quote_ident($name);
+        }
+    }
+
+    if (!empty($pk_cols)) {
+        $col_sql[] = 'PRIMARY KEY (' . implode(', ', $pk_cols) . ')';
+    }
+
+    $sql = 'CREATE TABLE ' . aa_quote_ident($table) . ' (' . implode(', ', $col_sql) . ')';
+    debug("CheckDBStruct: {$sql}");
+    if ($verbose) {
+        echo "[CheckDBStruct] CREATE TABLE {$table}\n";
+        @ob_flush();
+    }
+    ps_query($sql, [], '', -1, false);
+}
+
+/**
+ * Add columns that exist in the dbstruct but not in the live table.
+ * Column type/width upgrades are intentionally NOT performed here — that
+ * was upstream behaviour for evolving MySQL types and isn't worth porting
+ * automatically to Postgres until Phase 0.5.C explicitly opts into it.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_alter_existing_table(string $table, array $columns): void
+{
+    $existing = aa_pg_list_columns($table);
+
+    foreach ($columns as $col) {
+        $name = $col[0];
+        if (in_array($name, $existing, true)) {
+            continue;
+        }
+        $info = aa_mysql_to_pg_type($col[1]);
+        $nullable = $col[2] ?? 'YES';
+        $default  = $col[4] ?? '';
+
+        $line = aa_quote_ident($name) . ' ' . $info['type'];
+        if ($nullable === 'NO') {
+            $line .= ' NOT NULL';
+        }
+        if ($default !== '' && $default !== null) {
+            $line .= ' DEFAULT ' . aa_pg_format_default((string) $default, $info);
+        }
+        $sql = 'ALTER TABLE ' . aa_quote_ident($table) . ' ADD COLUMN ' . $line;
+        debug("CheckDBStruct: {$sql}");
+        ps_query($sql, [], '', -1, false);
+    }
+}
+
+/**
+ * INSERT each row from data_*.txt into the table just created.
+ *
+ * Empty cells become NULL — except when the column is NOT NULL and has
+ * no DEFAULT, in which case we substitute the type-appropriate "implicit
+ * default" (empty string / 0 / FALSE). This mirrors upstream MySQL's
+ * behaviour under sql_mode="" (which is how RS shipped) and is what the
+ * dbstruct seed files have always assumed.
+ *
+ * The "''" sentinel is also treated as NULL, for compatibility with the
+ * occasional legacy dbstruct file that uses it.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_load_seed_data(string $table, array $columns, string $file): void
+{
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return;
+    }
+
+    $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+    $colnames     = implode(', ', array_map(static fn($c) => aa_quote_ident($c[0]), $columns));
+    $sql = 'INSERT INTO ' . aa_quote_ident($table) . " ({$colnames}) VALUES ({$placeholders})";
+
+    while (($row = fgetcsv($f, 5000)) !== false) {
+        if (count($row) === 0) {
+            continue;
+        }
+        $params = [];
+        $col_count = min(count($row), count($columns));
+        for ($n = 0; $n < $col_count; $n++) {
+            $col      = $columns[$n];
+            $info     = aa_mysql_to_pg_type($col[1]);
+            $nullable = ($col[2] ?? 'YES') !== 'NO';
+            $default  = $col[4] ?? '';
+            $cell     = $row[$n];
+            $is_empty = ($cell === '' || $cell === "''");
+
+            $params[] = $info['param_type'];
+
+            if ($is_empty && $nullable) {
+                $params[] = null;
+            } elseif ($is_empty) {
+                // NOT NULL and no value supplied. Use the column's DEFAULT
+                // if it has one, otherwise the type-appropriate implicit
+                // default — matching upstream MySQL's permissive coercion.
+                if ($default !== '' && $default !== null) {
+                    $params[] = $info['is_boolean']
+                        ? (($default === '0' || strcasecmp((string) $default, 'false') === 0) ? 'false' : 'true')
+                        : $default;
+                } elseif ($info['is_boolean']) {
+                    $params[] = 'false';
+                } elseif (in_array($info['param_type'], ['i', 'd'], true)) {
+                    $params[] = 0;
+                } elseif ($info['param_type'] === 'b') {
+                    $params[] = '';
+                } else {
+                    $params[] = ''; // VARCHAR / TEXT / CHAR
+                }
+            } elseif ($info['is_boolean']) {
+                $params[] = ($cell === '0' || strcasecmp((string) $cell, 'false') === 0) ? 'false' : 'true';
+            } else {
+                $params[] = $cell;
+            }
+        }
+        ps_query($sql, $params, '', -1, false);
+    }
+    fclose($f);
+}
+
+/**
+ * Create any missing indexes for a table. Index names are prefixed with
+ * the table name so they're unique in the Postgres schema (MySQL scopes
+ * index names per-table, Postgres does not).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_apply_indexes(string $table, string $file, bool $verbose): void
+{
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return;
+    }
+
+    $by_name = [];
+    while (($row = fgetcsv($f, 5000)) !== false) {
+        if (count($row) < 11) {
+            continue;
+        }
+        $key_name = $row[2];
+        if ($key_name === '' || $key_name === 'PRIMARY') {
+            continue; // PRIMARY KEY was added inline in CREATE TABLE.
+        }
+        if (!isset($by_name[$key_name])) {
+            $by_name[$key_name] = [
+                'unique'     => ((string) $row[1]) === '0',
+                'index_type' => strtoupper(trim($row[10] ?? 'BTREE')),
+                'columns'    => [],
+            ];
+        }
+        $by_name[$key_name]['columns'][(int) $row[3]] = $row[4];
+    }
+    fclose($f);
+
+    $pg_idx_name = static fn(string $name) => "{$table}__{$name}";
+    $existing    = aa_pg_list_indexes($table);
+
+    foreach ($by_name as $name => $idx) {
+        if ($idx['index_type'] === 'FULLTEXT') {
+            // Deferred per ADR 0005 — comes back as tsvector in Phase 0.5.C+.
+            debug("CheckDBStruct: skipping FULLTEXT index '{$name}' on {$table} (pending tsvector rewrite)");
+            continue;
+        }
+
+        $full_name = $pg_idx_name($name);
+        if (in_array($full_name, $existing, true)) {
+            continue;
+        }
+
+        ksort($idx['columns']);
+        $cols = array_map(static fn($c) => aa_quote_ident($c), $idx['columns']);
+
+        $unique = $idx['unique'] ? 'UNIQUE ' : '';
+        $sql = "CREATE {$unique}INDEX " . aa_quote_ident($full_name)
+             . ' ON ' . aa_quote_ident($table) . ' (' . implode(', ', $cols) . ')';
+
+        debug("CheckDBStruct: {$sql}");
+        if ($verbose) {
+            echo "[CheckDBStruct] CREATE INDEX {$full_name} ON {$table}\n";
+            @ob_flush();
+        }
+        ps_query($sql, [], '', -1, false);
+    }
+}
+
 
 /**
 * Generate the LIMIT statement for a SQL query
@@ -1141,25 +1480,30 @@ function CheckDBStruct($path, $verbose = false)
 */
 function sql_limit($offset, $rows)
 {
+    // ARTIST-ALLEY: emits Postgres "LIMIT n OFFSET m" instead of MySQL's
+    // "LIMIT m, n". Postgres requires the row count first; the order in
+    // MySQL was the inverse and a common porting trap.
     $offset_true = !is_null($offset) && is_int_loose($offset) && $offset > 0;
     $rows_true   = !is_null($rows) && is_int_loose($rows) && $rows >= 0;
 
-    $limit = ($offset_true || $rows_true ? 'LIMIT ' : '');
-
-    if ($offset_true && !$rows_true) {
+    if (!$offset_true && !$rows_true) {
         return '';
     }
 
-    if ($offset_true) {
-        $limit .= abs($offset);
+    if ($offset_true && !$rows_true) {
+        // Original returned '' here too; preserve that.
+        return '';
     }
 
+    $parts = [];
     if ($rows_true) {
-        $rows = abs($rows);
-        $limit .= ($offset_true ? ",{$rows}" : $rows);
+        $parts[] = 'LIMIT ' . abs((int) $rows);
+    }
+    if ($offset_true) {
+        $parts[] = 'OFFSET ' . abs((int) $offset);
     }
 
-    return $limit;
+    return implode(' ', $parts);
 }
 
 /**

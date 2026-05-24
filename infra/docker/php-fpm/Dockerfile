@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         antiword \
         ca-certificates \
         cron \
-        default-mysql-client \
         exiftool \
         ffmpeg \
         ghostscript \
@@ -33,23 +32,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libzip-dev \
         libreoffice \
         poppler-utils \
+        postgresql-client \
         unoconv \
         wget \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
-# PHP extensions used by ResourceSpace + pdo_pgsql for future Postgres sidecars
+# PHP extensions. mysqli and pdo_mysql intentionally omitted — artist-alley
+# is Postgres-only (ADR 0005). pgsql is the connection extension, pdo_pgsql
+# is the PDO driver used by include/database_functions.php.
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" \
         gd \
         intl \
         ldap \
         exif \
-        pdo_mysql \
         pdo_pgsql \
-        mysqli \
-        zip \
-    && docker-php-ext-enable mysqli
+        pgsql \
+        zip
 
 # APCu (RS uses it for user-cache fast paths)
 RUN pecl install apcu \

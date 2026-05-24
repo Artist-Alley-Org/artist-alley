@@ -469,7 +469,6 @@ if (get_post_bool('ajax')) {
                     $ffmpeg_path      = "";
                     $exiftool_path    = "";
                     $pdftotext_path   = "";
-                    $mysql_bin_path   = "";
                 }
 
                 $admin_fullname = 'Admin user';
@@ -479,12 +478,12 @@ if (get_post_bool('ajax')) {
 
                 $db_connection_modes = array(
                     "read_write" => array(
-                        "mysql_username" => "",
-                        "mysql_password" => "",
+                        "db_username" => "",
+                        "db_password" => "",
                     ),
                     "read_only" => array(
-                        "mysql_username" => "",
-                        "mysql_password" => "",
+                        "db_username" => "",
+                        "db_password" => "",
                     )
                 );
             } else {
@@ -508,104 +507,113 @@ if (get_post_bool('ajax')) {
                     $config_output .= "\r\n# Initial Structural Plugin used: " . $structural_plugin . "\r\n\r\n\r\n";
                 }
 
-                //Grab MySQL settings
-                $mysql_server = get_post('mysql_server');
-                $mysql_db = get_post('mysql_db');
+                // ARTIST-ALLEY: PostgreSQL connection probe (replaces mysqli).
+                // Form fields are db_server / db_port / db_username / db_password
+                // / db_name; the connection itself uses PDO+pgsql.
+                $db_server = get_post('db_server');
+                $db_port   = (int) get_post('db_port');
+                if ($db_port <= 0) {
+                    $db_port = 5432;
+                }
+                $db_name   = get_post('db_name');
 
                 $db_connection_modes = array(
                     "read_write" => array(
-                        "mysql_username" => trim(get_post("mysql_username")),
-                        "mysql_password" => trim(get_post("mysql_password")),
+                        "db_username" => trim(get_post("db_username")),
+                        "db_password" => trim(get_post("db_password")),
                     ),
                     "read_only" => array(
-                        "mysql_username" => trim(get_post("read_only_db_username")),
-                        "mysql_password" => trim(get_post("read_only_db_password")),
+                        "db_username" => trim(get_post("read_only_db_username")),
+                        "db_password" => trim(get_post("read_only_db_password")),
                     ),
                 );
 
-                $mysql_config_output = "";
+                $db_config_output = "";
 
                 foreach ($db_connection_modes as $db_connection_mode => $db_credentials) {
-                    $mysql_username = $db_credentials["mysql_username"];
-                    $mysql_password = $db_credentials["mysql_password"];
+                    $db_username = $db_credentials["db_username"];
+                    $db_password = $db_credentials["db_password"];
 
                     // read-only credentials are optional
-                    if ($db_connection_mode == "read_only" && ($mysql_username == "" || $mysql_password == "")) {
+                    if ($db_connection_mode == "read_only" && ($db_username == "" || $db_password == "")) {
                         continue;
                     }
 
-                    // Check connection
-                    $mysqli_connection = mysqli_connect($mysql_server, $mysql_username, $mysql_password);
-                    if ($mysqli_connection === false) {
-                        switch (mysqli_errno($mysqli_connection)) {
-                            case 1045:  //User login failure.
+                    // Connect to the server, selecting the requested database.
+                    // PostgreSQL has no two-step "connect, then select DB" — the
+                    // database is part of the DSN.
+                    try {
+                        $pdo = new PDO(
+                            sprintf('pgsql:host=%s;port=%d;dbname=%s', $db_server, $db_port, $db_name),
+                            $db_username,
+                            $db_password,
+                            [
+                                PDO::ATTR_ERRMODE          => PDO::ERRMODE_EXCEPTION,
+                                PDO::ATTR_EMULATE_PREPARES => false,
+                            ]
+                        );
+                    } catch (PDOException $e) {
+                        $sqlstate = $e->errorInfo[0] ?? '';
+                        switch ($sqlstate) {
+                            case '28P01': // invalid_password
+                            case '28000': // invalid_authorization_specification
                                 $errors['databaselogin'] = true;
                                 break;
-                            default: //Must be a server problem.
+                            case '3D000': // invalid_catalog_name (database does not exist)
+                                $errors['databasedb'] = true;
+                                break;
+                            case '08001': // sqlclient_unable_to_establish_sqlconnection
+                            case '08006': // connection_failure
+                            case '08000': // connection_exception
+                                $errors['databaseserver'] = true;
+                                break;
+                            default:
                                 $errors['databaseserver'] = true;
                                 break;
                         }
+                        $errors['database'] = $e->getMessage();
+                        break;
                     }
 
-                    // Check MySQL version
-                    $mysqlversion = mysqli_get_server_info($mysqli_connection);
-                    $mysqlversion_parts = explode(".", $mysqlversion);
-                    $mysqlversion_majorminor = floatval($mysqlversion_parts[0] . (isset($mysqlversion_parts[1]) ? "." . $mysqlversion_parts[1] : ""));
-
-                    if ($mysqlversion_majorminor < 5) {
+                    // Verify server version. Postgres 12 is the floor; anything
+                    // older lacks features we expect (GENERATED columns, etc.).
+                    $pgversion = (int) $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+                    if ($pgversion > 0 && $pgversion < 12) {
                         $errors['databaseversion'] = true;
                         break;
                     }
 
-                    // Check DB access
-                    if (mysqli_select_db($mysqli_connection, $mysql_db) === false) {
-                        $errors['databasedb'] = true;
-                        break;
-                    }
-
-                    // Check DB permissions
+                    // Confirm DDL permission on the read_write connection.
                     if ($db_connection_mode == "read_write") {
-                        if (mysqli_query($mysqli_connection, "CREATE table configtest(test varchar(30))")) {
-                            mysqli_query($mysqli_connection, "DROP table configtest");
-                        } else {
+                        try {
+                            $pdo->exec("CREATE TABLE configtest (test varchar(30))");
+                            $pdo->exec("DROP TABLE configtest");
+                        } catch (PDOException $e) {
                             $errors['databaseperms'] = true;
+                            $errors['database'] = $e->getMessage();
                             break;
                         }
                     }
 
-                    if (isset($errors)) {
-                        $errors['database'] = mysqli_error($mysqli_connection);
-                        break;
-                    }
+                    $config_var_username = ($db_connection_mode == "read_only" ? "read_only_db_username" : "db_username");
+                    $config_var_password = ($db_connection_mode == "read_only" ? "read_only_db_password" : "db_password");
 
-                    $config_var_username = ($db_connection_mode == "read_only" ? "read_only_db_username" : "mysql_username");
-                    $config_var_password = ($db_connection_mode == "read_only" ? "read_only_db_password" : "mysql_password");
-
-                    $mysql_config_output .= "\${$config_var_username} = '{$mysql_username}';\r\n";
-                    $mysql_config_output .= "\${$config_var_password} = '{$mysql_password}';\r\n";
+                    $db_config_output .= "\${$config_var_username} = '{$db_username}';\r\n";
+                    $db_config_output .= "\${$config_var_password} = '{$db_password}';\r\n";
                 }
 
                 if (!isset($errors)) {
-                    $config_output .= "# MySQL database settings\r\n";
-                    $config_output .= "\$mysql_server = '$mysql_server';\r\n";
-                    $config_output .= $mysql_config_output;
-                    $config_output .= "\$mysql_db = '$mysql_db';\r\n";
+                    $config_output .= "# Database settings (PostgreSQL via PDO+pgsql)\r\n";
+                    $config_output .= "\$db_server = '$db_server';\r\n";
+                    $config_output .= "\$db_port   = $db_port;\r\n";
+                    $config_output .= $db_config_output;
+                    $config_output .= "\$db_name   = '$db_name';\r\n";
                     $config_output .= "\r\n";
                 }
 
-                // Check MySQL bin path (not required)
-                $mysql_bin_path = sslash(get_post('mysql_bin_path'));
-
-                if ((isset($mysql_bin_path)) && ($mysql_bin_path != '')) {
-                    if (stripos($mysql_bin_path . '/mysqldump' . $exe_ext, 'phar://') !== false) {
-                        exit($lang["setup-err_phar_injection"]);
-                    }
-                    if (!file_exists($mysql_bin_path . '/mysqldump' . $exe_ext)) {
-                        $errors['mysqlbinpath'] = true;
-                    } else {
-                        $config_output .= "\$mysql_bin_path = '$mysql_bin_path';\r\n\r\n";
-                    }
-                }
+                // ARTIST-ALLEY: mysql bin path field removed. Postgres uses
+                // pg_dump/pg_restore for backups; those aren't required at
+                // install time and will be wired up by future backup tooling.
 
                 // Check baseurl (required)
                 $baseurl = sslash(get_post('baseurl'));
@@ -1305,74 +1313,61 @@ if (get_post_bool('ajax')) {
                             </div>
                         <?php } ?>
                                 
+                        <!-- ARTIST-ALLEY: PostgreSQL connection form. Labels still
+                             read from upstream language keys ("setup-mysqlserver", etc.)
+                             to avoid touching every translation; a follow-up commit
+                             will introduce setup-dbserver and friends. -->
                         <div class="configitem">
-                            <label for="mysqlserver"><?php echo escape($lang["setup-mysqlserver"]);?></label>
-                            <input class="mysqlconn" type="text" required id="mysqlserver" name="mysql_server" value="<?php echo escape($mysql_server);?>"/>
+                            <label for="dbserver"><?php echo escape($lang["setup-mysqlserver"]);?></label>
+                            <input class="mysqlconn" type="text" required id="dbserver" name="db_server" value="<?php echo escape($db_server ?? 'postgres');?>"/>
                             <strong>*</strong>
-                            <a class="iflink" href="#if-mysql-server">?</a>
-                            <p class="iteminfo" id="if-mysql-server"><?php echo strip_tags_and_attributes($lang["setup-if_mysqlserver"]);?></p>
                         </div>
                         <div class="configitem">
-                            <label for="mysqlusername"><?php echo escape($lang["setup-mysqlusername"]); ?></label>
+                            <label for="dbport">Database port</label>
+                            <input id="dbport" type="number" required name="db_port" value="<?php echo escape($db_port ?? 5432);?>" min="1" max="65535"/>
+                            <strong>*</strong>
+                        </div>
+                        <div class="configitem">
+                            <label for="dbusername"><?php echo escape($lang["setup-mysqlusername"]); ?></label>
                             <input class="mysqlconn"
                                 type="text"
                                 required
-                                id="mysqlusername"
-                                name="mysql_username"
-                                value="<?php echo escape($db_connection_modes["read_write"]["mysql_username"]); ?>"
+                                id="dbusername"
+                                name="db_username"
+                                value="<?php echo escape($db_connection_modes["read_write"]["db_username"]); ?>"
                                 data-connection_mode="read_write"/>
                             <strong>*</strong>
-                            <a class="iflink" href="#if-mysql-username">?</a>
-                            <p class="iteminfo" id="if-mysql-username"><?php echo escape($lang["setup-if_mysqlusername"]);?></p>        
                         </div>
                         <div class="configitem">
-                            <label for="mysqlpassword"><?php echo escape($lang["setup-mysqlpassword"]);?></label>
+                            <label for="dbpassword"><?php echo escape($lang["setup-mysqlpassword"]);?></label>
                             <input class="mysqlconn"
                                 type="password"
-                                id="mysqlpassword"
-                                name="mysql_password"
-                                value="<?php echo escape($db_connection_modes["read_write"]["mysql_password"]); ?>"
+                                id="dbpassword"
+                                name="db_password"
+                                value="<?php echo escape($db_connection_modes["read_write"]["db_password"]); ?>"
                                 data-connection_mode="read_write"/>
-                            <a class="iflink" href="#if-mysql-password">?</a>
-                            <p class="iteminfo" id="if-mysql-password"><?php echo escape($lang["setup-if_mysqlpassword"]);?></p>
                         </div>
                         <div class="configitem">
-                            <label for="mysql_read_only_username"><?php echo escape($lang["setup-mysql_read_only_username"]); ?></label>
-                            <input id="mysql_read_only_username"
+                            <label for="db_read_only_username"><?php echo escape($lang["setup-mysql_read_only_username"]); ?></label>
+                            <input id="db_read_only_username"
                                 class="mysqlconn"
                                 type="text"
                                 name="read_only_db_username"
-                                value="<?php echo escape($db_connection_modes["read_only"]["mysql_username"]); ?>"
+                                value="<?php echo escape($db_connection_modes["read_only"]["db_username"]); ?>"
                                 data-connection_mode="read_only">
-                            <a class="iflink" href="#if-mysql-read-only-username">?</a>
-                            <p class="iteminfo" id="if-mysql-read-only-username"><?php echo escape($lang["setup-if_mysql_read_only_username"]); ?></p>        
                         </div>
                         <div class="configitem">
-                            <label for="mysql_read_only_password"><?php echo escape($lang["setup-mysql_read_only_password"]); ?></label>
-                            <input id="mysql_read_only_password"
+                            <label for="db_read_only_password"><?php echo escape($lang["setup-mysql_read_only_password"]); ?></label>
+                            <input id="db_read_only_password"
                                 class="mysqlconn"
                                 type="password"
                                 name="read_only_db_password"
-                                value="<?php echo escape($db_connection_modes["read_only"]["mysql_password"]); ?>"
+                                value="<?php echo escape($db_connection_modes["read_only"]["db_password"]); ?>"
                                 data-connection_mode="read_only">
-                            <a class="iflink" href="#if-mysql-read-only-password">?</a>
-                            <p class="iteminfo" id="if-mysql-read-only-password"><?php echo escape($lang["setup-if_mysql_read_only_password"]); ?></p>
                         </div>
                         <div class="configitem">
-                            <label for="mysqldb"><?php echo escape($lang["setup-mysqldb"]);?></label>
-                            <input id="mysqldb" class="mysqlconn" type="text" required name="mysql_db" value="<?php echo escape($mysql_db);?>"/>
-                            <a class="iflink" href="#if-mysql-db">?</a>
-                            <p class="iteminfo" id="if-mysql-db"><?php echo escape($lang["setup-if_mysqldb"]);?></p>
-                        </div>
-                        
-                        <div class="configitem">
-                            <?php if (isset($errors['mysqlbinpath'])) {?>
-                                <div class="erroritem"><?php echo escape($lang["setup-err_mysqlbinpath"]);?></div>
-                            <?php } ?>
-                            <label for="mysqlbinpath"><?php echo escape($lang["setup-mysqlbinpath"]);?></label>
-                            <input id="mysqlbinpath" type="text" name="mysql_bin_path" value="<?php echo escape($mysql_bin_path);?>"/>
-                            <a class="iflink" href="#if-mysql-bin-path">?</a>
-                            <p class="iteminfo" id="if-mysql-bin-path"><?php echo escape($lang["setup-if_mysqlbinpath"]);?></p>
+                            <label for="dbname"><?php echo escape($lang["setup-mysqldb"]);?></label>
+                            <input id="dbname" class="mysqlconn" type="text" required name="db_name" value="<?php echo escape($db_name ?? 'artist_alley');?>"/>
                         </div>
                     
                         <p class="configsection">
