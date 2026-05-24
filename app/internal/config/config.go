@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -44,8 +45,14 @@ type Config struct {
 	// Storage. Backend selects which storage.Backend implementation
 	// the app constructs at boot. The other fields are backend-specific
 	// — only the ones for the selected backend need to be set.
-	StorageBackend string // "fs" | "s3" (Phase 1.4.B) | ...
-	StorageFSRoot  string // "fs": absolute path to the storage root
+	StorageBackend         string // "fs" | "s3" | ...
+	StorageFSRoot          string // "fs": absolute path to the storage root
+	StorageS3Endpoint      string // "s3": e.g., http://minio:9000 (AWS endpoint when empty)
+	StorageS3Region        string // "s3": e.g., us-east-1
+	StorageS3Bucket        string // "s3": bucket name
+	StorageS3AccessKey     string // "s3"
+	StorageS3SecretKey     string // "s3"
+	StorageS3UsePathStyle  bool   // "s3": true for MinIO and similar
 
 	// Legacy PHP-FPM upstream, used by the nginx layer for unported
 	// routes. The Go app currently does not proxy fcgi itself; this
@@ -70,9 +77,15 @@ func Load() (Config, error) {
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
 		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
-		StorageBackend:    envStr("AA_STORAGE_BACKEND", "fs"),
-		StorageFSRoot:     envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),
-		LegacyPHPAddr:     envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
+		StorageBackend:        envStr("AA_STORAGE_BACKEND", "fs"),
+		StorageFSRoot:         envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),
+		StorageS3Endpoint:     envStr("AA_STORAGE_S3_ENDPOINT", ""),
+		StorageS3Region:       envStr("AA_STORAGE_S3_REGION", "us-east-1"),
+		StorageS3Bucket:       envStr("AA_STORAGE_S3_BUCKET", ""),
+		StorageS3AccessKey:    envStr("AA_STORAGE_S3_ACCESS_KEY", ""),
+		StorageS3SecretKey:    envStr("AA_STORAGE_S3_SECRET_KEY", ""),
+		StorageS3UsePathStyle: envBool("AA_STORAGE_S3_USE_PATH_STYLE", true),
+		LegacyPHPAddr:         envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
 	}
 
 	if c.DBPassword == "" {
@@ -89,6 +102,21 @@ func envStr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		panic(fmt.Sprintf("config: %s=%q is not a valid bool", key, v))
+	}
 }
 
 func envInt(key string, def int) int {
