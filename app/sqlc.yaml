@@ -1,0 +1,18 @@
+version: "2"
+# Each feature package has its own (queries, schema, gen) entry. As we
+# port more domains over, append entries here. The shared `schema.sql`
+# at app root grows alongside.
+sql:
+  - engine: postgresql
+    queries: internal/resourcetype/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: resourcetype
+        out: internal/resourcetype
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

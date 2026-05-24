@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: artist-alley API
+  version: 0.1.0
+  description: |
+    The artist-alley REST API.
+
+    This file is the **contract**: server types and handler interfaces are
+    generated from it by `oapi-codegen` (see `app/api/oapi-codegen.yaml`).
+    Frontend code (SvelteKit, eventually) will generate its TypeScript
+    types from the same source. Edits to this file are the only way to
+    change the public API surface — handlers will fail to compile if the
+    Go signatures drift from the spec.
+
+    Generate: `cd app && docker run --rm -v $PWD:/src -w /src/api \
+      ghcr.io/oapi-codegen/oapi-codegen:latest -config oapi-codegen.yaml \
+      openapi.yaml`
+
+servers:
+  - url: /api/v1
+    description: Local development behind nginx (port 8088 by default)
+
+tags:
+  - name: resource_types
+    description: Configurable categories applied to every uploaded asset
+      (Photo, Document, Video, Audio, custom types, etc.)
+
+paths:
+  /resource_types:
+    get:
+      operationId: listResourceTypes
+      summary: List all resource types
+      description: |
+        Returns every resource type configured in the system, ordered by
+        display order (`order_by`) then by primary key. Anonymous access.
+      tags: [resource_types]
+      responses:
+        "200":
+          description: List of resource types
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  schemas:
+    ResourceType:
+      type: object
+      required: [ref]
+      properties:
+        ref:
+          type: integer
+          format: int64
+          description: Primary key
+          example: 1
+        name:
+          type: string
+          nullable: true
+          example: Photo
+        allowed_extensions:
+          type: string
+          nullable: true
+          description: |
+            Comma-separated list of file extensions accepted for this
+            resource type. Null means "use the system default."
+          example: jpg,jpeg,png,gif
+        order_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: Display order, ascending. Null sorts last.
+        icon:
+          type: string
+          nullable: true
+          description: Lucide icon name shown in UI
+          example: image
+        colour:
+          type: integer
+          format: int64
+          nullable: true
+        tab:
+          type: integer
+          format: int64
+          nullable: true
+          description: Resource-type tab grouping in the admin UI
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error summary
+          example: could not list resource types
+  responses:
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

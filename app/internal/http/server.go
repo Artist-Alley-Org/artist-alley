@@ -15,6 +15,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -44,7 +46,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Method(http.MethodGet, "/healthz", health)
 	r.Method(http.MethodGet, "/readyz", health) // same handler for now
 
-	// Future: r.Mount("/api/v1", apiv1.Router(...)) etc.
+	// /api/v1 — endpoints derive from the OpenAPI spec at
+	// app/api/openapi.yaml. Each feature package implements its slice
+	// of openapi.StrictServerInterface; for now the resourcetype
+	// handler is the entire implementation. As we add more endpoints,
+	// they get composed into a single struct implementing the full
+	// interface (likely under internal/api/).
+	r.Route("/api/v1", func(r chi.Router) {
+		impl := resourcetype.NewHandler(pool, logger)
+		strict := openapi.NewStrictHandler(impl, nil)
+		openapi.HandlerFromMux(strict, r)
+	})
 
 	return &Server{
 		cfg:    cfg,
