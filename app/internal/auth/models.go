@@ -9,15 +9,22 @@ import (
 )
 
 type ApiToken struct {
-	ID         pgtype.UUID
-	RsUserID   int64
-	Name       string
-	TokenHash  []byte
-	Scopes     []string
-	ExpiresAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
-	RevokedAt  pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
+	ID             pgtype.UUID
+	RsUserID       int64
+	Name           string
+	TokenHash      []byte
+	Scopes         []string
+	ExpiresAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+}
+
+type Capability struct {
+	Code        string
+	Description string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type ResourceType struct {
@@ -31,6 +38,21 @@ type ResourceType struct {
 	Icon              *string
 	Tab               *int64
 	PullImages        *int64
+}
+
+type Role struct {
+	ID             pgtype.UUID
+	ParentID       pgtype.UUID
+	Name           string
+	Description    string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type RoleCapability struct {
+	RoleID         pgtype.UUID
+	CapabilityCode string
 }
 
 type User struct {
@@ -53,4 +75,27 @@ type User struct {
 	Created            pgtype.Timestamptz
 	Origin             *string
 	UniqueHash         *string
+}
+
+type UserCapabilityGrant struct {
+	RsUserID          int64
+	CapabilityCode    string
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	Note              string
+}
+
+type UserCapabilityRevoke struct {
+	RsUserID          int64
+	CapabilityCode    string
+	RevokedAt         pgtype.Timestamptz
+	RevokedByRsUserID *int64
+	Note              string
+}
+
+type UserRole struct {
+	RsUserID           int64
+	RoleID             pgtype.UUID
+	AssignedAt         pgtype.Timestamptz
+	AssignedByRsUserID *int64
 }

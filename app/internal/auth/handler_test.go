@@ -373,9 +373,13 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		}
 	}
 	t.Cleanup(func() {
-		// Best-effort: remove the user and any tokens they created.
-		_, _ = pool.Exec(context.Background(), `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, userRef)
+		// Best-effort: remove the user and any rows that reference them.
+		cleanCtx := context.Background()
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_role WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})
 
 	// Real chi router wired exactly as the production server does it.
@@ -422,6 +426,18 @@ func (a authOnlyImpl) CreateApiToken(ctx context.Context, req openapi.CreateApiT
 }
 func (a authOnlyImpl) RevokeApiToken(ctx context.Context, req openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
 	return a.h.RevokeApiToken(ctx, req)
+}
+func (a authOnlyImpl) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
+	return a.h.ListCapabilities(ctx, req)
+}
+func (a authOnlyImpl) ListRoles(ctx context.Context, req openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
+	return a.h.ListRoles(ctx, req)
+}
+func (a authOnlyImpl) GetMyCapabilities(ctx context.Context, req openapi.GetMyCapabilitiesRequestObject) (openapi.GetMyCapabilitiesResponseObject, error) {
+	return a.h.GetMyCapabilities(ctx, req)
+}
+func (a authOnlyImpl) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
+	return a.h.SetUserRole(ctx, req)
 }
 func (a authOnlyImpl) ListResourceTypes(_ context.Context, _ openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	panic("ListResourceTypes called from auth test shim")

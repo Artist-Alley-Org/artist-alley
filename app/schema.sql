@@ -52,15 +52,65 @@ CREATE TABLE "user" (
     unique_hash          VARCHAR(50)
 );
 
--- migrations/00001_api_tokens.sql — owned outright by Go (goose).
+-- migrations/00001_api_tokens.sql + 00003_api_tokens_origin_server.sql.
+-- Owned outright by Go (goose).
 CREATE TABLE api_tokens (
-    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    rs_user_id    BIGINT       NOT NULL,
-    name          TEXT         NOT NULL,
-    token_hash    BYTEA        NOT NULL UNIQUE,
-    scopes        TEXT[]       NOT NULL DEFAULT '{}',
-    expires_at    TIMESTAMPTZ  NULL,
-    last_used_at  TIMESTAMPTZ  NULL,
-    revoked_at    TIMESTAMPTZ  NULL,
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    rs_user_id       BIGINT       NOT NULL,
+    name             TEXT         NOT NULL,
+    token_hash       BYTEA        NOT NULL UNIQUE,
+    scopes           TEXT[]       NOT NULL DEFAULT '{}',
+    expires_at       TIMESTAMPTZ  NULL,
+    last_used_at     TIMESTAMPTZ  NULL,
+    revoked_at       TIMESTAMPTZ  NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    origin_server_id UUID         NULL
+);
+
+-- migrations/00002_capabilities_roles.sql — authorization model.
+CREATE TABLE capabilities (
+    code        TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE roles (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    parent_id        UUID         NULL REFERENCES roles(id) ON DELETE SET NULL,
+    name             TEXT         NOT NULL UNIQUE,
+    description      TEXT         NOT NULL DEFAULT '',
+    origin_server_id UUID         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE role_capabilities (
+    role_id         UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    capability_code TEXT NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, capability_code)
+);
+
+CREATE TABLE user_role (
+    rs_user_id             BIGINT       NOT NULL PRIMARY KEY,
+    role_id                UUID         NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    assigned_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    assigned_by_rs_user_id BIGINT       NULL
+);
+
+CREATE TABLE user_capability_grants (
+    rs_user_id            BIGINT       NOT NULL,
+    capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    note                  TEXT         NOT NULL DEFAULT '',
+    PRIMARY KEY (rs_user_id, capability_code)
+);
+
+CREATE TABLE user_capability_revokes (
+    rs_user_id            BIGINT       NOT NULL,
+    capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    revoked_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    revoked_by_rs_user_id BIGINT       NULL,
+    note                  TEXT         NOT NULL DEFAULT '',
+    PRIMARY KEY (rs_user_id, capability_code)
 );

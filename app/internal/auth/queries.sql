@@ -104,3 +104,77 @@ SET revoked_at = NOW()
 WHERE id = $1
   AND rs_user_id = $2
   AND revoked_at IS NULL;
+
+-- name: EffectiveCapabilitiesForUser :many
+-- Returns the union of capabilities a user can exercise after all role
+-- inheritance and per-user overrides resolve. The recursive CTE walks
+-- the role hierarchy from the user's assigned role up to the chain
+-- root, then we union in explicit grants and remove explicit revokes.
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM roles r
+    JOIN user_role ur ON ur.role_id = r.id
+    WHERE ur.rs_user_id = $1
+
+    UNION ALL
+
+    SELECT r.id, r.parent_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.parent_id
+    WHERE rc.depth < 32 -- belt + braces against accidental cycles
+),
+role_caps AS (
+    SELECT DISTINCT rc.capability_code AS code
+    FROM role_chain rch
+    JOIN role_capabilities rc ON rc.role_id = rch.id
+),
+all_caps AS (
+    SELECT code FROM role_caps
+    UNION
+    SELECT g.capability_code AS code
+    FROM user_capability_grants g
+    WHERE g.rs_user_id = $1
+)
+SELECT ac.code
+FROM all_caps ac
+WHERE ac.code NOT IN (
+    SELECT v.capability_code
+    FROM user_capability_revokes v
+    WHERE v.rs_user_id = $1
+)
+ORDER BY ac.code;
+
+-- name: AssignedRoleForUser :one
+-- Returns the user's currently assigned role (id + name) or no rows.
+SELECT r.id, r.name, r.description, r.parent_id
+FROM roles r
+JOIN user_role ur ON ur.role_id = r.id
+WHERE ur.rs_user_id = $1;
+
+-- name: SetUserRole :exec
+-- Idempotent assign-or-overwrite. Used by the admin endpoint.
+INSERT INTO user_role (rs_user_id, role_id, assigned_by_rs_user_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (rs_user_id) DO UPDATE SET
+    role_id                = EXCLUDED.role_id,
+    assigned_at            = NOW(),
+    assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id;
+
+-- name: ListCapabilities :many
+SELECT code, description FROM capabilities ORDER BY code;
+
+-- name: ListRoles :many
+-- Returns every role with its parent_id; the handler enriches each
+-- with the list of role-attached capabilities via ListRoleCapabilities.
+SELECT id, name, description, parent_id
+FROM roles
+ORDER BY name;
+
+-- name: ListRoleCapabilities :many
+-- Capabilities directly attached to a role (not including inherited).
+SELECT capability_code FROM role_capabilities
+WHERE role_id = $1
+ORDER BY capability_code;
+
+-- name: GetRole :one
+SELECT id, name, description, parent_id FROM roles WHERE id = $1;

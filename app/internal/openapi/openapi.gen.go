@@ -68,6 +68,13 @@ type ApiTokenSummary struct {
 	Scopes     []string           `json:"scopes"`
 }
 
+// Capability defines model for Capability.
+type Capability struct {
+	// Code Atomic capability identifier (e.g., "users.read").
+	Code        string `json:"code"`
+	Description string `json:"description"`
+}
+
 // CreateApiTokenRequest defines model for CreateApiTokenRequest.
 type CreateApiTokenRequest struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -93,6 +100,23 @@ type CurrentUser struct {
 
 // CurrentUserAuthMethod How the caller was authenticated for this request.
 type CurrentUserAuthMethod string
+
+// EffectiveCapabilities defines model for EffectiveCapabilities.
+type EffectiveCapabilities struct {
+	// Capabilities The resolved capability set: (role chain capabilities)
+	// UNION (explicit grants) EXCEPT (explicit revokes). What
+	// middleware checks against when enforcing
+	// x-required-capabilities.
+	Capabilities []string `json:"capabilities"`
+
+	// Grants Capabilities granted explicitly to this user.
+	Grants *[]string `json:"grants,omitempty"`
+
+	// Revokes Capabilities revoked explicitly from this user.
+	Revokes *[]string `json:"revokes,omitempty"`
+	Role    *Role     `json:"role,omitempty"`
+	UserRef int64     `json:"user_ref"`
+}
 
 // Error defines model for Error.
 type Error struct {
@@ -127,8 +151,31 @@ type ResourceType struct {
 	Tab *int64 `json:"tab,omitempty"`
 }
 
+// Role defines model for Role.
+type Role struct {
+	// Capabilities Capability codes attached directly to this role. Does NOT
+	// include inherited capabilities — chase parent_id to get the
+	// full set, or call `/auth/me/capabilities` for the resolved
+	// view of the current user.
+	Capabilities []string           `json:"capabilities"`
+	Description  string             `json:"description"`
+	Id           openapi_types.UUID `json:"id"`
+	Name         string             `json:"name"`
+
+	// ParentId Single-inheritance parent role; null for root roles.
+	ParentId *openapi_types.UUID `json:"parent_id,omitempty"`
+}
+
+// SetUserRoleRequest defines model for SetUserRoleRequest.
+type SetUserRoleRequest struct {
+	RoleId openapi_types.UUID `json:"role_id"`
+}
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
+
+// Forbidden defines model for Forbidden.
+type Forbidden = Error
 
 // InternalError defines model for InternalError.
 type InternalError = Error
@@ -151,8 +198,14 @@ type LoginJSONRequestBody = LoginRequest
 // CreateApiTokenJSONRequestBody defines body for CreateApiToken for application/json ContentType.
 type CreateApiTokenJSONRequestBody = CreateApiTokenRequest
 
+// SetUserRoleJSONRequestBody defines body for SetUserRole for application/json ContentType.
+type SetUserRoleJSONRequestBody = SetUserRoleRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// List every capability the server knows about
+	// (GET /auth/capabilities)
+	ListCapabilities(w http.ResponseWriter, r *http.Request)
 	// Sign in with username and password
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
@@ -162,6 +215,12 @@ type ServerInterface interface {
 	// Return information about the caller
 	// (GET /auth/me)
 	GetCurrentUser(w http.ResponseWriter, r *http.Request)
+	// Effective capabilities for the current user
+	// (GET /auth/me/capabilities)
+	GetMyCapabilities(w http.ResponseWriter, r *http.Request)
+	// List roles and the capabilities attached to each
+	// (GET /auth/roles)
+	ListRoles(w http.ResponseWriter, r *http.Request)
 	// List the caller's API tokens
 	// (GET /auth/tokens)
 	ListApiTokens(w http.ResponseWriter, r *http.Request)
@@ -171,6 +230,9 @@ type ServerInterface interface {
 	// Revoke an API token by ID
 	// (DELETE /auth/tokens/{id})
 	RevokeApiToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Assign a role to a user (admin)
+	// (PUT /auth/users/{ref}/role)
+	SetUserRole(w http.ResponseWriter, r *http.Request, ref int64)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(w http.ResponseWriter, r *http.Request)
@@ -179,6 +241,12 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// List every capability the server knows about
+// (GET /auth/capabilities)
+func (_ Unimplemented) ListCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // Sign in with username and password
 // (POST /auth/login)
@@ -195,6 +263,18 @@ func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request) {
 // Return information about the caller
 // (GET /auth/me)
 func (_ Unimplemented) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Effective capabilities for the current user
+// (GET /auth/me/capabilities)
+func (_ Unimplemented) GetMyCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List roles and the capabilities attached to each
+// (GET /auth/roles)
+func (_ Unimplemented) ListRoles(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -216,6 +296,12 @@ func (_ Unimplemented) RevokeApiToken(w http.ResponseWriter, r *http.Request, id
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// Assign a role to a user (admin)
+// (PUT /auth/users/{ref}/role)
+func (_ Unimplemented) SetUserRole(w http.ResponseWriter, r *http.Request, ref int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // List all resource types
 // (GET /resource_types)
 func (_ Unimplemented) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +316,28 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) ListCapabilities(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +388,50 @@ func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCurrentUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) GetMyCapabilities(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRoles operation middleware
+func (siw *ServerInterfaceWrapper) ListRoles(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRoles(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -356,6 +508,40 @@ func (siw *ServerInterfaceWrapper) RevokeApiToken(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeApiToken(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetUserRole operation middleware
+func (siw *ServerInterfaceWrapper) SetUserRole(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ref" -------------
+	var ref int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ref", chi.URLParam(r, "ref"), &ref, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ref", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetUserRole(w, r, ref)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -493,6 +679,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/capabilities", wrapper.ListCapabilities)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
 	})
 	r.Group(func(r chi.Router) {
@@ -500,6 +689,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/auth/me", wrapper.GetCurrentUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/me/capabilities", wrapper.GetMyCapabilities)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/roles", wrapper.ListRoles)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/auth/tokens", wrapper.ListApiTokens)
@@ -511,6 +706,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Delete(options.BaseURL+"/auth/tokens/{id}", wrapper.RevokeApiToken)
 	})
 	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/auth/users/{ref}/role", wrapper.SetUserRole)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/resource_types", wrapper.ListResourceTypes)
 	})
 
@@ -519,11 +717,62 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 
 type BadRequestJSONResponse Error
 
+type ForbiddenJSONResponse Error
+
 type InternalErrorJSONResponse Error
 
 type NotFoundJSONResponse Error
 
 type UnauthorizedJSONResponse Error
+
+type ListCapabilitiesRequestObject struct {
+}
+
+type ListCapabilitiesResponseObject interface {
+	VisitListCapabilitiesResponse(w http.ResponseWriter) error
+}
+
+type ListCapabilities200JSONResponse []Capability
+
+func (response ListCapabilities200JSONResponse) VisitListCapabilitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCapabilities401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCapabilities401JSONResponse) VisitListCapabilitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCapabilities403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response ListCapabilities403JSONResponse) VisitListCapabilitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type LoginRequestObject struct {
 	Body *LoginJSONRequestBody
@@ -621,6 +870,90 @@ func (response GetCurrentUser401JSONResponse) VisitGetCurrentUserResponse(w http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMyCapabilitiesRequestObject struct {
+}
+
+type GetMyCapabilitiesResponseObject interface {
+	VisitGetMyCapabilitiesResponse(w http.ResponseWriter) error
+}
+
+type GetMyCapabilities200JSONResponse EffectiveCapabilities
+
+func (response GetMyCapabilities200JSONResponse) VisitGetMyCapabilitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMyCapabilities401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetMyCapabilities401JSONResponse) VisitGetMyCapabilitiesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRolesRequestObject struct {
+}
+
+type ListRolesResponseObject interface {
+	VisitListRolesResponse(w http.ResponseWriter) error
+}
+
+type ListRoles200JSONResponse []Role
+
+func (response ListRoles200JSONResponse) VisitListRolesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRoles401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListRoles401JSONResponse) VisitListRolesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRoles403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response ListRoles403JSONResponse) VisitListRolesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -754,6 +1087,65 @@ func (response RevokeApiToken404JSONResponse) VisitRevokeApiTokenResponse(w http
 	return err
 }
 
+type SetUserRoleRequestObject struct {
+	Ref  int64 `json:"ref"`
+	Body *SetUserRoleJSONRequestBody
+}
+
+type SetUserRoleResponseObject interface {
+	VisitSetUserRoleResponse(w http.ResponseWriter) error
+}
+
+type SetUserRole204Response struct {
+}
+
+func (response SetUserRole204Response) VisitSetUserRoleResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetUserRole401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SetUserRole401JSONResponse) VisitSetUserRoleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetUserRole403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SetUserRole403JSONResponse) VisitSetUserRoleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetUserRole404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SetUserRole404JSONResponse) VisitSetUserRoleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListResourceTypesRequestObject struct {
 }
 
@@ -791,6 +1183,9 @@ func (response ListResourceTypes500JSONResponse) VisitListResourceTypesResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// List every capability the server knows about
+	// (GET /auth/capabilities)
+	ListCapabilities(ctx context.Context, request ListCapabilitiesRequestObject) (ListCapabilitiesResponseObject, error)
 	// Sign in with username and password
 	// (POST /auth/login)
 	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
@@ -800,6 +1195,12 @@ type StrictServerInterface interface {
 	// Return information about the caller
 	// (GET /auth/me)
 	GetCurrentUser(ctx context.Context, request GetCurrentUserRequestObject) (GetCurrentUserResponseObject, error)
+	// Effective capabilities for the current user
+	// (GET /auth/me/capabilities)
+	GetMyCapabilities(ctx context.Context, request GetMyCapabilitiesRequestObject) (GetMyCapabilitiesResponseObject, error)
+	// List roles and the capabilities attached to each
+	// (GET /auth/roles)
+	ListRoles(ctx context.Context, request ListRolesRequestObject) (ListRolesResponseObject, error)
 	// List the caller's API tokens
 	// (GET /auth/tokens)
 	ListApiTokens(ctx context.Context, request ListApiTokensRequestObject) (ListApiTokensResponseObject, error)
@@ -809,6 +1210,9 @@ type StrictServerInterface interface {
 	// Revoke an API token by ID
 	// (DELETE /auth/tokens/{id})
 	RevokeApiToken(ctx context.Context, request RevokeApiTokenRequestObject) (RevokeApiTokenResponseObject, error)
+	// Assign a role to a user (admin)
+	// (PUT /auth/users/{ref}/role)
+	SetUserRole(ctx context.Context, request SetUserRoleRequestObject) (SetUserRoleResponseObject, error)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(ctx context.Context, request ListResourceTypesRequestObject) (ListResourceTypesResponseObject, error)
@@ -841,6 +1245,30 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListCapabilities operation middleware
+func (sh *strictHandler) ListCapabilities(w http.ResponseWriter, r *http.Request) {
+	var request ListCapabilitiesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCapabilities(ctx, request.(ListCapabilitiesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCapabilities")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCapabilitiesResponseObject); ok {
+		if err := validResponse.VisitListCapabilitiesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // Login operation middleware
@@ -915,6 +1343,54 @@ func (sh *strictHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetCurrentUserResponseObject); ok {
 		if err := validResponse.VisitGetCurrentUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMyCapabilities operation middleware
+func (sh *strictHandler) GetMyCapabilities(w http.ResponseWriter, r *http.Request) {
+	var request GetMyCapabilitiesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMyCapabilities(ctx, request.(GetMyCapabilitiesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMyCapabilities")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMyCapabilitiesResponseObject); ok {
+		if err := validResponse.VisitGetMyCapabilitiesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListRoles operation middleware
+func (sh *strictHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
+	var request ListRolesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRoles(ctx, request.(ListRolesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRoles")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRolesResponseObject); ok {
+		if err := validResponse.VisitListRolesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1003,6 +1479,39 @@ func (sh *strictHandler) RevokeApiToken(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// SetUserRole operation middleware
+func (sh *strictHandler) SetUserRole(w http.ResponseWriter, r *http.Request, ref int64) {
+	var request SetUserRoleRequestObject
+
+	request.Ref = ref
+
+	var body SetUserRoleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetUserRole(ctx, request.(SetUserRoleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetUserRole")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetUserRoleResponseObject); ok {
+		if err := validResponse.VisitSetUserRoleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListResourceTypes operation middleware
 func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
 	var request ListResourceTypesRequestObject
@@ -1032,54 +1541,68 @@ func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"hY4hq63TZXDaGNBlyWGvbTh03dXV6n8BAAD//w==",
+	"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",
+	"ubz5vwAAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

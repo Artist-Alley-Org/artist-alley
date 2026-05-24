@@ -149,6 +149,111 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /auth/capabilities:
+    get:
+      operationId: listCapabilities
+      summary: List every capability the server knows about
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["caps.read"]
+      responses:
+        "200":
+          description: List of capabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Capability"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/roles:
+    get:
+      operationId: listRoles
+      summary: List roles and the capabilities attached to each
+      description: |
+        Includes parent_id but does NOT recurse — each role's
+        `capabilities` array is just the direct attachments. Effective
+        capabilities for a user (role chain + grants - revokes) are
+        exposed via `/auth/me/capabilities`.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["roles.read"]
+      responses:
+        "200":
+          description: List of roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/me/capabilities:
+    get:
+      operationId: getMyCapabilities
+      summary: Effective capabilities for the current user
+      description: |
+        Returns the fully resolved capability set: role-chain capabilities
+        unioned with explicit grants, minus explicit revokes. This is
+        what middleware uses for enforcement.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Effective capability set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveCapabilities"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/users/{ref}/role:
+    put:
+      operationId: setUserRole
+      summary: Assign a role to a user (admin)
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      parameters:
+        - name: ref
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUserRoleRequest"
+      responses:
+        "204":
+          description: Role assigned
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /auth/tokens/{id}:
     delete:
       operationId: revokeApiToken
@@ -325,6 +430,78 @@ components:
               description: |
                 The plaintext token. Save it — it is never returned again.
               example: aa_pat_K7eHs0bdQ9XR8h0g7y4mR0aZ2lY1pX5N
+    Capability:
+      type: object
+      required: [code, description]
+      properties:
+        code:
+          type: string
+          description: Atomic capability identifier (e.g., "users.read").
+          example: users.read
+        description:
+          type: string
+    Role:
+      type: object
+      required: [id, name, description, capabilities]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Single-inheritance parent role; null for root roles.
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: |
+            Capability codes attached directly to this role. Does NOT
+            include inherited capabilities — chase parent_id to get the
+            full set, or call `/auth/me/capabilities` for the resolved
+            view of the current user.
+    EffectiveCapabilities:
+      type: object
+      required: [user_ref, capabilities]
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+        role:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Role"
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: |
+            The resolved capability set: (role chain capabilities)
+            UNION (explicit grants) EXCEPT (explicit revokes). What
+            middleware checks against when enforcing
+            x-required-capabilities.
+        grants:
+          type: array
+          items:
+            type: string
+          description: Capabilities granted explicitly to this user.
+        revokes:
+          type: array
+          items:
+            type: string
+          description: Capabilities revoked explicitly from this user.
+    SetUserRoleRequest:
+      type: object
+      required: [role_id]
+      properties:
+        role_id:
+          type: string
+          format: uuid
     CreateApiTokenRequest:
       type: object
       required: [name]
@@ -362,6 +539,12 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but missing required capabilities
       content:
         application/json:
           schema:

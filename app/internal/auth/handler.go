@@ -333,6 +333,193 @@ func (h *Handler) RevokeApiToken(
 }
 
 // ---------------------------------------------------------------------------
+// /auth/capabilities, /auth/roles, /auth/me/capabilities, /auth/users/{ref}/role
+// ---------------------------------------------------------------------------
+
+func (h *Handler) ListCapabilities(
+	ctx context.Context,
+	_ openapi.ListCapabilitiesRequestObject,
+) (openapi.ListCapabilitiesResponseObject, error) {
+	id := IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ListCapabilities401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can("caps.read") {
+		return openapi.ListCapabilities403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "caps.read capability required"},
+		}, nil
+	}
+	q := New(h.Pool)
+	rows, err := q.ListCapabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(openapi.ListCapabilities200JSONResponse, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, openapi.Capability{Code: r.Code, Description: r.Description})
+	}
+	return out, nil
+}
+
+func (h *Handler) ListRoles(
+	ctx context.Context,
+	_ openapi.ListRolesRequestObject,
+) (openapi.ListRolesResponseObject, error) {
+	id := IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ListRoles401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can("roles.read") {
+		return openapi.ListRoles403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "roles.read capability required"},
+		}, nil
+	}
+	q := New(h.Pool)
+	roles, err := q.ListRoles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(openapi.ListRoles200JSONResponse, 0, len(roles))
+	for _, r := range roles {
+		caps, err := q.ListRoleCapabilities(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		role := openapi.Role{
+			Id:           openapi_types.UUID(r.ID.Bytes),
+			Name:         r.Name,
+			Description:  r.Description,
+			Capabilities: caps,
+		}
+		if r.ParentID.Valid {
+			p := openapi_types.UUID(r.ParentID.Bytes)
+			role.ParentId = &p
+		}
+		out = append(out, role)
+	}
+	return out, nil
+}
+
+func (h *Handler) GetMyCapabilities(
+	ctx context.Context,
+	_ openapi.GetMyCapabilitiesRequestObject,
+) (openapi.GetMyCapabilitiesResponseObject, error) {
+	id := IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.GetMyCapabilities401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+
+	q := New(h.Pool)
+	roleRow, err := q.AssignedRoleForUser(ctx, id.UserRef)
+	var roleOpenapi *openapi.Role
+	if err == nil {
+		caps, err := q.ListRoleCapabilities(ctx, roleRow.ID)
+		if err != nil {
+			return nil, err
+		}
+		ro := openapi.Role{
+			Id:           openapi_types.UUID(roleRow.ID.Bytes),
+			Name:         roleRow.Name,
+			Description:  roleRow.Description,
+			Capabilities: caps,
+		}
+		if roleRow.ParentID.Valid {
+			p := openapi_types.UUID(roleRow.ParentID.Bytes)
+			ro.ParentId = &p
+		}
+		roleOpenapi = &ro
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	grants, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_grants WHERE rs_user_id = $1 ORDER BY capability_code`, id.UserRef)
+	if err != nil {
+		return nil, err
+	}
+	revokes, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_revokes WHERE rs_user_id = $1 ORDER BY capability_code`, id.UserRef)
+	if err != nil {
+		return nil, err
+	}
+
+	caps := append([]string{}, id.Capabilities...) // copy
+	resp := openapi.EffectiveCapabilities{
+		UserRef:      id.UserRef,
+		Capabilities: caps,
+		Role:         roleOpenapi,
+		Grants:       &grants,
+		Revokes:      &revokes,
+	}
+	return openapi.GetMyCapabilities200JSONResponse(resp), nil
+}
+
+func (h *Handler) SetUserRole(
+	ctx context.Context,
+	req openapi.SetUserRoleRequestObject,
+) (openapi.SetUserRoleResponseObject, error) {
+	id := IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.SetUserRole401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can("users.write") {
+		return openapi.SetUserRole403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "users.write capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return nil, errors.New("missing body") // strict-server returns 500; the spec says this is required so codegen normally rejects nil
+	}
+
+	q := New(h.Pool)
+	roleUUID := pgtype.UUID{Bytes: uuid.UUID(req.Body.RoleId), Valid: true}
+	// 404 if the role doesn't exist.
+	if _, err := q.GetRole(ctx, roleUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetUserRole404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "role not found"},
+			}, nil
+		}
+		return nil, err
+	}
+
+	if err := q.SetUserRole(ctx, SetUserRoleParams{
+		RsUserID:            req.Ref,
+		RoleID:              roleUUID,
+		AssignedByRsUserID:  &id.UserRef,
+	}); err != nil {
+		return nil, err
+	}
+	return openapi.SetUserRole204Response{}, nil
+}
+
+// fetchSimpleCapList runs a single-column-of-text query and collects
+// the results. Small helper used by GetMyCapabilities for the grant
+// and revoke lists; not worth its own sqlc entry.
+func (h *Handler) fetchSimpleCapList(ctx context.Context, sql string, userRef int64) ([]string, error) {
+	rows, err := h.Pool.Query(ctx, sql, userRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

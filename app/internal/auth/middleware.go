@@ -17,13 +17,34 @@ import (
 // successful authentication. nil in the context means the caller is
 // anonymous.
 type Identity struct {
-	UserRef    int64
-	Username   string
-	Fullname   *string
-	Email      *string
-	Usergroup  *int64
-	AuthMethod string     // "session" or "token"
-	TokenID    *uuid.UUID // populated when AuthMethod=="token"
+	UserRef      int64
+	Username     string
+	Fullname     *string
+	Email        *string
+	Usergroup    *int64
+	AuthMethod   string     // "session" or "token"
+	TokenID      *uuid.UUID // populated when AuthMethod=="token"
+	Capabilities []string   // effective capability codes resolved at request start
+}
+
+// SuperAdminCapability bypasses every Can() check. Matches the
+// "system.admin" code seeded by migration 00002.
+const SuperAdminCapability = "system.admin"
+
+// Can returns true when this identity is allowed to exercise the given
+// capability code. Holding [SuperAdminCapability] is a wildcard.
+//
+// A nil identity is never authorised.
+func (id *Identity) Can(code string) bool {
+	if id == nil || code == "" {
+		return false
+	}
+	for _, c := range id.Capabilities {
+		if c == code || c == SuperAdminCapability {
+			return true
+		}
+	}
+	return false
 }
 
 type ctxKey int
@@ -69,6 +90,7 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 
 		if tok, ok := ExtractBearerToken(req.Header); ok && LooksLikeAPIToken(tok) {
 			if id, err := r.resolveByToken(ctx, queries, tok); err == nil {
+				r.loadCapabilities(ctx, queries, id)
 				next.ServeHTTP(w, req.WithContext(WithIdentity(ctx, id)))
 				return
 			} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -78,6 +100,7 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 
 		if cookie := SessionCookieValue(req); cookie != "" {
 			if id, err := r.resolveBySession(ctx, queries, cookie); err == nil {
+				r.loadCapabilities(ctx, queries, id)
 				next.ServeHTTP(w, req.WithContext(WithIdentity(ctx, id)))
 				return
 			} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -87,6 +110,26 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, req)
 	})
+}
+
+// loadCapabilities populates id.Capabilities with the user's effective
+// capability set. A failure here is non-fatal — we log it and proceed
+// with an empty capability set, which means the user can do nothing
+// privileged. That's safer than failing the whole request because of a
+// transient DB error in the cap lookup.
+func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identity) {
+	if id == nil {
+		return
+	}
+	caps, err := q.EffectiveCapabilitiesForUser(ctx, id.UserRef)
+	if err != nil {
+		r.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.caps.load.error",
+			slog.Int64("user_ref", id.UserRef),
+			slog.String("err", err.Error()),
+		)
+		return
+	}
+	id.Capabilities = caps
 }
 
 func (r *Resolver) resolveByToken(ctx context.Context, q *Queries, plaintext string) (*Identity, error) {

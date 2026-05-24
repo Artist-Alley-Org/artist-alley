@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignedRoleForUser = `-- name: AssignedRoleForUser :one
+SELECT r.id, r.name, r.description, r.parent_id
+FROM roles r
+JOIN user_role ur ON ur.role_id = r.id
+WHERE ur.rs_user_id = $1
+`
+
+type AssignedRoleForUserRow struct {
+	ID          pgtype.UUID
+	Name        string
+	Description string
+	ParentID    pgtype.UUID
+}
+
+// Returns the user's currently assigned role (id + name) or no rows.
+func (q *Queries) AssignedRoleForUser(ctx context.Context, rsUserID int64) (AssignedRoleForUserRow, error) {
+	row := q.db.QueryRow(ctx, assignedRoleForUser, rsUserID)
+	var i AssignedRoleForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ParentID,
+	)
+	return i, err
+}
+
 const clearUserSession = `-- name: ClearUserSession :exec
 UPDATE "user"
 SET session   = NULL,
@@ -83,6 +110,66 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const effectiveCapabilitiesForUser = `-- name: EffectiveCapabilitiesForUser :many
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM roles r
+    JOIN user_role ur ON ur.role_id = r.id
+    WHERE ur.rs_user_id = $1
+
+    UNION ALL
+
+    SELECT r.id, r.parent_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.parent_id
+    WHERE rc.depth < 32 -- belt + braces against accidental cycles
+),
+role_caps AS (
+    SELECT DISTINCT rc.capability_code AS code
+    FROM role_chain rch
+    JOIN role_capabilities rc ON rc.role_id = rch.id
+),
+all_caps AS (
+    SELECT code FROM role_caps
+    UNION
+    SELECT g.capability_code AS code
+    FROM user_capability_grants g
+    WHERE g.rs_user_id = $1
+)
+SELECT ac.code
+FROM all_caps ac
+WHERE ac.code NOT IN (
+    SELECT v.capability_code
+    FROM user_capability_revokes v
+    WHERE v.rs_user_id = $1
+)
+ORDER BY ac.code
+`
+
+// Returns the union of capabilities a user can exercise after all role
+// inheritance and per-user overrides resolve. The recursive CTE walks
+// the role hierarchy from the user's assigned role up to the chain
+// root, then we union in explicit grants and remove explicit revokes.
+func (q *Queries) EffectiveCapabilitiesForUser(ctx context.Context, rsUserID int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, effectiveCapabilitiesForUser, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		items = append(items, code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const findActiveApiToken = `-- name: FindActiveApiToken :one
@@ -208,6 +295,29 @@ func (q *Queries) FindUserByUsername(ctx context.Context, username *string) (Fin
 	return i, err
 }
 
+const getRole = `-- name: GetRole :one
+SELECT id, name, description, parent_id FROM roles WHERE id = $1
+`
+
+type GetRoleRow struct {
+	ID          pgtype.UUID
+	Name        string
+	Description string
+	ParentID    pgtype.UUID
+}
+
+func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, error) {
+	row := q.db.QueryRow(ctx, getRole, id)
+	var i GetRoleRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ParentID,
+	)
+	return i, err
+}
+
 const listApiTokensForUser = `-- name: ListApiTokensForUser :many
 SELECT id,
        rs_user_id,
@@ -262,6 +372,102 @@ func (q *Queries) ListApiTokensForUser(ctx context.Context, rsUserID int64) ([]L
 	return items, nil
 }
 
+const listCapabilities = `-- name: ListCapabilities :many
+SELECT code, description FROM capabilities ORDER BY code
+`
+
+type ListCapabilitiesRow struct {
+	Code        string
+	Description string
+}
+
+func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, error) {
+	rows, err := q.db.Query(ctx, listCapabilities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCapabilitiesRow
+	for rows.Next() {
+		var i ListCapabilitiesRow
+		if err := rows.Scan(&i.Code, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoleCapabilities = `-- name: ListRoleCapabilities :many
+SELECT capability_code FROM role_capabilities
+WHERE role_id = $1
+ORDER BY capability_code
+`
+
+// Capabilities directly attached to a role (not including inherited).
+func (q *Queries) ListRoleCapabilities(ctx context.Context, roleID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRoleCapabilities, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var capability_code string
+		if err := rows.Scan(&capability_code); err != nil {
+			return nil, err
+		}
+		items = append(items, capability_code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoles = `-- name: ListRoles :many
+SELECT id, name, description, parent_id
+FROM roles
+ORDER BY name
+`
+
+type ListRolesRow struct {
+	ID          pgtype.UUID
+	Name        string
+	Description string
+	ParentID    pgtype.UUID
+}
+
+// Returns every role with its parent_id; the handler enriches each
+// with the list of role-attached capabilities via ListRoleCapabilities.
+func (q *Queries) ListRoles(ctx context.Context) ([]ListRolesRow, error) {
+	rows, err := q.db.Query(ctx, listRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRolesRow
+	for rows.Next() {
+		var i ListRolesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.ParentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()
@@ -283,6 +489,27 @@ func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setUserRole = `-- name: SetUserRole :exec
+INSERT INTO user_role (rs_user_id, role_id, assigned_by_rs_user_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (rs_user_id) DO UPDATE SET
+    role_id                = EXCLUDED.role_id,
+    assigned_at            = NOW(),
+    assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id
+`
+
+type SetUserRoleParams struct {
+	RsUserID           int64
+	RoleID             pgtype.UUID
+	AssignedByRsUserID *int64
+}
+
+// Idempotent assign-or-overwrite. Used by the admin endpoint.
+func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) error {
+	_, err := q.db.Exec(ctx, setUserRole, arg.RsUserID, arg.RoleID, arg.AssignedByRsUserID)
+	return err
 }
 
 const setUserSession = `-- name: SetUserSession :exec
