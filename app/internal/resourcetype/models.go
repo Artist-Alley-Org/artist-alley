@@ -4,6 +4,22 @@
 
 package resourcetype
 
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type ApiToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	RsUserID   int64              `json:"rs_user_id"`
+	Name       string             `json:"name"`
+	TokenHash  []byte             `json:"token_hash"`
+	Scopes     []string           `json:"scopes"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type ResourceType struct {
 	Ref               int64   `json:"ref"`
 	Name              *string `json:"name"`
@@ -15,4 +31,26 @@ type ResourceType struct {
 	Icon              *string `json:"icon"`
 	Tab               *int64  `json:"tab"`
 	PullImages        *int64  `json:"pull_images"`
+}
+
+type User struct {
+	Ref                int64              `json:"ref"`
+	Username           *string            `json:"username"`
+	Password           *string            `json:"password"`
+	Fullname           *string            `json:"fullname"`
+	Email              *string            `json:"email"`
+	Usergroup          *int64             `json:"usergroup"`
+	LastActive         pgtype.Timestamptz `json:"last_active"`
+	LoggedIn           *int64             `json:"logged_in"`
+	AcceptedTerms      int64              `json:"accepted_terms"`
+	AccountExpires     pgtype.Timestamptz `json:"account_expires"`
+	Session            *string            `json:"session"`
+	PasswordLastChange pgtype.Timestamptz `json:"password_last_change"`
+	LoginTries         int64              `json:"login_tries"`
+	LoginLastTry       pgtype.Timestamptz `json:"login_last_try"`
+	Approved           int64              `json:"approved"`
+	Lang               *string            `json:"lang"`
+	Created            pgtype.Timestamptz `json:"created"`
+	Origin             *string            `json:"origin"`
+	UniqueHash         *string            `json:"unique_hash"`
 }

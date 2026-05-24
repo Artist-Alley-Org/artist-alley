@@ -21,11 +21,157 @@ servers:
     description: Local development behind nginx (port 8088 by default)
 
 tags:
+  - name: auth
+    description: |
+      Authentication and identity. The login endpoint accepts username +
+      password and sets an `rs_session` cookie (PHP-compatible) so the
+      same session works against both the Go API and the legacy RS PHP
+      pages. API tokens (`aa_pat_*`, 32 random bytes) are an alternate
+      auth method for programmatic clients — issued via this same set
+      of endpoints, presented via `Authorization: Bearer <token>`.
   - name: resource_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
 
 paths:
+  /auth/login:
+    post:
+      operationId: login
+      summary: Sign in with username and password
+      description: |
+        Verifies credentials against the RS `user` table using the same
+        HMAC-then-bcrypt hashing scheme RS uses (so PHP-created users
+        log in unchanged). On success: writes a new session token to
+        `user.session` and sets the `rs_session` cookie.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated. Returns the current user; an
+            `rs_session` cookie is set in the response headers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: End the current session
+      description: |
+        Clears `user.session` for the calling user and expires the
+        `rs_session` cookie. Safe to call when unauthenticated
+        (returns 204 either way).
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Logged out (or wasn't logged in).
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Return information about the caller
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/tokens:
+    get:
+      operationId: listApiTokens
+      summary: List the caller's API tokens
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of tokens (without the token values).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiTokenSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createApiToken
+      summary: Issue a new API token
+      description: |
+        Creates a Personal Access Token bound to the caller. The token
+        value is returned in the response **once and only once** — it
+        is hashed in the database and cannot be recovered later. Lose
+        it, revoke and re-issue.
+
+        Token creation is restricted to cookie-authenticated callers,
+        so a stolen token cannot mint further tokens.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiTokenRequest"
+      responses:
+        "201":
+          description: Token issued. The plaintext token is in the
+            `token` field of the response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenCreated"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/tokens/{id}:
+    delete:
+      operationId: revokeApiToken
+      summary: Revoke an API token by ID
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Revoked.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /resource_types:
     get:
       operationId: listResourceTypes
@@ -47,6 +193,22 @@ paths:
           $ref: "#/components/responses/InternalError"
 
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: rs_session
+      description: |
+        PHP-compatible session cookie issued by `/auth/login`. Same
+        cookie works against the RS PHP pages so users only sign in
+        once.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: aa_pat
+      description: |
+        Personal Access Token, format `aa_pat_<32 chars>`. Issued via
+        `POST /auth/tokens`. Send as `Authorization: Bearer aa_pat_...`.
   schemas:
     ResourceType:
       type: object
@@ -95,7 +257,115 @@ components:
           type: string
           description: Human-readable error summary
           example: could not list resource types
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          format: password
+    CurrentUser:
+      type: object
+      required: [ref, username, auth_method]
+      properties:
+        ref:
+          type: integer
+          format: int64
+        username:
+          type: string
+        fullname:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        usergroup:
+          type: integer
+          format: int64
+          nullable: true
+        auth_method:
+          type: string
+          enum: [session, token]
+          description: How the caller was authenticated for this request.
+    ApiTokenSummary:
+      type: object
+      required: [id, name, created_at, scopes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+    ApiTokenCreated:
+      allOf:
+        - $ref: "#/components/schemas/ApiTokenSummary"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: |
+                The plaintext token. Save it — it is never returned again.
+              example: aa_pat_K7eHs0bdQ9XR8h0g7y4mR0aZ2lY1pX5N
+    CreateApiTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: CI deploy bot
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        scopes:
+          type: array
+          items:
+            type: string
+          description: |
+            Capability codes this token may exercise. Empty array means
+            the token can do whatever the user can do. (The
+            capability/role model itself lands in Phase 1.3; for now
+            scopes are recorded but not enforced.)
   responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Authentication required, missing, or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     InternalError:
       description: Unexpected server error
       content:

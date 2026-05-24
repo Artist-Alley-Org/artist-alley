@@ -14,15 +14,96 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+const (
+	BearerAuthScopes bearerAuthContextKey = "bearerAuth.Scopes"
+	CookieAuthScopes cookieAuthContextKey = "cookieAuth.Scopes"
+)
+
+// Defines values for CurrentUserAuthMethod.
+const (
+	Session CurrentUserAuthMethod = "session"
+	Token   CurrentUserAuthMethod = "token"
+)
+
+// Valid indicates whether the value is a known member of the CurrentUserAuthMethod enum.
+func (e CurrentUserAuthMethod) Valid() bool {
+	switch e {
+	case Session:
+		return true
+	case Token:
+		return true
+	default:
+		return false
+	}
+}
+
+// ApiTokenCreated defines model for ApiTokenCreated.
+type ApiTokenCreated struct {
+	CreatedAt  time.Time          `json:"created_at"`
+	ExpiresAt  *time.Time         `json:"expires_at,omitempty"`
+	Id         openapi_types.UUID `json:"id"`
+	LastUsedAt *time.Time         `json:"last_used_at,omitempty"`
+	Name       string             `json:"name"`
+	Scopes     []string           `json:"scopes"`
+
+	// Token The plaintext token. Save it — it is never returned again.
+	Token string `json:"token"`
+}
+
+// ApiTokenSummary defines model for ApiTokenSummary.
+type ApiTokenSummary struct {
+	CreatedAt  time.Time          `json:"created_at"`
+	ExpiresAt  *time.Time         `json:"expires_at,omitempty"`
+	Id         openapi_types.UUID `json:"id"`
+	LastUsedAt *time.Time         `json:"last_used_at,omitempty"`
+	Name       string             `json:"name"`
+	Scopes     []string           `json:"scopes"`
+}
+
+// CreateApiTokenRequest defines model for CreateApiTokenRequest.
+type CreateApiTokenRequest struct {
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name      string     `json:"name"`
+
+	// Scopes Capability codes this token may exercise. Empty array means
+	// the token can do whatever the user can do. (The
+	// capability/role model itself lands in Phase 1.3; for now
+	// scopes are recorded but not enforced.)
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// CurrentUser defines model for CurrentUser.
+type CurrentUser struct {
+	// AuthMethod How the caller was authenticated for this request.
+	AuthMethod CurrentUserAuthMethod `json:"auth_method"`
+	Email      *string               `json:"email,omitempty"`
+	Fullname   *string               `json:"fullname,omitempty"`
+	Ref        int64                 `json:"ref"`
+	Usergroup  *int64                `json:"usergroup,omitempty"`
+	Username   string                `json:"username"`
+}
+
+// CurrentUserAuthMethod How the caller was authenticated for this request.
+type CurrentUserAuthMethod string
 
 // Error defines model for Error.
 type Error struct {
 	// Error Human-readable error summary
 	Error string `json:"error"`
+}
+
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	Password string `json:"password"`
+	Username string `json:"username"`
 }
 
 // ResourceType defines model for ResourceType.
@@ -46,11 +127,50 @@ type ResourceType struct {
 	Tab *int64 `json:"tab,omitempty"`
 }
 
+// BadRequest defines model for BadRequest.
+type BadRequest = Error
+
 // InternalError defines model for InternalError.
 type InternalError = Error
 
+// NotFound defines model for NotFound.
+type NotFound = Error
+
+// Unauthorized defines model for Unauthorized.
+type Unauthorized = Error
+
+// bearerAuthContextKey is the context key for bearerAuth security scheme
+type bearerAuthContextKey string
+
+// cookieAuthContextKey is the context key for cookieAuth security scheme
+type cookieAuthContextKey string
+
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody = LoginRequest
+
+// CreateApiTokenJSONRequestBody defines body for CreateApiToken for application/json ContentType.
+type CreateApiTokenJSONRequestBody = CreateApiTokenRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Sign in with username and password
+	// (POST /auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+	// End the current session
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
+	// Return information about the caller
+	// (GET /auth/me)
+	GetCurrentUser(w http.ResponseWriter, r *http.Request)
+	// List the caller's API tokens
+	// (GET /auth/tokens)
+	ListApiTokens(w http.ResponseWriter, r *http.Request)
+	// Issue a new API token
+	// (POST /auth/tokens)
+	CreateApiToken(w http.ResponseWriter, r *http.Request)
+	// Revoke an API token by ID
+	// (DELETE /auth/tokens/{id})
+	RevokeApiToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(w http.ResponseWriter, r *http.Request)
@@ -59,6 +179,42 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Sign in with username and password
+// (POST /auth/login)
+func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// End the current session
+// (POST /auth/logout)
+func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Return information about the caller
+// (GET /auth/me)
+func (_ Unimplemented) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List the caller's API tokens
+// (GET /auth/tokens)
+func (_ Unimplemented) ListApiTokens(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Issue a new API token
+// (POST /auth/tokens)
+func (_ Unimplemented) CreateApiToken(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Revoke an API token by ID
+// (DELETE /auth/tokens/{id})
+func (_ Unimplemented) RevokeApiToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // List all resource types
 // (GET /resource_types)
@@ -74,6 +230,140 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCurrentUser operation middleware
+func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCurrentUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListApiTokens operation middleware
+func (siw *ServerInterfaceWrapper) ListApiTokens(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListApiTokens(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateApiToken operation middleware
+func (siw *ServerInterfaceWrapper) CreateApiToken(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateApiToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeApiToken operation middleware
+func (siw *ServerInterfaceWrapper) RevokeApiToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeApiToken(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListResourceTypes operation middleware
 func (siw *ServerInterfaceWrapper) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
@@ -203,13 +493,266 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/logout", wrapper.Logout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/me", wrapper.GetCurrentUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/tokens", wrapper.ListApiTokens)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/tokens", wrapper.CreateApiToken)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/auth/tokens/{id}", wrapper.RevokeApiToken)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/resource_types", wrapper.ListResourceTypes)
 	})
 
 	return r
 }
 
+type BadRequestJSONResponse Error
+
 type InternalErrorJSONResponse Error
+
+type NotFoundJSONResponse Error
+
+type UnauthorizedJSONResponse Error
+
+type LoginRequestObject struct {
+	Body *LoginJSONRequestBody
+}
+
+type LoginResponseObject interface {
+	VisitLoginResponse(w http.ResponseWriter) error
+}
+
+type Login200JSONResponse CurrentUser
+
+func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response Login401JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response Login500JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutRequestObject struct {
+}
+
+type LogoutResponseObject interface {
+	VisitLogoutResponse(w http.ResponseWriter) error
+}
+
+type Logout204Response struct {
+}
+
+func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetCurrentUserRequestObject struct {
+}
+
+type GetCurrentUserResponseObject interface {
+	VisitGetCurrentUserResponse(w http.ResponseWriter) error
+}
+
+type GetCurrentUser200JSONResponse CurrentUser
+
+func (response GetCurrentUser200JSONResponse) VisitGetCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCurrentUser401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCurrentUser401JSONResponse) VisitGetCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListApiTokensRequestObject struct {
+}
+
+type ListApiTokensResponseObject interface {
+	VisitListApiTokensResponse(w http.ResponseWriter) error
+}
+
+type ListApiTokens200JSONResponse []ApiTokenSummary
+
+func (response ListApiTokens200JSONResponse) VisitListApiTokensResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListApiTokens401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListApiTokens401JSONResponse) VisitListApiTokensResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateApiTokenRequestObject struct {
+	Body *CreateApiTokenJSONRequestBody
+}
+
+type CreateApiTokenResponseObject interface {
+	VisitCreateApiTokenResponse(w http.ResponseWriter) error
+}
+
+type CreateApiToken201JSONResponse ApiTokenCreated
+
+func (response CreateApiToken201JSONResponse) VisitCreateApiTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateApiToken400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateApiToken400JSONResponse) VisitCreateApiTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateApiToken401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateApiToken401JSONResponse) VisitCreateApiTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeApiTokenRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type RevokeApiTokenResponseObject interface {
+	VisitRevokeApiTokenResponse(w http.ResponseWriter) error
+}
+
+type RevokeApiToken204Response struct {
+}
+
+func (response RevokeApiToken204Response) VisitRevokeApiTokenResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RevokeApiToken401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RevokeApiToken401JSONResponse) VisitRevokeApiTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeApiToken404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RevokeApiToken404JSONResponse) VisitRevokeApiTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type ListResourceTypesRequestObject struct {
 }
@@ -248,6 +791,24 @@ func (response ListResourceTypes500JSONResponse) VisitListResourceTypesResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Sign in with username and password
+	// (POST /auth/login)
+	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
+	// End the current session
+	// (POST /auth/logout)
+	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
+	// Return information about the caller
+	// (GET /auth/me)
+	GetCurrentUser(ctx context.Context, request GetCurrentUserRequestObject) (GetCurrentUserResponseObject, error)
+	// List the caller's API tokens
+	// (GET /auth/tokens)
+	ListApiTokens(ctx context.Context, request ListApiTokensRequestObject) (ListApiTokensResponseObject, error)
+	// Issue a new API token
+	// (POST /auth/tokens)
+	CreateApiToken(ctx context.Context, request CreateApiTokenRequestObject) (CreateApiTokenResponseObject, error)
+	// Revoke an API token by ID
+	// (DELETE /auth/tokens/{id})
+	RevokeApiToken(ctx context.Context, request RevokeApiTokenRequestObject) (RevokeApiTokenResponseObject, error)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(ctx context.Context, request ListResourceTypesRequestObject) (ListResourceTypesResponseObject, error)
@@ -282,6 +843,166 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
+// Login operation middleware
+func (sh *strictHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var request LoginRequestObject
+
+	var body LoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Login(ctx, request.(LoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Login")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginResponseObject); ok {
+		if err := validResponse.VisitLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Logout operation middleware
+func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var request LogoutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Logout(ctx, request.(LogoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Logout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutResponseObject); ok {
+		if err := validResponse.VisitLogoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCurrentUser operation middleware
+func (sh *strictHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	var request GetCurrentUserRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCurrentUser(ctx, request.(GetCurrentUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCurrentUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCurrentUserResponseObject); ok {
+		if err := validResponse.VisitGetCurrentUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListApiTokens operation middleware
+func (sh *strictHandler) ListApiTokens(w http.ResponseWriter, r *http.Request) {
+	var request ListApiTokensRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListApiTokens(ctx, request.(ListApiTokensRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListApiTokens")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListApiTokensResponseObject); ok {
+		if err := validResponse.VisitListApiTokensResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateApiToken operation middleware
+func (sh *strictHandler) CreateApiToken(w http.ResponseWriter, r *http.Request) {
+	var request CreateApiTokenRequestObject
+
+	var body CreateApiTokenJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateApiToken(ctx, request.(CreateApiTokenRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateApiToken")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateApiTokenResponseObject); ok {
+		if err := validResponse.VisitCreateApiTokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokeApiToken operation middleware
+func (sh *strictHandler) RevokeApiToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request RevokeApiTokenRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokeApiToken(ctx, request.(RevokeApiTokenRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokeApiToken")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokeApiTokenResponseObject); ok {
+		if err := validResponse.VisitRevokeApiTokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListResourceTypes operation middleware
 func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
 	var request ListResourceTypesRequestObject
@@ -311,26 +1032,54 @@ func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"nFbbbhs3E36VAf9c2MZqpSR/g2DvjCZNjQaFkTjtRdeIKHJ2RYc7ZHmQvQgE9CH6hH2SgqSkeC0XTXqj",
-	"Aw/Db07fN5+ZMIM1hBQ8az4zh94a8pj/XFBAR1y/ds64tCAMBaSQfnJrtRI8KEPzG28orXmxxoGnX08c",
-	"dqxh/5t/sT4vu35erG2324pJ9MIpm4ywhn0gvLMoAkrw6DboAHdHq53pjOqAxjpj0QVVwOJ+eWr0xzhw",
-	"mjnkkq80Fovg4zBwN7KK4R0frEbWMGGilkAmgFY+gENvohMIYbToWcXSN2uYD05RnzE5/D0qh5I1v+1e",
-	"vz4cM6sbFIFtK/ZuZ+gqbzxEzbU2tyg/4l1A8sqQP3bhezMMfObRcsdTcDI+00GnkkOHi8CFQJsOdMZB",
-	"WCvf0sSLGn6OWsOAnDy0LHqEsEbwow84gMSORx3qlrU0CcyN7asbi31lqa961bGKUdQ6hZM1wUU8ik3F",
-	"hNEm5mx0xg08sIYpCi/+/893FQXs0aXLSpRymkbhbRRKIqRNID4g+LW5JVAEHy4meNXAe/wakMlKrpzD",
-	"1cu1CeZrrhon0X1cjccwXylvNR8hn6iAe4EkFfW74HvjggfNfahZ9V+Ckxvr4aOXTqV6hk84qemnj7xw",
-	"bDHw1bHFfdXO0nkIfAW9M9Eq6lPEU9lwOexj/81uPGie5NNx66RTijpzDO4qPe+C8mHGtcYR3r1+fwXn",
-	"lxd1Sy1drZUvvaF8Rnp2lnjLcRHOzpo9teS2Bk4S1pykRgcJneu4SMsOW+qRsDRc58wAKsBqhKXhVs2E",
-	"kdgjLeHEI8KSWzvnVs3v79UjH/TytG7pB5dZU0LagZP3G9QBf1KhAtwghci1Hk/hVmkN+ydBBQ+JMN5n",
-	"r1sqaDOO3LK5/nOCangt0+lgcssXx7krrW1Ij3DLRwimJbHm1Jd1G1daiRQx8DH7DH/98ec+Er6A6bjS",
-	"yWyi8BzNLt1t6Y0Br3riITr0IJ3qwj1kFkXOwpudKw0shQRuLbRxsXj2onyCNOITOnCRYDZzA8w28OTy",
-	"11fN3DsBs1tI3ymm0LYtAfRr4WplJhGe/Gk0D+gDzIShTvVwlIqdIWORuFUlO5noggq59ycFdX6Z6nqD",
-	"zpeKW9RP60Vu/HKfNex5vaifs4pZHtaZtOd7sv1YJKP5zHoMj7VWiI58yr4bpzoDBX10KPdtVti5KnyC",
-	"ElZjS/I+x8DJcs9Gy9N0hVKd2i+MUMM5GRoHE4tEeF9nx5MMZf2+kIlelQ/3pSpJ3mQYeLZYfNMIoAIO",
-	"/t9mgYk4bg8UwJ3j42Mjwtud9D1Q523FvivwHnvs4MZ8OtDkuWI3CexMc60fUX7e+0JTk/xeZ3yFTtL+",
-	"kWAZwTVI3KA2dkAKsMK1IgnUK7qDE2tcgJeLly9Tvnbqe8oqFp1mDcuEsnnKttcHAMdzQSmWPNgIHrA3",
-	"TiX2SnlBmXq31Fi02nCJErj3GOAky1wFr4yICVcFvyiJpoLzKJWpQEQfUjsnLyvAIOoEq6jlwyBsr7d/",
-	"BwAA//8=",
+	"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",
+	"hY4hq63TZXDaGNBlyWGvbTh03dXV6n8BAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

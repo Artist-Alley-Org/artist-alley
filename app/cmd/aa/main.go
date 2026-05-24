@@ -48,6 +48,11 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	if err := db.Migrate(ctx, cfg); err != nil {
+		return err
+	}
+	logger.Info("migrations applied")
+
 	pool, err := db.Open(ctx, cfg)
 	if err != nil {
 		return err

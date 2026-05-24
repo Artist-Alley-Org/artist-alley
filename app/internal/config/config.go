@@ -36,6 +36,11 @@ type Config struct {
 	LogLevel  string // debug / info / warn / error
 	LogFormat string // json (default) or text
 
+	// Auth — must match the PHP side exactly during the transition
+	// since both worlds hash passwords with the same pepper. Pulled
+	// from the same config value RS reads as $scramble_key.
+	ScrambleKey string
+
 	// Legacy PHP-FPM upstream, used by the nginx layer for unported
 	// routes. The Go app currently does not proxy fcgi itself; this
 	// value is here so future ports can introspect or rewrite it.
@@ -58,11 +63,15 @@ func Load() (Config, error) {
 		DBConnMaxLifetime: envDuration("AA_DB_CONN_MAX_LIFETIME", time.Hour),
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
+		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
 		LegacyPHPAddr:     envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
 	}
 
 	if c.DBPassword == "" {
 		return c, errors.New("config: AA_DB_PASSWORD is required")
+	}
+	if c.ScrambleKey == "" {
+		return c, errors.New("config: AA_SCRAMBLE_KEY is required (must match RS's $scramble_key)")
 	}
 	return c, nil
 }

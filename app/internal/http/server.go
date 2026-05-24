@@ -12,11 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
-	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -47,13 +47,18 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Method(http.MethodGet, "/readyz", health) // same handler for now
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
-	// app/api/openapi.yaml. Each feature package implements its slice
-	// of openapi.StrictServerInterface; for now the resourcetype
-	// handler is the entire implementation. As we add more endpoints,
-	// they get composed into a single struct implementing the full
-	// interface (likely under internal/api/).
+	// app/api/openapi.yaml. apiServer composes every feature package
+	// into a single struct that satisfies openapi.StrictServerInterface.
+	resolver := &auth.Resolver{Pool: pool, Logger: logger}
 	r.Route("/api/v1", func(r chi.Router) {
-		impl := resourcetype.NewHandler(pool, logger)
+		// Resolve identity (cookie or Bearer token) for every request
+		// under /api/v1. Anonymous requests still pass through — each
+		// handler decides whether to require auth (the OpenAPI spec
+		// records the security requirements; codegen-enforced
+		// authorization comes in Phase 1.3).
+		r.Use(resolver.ResolveIdentity)
+
+		impl := newAPIServer(pool, logger, cfg.ScrambleKey)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 	})
