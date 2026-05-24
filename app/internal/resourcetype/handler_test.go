@@ -156,6 +156,15 @@ func (rtOnly) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesReques
 func (rtOnly) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from resourcetype test shim")
 }
+func (rtOnly) UploadAsset(context.Context, openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
+	panic("UploadAsset called from resourcetype test shim")
+}
+func (rtOnly) DownloadAssetOriginal(context.Context, openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
+	panic("DownloadAssetOriginal called from resourcetype test shim")
+}
+func (rtOnly) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
+	panic("DownloadAssetVariant called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

@@ -29,6 +29,12 @@ tags:
       pages. API tokens (`aa_pat_*`, 32 random bytes) are an alternate
       auth method for programmatic clients — issued via this same set
       of endpoints, presented via `Authorization: Bearer <token>`.
+  - name: assets
+    description: |
+      Upload, download, and pin management for asset bytes. Storage is
+      content-addressed: every blob is keyed by sha256(contents), so
+      identical uploads dedup automatically and federated peers can
+      verify transfers by hash. See ADR 0008.
   - name: resource_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
@@ -277,6 +283,147 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /assets:
+    post:
+      operationId: uploadAsset
+      summary: Upload a new asset blob
+      description: |
+        Streams the request body to storage, computing sha256 in the
+        same pass. If the resulting hash already exists, the bytes are
+        not re-uploaded — only a new pin is added so the caller's user
+        keeps the object alive. The response includes a `deduped` flag
+        so clients can show "already uploaded" UX.
+
+        The pin subject for this endpoint is always `user:<caller-ref>`.
+        When the resource model lands in a later phase, callers will
+        be able to specify a richer subject (e.g., a resource id).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      parameters:
+        - name: X-Content-Type
+          in: header
+          required: false
+          description: |
+            Original content type of the upload. Defaults to
+            application/octet-stream when omitted. Recorded as the
+            original variant's content_type so download responses can
+            set the right Content-Type header.
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Upload accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{hash}:
+    get:
+      operationId: downloadAssetOriginal
+      summary: Download the original variant by content hash
+      description: |
+        Returns the bytes of the `original` variant. Supports HTTP
+        Range requests for partial downloads (video scrub, resumable
+        downloads). 404 when the hash isn't known to this server.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Full body
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial body (Range request honoured)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{hash}/{variant}:
+    get:
+      operationId: downloadAssetVariant
+      summary: Download a specific variant of an asset
+      description: |
+        Same semantics as the original-variant download but for any
+        named variant key (e.g. "preview_2048", "thumb_512",
+        "hls/seg00001.ts").
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Full body
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial body (Range request honoured)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /resource_types:
     get:
       operationId: listResourceTypes
@@ -502,6 +649,33 @@ components:
         role_id:
           type: string
           format: uuid
+    UploadResult:
+      type: object
+      required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id]
+      properties:
+        hash:
+          type: string
+          description: lowercase hex sha256 of the uploaded bytes
+          example: a1b2c3d4e5f6...0123
+        size:
+          type: integer
+          format: int64
+          description: Byte count
+        content_type:
+          type: string
+          example: image/jpeg
+        deduped:
+          type: boolean
+          description: |
+            true if the hash was already present on this server and
+            the bytes were NOT re-uploaded to the backend. A new pin
+            was still added for the caller.
+        pin_subject_type:
+          type: string
+          example: user
+        pin_subject_id:
+          type: string
+          example: "9"
     CreateApiTokenRequest:
       type: object
       required: [name]

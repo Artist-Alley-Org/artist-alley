@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -171,6 +172,24 @@ type SetUserRoleRequest struct {
 	RoleId openapi_types.UUID `json:"role_id"`
 }
 
+// UploadResult defines model for UploadResult.
+type UploadResult struct {
+	ContentType string `json:"content_type"`
+
+	// Deduped true if the hash was already present on this server and
+	// the bytes were NOT re-uploaded to the backend. A new pin
+	// was still added for the caller.
+	Deduped bool `json:"deduped"`
+
+	// Hash lowercase hex sha256 of the uploaded bytes
+	Hash           string `json:"hash"`
+	PinSubjectId   string `json:"pin_subject_id"`
+	PinSubjectType string `json:"pin_subject_type"`
+
+	// Size Byte count
+	Size int64 `json:"size"`
+}
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -192,6 +211,25 @@ type bearerAuthContextKey string
 // cookieAuthContextKey is the context key for cookieAuth security scheme
 type cookieAuthContextKey string
 
+// UploadAssetParams defines parameters for UploadAsset.
+type UploadAssetParams struct {
+	// XContentType Original content type of the upload. Defaults to
+	// application/octet-stream when omitted. Recorded as the
+	// original variant's content_type so download responses can
+	// set the right Content-Type header.
+	XContentType *string `json:"X-Content-Type,omitempty"`
+}
+
+// DownloadAssetOriginalParams defines parameters for DownloadAssetOriginal.
+type DownloadAssetOriginalParams struct {
+	Range *string `json:"Range,omitempty"`
+}
+
+// DownloadAssetVariantParams defines parameters for DownloadAssetVariant.
+type DownloadAssetVariantParams struct {
+	Range *string `json:"Range,omitempty"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -203,6 +241,15 @@ type SetUserRoleJSONRequestBody = SetUserRoleRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Upload a new asset blob
+	// (POST /assets)
+	UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams)
+	// Download the original variant by content hash
+	// (GET /assets/{hash})
+	DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams)
+	// Download a specific variant of an asset
+	// (GET /assets/{hash}/{variant})
+	DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams)
 	// List every capability the server knows about
 	// (GET /auth/capabilities)
 	ListCapabilities(w http.ResponseWriter, r *http.Request)
@@ -241,6 +288,24 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Upload a new asset blob
+// (POST /assets)
+func (_ Unimplemented) UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download the original variant by content hash
+// (GET /assets/{hash})
+func (_ Unimplemented) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download a specific variant of an asset
+// (GET /assets/{hash}/{variant})
+func (_ Unimplemented) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // List every capability the server knows about
 // (GET /auth/capabilities)
@@ -316,6 +381,180 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// UploadAsset operation middleware
+func (siw *ServerInterfaceWrapper) UploadAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadAssetParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Content-Type" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Content-Type")]; found {
+		var XContentType string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Content-Type", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Content-Type", valueList[0], &XContentType, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Content-Type", Err: err})
+			return
+		}
+
+		params.XContentType = &XContentType
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadAsset(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadAssetOriginal operation middleware
+func (siw *ServerInterfaceWrapper) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "hash" -------------
+	var hash string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadAssetOriginalParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadAssetOriginal(w, r, hash, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadAssetVariant operation middleware
+func (siw *ServerInterfaceWrapper) DownloadAssetVariant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "hash" -------------
+	var hash string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "variant" -------------
+	var variant string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "variant", chi.URLParam(r, "variant"), &variant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "variant", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadAssetVariantParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadAssetVariant(w, r, hash, variant, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListCapabilities operation middleware
 func (siw *ServerInterfaceWrapper) ListCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -679,6 +918,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/assets", wrapper.UploadAsset)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{hash}", wrapper.DownloadAssetOriginal)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{hash}/{variant}", wrapper.DownloadAssetVariant)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/auth/capabilities", wrapper.ListCapabilities)
 	})
 	r.Group(func(r chi.Router) {
@@ -724,6 +972,212 @@ type InternalErrorJSONResponse Error
 type NotFoundJSONResponse Error
 
 type UnauthorizedJSONResponse Error
+
+type UploadAssetRequestObject struct {
+	Params UploadAssetParams
+	Body   io.Reader
+}
+
+type UploadAssetResponseObject interface {
+	VisitUploadAssetResponse(w http.ResponseWriter) error
+}
+
+type UploadAsset201JSONResponse UploadResult
+
+func (response UploadAsset201JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UploadAsset401JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadAsset500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response UploadAsset500JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadAssetOriginalRequestObject struct {
+	Hash   string `json:"hash"`
+	Params DownloadAssetOriginalParams
+}
+
+type DownloadAssetOriginalResponseObject interface {
+	VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error
+}
+
+type DownloadAssetOriginal200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadAssetOriginal200ApplicationoctetStreamResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadAssetOriginal206ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadAssetOriginal206ApplicationoctetStreamResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(206)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadAssetOriginal401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DownloadAssetOriginal401JSONResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadAssetOriginal404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DownloadAssetOriginal404JSONResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadAssetVariantRequestObject struct {
+	Hash    string `json:"hash"`
+	Variant string `json:"variant"`
+	Params  DownloadAssetVariantParams
+}
+
+type DownloadAssetVariantResponseObject interface {
+	VisitDownloadAssetVariantResponse(w http.ResponseWriter) error
+}
+
+type DownloadAssetVariant200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadAssetVariant200ApplicationoctetStreamResponse) VisitDownloadAssetVariantResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadAssetVariant206ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadAssetVariant206ApplicationoctetStreamResponse) VisitDownloadAssetVariantResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(206)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadAssetVariant401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DownloadAssetVariant401JSONResponse) VisitDownloadAssetVariantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadAssetVariant404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DownloadAssetVariant404JSONResponse) VisitDownloadAssetVariantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type ListCapabilitiesRequestObject struct {
 }
@@ -1183,6 +1637,15 @@ func (response ListResourceTypes500JSONResponse) VisitListResourceTypesResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Upload a new asset blob
+	// (POST /assets)
+	UploadAsset(ctx context.Context, request UploadAssetRequestObject) (UploadAssetResponseObject, error)
+	// Download the original variant by content hash
+	// (GET /assets/{hash})
+	DownloadAssetOriginal(ctx context.Context, request DownloadAssetOriginalRequestObject) (DownloadAssetOriginalResponseObject, error)
+	// Download a specific variant of an asset
+	// (GET /assets/{hash}/{variant})
+	DownloadAssetVariant(ctx context.Context, request DownloadAssetVariantRequestObject) (DownloadAssetVariantResponseObject, error)
 	// List every capability the server knows about
 	// (GET /auth/capabilities)
 	ListCapabilities(ctx context.Context, request ListCapabilitiesRequestObject) (ListCapabilitiesResponseObject, error)
@@ -1245,6 +1708,89 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// UploadAsset operation middleware
+func (sh *strictHandler) UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams) {
+	var request UploadAssetRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadAsset(ctx, request.(UploadAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadAssetResponseObject); ok {
+		if err := validResponse.VisitUploadAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadAssetOriginal operation middleware
+func (sh *strictHandler) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams) {
+	var request DownloadAssetOriginalRequestObject
+
+	request.Hash = hash
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadAssetOriginal(ctx, request.(DownloadAssetOriginalRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadAssetOriginal")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadAssetOriginalResponseObject); ok {
+		if err := validResponse.VisitDownloadAssetOriginalResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadAssetVariant operation middleware
+func (sh *strictHandler) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams) {
+	var request DownloadAssetVariantRequestObject
+
+	request.Hash = hash
+	request.Variant = variant
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadAssetVariant(ctx, request.(DownloadAssetVariantRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadAssetVariant")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadAssetVariantResponseObject); ok {
+		if err := validResponse.VisitDownloadAssetVariantResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // ListCapabilities operation middleware
@@ -1541,68 +2087,85 @@ func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Reques
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"ubz5vwAAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

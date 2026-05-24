@@ -55,6 +55,33 @@ type RoleCapability struct {
 	CapabilityCode string      `json:"capability_code"`
 }
 
+type StorageObject struct {
+	Hash           string             `json:"hash"`
+	SizeBytes      int64              `json:"size_bytes"`
+	ContentType    string             `json:"content_type"`
+	Backend        string             `json:"backend"`
+	BackendBucket  *string            `json:"backend_bucket"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	GcEligibleAt   pgtype.Timestamptz `json:"gc_eligible_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type StoragePin struct {
+	ObjectHash     string             `json:"object_hash"`
+	PinSubjectType string             `json:"pin_subject_type"`
+	PinSubjectID   string             `json:"pin_subject_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type StorageVariant struct {
+	ObjectHash  string             `json:"object_hash"`
+	VariantKey  string             `json:"variant_key"`
+	SizeBytes   int64              `json:"size_bytes"`
+	ContentType string             `json:"content_type"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type User struct {
 	Ref                int64              `json:"ref"`
 	Username           *string            `json:"username"`
