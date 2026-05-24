@@ -54,3 +54,7 @@ Thumbs.db
 # --- Docker / runtime ---
 *.pid
 .docker-data/
+
+# --- Reference-only plugin dirs (kept locally, used as blueprints) ---
+barts_grouping/
+barts_annotations/

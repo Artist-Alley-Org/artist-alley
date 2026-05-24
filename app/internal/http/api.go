@@ -6,9 +6,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
 // apiServer aggregates every feature package's handler into the single
@@ -21,12 +23,14 @@ import (
 type apiServer struct {
 	auth         *auth.Handler
 	resourceType *resourcetype.Handler
+	assets       *assets.Handler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, storageSvc *storage.Service) *apiServer {
 	return &apiServer{
 		auth:         auth.NewHandler(pool, logger, scrambleKey, 0),
 		resourceType: resourcetype.NewHandler(pool, logger),
+		assets:       assets.NewHandler(storageSvc, logger),
 	}
 }
 
@@ -76,4 +80,18 @@ func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequ
 
 func (s *apiServer) ListResourceTypes(ctx context.Context, req openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	return s.resourceType.ListResourceTypes(ctx, req)
+}
+
+// --- assets ----------------------------------------------------------------
+
+func (s *apiServer) UploadAsset(ctx context.Context, req openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
+	return s.assets.UploadAsset(ctx, req)
+}
+
+func (s *apiServer) DownloadAssetOriginal(ctx context.Context, req openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
+	return s.assets.DownloadAssetOriginal(ctx, req)
+}
+
+func (s *apiServer) DownloadAssetVariant(ctx context.Context, req openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
+	return s.assets.DownloadAssetVariant(ctx, req)
 }

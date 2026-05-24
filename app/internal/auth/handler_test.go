@@ -442,6 +442,15 @@ func (a authOnlyImpl) SetUserRole(ctx context.Context, req openapi.SetUserRoleRe
 func (a authOnlyImpl) ListResourceTypes(_ context.Context, _ openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	panic("ListResourceTypes called from auth test shim")
 }
+func (a authOnlyImpl) UploadAsset(_ context.Context, _ openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
+	panic("UploadAsset called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetOriginal(_ context.Context, _ openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
+	panic("DownloadAssetOriginal called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetVariant(_ context.Context, _ openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
+	panic("DownloadAssetVariant called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

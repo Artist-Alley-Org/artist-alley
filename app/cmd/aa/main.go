@@ -60,7 +60,10 @@ func run() error {
 	defer pool.Close()
 	logger.Info("db connected")
 
-	srv := aahttp.New(cfg, logger, pool, Version)
+	srv, err := aahttp.New(cfg, logger, pool, Version)
+	if err != nil {
+		return err
+	}
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

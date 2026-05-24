@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package auth
+package storage
 
 import (
 	"github.com/jackc/pgx/v5/pgtype"

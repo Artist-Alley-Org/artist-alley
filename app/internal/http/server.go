@@ -5,6 +5,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -17,6 +18,9 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
+	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
+	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -30,7 +34,16 @@ type Server struct {
 
 // New builds a Server with routes wired up but not yet listening.
 // Call [Server.Run] to start serving.
-func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version string) *Server {
+func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version string) (*Server, error) {
+	backend, err := buildStorageBackend(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("storage backend: %w", err)
+	}
+	storageSvc := storage.NewService(backend, pool)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "storage.ready",
+		slog.String("backend", backend.Name()),
+	)
+
 	r := chi.NewRouter()
 
 	// Order matters: RequestID first so it shows up in every later log.
@@ -58,7 +71,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
 
-		impl := newAPIServer(pool, logger, cfg.ScrambleKey)
+		impl := newAPIServer(pool, logger, cfg.ScrambleKey, storageSvc)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 	})
@@ -73,6 +86,29 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
+	}, nil
+}
+
+// buildStorageBackend picks the storage.Backend implementation named
+// by cfg.StorageBackend. Backend-specific config is validated by the
+// implementation's constructor.
+func buildStorageBackend(cfg config.Config) (storage.Backend, error) {
+	switch cfg.StorageBackend {
+	case "fs", "":
+		return storagefs.New(cfg.StorageFSRoot)
+	case "s3":
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return storages3.New(ctx, storages3.Config{
+			Bucket:       cfg.StorageS3Bucket,
+			Region:       cfg.StorageS3Region,
+			Endpoint:     cfg.StorageS3Endpoint,
+			AccessKey:    cfg.StorageS3AccessKey,
+			SecretKey:    cfg.StorageS3SecretKey,
+			UsePathStyle: cfg.StorageS3UsePathStyle,
+		})
+	default:
+		return nil, fmt.Errorf("unknown AA_STORAGE_BACKEND=%q (expected fs|s3)", cfg.StorageBackend)
 	}
 }
 
