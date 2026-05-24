@@ -2,7 +2,7 @@
 
 A self-hosted art review and archival tool for game studios.
 
-> **Status:** Phase 0 — early development. Forked from [ResourceSpace](https://www.resourcespace.com/) trunk @ r28830 (2026-05-21) and being incrementally modernized. Not yet ready for production use.
+> **Status:** Phase 1.0 — early development. Forked from [ResourceSpace](https://www.resourcespace.com/) trunk @ r28830 (2026-05-21). RS PHP runs on PostgreSQL (Phase 0.5) and the Go server skeleton is up (Phase 1.0). Not yet ready for production use.
 
 ---
 
