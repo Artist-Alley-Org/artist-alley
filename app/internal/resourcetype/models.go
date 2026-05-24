@@ -9,15 +9,22 @@ import (
 )
 
 type ApiToken struct {
-	ID         pgtype.UUID        `json:"id"`
-	RsUserID   int64              `json:"rs_user_id"`
-	Name       string             `json:"name"`
-	TokenHash  []byte             `json:"token_hash"`
-	Scopes     []string           `json:"scopes"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
-	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID             pgtype.UUID        `json:"id"`
+	RsUserID       int64              `json:"rs_user_id"`
+	Name           string             `json:"name"`
+	TokenHash      []byte             `json:"token_hash"`
+	Scopes         []string           `json:"scopes"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+}
+
+type Capability struct {
+	Code        string             `json:"code"`
+	Description string             `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type ResourceType struct {
@@ -31,6 +38,21 @@ type ResourceType struct {
 	Icon              *string `json:"icon"`
 	Tab               *int64  `json:"tab"`
 	PullImages        *int64  `json:"pull_images"`
+}
+
+type Role struct {
+	ID             pgtype.UUID        `json:"id"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RoleCapability struct {
+	RoleID         pgtype.UUID `json:"role_id"`
+	CapabilityCode string      `json:"capability_code"`
 }
 
 type User struct {
@@ -53,4 +75,27 @@ type User struct {
 	Created            pgtype.Timestamptz `json:"created"`
 	Origin             *string            `json:"origin"`
 	UniqueHash         *string            `json:"unique_hash"`
+}
+
+type UserCapabilityGrant struct {
+	RsUserID          int64              `json:"rs_user_id"`
+	CapabilityCode    string             `json:"capability_code"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
+	Note              string             `json:"note"`
+}
+
+type UserCapabilityRevoke struct {
+	RsUserID          int64              `json:"rs_user_id"`
+	CapabilityCode    string             `json:"capability_code"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedByRsUserID *int64             `json:"revoked_by_rs_user_id"`
+	Note              string             `json:"note"`
+}
+
+type UserRole struct {
+	RsUserID           int64              `json:"rs_user_id"`
+	RoleID             pgtype.UUID        `json:"role_id"`
+	AssignedAt         pgtype.Timestamptz `json:"assigned_at"`
+	AssignedByRsUserID *int64             `json:"assigned_by_rs_user_id"`
 }

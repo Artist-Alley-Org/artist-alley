@@ -56,6 +56,22 @@ func (s *apiServer) RevokeApiToken(ctx context.Context, req openapi.RevokeApiTok
 	return s.auth.RevokeApiToken(ctx, req)
 }
 
+func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
+	return s.auth.ListCapabilities(ctx, req)
+}
+
+func (s *apiServer) ListRoles(ctx context.Context, req openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
+	return s.auth.ListRoles(ctx, req)
+}
+
+func (s *apiServer) GetMyCapabilities(ctx context.Context, req openapi.GetMyCapabilitiesRequestObject) (openapi.GetMyCapabilitiesResponseObject, error) {
+	return s.auth.GetMyCapabilities(ctx, req)
+}
+
+func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
+	return s.auth.SetUserRole(ctx, req)
+}
+
 // --- resource_types --------------------------------------------------------
 
 func (s *apiServer) ListResourceTypes(ctx context.Context, req openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {

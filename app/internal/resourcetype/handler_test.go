@@ -144,6 +144,18 @@ func (rtOnly) CreateApiToken(context.Context, openapi.CreateApiTokenRequestObjec
 func (rtOnly) RevokeApiToken(context.Context, openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
 	panic("RevokeApiToken called from resourcetype test shim")
 }
+func (rtOnly) ListCapabilities(context.Context, openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
+	panic("ListCapabilities called from resourcetype test shim")
+}
+func (rtOnly) ListRoles(context.Context, openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
+	panic("ListRoles called from resourcetype test shim")
+}
+func (rtOnly) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequestObject) (openapi.GetMyCapabilitiesResponseObject, error) {
+	panic("GetMyCapabilities called from resourcetype test shim")
+}
+func (rtOnly) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
+	panic("SetUserRole called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 
