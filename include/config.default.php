@@ -37,49 +37,25 @@
 /* ---------------------------------------------------
     Database settings
 ------------------------------------------------------ */
-$mysql_server      = 'localhost';
-$mysql_server_port = 3306;
-$mysql_username    = 'root';
-$mysql_password    = '';
-$read_only_db_username = "";
-$read_only_db_password = "";
-$mysql_db          = 'resourcespace';
-// $mysql_charset     = 'utf8';
+// ARTIST-ALLEY: connection settings live under $db_* (renamed from upstream
+// $mysql_*). PostgreSQL-only — see ADR 0005.
+$db_server   = 'postgres';
+$db_port     = 5432;
+$db_username = 'artist_alley';
+$db_password = '';
+$db_name     = 'artist_alley';
 
-// The path to the MySQL client binaries - e.g. mysqldump
-// (only needed if you plan to use the export tool)
-// IMPORTANT: no trailing slash
-$mysql_bin_path = '/usr/bin';
+// Optional separate connection for read-only queries (e.g., to a replica).
+// Leave blank to use the read_write connection for everything.
+$read_only_db_username = '';
+$read_only_db_password = '';
 
-// Ability to record important DB transactions (e.g. INSERT, UPDATE, DELETE) in a sql file to allow replaying of changes since DB was last backed.
-// You may schedule cron jobs to delete this sql log file and perform a mysqldump of the database at the same time.
-// Note that there is no built in database backup, you need to take care of this yourself!
-//
-// WARNING!! Ensure the location defined by $mysql_log_location is not in a web accessible directory -it is advisable to either block access in the web server configuration or make the file write only by the web service account
-$mysql_log_transactions = false;
-// $mysql_log_location     = '/var/resourcespace_backups/sql_log.sql';
+// Path to the postgres client binaries (used by the export tool).
+// IMPORTANT: no trailing slash.
+$db_bin_path = '/usr/bin';
 
-// Enable establishing secure connections using SSL
-// Requires setting up mysqli_ssl_server_cert and mysqli_ssl_ca_cert
-$use_mysqli_ssl = false;
-
-// $mysqli_ssl_server_cert = '/etc/ssl/certs/server.pem';
-// $mysqli_ssl_ca_cert     = '/etc/ssl/certs/ca_chain.pem';
-// $mysqli_ssl_ca_path     = '/etc/ssl/certs';
-$mysqli_ssl_verify_server_cert = true;
-
-// Optimisation options
-/**
- * @var int $mysql_sort_buffer_size Set the database sort_buffer_size value (min: 32768; max: 4294967295)
- *
- * "If you see many Sort_merge_passes per second in SHOW GLOBAL STATUS output, you can consider increasing the
- * sort_buffer_size value to speed up ORDER BY or GROUP BY operations that cannot be improved with query optimization or
- * improved indexing." @see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_sort_buffer_size
- */
-
-$mysql_sort_buffer_size = 0;
-
-// Applying changes to the database in a single transaction for performance improvement.
+// Apply DDL/DML batches inside a transaction. Generally improves both
+// throughput and consistency.
 $use_db_transaction = true;
 
 $baseurl = "http://my.site/resourcespace"; // The 'base' web address for this installation. Note: no trailing slash

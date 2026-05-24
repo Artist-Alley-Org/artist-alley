@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, "feat/**"]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    name: Lint + integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Compose stack mirrors local dev so CI and `./scripts/test.sh`
+      # exercise the same artifact (our php-fpm image, our postgres init,
+      # our nginx config). Drift between CI and local is the cause of
+      # half the "works on my machine" bugs we'd otherwise hit.
+      - name: Materialise .env for the stack
+        run: |
+          cp .env.example .env
+          sed -i "s/^MYSQL_ROOT_PASSWORD=.*/MYSQL_ROOT_PASSWORD=ci_unused/" .env
+          sed -i "s/^MYSQL_PASSWORD=.*/MYSQL_PASSWORD=ci_unused/" .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
+
+      - name: Build and start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never became ready" >&2
+          docker compose logs postgres
+          exit 1
+
+      - name: PHP syntax check (every .php under include/, pages/, api/, batch/)
+        run: |
+          docker compose exec -T php bash -c '
+            set -e
+            fail=0
+            for f in $(find include pages api batch -type f -name "*.php"); do
+              if ! php -l "$f" > /dev/null 2>&1; then
+                echo "::error file=$f::syntax error"
+                php -l "$f" || true
+                fail=1
+              fi
+            done
+            exit $fail
+          '
+
+      - name: Run artist-alley integration tests
+        run: ./scripts/test.sh
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200

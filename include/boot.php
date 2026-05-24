@@ -67,7 +67,14 @@ if (file_exists(__DIR__ . "/config.deprecated.php")) {
 
 # Load the real config
 if (!(file_exists(__DIR__ . "/config.php") && filesize(__DIR__ . "/config.php") > 0)) {
-    header("Location: pages/setup.php");
+    // ARTIST-ALLEY: use a root-absolute path so the redirect resolves
+    // correctly no matter which RS page the browser was on. Upstream's
+    // relative "pages/setup.php" produces URLs like
+    // /pages/team/pages/setup.php when the redirect fires from any deep
+    // page during a pre-install state. artist-alley serves RS at site
+    // root (see infra/nginx/default.conf), so /pages/setup.php is the
+    // canonical target.
+    header("Location: /pages/setup.php");
     die(0);
 }
 include __DIR__ . "/config.php";

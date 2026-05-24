@@ -36,30 +36,7 @@ services:
     environment:
       TZ: ${TZ:-UTC}
     depends_on:
-      - mysql
       - postgres
-    restart: unless-stopped
-
-  mysql:
-    image: mysql:8.4
-    # mysql_native_password was removed in 8.4; we rely on the default
-    # caching_sha2_password, which PHP 8.x mysqli supports natively.
-    command: --sql-mode=""
-    ports:
-      - "${MYSQL_HOST_PORT:-3306}:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    environment:
-      TZ: ${TZ:-UTC}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-resourcespace}
-      MYSQL_USER: ${MYSQL_USER:-resourcespace}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   postgres:
@@ -82,6 +59,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mysql-data:
   postgres-data:
   filestore:
