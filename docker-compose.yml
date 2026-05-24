@@ -43,6 +43,9 @@ services:
       AA_LOG_LEVEL: ${AA_LOG_LEVEL:-info}
       AA_LOG_FORMAT: ${AA_LOG_FORMAT:-json}
       AA_LEGACY_PHP_ADDR: php:9000
+      # Must match RS's scramble_key in include/config.php so
+      # password hashes and PAT comparisons are byte-compatible.
+      AA_SCRAMBLE_KEY: ${AA_SCRAMBLE_KEY:?AA_SCRAMBLE_KEY is required; copy scramble_key out of include/config.php into .env}
       TZ: ${TZ:-UTC}
     depends_on:
       postgres:

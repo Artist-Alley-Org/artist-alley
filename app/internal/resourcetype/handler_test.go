@@ -86,8 +86,13 @@ func TestListResourceTypes_HTTP(t *testing.T) {
 	defer pool.Close()
 	ensureResourceTypeSeed(t, ctx, pool)
 
+	// The StrictServerInterface now spans every endpoint group; we
+	// pad the missing slices with the codegen-supplied Unimplemented
+	// (which returns 501 for unsupported methods at the strict-server
+	// layer). For the route under test that's a non-issue because
+	// only ListResourceTypes is exercised.
 	impl := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	strict := openapi.NewStrictHandler(impl, nil)
+	strict := openapi.NewStrictHandler(rtOnly{h: impl}, nil)
 
 	router := chi.NewRouter()
 	openapi.HandlerFromMux(strict, router)
@@ -110,6 +115,34 @@ func TestListResourceTypes_HTTP(t *testing.T) {
 	if len(rows) < 4 {
 		t.Fatalf("expected at least 4 rows, got %d", len(rows))
 	}
+}
+
+// rtOnly is a StrictServerInterface implementation that forwards
+// ListResourceTypes to the real handler and panics for every other
+// method, so a wrong-test-route bug surfaces immediately instead of
+// silently returning a "not implemented" response.
+type rtOnly struct{ h *Handler }
+
+func (r rtOnly) ListResourceTypes(ctx context.Context, req openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
+	return r.h.ListResourceTypes(ctx, req)
+}
+func (rtOnly) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
+	panic("Login called from resourcetype test shim")
+}
+func (rtOnly) Logout(context.Context, openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
+	panic("Logout called from resourcetype test shim")
+}
+func (rtOnly) GetCurrentUser(context.Context, openapi.GetCurrentUserRequestObject) (openapi.GetCurrentUserResponseObject, error) {
+	panic("GetCurrentUser called from resourcetype test shim")
+}
+func (rtOnly) ListApiTokens(context.Context, openapi.ListApiTokensRequestObject) (openapi.ListApiTokensResponseObject, error) {
+	panic("ListApiTokens called from resourcetype test shim")
+}
+func (rtOnly) CreateApiToken(context.Context, openapi.CreateApiTokenRequestObject) (openapi.CreateApiTokenResponseObject, error) {
+	panic("CreateApiToken called from resourcetype test shim")
+}
+func (rtOnly) RevokeApiToken(context.Context, openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
+	panic("RevokeApiToken called from resourcetype test shim")
 }
 
 // --- test helpers -----------------------------------------------------------
