@@ -55,7 +55,7 @@ jobs:
             exit $fail
           '
 
-      - name: Run artist-alley integration tests
+      - name: Run artist-alley integration tests (PHP + Go)
         run: ./scripts/test.sh
 
       - name: Container logs on failure
