@@ -99,6 +99,25 @@ aa_test('Backtick identifiers are translated to double-quoted', function () {
     return 'space_col=99';
 });
 
+aa_test('Dialect translation: IFNULL -> COALESCE', function () {
+    $r = ps_query("SELECT IFNULL(NULL, 'fallback') AS value", [], '', -1, false);
+    aa_assert_eq('fallback', $r[0]['value']);
+    return "IFNULL(NULL,'fallback') -> 'fallback'";
+});
+
+aa_test('Dialect translation: LIMIT a,b -> LIMIT b OFFSET a', function () {
+    ps_query("CREATE TEMP TABLE aa_lim (id INT)", [], '', -1, false);
+    for ($i = 1; $i <= 5; $i++) {
+        ps_query("INSERT INTO aa_lim VALUES (?)", ['i', $i], '', -1, false);
+    }
+    // MySQL-style: offset=2, count=2 -> rows 3 and 4
+    $r = ps_query("SELECT id AS value FROM aa_lim ORDER BY id LIMIT 2, 2", [], '', -1, false);
+    aa_assert_eq(2, count($r), 'two rows');
+    aa_assert_eq(3, (int) $r[0]['value']);
+    aa_assert_eq(4, (int) $r[1]['value']);
+    return 'LIMIT 2,2 -> rows 3,4';
+});
+
 aa_test('Column names with spaces are normalised to underscores', function () {
     $r = ps_query('SELECT 1 AS "spaced col"', [], '', -1, false);
     aa_assert(isset($r[0]['spaced_col']), 'no spaced_col key in ' . json_encode(array_keys($r[0])));

@@ -272,8 +272,22 @@ foreach ($plugins as $plugin_name) {
             # Check if there's a plugin.yaml file to get version and author info.
             $p_y = get_plugin_yaml($plugin_name, false);
             # Write what information we have to the plugin DB.
+            // ARTIST-ALLEY: MySQL "REPLACE INTO" -> Postgres INSERT ON CONFLICT.
+            // `name` is the PRIMARY KEY of the plugins table.
             ps_query(
-                "REPLACE plugins(inst_version, author, descrip, name, info_url, update_url, config_url, priority, disable_group_select, title, icon) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO plugins(inst_version, author, descrip, name, info_url, update_url, config_url, priority, disable_group_select, title, icon)"
+                . " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                . " ON CONFLICT (name) DO UPDATE SET"
+                . "   inst_version         = EXCLUDED.inst_version,"
+                . "   author               = EXCLUDED.author,"
+                . "   descrip              = EXCLUDED.descrip,"
+                . "   info_url             = EXCLUDED.info_url,"
+                . "   update_url           = EXCLUDED.update_url,"
+                . "   config_url           = EXCLUDED.config_url,"
+                . "   priority             = EXCLUDED.priority,"
+                . "   disable_group_select = EXCLUDED.disable_group_select,"
+                . "   title                = EXCLUDED.title,"
+                . "   icon                 = EXCLUDED.icon",
                 array
                     (
                     "s",$p_y['version'],

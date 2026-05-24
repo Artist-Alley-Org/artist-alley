@@ -449,6 +449,40 @@ function aa_quote_ident(string $name): string
 }
 
 /**
+ * Translate MySQL-isms in a query string to their Postgres equivalents.
+ *
+ * This is intentionally a small, narrow rule set. We don't try to parse
+ * SQL — these are regex substitutions for the handful of MySQL-specific
+ * constructs RS uses heavily. Anything subtle (ON DUPLICATE KEY,
+ * DATE_FORMAT, MATCH AGAINST) is patched at the call site.
+ *
+ * Each rule is opt-in to keep behaviour predictable.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.C — will be deleted with the rest of
+ *           database_functions.php when the Go server retires the PHP path.
+ */
+function aa_translate_mysql_to_pg(string $sql): string
+{
+    // Backtick identifier quoting -> Postgres double quotes.
+    $sql = str_replace('`', '"', $sql);
+
+    // IFNULL(a, b) -> COALESCE(a, b). Functionally identical; Postgres
+    // does not have IFNULL.
+    $sql = preg_replace('/\bIFNULL\s*\(/i', 'COALESCE(', $sql);
+
+    // MySQL "LIMIT offset, count" -> Postgres "LIMIT count OFFSET offset".
+    // Only matches literal numbers (and placeholders) to keep the regex
+    // unambiguous — fancier two-arg LIMITs are rare in RS.
+    $sql = preg_replace(
+        '/\bLIMIT\s+(\d+|\?)\s*,\s*(\d+|\?)\b/i',
+        'LIMIT $2 OFFSET $1',
+        $sql
+    );
+
+    return $sql;
+}
+
+/**
  * Execute a prepared statement and return the results as an array.
  *
  * @param  string $sql                      The SQL to execute
@@ -545,10 +579,11 @@ function ps_query($sql, array $parameters = array(), $cache = "", $fetchrows = -
     // execute, which is cleaner and lets us cache the PDOStatement
     // regardless of whether parameters were supplied.
     //
-    // Backtick identifier quoting (a MySQL extension) is translated to
-    // Postgres double-quoting transparently so callers that still use
-    // upstream-style SQL keep working without per-query patches.
-    $sql_translated = str_replace('`', '"', $sql);
+    // SQL dialect translation pass (mysql -> postgres). The PHP backend
+    // is being retired (ADR 0006); rather than patch ~50 call sites
+    // that use these MySQL-isms, we translate them at the boundary.
+    // Each rule is intentionally narrow to avoid surprising rewrites.
+    $sql_translated = aa_translate_mysql_to_pg($sql);
 
     if (!isset($prepared_statement_cache)) {
         $prepared_statement_cache = array();
@@ -935,30 +970,503 @@ function check_db_structs($verbose = false)
  */
 function CheckDBStruct($path, $verbose = false)
 {
-    // ARTIST-ALLEY: Phase 0.5.A stub.
+    // ARTIST-ALLEY (Phase 0.5.B): Postgres-emitting reimplementation of
+    // the upstream MySQL-DDL-from-dbstruct loader.
     //
-    // The upstream implementation read dbstruct/*.txt (CSV-style schema
-    // definitions) and emitted MySQL DDL — backticked identifiers,
-    // auto_increment, tinyint(1) booleans, etc. None of that is valid
-    // Postgres syntax. The replacement is being written in
-    // Phase 0.5.B (branch feat/postgres-schema-emitter): it will parse the
-    // same dbstruct/*.txt format and emit Postgres-native DDL with proper
-    // type translation (int→BIGINT, tinyint(1)→BOOLEAN, datetime→TIMESTAMPTZ,
-    // text-with-json-payloads→JSONB where opted-in, FULLTEXT indexes
-    // omitted pending the tsvector rewrite, etc.).
+    // Reads the same on-disk CSV format as upstream (table_*.txt,
+    // index_*.txt, data_*.txt) so RS plugins and any third-party
+    // dbstruct directories continue to work unchanged. The DDL we emit
+    // is Postgres-native: BIGINT instead of int(N), BOOLEAN for
+    // tinyint(1), TIMESTAMPTZ for datetime/timestamp, IDENTITY columns
+    // instead of AUTO_INCREMENT, double-quoted identifiers, etc. See
+    // aa_mysql_to_pg_type() for the full mapping.
     //
-    // Until that lands, this stub keeps ps_query()'s error-recovery path
-    // from trying to run MySQL DDL against Postgres. The installer and
-    // first-run schema creation will not work until Phase 0.5.B; that's
-    // expected for this branch.
-    debug(
-        "CheckDBStruct(): stubbed pending Phase 0.5.B Postgres schema emitter"
-        . " (path={$path}, verbose=" . var_export($verbose, true) . ")"
-    );
-    if ($verbose) {
-        echo "[CheckDBStruct] stubbed (Phase 0.5.A) — Postgres schema emitter lands in Phase 0.5.B.\n";
+    // FULLTEXT indexes are deferred (skipped with a debug note) pending
+    // the tsvector-based search rewrite in a later phase.
+    if (!file_exists($path)) {
+        $path = __DIR__ . "/../" . $path;
+        if (!file_exists($path)) {
+            return false;
+        }
     }
-    return false;
+
+    db_begin_transaction("CheckDBStruct");
+
+    $existing_tables = aa_pg_list_tables();
+    $dh = opendir($path);
+    if ($dh === false) {
+        db_rollback_transaction("CheckDBStruct");
+        return false;
+    }
+
+    while (($file = readdir($dh)) !== false) {
+        if (substr($file, 0, 6) !== "table_" || substr($file, -4) !== ".txt") {
+            continue;
+        }
+        $table = substr($file, 6, -4);
+        $column_defs = aa_parse_table_def($path . "/" . $file);
+
+        if (!in_array($table, $existing_tables, true)) {
+            aa_pg_create_table($table, $column_defs, $verbose);
+
+            // Seed data, if present.
+            $data_file = $path . "/data_" . $table . ".txt";
+            if (file_exists($data_file)) {
+                aa_pg_load_seed_data($table, $column_defs, $data_file);
+            }
+        } else {
+            aa_pg_alter_existing_table($table, $column_defs);
+        }
+
+        // Indexes.
+        $index_file = $path . "/index_" . $table . ".txt";
+        if (file_exists($index_file)) {
+            aa_pg_apply_indexes($table, $index_file, $verbose);
+        }
+    }
+    closedir($dh);
+
+    db_end_transaction("CheckDBStruct");
+    return true;
+}
+
+/**
+ * Translate a MySQL column type string into a Postgres-native equivalent
+ * plus metadata the caller needs (parameter binding type, boolean flag).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ *
+ * @return array{type:string, param_type:string, is_boolean:bool}
+ */
+function aa_mysql_to_pg_type(string $mysql_type): array
+{
+    // RS uses '§' as an in-CSV escape for ',' so types like
+    // "decimal(17,4)" survive the fgetcsv parser.
+    $t = str_replace("§", ",", trim($mysql_type));
+    $t = preg_replace('/\s+unsigned\b/i', '', $t);
+    $lc = strtolower($t);
+
+    // ARTIST-ALLEY: tinyint(1) is MySQL's conventional boolean. We map it
+    // to SMALLINT (not BOOLEAN) so RS's many `WHERE x = 1` / `WHERE x = 0`
+    // comparisons keep working without per-call-site patches. The PHP
+    // backend is being retired (see ADR 0006) — when we own the schema
+    // from Go we'll re-introduce proper BOOLEAN types. Until then,
+    // 0/1 semantics save us patching a dozen files just for typing.
+    if ($lc === 'tinyint(1)') {
+        return ['type' => 'SMALLINT', 'param_type' => 'i', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tinyint|smallint|mediumint|int|bigint)(\(\d+\))?$/', $lc)) {
+        return ['type' => 'BIGINT', 'param_type' => 'i', 'is_boolean' => false];
+    }
+    if (preg_match('/^varchar\((\d+)\)$/', $lc, $m)) {
+        return ['type' => "VARCHAR({$m[1]})", 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (preg_match('/^char\((\d+)\)$/', $lc, $m)) {
+        return ['type' => "CHAR({$m[1]})", 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tiny|medium|long)?text$/', $lc)) {
+        return ['type' => 'TEXT', 'param_type' => 's', 'is_boolean' => false];
+    }
+    if (in_array($lc, ['datetime', 'timestamp'], true)) {
+        return ['type' => 'TIMESTAMPTZ', 'param_type' => 's', 'is_boolean' => false];
+    }
+    if ($lc === 'date') {
+        return ['type' => 'DATE',  'param_type' => 's', 'is_boolean' => false];
+    }
+    if ($lc === 'time') {
+        return ['type' => 'TIME',  'param_type' => 's', 'is_boolean' => false];
+    }
+    if (in_array($lc, ['float', 'double'], true)) {
+        return ['type' => 'DOUBLE PRECISION', 'param_type' => 'd', 'is_boolean' => false];
+    }
+    if (preg_match('/^decimal\((\d+),(\d+)\)$/', $lc, $m)) {
+        return ['type' => "NUMERIC({$m[1]},{$m[2]})", 'param_type' => 'd', 'is_boolean' => false];
+    }
+    if (preg_match('/^(tiny|medium|long)?blob$/', $lc)) {
+        return ['type' => 'BYTEA', 'param_type' => 'b', 'is_boolean' => false];
+    }
+
+    // Unknown type — fall back to TEXT with a debug note so we notice.
+    debug("aa_mysql_to_pg_type: unrecognised type '{$mysql_type}', falling back to TEXT");
+    return ['type' => 'TEXT', 'param_type' => 's', 'is_boolean' => false];
+}
+
+/**
+ * Parse a dbstruct/table_*.txt file into an array of column definitions.
+ * Each row is [name, mysql_type, nullable('YES'|'NO'), key, default, extra].
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_parse_table_def(string $file): array
+{
+    $rows = [];
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return [];
+    }
+    while (($col = fgetcsv($f, 5000)) !== false) {
+        if (count($col) < 6) {
+            continue;
+        }
+        $rows[] = $col;
+    }
+    fclose($f);
+    return $rows;
+}
+
+/**
+ * Return the list of base tables in the public schema.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_tables(): array
+{
+    $r = ps_query(
+        "SELECT tablename AS value FROM pg_tables WHERE schemaname = current_schema()",
+        [],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Return existing index names on a given table (in the public schema).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_indexes(string $table): array
+{
+    $r = ps_query(
+        "SELECT indexname AS value FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ?",
+        ['s', $table],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Return existing column names on a given table.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_list_columns(string $table): array
+{
+    $r = ps_query(
+        "SELECT column_name AS value FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = ?",
+        ['s', $table],
+        '',
+        -1,
+        false
+    );
+    return array_map(static fn($row) => $row['value'], $r);
+}
+
+/**
+ * Type-appropriate implicit default for a NOT NULL column the dbstruct
+ * didn't give an explicit DEFAULT to. Mirrors MySQL's sql_mode=""
+ * behaviour so RS code's "INSERT without listing every column" pattern
+ * keeps working on Postgres.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_implicit_default(array $type_info): string
+{
+    if ($type_info['is_boolean']) {
+        return 'FALSE';
+    }
+    if (in_array($type_info['param_type'], ['i', 'd'], true)) {
+        return '0';
+    }
+    if ($type_info['param_type'] === 'b') {
+        return "''::bytea";
+    }
+    return "''";
+}
+
+/**
+ * Format a DEFAULT clause value as a Postgres literal.
+ *
+ * SQL keywords and function calls (CURRENT_TIMESTAMP, NULL, NOW(), etc.)
+ * are passed through unquoted — they are not string literals and quoting
+ * them produces "invalid input syntax for type X" errors at table
+ * creation time.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_format_default(string $value, array $type_info): string
+{
+    $trimmed = trim($value);
+
+    // Bare SQL keywords/functions allowed by RS dbstruct files.
+    // (Postgres accepts the same spelling Postgres uses; no translation
+    // needed beyond keeping them unquoted.)
+    static $bare_keywords = ['NULL', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'LOCALTIMESTAMP'];
+    foreach ($bare_keywords as $kw) {
+        if (strcasecmp($trimmed, $kw) === 0) {
+            return strtoupper($trimmed);
+        }
+    }
+    // NOW() or other function-with-parens — recognise the pattern.
+    if (preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*\s*\(\s*\)$/', $trimmed)) {
+        return $trimmed;
+    }
+
+    if ($type_info['is_boolean']) {
+        $v = trim($value, "'\"");
+        return ($v === '0' || strcasecmp($v, 'false') === 0) ? 'FALSE' : 'TRUE';
+    }
+    if (in_array($type_info['param_type'], ['i', 'd'], true)) {
+        return is_numeric($value) ? (string) $value : "'" . str_replace("'", "''", $value) . "'";
+    }
+    // String / date / blob — always quote.
+    return "'" . str_replace("'", "''", $value) . "'";
+}
+
+/**
+ * Build and execute CREATE TABLE for a new table.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_create_table(string $table, array $columns, bool $verbose): void
+{
+    $col_sql = [];
+    $pk_cols = [];
+
+    foreach ($columns as $col) {
+        $name      = $col[0];
+        $mysql_t   = $col[1];
+        $nullable  = $col[2] ?? 'YES';
+        $key       = $col[3] ?? '';
+        $default   = $col[4] ?? '';
+        $extra     = $col[5] ?? '';
+
+        $info = aa_mysql_to_pg_type($mysql_t);
+
+        $line = aa_quote_ident($name) . ' ' . $info['type'];
+
+        if (stripos($extra, 'auto_increment') !== false) {
+            // GENERATED BY DEFAULT (not ALWAYS) so seed-data rows can
+            // supply explicit ID values.
+            $line .= ' GENERATED BY DEFAULT AS IDENTITY';
+        }
+        if ($nullable === 'NO') {
+            $line .= ' NOT NULL';
+        }
+
+        // ARTIST-ALLEY: NOT NULL columns without an explicit DEFAULT get an
+        // implicit type-appropriate one. RS code base routinely does INSERTs
+        // that omit columns it expects MySQL's sql_mode="" to backfill with
+        // the type's implicit default ('' for varchar/text, 0 for numeric).
+        // Postgres rejects this by default; emitting the DEFAULT in the
+        // schema is the one-place fix that keeps every such INSERT working.
+        // IDENTITY columns are not given a DEFAULT — the sequence is their
+        // default.
+        $needs_implicit_default = (
+            $nullable === 'NO'
+            && ($default === '' || $default === null)
+            && stripos($extra, 'auto_increment') === false
+            && $key !== 'PRI' // primary keys must be explicitly set
+        );
+
+        if ($default !== '' && $default !== null) {
+            $line .= ' DEFAULT ' . aa_pg_format_default((string) $default, $info);
+        } elseif ($needs_implicit_default) {
+            $line .= ' DEFAULT ' . aa_pg_implicit_default($info);
+        }
+
+        $col_sql[] = $line;
+
+        if ($key === 'PRI') {
+            $pk_cols[] = aa_quote_ident($name);
+        }
+    }
+
+    if (!empty($pk_cols)) {
+        $col_sql[] = 'PRIMARY KEY (' . implode(', ', $pk_cols) . ')';
+    }
+
+    $sql = 'CREATE TABLE ' . aa_quote_ident($table) . ' (' . implode(', ', $col_sql) . ')';
+    debug("CheckDBStruct: {$sql}");
+    if ($verbose) {
+        echo "[CheckDBStruct] CREATE TABLE {$table}\n";
+        @ob_flush();
+    }
+    ps_query($sql, [], '', -1, false);
+}
+
+/**
+ * Add columns that exist in the dbstruct but not in the live table.
+ * Column type/width upgrades are intentionally NOT performed here — that
+ * was upstream behaviour for evolving MySQL types and isn't worth porting
+ * automatically to Postgres until Phase 0.5.C explicitly opts into it.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_alter_existing_table(string $table, array $columns): void
+{
+    $existing = aa_pg_list_columns($table);
+
+    foreach ($columns as $col) {
+        $name = $col[0];
+        if (in_array($name, $existing, true)) {
+            continue;
+        }
+        $info = aa_mysql_to_pg_type($col[1]);
+        $nullable = $col[2] ?? 'YES';
+        $default  = $col[4] ?? '';
+
+        $line = aa_quote_ident($name) . ' ' . $info['type'];
+        if ($nullable === 'NO') {
+            $line .= ' NOT NULL';
+        }
+        if ($default !== '' && $default !== null) {
+            $line .= ' DEFAULT ' . aa_pg_format_default((string) $default, $info);
+        }
+        $sql = 'ALTER TABLE ' . aa_quote_ident($table) . ' ADD COLUMN ' . $line;
+        debug("CheckDBStruct: {$sql}");
+        ps_query($sql, [], '', -1, false);
+    }
+}
+
+/**
+ * INSERT each row from data_*.txt into the table just created.
+ *
+ * Empty cells become NULL — except when the column is NOT NULL and has
+ * no DEFAULT, in which case we substitute the type-appropriate "implicit
+ * default" (empty string / 0 / FALSE). This mirrors upstream MySQL's
+ * behaviour under sql_mode="" (which is how RS shipped) and is what the
+ * dbstruct seed files have always assumed.
+ *
+ * The "''" sentinel is also treated as NULL, for compatibility with the
+ * occasional legacy dbstruct file that uses it.
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_load_seed_data(string $table, array $columns, string $file): void
+{
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return;
+    }
+
+    $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+    $colnames     = implode(', ', array_map(static fn($c) => aa_quote_ident($c[0]), $columns));
+    $sql = 'INSERT INTO ' . aa_quote_ident($table) . " ({$colnames}) VALUES ({$placeholders})";
+
+    while (($row = fgetcsv($f, 5000)) !== false) {
+        if (count($row) === 0) {
+            continue;
+        }
+        $params = [];
+        $col_count = min(count($row), count($columns));
+        for ($n = 0; $n < $col_count; $n++) {
+            $col      = $columns[$n];
+            $info     = aa_mysql_to_pg_type($col[1]);
+            $nullable = ($col[2] ?? 'YES') !== 'NO';
+            $default  = $col[4] ?? '';
+            $cell     = $row[$n];
+            $is_empty = ($cell === '' || $cell === "''");
+
+            $params[] = $info['param_type'];
+
+            if ($is_empty && $nullable) {
+                $params[] = null;
+            } elseif ($is_empty) {
+                // NOT NULL and no value supplied. Use the column's DEFAULT
+                // if it has one, otherwise the type-appropriate implicit
+                // default — matching upstream MySQL's permissive coercion.
+                if ($default !== '' && $default !== null) {
+                    $params[] = $info['is_boolean']
+                        ? (($default === '0' || strcasecmp((string) $default, 'false') === 0) ? 'false' : 'true')
+                        : $default;
+                } elseif ($info['is_boolean']) {
+                    $params[] = 'false';
+                } elseif (in_array($info['param_type'], ['i', 'd'], true)) {
+                    $params[] = 0;
+                } elseif ($info['param_type'] === 'b') {
+                    $params[] = '';
+                } else {
+                    $params[] = ''; // VARCHAR / TEXT / CHAR
+                }
+            } elseif ($info['is_boolean']) {
+                $params[] = ($cell === '0' || strcasecmp((string) $cell, 'false') === 0) ? 'false' : 'true';
+            } else {
+                $params[] = $cell;
+            }
+        }
+        ps_query($sql, $params, '', -1, false);
+    }
+    fclose($f);
+}
+
+/**
+ * Create any missing indexes for a table. Index names are prefixed with
+ * the table name so they're unique in the Postgres schema (MySQL scopes
+ * index names per-table, Postgres does not).
+ *
+ * @internal ARTIST-ALLEY Phase 0.5.B.
+ */
+function aa_pg_apply_indexes(string $table, string $file, bool $verbose): void
+{
+    $f = fopen($file, "r");
+    if ($f === false) {
+        return;
+    }
+
+    $by_name = [];
+    while (($row = fgetcsv($f, 5000)) !== false) {
+        if (count($row) < 11) {
+            continue;
+        }
+        $key_name = $row[2];
+        if ($key_name === '' || $key_name === 'PRIMARY') {
+            continue; // PRIMARY KEY was added inline in CREATE TABLE.
+        }
+        if (!isset($by_name[$key_name])) {
+            $by_name[$key_name] = [
+                'unique'     => ((string) $row[1]) === '0',
+                'index_type' => strtoupper(trim($row[10] ?? 'BTREE')),
+                'columns'    => [],
+            ];
+        }
+        $by_name[$key_name]['columns'][(int) $row[3]] = $row[4];
+    }
+    fclose($f);
+
+    $pg_idx_name = static fn(string $name) => "{$table}__{$name}";
+    $existing    = aa_pg_list_indexes($table);
+
+    foreach ($by_name as $name => $idx) {
+        if ($idx['index_type'] === 'FULLTEXT') {
+            // Deferred per ADR 0005 — comes back as tsvector in Phase 0.5.C+.
+            debug("CheckDBStruct: skipping FULLTEXT index '{$name}' on {$table} (pending tsvector rewrite)");
+            continue;
+        }
+
+        $full_name = $pg_idx_name($name);
+        if (in_array($full_name, $existing, true)) {
+            continue;
+        }
+
+        ksort($idx['columns']);
+        $cols = array_map(static fn($c) => aa_quote_ident($c), $idx['columns']);
+
+        $unique = $idx['unique'] ? 'UNIQUE ' : '';
+        $sql = "CREATE {$unique}INDEX " . aa_quote_ident($full_name)
+             . ' ON ' . aa_quote_ident($table) . ' (' . implode(', ', $cols) . ')';
+
+        debug("CheckDBStruct: {$sql}");
+        if ($verbose) {
+            echo "[CheckDBStruct] CREATE INDEX {$full_name} ON {$table}\n";
+            @ob_flush();
+        }
+        ps_query($sql, [], '', -1, false);
+    }
 }
 
 

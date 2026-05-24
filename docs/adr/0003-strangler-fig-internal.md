@@ -1,7 +1,13 @@
 # ADR 0003: Strangler Fig pattern applied internally
 
 - Date: 2026-05-23
-- Status: Accepted
+- Status: Accepted — **amended by ADR 0006**. The Strangler Fig pattern
+  itself stands (PHP is progressively replaced over time), but the
+  *replacement vehicle* is now a single Go monolith rather than a fleet
+  of sidecar services. The "Build as a Go sidecar" / "Hybrid policy" /
+  "`artist_alley` plugin as PHP-side bridge" guidance below is retired.
+  Treat the bullets in this document as historical context for the
+  Phase 0.5 work; for the current architecture see ADR 0006.
 
 ## Context
 
