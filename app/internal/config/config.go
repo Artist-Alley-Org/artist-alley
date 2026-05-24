@@ -41,6 +41,12 @@ type Config struct {
 	// from the same config value RS reads as $scramble_key.
 	ScrambleKey string
 
+	// Storage. Backend selects which storage.Backend implementation
+	// the app constructs at boot. The other fields are backend-specific
+	// — only the ones for the selected backend need to be set.
+	StorageBackend string // "fs" | "s3" (Phase 1.4.B) | ...
+	StorageFSRoot  string // "fs": absolute path to the storage root
+
 	// Legacy PHP-FPM upstream, used by the nginx layer for unported
 	// routes. The Go app currently does not proxy fcgi itself; this
 	// value is here so future ports can introspect or rewrite it.
@@ -64,6 +70,8 @@ func Load() (Config, error) {
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
 		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
+		StorageBackend:    envStr("AA_STORAGE_BACKEND", "fs"),
+		StorageFSRoot:     envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),
 		LegacyPHPAddr:     envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
 	}
 

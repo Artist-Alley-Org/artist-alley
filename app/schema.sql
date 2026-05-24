@@ -114,3 +114,35 @@ CREATE TABLE user_capability_revokes (
     note                  TEXT         NOT NULL DEFAULT '',
     PRIMARY KEY (rs_user_id, capability_code)
 );
+
+-- migrations/00004_storage.sql — content-addressed storage layer.
+-- See docs/adr/0008-storage-architecture.md.
+
+CREATE TABLE storage_objects (
+    hash             TEXT         PRIMARY KEY,
+    size_bytes       BIGINT       NOT NULL,
+    content_type     TEXT         NOT NULL DEFAULT 'application/octet-stream',
+    backend          TEXT         NOT NULL,
+    backend_bucket   TEXT         NULL,
+    origin_server_id UUID         NULL,
+    gc_eligible_at   TIMESTAMPTZ  NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE storage_variants (
+    object_hash  TEXT         NOT NULL REFERENCES storage_objects(hash) ON DELETE CASCADE,
+    variant_key  TEXT         NOT NULL,
+    size_bytes   BIGINT       NOT NULL,
+    content_type TEXT         NOT NULL DEFAULT 'application/octet-stream',
+    metadata     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (object_hash, variant_key)
+);
+
+CREATE TABLE storage_pins (
+    object_hash      TEXT         NOT NULL REFERENCES storage_objects(hash) ON DELETE RESTRICT,
+    pin_subject_type TEXT         NOT NULL,
+    pin_subject_id   TEXT         NOT NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (object_hash, pin_subject_type, pin_subject_id)
+);
