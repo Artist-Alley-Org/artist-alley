@@ -31,7 +31,14 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+)
+
+// Cache domain names. Stable strings used as NOTIFY targets — peer
+// instances key off these when dispatching invalidations.
+const (
+	cacheDomainFieldByID = "field_definition.id"
 )
 
 // codePattern matches the admin-supplied field code (federation slug).
@@ -49,11 +56,66 @@ const (
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	// fieldsByID caches field_definition rows by UUID string. Reads
+	// on the hot path (SetAssetFieldValue, GetField) go through it;
+	// writes (Create/Update/Archive) call Invalidate which drops the
+	// local copy AND broadcasts to peer instances via the cache
+	// Registry's NOTIFY channel. Nil-safe: a Handler built without
+	// a registry skips the cache and reads always go to the DB.
+	fieldsByID *cache.Cache[FieldDefinition]
 }
 
-// NewHandler binds the metadata handler to the DB pool.
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Logger: logger}
+// NewHandler binds the metadata handler to the DB pool and the
+// shared cache registry. Passing a nil registry is legal — the
+// handler falls back to direct DB reads (useful in tests that
+// don't want to spin up the LISTEN goroutine).
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Logger: logger}
+	if registry != nil {
+		// 5000 entries comfortably covers thousand-field installs
+		// while staying ~1MB of resident memory. The LRU evicts
+		// cold field defs without losing them — next read repopulates.
+		h.fieldsByID = cache.Register[FieldDefinition](registry, cacheDomainFieldByID, 5000)
+	}
+	return h
+}
+
+// getFieldByIDCached resolves a field_definition row, hitting the
+// LRU on a warm cache and falling back to a DB read + populate on
+// miss. Returns the same shape sqlc emits so callers don't care
+// whether they got a cached copy.
+func (h *Handler) getFieldByIDCached(ctx context.Context, id pgtype.UUID) (FieldDefinition, error) {
+	idStr := uuidString(id)
+	if h.fieldsByID != nil {
+		if v, ok := h.fieldsByID.Get(idStr); ok {
+			return v, nil
+		}
+	}
+	row, err := New(h.Pool).GetFieldDefinitionByID(ctx, id)
+	if err != nil {
+		return row, err
+	}
+	if h.fieldsByID != nil {
+		h.fieldsByID.Add(idStr, row)
+	}
+	return row, nil
+}
+
+// invalidateField drops the local LRU entry and broadcasts to
+// peers. Best-effort — a NOTIFY failure logs but doesn't propagate
+// so writers don't fail because of cache plumbing.
+func (h *Handler) invalidateField(ctx context.Context, id pgtype.UUID) {
+	if h.fieldsByID == nil {
+		return
+	}
+	if err := h.fieldsByID.Invalidate(ctx, uuidString(id)); err != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "metadata.cache.invalidate.error",
+			slog.String("domain", cacheDomainFieldByID),
+			slog.String("key", uuidString(id)),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +242,7 @@ func (h *Handler) CreateField(
 		}
 		return nil, fmt.Errorf("metadata: create: %w", err)
 	}
-	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(row.ID.Bytes).String())
+	h.invalidateField(ctx, row.ID)
 	return openapi.CreateField201JSONResponse(fieldDefToAPI(row)), nil
 }
 
@@ -197,8 +259,7 @@ func (h *Handler) GetField(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	q := New(h.Pool)
-	row, err := q.GetFieldDefinitionByID(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	row, err := h.getFieldByIDCached(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.GetField404JSONResponse{
@@ -280,7 +341,7 @@ func (h *Handler) UpdateField(
 		}
 		return nil, fmt.Errorf("metadata: update: %w", err)
 	}
-	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(row.ID.Bytes).String())
+	h.invalidateField(ctx, row.ID)
 	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
 }
 
@@ -319,7 +380,7 @@ func (h *Handler) ArchiveField(
 	}); err != nil {
 		return nil, fmt.Errorf("metadata: archive: %w", err)
 	}
-	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(pgID.Bytes).String())
+	h.invalidateField(ctx, pgID)
 	return openapi.ArchiveField204Response{}, nil
 }
 
@@ -372,9 +433,9 @@ func (h *Handler) SetAssetFieldValue(
 	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
 
 	// Load the field definition so we can validate the incoming value
-	// shape matches the declared type.
-	qPool := New(h.Pool)
-	fieldRow, err := qPool.GetFieldDefinitionByID(ctx, pgField)
+	// shape matches the declared type. The cached read avoids
+	// hitting the DB for the same field on every asset edit.
+	fieldRow, err := h.getFieldByIDCached(ctx, pgField)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return openapi.SetAssetFieldValue404JSONResponse{
@@ -569,24 +630,10 @@ var _ interface {
 	GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error)
 } = (*Handler)(nil)
 
-// notifyCacheInvalidate publishes a cache-invalidate event for the
-// upcoming Phase 1.10 cache layer. It's a no-op until subscribers
-// exist (Postgres LISTEN/NOTIFY discards events with no listeners),
-// but emitting here means the wiring is in place when caching lands.
-func (h *Handler) notifyCacheInvalidate(ctx context.Context, domain, key string) {
-	payload, _ := json.Marshal(map[string]string{
-		"domain": domain,
-		"key":    key,
-		"op":     "upsert",
-	})
-	if _, err := h.Pool.Exec(ctx, "SELECT pg_notify('cache_invalidate', $1)", string(payload)); err != nil {
-		h.Logger.LogAttrs(ctx, slog.LevelWarn, "metadata.notify.error",
-			slog.String("domain", domain),
-			slog.String("key", key),
-			slog.String("err", err.Error()),
-		)
-	}
-}
+// uuidString returns the canonical text form of a pgtype.UUID. Used
+// for cache keys and NOTIFY payloads so writes and reads agree on
+// the exact string representation.
+func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 
 // ---------------------------------------------------------------------------
 // Helpers — input parsing, validation, type-specific marshalling.
