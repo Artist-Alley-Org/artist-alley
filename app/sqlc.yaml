@@ -42,3 +42,42 @@ sql:
         emit_interface: false
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/audit/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: audit
+        out: internal/audit
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/sysconfig/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: sysconfig
+        out: internal/sysconfig
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/assets/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: assets
+        out: internal/assets
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

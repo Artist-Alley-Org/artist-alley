@@ -1,257 +1,835 @@
-// Package assets implements the storage-facing endpoints of the
-// artist-alley HTTP API: upload (single-shot for now; TUS-resumable
-// in a follow-up), download original, and download a named variant.
+// Package assets implements the asset-entity slice of the
+// artist-alley HTTP API. An asset is the user-facing record on top
+// of the byte-plane managed by the storage package.
 //
-// The handler is a thin layer over storage.Service. Authorization is
-// "must be authenticated" for Phase 1.4.C; per-pin access control
-// lands when the resource layer (separate phase) introduces user-
-// owned objects.
+// See ADR 0011 for the entity model. The storage byte upload /
+// download endpoints (/storage/objects/*) live in
+// internal/storage/handler.go.
 package assets
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
-// PinSubjectTypeUser is the canonical pin subject type for "this
-// upload belongs to a user account, not to any richer resource". When
-// the resource layer lands, uploads tied to a resource will use
-// "resource" as the subject type instead.
-const PinSubjectTypeUser = "user"
+// PinSubjectTypeAsset is the storage-pin subject_type assets use to
+// claim their underlying bytes. Replaces the `user:` pin set by the
+// initial upload.
+const PinSubjectTypeAsset = "asset"
 
-// Handler implements the assets-related slice of
+// maxListLimit caps the per-page row count regardless of what the
+// caller requests. Higher than the openapi spec's default but in
+// line with its declared maximum (200).
+const maxListLimit = 200
+
+// Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
-	Service *storage.Service
+	Pool    *pgxpool.Pool
+	Storage *storage.Service
 	Logger  *slog.Logger
 }
 
-// NewHandler binds the handler to a storage Service.
-func NewHandler(svc *storage.Service, logger *slog.Logger) *Handler {
-	return &Handler{Service: svc, Logger: logger}
+// NewHandler binds an entity handler to the DB pool and the storage
+// Service it shares with the storage byte handler.
+func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger) *Handler {
+	return &Handler{Pool: pool, Storage: storageSvc, Logger: logger}
 }
 
-// UploadAsset implements POST /api/v1/assets.
-//
-// Streams the request body through storage.Service.UploadOriginal,
-// which hashes on the fly, dedups against any existing object with
-// the same sha256, and adds a `user:<ref>` pin so the caller owns
-// the upload.
-func (h *Handler) UploadAsset(
+// ---------------------------------------------------------------------------
+// CreateAsset
+// ---------------------------------------------------------------------------
+
+func (h *Handler) CreateAsset(
 	ctx context.Context,
-	req openapi.UploadAssetRequestObject,
-) (openapi.UploadAssetResponseObject, error) {
+	req openapi.CreateAssetRequestObject,
+) (openapi.CreateAssetResponseObject, error) {
 	id := auth.IdentityFromContext(ctx)
 	if id == nil {
-		return openapi.UploadAsset401JSONResponse{
+		return openapi.CreateAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
 	if req.Body == nil {
-		return openapi.UploadAsset500JSONResponse{
-			InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "missing request body"},
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	in := req.Body
+
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "title is required"},
 		}, nil
 	}
 
-	contentType := "application/octet-stream"
-	if req.Params.XContentType != nil && *req.Params.XContentType != "" {
-		contentType = *req.Params.XContentType
+	status := "active"
+	if in.Status != nil {
+		status = string(*in.Status)
+	}
+	switch status {
+	case "draft", "active", "archived":
+	default:
+		return openapi.CreateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "status must be one of draft|active|archived"},
+		}, nil
 	}
 
-	pin := storage.PinRef{
-		SubjectType: PinSubjectTypeUser,
-		SubjectID:   strconv.FormatInt(id.UserRef, 10),
-	}
-
-	result, err := h.Service.UploadOriginal(ctx, req.Body, contentType, pin)
+	metadataJSON, err := encodeMetadata(in.Metadata)
 	if err != nil {
-		h.Logger.LogAttrs(ctx, slog.LevelError, "assets.upload.error",
-			slog.Int64("user_ref", id.UserRef),
-			slog.String("err", err.Error()),
-		)
-		return openapi.UploadAsset500JSONResponse{
-			InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "could not store upload"},
-		}, nil
+		return nil, err
 	}
 
-	return openapi.UploadAsset201JSONResponse(openapi.UploadResult{
-		Hash:           result.Hash,
-		Size:           result.Size,
-		ContentType:    result.ContentType,
-		Deduped:        result.Deduped,
-		PinSubjectType: result.Pin.SubjectType,
-		PinSubjectId:   result.Pin.SubjectID,
-	}), nil
+	var fileHashPtr *string
+	if in.FileHash != nil && *in.FileHash != "" {
+		fh := strings.ToLower(strings.TrimSpace(*in.FileHash))
+		if err := storage.ValidateHash(fh); err != nil {
+			return openapi.CreateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "file_hash: " + err.Error()},
+			}, nil
+		}
+		fileHashPtr = &fh
+	}
+
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("assets: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := New(tx)
+
+	row, err := q.CreateAsset(ctx, CreateAssetParams{
+		Title:          title,
+		Description:    strDefault(in.Description, ""),
+		ResourceType:   in.ResourceType,
+		OwnerUserRef:   &id.UserRef,
+		Status:         status,
+		FileHash:       fileHashPtr,
+		FileExtension:  in.FileExtension,
+		FileSizeBytes:  nil, // backfilled below from storage_objects if hash present
+		Metadata:       metadataJSON,
+		OriginServerID: pgtype.UUID{Valid: false},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("assets: insert: %w", err)
+	}
+	newID := uuid.UUID(row.ID.Bytes)
+
+	// Tags (optional). Replace, not merge — at creation time there's
+	// nothing to merge with.
+	tags := []string{}
+	if in.Tags != nil {
+		seen := map[string]struct{}{}
+		for _, t := range *in.Tags {
+			t = strings.TrimSpace(t)
+			if t == "" {
+				continue
+			}
+			if _, dup := seen[t]; dup {
+				continue
+			}
+			seen[t] = struct{}{}
+			if err := q.AddAssetTag(ctx, AddAssetTagParams{
+				AssetID: row.ID,
+				Tag:     t,
+			}); err != nil {
+				return nil, fmt.Errorf("assets: add tag: %w", err)
+			}
+			tags = append(tags, t)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("assets: commit: %w", err)
+	}
+
+	// Pin rebalancing happens OUTSIDE the asset-table tx so a
+	// storage-pin failure doesn't roll back the asset itself —
+	// the worst case is an extra `user:` pin we GC later.
+	if fileHashPtr != nil {
+		if err := h.Storage.AddPin(ctx, storage.PinRef{
+			SubjectType: PinSubjectTypeAsset,
+			SubjectID:   newID.String(),
+		}, *fileHashPtr); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.add_pin.error",
+				slog.String("asset_id", newID.String()),
+				slog.String("file_hash", *fileHashPtr),
+				slog.String("err", err.Error()),
+			)
+		}
+		if err := h.Storage.RemovePin(ctx, storage.PinRef{
+			SubjectType: storage.PinSubjectTypeUser,
+			SubjectID:   strconv.FormatInt(id.UserRef, 10),
+		}, *fileHashPtr); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.remove_user_pin.skipped",
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+
+	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
 }
 
-// DownloadAssetOriginal implements GET /api/v1/assets/{hash}.
-func (h *Handler) DownloadAssetOriginal(
+// ---------------------------------------------------------------------------
+// GetAsset
+// ---------------------------------------------------------------------------
+
+func (h *Handler) GetAsset(
 	ctx context.Context,
-	req openapi.DownloadAssetOriginalRequestObject,
-) (openapi.DownloadAssetOriginalResponseObject, error) {
-	id := auth.IdentityFromContext(ctx)
-	if id == nil {
-		return openapi.DownloadAssetOriginal401JSONResponse{
+	req openapi.GetAssetRequestObject,
+) (openapi.GetAssetResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetAsset401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	return h.download(ctx, req.Hash, storage.VariantOriginal, headerVal(req.Params.Range), originalResponder{})
+	q := New(h.Pool)
+	row, err := q.GetAsset(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.GetAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	tags, err := q.ListAssetTags(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("assets: list tags: %w", err)
+	}
+	return openapi.GetAsset200JSONResponse(rowToAsset(row, tags)), nil
 }
 
-// DownloadAssetVariant implements GET /api/v1/assets/{hash}/{variant}.
+// ---------------------------------------------------------------------------
+// UpdateAsset
+// ---------------------------------------------------------------------------
+
+func (h *Handler) UpdateAsset(
+	ctx context.Context,
+	req openapi.UpdateAssetRequestObject,
+) (openapi.UpdateAssetResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.UpdateAsset401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	in := req.Body
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+
+	var statusPtr *string
+	if in.Status != nil {
+		s := string(*in.Status)
+		switch s {
+		case "draft", "active", "archived":
+		default:
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "status must be one of draft|active|archived"},
+			}, nil
+		}
+		statusPtr = &s
+	}
+	var titlePtr *string
+	if in.Title != nil {
+		t := strings.TrimSpace(*in.Title)
+		if t == "" {
+			return openapi.UpdateAsset400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "title cannot be empty"},
+			}, nil
+		}
+		titlePtr = &t
+	}
+	var descPtr *string
+	if in.Description != nil {
+		descPtr = in.Description
+	}
+	var metaJSON []byte
+	if in.Metadata != nil {
+		raw, err := encodeMetadata(in.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		metaJSON = raw
+	}
+
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("assets: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := New(tx)
+
+	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
+		ID:          pgID,
+		Title:       titlePtr,
+		Description: descPtr,
+		Status:      statusPtr,
+		Metadata:    metaJSON,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: update: %w", err)
+	}
+
+	// Tag replacement when the client sends a tags array.
+	tags := []string{}
+	if in.Tags != nil {
+		clean := dedupeTags(*in.Tags)
+		// Two-step replacement: DELETE all + INSERT new. Cheaper than
+		// diffing for small sets, and tags don't carry per-row state
+		// we'd care to preserve.
+		if _, err := tx.Exec(ctx, `DELETE FROM asset_tag WHERE asset_id = $1`, row.ID); err != nil {
+			return nil, fmt.Errorf("assets: clear tags: %w", err)
+		}
+		for _, t := range clean {
+			if err := q.AddAssetTag(ctx, AddAssetTagParams{AssetID: row.ID, Tag: t}); err != nil {
+				return nil, fmt.Errorf("assets: add tag: %w", err)
+			}
+		}
+		tags = clean
+	} else {
+		existing, err := q.ListAssetTags(ctx, row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("assets: list tags: %w", err)
+		}
+		tags = existing
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("assets: commit: %w", err)
+	}
+
+	return openapi.UpdateAsset200JSONResponse(rowToAsset(updateRowToGetRow(row), tags)), nil
+}
+
+// ---------------------------------------------------------------------------
+// DeleteAsset
+// ---------------------------------------------------------------------------
+
+func (h *Handler) DeleteAsset(
+	ctx context.Context,
+	req openapi.DeleteAssetRequestObject,
+) (openapi.DeleteAssetResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.DeleteAsset401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+
+	// Fetch first so we can drop the storage pin even though the soft
+	// delete doesn't return the row.
+	q := New(h.Pool)
+	row, err := q.GetAsset(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.DeleteAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if err := q.SoftDeleteAsset(ctx, pgID); err != nil {
+		return nil, fmt.Errorf("assets: soft-delete: %w", err)
+	}
+	if row.FileHash != nil {
+		if err := h.Storage.RemovePin(ctx, storage.PinRef{
+			SubjectType: PinSubjectTypeAsset,
+			SubjectID:   uuid.UUID(row.ID.Bytes).String(),
+		}, *row.FileHash); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.delete.remove_pin.error",
+				slog.String("asset_id", uuid.UUID(row.ID.Bytes).String()),
+				slog.String("file_hash", *row.FileHash),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+	return openapi.DeleteAsset204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
+// ListAssets
+// ---------------------------------------------------------------------------
+
+func (h *Handler) ListAssets(
+	ctx context.Context,
+	req openapi.ListAssetsRequestObject,
+) (openapi.ListAssetsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListAssets401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+
+	limit := int32(50)
+	if req.Params.Limit != nil {
+		l := *req.Params.Limit
+		if l < 1 {
+			l = 1
+		}
+		if l > maxListLimit {
+			l = maxListLimit
+		}
+		limit = int32(l)
+	}
+
+	var cursorTs pgtype.Timestamptz
+	var cursorID pgtype.UUID
+	if req.Params.Cursor != nil && *req.Params.Cursor != "" {
+		ts, id, err := decodeCursor(*req.Params.Cursor)
+		if err != nil {
+			return openapi.ListAssets500JSONResponse{
+				InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: "invalid cursor"},
+			}, nil
+		}
+		cursorTs = pgtype.Timestamptz{Time: ts, Valid: true}
+		cursorID = pgtype.UUID{Bytes: id, Valid: true}
+	}
+
+	var ownerRef *int64
+	if req.Params.OwnerRef != nil {
+		ownerRef = req.Params.OwnerRef
+	}
+	var resType *int64
+	if req.Params.ResourceType != nil {
+		resType = req.Params.ResourceType
+	}
+	var statusPtr *string
+	if req.Params.Status != nil {
+		s := string(*req.Params.Status)
+		statusPtr = &s
+	}
+
+	q := New(h.Pool)
+
+	// One-shot paging: fetch limit+1 to know whether there's a next page.
+	fetch := limit + 1
+
+	var assetsList []openapi.Asset
+	var lastCreatedAt time.Time
+	var lastID uuid.UUID
+	var rowCount int
+
+	if req.Params.Tag != nil && *req.Params.Tag != "" {
+		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
+			Tag:             *req.Params.Tag,
+			OwnerUserRef:    ownerRef,
+			ResourceType:    resType,
+			Status:          statusPtr,
+			CursorCreatedAt: cursorTs,
+			CursorID:        cursorID,
+			RowLimit:        fetch,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("assets: list by tag: %w", err)
+		}
+		for _, r := range rows {
+			rowCount++
+			if rowCount > int(limit) {
+				break
+			}
+			tags, err := q.ListAssetTags(ctx, r.ID)
+			if err != nil {
+				return nil, fmt.Errorf("assets: list tags: %w", err)
+			}
+			assetsList = append(assetsList, rowToAsset(listByTagRowToGetRow(r), tags))
+			lastCreatedAt = r.CreatedAt.Time
+			lastID = uuid.UUID(r.ID.Bytes)
+		}
+		rowCount = len(rows)
+	} else {
+		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
+			OwnerUserRef:    ownerRef,
+			ResourceType:    resType,
+			Status:          statusPtr,
+			CursorCreatedAt: cursorTs,
+			CursorID:        cursorID,
+			RowLimit:        fetch,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("assets: list: %w", err)
+		}
+		for i, r := range rows {
+			if i >= int(limit) {
+				break
+			}
+			tags, err := q.ListAssetTags(ctx, r.ID)
+			if err != nil {
+				return nil, fmt.Errorf("assets: list tags: %w", err)
+			}
+			assetsList = append(assetsList, rowToAsset(listRowToGetRow(r), tags))
+			lastCreatedAt = r.CreatedAt.Time
+			lastID = uuid.UUID(r.ID.Bytes)
+		}
+		rowCount = len(rows)
+	}
+
+	resp := openapi.AssetList{Items: assetsList}
+	if rowCount > int(limit) {
+		next := encodeCursor(lastCreatedAt, lastID)
+		resp.NextCursor = &next
+	}
+	if resp.Items == nil {
+		resp.Items = []openapi.Asset{}
+	}
+	return openapi.ListAssets200JSONResponse(resp), nil
+}
+
+// ---------------------------------------------------------------------------
+// DownloadAssetFile / DownloadAssetVariant
+// ---------------------------------------------------------------------------
+
+func (h *Handler) DownloadAssetFile(
+	ctx context.Context,
+	req openapi.DownloadAssetFileRequestObject,
+) (openapi.DownloadAssetFileResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.DownloadAssetFile401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return openapi.DownloadAssetFile404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset has no file attached"},
+		}, nil
+	}
+
+	body, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return openapi.DownloadAssetFile404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "stored object missing for this asset"},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.DownloadAssetFile200ApplicationoctetStreamResponse{
+		Body:          body,
+		ContentLength: info.Size,
+	}, nil
+}
+
 func (h *Handler) DownloadAssetVariant(
 	ctx context.Context,
 	req openapi.DownloadAssetVariantRequestObject,
 ) (openapi.DownloadAssetVariantResponseObject, error) {
-	id := auth.IdentityFromContext(ctx)
-	if id == nil {
+	if auth.IdentityFromContext(ctx) == nil {
 		return openapi.DownloadAssetVariant401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	resp, err := h.download(ctx, req.Hash, req.Variant, headerVal(req.Params.Range), variantResponder{})
-	if err != nil || resp == nil {
+	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))
+	if err != nil {
 		return nil, err
 	}
-	return resp.(openapi.DownloadAssetVariantResponseObject), nil
-}
-
-// --- shared download path -------------------------------------------------
-
-// downloadResponder turns a generic download outcome into the
-// per-operation response type the codegen wants. Allows us to share
-// the actual handler logic between the two GET endpoints.
-type downloadResponder interface {
-	full(body io.Reader, length int64) any
-	partial(body io.Reader, length int64) any
-	notFound() any
-}
-
-type originalResponder struct{}
-
-func (originalResponder) full(body io.Reader, length int64) any {
-	return openapi.DownloadAssetOriginal200ApplicationoctetStreamResponse{Body: body, ContentLength: length}
-}
-func (originalResponder) partial(body io.Reader, length int64) any {
-	return openapi.DownloadAssetOriginal206ApplicationoctetStreamResponse{Body: body, ContentLength: length}
-}
-func (originalResponder) notFound() any {
-	return openapi.DownloadAssetOriginal404JSONResponse{
-		NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "object not found"},
-	}
-}
-
-type variantResponder struct{}
-
-func (variantResponder) full(body io.Reader, length int64) any {
-	return openapi.DownloadAssetVariant200ApplicationoctetStreamResponse{Body: body, ContentLength: length}
-}
-func (variantResponder) partial(body io.Reader, length int64) any {
-	return openapi.DownloadAssetVariant206ApplicationoctetStreamResponse{Body: body, ContentLength: length}
-}
-func (variantResponder) notFound() any {
-	return openapi.DownloadAssetVariant404JSONResponse{
-		NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "object not found"},
-	}
-}
-
-func (h *Handler) download(
-	ctx context.Context,
-	hash, variant, rangeHeader string,
-	resp downloadResponder,
-) (openapi.DownloadAssetOriginalResponseObject, error) {
-	if rangeHeader == "" {
-		body, info, err := h.Service.Download(ctx, hash, variant)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				return resp.notFound().(openapi.DownloadAssetOriginalResponseObject), nil
-			}
-			return nil, err
-		}
-		return resp.full(body, info.Size).(openapi.DownloadAssetOriginalResponseObject), nil
-	}
-
-	// Honour a single-range request. Multi-range (the rare comma form)
-	// returns a 200 with the full body — same as nginx's default for
-	// edge cases.
-	offset, length, ok := parseSingleRange(rangeHeader)
 	if !ok {
-		body, info, err := h.Service.Download(ctx, hash, variant)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				return resp.notFound().(openapi.DownloadAssetOriginalResponseObject), nil
-			}
-			return nil, err
-		}
-		return resp.full(body, info.Size).(openapi.DownloadAssetOriginalResponseObject), nil
+		return openapi.DownloadAssetVariant404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset has no file attached"},
+		}, nil
 	}
-
-	body, err := h.Service.DownloadRange(ctx, hash, variant, offset, length)
+	body, info, err := h.Storage.Download(ctx, hash, req.Variant)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return resp.notFound().(openapi.DownloadAssetOriginalResponseObject), nil
+			return openapi.DownloadAssetVariant404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "variant not found"},
+			}, nil
 		}
 		return nil, err
 	}
-	return resp.partial(body, length).(openapi.DownloadAssetOriginalResponseObject), nil
+	return openapi.DownloadAssetVariant200ApplicationoctetStreamResponse{
+		Body:          body,
+		ContentLength: info.Size,
+	}, nil
 }
 
-// --- helpers ---------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Tag management
+// ---------------------------------------------------------------------------
 
-func headerVal(p *string) string {
+func (h *Handler) AddAssetTags(
+	ctx context.Context,
+	req openapi.AddAssetTagsRequestObject,
+) (openapi.AddAssetTagsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.AddAssetTags401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil || len(req.Body.Tags) == 0 {
+		return openapi.AddAssetTags400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "tags array is required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+	if _, err := q.GetAsset(ctx, pgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.AddAssetTags404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	for _, t := range dedupeTags(req.Body.Tags) {
+		if err := q.AddAssetTag(ctx, AddAssetTagParams{AssetID: pgID, Tag: t}); err != nil {
+			return nil, fmt.Errorf("assets: add tag: %w", err)
+		}
+	}
+	return openapi.AddAssetTags204Response{}, nil
+}
+
+func (h *Handler) RemoveAssetTag(
+	ctx context.Context,
+	req openapi.RemoveAssetTagRequestObject,
+) (openapi.RemoveAssetTagResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.RemoveAssetTag401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+	if err := q.RemoveAssetTag(ctx, RemoveAssetTagParams{AssetID: pgID, Tag: req.Tag}); err != nil {
+		return nil, fmt.Errorf("assets: remove tag: %w", err)
+	}
+	return openapi.RemoveAssetTag204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) resolveAssetFileHash(ctx context.Context, id uuid.UUID) (string, bool, error) {
+	q := New(h.Pool)
+	row, err := q.GetAsset(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if row.FileHash == nil || *row.FileHash == "" {
+		return "", false, nil
+	}
+	return *row.FileHash, true, nil
+}
+
+// encodeMetadata serialises the optional API-side metadata map into
+// the JSONB column. nil/empty -> "{}" so the column never holds
+// SQL NULL.
+func encodeMetadata(m *map[string]interface{}) ([]byte, error) {
+	if m == nil || len(*m) == 0 {
+		return []byte("{}"), nil
+	}
+	b, err := json.Marshal(*m)
+	if err != nil {
+		return nil, fmt.Errorf("assets: marshal metadata: %w", err)
+	}
+	return b, nil
+}
+
+// dedupeTags trims, lowercases, and dedups a tag list. Order is
+// preserved (first occurrence wins).
+func dedupeTags(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// strDefault returns *p or the default if p is nil.
+func strDefault(p *string, def string) string {
 	if p == nil {
-		return ""
+		return def
 	}
 	return *p
 }
 
-// parseSingleRange parses "bytes=<off>-<end>" or "bytes=<off>-" into
-// (offset, length, ok). Returns ok=false for any form we don't
-// understand (multi-range, suffix-range), letting the caller fall
-// back to a 200 full-body response.
-func parseSingleRange(h string) (offset, length int64, ok bool) {
-	const prefix = "bytes="
-	if !strings.HasPrefix(h, prefix) {
-		return 0, 0, false
-	}
-	spec := strings.TrimSpace(strings.TrimPrefix(h, prefix))
-	if strings.Contains(spec, ",") {
-		return 0, 0, false // multi-range
-	}
-	dash := strings.IndexByte(spec, '-')
-	if dash <= 0 {
-		// "-N" suffix range; not bothering for Phase 1.4.C.
-		return 0, 0, false
-	}
-	startStr, endStr := spec[:dash], spec[dash+1:]
-	start, err := strconv.ParseInt(startStr, 10, 64)
-	if err != nil || start < 0 {
-		return 0, 0, false
-	}
-	if endStr == "" {
-		// "bytes=N-" — to EOF
-		return start, 0, true
-	}
-	end, err := strconv.ParseInt(endStr, 10, 64)
-	if err != nil || end < start {
-		return 0, 0, false
-	}
-	return start, end - start + 1, true
+// encodeCursor builds the opaque pagination token. RFC3339-nano +
+// "|" + uuid, base64-url encoded.
+func encodeCursor(t time.Time, id uuid.UUID) string {
+	raw := t.UTC().Format(time.RFC3339Nano) + "|" + id.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
-// Compile-time assertion: the Handler satisfies the part of
-// StrictServerInterface it claims to. Catches drift if codegen
-// signatures change.
+func decodeCursor(s string) (time.Time, uuid.UUID, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, uuid.Nil, err
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, uuid.Nil, errors.New("bad cursor shape")
+	}
+	t, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, uuid.Nil, err
+	}
+	id, err := uuid.Parse(parts[1])
+	if err != nil {
+		return time.Time{}, uuid.Nil, err
+	}
+	return t, id, nil
+}
+
+// rowToAsset converts the sqlc-emitted row shape into the OpenAPI
+// Asset response. Several sqlc-generated row types share the same
+// columns; we normalise via rowToAssetRow/listRowToGetRow etc.
+func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
+	a := openapi.Asset{
+		Id:           openapi_types.UUID(row.ID.Bytes),
+		Title:        row.Title,
+		ResourceType: row.ResourceType,
+		Status:       openapi.AssetStatus(row.Status),
+		CreatedAt:    row.CreatedAt.Time,
+		UpdatedAt:    row.UpdatedAt.Time,
+		Tags:         tags,
+	}
+	if row.Description != "" {
+		d := row.Description
+		a.Description = &d
+	}
+	a.OwnerUserRef = row.OwnerUserRef
+	a.FileHash = row.FileHash
+	a.FileExtension = row.FileExtension
+	a.FileSizeBytes = row.FileSizeBytes
+	if len(row.Metadata) > 0 && string(row.Metadata) != "{}" {
+		var m map[string]interface{}
+		if err := json.Unmarshal(row.Metadata, &m); err == nil {
+			a.Metadata = &m
+		}
+	}
+	if a.Tags == nil {
+		a.Tags = []string{}
+	}
+	return a
+}
+
+// The CreateAsset/UpdateAsset/ListAsset return shapes have the same
+// column set but distinct Go types (sqlc generates one per query).
+// These helpers project them onto a common GetAssetRow we already
+// have a marshaller for.
+func rowToAssetRow(r CreateAssetRow) GetAssetRow {
+	return GetAssetRow{
+		ID:             r.ID,
+		Title:          r.Title,
+		Description:    r.Description,
+		ResourceType:   r.ResourceType,
+		OwnerUserRef:   r.OwnerUserRef,
+		Status:         r.Status,
+		FileHash:       r.FileHash,
+		FileExtension:  r.FileExtension,
+		FileSizeBytes:  r.FileSizeBytes,
+		Metadata:       r.Metadata,
+		OriginServerID: r.OriginServerID,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+}
+
+func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
+	return GetAssetRow{
+		ID:             r.ID,
+		Title:          r.Title,
+		Description:    r.Description,
+		ResourceType:   r.ResourceType,
+		OwnerUserRef:   r.OwnerUserRef,
+		Status:         r.Status,
+		FileHash:       r.FileHash,
+		FileExtension:  r.FileExtension,
+		FileSizeBytes:  r.FileSizeBytes,
+		Metadata:       r.Metadata,
+		OriginServerID: r.OriginServerID,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+}
+
+func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
+	return GetAssetRow{
+		ID:             r.ID,
+		Title:          r.Title,
+		Description:    r.Description,
+		ResourceType:   r.ResourceType,
+		OwnerUserRef:   r.OwnerUserRef,
+		Status:         r.Status,
+		FileHash:       r.FileHash,
+		FileExtension:  r.FileExtension,
+		FileSizeBytes:  r.FileSizeBytes,
+		Metadata:       r.Metadata,
+		OriginServerID: r.OriginServerID,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+}
+
+func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
+	return GetAssetRow{
+		ID:             r.ID,
+		Title:          r.Title,
+		Description:    r.Description,
+		ResourceType:   r.ResourceType,
+		OwnerUserRef:   r.OwnerUserRef,
+		Status:         r.Status,
+		FileHash:       r.FileHash,
+		FileExtension:  r.FileExtension,
+		FileSizeBytes:  r.FileSizeBytes,
+		Metadata:       r.Metadata,
+		OriginServerID: r.OriginServerID,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+}
+
+// Compile-time assertion: catches openapi-codegen signature drift.
 var _ interface {
-	UploadAsset(context.Context, openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error)
-	DownloadAssetOriginal(context.Context, openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error)
+	CreateAsset(context.Context, openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error)
+	GetAsset(context.Context, openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error)
+	UpdateAsset(context.Context, openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error)
+	DeleteAsset(context.Context, openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error)
+	ListAssets(context.Context, openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error)
+	DownloadAssetFile(context.Context, openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error)
 	DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error)
+	AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error)
+	RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error)
 } = (*Handler)(nil)

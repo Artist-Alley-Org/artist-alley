@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>Signing out — artist-alley</title>
+    <style>
+        :root { color-scheme: dark light; --bg:#0f1115; --fg:#e7e9ec; --muted:#8a8f9a; }
+        @media (prefers-color-scheme: light) {
+            :root { --bg:#f7f7f8; --fg:#16181d; --muted:#5a606b; }
+        }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--fg);
+            font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+            display: grid;
+            place-items: center;
+        }
+        .status { color: var(--muted); font-size: 14px; }
+    </style>
+</head>
+<body>
+    <p class="status" id="status">Signing out…</p>
+    <script>
+        (async function () {
+            try {
+                await fetch('/api/v1/auth/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+            } catch { /* idempotent — proceed to /login regardless */ }
+            location.href = '/login';
+        })();
+    </script>
+</body>
+</html>

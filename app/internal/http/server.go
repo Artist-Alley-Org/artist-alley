@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
@@ -21,6 +22,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -59,10 +61,18 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Method(http.MethodGet, "/healthz", health)
 	r.Method(http.MethodGet, "/readyz", health) // same handler for now
 
+	// Shared auth subsystem: one SessionManager + LoginLimiter for the
+	// whole process; one audit Recorder feeds both login attempts and
+	// every other security-relevant event later phases will plug in.
+	sessions := auth.NewSessionManager(pool)
+	limiter := auth.NewLoginLimiter()
+	auditRec := audit.NewRecorder(pool, logger)
+	sysCfg := sysconfig.NewStore(pool)
+
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
-	resolver := &auth.Resolver{Pool: pool, Logger: logger}
+	resolver := &auth.Resolver{Pool: pool, Logger: logger, Sessions: sessions}
 	r.Route("/api/v1", func(r chi.Router) {
 		// Resolve identity (cookie or Bearer token) for every request
 		// under /api/v1. Anonymous requests still pass through — each
@@ -71,7 +81,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
 
-		impl := newAPIServer(pool, logger, cfg.ScrambleKey, storageSvc)
+		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 	})

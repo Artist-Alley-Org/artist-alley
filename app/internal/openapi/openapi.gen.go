@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,69 @@ const (
 	CookieAuthScopes cookieAuthContextKey = "cookieAuth.Scopes"
 )
 
+// Defines values for AssetStatus.
+const (
+	AssetStatusActive   AssetStatus = "active"
+	AssetStatusArchived AssetStatus = "archived"
+	AssetStatusDraft    AssetStatus = "draft"
+)
+
+// Valid indicates whether the value is a known member of the AssetStatus enum.
+func (e AssetStatus) Valid() bool {
+	switch e {
+	case AssetStatusActive:
+		return true
+	case AssetStatusArchived:
+		return true
+	case AssetStatusDraft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssetCreateStatus.
+const (
+	AssetCreateStatusActive   AssetCreateStatus = "active"
+	AssetCreateStatusArchived AssetCreateStatus = "archived"
+	AssetCreateStatusDraft    AssetCreateStatus = "draft"
+)
+
+// Valid indicates whether the value is a known member of the AssetCreateStatus enum.
+func (e AssetCreateStatus) Valid() bool {
+	switch e {
+	case AssetCreateStatusActive:
+		return true
+	case AssetCreateStatusArchived:
+		return true
+	case AssetCreateStatusDraft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssetUpdateStatus.
+const (
+	AssetUpdateStatusActive   AssetUpdateStatus = "active"
+	AssetUpdateStatusArchived AssetUpdateStatus = "archived"
+	AssetUpdateStatusDraft    AssetUpdateStatus = "draft"
+)
+
+// Valid indicates whether the value is a known member of the AssetUpdateStatus enum.
+func (e AssetUpdateStatus) Valid() bool {
+	switch e {
+	case AssetUpdateStatusActive:
+		return true
+	case AssetUpdateStatusArchived:
+		return true
+	case AssetUpdateStatusDraft:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	Session CurrentUserAuthMethod = "session"
@@ -40,6 +104,69 @@ func (e CurrentUserAuthMethod) Valid() bool {
 	case Session:
 		return true
 	case Token:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SMTPConfigEncryption.
+const (
+	SMTPConfigEncryptionNone     SMTPConfigEncryption = "none"
+	SMTPConfigEncryptionStarttls SMTPConfigEncryption = "starttls"
+	SMTPConfigEncryptionTls      SMTPConfigEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the SMTPConfigEncryption enum.
+func (e SMTPConfigEncryption) Valid() bool {
+	switch e {
+	case SMTPConfigEncryptionNone:
+		return true
+	case SMTPConfigEncryptionStarttls:
+		return true
+	case SMTPConfigEncryptionTls:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SetupDefaultsSmtpEncryption.
+const (
+	SetupDefaultsSmtpEncryptionNone     SetupDefaultsSmtpEncryption = "none"
+	SetupDefaultsSmtpEncryptionStarttls SetupDefaultsSmtpEncryption = "starttls"
+	SetupDefaultsSmtpEncryptionTls      SetupDefaultsSmtpEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the SetupDefaultsSmtpEncryption enum.
+func (e SetupDefaultsSmtpEncryption) Valid() bool {
+	switch e {
+	case SetupDefaultsSmtpEncryptionNone:
+		return true
+	case SetupDefaultsSmtpEncryptionStarttls:
+		return true
+	case SetupDefaultsSmtpEncryptionTls:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAssetsParamsStatus.
+const (
+	ListAssetsParamsStatusActive   ListAssetsParamsStatus = "active"
+	ListAssetsParamsStatusArchived ListAssetsParamsStatus = "archived"
+	ListAssetsParamsStatusDraft    ListAssetsParamsStatus = "draft"
+)
+
+// Valid indicates whether the value is a known member of the ListAssetsParamsStatus enum.
+func (e ListAssetsParamsStatus) Valid() bool {
+	switch e {
+	case ListAssetsParamsStatusActive:
+		return true
+	case ListAssetsParamsStatusArchived:
+		return true
+	case ListAssetsParamsStatusDraft:
 		return true
 	default:
 		return false
@@ -68,6 +195,73 @@ type ApiTokenSummary struct {
 	Name       string             `json:"name"`
 	Scopes     []string           `json:"scopes"`
 }
+
+// Asset defines model for Asset.
+type Asset struct {
+	CreatedAt     time.Time `json:"created_at"`
+	Description   *string   `json:"description,omitempty"`
+	FileExtension *string   `json:"file_extension,omitempty"`
+
+	// FileHash sha256 of the linked storage object
+	FileHash      *string            `json:"file_hash,omitempty"`
+	FileSizeBytes *int64             `json:"file_size_bytes,omitempty"`
+	Id            openapi_types.UUID `json:"id"`
+
+	// Metadata Free-form JSONB metadata blob (EXIF, custom fields, etc.).
+	Metadata     *map[string]interface{} `json:"metadata,omitempty"`
+	OwnerUserRef *int64                  `json:"owner_user_ref,omitempty"`
+	ResourceType int64                   `json:"resource_type"`
+	Status       AssetStatus             `json:"status"`
+	Tags         []string                `json:"tags"`
+	Title        string                  `json:"title"`
+	UpdatedAt    time.Time               `json:"updated_at"`
+}
+
+// AssetStatus defines model for Asset.Status.
+type AssetStatus string
+
+// AssetCreate defines model for AssetCreate.
+type AssetCreate struct {
+	Description   *string `json:"description,omitempty"`
+	FileExtension *string `json:"file_extension,omitempty"`
+
+	// FileHash sha256 of a previously uploaded storage object. When set,
+	// the storage layer is re-pinned under `asset:<new-id>` and
+	// the caller's `user:` pin (from the prior upload) is
+	// dropped.
+	FileHash     *string                 `json:"file_hash,omitempty"`
+	Metadata     *map[string]interface{} `json:"metadata,omitempty"`
+	ResourceType int64                   `json:"resource_type"`
+	Status       *AssetCreateStatus      `json:"status,omitempty"`
+	Tags         *[]string               `json:"tags,omitempty"`
+	Title        string                  `json:"title"`
+}
+
+// AssetCreateStatus defines model for AssetCreate.Status.
+type AssetCreateStatus string
+
+// AssetList defines model for AssetList.
+type AssetList struct {
+	Items []Asset `json:"items"`
+
+	// NextCursor Pass back as the `cursor` query param to fetch the next
+	// page. null when the current page is the last.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// AssetUpdate Partial update; only fields present are touched. Tag arrays
+// REPLACE the full tag set when supplied (use the /tags
+// sub-resource for additive ops).
+type AssetUpdate struct {
+	Description *string                 `json:"description,omitempty"`
+	Metadata    *map[string]interface{} `json:"metadata,omitempty"`
+	Status      *AssetUpdateStatus      `json:"status,omitempty"`
+	Tags        *[]string               `json:"tags,omitempty"`
+	Title       *string                 `json:"title,omitempty"`
+}
+
+// AssetUpdateStatus defines model for AssetUpdate.Status.
+type AssetUpdateStatus string
 
 // Capability defines model for Capability.
 type Capability struct {
@@ -125,6 +319,14 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// InitialAdminRequest defines model for InitialAdminRequest.
+type InitialAdminRequest struct {
+	Email    openapi_types.Email `json:"email"`
+	Fullname *string             `json:"fullname,omitempty"`
+	Password string              `json:"password"`
+	Username string              `json:"username"`
+}
+
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
 	Password string `json:"password"`
@@ -167,9 +369,85 @@ type Role struct {
 	ParentId *openapi_types.UUID `json:"parent_id,omitempty"`
 }
 
+// SMTPConfig defines model for SMTPConfig.
+type SMTPConfig struct {
+	Encryption  SMTPConfigEncryption `json:"encryption"`
+	FromAddress string               `json:"from_address"`
+	Host        string               `json:"host"`
+	Password    *string              `json:"password,omitempty"`
+	Port        int                  `json:"port"`
+	Username    *string              `json:"username,omitempty"`
+}
+
+// SMTPConfigEncryption defines model for SMTPConfig.Encryption.
+type SMTPConfigEncryption string
+
 // SetUserRoleRequest defines model for SetUserRoleRequest.
 type SetUserRoleRequest struct {
 	RoleId openapi_types.UUID `json:"role_id"`
+}
+
+// SetupCompleteRequest defines model for SetupCompleteRequest.
+type SetupCompleteRequest struct {
+	Admin InitialAdminRequest `json:"admin"`
+	Site  SiteConfig          `json:"site"`
+	Smtp  *SMTPConfig         `json:"smtp,omitempty"`
+}
+
+// SetupDefaults Prefills harvested from `AA_SETUP_DEFAULT_*` env vars at boot.
+// Empty strings mean "no prefill"; the form leaves those fields
+// blank.
+type SetupDefaults struct {
+	AdminEmail      string                      `json:"admin_email"`
+	AdminFullname   string                      `json:"admin_fullname"`
+	AdminUsername   string                      `json:"admin_username"`
+	SiteBaseUrl     string                      `json:"site_base_url"`
+	SiteName        string                      `json:"site_name"`
+	SmtpEncryption  SetupDefaultsSmtpEncryption `json:"smtp_encryption"`
+	SmtpFromAddress string                      `json:"smtp_from_address"`
+	SmtpHost        string                      `json:"smtp_host"`
+	SmtpPort        int                         `json:"smtp_port"`
+	SmtpUsername    string                      `json:"smtp_username"`
+}
+
+// SetupDefaultsSmtpEncryption defines model for SetupDefaults.SmtpEncryption.
+type SetupDefaultsSmtpEncryption string
+
+// SetupDeploymentInfo Read-only view of how the running process was configured at
+// boot. Shown on the setup page so the admin can confirm the
+// installation target before creating an admin account.
+type SetupDeploymentInfo struct {
+	DbHost string `json:"db_host"`
+	DbName string `json:"db_name"`
+	DbPort int    `json:"db_port"`
+
+	// StorageBackend fs | s3
+	StorageBackend string `json:"storage_backend"`
+}
+
+// SetupStatus defines model for SetupStatus.
+type SetupStatus struct {
+	// Defaults Prefills harvested from `AA_SETUP_DEFAULT_*` env vars at boot.
+	// Empty strings mean "no prefill"; the form leaves those fields
+	// blank.
+	Defaults SetupDefaults `json:"defaults"`
+
+	// Deployment Read-only view of how the running process was configured at
+	// boot. Shown on the setup page so the admin can confirm the
+	// installation target before creating an admin account.
+	Deployment SetupDeploymentInfo `json:"deployment"`
+
+	// NeedsSetup True when no user with the `system.admin` capability exists.
+	NeedsSetup bool `json:"needs_setup"`
+}
+
+// SiteConfig defines model for SiteConfig.
+type SiteConfig struct {
+	// BaseUrl Absolute URL the site is reachable at. Used to build
+	// outgoing links (e.g., password-reset emails). May be empty
+	// at install time and filled in later.
+	BaseUrl *string `json:"base_url,omitempty"`
+	Name    string  `json:"name"`
 }
 
 // UploadResult defines model for UploadResult.
@@ -211,8 +489,41 @@ type bearerAuthContextKey string
 // cookieAuthContextKey is the context key for cookieAuth security scheme
 type cookieAuthContextKey string
 
-// UploadAssetParams defines parameters for UploadAsset.
-type UploadAssetParams struct {
+// ListAssetsParams defines parameters for ListAssets.
+type ListAssetsParams struct {
+	// OwnerRef Filter to a single owner's assets.
+	OwnerRef     *int64                  `form:"owner_ref,omitempty" json:"owner_ref,omitempty"`
+	ResourceType *int64                  `form:"resource_type,omitempty" json:"resource_type,omitempty"`
+	Status       *ListAssetsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Tag Single-tag filter (intersection with other filters).
+	Tag *string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Cursor Opaque pagination token from a previous response.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAssetsParamsStatus defines parameters for ListAssets.
+type ListAssetsParamsStatus string
+
+// DownloadAssetFileParams defines parameters for DownloadAssetFile.
+type DownloadAssetFileParams struct {
+	Range *string `json:"Range,omitempty"`
+}
+
+// AddAssetTagsJSONBody defines parameters for AddAssetTags.
+type AddAssetTagsJSONBody struct {
+	Tags []string `json:"tags"`
+}
+
+// DownloadAssetVariantParams defines parameters for DownloadAssetVariant.
+type DownloadAssetVariantParams struct {
+	Range *string `json:"Range,omitempty"`
+}
+
+// UploadStorageObjectParams defines parameters for UploadStorageObject.
+type UploadStorageObjectParams struct {
 	// XContentType Original content type of the upload. Defaults to
 	// application/octet-stream when omitted. Recorded as the
 	// original variant's content_type so download responses can
@@ -220,15 +531,24 @@ type UploadAssetParams struct {
 	XContentType *string `json:"X-Content-Type,omitempty"`
 }
 
-// DownloadAssetOriginalParams defines parameters for DownloadAssetOriginal.
-type DownloadAssetOriginalParams struct {
+// DownloadStorageObjectParams defines parameters for DownloadStorageObject.
+type DownloadStorageObjectParams struct {
 	Range *string `json:"Range,omitempty"`
 }
 
-// DownloadAssetVariantParams defines parameters for DownloadAssetVariant.
-type DownloadAssetVariantParams struct {
+// DownloadStorageObjectVariantParams defines parameters for DownloadStorageObjectVariant.
+type DownloadStorageObjectVariantParams struct {
 	Range *string `json:"Range,omitempty"`
 }
+
+// CreateAssetJSONRequestBody defines body for CreateAsset for application/json ContentType.
+type CreateAssetJSONRequestBody = AssetCreate
+
+// UpdateAssetJSONRequestBody defines body for UpdateAsset for application/json ContentType.
+type UpdateAssetJSONRequestBody = AssetUpdate
+
+// AddAssetTagsJSONRequestBody defines body for AddAssetTags for application/json ContentType.
+type AddAssetTagsJSONRequestBody AddAssetTagsJSONBody
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
@@ -239,17 +559,38 @@ type CreateApiTokenJSONRequestBody = CreateApiTokenRequest
 // SetUserRoleJSONRequestBody defines body for SetUserRole for application/json ContentType.
 type SetUserRoleJSONRequestBody = SetUserRoleRequest
 
+// CompleteSetupJSONRequestBody defines body for CompleteSetup for application/json ContentType.
+type CompleteSetupJSONRequestBody = SetupCompleteRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Upload a new asset blob
+	// List assets (paginated)
+	// (GET /assets)
+	ListAssets(w http.ResponseWriter, r *http.Request, params ListAssetsParams)
+	// Create an asset entity
 	// (POST /assets)
-	UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams)
-	// Download the original variant by content hash
-	// (GET /assets/{hash})
-	DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams)
-	// Download a specific variant of an asset
-	// (GET /assets/{hash}/{variant})
-	DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams)
+	CreateAsset(w http.ResponseWriter, r *http.Request)
+	// Soft-delete an asset
+	// (DELETE /assets/{id})
+	DeleteAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (GET /assets/{id})
+	GetAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (PATCH /assets/{id})
+	UpdateAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Download the asset's primary file (original variant)
+	// (GET /assets/{id}/file)
+	DownloadAssetFile(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DownloadAssetFileParams)
+	// Add tags to an asset (bulk, idempotent)
+	// (POST /assets/{id}/tags)
+	AddAssetTags(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (DELETE /assets/{id}/tags/{tag})
+	RemoveAssetTag(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, tag string)
+	// Download a named variant of the asset (thumb / preview / etc.)
+	// (GET /assets/{id}/variants/{variant})
+	DownloadAssetVariant(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, variant string, params DownloadAssetVariantParams)
 	// List every capability the server knows about
 	// (GET /auth/capabilities)
 	ListCapabilities(w http.ResponseWriter, r *http.Request)
@@ -283,27 +624,75 @@ type ServerInterface interface {
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(w http.ResponseWriter, r *http.Request)
+	// Finalize first-run setup (admin + site + SMTP)
+	// (POST /setup/complete)
+	CompleteSetup(w http.ResponseWriter, r *http.Request)
+	// First-run setup status + admin-form prefills
+	// (GET /setup/status)
+	GetSetupStatus(w http.ResponseWriter, r *http.Request)
+	// Upload a raw byte stream
+	// (POST /storage/objects)
+	UploadStorageObject(w http.ResponseWriter, r *http.Request, params UploadStorageObjectParams)
+	// Download a raw byte stream by content hash (original variant)
+	// (GET /storage/objects/{hash})
+	DownloadStorageObject(w http.ResponseWriter, r *http.Request, hash string, params DownloadStorageObjectParams)
+	// Download a specific variant of a stored object
+	// (GET /storage/objects/{hash}/variants/{variant})
+	DownloadStorageObjectVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadStorageObjectVariantParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
 
-// Upload a new asset blob
+// List assets (paginated)
+// (GET /assets)
+func (_ Unimplemented) ListAssets(w http.ResponseWriter, r *http.Request, params ListAssetsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create an asset entity
 // (POST /assets)
-func (_ Unimplemented) UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams) {
+func (_ Unimplemented) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Download the original variant by content hash
-// (GET /assets/{hash})
-func (_ Unimplemented) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams) {
+// Soft-delete an asset
+// (DELETE /assets/{id})
+func (_ Unimplemented) DeleteAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Download a specific variant of an asset
-// (GET /assets/{hash}/{variant})
-func (_ Unimplemented) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams) {
+// (GET /assets/{id})
+func (_ Unimplemented) GetAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /assets/{id})
+func (_ Unimplemented) UpdateAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download the asset's primary file (original variant)
+// (GET /assets/{id}/file)
+func (_ Unimplemented) DownloadAssetFile(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DownloadAssetFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Add tags to an asset (bulk, idempotent)
+// (POST /assets/{id}/tags)
+func (_ Unimplemented) AddAssetTags(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /assets/{id}/tags/{tag})
+func (_ Unimplemented) RemoveAssetTag(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, tag string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download a named variant of the asset (thumb / preview / etc.)
+// (GET /assets/{id}/variants/{variant})
+func (_ Unimplemented) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, variant string, params DownloadAssetVariantParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -373,6 +762,36 @@ func (_ Unimplemented) ListResourceTypes(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// Finalize first-run setup (admin + site + SMTP)
+// (POST /setup/complete)
+func (_ Unimplemented) CompleteSetup(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// First-run setup status + admin-form prefills
+// (GET /setup/status)
+func (_ Unimplemented) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Upload a raw byte stream
+// (POST /storage/objects)
+func (_ Unimplemented) UploadStorageObject(w http.ResponseWriter, r *http.Request, params UploadStorageObjectParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download a raw byte stream by content hash (original variant)
+// (GET /storage/objects/{hash})
+func (_ Unimplemented) DownloadStorageObject(w http.ResponseWriter, r *http.Request, hash string, params DownloadStorageObjectParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Download a specific variant of a stored object
+// (GET /storage/objects/{hash}/variants/{variant})
+func (_ Unimplemented) DownloadStorageObjectVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadStorageObjectVariantParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ServerInterfaceWrapper converts contexts to parameters.
 type ServerInterfaceWrapper struct {
 	Handler            ServerInterface
@@ -382,8 +801,8 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// UploadAsset operation middleware
-func (siw *ServerInterfaceWrapper) UploadAsset(w http.ResponseWriter, r *http.Request) {
+// ListAssets operation middleware
+func (siw *ServerInterfaceWrapper) ListAssets(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -397,31 +816,88 @@ func (siw *ServerInterfaceWrapper) UploadAsset(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params UploadAssetParams
+	var params ListAssetsParams
 
-	headers := r.Header
+	// ------------- Optional query parameter "owner_ref" -------------
 
-	// ------------- Optional header parameter "X-Content-Type" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-Content-Type")]; found {
-		var XContentType string
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Content-Type", Count: n})
-			return
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "owner_ref", r.URL.Query(), &params.OwnerRef, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "owner_ref"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner_ref", Err: err})
 		}
+		return
+	}
 
-		err = runtime.BindStyledParameterWithOptions("simple", "X-Content-Type", valueList[0], &XContentType, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Content-Type", Err: err})
-			return
+	// ------------- Optional query parameter "resource_type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "resource_type", r.URL.Query(), &params.ResourceType, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "resource_type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resource_type", Err: err})
 		}
+		return
+	}
 
-		params.XContentType = &XContentType
+	// ------------- Optional query parameter "status" -------------
 
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tag" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tag", r.URL.Query(), &params.Tag, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tag"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tag", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UploadAsset(w, r, params)
+		siw.Handler.ListAssets(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -431,18 +907,142 @@ func (siw *ServerInterfaceWrapper) UploadAsset(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// DownloadAssetOriginal operation middleware
-func (siw *ServerInterfaceWrapper) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request) {
+// CreateAsset operation middleware
+func (siw *ServerInterfaceWrapper) CreateAsset(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAsset(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAsset operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "hash" -------------
-	var hash string
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAsset(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAsset operation middleware
+func (siw *ServerInterfaceWrapper) GetAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAsset(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAsset operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAsset(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAsset(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadAssetFile operation middleware
+func (siw *ServerInterfaceWrapper) DownloadAssetFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
 		return
 	}
 
@@ -455,7 +1055,7 @@ func (siw *ServerInterfaceWrapper) DownloadAssetOriginal(w http.ResponseWriter, 
 	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params DownloadAssetOriginalParams
+	var params DownloadAssetFileParams
 
 	headers := r.Header
 
@@ -479,7 +1079,84 @@ func (siw *ServerInterfaceWrapper) DownloadAssetOriginal(w http.ResponseWriter, 
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DownloadAssetOriginal(w, r, hash, params)
+		siw.Handler.DownloadAssetFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddAssetTags operation middleware
+func (siw *ServerInterfaceWrapper) AddAssetTags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddAssetTags(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveAssetTag operation middleware
+func (siw *ServerInterfaceWrapper) RemoveAssetTag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "tag" -------------
+	var tag string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tag", chi.URLParam(r, "tag"), &tag, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tag", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveAssetTag(w, r, id, tag)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -495,12 +1172,12 @@ func (siw *ServerInterfaceWrapper) DownloadAssetVariant(w http.ResponseWriter, r
 	var err error
 	_ = err
 
-	// ------------- Path parameter "hash" -------------
-	var hash string
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
 		return
 	}
 
@@ -546,7 +1223,7 @@ func (siw *ServerInterfaceWrapper) DownloadAssetVariant(w http.ResponseWriter, r
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DownloadAssetVariant(w, r, hash, variant, params)
+		siw.Handler.DownloadAssetVariant(w, r, id, variant, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -804,6 +1481,208 @@ func (siw *ServerInterfaceWrapper) ListResourceTypes(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteSetup operation middleware
+func (siw *ServerInterfaceWrapper) CompleteSetup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteSetup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSetupStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSetupStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadStorageObject operation middleware
+func (siw *ServerInterfaceWrapper) UploadStorageObject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadStorageObjectParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Content-Type" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Content-Type")]; found {
+		var XContentType string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Content-Type", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Content-Type", valueList[0], &XContentType, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Content-Type", Err: err})
+			return
+		}
+
+		params.XContentType = &XContentType
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadStorageObject(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadStorageObject operation middleware
+func (siw *ServerInterfaceWrapper) DownloadStorageObject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "hash" -------------
+	var hash string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadStorageObjectParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadStorageObject(w, r, hash, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadStorageObjectVariant operation middleware
+func (siw *ServerInterfaceWrapper) DownloadStorageObjectVariant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "hash" -------------
+	var hash string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hash", chi.URLParam(r, "hash"), &hash, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hash", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "variant" -------------
+	var variant string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "variant", chi.URLParam(r, "variant"), &variant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "variant", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadStorageObjectVariantParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadStorageObjectVariant(w, r, hash, variant, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -918,13 +1797,31 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/assets", wrapper.UploadAsset)
+		r.Get(options.BaseURL+"/assets", wrapper.ListAssets)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/assets/{hash}", wrapper.DownloadAssetOriginal)
+		r.Post(options.BaseURL+"/assets", wrapper.CreateAsset)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/assets/{hash}/{variant}", wrapper.DownloadAssetVariant)
+		r.Delete(options.BaseURL+"/assets/{id}", wrapper.DeleteAsset)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{id}", wrapper.GetAsset)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/assets/{id}", wrapper.UpdateAsset)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{id}/file", wrapper.DownloadAssetFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/assets/{id}/tags", wrapper.AddAssetTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/assets/{id}/tags/{tag}", wrapper.RemoveAssetTag)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{id}/variants/{variant}", wrapper.DownloadAssetVariant)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/auth/capabilities", wrapper.ListCapabilities)
@@ -959,6 +1856,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/resource_types", wrapper.ListResourceTypes)
 	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/setup/complete", wrapper.CompleteSetup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/setup/status", wrapper.GetSetupStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/storage/objects", wrapper.UploadStorageObject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/storage/objects/{hash}", wrapper.DownloadStorageObject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/storage/objects/{hash}/variants/{variant}", wrapper.DownloadStorageObjectVariant)
+	})
 
 	return r
 }
@@ -973,32 +1885,31 @@ type NotFoundJSONResponse Error
 
 type UnauthorizedJSONResponse Error
 
-type UploadAssetRequestObject struct {
-	Params UploadAssetParams
-	Body   io.Reader
+type ListAssetsRequestObject struct {
+	Params ListAssetsParams
 }
 
-type UploadAssetResponseObject interface {
-	VisitUploadAssetResponse(w http.ResponseWriter) error
+type ListAssetsResponseObject interface {
+	VisitListAssetsResponse(w http.ResponseWriter) error
 }
 
-type UploadAsset201JSONResponse UploadResult
+type ListAssets200JSONResponse AssetList
 
-func (response UploadAsset201JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+func (response ListAssets200JSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
+	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
 }
 
-type UploadAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+type ListAssets401JSONResponse struct{ UnauthorizedJSONResponse }
 
-func (response UploadAsset401JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+func (response ListAssets401JSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1010,9 +1921,9 @@ func (response UploadAsset401JSONResponse) VisitUploadAssetResponse(w http.Respo
 	return err
 }
 
-type UploadAsset500JSONResponse struct{ InternalErrorJSONResponse }
+type ListAssets500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response UploadAsset500JSONResponse) VisitUploadAssetResponse(w http.ResponseWriter) error {
+func (response ListAssets500JSONResponse) VisitListAssetsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1024,21 +1935,244 @@ func (response UploadAsset500JSONResponse) VisitUploadAssetResponse(w http.Respo
 	return err
 }
 
-type DownloadAssetOriginalRequestObject struct {
-	Hash   string `json:"hash"`
-	Params DownloadAssetOriginalParams
+type CreateAssetRequestObject struct {
+	Body *CreateAssetJSONRequestBody
 }
 
-type DownloadAssetOriginalResponseObject interface {
-	VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error
+type CreateAssetResponseObject interface {
+	VisitCreateAssetResponse(w http.ResponseWriter) error
 }
 
-type DownloadAssetOriginal200ApplicationoctetStreamResponse struct {
+type CreateAsset201JSONResponse Asset
+
+func (response CreateAsset201JSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateAsset400JSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateAsset401JSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAsset500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateAsset500JSONResponse) VisitCreateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAssetRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type DeleteAssetResponseObject interface {
+	VisitDeleteAssetResponse(w http.ResponseWriter) error
+}
+
+type DeleteAsset204Response struct {
+}
+
+func (response DeleteAsset204Response) VisitDeleteAssetResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteAsset401JSONResponse) VisitDeleteAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAsset404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteAsset404JSONResponse) VisitDeleteAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type GetAssetResponseObject interface {
+	VisitGetAssetResponse(w http.ResponseWriter) error
+}
+
+type GetAsset200JSONResponse Asset
+
+func (response GetAsset200JSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAsset401JSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAsset404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetAsset404JSONResponse) VisitGetAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAssetRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *UpdateAssetJSONRequestBody
+}
+
+type UpdateAssetResponseObject interface {
+	VisitUpdateAssetResponse(w http.ResponseWriter) error
+}
+
+type UpdateAsset200JSONResponse Asset
+
+func (response UpdateAsset200JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateAsset400JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UpdateAsset401JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAsset404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateAsset404JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadAssetFileRequestObject struct {
+	Id     openapi_types.UUID `json:"id"`
+	Params DownloadAssetFileParams
+}
+
+type DownloadAssetFileResponseObject interface {
+	VisitDownloadAssetFileResponse(w http.ResponseWriter) error
+}
+
+type DownloadAssetFile200ApplicationoctetStreamResponse struct {
 	Body          io.Reader
 	ContentLength int64
 }
 
-func (response DownloadAssetOriginal200ApplicationoctetStreamResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+func (response DownloadAssetFile200ApplicationoctetStreamResponse) VisitDownloadAssetFileResponse(w http.ResponseWriter) error {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	if response.ContentLength != 0 {
@@ -1053,12 +2187,12 @@ func (response DownloadAssetOriginal200ApplicationoctetStreamResponse) VisitDown
 	return err
 }
 
-type DownloadAssetOriginal206ApplicationoctetStreamResponse struct {
+type DownloadAssetFile206ApplicationoctetStreamResponse struct {
 	Body          io.Reader
 	ContentLength int64
 }
 
-func (response DownloadAssetOriginal206ApplicationoctetStreamResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+func (response DownloadAssetFile206ApplicationoctetStreamResponse) VisitDownloadAssetFileResponse(w http.ResponseWriter) error {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	if response.ContentLength != 0 {
@@ -1073,9 +2207,9 @@ func (response DownloadAssetOriginal206ApplicationoctetStreamResponse) VisitDown
 	return err
 }
 
-type DownloadAssetOriginal401JSONResponse struct{ UnauthorizedJSONResponse }
+type DownloadAssetFile401JSONResponse struct{ UnauthorizedJSONResponse }
 
-func (response DownloadAssetOriginal401JSONResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+func (response DownloadAssetFile401JSONResponse) VisitDownloadAssetFileResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1087,9 +2221,113 @@ func (response DownloadAssetOriginal401JSONResponse) VisitDownloadAssetOriginalR
 	return err
 }
 
-type DownloadAssetOriginal404JSONResponse struct{ NotFoundJSONResponse }
+type DownloadAssetFile404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response DownloadAssetOriginal404JSONResponse) VisitDownloadAssetOriginalResponse(w http.ResponseWriter) error {
+func (response DownloadAssetFile404JSONResponse) VisitDownloadAssetFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddAssetTagsRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *AddAssetTagsJSONRequestBody
+}
+
+type AddAssetTagsResponseObject interface {
+	VisitAddAssetTagsResponse(w http.ResponseWriter) error
+}
+
+type AddAssetTags204Response struct {
+}
+
+func (response AddAssetTags204Response) VisitAddAssetTagsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type AddAssetTags400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response AddAssetTags400JSONResponse) VisitAddAssetTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddAssetTags401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response AddAssetTags401JSONResponse) VisitAddAssetTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddAssetTags404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response AddAssetTags404JSONResponse) VisitAddAssetTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveAssetTagRequestObject struct {
+	Id  openapi_types.UUID `json:"id"`
+	Tag string             `json:"tag"`
+}
+
+type RemoveAssetTagResponseObject interface {
+	VisitRemoveAssetTagResponse(w http.ResponseWriter) error
+}
+
+type RemoveAssetTag204Response struct {
+}
+
+func (response RemoveAssetTag204Response) VisitRemoveAssetTagResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveAssetTag401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RemoveAssetTag401JSONResponse) VisitRemoveAssetTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveAssetTag404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RemoveAssetTag404JSONResponse) VisitRemoveAssetTagResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1102,8 +2340,8 @@ func (response DownloadAssetOriginal404JSONResponse) VisitDownloadAssetOriginalR
 }
 
 type DownloadAssetVariantRequestObject struct {
-	Hash    string `json:"hash"`
-	Variant string `json:"variant"`
+	Id      openapi_types.UUID `json:"id"`
+	Variant string             `json:"variant"`
 	Params  DownloadAssetVariantParams
 }
 
@@ -1635,16 +2873,339 @@ func (response ListResourceTypes500JSONResponse) VisitListResourceTypesResponse(
 	return err
 }
 
+type CompleteSetupRequestObject struct {
+	Body *CompleteSetupJSONRequestBody
+}
+
+type CompleteSetupResponseObject interface {
+	VisitCompleteSetupResponse(w http.ResponseWriter) error
+}
+
+type CompleteSetup201JSONResponse CurrentUser
+
+func (response CompleteSetup201JSONResponse) VisitCompleteSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteSetup400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CompleteSetup400JSONResponse) VisitCompleteSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteSetup409JSONResponse Error
+
+func (response CompleteSetup409JSONResponse) VisitCompleteSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteSetup500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CompleteSetup500JSONResponse) VisitCompleteSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSetupStatusRequestObject struct {
+}
+
+type GetSetupStatusResponseObject interface {
+	VisitGetSetupStatusResponse(w http.ResponseWriter) error
+}
+
+type GetSetupStatus200JSONResponse SetupStatus
+
+func (response GetSetupStatus200JSONResponse) VisitGetSetupStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSetupStatus500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetSetupStatus500JSONResponse) VisitGetSetupStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadStorageObjectRequestObject struct {
+	Params UploadStorageObjectParams
+	Body   io.Reader
+}
+
+type UploadStorageObjectResponseObject interface {
+	VisitUploadStorageObjectResponse(w http.ResponseWriter) error
+}
+
+type UploadStorageObject201JSONResponse UploadResult
+
+func (response UploadStorageObject201JSONResponse) VisitUploadStorageObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadStorageObject401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UploadStorageObject401JSONResponse) VisitUploadStorageObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadStorageObject500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response UploadStorageObject500JSONResponse) VisitUploadStorageObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadStorageObjectRequestObject struct {
+	Hash   string `json:"hash"`
+	Params DownloadStorageObjectParams
+}
+
+type DownloadStorageObjectResponseObject interface {
+	VisitDownloadStorageObjectResponse(w http.ResponseWriter) error
+}
+
+type DownloadStorageObject200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadStorageObject200ApplicationoctetStreamResponse) VisitDownloadStorageObjectResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadStorageObject206ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadStorageObject206ApplicationoctetStreamResponse) VisitDownloadStorageObjectResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(206)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadStorageObject401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DownloadStorageObject401JSONResponse) VisitDownloadStorageObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadStorageObject404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DownloadStorageObject404JSONResponse) VisitDownloadStorageObjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadStorageObjectVariantRequestObject struct {
+	Hash    string `json:"hash"`
+	Variant string `json:"variant"`
+	Params  DownloadStorageObjectVariantParams
+}
+
+type DownloadStorageObjectVariantResponseObject interface {
+	VisitDownloadStorageObjectVariantResponse(w http.ResponseWriter) error
+}
+
+type DownloadStorageObjectVariant200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadStorageObjectVariant200ApplicationoctetStreamResponse) VisitDownloadStorageObjectVariantResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadStorageObjectVariant206ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response DownloadStorageObjectVariant206ApplicationoctetStreamResponse) VisitDownloadStorageObjectVariantResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(206)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadStorageObjectVariant401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DownloadStorageObjectVariant401JSONResponse) VisitDownloadStorageObjectVariantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadStorageObjectVariant404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DownloadStorageObjectVariant404JSONResponse) VisitDownloadStorageObjectVariantResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// Upload a new asset blob
+	// List assets (paginated)
+	// (GET /assets)
+	ListAssets(ctx context.Context, request ListAssetsRequestObject) (ListAssetsResponseObject, error)
+	// Create an asset entity
 	// (POST /assets)
-	UploadAsset(ctx context.Context, request UploadAssetRequestObject) (UploadAssetResponseObject, error)
-	// Download the original variant by content hash
-	// (GET /assets/{hash})
-	DownloadAssetOriginal(ctx context.Context, request DownloadAssetOriginalRequestObject) (DownloadAssetOriginalResponseObject, error)
-	// Download a specific variant of an asset
-	// (GET /assets/{hash}/{variant})
+	CreateAsset(ctx context.Context, request CreateAssetRequestObject) (CreateAssetResponseObject, error)
+	// Soft-delete an asset
+	// (DELETE /assets/{id})
+	DeleteAsset(ctx context.Context, request DeleteAssetRequestObject) (DeleteAssetResponseObject, error)
+
+	// (GET /assets/{id})
+	GetAsset(ctx context.Context, request GetAssetRequestObject) (GetAssetResponseObject, error)
+
+	// (PATCH /assets/{id})
+	UpdateAsset(ctx context.Context, request UpdateAssetRequestObject) (UpdateAssetResponseObject, error)
+	// Download the asset's primary file (original variant)
+	// (GET /assets/{id}/file)
+	DownloadAssetFile(ctx context.Context, request DownloadAssetFileRequestObject) (DownloadAssetFileResponseObject, error)
+	// Add tags to an asset (bulk, idempotent)
+	// (POST /assets/{id}/tags)
+	AddAssetTags(ctx context.Context, request AddAssetTagsRequestObject) (AddAssetTagsResponseObject, error)
+
+	// (DELETE /assets/{id}/tags/{tag})
+	RemoveAssetTag(ctx context.Context, request RemoveAssetTagRequestObject) (RemoveAssetTagResponseObject, error)
+	// Download a named variant of the asset (thumb / preview / etc.)
+	// (GET /assets/{id}/variants/{variant})
 	DownloadAssetVariant(ctx context.Context, request DownloadAssetVariantRequestObject) (DownloadAssetVariantResponseObject, error)
 	// List every capability the server knows about
 	// (GET /auth/capabilities)
@@ -1679,6 +3240,21 @@ type StrictServerInterface interface {
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(ctx context.Context, request ListResourceTypesRequestObject) (ListResourceTypesResponseObject, error)
+	// Finalize first-run setup (admin + site + SMTP)
+	// (POST /setup/complete)
+	CompleteSetup(ctx context.Context, request CompleteSetupRequestObject) (CompleteSetupResponseObject, error)
+	// First-run setup status + admin-form prefills
+	// (GET /setup/status)
+	GetSetupStatus(ctx context.Context, request GetSetupStatusRequestObject) (GetSetupStatusResponseObject, error)
+	// Upload a raw byte stream
+	// (POST /storage/objects)
+	UploadStorageObject(ctx context.Context, request UploadStorageObjectRequestObject) (UploadStorageObjectResponseObject, error)
+	// Download a raw byte stream by content hash (original variant)
+	// (GET /storage/objects/{hash})
+	DownloadStorageObject(ctx context.Context, request DownloadStorageObjectRequestObject) (DownloadStorageObjectResponseObject, error)
+	// Download a specific variant of a stored object
+	// (GET /storage/objects/{hash}/variants/{variant})
+	DownloadStorageObjectVariant(ctx context.Context, request DownloadStorageObjectVariantRequestObject) (DownloadStorageObjectVariantResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1710,27 +3286,25 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
-// UploadAsset operation middleware
-func (sh *strictHandler) UploadAsset(w http.ResponseWriter, r *http.Request, params UploadAssetParams) {
-	var request UploadAssetRequestObject
+// ListAssets operation middleware
+func (sh *strictHandler) ListAssets(w http.ResponseWriter, r *http.Request, params ListAssetsParams) {
+	var request ListAssetsRequestObject
 
 	request.Params = params
 
-	request.Body = r.Body
-
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.UploadAsset(ctx, request.(UploadAssetRequestObject))
+		return sh.ssi.ListAssets(ctx, request.(ListAssetsRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "UploadAsset")
+		handler = middleware(handler, "ListAssets")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(UploadAssetResponseObject); ok {
-		if err := validResponse.VisitUploadAssetResponse(w); err != nil {
+	} else if validResponse, ok := response.(ListAssetsResponseObject); ok {
+		if err := validResponse.VisitListAssetsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1738,26 +3312,202 @@ func (sh *strictHandler) UploadAsset(w http.ResponseWriter, r *http.Request, par
 	}
 }
 
-// DownloadAssetOriginal operation middleware
-func (sh *strictHandler) DownloadAssetOriginal(w http.ResponseWriter, r *http.Request, hash string, params DownloadAssetOriginalParams) {
-	var request DownloadAssetOriginalRequestObject
+// CreateAsset operation middleware
+func (sh *strictHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
+	var request CreateAssetRequestObject
 
-	request.Hash = hash
-	request.Params = params
+	var body CreateAssetJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DownloadAssetOriginal(ctx, request.(DownloadAssetOriginalRequestObject))
+		return sh.ssi.CreateAsset(ctx, request.(CreateAssetRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DownloadAssetOriginal")
+		handler = middleware(handler, "CreateAsset")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DownloadAssetOriginalResponseObject); ok {
-		if err := validResponse.VisitDownloadAssetOriginalResponse(w); err != nil {
+	} else if validResponse, ok := response.(CreateAssetResponseObject); ok {
+		if err := validResponse.VisitCreateAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAsset operation middleware
+func (sh *strictHandler) DeleteAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request DeleteAssetRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAsset(ctx, request.(DeleteAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAssetResponseObject); ok {
+		if err := validResponse.VisitDeleteAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAsset operation middleware
+func (sh *strictHandler) GetAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request GetAssetRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAsset(ctx, request.(GetAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetResponseObject); ok {
+		if err := validResponse.VisitGetAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAsset operation middleware
+func (sh *strictHandler) UpdateAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UpdateAssetRequestObject
+
+	request.Id = id
+
+	var body UpdateAssetJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAsset(ctx, request.(UpdateAssetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAsset")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAssetResponseObject); ok {
+		if err := validResponse.VisitUpdateAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadAssetFile operation middleware
+func (sh *strictHandler) DownloadAssetFile(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DownloadAssetFileParams) {
+	var request DownloadAssetFileRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadAssetFile(ctx, request.(DownloadAssetFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadAssetFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadAssetFileResponseObject); ok {
+		if err := validResponse.VisitDownloadAssetFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddAssetTags operation middleware
+func (sh *strictHandler) AddAssetTags(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request AddAssetTagsRequestObject
+
+	request.Id = id
+
+	var body AddAssetTagsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddAssetTags(ctx, request.(AddAssetTagsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddAssetTags")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddAssetTagsResponseObject); ok {
+		if err := validResponse.VisitAddAssetTagsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveAssetTag operation middleware
+func (sh *strictHandler) RemoveAssetTag(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, tag string) {
+	var request RemoveAssetTagRequestObject
+
+	request.Id = id
+	request.Tag = tag
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveAssetTag(ctx, request.(RemoveAssetTagRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveAssetTag")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveAssetTagResponseObject); ok {
+		if err := validResponse.VisitRemoveAssetTagResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1766,10 +3516,10 @@ func (sh *strictHandler) DownloadAssetOriginal(w http.ResponseWriter, r *http.Re
 }
 
 // DownloadAssetVariant operation middleware
-func (sh *strictHandler) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadAssetVariantParams) {
+func (sh *strictHandler) DownloadAssetVariant(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, variant string, params DownloadAssetVariantParams) {
 	var request DownloadAssetVariantRequestObject
 
-	request.Hash = hash
+	request.Id = id
 	request.Variant = variant
 	request.Params = params
 
@@ -2082,90 +3832,274 @@ func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// CompleteSetup operation middleware
+func (sh *strictHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
+	var request CompleteSetupRequestObject
+
+	var body CompleteSetupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteSetup(ctx, request.(CompleteSetupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteSetup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteSetupResponseObject); ok {
+		if err := validResponse.VisitCompleteSetupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSetupStatus operation middleware
+func (sh *strictHandler) GetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetSetupStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSetupStatus(ctx, request.(GetSetupStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSetupStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSetupStatusResponseObject); ok {
+		if err := validResponse.VisitGetSetupStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadStorageObject operation middleware
+func (sh *strictHandler) UploadStorageObject(w http.ResponseWriter, r *http.Request, params UploadStorageObjectParams) {
+	var request UploadStorageObjectRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadStorageObject(ctx, request.(UploadStorageObjectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadStorageObject")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadStorageObjectResponseObject); ok {
+		if err := validResponse.VisitUploadStorageObjectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadStorageObject operation middleware
+func (sh *strictHandler) DownloadStorageObject(w http.ResponseWriter, r *http.Request, hash string, params DownloadStorageObjectParams) {
+	var request DownloadStorageObjectRequestObject
+
+	request.Hash = hash
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadStorageObject(ctx, request.(DownloadStorageObjectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadStorageObject")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadStorageObjectResponseObject); ok {
+		if err := validResponse.VisitDownloadStorageObjectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadStorageObjectVariant operation middleware
+func (sh *strictHandler) DownloadStorageObjectVariant(w http.ResponseWriter, r *http.Request, hash string, variant string, params DownloadStorageObjectVariantParams) {
+	var request DownloadStorageObjectVariantRequestObject
+
+	request.Hash = hash
+	request.Variant = variant
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadStorageObjectVariant(ctx, request.(DownloadStorageObjectVariantRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadStorageObjectVariant")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadStorageObjectVariantResponseObject); ok {
+		if err := validResponse.VisitDownloadStorageObjectVariantResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"7H3pdttG9uer3IPpcyw5IClvaUf+MoqXxNNOrJHk/mcm8JBF4JKoCKhCVxVIsz06Zx5innCeZE7dKqwE",
+	"JcqL/E+f/pJYJFDrXX535ccglnkhBQqjg+OPgUJdSKGR/viRJWf4jxK1sX/FUhgU9E9WFBmPmeFSTP7Q",
+	"UtjPdJxizuy//qJwERwH/2XSDD1x3+rJS6WkCq6ursIgQR0rXthBguPgF5YtpMoxAeWnvAqDV1LNeZKg",
+	"+Przn5QmRWHsqJjAvDSQc625WNJ6uMIEYlawOc+44ajt6l4Lg0qwzI351Vf4TuCHAmO7PI1qhQrQPRoG",
+	"v0rzSpYi+fqLOEMtSxUjCGlgQXNehcE7wUqTSsX/icmdXhWXor6fsLqxEKQCLlYs40lgX/cj2glPCn4h",
+	"L1E8V2gvmlaYZW8XwfHv16+mevG8zHOmNsFV+DEolCxQETkcfwyM/dr+o7vaixShyBgXBj8YoIfGcM5W",
+	"CNzA//s//9f+j2sQaG9UoSmVwATYknExjkQQBviB5UWGwXHA2LRgZvq3v+LP+mie/Pcffjt7mh4t/7p5",
+	"nJ8dsf/5MPsfD4rfnvwahIHZFPYFbRQXSzqD6pSC49/9St/Xj8n5Hxib4Or9VRj093nc32bsTm7K6Hot",
+	"z9p/BQkzODI8x+3Z7RYKrlBf944os4zN7TaNKnFgDJ503i1LngxNlTFtpqW+foE3TiZYjnSn/S90LAt3",
+	"Dtxgrgef8R8wpdhm6+xp1TR82D7KeuTtWwmDE63RfJmb6NDmwNoXPMMpfjAotH/kxrOiV1Km023a1yl7",
+	"+OR7kAswKULGxaUVXkYqtkTw+wv3nEHzf+J0vjFu7/VuuTDfP949iGW7JapbEFCOhiXMkHhiScLtVlh2",
+	"2jp5N0F3p68U4siODf/t/O2vP0I1CswzOYeDl7+9fhVCXGojc1hwzBIdApp4fDgOBi5crgUqS8VqSiLp",
+	"k/arvKieuq8Gxth+RxtmSjpgFGVu6TVRbGEvicWGryxJMRWnfIVJi1JbpM+Wt2KOMDDcZMOsVhbJLcl7",
+	"iNXc+P3TqHfaY8LWnH4zO/nRaZBtrvxWHMagULjistTZBsoikyzZYrYx/EeKAjSaMBKWJauvM7ZBZdWQ",
+	"wlHBhdVApUhQwYzZvR5H5dHRo1jgesQT+jfOgInEDRKzLEN1T8PMUuzxDAou4GChZE5sXygulV/RIXAd",
+	"iUTJosDEqbcbd78vQ25d0+cxQIILVmb26Zr0vxBP5OzDGxRLkwbH3z8Og5yL6s8H4S0YpjXMk6OjG8bp",
+	"I4BBrthJ62+4HtA/9Ybqf1wLoEiJDWxI4AczjUulHYju0vcp0xrmLL4EpomaZu7JGfyjRLWBgimWg5Gw",
+	"QBOn9IQdLxIFW+IYLHHB2tI8EWqpFAoD9jtL7KSUmDZ7EWJfuNCed57YOxIkQ/tRhrMMnKB5BlJkG68Q",
+	"LP9quzymEIws4xSTMVywJdBR6UicvTx9c/L8Ja17YXdm2NIys9uhLi3UxgQOSo30zMSSXiR0OR9VFw0L",
+	"qcBx0QpBFvrQbf52MuyTWfKL65dvxEtbG3te2YZDiFkmA5RwYmTO48ao3ABPrFWz4KjgAMfLcQhRYCWq",
+	"HitkSRQQVmisgear2wO9HjHTCrvvDFG2U3mVhdByDXT3+yXQfgXAm+0+fw0JFpncwFxagmld2YMbr6wN",
+	"3LvX0Fwc2FOwQsFKBrtByNkG8AOqmGscw8u8MBvHi5AjE9ppP/dozAQkEtYpM2TI2W/sBfkvxnBwkWIk",
+	"mtueKJkh5DLBDLjRmC0gYyLRwAWcpkwjPBg/ekbsKuQ6Em79JBsUxlIl3kth7XAUC6liTMaHxMufaJnQ",
+	"kQ9euxOb7zSq7cu2hv80R5PKZPtwf5ZraBACrJkG1vGz2O3RgXunz7ilZTVqQkjhlr3aMixzxrP9MFSZ",
+	"ZRVR3fjwLtC9jRfsHS+VLItPBOn2/R3GZu967Jpaz4edkx+6tpeLBZJQfd72W21Lp963294LqzuyVdsB",
+	"trFa5xgOiIbjlHHRcY4dRuLdr6/f/goH+KHIeMwNLBUTRh/Cy9+evzy9aH2hcCUvUR9aaMpMJHKeJBmu",
+	"LZ3HKcaX2rlCtFdyjtS5WEbiw6g6nlF78vGteCAM3MquEQwctVs+JlAtO9tYzEGUa29kfKsZ/ZZvmNI9",
+	"1ZnSQ+pPm1Q6Tbeft+vMPn31vk/BnmCn+/JHj4Trd8Mu1Q1Sb+VU7emW6uOeoClzJkZWF9rFOscoaO/C",
+	"aivNWJZZQkIz49pADYvs/PpGi9LNPrTc14JbXHeS5PwaxVhJq5ZLz77wX/3f41jmQdgcq3v+BmHWjHXO",
+	"DQKtgGujmJFqH01bMK3XUnWdI/WHHb36dOD1tgDrbaurpJ/c0kRpSbrWatyRDN3AG7m85uhv2uUt93X7",
+	"pQ8tuXKmX3j7tKdZs0yuMWl8BUMSQ+Y5G2m0ZpCVT0TUcgELbrmgfhFYHGPRVriR6JD+GH619gTBGoc6",
+	"SW/rjTaYgzeFx1HQc0j/USzDPwpchoVYhku+2IfeYpnJUn2qDy+WAy72N2XMEwT7JdhzB53KtbBI6t3r",
+	"znp5zpafCD9PU2nkPq9aaKam8832Ml9wXWRsA/RECEzHKBIulv7wtVRGO3u0LQRu4/BbDBicilshCJfY",
+	"EYQPwn3QjWHz7RErqh3Z58GwORAA4mJpT9ySDXGJO/tbb2MA9Qyyjldnt8EyW1CfGcOslQ0JVxi3lbrV",
+	"lmN4IVHDr28vIsFFnJWWxESKipteMJDCODGB9oJZqDzliR1qicaeRyTIWNdoKDJlwTDMJha+TXKctAea",
+	"ef5sMFckVhzXlQe9cmCQ+r8lzrnJpt/TPb4zMlLvfPvgz7lYZjjyh8dEXJ0TnfMz56WxO1dSus90hwX8",
+	"Wm7poGkFWtrL2QN7nP9ycfpcigVfDuhwEatNfYqVrSKk8E5lZUxGQCKjsRsB0v5uS58rmU9ZkijUuit2",
+	"TpQhte4dsFJhkW3aeMF5Y4cGTaVThK0l5KYYd7HGreHA9gtSdad58vSvn2fp0ML9wGH7wHsHNXh1SHaq",
+	"FQ87sYAlsOle5N4XRv7FHROXxXNpj8Dsntrhhxs8pUNY8ioMNHcOxetetbTiKde+kZtif8zfovoB5N87",
+	"igoI0aJ2nscLBxz0kFrCBc8yDSlTK9QETax1Mzs5mZ6/vHh3On3x8tXJuzcX0/szQLGCFVNWYMNcSjOO",
+	"hHPGuHvShFsgCoSEwo0bBc+cl1SqHDJkK3LsSI3e1xqJecbE5ZDvk3Y2raH6Fr2779sIfMcj1xC8O7fp",
+	"nGmclirb/cQAAlWGazNiWUYKffu13BTTryKkaOS+pBp+qhI9w9/uKzHo4f3FRu/Uw85Nbt1b+4D719He",
+	"RXvN26fbX+TQKV3DHUUmNzkK81os5BDQYsmIAgQVBki9P02VQli8VSgZo9bkWIuJdUuFCTATCeITOCcg",
+	"LB0s03ZSF/zQsgXUYibc2yp3cIULbViWufQaw5TFMXNcSIVA0VI7NRP+bRbHshRmMIwwn24roUJqs1Q4",
+	"SGLJfCfFT3dSfDIfoKjHjx4Oh/co3jmds/gSxQBUWWj436AfdayGxc2OgWqnzWqazWzPupMizuvwSD8e",
+	"08jRa0V4R+gS6KtIbM9XOxRJwTlM9JQoZ8A5qEp0bjkhnbd7zY0Lws2c6TgmGpm1PYf4gWujW2kPcykz",
+	"ZGLbH92aurOTsDmPwZNsdODWQbYlbi8cM9cyKw3Cu7M3jlss7CLPNItT8ioxM4Z3Ggnaz0ueJZGQpVlK",
+	"yw4ZF5e6CttUcGmkUKMBkkD6cAy/sA3MEdDqrkgwA57RwPAcgYnE2u0ZJtaOypipMH5DiakxhT6eTJgy",
+	"N+G4bT46iXOEE2XgDK080beNoewbLnhHkf4z1BQ93w6GUWpgHZPvGeeTPwpcDsezkrLAAY616AS4s49S",
+	"plMXZcgUsmRTh1RJAnJdJU7WqQuUTwRrVGjtPFA4qjMnjBORnmfHcAIC11BwEQk7gzY8y4AlSe1UqcIc",
+	"7tL6xB0GwwkcmVyjiq3pmOIH6CZM1WtxaU+dVMAH84fxo+QxPll8Px6Pjx48fDQIzrmY6pKuxiPeZogf",
+	"bnph+4osjw9CA/7PgQjnjxuDQMohCG/tK6bT8iOHXappiGFgvVt73iZRu2CMS8XN5txKPy8akClUJ6VJ",
+	"m79eVYt2mZdBP+vrFJWWgmVwEpMeprhoCG6vMPP5ms52e/QQ4pQp7dNnxvBa6xITWHEWidnp2/MLcD4B",
+	"inbp2RjOUSTANMxOfHItKeRj+JHWBn708Xg8cyRHopyIjh5oztiKDed6k5ccqy32tvLz6ciqBWa4lXU+",
+	"+AbuFeBurfNN5bjI5JKL2RhcVNM9RK43ygGaVdkVUiCcnVsZmmg48F6USTsGOC7S4jCMxDrlcWpfW6cb",
+	"WCNcIhbATRUAfQYKafyUFQUKDVLECKc/n1JCkUV1G1BoLPV4x4ggb79dWOUH6NMvK/jfcOMyjPkgAruw",
+	"GKkFuOHs5fkFnJy+HkciEhdWopCn1e/2/n1Lp4rF5v7940rWUGSBhHvKRJKhAkvyasFiF86NxBIFOvct",
+	"mUDc0DlLVvBRLBNcopjBgUaEGSuKCSv4pP3deMPybHY4jsQrRVySkHcLDs5XmBn8Gzch4AqFKVmWbQ5h",
+	"beVWNSVwo+FiU+A57ToSbrV17pYmbyq5+8bwMrFPVy4y2jilqtA9ZxtYsw0YGYk4ZWLpPi/KecZje2Kg",
+	"S9oz+cr8SWi3mAXjmR3Wkh+d5sLB0J8kaL4UzJQKNSSKL0xrZQXGdAs/+a0cwyxOgBUF+Uoefu/+C4mM",
+	"L1FZxAyjkcphtIK/nP7Hi+OJVjGM1mD/b88UoigSAMs0VmMuOyfc+ePYKmZtYOTwNmxdhR9IFihYwd3t",
+	"OI3gkk06Fpw9mSAMVqhcMmBwNH4wPiI3sns/OA4ejY/GjyiUYFKSVBPKyaN/Ll1ecN9uMKUSGtxjsOKa",
+	"WNorNKekQqvN7D4WXGlrKJSFha06Ei6/ypoJXDgLoMhKDZpbHWBv3aDSz0DxOEUFGpmKU5e6EAmCfycv",
+	"zuDo6MGR40Or+2mY10lwHLzh2py41ZPHkOVohyPfRC+hliayi2agyX8IlBV7r9rXuGJySgRreNzlzroo",
+	"Y1NosIf6+Tg43Fbe6OcPWaeeNmN9SjaUHX7Qz2rY0t+TFbn2fDGmi6Trkcbem7/Hw12naNiys8Ab535b",
+	"sH+U2CYblxhDDNvkpkJVYLRrYp8IeMPcQ29mPOem82KdwkmxR/aB5/aUH3qk6/56MHBv78NuHdTDo6Mv",
+	"VtXS5FMOVbY461wuPI1bQfD46MGuMetFTjoFOFdh8MSt+PqXuvVLbVhE/NhGC7+/t6fehki/v7fHVIXY",
+	"HWdXEufAUwEmh1Ua9fHvgd/Se/IZ6wG55dLLNDBC2vR4CLJwyYXZhmwsijIZJxaafOdIdKAyaKOQ5RZa",
+	"waxOnraQa9H+G8gg2DcVOhJbudD0dzcjGjoJ0S71uZUWHQlnKzDjbBVu9RolQ8NBY49YrSrkmgQegS5S",
+	"h/5AhDRt40AdDslZn6lHKbcOV6M2P8pk82Xp2OfAX3XBu88U6bHQgy879SD72C/AJ/Q73tmDDVpVjn8e",
+	"dnMnT1442rSF02YzxG1XYQUYJh95cuXYLsOh5ORfmLp0SNYN6p5LLPg0Gmb+zykzs0NC/jXPEGUTy+Ry",
+	"hYnzvf/0HPQasUDlnBkQyyzD2GhP5cQFjtQjkUmxRAWe4eYbYGIjBQ7R9gtaRkPbHSp7PBB2d8v+5Mt9",
+	"7Aa9/qW6AvMz7/VcLszIHXR9ucMy1EO/7tn8hGbHwRx9ffa7qAjnP/NRD2mjLg4lbGHBdgMtKDbYFXCD",
+	"SHBHFPE9gfc4vakcYAxvB8oBfFKFF+Iwl8nG2Y25TPiCY0JeSZjZnc3ggAL+h1ZDKiwya3H1ywWeQamx",
+	"8Tk0smHihuiUCDhjTg8xoqtx+OpKxpdS7KVk7oDK3XKSNqXfjZL5FszRUx4TC5522p2nSn7gSB6C2cSr",
+	"holzuunJxxp3XTVZLjT0PR2JwdLQMTw+etxU7zidlDINQkI9WiTspxs0zvkODMiGqlAA2TyyNFaY+hK0",
+	"QZ0i18J+Sbf+ile1UfuSlowNmpFDnV0Sq0XDnAuXi9oXDlsE9sqyquVye+kPj76/q3krWUQC5uCMfDip",
+	"FLJUFsf/KbRndY1t4rIgnDLgyGF1IBW3tkkGK6Y4E2aXhfK1dUJlxKZoQXwzLJ37tebv+z5TVkVRd6LH",
+	"vOXWZZ+TxHHOhV3Jp6uCXj+FL1nr1a9/HC7t3UfFDCBMu23IUS0pdPcvphMa7jpJEgshSMDXhsfBvMwu",
+	"Q+AJ5oW013y4hxFCJDv5aNiyZ490yeqMzImKsoI9r6KyQuCgvah/Q9JB8dMd1PhT3jXqjaLIC1U9+ej/",
+	"ddVCC9eo3L+7p/+tdf/UWpdRCDCpVGsVxvaCwqRlPoeJc9vhGiauAUbwn4kBVi063JcJPleTlyad9BPX",
+	"BznmDdemU8v3mebPXmX7rcLmbaW6Rc1vfP1Jv1XWJxLxo5tfalqEfQkHNq5QbdrZSi5vjgK5l0KuNbC5",
+	"LDseGTvY+zDYUY1I1dWs8HXaXhHWAXQCPYO+8L+jsra9tnYMlYWzrKmEtIs6O69C7YaSk0rqVVbFbCPx",
+	"8y8nz0cmRTGaU7Yi+ZvtIy5LwL5fatRwoCVQ7N/bS1RVHolMUjVH6YO5yeEY3grQJeU5HMNa8cZTX+UK",
+	"uICPkZGglY39584vTi5EygxTelp/465oMFJI5/N13AqdUrE79iu0i6lvakM3hiqU2y/+eGYB2MBJ+pBG",
+	"4zNyuwAnm/T4zj3cjWOTL6kii2KQVb4sUUa7uKDDVB1msVy3k1ueZ8iU7z/TkF07LctSPmUo2hl9gwIX",
+	"VhmiRzhnCwqYU60OeSBK0alcj8SB8nfz8OgxIKeo6pptDncQs5MaNwPYN3JpzQhZGmurwpppcc9A5j7l",
+	"4nD8uXLuZRWk8uTUKrPfcfo57lRJP6FpE/S345vnLeb4RCL/vGN1nApcOOBh5SGpilZA8Noj3gUBhlM7",
+	"KpfuZndxvpIZjrZr8yNRCi6F94xBr0A/hJyLUkO/PH8MlOzEdSTWKTPQqtInLWJZzXehyLFKBt8ilV82",
+	"XxK+XNs7crD3wQDd1A/2zu+b0NDAYrg/3L4CuIaWqH5uJwW9djl4ulWpOC8NJL7UEZRdvnZpWsjilOjo",
+	"no7ErFuo6PqgcA1/lB6RuCJKX1RpqUCPod5Rq/VJtSXmBHK7icR3ngxhVPeFcKEO/FBI7ZIld5VO7ko3",
+	"OqPjuAuo7Jom7A+S3UX9idAxLbiV5dC60LqU1kgim9shZFfy2YfILhH2WnOo6kV0Nxe83QN277t2e4GD",
+	"KhzRdA5asaxEfTj+JhKHltdJWTk5fe0Xuy1ibk7cGUyIhrksRdLNP3T5AzRRJOgIXMqNb3/bx6/371O+",
+	"ryU9SjW1f92/79vnUuqBNW+aFxNm2Jxp90bMhJAG5q5z0goVJr68At5IjZHgJvTyhp5XOKJ8Z5fk69o7",
+	"UdmTFG6R1oCnPsyUtGrPe9Rta+T2qMNIaMpfNDJD0XSKsqvJuTCwKBXhRnfg1yTyeML7SvbQcF+vu87q",
+	"6XVmHkowoAN0ueiOgHqNle31eAqY0QczF0yvPFFN8uGd+ehv4M8ON1JFgDeqaz68RtM7shlI6+m70S1p",
+	"t2joLgJFN1s6blnJ+M/h5Dyr5ENzMzDfwOsX19wP+VImHxUuriZV/6WiHFBlrar1va7HZTfvcT87U5Pf",
+	"fx1JMlB+/6lBNTsGMK35UnxW8tbtUNJdh9Rof8AIWrmsVgeKqW7y8HYoyjWEJNecp8JO8vrNVqXzfnYa",
+	"A7XLir1kdZWdoWtjQ8l6kUjarW3gYFY1wZkd2leIU4qmEc0YToQUm1yWrjOR1jvBe6tD0h2B+HZPptuA",
+	"+W4nsS/hMnMp1Vk20KXME0Xvft2lU8UszVapg2HU9lbgSKfSgFFMaBa7PGtAkRTSghPKz4w9tCOHA1d2",
+	"QZYyI2GJLaz8wK5WNnFJqHBQUYOVViEQDnt39uYwdHWXrYxu//r5LxenbUe3z4OzKIp82+uUZy5NtFdW",
+	"TLziCoqfgS7n2socYejNCk3C46MfCMnRLFzXGeWEHgumNcxEmWWNv3Cmc1NUyIEvXP0ugUwL3FoMsUHj",
+	"YEjV8KgqctLunVGCBQq7q0gs0NcxHVT+TqDqYEro5gtPtdbe1ZBwbfedQCmMnbla+WB1cA8v+ms/92XT",
+	"X0nIb7c6uWO0eIM7kJYIFQ88a5Mu/diGXIMvsflUIPjD1/+dk3PXfa2qZU6ZrrsuVA3+nvmmDp422Ypx",
+	"17TliySld1TVKy5Yxv/pxcBIlcLP7XQVfOekwHfEzW3N5Sr427Kp6QJ9rTpap+iso6YTnau6ps4A/XWE",
+	"VKcWCVV3zWhaBpBbFg5e/Aip1GZSSGXCOtnQV3gfOunExKZqIuNN86ZTxj1dtSBGseJKChq7UHLFk7qS",
+	"97oGNtuKj4SQcb5V3yuMSNVQrI7BXDGRjKxBUPUKUFaiKL3DxdpuI/EV/avtaXayn7tm+A6SVkeKL06V",
+	"XWKs56QLc7/I4a9T76LJbqbqboV5Thkfejsb28iKmEKSOSV1SPG1/A41RYJKaa3spzIkb42WGT1KtUAV",
+	"nzt9FkKnHigip0G7P4ElHCJzVjUmsCTkGhJo2XXqWD0ZiUvEwpdl01aBZXyFToPVnhZe+YcZzHyZ/QwW",
+	"GVuSLyPOuL0qahmjU7mGKKiWXS0sCuDdb74+mipDwBfjN82ea4hhF5yt2ab66QhXWuWWPVK4qGrlI3HS",
+	"qnJpvDEHnRz22aHzDejur1ZYG9UPFImCC+2dPLlceeZu/24F+Znsh34uufbhFrqK4TR4u/FzRwBvqx+1",
+	"uba49W2VhOqZ0UHtTteHMVR9XCiiviv/yAUnZc6Njxf71uDMS5N+uus9De1eCpZSkip9p+Y/e70ur5rI",
+	"lC9TA8/dWyOLi304uVVo3899+W3Ufv76JJh9Qcpnpl3dHTbpNEAZrCBw2VK+J+ufqOqsWjkotm5XWrYl",
+	"q+ODYdk6+UgFAHuFN53o8zwxq+h4VhFyU7IOP19cnEbCpc55UnIRpsLn1lUUruHAamoJOlblPCQBnFu4",
+	"FIn6kcNe1YEv0xT3DCUAibr/gcsKuq6Y4AaRMODX8U1Pdjt2CmbsdQbHwf/6/Wj0Axst3n/8/vHVX75s",
+	"gvm/szBbpPQnzsbscSnMN7XCIbK+thhiH0a+Pt+3h56olQjmTBge6+rnfOoV1FpoXjqkYIE4pZNGoson",
+	"vcSNr/KJAp9FOn149PhpFIQQBZRfOn3y4GEUhJGIgjTTE43Lo6Ojowdjo6PgcG9mbdKRvw3PftOk1H9z",
+	"/78G9+sCY77gcTsdm2KRCpPmxxcH2J1WYJXbEHR9I2PLrbjCTBZk/84x5SIBseTiAxxYlQxPj54+tdLG",
+	"G35WrFDTvYC6F60eBK2yh4/X/7qrxeqVZ9GZKpQ529gQDkbpJqfwu0jULrY683RHuuRBt+3VobecvLVW",
+	"JbaupWr9Dslc+h6HP0mKBVX5EBkuWbyBs3M4/fnU/QCZNfjreDocVA3B7s9CePQQrGkvcwd0KM+F3DsZ",
+	"4TWDEZERuB94cXBGyaViec4Mj2tLjELgdScxD03c4k0k5KI+KB1WFcVVHs1wWzFnNLnIfG1+NQKE4hDb",
+	"7V8cMgxrMR661E4uIGeCLSkrzIl1MuScMQVe6FJemWf0kW+bismxj0fQL2hybaW/aw3gDOsD/4I+DEHL",
+	"SDgiiamY2oE9Ml+BlUbSkZHHmZosYuL7bRWIyls7K1R8sXG+8IX9dE4et3QM54i+p9HR0+5RVD1atn+V",
+	"wbmIyXkdM4NLqShJxv9Am5F+a7Ux70sk6EcGQngh49IeWAh/t3A1hJMy4bL+/VBy9od19cRQoyIdXL2/",
+	"+v8BAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

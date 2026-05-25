@@ -10,10 +10,14 @@ import (
 	"time"
 )
 
-// SessionCookieName matches RS's PHP-side cookie. Keeping the name
+// SessionCookieName matches RS's PHP-side cookie. RS reads/writes a
+// cookie named exactly "user" (see include/authenticate.php and
+// include/login_functions.php::set_login_cookies). Keeping the name
 // identical is what makes login interoperable between Go and PHP
-// during the transition.
-const SessionCookieName = "rs_session"
+// during the transition; after PHP is retired we may rename to
+// something less generic but every PHP path key on "user" so it
+// stays as-is for now.
+const SessionCookieName = "user"
 
 // TokenPrefix is the visible marker stamped on every artist-alley
 // Personal Access Token. It lets users (and leak-scanners) recognise
@@ -81,7 +85,7 @@ func WriteSessionCookie(w http.ResponseWriter, r *http.Request, token string, da
 		Expires:  expires,
 		HttpOnly: true,
 		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 
@@ -96,7 +100,7 @@ func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 

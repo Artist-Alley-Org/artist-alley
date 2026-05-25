@@ -1,0 +1,317 @@
+// Package setup implements the first-run installer endpoints:
+// /setup/status and /setup/complete. It only does anything while the
+// system has zero system.admin users; once the first admin is
+// created, the endpoints return 409 forever after.
+//
+// Day-to-day user administration (creating other users, editing
+// profiles, password reset) is NOT this package's job — those land in
+// Phase 1.6.B under /admin/users and friends.
+package setup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/mail"
+	"net/url"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+)
+
+// adminRoleName is the seeded role we assign to the first admin. The
+// role + its system.admin capability come from migration 00002.
+const adminRoleName = "Admin"
+
+// minPasswordLen mirrors the OpenAPI spec.
+const minPasswordLen = 8
+
+// Handler implements the setup-related slice of openapi.StrictServerInterface.
+type Handler struct {
+	Pool        *pgxpool.Pool
+	Logger      *slog.Logger
+	ScrambleKey string
+	Cfg         config.Config // for SetupDefaults + deployment-info readout
+	SysConfig   *sysconfig.Store
+
+	// StorageBackendName is "fs" | "s3" | ... — surfaced read-only on
+	// the setup page so the admin can confirm what's wired up.
+	StorageBackendName string
+}
+
+// NewHandler constructs a setup handler.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sys *sysconfig.Store, storageBackend string) *Handler {
+	return &Handler{
+		Pool:               pool,
+		Logger:             logger,
+		ScrambleKey:        cfg.ScrambleKey,
+		Cfg:                cfg,
+		SysConfig:          sys,
+		StorageBackendName: storageBackend,
+	}
+}
+
+// GetSetupStatus implements GET /setup/status. Always 200; returns
+// whether setup is still needed plus the deployment readout and any
+// env-var prefills.
+func (h *Handler) GetSetupStatus(
+	ctx context.Context,
+	_ openapi.GetSetupStatusRequestObject,
+) (openapi.GetSetupStatusResponseObject, error) {
+	needs, err := h.needsSetup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	d := h.Cfg.SetupDefaults
+	return openapi.GetSetupStatus200JSONResponse{
+		NeedsSetup: needs,
+		Deployment: openapi.SetupDeploymentInfo{
+			DbHost:          h.Cfg.DBHost,
+			DbPort:          h.Cfg.DBPort,
+			DbName:          h.Cfg.DBName,
+			StorageBackend: h.StorageBackendName,
+		},
+		Defaults: openapi.SetupDefaults{
+			AdminUsername:    d.AdminUsername,
+			AdminEmail:       d.AdminEmail,
+			AdminFullname:    d.AdminFullname,
+			SiteName:         d.SiteName,
+			SiteBaseUrl:      d.SiteBaseURL,
+			SmtpHost:         d.SMTPHost,
+			SmtpPort:         d.SMTPPort,
+			SmtpEncryption:   openapi.SetupDefaultsSmtpEncryption(normaliseEncryption(d.SMTPEncryption)),
+			SmtpUsername:     d.SMTPUsername,
+			SmtpFromAddress:  d.SMTPFromAddr,
+		},
+	}, nil
+}
+
+// CompleteSetup implements POST /setup/complete.
+//
+// All writes happen inside one transaction: admin user, role
+// assignment, site config, optional SMTP config. Either all four
+// land or none do.
+func (h *Handler) CompleteSetup(
+	ctx context.Context,
+	req openapi.CompleteSetupRequestObject,
+) (openapi.CompleteSetupResponseObject, error) {
+	needs, err := h.needsSetup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !needs {
+		return openapi.CompleteSetup409JSONResponse{
+			Error: "setup already complete; an administrator exists",
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.CompleteSetup400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+
+	// --- input validation ---
+	adminIn := req.Body.Admin
+	username := strings.TrimSpace(adminIn.Username)
+	if username == "" {
+		return badInput("username is required"), nil
+	}
+	if len(username) > 50 {
+		return badInput("username must be 50 characters or fewer"), nil
+	}
+	if len(adminIn.Password) < minPasswordLen {
+		return badInput(fmt.Sprintf("password must be at least %d characters", minPasswordLen)), nil
+	}
+	emailStr := strings.TrimSpace(string(adminIn.Email))
+	if _, mailErr := mail.ParseAddress(emailStr); mailErr != nil {
+		return badInput("admin email is not a valid address"), nil
+	}
+
+	siteIn := req.Body.Site
+	siteName := strings.TrimSpace(siteIn.Name)
+	if siteName == "" {
+		return badInput("site name is required"), nil
+	}
+	if len(siteName) > 100 {
+		return badInput("site name must be 100 characters or fewer"), nil
+	}
+	siteBaseURL := ""
+	if siteIn.BaseUrl != nil && *siteIn.BaseUrl != "" {
+		raw := strings.TrimSpace(*siteIn.BaseUrl)
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return badInput("site base_url must be an absolute http(s) URL"), nil
+		}
+		// Normalise: strip trailing slash so we can concatenate paths
+		// without doubling.
+		siteBaseURL = strings.TrimRight(raw, "/")
+	}
+
+	var smtp sysconfig.SMTP
+	if req.Body.Smtp != nil {
+		sm := req.Body.Smtp
+		smtp.Host = strings.TrimSpace(sm.Host)
+		smtp.Port = sm.Port
+		smtp.Encryption = sysconfig.SMTPEncryption(string(sm.Encryption))
+		smtp.FromAddr = strings.TrimSpace(sm.FromAddress)
+		if sm.Username != nil {
+			smtp.Username = *sm.Username
+		}
+		if sm.Password != nil {
+			smtp.Password = *sm.Password
+		}
+		// Only validate the SMTP block when host is provided; an empty
+		// host means "no SMTP yet, leave this blank".
+		if smtp.Host != "" {
+			switch smtp.Encryption {
+			case sysconfig.SMTPEncryptionNone, sysconfig.SMTPEncryptionStartTLS, sysconfig.SMTPEncryptionTLS:
+			default:
+				return badInput("smtp encryption must be none|starttls|tls"), nil
+			}
+			if smtp.Port <= 0 || smtp.Port > 65535 {
+				return badInput("smtp port must be 1..65535"), nil
+			}
+			if smtp.FromAddr == "" {
+				return badInput("smtp from_address is required when smtp.host is set"), nil
+			}
+			if _, mailErr := mail.ParseAddress(smtp.FromAddr); mailErr != nil {
+				return badInput("smtp from_address is not a valid email"), nil
+			}
+		}
+	}
+
+	// --- transactional writes ---
+	hash, err := auth.HashPassword(adminIn.Password, h.ScrambleKey)
+	if err != nil {
+		return nil, fmt.Errorf("setup: hash password: %w", err)
+	}
+
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("setup: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := auth.New(tx)
+
+	// Re-check inside the tx so two parallel setup calls can't both
+	// commit an admin.
+	count, err := q.CountSystemAdmins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("setup: recheck admin count: %w", err)
+	}
+	if count > 0 {
+		return openapi.CompleteSetup409JSONResponse{
+			Error: "setup already complete; an administrator exists",
+		}, nil
+	}
+
+	var fullnamePtr *string
+	if adminIn.Fullname != nil {
+		s := strings.TrimSpace(*adminIn.Fullname)
+		if s != "" {
+			fullnamePtr = &s
+		}
+	}
+	userRow, err := q.CreateUser(ctx, auth.CreateUserParams{
+		Username: &username,
+		Password: &hash,
+		Fullname: fullnamePtr,
+		Email:    &emailStr,
+		Lang:     nil,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setup: insert user: %w", err)
+	}
+
+	adminRole, err := q.FindRoleByName(ctx, adminRoleName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("setup: %q role not found — was migration 00002 applied?", adminRoleName)
+		}
+		return nil, fmt.Errorf("setup: lookup admin role: %w", err)
+	}
+	if err := q.SetUserRole(ctx, auth.SetUserRoleParams{
+		RsUserID:           userRow.Ref,
+		RoleID:             adminRole.ID,
+		AssignedByRsUserID: nil, // bootstrap; no actor
+	}); err != nil {
+		return nil, fmt.Errorf("setup: assign admin role: %w", err)
+	}
+
+	if err := h.SysConfig.SetSiteAndSMTPTx(ctx, tx, sysconfig.Site{
+		Name:    siteName,
+		BaseURL: siteBaseURL,
+	}, smtp); err != nil {
+		return nil, fmt.Errorf("setup: write system config: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("setup: commit: %w", err)
+	}
+
+	h.Logger.LogAttrs(ctx, slog.LevelInfo, "setup.complete",
+		slog.Int64("user_ref", userRow.Ref),
+		slog.String("username", username),
+		slog.String("site_name", siteName),
+		slog.Bool("smtp_configured", smtp.Host != ""),
+	)
+
+	resp := openapi.CurrentUser{
+		Ref:        userRow.Ref,
+		AuthMethod: "session",
+	}
+	if userRow.Username != nil {
+		resp.Username = *userRow.Username
+	}
+	resp.Fullname = userRow.Fullname
+	resp.Email = userRow.Email
+	resp.Usergroup = userRow.Usergroup
+	return openapi.CompleteSetup201JSONResponse(resp), nil
+}
+
+// needsSetup returns true when zero users have a role granting
+// system.admin. The cheap COUNT lives in auth.Queries.
+func (h *Handler) needsSetup(ctx context.Context) (bool, error) {
+	q := auth.New(h.Pool)
+	n, err := q.CountSystemAdmins(ctx)
+	if err != nil {
+		return false, fmt.Errorf("setup: count admins: %w", err)
+	}
+	return n == 0, nil
+}
+
+func badInput(msg string) openapi.CompleteSetup400JSONResponse {
+	return openapi.CompleteSetup400JSONResponse{
+		BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: msg},
+	}
+}
+
+// normaliseEncryption lowercases the env-provided value and falls
+// back to "starttls" for anything we don't recognise. Defensive — the
+// admin form will overwrite this anyway.
+func normaliseEncryption(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "none":
+		return "none"
+	case "tls", "ssl", "smtps":
+		return "tls"
+	case "starttls", "", "auto":
+		return "starttls"
+	default:
+		return "starttls"
+	}
+}
+
+// Compile-time assertion that we implement the relevant slice of the
+// StrictServerInterface — catches drift when codegen signatures change.
+var _ interface {
+	GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error)
+	CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error)
+} = (*Handler)(nil)

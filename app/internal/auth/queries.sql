@@ -52,6 +52,103 @@ SET session   = NULL,
     logged_in = 0
 WHERE session = $1;
 
+-- ---------------------------------------------------------------------------
+-- sessions table (Phase 1.5)
+-- ---------------------------------------------------------------------------
+
+-- name: InsertSession :one
+-- Records a fresh login. token_hash is sha256(cookie_value); the plaintext
+-- never reaches the DB. ip/user_agent are best-effort observability.
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_ref, created_at, last_used_at, expires_at;
+
+-- name: FindActiveSession :one
+-- Resolves an incoming cookie. Only returns rows that haven't been revoked
+-- and haven't passed their hard expiry. The idle-timeout check lives in
+-- code so the cutoff is configurable per request.
+SELECT s.id,
+       s.user_ref,
+       s.created_at,
+       s.last_used_at,
+       s.expires_at,
+       s.ip,
+       s.user_agent
+FROM sessions s
+WHERE s.token_hash = $1
+  AND s.revoked_at IS NULL
+  AND (s.expires_at IS NULL OR s.expires_at > NOW())
+LIMIT 1;
+
+-- name: TouchSession :exec
+-- Updates last_used_at on each authenticated request. Cheap and safe
+-- to call on every hit; the index on last_used_at is partial-on-active.
+UPDATE sessions
+SET last_used_at = NOW()
+WHERE id = $1;
+
+-- name: RevokeSession :exec
+-- Soft-deletes a session by id. Idempotent.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL;
+
+-- name: RevokeSessionByToken :exec
+-- Revoke by cookie hash. Used by /auth/logout when we have the cookie
+-- but no session id loaded.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE token_hash = $1
+  AND revoked_at IS NULL;
+
+-- name: ListSessionsForUser :many
+-- Powers /auth/me/sessions. Returns active sessions ordered most recently
+-- used first.
+SELECT id,
+       user_ref,
+       created_at,
+       last_used_at,
+       expires_at,
+       ip,
+       user_agent
+FROM sessions
+WHERE user_ref = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+ORDER BY last_used_at DESC;
+
+-- ---------------------------------------------------------------------------
+-- setup wizard (Phase 1.6.A)
+-- ---------------------------------------------------------------------------
+
+-- name: CountSystemAdmins :one
+-- Returns the number of real (still-existing) users whose assigned role
+-- grants system.admin. The join against "user" filters out dangling
+-- user_role rows left over from deleted users — the user table doesn't
+-- cascade.
+SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+FROM user_role ur
+JOIN role_capabilities rc ON rc.role_id = ur.role_id
+JOIN "user" u             ON u.ref     = ur.rs_user_id
+WHERE rc.capability_code = 'system.admin';
+
+-- name: FindRoleByName :one
+-- Used by setup to look up the seeded "Admin" role without hardcoding
+-- a UUID.
+SELECT id, parent_id, name, description, origin_server_id, created_at, updated_at
+FROM roles
+WHERE name = $1
+LIMIT 1;
+
+-- name: CreateUser :one
+-- Used by setup (initial admin) and later by the admin user-management
+-- endpoints. RS quirks: usergroup is nullable (we don't carry RS's
+-- group concept forward), approved defaults to 1.
+INSERT INTO "user" (username, password, fullname, email, approved, lang)
+VALUES ($1, $2, $3, $4, 1, $5)
+RETURNING ref, username, fullname, email, usergroup, created;
+
 -- name: CreateApiToken :one
 INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)

@@ -461,10 +461,114 @@ function aa_quote_ident(string $name): string
  * @internal ARTIST-ALLEY Phase 0.5.C — will be deleted with the rest of
  *           database_functions.php when the Go server retires the PHP path.
  */
+/**
+ * Find every call to a named SQL function in $sql and replace it
+ * with the result of $rewrite(args[]). Paren-aware: handles nested
+ * parens and commas inside string literals or sub-expressions.
+ *
+ * The rewrite callback receives the comma-separated arg list (already
+ * trimmed) and returns the replacement string, or "" to skip this
+ * occurrence and leave the original in place (useful when args don't
+ * match expected arity).
+ */
+function aa_rewrite_mysql_fn(string $sql, string $fn, callable $rewrite): string
+{
+    $out = '';
+    $i = 0;
+    $n = strlen($sql);
+    $needle = strtolower($fn);
+    while ($i < $n) {
+        // Look for the next case-insensitive match for the function
+        // name followed by optional whitespace and '('.
+        $rest = substr($sql, $i);
+        if (!preg_match('/\b' . preg_quote($needle, '/') . '\s*\(/i', $rest, $m, PREG_OFFSET_CAPTURE)) {
+            $out .= $rest;
+            break;
+        }
+        $matchOffset = $m[0][1];
+        $matchLen    = strlen($m[0][0]);
+        $out .= substr($rest, 0, $matchOffset);
+        // Walk forward from the '(' counting parens.
+        $start = $i + $matchOffset + $matchLen; // index of first char inside the parens
+        $depth = 1;
+        $j = $start;
+        $args = [''];
+        $inSingle = false;
+        $inDouble = false;
+        while ($j < $n && $depth > 0) {
+            $c = $sql[$j];
+            if ($inSingle) {
+                if ($c === "'") {
+                    // SQL '' is an escaped quote; not exiting the string.
+                    if ($j + 1 < $n && $sql[$j + 1] === "'") {
+                        $args[count($args) - 1] .= "''";
+                        $j += 2;
+                        continue;
+                    }
+                    $inSingle = false;
+                }
+            } elseif ($inDouble) {
+                if ($c === '"') {
+                    $inDouble = false;
+                }
+            } else {
+                if ($c === "'") {
+                    $inSingle = true;
+                } elseif ($c === '"') {
+                    $inDouble = true;
+                } elseif ($c === '(') {
+                    $depth++;
+                } elseif ($c === ')') {
+                    $depth--;
+                    if ($depth === 0) {
+                        $j++;
+                        break;
+                    }
+                } elseif ($c === ',' && $depth === 1) {
+                    $args[] = '';
+                    $j++;
+                    continue;
+                }
+            }
+            $args[count($args) - 1] .= $c;
+            $j++;
+        }
+        if ($depth !== 0) {
+            // Unbalanced — bail out, append the rest verbatim.
+            $out .= substr($sql, $i + $matchOffset);
+            break;
+        }
+        $args = array_map('trim', $args);
+        $replacement = $rewrite($args);
+        if ($replacement === '') {
+            // Leave the original call untouched.
+            $out .= substr($sql, $i + $matchOffset, $j - ($i + $matchOffset));
+        } else {
+            $out .= $replacement;
+        }
+        $i = $j;
+    }
+    return $out;
+}
+
 function aa_translate_mysql_to_pg(string $sql): string
 {
     // Backtick identifier quoting -> Postgres double quotes.
     $sql = str_replace('`', '"', $sql);
+
+    // SHOW TABLES / SHOW INDEXES — MySQL metadata queries some RS
+    // tooling pages still emit. Rewrite to pg_catalog lookups so they
+    // at least return a sensible row set instead of erroring on an
+    // unknown server-side parameter ("unrecognized configuration
+    // parameter tables").
+    if (preg_match('/^\s*SHOW\s+TABLES\s*$/i', $sql)) {
+        $sql = "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema()";
+    } elseif (preg_match('/^\s*SHOW\s+INDEXES\s+FROM\s+("?[A-Za-z0-9_]+"?)\s*$/i', $sql, $m)) {
+        $tbl = trim($m[1], '"');
+        $sql = "SELECT tablename AS \"Table\", indexname AS \"Key_name\", indexdef AS \"Index_def\" "
+             . "FROM pg_catalog.pg_indexes WHERE schemaname = current_schema() "
+             . "AND tablename = " . "'" . str_replace("'", "''", $tbl) . "'";
+    }
 
     // IFNULL(a, b) -> COALESCE(a, b). Functionally identical; Postgres
     // does not have IFNULL.
@@ -476,6 +580,120 @@ function aa_translate_mysql_to_pg(string $sql): string
     $sql = preg_replace(
         '/\bLIMIT\s+(\d+|\?)\s*,\s*(\d+|\?)\b/i',
         'LIMIT $2 OFFSET $1',
+        $sql
+    );
+
+    // Reserved-word identifier handling. RS uses `user` and `group`
+    // as bare identifiers throughout (table names, column names, SET
+    // targets). MySQL allows that; Postgres treats them as keywords.
+    //
+    // We quote every BARE occurrence — meaning a `user`/`group` token
+    // that is NOT:
+    //   - prefixed by `.` (already-qualified, e.g. u.user — PG accepts
+    //     reserved words after a period unquoted)
+    //   - part of a longer identifier (current_user, user_dash_tile,
+    //     usergroup) — the \b boundary handles that since _ is a word
+    //     char
+    //   - inside a string literal (handled by the lookbehind chain:
+    //     we replace the token, the surrounding text is unaffected)
+    //
+    // Compound forms like `current_user` and `session_user` are
+    // single \w+ tokens, so \b doesn't fire inside them.
+    // `user` is a pure identifier in RS — no SQL keyword overlap that
+    // needs special-casing.
+    $sql = preg_replace(
+        '/(?<![.\w"])user(?![\w"])/i',
+        '"user"',
+        $sql
+    );
+
+    // `group` is also the SQL keyword in `GROUP BY` / `GROUPING SETS`
+    // / `WITHIN GROUP`. Skip those — only quote when in identifier
+    // position.
+    $sql = preg_replace(
+        '/(?<![.\w"])group(?![\w"])(?!\s+BY\b)(?!\s+ING\b)(?!\s+SETS\b)/i',
+        '"group"',
+        $sql
+    );
+
+    // MySQL allows single-quoted column aliases: `SELECT col AS 'foo'`.
+    // Postgres only accepts identifiers (unquoted or double-quoted).
+    // Translate AS-single-quoted-name to AS-double-quoted-name.
+    $sql = preg_replace(
+        '/\bAS\s+\'([^\']+)\'/i',
+        'AS "$1"',
+        $sql
+    );
+
+    // MySQL "BINARY 'x'" forces case-sensitive comparison. Postgres
+    // string comparison is case-sensitive by default, so just drop
+    // the BINARY keyword wherever it appears in expressions.
+    $sql = preg_replace('/\bBINARY\s+/i', '', $sql);
+
+    // MySQL "zero date" literal '0000-00-00 00:00:00' is not a valid
+    // Postgres timestamp. Replace with NULL so comparisons short-circuit
+    // sensibly (= NULL is NULL, treated as false in WHERE; IS NULL
+    // checks elsewhere still match).
+    $sql = str_replace("'0000-00-00 00:00:00'", 'NULL', $sql);
+    $sql = str_replace("'0000-00-00'", 'NULL', $sql);
+
+    // MySQL IF(cond, then, else) -> Postgres CASE WHEN cond THEN ...
+    // Args can contain nested parens and commas, so we hand-parse
+    // instead of using a flat regex.
+    $sql = aa_rewrite_mysql_fn($sql, 'if', function (array $args): string {
+        if (count($args) !== 3) {
+            return ''; // signal "leave untouched"
+        }
+        return '(CASE WHEN ' . $args[0] . ' THEN ' . $args[1] . ' ELSE ' . $args[2] . ' END)';
+    });
+
+    // MySQL TIMESTAMPDIFF(unit, t1, t2) -> Postgres EXTRACT(EPOCH ...)
+    // for SECOND/MINUTE/HOUR/DAY (the units RS actually uses).
+    $sql = aa_rewrite_mysql_fn($sql, 'timestampdiff', function (array $args): string {
+        if (count($args) !== 3) {
+            return '';
+        }
+        $unit = strtoupper(trim($args[0]));
+        $divisors = [
+            'SECOND' => 1.0,
+            'MINUTE' => 60.0,
+            'HOUR'   => 3600.0,
+            'DAY'    => 86400.0,
+        ];
+        if (!isset($divisors[$unit])) {
+            return ''; // unsupported unit; let it error so we notice
+        }
+        $expr = "EXTRACT(EPOCH FROM ({$args[2]} - {$args[1]}))";
+        if ($divisors[$unit] !== 1.0) {
+            $expr = "({$expr} / {$divisors[$unit]})";
+        }
+        return '(' . $expr . ')::bigint';
+    });
+
+    // FIND_IN_SET(needle, haystack) returns the position of needle in
+    // a comma-separated haystack (>0 if present, 0 if not). Postgres
+    // equivalent is `needle = ANY(string_to_array(haystack, ','))`,
+    // which is boolean — so we have to rewrite the surrounding
+    // comparator at the same time. Three patterns, longest-match first:
+    //   FIND_IN_SET(a, b) <> 0  -> (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b) = 0   -> NOT (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b)       -> (a = ANY(string_to_array(b, ',')))
+    // RS's call sites use simple args (no nested parens), so the
+    // non-greedy [^,()]+ capture is sufficient.
+    $fis_args = '\s*([^,()]+?)\s*,\s*([^,()]+?)\s*';
+    $sql = preg_replace(
+        '/\bFIND_IN_SET\s*\(' . $fis_args . '\)\s*<>\s*0\b/i',
+        '($1 = ANY(string_to_array($2, \',\')))',
+        $sql
+    );
+    $sql = preg_replace(
+        '/\bFIND_IN_SET\s*\(' . $fis_args . '\)\s*=\s*0\b/i',
+        'NOT ($1 = ANY(string_to_array($2, \',\')))',
+        $sql
+    );
+    $sql = preg_replace(
+        '/\bFIND_IN_SET\s*\(' . $fis_args . '\)/i',
+        '($1 = ANY(string_to_array($2, \',\')))',
         $sql
     );
 

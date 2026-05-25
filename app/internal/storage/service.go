@@ -200,6 +200,32 @@ func (s *Service) DownloadRange(ctx context.Context, hash, variant string, offse
 	return s.Backend.GetRange(ctx, hash, variant, offset, length)
 }
 
+// AddPin attaches a fresh pin to an existing storage object without
+// touching the bytes. Used by the asset entity handler to claim a
+// previously uploaded blob under `asset:<uuid>`. Idempotent on the
+// underlying primary key (subject_type, subject_id, hash) — re-adding
+// is a no-op.
+//
+// Also clears any pending gc_eligible_at on the object: a fresh pin
+// means the object is alive again.
+func (s *Service) AddPin(ctx context.Context, pin PinRef, hash string) error {
+	if pin.SubjectType == "" || pin.SubjectID == "" {
+		return errors.New("storage: pin SubjectType and SubjectID are required")
+	}
+	q := New(s.Pool)
+	if err := q.AddPin(ctx, AddPinParams{
+		ObjectHash:     hash,
+		PinSubjectType: pin.SubjectType,
+		PinSubjectID:   pin.SubjectID,
+	}); err != nil {
+		return fmt.Errorf("storage: add pin: %w", err)
+	}
+	if err := q.ClearGCEligible(ctx, hash); err != nil {
+		return fmt.Errorf("storage: clear gc: %w", err)
+	}
+	return nil
+}
+
 // RemovePin removes one pin from an object. If that was the last pin,
 // the object is marked GC-eligible (gc_eligible_at = NOW()+grace).
 // The sweeper job (not yet implemented) actually deletes the bytes

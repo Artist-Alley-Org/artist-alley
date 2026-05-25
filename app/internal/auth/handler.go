@@ -39,24 +39,64 @@ import (
 
 // Handler implements the auth-related slice of openapi.StrictServerInterface.
 type Handler struct {
-	Pool         *pgxpool.Pool
-	Logger       *slog.Logger
-	ScrambleKey  string
-	SessionDays  int    // how long the rs_session cookie lives; matches RS default
-	tokenPrefix  string // overridable in tests
+	Pool        *pgxpool.Pool
+	Logger      *slog.Logger
+	ScrambleKey string
+	SessionDays int // how long the session cookie lives; matches RS default
+
+	Sessions *SessionManager
+	Limiter  *LoginLimiter
+	Audit    auditRecorder
+
+	tokenPrefix string // overridable in tests
 }
 
+// auditRecorder is the subset of audit.Recorder that the auth handler
+// uses. Declared as an interface here so the auth package doesn't
+// import the audit package directly — keeps the dependency arrow
+// shallow and makes tests trivial to stub.
+type auditRecorder interface {
+	LoginSucceeded(ctx context.Context, req *http.Request, userRef int64, sessionID string)
+	LoginFailed(ctx context.Context, req *http.Request, attemptedUsername string, userRef *int64, reason string)
+	LoginRateLimited(ctx context.Context, req *http.Request, attemptedUsername, key string)
+	Logout(ctx context.Context, req *http.Request, userRef int64, sessionID string)
+}
+
+// nopAudit is the default Audit when none is wired up — useful in
+// older tests that haven't been updated to pass a recorder.
+type nopAudit struct{}
+
+func (nopAudit) LoginSucceeded(context.Context, *http.Request, int64, string)            {}
+func (nopAudit) LoginFailed(context.Context, *http.Request, string, *int64, string)      {}
+func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)         {}
+func (nopAudit) Logout(context.Context, *http.Request, int64, string)                    {}
+
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
-// default of 7 days (matching RS's rs_setcookie default) is used.
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, sessionDays int) *Handler {
+// default of 7 days (matching RS's rs_setcookie default) is used. The
+// session manager, login limiter, and audit recorder are required for
+// production wiring; pass nil for any of them in tests to get a no-op
+// fallback.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, sessionDays int, sessions *SessionManager, limiter *LoginLimiter, audit auditRecorder) *Handler {
 	if sessionDays <= 0 {
 		sessionDays = 7
+	}
+	if sessions == nil {
+		sessions = NewSessionManager(pool)
+	}
+	if limiter == nil {
+		limiter = NewLoginLimiter()
+	}
+	if audit == nil {
+		audit = nopAudit{}
 	}
 	return &Handler{
 		Pool:        pool,
 		Logger:      logger,
 		ScrambleKey: scrambleKey,
 		SessionDays: sessionDays,
+		Sessions:    sessions,
+		Limiter:     limiter,
+		Audit:       audit,
 	}
 }
 
@@ -81,10 +121,27 @@ func (h *Handler) Login(
 		}, nil
 	}
 
+	// Rate limit: two buckets, by IP and by attempted username. Either
+	// trip rejects the attempt. The IP key isolates a noisy network
+	// from drowning out other users; the username key isolates a
+	// single account from being brute-forced from many IPs.
+	httpReq := RequestFromContext(ctx)
+	ipKey := "ip:" + clientIPKey(httpReq)
+	userKey := "user:" + strings.ToLower(username)
+	if !h.Limiter.Allow(ipKey) {
+		h.Audit.LoginRateLimited(ctx, httpReq, username, ipKey)
+		return loginRateLimitedResponse{}, nil
+	}
+	if !h.Limiter.Allow(userKey) {
+		h.Audit.LoginRateLimited(ctx, httpReq, username, userKey)
+		return loginRateLimitedResponse{}, nil
+	}
+
 	q := New(h.Pool)
 	user, err := q.FindUserByUsername(ctx, &username)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			h.Audit.LoginFailed(ctx, httpReq, username, nil, "unknown_user")
 			// Same response shape as bad-password so we don't leak
 			// which usernames exist.
 			return openapi.Login401JSONResponse{
@@ -94,6 +151,7 @@ func (h *Handler) Login(
 		return nil, err
 	}
 	if user.Password == nil {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "no_password_set")
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
 		}, nil
@@ -101,6 +159,7 @@ func (h *Handler) Login(
 
 	if err := VerifyPassword(password, *user.Password, h.ScrambleKey); err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "bad_password")
 			return openapi.Login401JSONResponse{
 				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
 			}, nil
@@ -109,26 +168,29 @@ func (h *Handler) Login(
 	}
 
 	if user.Approved != 1 {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "not_approved")
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account is not approved"},
 		}, nil
 	}
 	if user.AccountExpires.Valid && user.AccountExpires.Time.Before(time.Now()) {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "account_expired")
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account has expired"},
 		}, nil
 	}
 
-	token, err := NewSessionToken()
+	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
 	if err != nil {
 		return nil, err
 	}
-	if err := q.SetUserSession(ctx, SetUserSessionParams{
-		Session: &token,
-		Ref:     user.Ref,
-	}); err != nil {
-		return nil, err
-	}
+
+	// A successful login should drain both rate-limit buckets so an
+	// earlier failed-then-recovered attempt doesn't penalise the
+	// legitimate user.
+	h.Limiter.Forget(ipKey)
+	h.Limiter.Forget(userKey)
+	h.Audit.LoginSucceeded(ctx, httpReq, user.Ref, sessionInfo.ID.String())
 
 	current := identityToCurrentUser(&Identity{
 		UserRef:    user.Ref,
@@ -143,6 +205,30 @@ func (h *Handler) Login(
 		sessionDays: h.SessionDays,
 		body:        current,
 	}, nil
+}
+
+// clientIPKey returns the request's best-guess client IP as a string,
+// falling back to "unknown" if there's no usable address. Only used as
+// a rate-limiter key, so a coarse fallback is fine.
+func clientIPKey(r *http.Request) string {
+	addr := addrFromRequest(r)
+	if addr == nil {
+		return "unknown"
+	}
+	return addr.String()
+}
+
+// loginRateLimitedResponse implements openapi.LoginResponseObject and
+// writes a 429 with a JSON body. The strict-server codegen only knows
+// about the 200/401 responses we declared in the spec, so we emit the
+// 429 by hand.
+type loginRateLimitedResponse struct{}
+
+func (loginRateLimitedResponse) VisitLoginResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_, _ = w.Write([]byte(`{"error":"too many attempts; try again shortly"}`))
+	return nil
 }
 
 // loginSetCookieResponse implements openapi.LoginResponseObject and
@@ -172,15 +258,22 @@ func (h *Handler) Logout(
 ) (openapi.LogoutResponseObject, error) {
 	// Resolve from the request context (set by the resolver middleware).
 	// If no identity, still clear the cookie and return 204 — logout is
-	// idempotent.
-	id := IdentityFromContext(ctx)
-	if id != nil && id.AuthMethod == "session" {
-		q := New(h.Pool)
-		if err := q.ClearUserSession(ctx, id.UserRef); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.logout.clear_session.error",
+	// idempotent. We revoke by cookie value (not user ref) so this only
+	// kills *this* session, leaving other devices logged in.
+	httpReq := RequestFromContext(ctx)
+	cookie := ""
+	if httpReq != nil {
+		cookie = SessionCookieValue(httpReq)
+	}
+	if cookie != "" {
+		if err := h.Sessions.RevokeByToken(ctx, cookie); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.logout.revoke.error",
 				slog.String("err", err.Error()))
 			// fall through; still expire cookie
 		}
+	}
+	if id := IdentityFromContext(ctx); id != nil && id.AuthMethod == "session" {
+		h.Audit.Logout(ctx, httpReq, id.UserRef, "")
 	}
 	return logoutClearCookieResponse{}, nil
 }

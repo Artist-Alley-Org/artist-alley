@@ -5,6 +5,8 @@
 package storage
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,6 +21,58 @@ type ApiToken struct {
 	RevokedAt      pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	OriginServerID pgtype.UUID
+}
+
+type Asset struct {
+	ID             pgtype.UUID
+	Title          string
+	Description    string
+	ResourceType   int64
+	OwnerUserRef   *int64
+	Status         string
+	FileHash       *string
+	FileExtension  *string
+	FileSizeBytes  *int64
+	Rating         *int32
+	UserRating     *float32
+	HitCount       int64
+	NewHitCount    int64
+	RequestCount   int64
+	ArchiveState   int32
+	Access         int32
+	ThumbWidth     *int32
+	ThumbHeight    *int32
+	ImageRed       *int16
+	ImageGreen     *int16
+	ImageBlue      *int16
+	ColourKey      *string
+	GeoLat         *float64
+	GeoLong        *float64
+	Country        *string
+	HasImage       bool
+	IsTranscoding  bool
+	Metadata       []byte
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+}
+
+type AssetTag struct {
+	AssetID pgtype.UUID
+	Tag     string
+	AddedAt pgtype.Timestamptz
+}
+
+type AuditEvent struct {
+	ID             pgtype.UUID
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	SubjectUserRef *int64
+	ActorUserRef   *int64
+	Ip             *netip.Addr
+	UserAgent      *string
+	Metadata       []byte
 }
 
 type Capability struct {
@@ -55,6 +109,19 @@ type RoleCapability struct {
 	CapabilityCode string
 }
 
+type Session struct {
+	ID             pgtype.UUID
+	UserRef        int64
+	TokenHash      []byte
+	CreatedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	Ip             *netip.Addr
+	UserAgent      *string
+	OriginServerID pgtype.UUID
+}
+
 type StorageObject struct {
 	Hash           string
 	SizeBytes      int64
@@ -80,6 +147,12 @@ type StorageVariant struct {
 	ContentType string
 	Metadata    []byte
 	CreatedAt   pgtype.Timestamptz
+}
+
+type SystemConfig struct {
+	Key       string
+	Value     []byte
+	UpdatedAt pgtype.Timestamptz
 }
 
 type User struct {

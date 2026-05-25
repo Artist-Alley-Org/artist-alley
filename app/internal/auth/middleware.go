@@ -49,7 +49,28 @@ func (id *Identity) Can(code string) bool {
 
 type ctxKey int
 
-const identityKey ctxKey = iota
+const (
+	identityKey ctxKey = iota
+	requestKey
+)
+
+// WithRequest stashes the incoming *http.Request in ctx so handlers
+// invoked through the strict-server abstraction (which strips access
+// to the raw request) can still see remote IP, User-Agent, etc. The
+// ResolveIdentity middleware sets this on every request.
+func WithRequest(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, requestKey, r)
+}
+
+// RequestFromContext returns the request stashed by WithRequest, or
+// nil if none. Handlers should tolerate nil — tests don't always
+// install the resolver middleware.
+func RequestFromContext(ctx context.Context) *http.Request {
+	if v, ok := ctx.Value(requestKey).(*http.Request); ok {
+		return v
+	}
+	return nil
+}
 
 // IdentityFromContext returns the resolved Identity for the request,
 // or nil if the caller is anonymous. Handlers call this after the
@@ -68,9 +89,20 @@ func WithIdentity(ctx context.Context, id *Identity) context.Context {
 }
 
 // Resolver wires the auth-resolving middleware to its dependencies.
+// Sessions is required for cookie auth; pass nil to fall back to a
+// default-configured SessionManager (e.g. in tests).
 type Resolver struct {
-	Pool   *pgxpool.Pool
-	Logger *slog.Logger
+	Pool     *pgxpool.Pool
+	Logger   *slog.Logger
+	Sessions *SessionManager
+}
+
+func (r *Resolver) sessions() *SessionManager {
+	if r.Sessions != nil {
+		return r.Sessions
+	}
+	r.Sessions = NewSessionManager(r.Pool)
+	return r.Sessions
 }
 
 // ResolveIdentity is the middleware: it tries the bearer token first,
@@ -85,7 +117,11 @@ type Resolver struct {
 // some — login, public reads — must allow anonymous).
 func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := req.Context()
+		// Stash the raw request so downstream handlers (which the
+		// strict-server abstraction wraps) can still see IP, UA,
+		// headers without us having to thread an explicit param.
+		ctx := WithRequest(req.Context(), req)
+		req = req.WithContext(ctx)
 		queries := New(r.Pool)
 
 		if tok, ok := ExtractBearerToken(req.Header); ok && LooksLikeAPIToken(tok) {
@@ -157,20 +193,23 @@ func (r *Resolver) resolveByToken(ctx context.Context, q *Queries, plaintext str
 }
 
 func (r *Resolver) resolveBySession(ctx context.Context, q *Queries, sessionToken string) (*Identity, error) {
-	row, err := q.FindUserBySession(ctx, &sessionToken)
+	info, err := r.sessions().Lookup(ctx, sessionToken)
 	if err != nil {
 		return nil, err
 	}
-	id := &Identity{
-		UserRef:    row.Ref,
-		Fullname:   row.Fullname,
-		Email:      row.Email,
-		Usergroup:  row.Usergroup,
-		AuthMethod: "session",
+	id, err := r.loadUser(ctx, q, info.UserRef)
+	if err != nil {
+		return nil, err
 	}
-	if row.Username != nil {
-		id.Username = *row.Username
-	}
+	id.AuthMethod = "session"
+	// Best-effort: bump last_used_at so the session keeps living and
+	// the next idle-timeout check uses now as the baseline. Done in a
+	// goroutine so it never blocks the request.
+	go func(sessionID uuid.UUID) {
+		ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = r.sessions().Touch(ctx2, sessionID)
+	}(info.ID)
 	return id, nil
 }
 

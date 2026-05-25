@@ -7,6 +7,7 @@ package auth
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -67,6 +68,29 @@ func (q *Queries) ClearUserSessionByToken(ctx context.Context, session *string) 
 	return err
 }
 
+const countSystemAdmins = `-- name: CountSystemAdmins :one
+
+SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+FROM user_role ur
+JOIN role_capabilities rc ON rc.role_id = ur.role_id
+JOIN "user" u             ON u.ref     = ur.rs_user_id
+WHERE rc.capability_code = 'system.admin'
+`
+
+// ---------------------------------------------------------------------------
+// setup wizard (Phase 1.6.A)
+// ---------------------------------------------------------------------------
+// Returns the number of real (still-existing) users whose assigned role
+// grants system.admin. The join against "user" filters out dangling
+// user_role rows left over from deleted users — the user table doesn't
+// cascade.
+func (q *Queries) CountSystemAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countSystemAdmins)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
 const createApiToken = `-- name: CreateApiToken :one
 INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -108,6 +132,52 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createUser = `-- name: CreateUser :one
+INSERT INTO "user" (username, password, fullname, email, approved, lang)
+VALUES ($1, $2, $3, $4, 1, $5)
+RETURNING ref, username, fullname, email, usergroup, created
+`
+
+type CreateUserParams struct {
+	Username *string
+	Password *string
+	Fullname *string
+	Email    *string
+	Lang     *string
+}
+
+type CreateUserRow struct {
+	Ref       int64
+	Username  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Created   pgtype.Timestamptz
+}
+
+// Used by setup (initial admin) and later by the admin user-management
+// endpoints. RS quirks: usergroup is nullable (we don't carry RS's
+// group concept forward), approved defaults to 1.
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Username,
+		arg.Password,
+		arg.Fullname,
+		arg.Email,
+		arg.Lang,
+	)
+	var i CreateUserRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Created,
 	)
 	return i, err
 }
@@ -214,6 +284,73 @@ func (q *Queries) FindActiveApiToken(ctx context.Context, tokenHash []byte) (Fin
 	return i, err
 }
 
+const findActiveSession = `-- name: FindActiveSession :one
+SELECT s.id,
+       s.user_ref,
+       s.created_at,
+       s.last_used_at,
+       s.expires_at,
+       s.ip,
+       s.user_agent
+FROM sessions s
+WHERE s.token_hash = $1
+  AND s.revoked_at IS NULL
+  AND (s.expires_at IS NULL OR s.expires_at > NOW())
+LIMIT 1
+`
+
+type FindActiveSessionRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	Ip         *netip.Addr
+	UserAgent  *string
+}
+
+// Resolves an incoming cookie. Only returns rows that haven't been revoked
+// and haven't passed their hard expiry. The idle-timeout check lives in
+// code so the cutoff is configurable per request.
+func (q *Queries) FindActiveSession(ctx context.Context, tokenHash []byte) (FindActiveSessionRow, error) {
+	row := q.db.QueryRow(ctx, findActiveSession, tokenHash)
+	var i FindActiveSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserRef,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.Ip,
+		&i.UserAgent,
+	)
+	return i, err
+}
+
+const findRoleByName = `-- name: FindRoleByName :one
+SELECT id, parent_id, name, description, origin_server_id, created_at, updated_at
+FROM roles
+WHERE name = $1
+LIMIT 1
+`
+
+// Used by setup to look up the seeded "Admin" role without hardcoding
+// a UUID.
+func (q *Queries) FindRoleByName(ctx context.Context, name string) (Role, error) {
+	row := q.db.QueryRow(ctx, findRoleByName, name)
+	var i Role
+	err := row.Scan(
+		&i.ID,
+		&i.ParentID,
+		&i.Name,
+		&i.Description,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const findUserBySession = `-- name: FindUserBySession :one
 SELECT ref,
        username,
@@ -314,6 +451,53 @@ func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, erro
 		&i.Name,
 		&i.Description,
 		&i.ParentID,
+	)
+	return i, err
+}
+
+const insertSession = `-- name: InsertSession :one
+
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_ref, created_at, last_used_at, expires_at
+`
+
+type InsertSessionParams struct {
+	UserRef   int64
+	TokenHash []byte
+	ExpiresAt pgtype.Timestamptz
+	Ip        *netip.Addr
+	UserAgent *string
+}
+
+type InsertSessionRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// sessions table (Phase 1.5)
+// ---------------------------------------------------------------------------
+// Records a fresh login. token_hash is sha256(cookie_value); the plaintext
+// never reaches the DB. ip/user_agent are best-effort observability.
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertSession,
+		arg.UserRef,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	var i InsertSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserRef,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -468,6 +652,61 @@ func (q *Queries) ListRoles(ctx context.Context) ([]ListRolesRow, error) {
 	return items, nil
 }
 
+const listSessionsForUser = `-- name: ListSessionsForUser :many
+SELECT id,
+       user_ref,
+       created_at,
+       last_used_at,
+       expires_at,
+       ip,
+       user_agent
+FROM sessions
+WHERE user_ref = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+ORDER BY last_used_at DESC
+`
+
+type ListSessionsForUserRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	Ip         *netip.Addr
+	UserAgent  *string
+}
+
+// Powers /auth/me/sessions. Returns active sessions ordered most recently
+// used first.
+func (q *Queries) ListSessionsForUser(ctx context.Context, userRef int64) ([]ListSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listSessionsForUser, userRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSessionsForUserRow
+	for rows.Next() {
+		var i ListSessionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserRef,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.Ip,
+			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()
@@ -489,6 +728,33 @@ func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeSession = `-- name: RevokeSession :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL
+`
+
+// Soft-deletes a session by id. Idempotent.
+func (q *Queries) RevokeSession(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, revokeSession, id)
+	return err
+}
+
+const revokeSessionByToken = `-- name: RevokeSessionByToken :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE token_hash = $1
+  AND revoked_at IS NULL
+`
+
+// Revoke by cookie hash. Used by /auth/logout when we have the cookie
+// but no session id loaded.
+func (q *Queries) RevokeSessionByToken(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, revokeSessionByToken, tokenHash)
+	return err
 }
 
 const setUserRole = `-- name: SetUserRole :exec
@@ -544,5 +810,18 @@ WHERE id = $1
 // request.
 func (q *Queries) TouchApiToken(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchApiToken, id)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions
+SET last_used_at = NOW()
+WHERE id = $1
+`
+
+// Updates last_used_at on each authenticated request. Cheap and safe
+// to call on every hit; the index on last_used_at is partial-on-active.
+func (q *Queries) TouchSession(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchSession, id)
 	return err
 }
