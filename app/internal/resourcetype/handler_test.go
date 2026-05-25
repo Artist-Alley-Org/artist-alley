@@ -198,6 +198,33 @@ func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObjec
 func (rtOnly) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from resourcetype test shim")
 }
+func (rtOnly) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
+	panic("ListFields called from resourcetype test shim")
+}
+func (rtOnly) CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
+	panic("CreateField called from resourcetype test shim")
+}
+func (rtOnly) GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
+	panic("GetField called from resourcetype test shim")
+}
+func (rtOnly) UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
+	panic("UpdateField called from resourcetype test shim")
+}
+func (rtOnly) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
+	panic("ArchiveField called from resourcetype test shim")
+}
+func (rtOnly) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
+	panic("GetAssetFields called from resourcetype test shim")
+}
+func (rtOnly) SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
+	panic("SetAssetFieldValue called from resourcetype test shim")
+}
+func (rtOnly) ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
+	panic("ClearAssetFieldValue called from resourcetype test shim")
+}
+func (rtOnly) GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	panic("GetAssetFieldValueHistory called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

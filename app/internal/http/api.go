@@ -10,6 +10,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
@@ -29,6 +30,7 @@ type apiServer struct {
 	resourceType *resourcetype.Handler
 	storage      *storage.Handler
 	assets       *assets.Handler
+	metadata     *metadata.Handler
 	setup        *setup.Handler
 }
 
@@ -38,6 +40,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		resourceType: resourcetype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger),
+		metadata:     metadata.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -140,6 +143,36 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
+}
+
+// --- metadata --------------------------------------------------------------
+
+func (s *apiServer) ListFields(ctx context.Context, req openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
+	return s.metadata.ListFields(ctx, req)
+}
+func (s *apiServer) CreateField(ctx context.Context, req openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
+	return s.metadata.CreateField(ctx, req)
+}
+func (s *apiServer) GetField(ctx context.Context, req openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
+	return s.metadata.GetField(ctx, req)
+}
+func (s *apiServer) UpdateField(ctx context.Context, req openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
+	return s.metadata.UpdateField(ctx, req)
+}
+func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
+	return s.metadata.ArchiveField(ctx, req)
+}
+func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
+	return s.metadata.GetAssetFields(ctx, req)
+}
+func (s *apiServer) SetAssetFieldValue(ctx context.Context, req openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
+	return s.metadata.SetAssetFieldValue(ctx, req)
+}
+func (s *apiServer) ClearAssetFieldValue(ctx context.Context, req openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
+	return s.metadata.ClearAssetFieldValue(ctx, req)
+}
+func (s *apiServer) GetAssetFieldValueHistory(ctx context.Context, req openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	return s.metadata.GetAssetFieldValueHistory(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

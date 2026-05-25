@@ -240,6 +240,33 @@ func (shimImpl) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject)
 func (shimImpl) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from storage test shim")
 }
+func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
+	panic("ListFields called from storage test shim")
+}
+func (shimImpl) CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
+	panic("CreateField called from storage test shim")
+}
+func (shimImpl) GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
+	panic("GetField called from storage test shim")
+}
+func (shimImpl) UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
+	panic("UpdateField called from storage test shim")
+}
+func (shimImpl) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
+	panic("ArchiveField called from storage test shim")
+}
+func (shimImpl) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
+	panic("GetAssetFields called from storage test shim")
+}
+func (shimImpl) SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
+	panic("SetAssetFieldValue called from storage test shim")
+}
+func (shimImpl) ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
+	panic("ClearAssetFieldValue called from storage test shim")
+}
+func (shimImpl) GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	panic("GetAssetFieldValueHistory called from storage test shim")
+}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()

@@ -489,6 +489,33 @@ func (a authOnlyImpl) GetSetupStatus(_ context.Context, _ openapi.GetSetupStatus
 func (a authOnlyImpl) CompleteSetup(_ context.Context, _ openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from auth test shim")
 }
+func (a authOnlyImpl) ListFields(_ context.Context, _ openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
+	panic("ListFields called from auth test shim")
+}
+func (a authOnlyImpl) CreateField(_ context.Context, _ openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
+	panic("CreateField called from auth test shim")
+}
+func (a authOnlyImpl) GetField(_ context.Context, _ openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
+	panic("GetField called from auth test shim")
+}
+func (a authOnlyImpl) UpdateField(_ context.Context, _ openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
+	panic("UpdateField called from auth test shim")
+}
+func (a authOnlyImpl) ArchiveField(_ context.Context, _ openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
+	panic("ArchiveField called from auth test shim")
+}
+func (a authOnlyImpl) GetAssetFields(_ context.Context, _ openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
+	panic("GetAssetFields called from auth test shim")
+}
+func (a authOnlyImpl) SetAssetFieldValue(_ context.Context, _ openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
+	panic("SetAssetFieldValue called from auth test shim")
+}
+func (a authOnlyImpl) ClearAssetFieldValue(_ context.Context, _ openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
+	panic("ClearAssetFieldValue called from auth test shim")
+}
+func (a authOnlyImpl) GetAssetFieldValueHistory(_ context.Context, _ openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	panic("GetAssetFieldValueHistory called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

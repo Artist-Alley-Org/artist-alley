@@ -71,6 +71,117 @@ func (e AssetCreateStatus) Valid() bool {
 	}
 }
 
+// Defines values for AssetFieldValueSetBy.
+const (
+	AssetFieldValueSetByApi      AssetFieldValueSetBy = "api"
+	AssetFieldValueSetByComputed AssetFieldValueSetBy = "computed"
+	AssetFieldValueSetByExif     AssetFieldValueSetBy = "exif"
+	AssetFieldValueSetByImport   AssetFieldValueSetBy = "import"
+	AssetFieldValueSetByIptc     AssetFieldValueSetBy = "iptc"
+	AssetFieldValueSetByManual   AssetFieldValueSetBy = "manual"
+	AssetFieldValueSetByXmp      AssetFieldValueSetBy = "xmp"
+)
+
+// Valid indicates whether the value is a known member of the AssetFieldValueSetBy enum.
+func (e AssetFieldValueSetBy) Valid() bool {
+	switch e {
+	case AssetFieldValueSetByApi:
+		return true
+	case AssetFieldValueSetByComputed:
+		return true
+	case AssetFieldValueSetByExif:
+		return true
+	case AssetFieldValueSetByImport:
+		return true
+	case AssetFieldValueSetByIptc:
+		return true
+	case AssetFieldValueSetByManual:
+		return true
+	case AssetFieldValueSetByXmp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssetFieldValueType.
+const (
+	AssetFieldValueTypeBoolean     AssetFieldValueType = "boolean"
+	AssetFieldValueTypeDate        AssetFieldValueType = "date"
+	AssetFieldValueTypeDatetime    AssetFieldValueType = "datetime"
+	AssetFieldValueTypeLongtext    AssetFieldValueType = "longtext"
+	AssetFieldValueTypeMultiSelect AssetFieldValueType = "multi_select"
+	AssetFieldValueTypeNumber      AssetFieldValueType = "number"
+	AssetFieldValueTypeReference   AssetFieldValueType = "reference"
+	AssetFieldValueTypeRichText    AssetFieldValueType = "rich_text"
+	AssetFieldValueTypeSelect      AssetFieldValueType = "select"
+	AssetFieldValueTypeText        AssetFieldValueType = "text"
+	AssetFieldValueTypeTree        AssetFieldValueType = "tree"
+)
+
+// Valid indicates whether the value is a known member of the AssetFieldValueType enum.
+func (e AssetFieldValueType) Valid() bool {
+	switch e {
+	case AssetFieldValueTypeBoolean:
+		return true
+	case AssetFieldValueTypeDate:
+		return true
+	case AssetFieldValueTypeDatetime:
+		return true
+	case AssetFieldValueTypeLongtext:
+		return true
+	case AssetFieldValueTypeMultiSelect:
+		return true
+	case AssetFieldValueTypeNumber:
+		return true
+	case AssetFieldValueTypeReference:
+		return true
+	case AssetFieldValueTypeRichText:
+		return true
+	case AssetFieldValueTypeSelect:
+		return true
+	case AssetFieldValueTypeText:
+		return true
+	case AssetFieldValueTypeTree:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssetFieldValueWriteSetBy.
+const (
+	AssetFieldValueWriteSetByApi      AssetFieldValueWriteSetBy = "api"
+	AssetFieldValueWriteSetByComputed AssetFieldValueWriteSetBy = "computed"
+	AssetFieldValueWriteSetByExif     AssetFieldValueWriteSetBy = "exif"
+	AssetFieldValueWriteSetByImport   AssetFieldValueWriteSetBy = "import"
+	AssetFieldValueWriteSetByIptc     AssetFieldValueWriteSetBy = "iptc"
+	AssetFieldValueWriteSetByManual   AssetFieldValueWriteSetBy = "manual"
+	AssetFieldValueWriteSetByXmp      AssetFieldValueWriteSetBy = "xmp"
+)
+
+// Valid indicates whether the value is a known member of the AssetFieldValueWriteSetBy enum.
+func (e AssetFieldValueWriteSetBy) Valid() bool {
+	switch e {
+	case AssetFieldValueWriteSetByApi:
+		return true
+	case AssetFieldValueWriteSetByComputed:
+		return true
+	case AssetFieldValueWriteSetByExif:
+		return true
+	case AssetFieldValueWriteSetByImport:
+		return true
+	case AssetFieldValueWriteSetByIptc:
+		return true
+	case AssetFieldValueWriteSetByManual:
+		return true
+	case AssetFieldValueWriteSetByXmp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssetUpdateStatus.
 const (
 	AssetUpdateStatusActive   AssetUpdateStatus = "active"
@@ -104,6 +215,138 @@ func (e CurrentUserAuthMethod) Valid() bool {
 	case Session:
 		return true
 	case Token:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldDefinitionStatus.
+const (
+	FieldDefinitionStatusActive     FieldDefinitionStatus = "active"
+	FieldDefinitionStatusArchived   FieldDefinitionStatus = "archived"
+	FieldDefinitionStatusDeprecated FieldDefinitionStatus = "deprecated"
+)
+
+// Valid indicates whether the value is a known member of the FieldDefinitionStatus enum.
+func (e FieldDefinitionStatus) Valid() bool {
+	switch e {
+	case FieldDefinitionStatusActive:
+		return true
+	case FieldDefinitionStatusArchived:
+		return true
+	case FieldDefinitionStatusDeprecated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldDefinitionType.
+const (
+	FieldDefinitionTypeBoolean     FieldDefinitionType = "boolean"
+	FieldDefinitionTypeDate        FieldDefinitionType = "date"
+	FieldDefinitionTypeDatetime    FieldDefinitionType = "datetime"
+	FieldDefinitionTypeLongtext    FieldDefinitionType = "longtext"
+	FieldDefinitionTypeMultiSelect FieldDefinitionType = "multi_select"
+	FieldDefinitionTypeNumber      FieldDefinitionType = "number"
+	FieldDefinitionTypeReference   FieldDefinitionType = "reference"
+	FieldDefinitionTypeRichText    FieldDefinitionType = "rich_text"
+	FieldDefinitionTypeSelect      FieldDefinitionType = "select"
+	FieldDefinitionTypeText        FieldDefinitionType = "text"
+	FieldDefinitionTypeTree        FieldDefinitionType = "tree"
+)
+
+// Valid indicates whether the value is a known member of the FieldDefinitionType enum.
+func (e FieldDefinitionType) Valid() bool {
+	switch e {
+	case FieldDefinitionTypeBoolean:
+		return true
+	case FieldDefinitionTypeDate:
+		return true
+	case FieldDefinitionTypeDatetime:
+		return true
+	case FieldDefinitionTypeLongtext:
+		return true
+	case FieldDefinitionTypeMultiSelect:
+		return true
+	case FieldDefinitionTypeNumber:
+		return true
+	case FieldDefinitionTypeReference:
+		return true
+	case FieldDefinitionTypeRichText:
+		return true
+	case FieldDefinitionTypeSelect:
+		return true
+	case FieldDefinitionTypeText:
+		return true
+	case FieldDefinitionTypeTree:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldDefinitionCreateType.
+const (
+	Boolean     FieldDefinitionCreateType = "boolean"
+	Date        FieldDefinitionCreateType = "date"
+	Datetime    FieldDefinitionCreateType = "datetime"
+	Longtext    FieldDefinitionCreateType = "longtext"
+	MultiSelect FieldDefinitionCreateType = "multi_select"
+	Number      FieldDefinitionCreateType = "number"
+	Reference   FieldDefinitionCreateType = "reference"
+	RichText    FieldDefinitionCreateType = "rich_text"
+	Select      FieldDefinitionCreateType = "select"
+	Text        FieldDefinitionCreateType = "text"
+	Tree        FieldDefinitionCreateType = "tree"
+)
+
+// Valid indicates whether the value is a known member of the FieldDefinitionCreateType enum.
+func (e FieldDefinitionCreateType) Valid() bool {
+	switch e {
+	case Boolean:
+		return true
+	case Date:
+		return true
+	case Datetime:
+		return true
+	case Longtext:
+		return true
+	case MultiSelect:
+		return true
+	case Number:
+		return true
+	case Reference:
+		return true
+	case RichText:
+		return true
+	case Select:
+		return true
+	case Text:
+		return true
+	case Tree:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FieldDefinitionUpdateStatus.
+const (
+	FieldDefinitionUpdateStatusActive     FieldDefinitionUpdateStatus = "active"
+	FieldDefinitionUpdateStatusArchived   FieldDefinitionUpdateStatus = "archived"
+	FieldDefinitionUpdateStatusDeprecated FieldDefinitionUpdateStatus = "deprecated"
+)
+
+// Valid indicates whether the value is a known member of the FieldDefinitionUpdateStatus enum.
+func (e FieldDefinitionUpdateStatus) Valid() bool {
+	switch e {
+	case FieldDefinitionUpdateStatusActive:
+		return true
+	case FieldDefinitionUpdateStatusArchived:
+		return true
+	case FieldDefinitionUpdateStatusDeprecated:
 		return true
 	default:
 		return false
@@ -167,6 +410,27 @@ func (e ListAssetsParamsStatus) Valid() bool {
 	case ListAssetsParamsStatusArchived:
 		return true
 	case ListAssetsParamsStatusDraft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListFieldsParamsStatus.
+const (
+	Active     ListFieldsParamsStatus = "active"
+	Archived   ListFieldsParamsStatus = "archived"
+	Deprecated ListFieldsParamsStatus = "deprecated"
+)
+
+// Valid indicates whether the value is a known member of the ListFieldsParamsStatus enum.
+func (e ListFieldsParamsStatus) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Archived:
+		return true
+	case Deprecated:
 		return true
 	default:
 		return false
@@ -239,6 +503,43 @@ type AssetCreate struct {
 
 // AssetCreateStatus defines model for AssetCreate.Status.
 type AssetCreateStatus string
+
+// AssetFieldValue One field value as seen on an asset.
+type AssetFieldValue struct {
+	FieldCode    string               `json:"field_code"`
+	FieldId      openapi_types.UUID   `json:"field_id"`
+	FieldLabel   *string              `json:"field_label,omitempty"`
+	SetAt        time.Time            `json:"set_at"`
+	SetBy        AssetFieldValueSetBy `json:"set_by"`
+	SetByUserRef *int64               `json:"set_by_user_ref,omitempty"`
+	Type         AssetFieldValueType  `json:"type"`
+	ValueDate    *time.Time           `json:"value_date,omitempty"`
+	ValueNum     *float32             `json:"value_num,omitempty"`
+	ValueOptions *[]string            `json:"value_options,omitempty"`
+	ValueRef     *openapi_types.UUID  `json:"value_ref,omitempty"`
+	ValueText    *string              `json:"value_text,omitempty"`
+}
+
+// AssetFieldValueSetBy defines model for AssetFieldValue.SetBy.
+type AssetFieldValueSetBy string
+
+// AssetFieldValueType defines model for AssetFieldValue.Type.
+type AssetFieldValueType string
+
+// AssetFieldValueWrite Pass whichever value_* field matches the target field's type.
+// The handler validates against field_definition.type and
+// rejects mismatches with 400.
+type AssetFieldValueWrite struct {
+	SetBy        *AssetFieldValueWriteSetBy `json:"set_by,omitempty"`
+	ValueDate    *time.Time                 `json:"value_date,omitempty"`
+	ValueNum     *float32                   `json:"value_num,omitempty"`
+	ValueOptions *[]string                  `json:"value_options,omitempty"`
+	ValueRef     *openapi_types.UUID        `json:"value_ref,omitempty"`
+	ValueText    *string                    `json:"value_text,omitempty"`
+}
+
+// AssetFieldValueWriteSetBy defines model for AssetFieldValueWrite.SetBy.
+type AssetFieldValueWriteSetBy string
 
 // AssetList defines model for AssetList.
 type AssetList struct {
@@ -317,6 +618,96 @@ type EffectiveCapabilities struct {
 type Error struct {
 	// Error Human-readable error summary
 	Error string `json:"error"`
+}
+
+// FieldDefinition defines model for FieldDefinition.
+type FieldDefinition struct {
+	// AppliesTo Resource type refs this field applies to. Empty = all.
+	AppliesTo []int64 `json:"applies_to"`
+
+	// Code Federation-stable slug. Globally unique.
+	Code                    string              `json:"code"`
+	CreatedAt               time.Time           `json:"created_at"`
+	DeprecatedReplacementId *openapi_types.UUID `json:"deprecated_replacement_id,omitempty"`
+	Description             *string             `json:"description,omitempty"`
+	DisplayGroup            string              `json:"display_group"`
+	DisplayOrder            int                 `json:"display_order"`
+	FieldSetId              *openapi_types.UUID `json:"field_set_id,omitempty"`
+	Id                      openapi_types.UUID  `json:"id"`
+	Label                   string              `json:"label"`
+
+	// Options Type-dependent constraints / values. Shape per ADR 0012.
+	Options        *map[string]interface{} `json:"options,omitempty"`
+	ReadCapability *string                 `json:"read_capability,omitempty"`
+	Required       bool                    `json:"required"`
+	Searchable     bool                    `json:"searchable"`
+
+	// Source Auto-extraction source, e.g. {"type":"exif","tag":"DateTimeOriginal"}.
+	Source          *map[string]interface{} `json:"source,omitempty"`
+	Status          FieldDefinitionStatus   `json:"status"`
+	Type            FieldDefinitionType     `json:"type"`
+	UpdatedAt       time.Time               `json:"updated_at"`
+	WriteCapability *string                 `json:"write_capability,omitempty"`
+}
+
+// FieldDefinitionStatus defines model for FieldDefinition.Status.
+type FieldDefinitionStatus string
+
+// FieldDefinitionType defines model for FieldDefinition.Type.
+type FieldDefinitionType string
+
+// FieldDefinitionCreate defines model for FieldDefinitionCreate.
+type FieldDefinitionCreate struct {
+	AppliesTo       *[]int64                  `json:"applies_to,omitempty"`
+	Code            string                    `json:"code"`
+	Description     *string                   `json:"description,omitempty"`
+	DisplayGroup    *string                   `json:"display_group,omitempty"`
+	DisplayOrder    *int                      `json:"display_order,omitempty"`
+	FieldSetId      *openapi_types.UUID       `json:"field_set_id,omitempty"`
+	Label           string                    `json:"label"`
+	Options         *map[string]interface{}   `json:"options,omitempty"`
+	ReadCapability  *string                   `json:"read_capability,omitempty"`
+	Required        *bool                     `json:"required,omitempty"`
+	Searchable      *bool                     `json:"searchable,omitempty"`
+	Source          *map[string]interface{}   `json:"source,omitempty"`
+	Type            FieldDefinitionCreateType `json:"type"`
+	WriteCapability *string                   `json:"write_capability,omitempty"`
+}
+
+// FieldDefinitionCreateType defines model for FieldDefinitionCreate.Type.
+type FieldDefinitionCreateType string
+
+// FieldDefinitionUpdate Partial update; only present fields are touched.
+type FieldDefinitionUpdate struct {
+	AppliesTo               *[]int64                     `json:"applies_to,omitempty"`
+	DeprecatedReplacementId *openapi_types.UUID          `json:"deprecated_replacement_id,omitempty"`
+	Description             *string                      `json:"description,omitempty"`
+	DisplayGroup            *string                      `json:"display_group,omitempty"`
+	DisplayOrder            *int                         `json:"display_order,omitempty"`
+	FieldSetId              *openapi_types.UUID          `json:"field_set_id,omitempty"`
+	Label                   *string                      `json:"label,omitempty"`
+	Options                 *map[string]interface{}      `json:"options,omitempty"`
+	ReadCapability          *string                      `json:"read_capability,omitempty"`
+	Required                *bool                        `json:"required,omitempty"`
+	Searchable              *bool                        `json:"searchable,omitempty"`
+	Source                  *map[string]interface{}      `json:"source,omitempty"`
+	Status                  *FieldDefinitionUpdateStatus `json:"status,omitempty"`
+	WriteCapability         *string                      `json:"write_capability,omitempty"`
+}
+
+// FieldDefinitionUpdateStatus defines model for FieldDefinitionUpdate.Status.
+type FieldDefinitionUpdateStatus string
+
+// FieldValueHistoryEntry defines model for FieldValueHistoryEntry.
+type FieldValueHistoryEntry struct {
+	AssetId          openapi_types.UUID      `json:"asset_id"`
+	ChangedAt        time.Time               `json:"changed_at"`
+	ChangedByUserRef *int64                  `json:"changed_by_user_ref,omitempty"`
+	FieldId          openapi_types.UUID      `json:"field_id"`
+	Id               openapi_types.UUID      `json:"id"`
+	NewValue         *map[string]interface{} `json:"new_value,omitempty"`
+	OldValue         *map[string]interface{} `json:"old_value,omitempty"`
+	SetBy            string                  `json:"set_by"`
 }
 
 // InitialAdminRequest defines model for InitialAdminRequest.
@@ -507,6 +898,11 @@ type ListAssetsParams struct {
 // ListAssetsParamsStatus defines parameters for ListAssets.
 type ListAssetsParamsStatus string
 
+// GetAssetFieldValueHistoryParams defines parameters for GetAssetFieldValueHistory.
+type GetAssetFieldValueHistoryParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // DownloadAssetFileParams defines parameters for DownloadAssetFile.
 type DownloadAssetFileParams struct {
 	Range *string `json:"Range,omitempty"`
@@ -521,6 +917,19 @@ type AddAssetTagsJSONBody struct {
 type DownloadAssetVariantParams struct {
 	Range *string `json:"Range,omitempty"`
 }
+
+// ListFieldsParams defines parameters for ListFields.
+type ListFieldsParams struct {
+	Status *ListFieldsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ResourceType When set, only fields whose `applies_to` is empty (=all)
+	// or contains this resource_type ref are returned. Used by
+	// the asset edit form to figure out which fields to show.
+	ResourceType *int64 `form:"resource_type,omitempty" json:"resource_type,omitempty"`
+}
+
+// ListFieldsParamsStatus defines parameters for ListFields.
+type ListFieldsParamsStatus string
 
 // UploadStorageObjectParams defines parameters for UploadStorageObject.
 type UploadStorageObjectParams struct {
@@ -547,6 +956,9 @@ type CreateAssetJSONRequestBody = AssetCreate
 // UpdateAssetJSONRequestBody defines body for UpdateAsset for application/json ContentType.
 type UpdateAssetJSONRequestBody = AssetUpdate
 
+// SetAssetFieldValueJSONRequestBody defines body for SetAssetFieldValue for application/json ContentType.
+type SetAssetFieldValueJSONRequestBody = AssetFieldValueWrite
+
 // AddAssetTagsJSONRequestBody defines body for AddAssetTags for application/json ContentType.
 type AddAssetTagsJSONRequestBody AddAssetTagsJSONBody
 
@@ -558,6 +970,12 @@ type CreateApiTokenJSONRequestBody = CreateApiTokenRequest
 
 // SetUserRoleJSONRequestBody defines body for SetUserRole for application/json ContentType.
 type SetUserRoleJSONRequestBody = SetUserRoleRequest
+
+// CreateFieldJSONRequestBody defines body for CreateField for application/json ContentType.
+type CreateFieldJSONRequestBody = FieldDefinitionCreate
+
+// UpdateFieldJSONRequestBody defines body for UpdateField for application/json ContentType.
+type UpdateFieldJSONRequestBody = FieldDefinitionUpdate
 
 // CompleteSetupJSONRequestBody defines body for CompleteSetup for application/json ContentType.
 type CompleteSetupJSONRequestBody = SetupCompleteRequest
@@ -579,6 +997,18 @@ type ServerInterface interface {
 
 	// (PATCH /assets/{id})
 	UpdateAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// All field values for an asset
+	// (GET /assets/{id}/fields)
+	GetAssetFields(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Clear a field value
+	// (DELETE /assets/{id}/fields/{field_id})
+	ClearAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID)
+	// Set or replace a single field value
+	// (PUT /assets/{id}/fields/{field_id})
+	SetAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID)
+	// Audit trail of changes to one field on one asset
+	// (GET /assets/{id}/fields/{field_id}/history)
+	GetAssetFieldValueHistory(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID, params GetAssetFieldValueHistoryParams)
 	// Download the asset's primary file (original variant)
 	// (GET /assets/{id}/file)
 	DownloadAssetFile(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DownloadAssetFileParams)
@@ -621,6 +1051,21 @@ type ServerInterface interface {
 	// Assign a role to a user (admin)
 	// (PUT /auth/users/{ref}/role)
 	SetUserRole(w http.ResponseWriter, r *http.Request, ref int64)
+	// List field definitions (the metadata schema)
+	// (GET /fields)
+	ListFields(w http.ResponseWriter, r *http.Request, params ListFieldsParams)
+	// Create a new field definition (admin)
+	// (POST /fields)
+	CreateField(w http.ResponseWriter, r *http.Request)
+	// Archive (soft-delete) a field definition (admin)
+	// (DELETE /fields/{id})
+	ArchiveField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (GET /fields/{id})
+	GetField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Update a field definition (admin)
+	// (PATCH /fields/{id})
+	UpdateField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(w http.ResponseWriter, r *http.Request)
@@ -670,6 +1115,30 @@ func (_ Unimplemented) GetAsset(w http.ResponseWriter, r *http.Request, id opena
 
 // (PATCH /assets/{id})
 func (_ Unimplemented) UpdateAsset(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// All field values for an asset
+// (GET /assets/{id}/fields)
+func (_ Unimplemented) GetAssetFields(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Clear a field value
+// (DELETE /assets/{id}/fields/{field_id})
+func (_ Unimplemented) ClearAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Set or replace a single field value
+// (PUT /assets/{id}/fields/{field_id})
+func (_ Unimplemented) SetAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Audit trail of changes to one field on one asset
+// (GET /assets/{id}/fields/{field_id}/history)
+func (_ Unimplemented) GetAssetFieldValueHistory(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID, params GetAssetFieldValueHistoryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -753,6 +1222,35 @@ func (_ Unimplemented) RevokeApiToken(w http.ResponseWriter, r *http.Request, id
 // Assign a role to a user (admin)
 // (PUT /auth/users/{ref}/role)
 func (_ Unimplemented) SetUserRole(w http.ResponseWriter, r *http.Request, ref int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List field definitions (the metadata schema)
+// (GET /fields)
+func (_ Unimplemented) ListFields(w http.ResponseWriter, r *http.Request, params ListFieldsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a new field definition (admin)
+// (POST /fields)
+func (_ Unimplemented) CreateField(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Archive (soft-delete) a field definition (admin)
+// (DELETE /fields/{id})
+func (_ Unimplemented) ArchiveField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /fields/{id})
+func (_ Unimplemented) GetField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update a field definition (admin)
+// (PATCH /fields/{id})
+func (_ Unimplemented) UpdateField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1022,6 +1520,185 @@ func (siw *ServerInterfaceWrapper) UpdateAsset(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateAsset(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetFields operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetFields(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetFields(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClearAssetFieldValue operation middleware
+func (siw *ServerInterfaceWrapper) ClearAssetFieldValue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "field_id" -------------
+	var fieldId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "field_id", chi.URLParam(r, "field_id"), &fieldId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "field_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClearAssetFieldValue(w, r, id, fieldId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetAssetFieldValue operation middleware
+func (siw *ServerInterfaceWrapper) SetAssetFieldValue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "field_id" -------------
+	var fieldId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "field_id", chi.URLParam(r, "field_id"), &fieldId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "field_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetAssetFieldValue(w, r, id, fieldId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssetFieldValueHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetAssetFieldValueHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "field_id" -------------
+	var fieldId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "field_id", chi.URLParam(r, "field_id"), &fieldId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "field_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAssetFieldValueHistoryParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssetFieldValueHistory(w, r, id, fieldId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1467,6 +2144,184 @@ func (siw *ServerInterfaceWrapper) SetUserRole(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListFields operation middleware
+func (siw *ServerInterfaceWrapper) ListFields(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListFieldsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "resource_type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "resource_type", r.URL.Query(), &params.ResourceType, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "resource_type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resource_type", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListFields(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateField operation middleware
+func (siw *ServerInterfaceWrapper) CreateField(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateField(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ArchiveField operation middleware
+func (siw *ServerInterfaceWrapper) ArchiveField(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ArchiveField(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetField operation middleware
+func (siw *ServerInterfaceWrapper) GetField(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetField(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateField operation middleware
+func (siw *ServerInterfaceWrapper) UpdateField(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateField(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListResourceTypes operation middleware
 func (siw *ServerInterfaceWrapper) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
 
@@ -1812,6 +2667,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Patch(options.BaseURL+"/assets/{id}", wrapper.UpdateAsset)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{id}/fields", wrapper.GetAssetFields)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/assets/{id}/fields/{field_id}", wrapper.ClearAssetFieldValue)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/assets/{id}/fields/{field_id}", wrapper.SetAssetFieldValue)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/assets/{id}/fields/{field_id}/history", wrapper.GetAssetFieldValueHistory)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/assets/{id}/file", wrapper.DownloadAssetFile)
 	})
 	r.Group(func(r chi.Router) {
@@ -1852,6 +2719,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/auth/users/{ref}/role", wrapper.SetUserRole)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/fields", wrapper.ListFields)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/fields", wrapper.CreateField)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/fields/{id}", wrapper.ArchiveField)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/fields/{id}", wrapper.GetField)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/fields/{id}", wrapper.UpdateField)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/resource_types", wrapper.ListResourceTypes)
@@ -2147,6 +3029,247 @@ func (response UpdateAsset401JSONResponse) VisitUpdateAssetResponse(w http.Respo
 type UpdateAsset404JSONResponse struct{ NotFoundJSONResponse }
 
 func (response UpdateAsset404JSONResponse) VisitUpdateAssetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFieldsRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type GetAssetFieldsResponseObject interface {
+	VisitGetAssetFieldsResponse(w http.ResponseWriter) error
+}
+
+type GetAssetFields200JSONResponse []AssetFieldValue
+
+func (response GetAssetFields200JSONResponse) VisitGetAssetFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFields401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAssetFields401JSONResponse) VisitGetAssetFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFields404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetAssetFields404JSONResponse) VisitGetAssetFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ClearAssetFieldValueRequestObject struct {
+	Id      openapi_types.UUID `json:"id"`
+	FieldId openapi_types.UUID `json:"field_id"`
+}
+
+type ClearAssetFieldValueResponseObject interface {
+	VisitClearAssetFieldValueResponse(w http.ResponseWriter) error
+}
+
+type ClearAssetFieldValue204Response struct {
+}
+
+func (response ClearAssetFieldValue204Response) VisitClearAssetFieldValueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ClearAssetFieldValue401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ClearAssetFieldValue401JSONResponse) VisitClearAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ClearAssetFieldValue403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response ClearAssetFieldValue403JSONResponse) VisitClearAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ClearAssetFieldValue404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ClearAssetFieldValue404JSONResponse) VisitClearAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetAssetFieldValueRequestObject struct {
+	Id      openapi_types.UUID `json:"id"`
+	FieldId openapi_types.UUID `json:"field_id"`
+	Body    *SetAssetFieldValueJSONRequestBody
+}
+
+type SetAssetFieldValueResponseObject interface {
+	VisitSetAssetFieldValueResponse(w http.ResponseWriter) error
+}
+
+type SetAssetFieldValue200JSONResponse AssetFieldValue
+
+func (response SetAssetFieldValue200JSONResponse) VisitSetAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetAssetFieldValue400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SetAssetFieldValue400JSONResponse) VisitSetAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetAssetFieldValue401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SetAssetFieldValue401JSONResponse) VisitSetAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetAssetFieldValue403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SetAssetFieldValue403JSONResponse) VisitSetAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetAssetFieldValue404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SetAssetFieldValue404JSONResponse) VisitSetAssetFieldValueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFieldValueHistoryRequestObject struct {
+	Id      openapi_types.UUID `json:"id"`
+	FieldId openapi_types.UUID `json:"field_id"`
+	Params  GetAssetFieldValueHistoryParams
+}
+
+type GetAssetFieldValueHistoryResponseObject interface {
+	VisitGetAssetFieldValueHistoryResponse(w http.ResponseWriter) error
+}
+
+type GetAssetFieldValueHistory200JSONResponse []FieldValueHistoryEntry
+
+func (response GetAssetFieldValueHistory200JSONResponse) VisitGetAssetFieldValueHistoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFieldValueHistory401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAssetFieldValueHistory401JSONResponse) VisitGetAssetFieldValueHistoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAssetFieldValueHistory404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetAssetFieldValueHistory404JSONResponse) VisitGetAssetFieldValueHistoryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -2838,6 +3961,321 @@ func (response SetUserRole404JSONResponse) VisitSetUserRoleResponse(w http.Respo
 	return err
 }
 
+type ListFieldsRequestObject struct {
+	Params ListFieldsParams
+}
+
+type ListFieldsResponseObject interface {
+	VisitListFieldsResponse(w http.ResponseWriter) error
+}
+
+type ListFields200JSONResponse []FieldDefinition
+
+func (response ListFields200JSONResponse) VisitListFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListFields401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListFields401JSONResponse) VisitListFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListFields500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListFields500JSONResponse) VisitListFieldsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateFieldRequestObject struct {
+	Body *CreateFieldJSONRequestBody
+}
+
+type CreateFieldResponseObject interface {
+	VisitCreateFieldResponse(w http.ResponseWriter) error
+}
+
+type CreateField201JSONResponse FieldDefinition
+
+func (response CreateField201JSONResponse) VisitCreateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateField400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateField400JSONResponse) VisitCreateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateField401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateField401JSONResponse) VisitCreateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateField403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CreateField403JSONResponse) VisitCreateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateField500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateField500JSONResponse) VisitCreateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ArchiveFieldRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type ArchiveFieldResponseObject interface {
+	VisitArchiveFieldResponse(w http.ResponseWriter) error
+}
+
+type ArchiveField204Response struct {
+}
+
+func (response ArchiveField204Response) VisitArchiveFieldResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ArchiveField401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ArchiveField401JSONResponse) VisitArchiveFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ArchiveField403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response ArchiveField403JSONResponse) VisitArchiveFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ArchiveField404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ArchiveField404JSONResponse) VisitArchiveFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetFieldRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type GetFieldResponseObject interface {
+	VisitGetFieldResponse(w http.ResponseWriter) error
+}
+
+type GetField200JSONResponse FieldDefinition
+
+func (response GetField200JSONResponse) VisitGetFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetField401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetField401JSONResponse) VisitGetFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetField404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetField404JSONResponse) VisitGetFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateFieldRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *UpdateFieldJSONRequestBody
+}
+
+type UpdateFieldResponseObject interface {
+	VisitUpdateFieldResponse(w http.ResponseWriter) error
+}
+
+type UpdateField200JSONResponse FieldDefinition
+
+func (response UpdateField200JSONResponse) VisitUpdateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateField400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateField400JSONResponse) VisitUpdateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateField401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UpdateField401JSONResponse) VisitUpdateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateField403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response UpdateField403JSONResponse) VisitUpdateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateField404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateField404JSONResponse) VisitUpdateFieldResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListResourceTypesRequestObject struct {
 }
 
@@ -3195,6 +4633,18 @@ type StrictServerInterface interface {
 
 	// (PATCH /assets/{id})
 	UpdateAsset(ctx context.Context, request UpdateAssetRequestObject) (UpdateAssetResponseObject, error)
+	// All field values for an asset
+	// (GET /assets/{id}/fields)
+	GetAssetFields(ctx context.Context, request GetAssetFieldsRequestObject) (GetAssetFieldsResponseObject, error)
+	// Clear a field value
+	// (DELETE /assets/{id}/fields/{field_id})
+	ClearAssetFieldValue(ctx context.Context, request ClearAssetFieldValueRequestObject) (ClearAssetFieldValueResponseObject, error)
+	// Set or replace a single field value
+	// (PUT /assets/{id}/fields/{field_id})
+	SetAssetFieldValue(ctx context.Context, request SetAssetFieldValueRequestObject) (SetAssetFieldValueResponseObject, error)
+	// Audit trail of changes to one field on one asset
+	// (GET /assets/{id}/fields/{field_id}/history)
+	GetAssetFieldValueHistory(ctx context.Context, request GetAssetFieldValueHistoryRequestObject) (GetAssetFieldValueHistoryResponseObject, error)
 	// Download the asset's primary file (original variant)
 	// (GET /assets/{id}/file)
 	DownloadAssetFile(ctx context.Context, request DownloadAssetFileRequestObject) (DownloadAssetFileResponseObject, error)
@@ -3237,6 +4687,21 @@ type StrictServerInterface interface {
 	// Assign a role to a user (admin)
 	// (PUT /auth/users/{ref}/role)
 	SetUserRole(ctx context.Context, request SetUserRoleRequestObject) (SetUserRoleResponseObject, error)
+	// List field definitions (the metadata schema)
+	// (GET /fields)
+	ListFields(ctx context.Context, request ListFieldsRequestObject) (ListFieldsResponseObject, error)
+	// Create a new field definition (admin)
+	// (POST /fields)
+	CreateField(ctx context.Context, request CreateFieldRequestObject) (CreateFieldResponseObject, error)
+	// Archive (soft-delete) a field definition (admin)
+	// (DELETE /fields/{id})
+	ArchiveField(ctx context.Context, request ArchiveFieldRequestObject) (ArchiveFieldResponseObject, error)
+
+	// (GET /fields/{id})
+	GetField(ctx context.Context, request GetFieldRequestObject) (GetFieldResponseObject, error)
+	// Update a field definition (admin)
+	// (PATCH /fields/{id})
+	UpdateField(ctx context.Context, request UpdateFieldRequestObject) (UpdateFieldResponseObject, error)
 	// List all resource types
 	// (GET /resource_types)
 	ListResourceTypes(ctx context.Context, request ListResourceTypesRequestObject) (ListResourceTypesResponseObject, error)
@@ -3421,6 +4886,121 @@ func (sh *strictHandler) UpdateAsset(w http.ResponseWriter, r *http.Request, id 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateAssetResponseObject); ok {
 		if err := validResponse.VisitUpdateAssetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetFields operation middleware
+func (sh *strictHandler) GetAssetFields(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request GetAssetFieldsRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetFields(ctx, request.(GetAssetFieldsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetFields")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetFieldsResponseObject); ok {
+		if err := validResponse.VisitGetAssetFieldsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ClearAssetFieldValue operation middleware
+func (sh *strictHandler) ClearAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID) {
+	var request ClearAssetFieldValueRequestObject
+
+	request.Id = id
+	request.FieldId = fieldId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ClearAssetFieldValue(ctx, request.(ClearAssetFieldValueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ClearAssetFieldValue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ClearAssetFieldValueResponseObject); ok {
+		if err := validResponse.VisitClearAssetFieldValueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetAssetFieldValue operation middleware
+func (sh *strictHandler) SetAssetFieldValue(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID) {
+	var request SetAssetFieldValueRequestObject
+
+	request.Id = id
+	request.FieldId = fieldId
+
+	var body SetAssetFieldValueJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetAssetFieldValue(ctx, request.(SetAssetFieldValueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetAssetFieldValue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetAssetFieldValueResponseObject); ok {
+		if err := validResponse.VisitSetAssetFieldValueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAssetFieldValueHistory operation middleware
+func (sh *strictHandler) GetAssetFieldValueHistory(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, fieldId openapi_types.UUID, params GetAssetFieldValueHistoryParams) {
+	var request GetAssetFieldValueHistoryRequestObject
+
+	request.Id = id
+	request.FieldId = fieldId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAssetFieldValueHistory(ctx, request.(GetAssetFieldValueHistoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAssetFieldValueHistory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAssetFieldValueHistoryResponseObject); ok {
+		if err := validResponse.VisitGetAssetFieldValueHistoryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -3808,6 +5388,148 @@ func (sh *strictHandler) SetUserRole(w http.ResponseWriter, r *http.Request, ref
 	}
 }
 
+// ListFields operation middleware
+func (sh *strictHandler) ListFields(w http.ResponseWriter, r *http.Request, params ListFieldsParams) {
+	var request ListFieldsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListFields(ctx, request.(ListFieldsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListFields")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListFieldsResponseObject); ok {
+		if err := validResponse.VisitListFieldsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateField operation middleware
+func (sh *strictHandler) CreateField(w http.ResponseWriter, r *http.Request) {
+	var request CreateFieldRequestObject
+
+	var body CreateFieldJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateField(ctx, request.(CreateFieldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateField")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateFieldResponseObject); ok {
+		if err := validResponse.VisitCreateFieldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ArchiveField operation middleware
+func (sh *strictHandler) ArchiveField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request ArchiveFieldRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ArchiveField(ctx, request.(ArchiveFieldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ArchiveField")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ArchiveFieldResponseObject); ok {
+		if err := validResponse.VisitArchiveFieldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetField operation middleware
+func (sh *strictHandler) GetField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request GetFieldRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetField(ctx, request.(GetFieldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetField")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetFieldResponseObject); ok {
+		if err := validResponse.VisitGetFieldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateField operation middleware
+func (sh *strictHandler) UpdateField(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UpdateFieldRequestObject
+
+	request.Id = id
+
+	var body UpdateFieldJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateField(ctx, request.(UpdateFieldRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateField")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateFieldResponseObject); ok {
+		if err := validResponse.VisitUpdateFieldResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListResourceTypes operation middleware
 func (sh *strictHandler) ListResourceTypes(w http.ResponseWriter, r *http.Request) {
 	var request ListResourceTypesRequestObject
@@ -3975,131 +5697,156 @@ func (sh *strictHandler) DownloadStorageObjectVariant(w http.ResponseWriter, r *
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7H3pdttG9uer3IPpcyw5IClvaUf+MoqXxNNOrJHk/mcm8JBF4JKoCKhCVxVIsz06Zx5innCeZE7dKqwE",
-	"JcqL/E+f/pJYJFDrXX535ccglnkhBQqjg+OPgUJdSKGR/viRJWf4jxK1sX/FUhgU9E9WFBmPmeFSTP7Q",
-	"UtjPdJxizuy//qJwERwH/2XSDD1x3+rJS6WkCq6ursIgQR0rXthBguPgF5YtpMoxAeWnvAqDV1LNeZKg",
-	"+Przn5QmRWHsqJjAvDSQc625WNJ6uMIEYlawOc+44ajt6l4Lg0qwzI351Vf4TuCHAmO7PI1qhQrQPRoG",
-	"v0rzSpYi+fqLOEMtSxUjCGlgQXNehcE7wUqTSsX/icmdXhWXor6fsLqxEKQCLlYs40lgX/cj2glPCn4h",
-	"L1E8V2gvmlaYZW8XwfHv16+mevG8zHOmNsFV+DEolCxQETkcfwyM/dr+o7vaixShyBgXBj8YoIfGcM5W",
-	"CNzA//s//9f+j2sQaG9UoSmVwATYknExjkQQBviB5UWGwXHA2LRgZvq3v+LP+mie/Pcffjt7mh4t/7p5",
-	"nJ8dsf/5MPsfD4rfnvwahIHZFPYFbRQXSzqD6pSC49/9St/Xj8n5Hxib4Or9VRj093nc32bsTm7K6Hot",
-	"z9p/BQkzODI8x+3Z7RYKrlBf944os4zN7TaNKnFgDJ503i1LngxNlTFtpqW+foE3TiZYjnSn/S90LAt3",
-	"Dtxgrgef8R8wpdhm6+xp1TR82D7KeuTtWwmDE63RfJmb6NDmwNoXPMMpfjAotH/kxrOiV1Km023a1yl7",
-	"+OR7kAswKULGxaUVXkYqtkTw+wv3nEHzf+J0vjFu7/VuuTDfP949iGW7JapbEFCOhiXMkHhiScLtVlh2",
-	"2jp5N0F3p68U4siODf/t/O2vP0I1CswzOYeDl7+9fhVCXGojc1hwzBIdApp4fDgOBi5crgUqS8VqSiLp",
-	"k/arvKieuq8Gxth+RxtmSjpgFGVu6TVRbGEvicWGryxJMRWnfIVJi1JbpM+Wt2KOMDDcZMOsVhbJLcl7",
-	"iNXc+P3TqHfaY8LWnH4zO/nRaZBtrvxWHMagULjistTZBsoikyzZYrYx/EeKAjSaMBKWJauvM7ZBZdWQ",
-	"wlHBhdVApUhQwYzZvR5H5dHRo1jgesQT+jfOgInEDRKzLEN1T8PMUuzxDAou4GChZE5sXygulV/RIXAd",
-	"iUTJosDEqbcbd78vQ25d0+cxQIILVmb26Zr0vxBP5OzDGxRLkwbH3z8Og5yL6s8H4S0YpjXMk6OjG8bp",
-	"I4BBrthJ62+4HtA/9Ybqf1wLoEiJDWxI4AczjUulHYju0vcp0xrmLL4EpomaZu7JGfyjRLWBgimWg5Gw",
-	"QBOn9IQdLxIFW+IYLHHB2tI8EWqpFAoD9jtL7KSUmDZ7EWJfuNCed57YOxIkQ/tRhrMMnKB5BlJkG68Q",
-	"LP9quzymEIws4xSTMVywJdBR6UicvTx9c/L8Ja17YXdm2NIys9uhLi3UxgQOSo30zMSSXiR0OR9VFw0L",
-	"qcBx0QpBFvrQbf52MuyTWfKL65dvxEtbG3te2YZDiFkmA5RwYmTO48ao3ABPrFWz4KjgAMfLcQhRYCWq",
-	"HitkSRQQVmisgear2wO9HjHTCrvvDFG2U3mVhdByDXT3+yXQfgXAm+0+fw0JFpncwFxagmld2YMbr6wN",
-	"3LvX0Fwc2FOwQsFKBrtByNkG8AOqmGscw8u8MBvHi5AjE9ppP/dozAQkEtYpM2TI2W/sBfkvxnBwkWIk",
-	"mtueKJkh5DLBDLjRmC0gYyLRwAWcpkwjPBg/ekbsKuQ6Em79JBsUxlIl3kth7XAUC6liTMaHxMufaJnQ",
-	"kQ9euxOb7zSq7cu2hv80R5PKZPtwf5ZraBACrJkG1vGz2O3RgXunz7ilZTVqQkjhlr3aMixzxrP9MFSZ",
-	"ZRVR3fjwLtC9jRfsHS+VLItPBOn2/R3GZu967Jpaz4edkx+6tpeLBZJQfd72W21Lp963294LqzuyVdsB",
-	"trFa5xgOiIbjlHHRcY4dRuLdr6/f/goH+KHIeMwNLBUTRh/Cy9+evzy9aH2hcCUvUR9aaMpMJHKeJBmu",
-	"LZ3HKcaX2rlCtFdyjtS5WEbiw6g6nlF78vGteCAM3MquEQwctVs+JlAtO9tYzEGUa29kfKsZ/ZZvmNI9",
-	"1ZnSQ+pPm1Q6Tbeft+vMPn31vk/BnmCn+/JHj4Trd8Mu1Q1Sb+VU7emW6uOeoClzJkZWF9rFOscoaO/C",
-	"aivNWJZZQkIz49pADYvs/PpGi9LNPrTc14JbXHeS5PwaxVhJq5ZLz77wX/3f41jmQdgcq3v+BmHWjHXO",
-	"DQKtgGujmJFqH01bMK3XUnWdI/WHHb36dOD1tgDrbaurpJ/c0kRpSbrWatyRDN3AG7m85uhv2uUt93X7",
-	"pQ8tuXKmX3j7tKdZs0yuMWl8BUMSQ+Y5G2m0ZpCVT0TUcgELbrmgfhFYHGPRVriR6JD+GH619gTBGoc6",
-	"SW/rjTaYgzeFx1HQc0j/USzDPwpchoVYhku+2IfeYpnJUn2qDy+WAy72N2XMEwT7JdhzB53KtbBI6t3r",
-	"znp5zpafCD9PU2nkPq9aaKam8832Ml9wXWRsA/RECEzHKBIulv7wtVRGO3u0LQRu4/BbDBicilshCJfY",
-	"EYQPwn3QjWHz7RErqh3Z58GwORAA4mJpT9ySDXGJO/tbb2MA9Qyyjldnt8EyW1CfGcOslQ0JVxi3lbrV",
-	"lmN4IVHDr28vIsFFnJWWxESKipteMJDCODGB9oJZqDzliR1qicaeRyTIWNdoKDJlwTDMJha+TXKctAea",
-	"ef5sMFckVhzXlQe9cmCQ+r8lzrnJpt/TPb4zMlLvfPvgz7lYZjjyh8dEXJ0TnfMz56WxO1dSus90hwX8",
-	"Wm7poGkFWtrL2QN7nP9ycfpcigVfDuhwEatNfYqVrSKk8E5lZUxGQCKjsRsB0v5uS58rmU9ZkijUuit2",
-	"TpQhte4dsFJhkW3aeMF5Y4cGTaVThK0l5KYYd7HGreHA9gtSdad58vSvn2fp0ML9wGH7wHsHNXh1SHaq",
-	"FQ87sYAlsOle5N4XRv7FHROXxXNpj8Dsntrhhxs8pUNY8ioMNHcOxetetbTiKde+kZtif8zfovoB5N87",
-	"igoI0aJ2nscLBxz0kFrCBc8yDSlTK9QETax1Mzs5mZ6/vHh3On3x8tXJuzcX0/szQLGCFVNWYMNcSjOO",
-	"hHPGuHvShFsgCoSEwo0bBc+cl1SqHDJkK3LsSI3e1xqJecbE5ZDvk3Y2raH6Fr2779sIfMcj1xC8O7fp",
-	"nGmclirb/cQAAlWGazNiWUYKffu13BTTryKkaOS+pBp+qhI9w9/uKzHo4f3FRu/Uw85Nbt1b+4D719He",
-	"RXvN26fbX+TQKV3DHUUmNzkK81os5BDQYsmIAgQVBki9P02VQli8VSgZo9bkWIuJdUuFCTATCeITOCcg",
-	"LB0s03ZSF/zQsgXUYibc2yp3cIULbViWufQaw5TFMXNcSIVA0VI7NRP+bRbHshRmMIwwn24roUJqs1Q4",
-	"SGLJfCfFT3dSfDIfoKjHjx4Oh/co3jmds/gSxQBUWWj436AfdayGxc2OgWqnzWqazWzPupMizuvwSD8e",
-	"08jRa0V4R+gS6KtIbM9XOxRJwTlM9JQoZ8A5qEp0bjkhnbd7zY0Lws2c6TgmGpm1PYf4gWujW2kPcykz",
-	"ZGLbH92aurOTsDmPwZNsdODWQbYlbi8cM9cyKw3Cu7M3jlss7CLPNItT8ioxM4Z3Ggnaz0ueJZGQpVlK",
-	"yw4ZF5e6CttUcGmkUKMBkkD6cAy/sA3MEdDqrkgwA57RwPAcgYnE2u0ZJtaOypipMH5DiakxhT6eTJgy",
-	"N+G4bT46iXOEE2XgDK080beNoewbLnhHkf4z1BQ93w6GUWpgHZPvGeeTPwpcDsezkrLAAY616AS4s49S",
-	"plMXZcgUsmRTh1RJAnJdJU7WqQuUTwRrVGjtPFA4qjMnjBORnmfHcAIC11BwEQk7gzY8y4AlSe1UqcIc",
-	"7tL6xB0GwwkcmVyjiq3pmOIH6CZM1WtxaU+dVMAH84fxo+QxPll8Px6Pjx48fDQIzrmY6pKuxiPeZogf",
-	"bnph+4osjw9CA/7PgQjnjxuDQMohCG/tK6bT8iOHXappiGFgvVt73iZRu2CMS8XN5txKPy8akClUJ6VJ",
-	"m79eVYt2mZdBP+vrFJWWgmVwEpMeprhoCG6vMPP5ms52e/QQ4pQp7dNnxvBa6xITWHEWidnp2/MLcD4B",
-	"inbp2RjOUSTANMxOfHItKeRj+JHWBn708Xg8cyRHopyIjh5oztiKDed6k5ccqy32tvLz6ciqBWa4lXU+",
-	"+AbuFeBurfNN5bjI5JKL2RhcVNM9RK43ygGaVdkVUiCcnVsZmmg48F6USTsGOC7S4jCMxDrlcWpfW6cb",
-	"WCNcIhbATRUAfQYKafyUFQUKDVLECKc/n1JCkUV1G1BoLPV4x4ggb79dWOUH6NMvK/jfcOMyjPkgAruw",
-	"GKkFuOHs5fkFnJy+HkciEhdWopCn1e/2/n1Lp4rF5v7940rWUGSBhHvKRJKhAkvyasFiF86NxBIFOvct",
-	"mUDc0DlLVvBRLBNcopjBgUaEGSuKCSv4pP3deMPybHY4jsQrRVySkHcLDs5XmBn8Gzch4AqFKVmWbQ5h",
-	"beVWNSVwo+FiU+A57ToSbrV17pYmbyq5+8bwMrFPVy4y2jilqtA9ZxtYsw0YGYk4ZWLpPi/KecZje2Kg",
-	"S9oz+cr8SWi3mAXjmR3Wkh+d5sLB0J8kaL4UzJQKNSSKL0xrZQXGdAs/+a0cwyxOgBUF+Uoefu/+C4mM",
-	"L1FZxAyjkcphtIK/nP7Hi+OJVjGM1mD/b88UoigSAMs0VmMuOyfc+ePYKmZtYOTwNmxdhR9IFihYwd3t",
-	"OI3gkk06Fpw9mSAMVqhcMmBwNH4wPiI3sns/OA4ejY/GjyiUYFKSVBPKyaN/Ll1ecN9uMKUSGtxjsOKa",
-	"WNorNKekQqvN7D4WXGlrKJSFha06Ei6/ypoJXDgLoMhKDZpbHWBv3aDSz0DxOEUFGpmKU5e6EAmCfycv",
-	"zuDo6MGR40Or+2mY10lwHLzh2py41ZPHkOVohyPfRC+hliayi2agyX8IlBV7r9rXuGJySgRreNzlzroo",
-	"Y1NosIf6+Tg43Fbe6OcPWaeeNmN9SjaUHX7Qz2rY0t+TFbn2fDGmi6Trkcbem7/Hw12naNiys8Ab535b",
-	"sH+U2CYblxhDDNvkpkJVYLRrYp8IeMPcQ29mPOem82KdwkmxR/aB5/aUH3qk6/56MHBv78NuHdTDo6Mv",
-	"VtXS5FMOVbY461wuPI1bQfD46MGuMetFTjoFOFdh8MSt+PqXuvVLbVhE/NhGC7+/t6fehki/v7fHVIXY",
-	"HWdXEufAUwEmh1Ua9fHvgd/Se/IZ6wG55dLLNDBC2vR4CLJwyYXZhmwsijIZJxaafOdIdKAyaKOQ5RZa",
-	"waxOnraQa9H+G8gg2DcVOhJbudD0dzcjGjoJ0S71uZUWHQlnKzDjbBVu9RolQ8NBY49YrSrkmgQegS5S",
-	"h/5AhDRt40AdDslZn6lHKbcOV6M2P8pk82Xp2OfAX3XBu88U6bHQgy879SD72C/AJ/Q73tmDDVpVjn8e",
-	"dnMnT1442rSF02YzxG1XYQUYJh95cuXYLsOh5ORfmLp0SNYN6p5LLPg0Gmb+zykzs0NC/jXPEGUTy+Ry",
-	"hYnzvf/0HPQasUDlnBkQyyzD2GhP5cQFjtQjkUmxRAWe4eYbYGIjBQ7R9gtaRkPbHSp7PBB2d8v+5Mt9",
-	"7Aa9/qW6AvMz7/VcLszIHXR9ucMy1EO/7tn8hGbHwRx9ffa7qAjnP/NRD2mjLg4lbGHBdgMtKDbYFXCD",
-	"SHBHFPE9gfc4vakcYAxvB8oBfFKFF+Iwl8nG2Y25TPiCY0JeSZjZnc3ggAL+h1ZDKiwya3H1ywWeQamx",
-	"8Tk0smHihuiUCDhjTg8xoqtx+OpKxpdS7KVk7oDK3XKSNqXfjZL5FszRUx4TC5522p2nSn7gSB6C2cSr",
-	"holzuunJxxp3XTVZLjT0PR2JwdLQMTw+etxU7zidlDINQkI9WiTspxs0zvkODMiGqlAA2TyyNFaY+hK0",
-	"QZ0i18J+Sbf+ile1UfuSlowNmpFDnV0Sq0XDnAuXi9oXDlsE9sqyquVye+kPj76/q3krWUQC5uCMfDip",
-	"FLJUFsf/KbRndY1t4rIgnDLgyGF1IBW3tkkGK6Y4E2aXhfK1dUJlxKZoQXwzLJ37tebv+z5TVkVRd6LH",
-	"vOXWZZ+TxHHOhV3Jp6uCXj+FL1nr1a9/HC7t3UfFDCBMu23IUS0pdPcvphMa7jpJEgshSMDXhsfBvMwu",
-	"Q+AJ5oW013y4hxFCJDv5aNiyZ490yeqMzImKsoI9r6KyQuCgvah/Q9JB8dMd1PhT3jXqjaLIC1U9+ej/",
-	"ddVCC9eo3L+7p/+tdf/UWpdRCDCpVGsVxvaCwqRlPoeJc9vhGiauAUbwn4kBVi063JcJPleTlyad9BPX",
-	"BznmDdemU8v3mebPXmX7rcLmbaW6Rc1vfP1Jv1XWJxLxo5tfalqEfQkHNq5QbdrZSi5vjgK5l0KuNbC5",
-	"LDseGTvY+zDYUY1I1dWs8HXaXhHWAXQCPYO+8L+jsra9tnYMlYWzrKmEtIs6O69C7YaSk0rqVVbFbCPx",
-	"8y8nz0cmRTGaU7Yi+ZvtIy5LwL5fatRwoCVQ7N/bS1RVHolMUjVH6YO5yeEY3grQJeU5HMNa8cZTX+UK",
-	"uICPkZGglY39584vTi5EygxTelp/465oMFJI5/N13AqdUrE79iu0i6lvakM3hiqU2y/+eGYB2MBJ+pBG",
-	"4zNyuwAnm/T4zj3cjWOTL6kii2KQVb4sUUa7uKDDVB1msVy3k1ueZ8iU7z/TkF07LctSPmUo2hl9gwIX",
-	"VhmiRzhnCwqYU60OeSBK0alcj8SB8nfz8OgxIKeo6pptDncQs5MaNwPYN3JpzQhZGmurwpppcc9A5j7l",
-	"4nD8uXLuZRWk8uTUKrPfcfo57lRJP6FpE/S345vnLeb4RCL/vGN1nApcOOBh5SGpilZA8Noj3gUBhlM7",
-	"KpfuZndxvpIZjrZr8yNRCi6F94xBr0A/hJyLUkO/PH8MlOzEdSTWKTPQqtInLWJZzXehyLFKBt8ilV82",
-	"XxK+XNs7crD3wQDd1A/2zu+b0NDAYrg/3L4CuIaWqH5uJwW9djl4ulWpOC8NJL7UEZRdvnZpWsjilOjo",
-	"no7ErFuo6PqgcA1/lB6RuCJKX1RpqUCPod5Rq/VJtSXmBHK7icR3ngxhVPeFcKEO/FBI7ZIld5VO7ko3",
-	"OqPjuAuo7Jom7A+S3UX9idAxLbiV5dC60LqU1kgim9shZFfy2YfILhH2WnOo6kV0Nxe83QN277t2e4GD",
-	"KhzRdA5asaxEfTj+JhKHltdJWTk5fe0Xuy1ibk7cGUyIhrksRdLNP3T5AzRRJOgIXMqNb3/bx6/371O+",
-	"ryU9SjW1f92/79vnUuqBNW+aFxNm2Jxp90bMhJAG5q5z0goVJr68At5IjZHgJvTyhp5XOKJ8Z5fk69o7",
-	"UdmTFG6R1oCnPsyUtGrPe9Rta+T2qMNIaMpfNDJD0XSKsqvJuTCwKBXhRnfg1yTyeML7SvbQcF+vu87q",
-	"6XVmHkowoAN0ueiOgHqNle31eAqY0QczF0yvPFFN8uGd+ehv4M8ON1JFgDeqaz68RtM7shlI6+m70S1p",
-	"t2joLgJFN1s6blnJ+M/h5Dyr5ENzMzDfwOsX19wP+VImHxUuriZV/6WiHFBlrar1va7HZTfvcT87U5Pf",
-	"fx1JMlB+/6lBNTsGMK35UnxW8tbtUNJdh9Rof8AIWrmsVgeKqW7y8HYoyjWEJNecp8JO8vrNVqXzfnYa",
-	"A7XLir1kdZWdoWtjQ8l6kUjarW3gYFY1wZkd2leIU4qmEc0YToQUm1yWrjOR1jvBe6tD0h2B+HZPptuA",
-	"+W4nsS/hMnMp1Vk20KXME0Xvft2lU8UszVapg2HU9lbgSKfSgFFMaBa7PGtAkRTSghPKz4w9tCOHA1d2",
-	"QZYyI2GJLaz8wK5WNnFJqHBQUYOVViEQDnt39uYwdHWXrYxu//r5LxenbUe3z4OzKIp82+uUZy5NtFdW",
-	"TLziCoqfgS7n2socYejNCk3C46MfCMnRLFzXGeWEHgumNcxEmWWNv3Cmc1NUyIEvXP0ugUwL3FoMsUHj",
-	"YEjV8KgqctLunVGCBQq7q0gs0NcxHVT+TqDqYEro5gtPtdbe1ZBwbfedQCmMnbla+WB1cA8v+ms/92XT",
-	"X0nIb7c6uWO0eIM7kJYIFQ88a5Mu/diGXIMvsflUIPjD1/+dk3PXfa2qZU6ZrrsuVA3+nvmmDp422Ypx",
-	"17TliySld1TVKy5Yxv/pxcBIlcLP7XQVfOekwHfEzW3N5Sr427Kp6QJ9rTpap+iso6YTnau6ps4A/XWE",
-	"VKcWCVV3zWhaBpBbFg5e/Aip1GZSSGXCOtnQV3gfOunExKZqIuNN86ZTxj1dtSBGseJKChq7UHLFk7qS",
-	"97oGNtuKj4SQcb5V3yuMSNVQrI7BXDGRjKxBUPUKUFaiKL3DxdpuI/EV/avtaXayn7tm+A6SVkeKL06V",
-	"XWKs56QLc7/I4a9T76LJbqbqboV5Thkfejsb28iKmEKSOSV1SPG1/A41RYJKaa3spzIkb42WGT1KtUAV",
-	"nzt9FkKnHigip0G7P4ElHCJzVjUmsCTkGhJo2XXqWD0ZiUvEwpdl01aBZXyFToPVnhZe+YcZzHyZ/QwW",
-	"GVuSLyPOuL0qahmjU7mGKKiWXS0sCuDdb74+mipDwBfjN82ea4hhF5yt2ab66QhXWuWWPVK4qGrlI3HS",
-	"qnJpvDEHnRz22aHzDejur1ZYG9UPFImCC+2dPLlceeZu/24F+Znsh34uufbhFrqK4TR4u/FzRwBvqx+1",
-	"uba49W2VhOqZ0UHtTteHMVR9XCiiviv/yAUnZc6Njxf71uDMS5N+uus9De1eCpZSkip9p+Y/e70ur5rI",
-	"lC9TA8/dWyOLi304uVVo3899+W3Ufv76JJh9Qcpnpl3dHTbpNEAZrCBw2VK+J+ufqOqsWjkotm5XWrYl",
-	"q+ODYdk6+UgFAHuFN53o8zwxq+h4VhFyU7IOP19cnEbCpc55UnIRpsLn1lUUruHAamoJOlblPCQBnFu4",
-	"FIn6kcNe1YEv0xT3DCUAibr/gcsKuq6Y4AaRMODX8U1Pdjt2CmbsdQbHwf/6/Wj0Axst3n/8/vHVX75s",
-	"gvm/szBbpPQnzsbscSnMN7XCIbK+thhiH0a+Pt+3h56olQjmTBge6+rnfOoV1FpoXjqkYIE4pZNGoson",
-	"vcSNr/KJAp9FOn149PhpFIQQBZRfOn3y4GEUhJGIgjTTE43Lo6Ojowdjo6PgcG9mbdKRvw3PftOk1H9z",
-	"/78G9+sCY77gcTsdm2KRCpPmxxcH2J1WYJXbEHR9I2PLrbjCTBZk/84x5SIBseTiAxxYlQxPj54+tdLG",
-	"G35WrFDTvYC6F60eBK2yh4/X/7qrxeqVZ9GZKpQ529gQDkbpJqfwu0jULrY683RHuuRBt+3VobecvLVW",
-	"JbaupWr9Dslc+h6HP0mKBVX5EBkuWbyBs3M4/fnU/QCZNfjreDocVA3B7s9CePQQrGkvcwd0KM+F3DsZ",
-	"4TWDEZERuB94cXBGyaViec4Mj2tLjELgdScxD03c4k0k5KI+KB1WFcVVHs1wWzFnNLnIfG1+NQKE4hDb",
-	"7V8cMgxrMR661E4uIGeCLSkrzIl1MuScMQVe6FJemWf0kW+bismxj0fQL2hybaW/aw3gDOsD/4I+DEHL",
-	"SDgiiamY2oE9Ml+BlUbSkZHHmZosYuL7bRWIyls7K1R8sXG+8IX9dE4et3QM54i+p9HR0+5RVD1atn+V",
-	"wbmIyXkdM4NLqShJxv9Am5F+a7Ux70sk6EcGQngh49IeWAh/t3A1hJMy4bL+/VBy9od19cRQoyIdXL2/",
-	"+v8BAAD//w==",
+	"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",
+	"yfau3l79ZwAAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

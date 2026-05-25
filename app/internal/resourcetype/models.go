@@ -58,6 +58,30 @@ type Asset struct {
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type AssetFieldValue struct {
+	AssetID      pgtype.UUID        `json:"asset_id"`
+	FieldID      pgtype.UUID        `json:"field_id"`
+	ValueText    *string            `json:"value_text"`
+	ValueNum     *float64           `json:"value_num"`
+	ValueDate    pgtype.Timestamptz `json:"value_date"`
+	ValueOptions []string           `json:"value_options"`
+	ValueRef     pgtype.UUID        `json:"value_ref"`
+	SetBy        string             `json:"set_by"`
+	SetAt        pgtype.Timestamptz `json:"set_at"`
+	SetByUserRef *int64             `json:"set_by_user_ref"`
+}
+
+type AssetFieldValueHistory struct {
+	ID               pgtype.UUID        `json:"id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	FieldID          pgtype.UUID        `json:"field_id"`
+	OldValue         []byte             `json:"old_value"`
+	NewValue         []byte             `json:"new_value"`
+	ChangedAt        pgtype.Timestamptz `json:"changed_at"`
+	ChangedByUserRef *int64             `json:"changed_by_user_ref"`
+	SetBy            string             `json:"set_by"`
+}
+
 type AssetTag struct {
 	AssetID pgtype.UUID        `json:"asset_id"`
 	Tag     string             `json:"tag"`
@@ -79,6 +103,31 @@ type Capability struct {
 	Code        string             `json:"code"`
 	Description string             `json:"description"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type FieldDefinition struct {
+	ID                      pgtype.UUID        `json:"id"`
+	Code                    string             `json:"code"`
+	Label                   string             `json:"label"`
+	Description             string             `json:"description"`
+	Type                    string             `json:"type"`
+	Options                 []byte             `json:"options"`
+	Required                bool               `json:"required"`
+	Searchable              bool               `json:"searchable"`
+	AppliesTo               []int64            `json:"applies_to"`
+	FieldSetID              pgtype.UUID        `json:"field_set_id"`
+	ReadCapability          *string            `json:"read_capability"`
+	WriteCapability         *string            `json:"write_capability"`
+	DisplayOrder            int32              `json:"display_order"`
+	DisplayGroup            string             `json:"display_group"`
+	Source                  []byte             `json:"source"`
+	Status                  string             `json:"status"`
+	DeprecatedReplacementID pgtype.UUID        `json:"deprecated_replacement_id"`
+	OriginServerID          pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
+	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
 }
 
 type ResourceType struct {
