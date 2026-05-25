@@ -58,6 +58,29 @@ type Config struct {
 	// routes. The Go app currently does not proxy fcgi itself; this
 	// value is here so future ports can introspect or rewrite it.
 	LegacyPHPAddr string
+
+	// Setup-wizard prefills. Pre-populating these via env makes it
+	// possible to script a deployment (Helm chart, Terraform, CI
+	// install test) without anyone typing into the browser form. None
+	// of them affect runtime behaviour after setup completes — once
+	// the admin clicks submit, the values live in system_config.
+	SetupDefaults SetupDefaults
+}
+
+// SetupDefaults groups every AA_SETUP_DEFAULT_* env value the setup
+// wizard prefills its form from. Empty fields just mean "no default —
+// the admin must type one in".
+type SetupDefaults struct {
+	AdminUsername  string
+	AdminEmail     string
+	AdminFullname  string
+	SiteName       string
+	SiteBaseURL    string
+	SMTPHost       string
+	SMTPPort       int
+	SMTPEncryption string // none | starttls | tls
+	SMTPUsername   string
+	SMTPFromAddr   string
 }
 
 // Load reads the environment into a Config, applying defaults and
@@ -86,6 +109,18 @@ func Load() (Config, error) {
 		StorageS3SecretKey:    envStr("AA_STORAGE_S3_SECRET_KEY", ""),
 		StorageS3UsePathStyle: envBool("AA_STORAGE_S3_USE_PATH_STYLE", true),
 		LegacyPHPAddr:         envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
+		SetupDefaults: SetupDefaults{
+			AdminUsername:  envStr("AA_SETUP_DEFAULT_USERNAME", ""),
+			AdminEmail:     envStr("AA_SETUP_DEFAULT_EMAIL", ""),
+			AdminFullname: envStr("AA_SETUP_DEFAULT_FULLNAME", ""),
+			SiteName:       envStr("AA_SETUP_DEFAULT_SITE_NAME", "artist-alley"),
+			SiteBaseURL:    envStr("AA_SETUP_DEFAULT_BASE_URL", ""),
+			SMTPHost:       envStr("AA_SETUP_DEFAULT_SMTP_HOST", ""),
+			SMTPPort:       envInt("AA_SETUP_DEFAULT_SMTP_PORT", 587),
+			SMTPEncryption: envStr("AA_SETUP_DEFAULT_SMTP_ENCRYPTION", "starttls"),
+			SMTPUsername:   envStr("AA_SETUP_DEFAULT_SMTP_USERNAME", ""),
+			SMTPFromAddr:   envStr("AA_SETUP_DEFAULT_SMTP_FROM", ""),
+		},
 	}
 
 	if c.DBPassword == "" {

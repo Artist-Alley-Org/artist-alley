@@ -68,6 +68,29 @@ func (q *Queries) ClearUserSessionByToken(ctx context.Context, session *string) 
 	return err
 }
 
+const countSystemAdmins = `-- name: CountSystemAdmins :one
+
+SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+FROM user_role ur
+JOIN role_capabilities rc ON rc.role_id = ur.role_id
+JOIN "user" u             ON u.ref     = ur.rs_user_id
+WHERE rc.capability_code = 'system.admin'
+`
+
+// ---------------------------------------------------------------------------
+// setup wizard (Phase 1.6.A)
+// ---------------------------------------------------------------------------
+// Returns the number of real (still-existing) users whose assigned role
+// grants system.admin. The join against "user" filters out dangling
+// user_role rows left over from deleted users — the user table doesn't
+// cascade.
+func (q *Queries) CountSystemAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countSystemAdmins)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
 const createApiToken = `-- name: CreateApiToken :one
 INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -109,6 +132,52 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createUser = `-- name: CreateUser :one
+INSERT INTO "user" (username, password, fullname, email, approved, lang)
+VALUES ($1, $2, $3, $4, 1, $5)
+RETURNING ref, username, fullname, email, usergroup, created
+`
+
+type CreateUserParams struct {
+	Username *string
+	Password *string
+	Fullname *string
+	Email    *string
+	Lang     *string
+}
+
+type CreateUserRow struct {
+	Ref       int64
+	Username  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Created   pgtype.Timestamptz
+}
+
+// Used by setup (initial admin) and later by the admin user-management
+// endpoints. RS quirks: usergroup is nullable (we don't carry RS's
+// group concept forward), approved defaults to 1.
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Username,
+		arg.Password,
+		arg.Fullname,
+		arg.Email,
+		arg.Lang,
+	)
+	var i CreateUserRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Created,
 	)
 	return i, err
 }
@@ -254,6 +323,30 @@ func (q *Queries) FindActiveSession(ctx context.Context, tokenHash []byte) (Find
 		&i.ExpiresAt,
 		&i.Ip,
 		&i.UserAgent,
+	)
+	return i, err
+}
+
+const findRoleByName = `-- name: FindRoleByName :one
+SELECT id, parent_id, name, description, origin_server_id, created_at, updated_at
+FROM roles
+WHERE name = $1
+LIMIT 1
+`
+
+// Used by setup to look up the seeded "Admin" role without hardcoding
+// a UUID.
+func (q *Queries) FindRoleByName(ctx context.Context, name string) (Role, error) {
+	row := q.db.QueryRow(ctx, findRoleByName, name)
+	var i Role
+	err := row.Scan(
+		&i.ID,
+		&i.ParentID,
+		&i.Name,
+		&i.Description,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

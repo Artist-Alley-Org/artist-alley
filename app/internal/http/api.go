@@ -9,9 +9,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
+	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // apiServer aggregates every feature package's handler into the single
@@ -25,13 +28,15 @@ type apiServer struct {
 	auth         *auth.Handler
 	resourceType *resourcetype.Handler
 	assets       *assets.Handler
+	setup        *setup.Handler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, storageBackend string) *apiServer {
 	return &apiServer{
-		auth:         auth.NewHandler(pool, logger, scrambleKey, 0, sessions, limiter, auditRec),
+		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec),
 		resourceType: resourcetype.NewHandler(pool, logger),
 		assets:       assets.NewHandler(storageSvc, logger),
+		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
 
@@ -95,4 +100,14 @@ func (s *apiServer) DownloadAssetOriginal(ctx context.Context, req openapi.Downl
 
 func (s *apiServer) DownloadAssetVariant(ctx context.Context, req openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	return s.assets.DownloadAssetVariant(ctx, req)
+}
+
+// --- setup -----------------------------------------------------------------
+
+func (s *apiServer) GetSetupStatus(ctx context.Context, req openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
+	return s.setup.GetSetupStatus(ctx, req)
+}
+
+func (s *apiServer) CompleteSetup(ctx context.Context, req openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
+	return s.setup.CompleteSetup(ctx, req)
 }

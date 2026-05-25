@@ -22,6 +22,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -66,6 +67,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	sessions := auth.NewSessionManager(pool)
 	limiter := auth.NewLoginLimiter()
 	auditRec := audit.NewRecorder(pool, logger)
+	sysCfg := sysconfig.NewStore(pool)
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
@@ -79,7 +81,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
 
-		impl := newAPIServer(pool, logger, cfg.ScrambleKey, storageSvc, sessions, limiter, auditRec)
+		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 	})

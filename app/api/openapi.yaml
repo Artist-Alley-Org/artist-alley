@@ -444,16 +444,79 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /setup/status:
+    get:
+      operationId: getSetupStatus
+      summary: First-run setup status + admin-form prefills
+      description: |
+        Returns whether the system still needs first-run setup, plus
+        read-only deployment info (DB host/port, storage backend) and
+        any prefill values the admin's deploy environment provided via
+        `AA_SETUP_DEFAULT_*` env vars. Anonymous access — this is the
+        first thing a brand-new install renders.
+      tags: [setup]
+      security: []
+      responses:
+        "200":
+          description: Setup status + defaults
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /setup/complete:
+    post:
+      operationId: completeSetup
+      summary: Finalize first-run setup (admin + site + SMTP)
+      description: |
+        One-shot transactional endpoint that creates the first admin
+        user, writes site identity (display name, base URL), and
+        optionally writes SMTP credentials. Only callable while no
+        `system.admin` user exists; subsequent calls return 409.
+
+        SMTP is optional — pass `null` for the `smtp` field if email
+        is not configured yet. The admin UI surfaces email-dependent
+        features (password reset, notifications) as disabled until
+        SMTP is filled in later.
+      tags: [setup]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupCompleteRequest"
+      responses:
+        "201":
+          description: Setup complete; first admin is now active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: System already has an administrator; setup is not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   securitySchemes:
     cookieAuth:
       type: apiKey
       in: cookie
-      name: rs_session
+      name: user
       description: |
-        PHP-compatible session cookie issued by `/auth/login`. Same
-        cookie works against the RS PHP pages so users only sign in
-        once.
+        PHP-compatible session cookie issued by `/auth/login`. The
+        cookie name `user` is the one RS reads (include/authenticate.php),
+        which is why we keep it for now; rename happens once PHP is
+        fully retired.
     bearerAuth:
       type: http
       scheme: bearer
@@ -519,6 +582,111 @@ components:
         password:
           type: string
           format: password
+    SetupStatus:
+      type: object
+      required: [needs_setup, deployment, defaults]
+      properties:
+        needs_setup:
+          type: boolean
+          description: True when no user with the `system.admin` capability exists.
+        deployment:
+          $ref: "#/components/schemas/SetupDeploymentInfo"
+        defaults:
+          $ref: "#/components/schemas/SetupDefaults"
+    SetupDeploymentInfo:
+      type: object
+      required: [db_host, db_port, db_name, storage_backend]
+      description: |
+        Read-only view of how the running process was configured at
+        boot. Shown on the setup page so the admin can confirm the
+        installation target before creating an admin account.
+      properties:
+        db_host:        { type: string, example: postgres }
+        db_port:        { type: integer, example: 5432 }
+        db_name:        { type: string, example: artist_alley }
+        storage_backend: { type: string, example: fs, description: "fs | s3" }
+    SetupDefaults:
+      type: object
+      description: |
+        Prefills harvested from `AA_SETUP_DEFAULT_*` env vars at boot.
+        Empty strings mean "no prefill"; the form leaves those fields
+        blank.
+      required:
+        [admin_username, admin_email, admin_fullname,
+         site_name, site_base_url,
+         smtp_host, smtp_port, smtp_encryption, smtp_username, smtp_from_address]
+      properties:
+        admin_username:  { type: string }
+        admin_email:     { type: string }
+        admin_fullname:  { type: string }
+        site_name:       { type: string, example: artist-alley }
+        site_base_url:   { type: string }
+        smtp_host:       { type: string }
+        smtp_port:       { type: integer, example: 587 }
+        smtp_encryption: { type: string, enum: [none, starttls, tls], example: starttls }
+        smtp_username:   { type: string }
+        smtp_from_address: { type: string }
+    SetupCompleteRequest:
+      type: object
+      required: [admin, site]
+      properties:
+        admin: { $ref: "#/components/schemas/InitialAdminRequest" }
+        site:  { $ref: "#/components/schemas/SiteConfig" }
+        smtp:
+          nullable: true
+          allOf: [ { $ref: "#/components/schemas/SMTPConfig" } ]
+    InitialAdminRequest:
+      type: object
+      required: [username, password, email]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: admin
+        password:
+          type: string
+          format: password
+          minLength: 8
+        email:
+          type: string
+          format: email
+          example: admin@example.com
+        fullname:
+          type: string
+          nullable: true
+          example: Site Administrator
+    SiteConfig:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Acme Art Reviews
+        base_url:
+          type: string
+          description: |
+            Absolute URL the site is reachable at. Used to build
+            outgoing links (e.g., password-reset emails). May be empty
+            at install time and filled in later.
+          example: https://art.example.com
+    SMTPConfig:
+      type: object
+      required: [host, port, encryption, from_address]
+      properties:
+        host: { type: string, example: smtp.example.com }
+        port: { type: integer, example: 587 }
+        encryption:
+          type: string
+          enum: [none, starttls, tls]
+          example: starttls
+        username: { type: string }
+        password: { type: string, format: password }
+        from_address:
+          type: string
+          example: "ArtSite <noreply@example.com>"
     CurrentUser:
       type: object
       required: [ref, username, auth_method]

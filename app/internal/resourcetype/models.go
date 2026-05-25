@@ -108,6 +108,12 @@ type StorageVariant struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type SystemConfig struct {
+	Key       string             `json:"key"`
+	Value     []byte             `json:"value"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	Ref                int64              `json:"ref"`
 	Username           *string            `json:"username"`

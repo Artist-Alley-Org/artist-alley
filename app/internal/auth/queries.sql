@@ -118,6 +118,37 @@ WHERE user_ref = $1
   AND (expires_at IS NULL OR expires_at > NOW())
 ORDER BY last_used_at DESC;
 
+-- ---------------------------------------------------------------------------
+-- setup wizard (Phase 1.6.A)
+-- ---------------------------------------------------------------------------
+
+-- name: CountSystemAdmins :one
+-- Returns the number of real (still-existing) users whose assigned role
+-- grants system.admin. The join against "user" filters out dangling
+-- user_role rows left over from deleted users — the user table doesn't
+-- cascade.
+SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+FROM user_role ur
+JOIN role_capabilities rc ON rc.role_id = ur.role_id
+JOIN "user" u             ON u.ref     = ur.rs_user_id
+WHERE rc.capability_code = 'system.admin';
+
+-- name: FindRoleByName :one
+-- Used by setup to look up the seeded "Admin" role without hardcoding
+-- a UUID.
+SELECT id, parent_id, name, description, origin_server_id, created_at, updated_at
+FROM roles
+WHERE name = $1
+LIMIT 1;
+
+-- name: CreateUser :one
+-- Used by setup (initial admin) and later by the admin user-management
+-- endpoints. RS quirks: usergroup is nullable (we don't carry RS's
+-- group concept forward), approved defaults to 1.
+INSERT INTO "user" (username, password, fullname, email, approved, lang)
+VALUES ($1, $2, $3, $4, 1, $5)
+RETURNING ref, username, fullname, email, usergroup, created;
+
 -- name: CreateApiToken :one
 INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)

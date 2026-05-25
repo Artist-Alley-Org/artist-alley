@@ -127,7 +127,31 @@
     </main>
 
     <script>
-        (function () {
+        (async function () {
+            // If the user is already signed in, bounce to the RS
+            // landing — no point showing the form.
+            try {
+                const me = await fetch('/api/v1/auth/me', { credentials: 'same-origin' });
+                if (me.ok) {
+                    location.replace('/');
+                    return;
+                }
+            } catch { /* fall through */ }
+
+            // If the install is fresh, send the user to the setup
+            // wizard instead of letting them stare at a login form
+            // they can never satisfy.
+            try {
+                const r = await fetch('/api/v1/setup/status', { credentials: 'same-origin' });
+                if (r.ok) {
+                    const body = await r.json();
+                    if (body.needs_setup) {
+                        location.replace('/setup');
+                        return;
+                    }
+                }
+            } catch { /* fall through to the form */ }
+
             const form    = document.getElementById('login-form');
             const submit  = document.getElementById('submit');
             const errBox  = document.getElementById('error');
@@ -159,7 +183,8 @@
                     });
 
                     if (resp.ok) {
-                        // Respect ?url= param if present (matches RS's login.php behaviour).
+                        // Respect ?url= param if present (matches RS's login.php behaviour);
+                        // fall back to "/" which RS serves via index.php.
                         const params = new URLSearchParams(location.search);
                         const next = params.get('url') || '/';
                         location.href = next.startsWith('/') ? next : '/';

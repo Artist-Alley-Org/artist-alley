@@ -165,6 +165,12 @@ func (rtOnly) DownloadAssetOriginal(context.Context, openapi.DownloadAssetOrigin
 func (rtOnly) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	panic("DownloadAssetVariant called from resourcetype test shim")
 }
+func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
+	panic("GetSetupStatus called from resourcetype test shim")
+}
+func (rtOnly) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
+	panic("CompleteSetup called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

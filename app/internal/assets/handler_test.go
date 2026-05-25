@@ -258,6 +258,12 @@ func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (
 func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	panic("ListResourceTypes called from assets test shim")
 }
+func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
+	panic("GetSetupStatus called from assets test shim")
+}
+func (shimImpl) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
+	panic("CompleteSetup called from assets test shim")
+}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()

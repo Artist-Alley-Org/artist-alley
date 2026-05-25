@@ -349,27 +349,31 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		t.Fatalf("HashPassword: %v", err)
 	}
 
-	// Idempotent upsert by username.
+	// Idempotent upsert by username. The UNIQUE INDEX from migration
+	// 00007 makes ON CONFLICT (username) work directly — no fallback
+	// path needed.
 	const upsert = `
 		INSERT INTO "user" (username, password, fullname, email, approved)
 		VALUES ($1, $2, 'Go Auth Test', 'go-auth-test@example.com', 1)
 		ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password
 		RETURNING ref
 	`
-	// Some installs don't have a UNIQUE constraint on username, in
-	// which case ON CONFLICT fails. Fall back to delete+insert.
 	var userRef int64
 	if err := pool.QueryRow(ctx, upsert, username, hash).Scan(&userRef); err != nil {
-		if _, err2 := pool.Exec(ctx, `DELETE FROM "user" WHERE username = $1`, username); err2 != nil {
-			t.Fatalf("cleanup before insert: %v", err2)
-		}
-		const insert = `
-			INSERT INTO "user" (username, password, fullname, email, approved)
-			VALUES ($1, $2, 'Go Auth Test', 'go-auth-test@example.com', 1)
-			RETURNING ref
-		`
-		if err := pool.QueryRow(ctx, insert, username, hash).Scan(&userRef); err != nil {
-			t.Fatalf("insert user: %v", err)
+		t.Fatalf("upsert user: %v", err)
+	}
+	// Pre-clean satellite tables before the test runs so leftover state
+	// from a previously-killed run (panic, ^C) doesn't trip PK
+	// constraints inside the test body.
+	for _, sql := range []string{
+		`DELETE FROM api_tokens             WHERE rs_user_id = $1`,
+		`DELETE FROM user_capability_grants WHERE rs_user_id = $1`,
+		`DELETE FROM user_capability_revokes WHERE rs_user_id = $1`,
+		`DELETE FROM user_role              WHERE rs_user_id = $1`,
+		`DELETE FROM sessions               WHERE user_ref   = $1`,
+	} {
+		if _, err := pool.Exec(ctx, sql, userRef); err != nil {
+			t.Fatalf("pre-clean: %v: %v", sql, err)
 		}
 	}
 	t.Cleanup(func() {
@@ -379,6 +383,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_role WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})
 
@@ -450,6 +455,12 @@ func (a authOnlyImpl) DownloadAssetOriginal(_ context.Context, _ openapi.Downloa
 }
 func (a authOnlyImpl) DownloadAssetVariant(_ context.Context, _ openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	panic("DownloadAssetVariant called from auth test shim")
+}
+func (a authOnlyImpl) GetSetupStatus(_ context.Context, _ openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
+	panic("GetSetupStatus called from auth test shim")
+}
+func (a authOnlyImpl) CompleteSetup(_ context.Context, _ openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
+	panic("CompleteSetup called from auth test shim")
 }
 
 // ---------------------------------------------------------------------------

@@ -108,6 +108,12 @@ type StorageVariant struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type SystemConfig struct {
+	Key       string
+	Value     []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type User struct {
 	Ref                int64
 	Username           *string
