@@ -381,14 +381,41 @@ func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (
 func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	panic("ListResourceTypes called from setup test shim")
 }
-func (shimImpl) UploadAsset(context.Context, openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
-	panic("UploadAsset called from setup test shim")
+func (shimImpl) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
+	panic("UploadStorageObject called from setup test shim")
 }
-func (shimImpl) DownloadAssetOriginal(context.Context, openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
-	panic("DownloadAssetOriginal called from setup test shim")
+func (shimImpl) DownloadStorageObject(context.Context, openapi.DownloadStorageObjectRequestObject) (openapi.DownloadStorageObjectResponseObject, error) {
+	panic("DownloadStorageObject called from setup test shim")
+}
+func (shimImpl) DownloadStorageObjectVariant(context.Context, openapi.DownloadStorageObjectVariantRequestObject) (openapi.DownloadStorageObjectVariantResponseObject, error) {
+	panic("DownloadStorageObjectVariant called from setup test shim")
+}
+func (shimImpl) CreateAsset(context.Context, openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
+	panic("CreateAsset called from setup test shim")
+}
+func (shimImpl) ListAssets(context.Context, openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error) {
+	panic("ListAssets called from setup test shim")
+}
+func (shimImpl) GetAsset(context.Context, openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error) {
+	panic("GetAsset called from setup test shim")
+}
+func (shimImpl) UpdateAsset(context.Context, openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
+	panic("UpdateAsset called from setup test shim")
+}
+func (shimImpl) DeleteAsset(context.Context, openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
+	panic("DeleteAsset called from setup test shim")
+}
+func (shimImpl) DownloadAssetFile(context.Context, openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
+	panic("DownloadAssetFile called from setup test shim")
 }
 func (shimImpl) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	panic("DownloadAssetVariant called from setup test shim")
+}
+func (shimImpl) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
+	panic("AddAssetTags called from setup test shim")
+}
+func (shimImpl) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
+	panic("RemoveAssetTag called from setup test shim")
 }
 
 // ---------------------------------------------------------------------------

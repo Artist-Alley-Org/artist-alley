@@ -23,6 +23,47 @@ type ApiToken struct {
 	OriginServerID pgtype.UUID
 }
 
+type Asset struct {
+	ID             pgtype.UUID
+	Title          string
+	Description    string
+	ResourceType   int64
+	OwnerUserRef   *int64
+	Status         string
+	FileHash       *string
+	FileExtension  *string
+	FileSizeBytes  *int64
+	Rating         *int32
+	UserRating     *float32
+	HitCount       int64
+	NewHitCount    int64
+	RequestCount   int64
+	ArchiveState   int32
+	Access         int32
+	ThumbWidth     *int32
+	ThumbHeight    *int32
+	ImageRed       *int16
+	ImageGreen     *int16
+	ImageBlue      *int16
+	ColourKey      *string
+	GeoLat         *float64
+	GeoLong        *float64
+	Country        *string
+	HasImage       bool
+	IsTranscoding  bool
+	Metadata       []byte
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+}
+
+type AssetTag struct {
+	AssetID pgtype.UUID
+	Tag     string
+	AddedAt pgtype.Timestamptz
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID
 	EventType      string

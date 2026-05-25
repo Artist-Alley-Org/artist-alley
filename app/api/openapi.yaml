@@ -283,10 +283,10 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /assets:
+  /storage/objects:
     post:
-      operationId: uploadAsset
-      summary: Upload a new asset blob
+      operationId: uploadStorageObject
+      summary: Upload a raw byte stream
       description: |
         Streams the request body to storage, computing sha256 in the
         same pass. If the resulting hash already exists, the bytes are
@@ -295,9 +295,9 @@ paths:
         so clients can show "already uploaded" UX.
 
         The pin subject for this endpoint is always `user:<caller-ref>`.
-        When the resource model lands in a later phase, callers will
-        be able to specify a richer subject (e.g., a resource id).
-      tags: [assets]
+        Asset entity creation (`POST /assets`) issues `asset:<uuid>`
+        pins and removes the `user:` pin once the entity owns the bytes.
+      tags: [storage]
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -331,15 +331,15 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /assets/{hash}:
+  /storage/objects/{hash}:
     get:
-      operationId: downloadAssetOriginal
-      summary: Download the original variant by content hash
+      operationId: downloadStorageObject
+      summary: Download a raw byte stream by content hash (original variant)
       description: |
         Returns the bytes of the `original` variant. Supports HTTP
         Range requests for partial downloads (video scrub, resumable
         downloads). 404 when the hash isn't known to this server.
-      tags: [assets]
+      tags: [storage]
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -375,15 +375,15 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /assets/{hash}/{variant}:
+  /storage/objects/{hash}/variants/{variant}:
     get:
-      operationId: downloadAssetVariant
-      summary: Download a specific variant of an asset
+      operationId: downloadStorageObjectVariant
+      summary: Download a specific variant of a stored object
       description: |
-        Same semantics as the original-variant download but for any
-        named variant key (e.g. "preview_2048", "thumb_512",
+        Same semantics as the original download but for any named
+        variant key (e.g. "preview_2048", "thumb_512",
         "hls/seg00001.ts").
-      tags: [assets]
+      tags: [storage]
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -419,6 +419,296 @@ paths:
               schema:
                 type: string
                 format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets:
+    post:
+      operationId: createAsset
+      summary: Create an asset entity
+      description: |
+        Creates a new asset, optionally linking it to a previously
+        uploaded byte stream via `file_hash`. If `file_hash` is set,
+        the storage layer is re-pinned under
+        `asset:<new-asset-id>` and the caller's prior `user:` pin
+        for that hash is dropped (the bytes are now owned by the
+        asset, not the uploader).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetCreate"
+      responses:
+        "201":
+          description: Asset created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      operationId: listAssets
+      summary: List assets (paginated)
+      description: |
+        Returns assets visible to the caller, newest first. Supports
+        cursor pagination plus simple filters; richer search lands
+        with ADR 0010.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: owner_ref
+          in: query
+          required: false
+          description: Filter to a single owner's assets.
+          schema: { type: integer, format: int64 }
+        - name: resource_type
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, active, archived]
+        - name: tag
+          in: query
+          required: false
+          description: Single-tag filter (intersection with other filters).
+          schema: { type: string }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination token from a previous response.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of assets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getAsset
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateAsset
+      description: |
+        Partial update. Only fields present in the request body are
+        modified. Use `tags` (array) to replace the full tag set; use
+        `POST /assets/{id}/tags` for additive changes.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetUpdate"
+      responses:
+        "200":
+          description: Updated asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteAsset
+      summary: Soft-delete an asset
+      description: |
+        Marks the asset deleted (sets `deleted_at`). The storage pin
+        is removed; the GC sweeper later collects bytes that are no
+        longer pinned by anyone.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/file:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: Range
+        in: header
+        required: false
+        schema: { type: string }
+    get:
+      operationId: downloadAssetFile
+      summary: Download the asset's primary file (original variant)
+      description: |
+        Proxies to `/storage/objects/{file_hash}` for the asset's
+        linked storage object. 404 when the asset has no file_hash
+        set yet (e.g. a draft created without an upload).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Full body
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Partial body (Range honoured)
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/variants/{variant}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: variant
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Range
+        in: header
+        required: false
+        schema: { type: string }
+    get:
+      operationId: downloadAssetVariant
+      summary: Download a named variant of the asset (thumb / preview / etc.)
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Full body
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Partial body (Range honoured)
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/tags:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: addAssetTags
+      summary: Add tags to an asset (bulk, idempotent)
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: array
+                  items: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "204":
+          description: Tags merged in
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/tags/{tag}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: tag
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: removeAssetTag
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Tag removed (idempotent)
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -817,6 +1107,85 @@ components:
         role_id:
           type: string
           format: uuid
+    Asset:
+      type: object
+      required: [id, title, resource_type, status, created_at, updated_at, tags]
+      properties:
+        id:             { type: string, format: uuid }
+        title:          { type: string }
+        description:    { type: string }
+        resource_type:  { type: integer, format: int64 }
+        owner_user_ref: { type: integer, format: int64, nullable: true }
+        status:         { type: string, enum: [draft, active, archived] }
+        file_hash:      { type: string, nullable: true, description: sha256 of the linked storage object }
+        file_extension: { type: string, nullable: true }
+        file_size_bytes: { type: integer, format: int64, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Free-form JSONB metadata blob (EXIF, custom fields, etc.).
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+    AssetCreate:
+      type: object
+      required: [title, resource_type]
+      properties:
+        title:          { type: string, minLength: 1, maxLength: 500 }
+        description:    { type: string }
+        resource_type:  { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [draft, active, archived]
+          default: active
+        file_hash:
+          type: string
+          nullable: true
+          description: |
+            sha256 of a previously uploaded storage object. When set,
+            the storage layer is re-pinned under `asset:<new-id>` and
+            the caller's `user:` pin (from the prior upload) is
+            dropped.
+        file_extension: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+        metadata:
+          type: object
+          additionalProperties: true
+    AssetUpdate:
+      type: object
+      description: |
+        Partial update; only fields present are touched. Tag arrays
+        REPLACE the full tag set when supplied (use the /tags
+        sub-resource for additive ops).
+      properties:
+        title:          { type: string, minLength: 1, maxLength: 500 }
+        description:    { type: string }
+        status:
+          type: string
+          enum: [draft, active, archived]
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+        metadata:
+          type: object
+          additionalProperties: true
+    AssetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Asset" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Pass back as the `cursor` query param to fetch the next
+            page. null when the current page is the last.
     UploadResult:
       type: object
       required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id]

@@ -65,6 +65,51 @@ CREATE TABLE system_config (
     updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
+-- migrations/00010_assets.sql — the user-facing artwork entity
+-- (Phase 1.8). UUID-keyed, file_hash points at storage_objects for
+-- the byte plane. See ADR 0011.
+CREATE TABLE assets (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    title              TEXT         NOT NULL DEFAULT '',
+    description        TEXT         NOT NULL DEFAULT '',
+    resource_type      BIGINT       NOT NULL REFERENCES resource_type(ref),
+    owner_user_ref     BIGINT       NULL,
+    status             TEXT         NOT NULL DEFAULT 'active',
+    file_hash          TEXT         NULL REFERENCES storage_objects(hash) ON DELETE SET NULL,
+    file_extension     TEXT         NULL,
+    file_size_bytes    BIGINT       NULL,
+    rating             INTEGER      NULL,
+    user_rating        REAL         NULL,
+    hit_count          BIGINT       NOT NULL DEFAULT 0,
+    new_hit_count      BIGINT       NOT NULL DEFAULT 0,
+    request_count      BIGINT       NOT NULL DEFAULT 0,
+    archive_state      INTEGER      NOT NULL DEFAULT 0,
+    access             INTEGER      NOT NULL DEFAULT 0,
+    thumb_width        INTEGER      NULL,
+    thumb_height       INTEGER      NULL,
+    image_red          SMALLINT     NULL,
+    image_green        SMALLINT     NULL,
+    image_blue         SMALLINT     NULL,
+    colour_key         TEXT         NULL,
+    geo_lat            DOUBLE PRECISION NULL,
+    geo_long           DOUBLE PRECISION NULL,
+    country            TEXT         NULL,
+    has_image          BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_transcoding     BOOLEAN      NOT NULL DEFAULT FALSE,
+    metadata           JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    origin_server_id   UUID         NULL,
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at         TIMESTAMPTZ  NULL
+);
+
+CREATE TABLE asset_tag (
+    asset_id   UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    tag        TEXT         NOT NULL,
+    added_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (asset_id, tag)
+);
+
 -- migrations/00001_api_tokens.sql + 00003_api_tokens_origin_server.sql.
 -- Owned outright by Go (goose).
 CREATE TABLE api_tokens (

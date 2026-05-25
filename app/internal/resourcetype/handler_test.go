@@ -156,14 +156,41 @@ func (rtOnly) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesReques
 func (rtOnly) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from resourcetype test shim")
 }
-func (rtOnly) UploadAsset(context.Context, openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
-	panic("UploadAsset called from resourcetype test shim")
+func (rtOnly) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
+	panic("UploadStorageObject called from resourcetype test shim")
 }
-func (rtOnly) DownloadAssetOriginal(context.Context, openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
-	panic("DownloadAssetOriginal called from resourcetype test shim")
+func (rtOnly) DownloadStorageObject(context.Context, openapi.DownloadStorageObjectRequestObject) (openapi.DownloadStorageObjectResponseObject, error) {
+	panic("DownloadStorageObject called from resourcetype test shim")
+}
+func (rtOnly) DownloadStorageObjectVariant(context.Context, openapi.DownloadStorageObjectVariantRequestObject) (openapi.DownloadStorageObjectVariantResponseObject, error) {
+	panic("DownloadStorageObjectVariant called from resourcetype test shim")
+}
+func (rtOnly) CreateAsset(context.Context, openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
+	panic("CreateAsset called from resourcetype test shim")
+}
+func (rtOnly) ListAssets(context.Context, openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error) {
+	panic("ListAssets called from resourcetype test shim")
+}
+func (rtOnly) GetAsset(context.Context, openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error) {
+	panic("GetAsset called from resourcetype test shim")
+}
+func (rtOnly) UpdateAsset(context.Context, openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
+	panic("UpdateAsset called from resourcetype test shim")
+}
+func (rtOnly) DeleteAsset(context.Context, openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
+	panic("DeleteAsset called from resourcetype test shim")
+}
+func (rtOnly) DownloadAssetFile(context.Context, openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
+	panic("DownloadAssetFile called from resourcetype test shim")
 }
 func (rtOnly) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	panic("DownloadAssetVariant called from resourcetype test shim")
+}
+func (rtOnly) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
+	panic("AddAssetTags called from resourcetype test shim")
+}
+func (rtOnly) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
+	panic("RemoveAssetTag called from resourcetype test shim")
 }
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from resourcetype test shim")

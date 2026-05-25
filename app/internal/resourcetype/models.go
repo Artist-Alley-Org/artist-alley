@@ -23,6 +23,47 @@ type ApiToken struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
+type Asset struct {
+	ID             pgtype.UUID        `json:"id"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	ResourceType   int64              `json:"resource_type"`
+	OwnerUserRef   *int64             `json:"owner_user_ref"`
+	Status         string             `json:"status"`
+	FileHash       *string            `json:"file_hash"`
+	FileExtension  *string            `json:"file_extension"`
+	FileSizeBytes  *int64             `json:"file_size_bytes"`
+	Rating         *int32             `json:"rating"`
+	UserRating     *float32           `json:"user_rating"`
+	HitCount       int64              `json:"hit_count"`
+	NewHitCount    int64              `json:"new_hit_count"`
+	RequestCount   int64              `json:"request_count"`
+	ArchiveState   int32              `json:"archive_state"`
+	Access         int32              `json:"access"`
+	ThumbWidth     *int32             `json:"thumb_width"`
+	ThumbHeight    *int32             `json:"thumb_height"`
+	ImageRed       *int16             `json:"image_red"`
+	ImageGreen     *int16             `json:"image_green"`
+	ImageBlue      *int16             `json:"image_blue"`
+	ColourKey      *string            `json:"colour_key"`
+	GeoLat         *float64           `json:"geo_lat"`
+	GeoLong        *float64           `json:"geo_long"`
+	Country        *string            `json:"country"`
+	HasImage       bool               `json:"has_image"`
+	IsTranscoding  bool               `json:"is_transcoding"`
+	Metadata       []byte             `json:"metadata"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type AssetTag struct {
+	AssetID pgtype.UUID        `json:"asset_id"`
+	Tag     string             `json:"tag"`
+	AddedAt pgtype.Timestamptz `json:"added_at"`
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID        `json:"id"`
 	EventType      string             `json:"event_type"`

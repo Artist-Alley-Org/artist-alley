@@ -447,14 +447,41 @@ func (a authOnlyImpl) SetUserRole(ctx context.Context, req openapi.SetUserRoleRe
 func (a authOnlyImpl) ListResourceTypes(_ context.Context, _ openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
 	panic("ListResourceTypes called from auth test shim")
 }
-func (a authOnlyImpl) UploadAsset(_ context.Context, _ openapi.UploadAssetRequestObject) (openapi.UploadAssetResponseObject, error) {
-	panic("UploadAsset called from auth test shim")
+func (a authOnlyImpl) UploadStorageObject(_ context.Context, _ openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
+	panic("UploadStorageObject called from auth test shim")
 }
-func (a authOnlyImpl) DownloadAssetOriginal(_ context.Context, _ openapi.DownloadAssetOriginalRequestObject) (openapi.DownloadAssetOriginalResponseObject, error) {
-	panic("DownloadAssetOriginal called from auth test shim")
+func (a authOnlyImpl) DownloadStorageObject(_ context.Context, _ openapi.DownloadStorageObjectRequestObject) (openapi.DownloadStorageObjectResponseObject, error) {
+	panic("DownloadStorageObject called from auth test shim")
+}
+func (a authOnlyImpl) DownloadStorageObjectVariant(_ context.Context, _ openapi.DownloadStorageObjectVariantRequestObject) (openapi.DownloadStorageObjectVariantResponseObject, error) {
+	panic("DownloadStorageObjectVariant called from auth test shim")
+}
+func (a authOnlyImpl) CreateAsset(_ context.Context, _ openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
+	panic("CreateAsset called from auth test shim")
+}
+func (a authOnlyImpl) ListAssets(_ context.Context, _ openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error) {
+	panic("ListAssets called from auth test shim")
+}
+func (a authOnlyImpl) GetAsset(_ context.Context, _ openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error) {
+	panic("GetAsset called from auth test shim")
+}
+func (a authOnlyImpl) UpdateAsset(_ context.Context, _ openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
+	panic("UpdateAsset called from auth test shim")
+}
+func (a authOnlyImpl) DeleteAsset(_ context.Context, _ openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
+	panic("DeleteAsset called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetFile(_ context.Context, _ openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
+	panic("DownloadAssetFile called from auth test shim")
 }
 func (a authOnlyImpl) DownloadAssetVariant(_ context.Context, _ openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	panic("DownloadAssetVariant called from auth test shim")
+}
+func (a authOnlyImpl) AddAssetTags(_ context.Context, _ openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
+	panic("AddAssetTags called from auth test shim")
+}
+func (a authOnlyImpl) RemoveAssetTag(_ context.Context, _ openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
+	panic("RemoveAssetTag called from auth test shim")
 }
 func (a authOnlyImpl) GetSetupStatus(_ context.Context, _ openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from auth test shim")
