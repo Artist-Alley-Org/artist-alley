@@ -327,7 +327,10 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 func makeRouter(t *testing.T, pool *pgxpool.Pool, admin bool) (chi.Router, int64) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := metadata.NewHandler(pool, logger)
+	// nil registry is intentional — these tests exercise the handler
+	// in isolation without spinning up the LISTEN goroutine. The cache
+	// integration is covered by internal/cache/cache_test.go.
+	h := metadata.NewHandler(pool, logger, nil)
 
 	userRef := int64(420000)
 	caps := []string{}
