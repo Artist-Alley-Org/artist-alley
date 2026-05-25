@@ -110,6 +110,59 @@ CREATE TABLE asset_tag (
     PRIMARY KEY (asset_id, tag)
 );
 
+-- migrations/00011_metadata.sql — admin-extensible field schema +
+-- typed values + append-only history. See ADR 0012. The search_text
+-- column on assets and its maintaining triggers also land in 00011.
+CREATE TABLE field_definition (
+    id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                        TEXT         NOT NULL UNIQUE,
+    label                       TEXT         NOT NULL,
+    description                 TEXT         NOT NULL DEFAULT '',
+    type                        TEXT         NOT NULL,
+    options                     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    required                    BOOLEAN      NOT NULL DEFAULT FALSE,
+    searchable                  BOOLEAN      NOT NULL DEFAULT TRUE,
+    applies_to                  BIGINT[]     NOT NULL DEFAULT '{}',
+    field_set_id                UUID         NULL,
+    read_capability             TEXT         NULL,
+    write_capability            TEXT         NULL,
+    display_order               INTEGER      NOT NULL DEFAULT 100,
+    display_group               TEXT         NOT NULL DEFAULT 'general',
+    source                      JSONB        NULL,
+    status                      TEXT         NOT NULL DEFAULT 'active',
+    deprecated_replacement_id   UUID         NULL REFERENCES field_definition(id),
+    origin_server_id            UUID         NULL,
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by_user_ref         BIGINT       NULL,
+    updated_by_user_ref         BIGINT       NULL
+);
+
+CREATE TABLE asset_field_value (
+    asset_id        UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    field_id        UUID         NOT NULL REFERENCES field_definition(id) ON DELETE CASCADE,
+    value_text      TEXT             NULL,
+    value_num       DOUBLE PRECISION NULL,
+    value_date      TIMESTAMPTZ      NULL,
+    value_options   TEXT[]       NULL,
+    value_ref       UUID         NULL,
+    set_by          TEXT         NOT NULL DEFAULT 'manual',
+    set_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    set_by_user_ref BIGINT       NULL,
+    PRIMARY KEY (asset_id, field_id)
+);
+
+CREATE TABLE asset_field_value_history (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id            UUID         NOT NULL,
+    field_id            UUID         NOT NULL,
+    old_value           JSONB        NULL,
+    new_value           JSONB        NULL,
+    changed_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    changed_by_user_ref BIGINT       NULL,
+    set_by              TEXT         NOT NULL DEFAULT 'manual'
+);
+
 -- migrations/00001_api_tokens.sql + 00003_api_tokens_origin_server.sql.
 -- Owned outright by Go (goose).
 CREATE TABLE api_tokens (

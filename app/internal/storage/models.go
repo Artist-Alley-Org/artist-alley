@@ -58,6 +58,30 @@ type Asset struct {
 	DeletedAt      pgtype.Timestamptz
 }
 
+type AssetFieldValue struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetAt        pgtype.Timestamptz
+	SetByUserRef *int64
+}
+
+type AssetFieldValueHistory struct {
+	ID               pgtype.UUID
+	AssetID          pgtype.UUID
+	FieldID          pgtype.UUID
+	OldValue         []byte
+	NewValue         []byte
+	ChangedAt        pgtype.Timestamptz
+	ChangedByUserRef *int64
+	SetBy            string
+}
+
 type AssetTag struct {
 	AssetID pgtype.UUID
 	Tag     string
@@ -79,6 +103,31 @@ type Capability struct {
 	Code        string
 	Description string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type FieldDefinition struct {
+	ID                      pgtype.UUID
+	Code                    string
+	Label                   string
+	Description             string
+	Type                    string
+	Options                 []byte
+	Required                bool
+	Searchable              bool
+	AppliesTo               []int64
+	FieldSetID              pgtype.UUID
+	ReadCapability          *string
+	WriteCapability         *string
+	DisplayOrder            int32
+	DisplayGroup            string
+	Source                  []byte
+	Status                  string
+	DeprecatedReplacementID pgtype.UUID
+	OriginServerID          pgtype.UUID
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	CreatedByUserRef        *int64
+	UpdatedByUserRef        *int64
 }
 
 type ResourceType struct {

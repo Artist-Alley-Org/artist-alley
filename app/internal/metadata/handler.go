@@ -1,0 +1,902 @@
+// Package metadata implements the admin-extensible metadata layer
+// described in ADR 0012:
+//
+//   - GET / POST / PATCH / DELETE on /fields          — schema admin
+//   - GET on /assets/{id}/fields                       — read all values
+//   - PUT / DELETE on /assets/{id}/fields/{field_id}   — write values
+//   - GET on /assets/{id}/fields/{field_id}/history    — audit trail
+//
+// Storage rides on three tables: field_definition (the schema),
+// asset_field_value (typed values, one column per primitive),
+// asset_field_value_history (append-only audit). The search_text
+// TSVECTOR on assets is maintained by Postgres triggers so search
+// stays consistent even when PHP writes during the transition.
+package metadata
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
+	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+)
+
+// codePattern matches the admin-supplied field code (federation slug).
+var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// Capability gates for the field-management surface. Field-VALUE
+// operations require asset write access, which today reduces to
+// "authenticated"; per-asset ACL lands in a later phase.
+const (
+	CapFieldsAdmin = "fields.admin"
+	CapSystemAdmin = "system.admin"
+)
+
+// Handler implements the metadata slice of openapi.StrictServerInterface.
+type Handler struct {
+	Pool   *pgxpool.Pool
+	Logger *slog.Logger
+}
+
+// NewHandler binds the metadata handler to the DB pool.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
+	return &Handler{Pool: pool, Logger: logger}
+}
+
+// ---------------------------------------------------------------------------
+// ListFields
+// ---------------------------------------------------------------------------
+
+func (h *Handler) ListFields(
+	ctx context.Context,
+	req openapi.ListFieldsRequestObject,
+) (openapi.ListFieldsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListFields401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	q := New(h.Pool)
+
+	if req.Params.ResourceType != nil {
+		rows, err := q.ListFieldDefinitionsForResourceType(ctx, *req.Params.ResourceType)
+		if err != nil {
+			return nil, fmt.Errorf("metadata: list by rt: %w", err)
+		}
+		out := make([]openapi.FieldDefinition, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, fieldDefToAPI(r))
+		}
+		return openapi.ListFields200JSONResponse(out), nil
+	}
+
+	var statusFilter *string
+	if req.Params.Status != nil {
+		s := string(*req.Params.Status)
+		statusFilter = &s
+	}
+	rows, err := q.ListFieldDefinitions(ctx, statusFilter)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list: %w", err)
+	}
+	out := make([]openapi.FieldDefinition, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fieldDefToAPI(r))
+	}
+	return openapi.ListFields200JSONResponse(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// CreateField
+// ---------------------------------------------------------------------------
+
+func (h *Handler) CreateField(
+	ctx context.Context,
+	req openapi.CreateFieldRequestObject,
+) (openapi.CreateFieldResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.CreateField401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !canAdminFields(id) {
+		return openapi.CreateField403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "field admin capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	in := req.Body
+	code := strings.TrimSpace(in.Code)
+	if !codePattern.MatchString(code) {
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "code must match ^[a-z][a-z0-9_]*$"},
+		}, nil
+	}
+	label := strings.TrimSpace(in.Label)
+	if label == "" {
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "label is required"},
+		}, nil
+	}
+	if !validFieldType(string(in.Type)) {
+		return openapi.CreateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "unknown field type"},
+		}, nil
+	}
+
+	optsJSON, err := encodeJSON(in.Options, "{}")
+	if err != nil {
+		return nil, err
+	}
+	srcJSON, err := encodeJSONOptional(in.Source)
+	if err != nil {
+		return nil, err
+	}
+
+	q := New(h.Pool)
+	row, err := q.CreateFieldDefinition(ctx, CreateFieldDefinitionParams{
+		Code:            code,
+		Label:           label,
+		Description:     strOr(in.Description, ""),
+		Type:            string(in.Type),
+		Options:         optsJSON,
+		Required:        boolOr(in.Required, false),
+		Searchable:      boolOr(in.Searchable, true),
+		AppliesTo:       int64SliceOr(in.AppliesTo, []int64{}),
+		FieldSetID:      uuidFromOpenAPIPtr(in.FieldSetId),
+		ReadCapability:  in.ReadCapability,
+		WriteCapability: in.WriteCapability,
+		DisplayOrder:    int32Or(in.DisplayOrder, 100),
+		DisplayGroup:    strOr(in.DisplayGroup, "general"),
+		Source:          srcJSON,
+		Status:          "active",
+		CreatedByUserRef: &id.UserRef,
+	})
+	if err != nil {
+		// Most likely a duplicate code violating the UNIQUE
+		// constraint. Surface that as a friendly 400.
+		if strings.Contains(err.Error(), "field_definition_code_key") {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "field code already exists"},
+			}, nil
+		}
+		return nil, fmt.Errorf("metadata: create: %w", err)
+	}
+	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(row.ID.Bytes).String())
+	return openapi.CreateField201JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
+// GetField
+// ---------------------------------------------------------------------------
+
+func (h *Handler) GetField(
+	ctx context.Context,
+	req openapi.GetFieldRequestObject,
+) (openapi.GetFieldResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetField401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	q := New(h.Pool)
+	row, err := q.GetFieldDefinitionByID(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.GetField404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.GetField200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
+// UpdateField
+// ---------------------------------------------------------------------------
+
+func (h *Handler) UpdateField(
+	ctx context.Context,
+	req openapi.UpdateFieldRequestObject,
+) (openapi.UpdateFieldResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.UpdateField401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !canAdminFields(id) {
+		return openapi.UpdateField403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "field admin capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateField400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+
+	in := req.Body
+	params := UpdateFieldDefinitionParams{
+		ID:                pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		Label:             in.Label,
+		Description:       in.Description,
+		Required:          in.Required,
+		Searchable:        in.Searchable,
+		AppliesTo:         appliesToOrNil(in.AppliesTo),
+		FieldSetID:        uuidFromOpenAPIPtr(in.FieldSetId),
+		ReadCapability:    in.ReadCapability,
+		WriteCapability:   in.WriteCapability,
+		DisplayOrder:      int32PtrOpt(in.DisplayOrder),
+		DisplayGroup:      in.DisplayGroup,
+		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
+		UpdatedByUserRef:  &id.UserRef,
+	}
+	if in.Status != nil {
+		s := string(*in.Status)
+		params.Status = &s
+	}
+	if in.Options != nil {
+		b, err := json.Marshal(*in.Options)
+		if err != nil {
+			return nil, err
+		}
+		params.Options = b
+	}
+	if in.Source != nil {
+		b, err := json.Marshal(*in.Source)
+		if err != nil {
+			return nil, err
+		}
+		params.Source = b
+	}
+
+	q := New(h.Pool)
+	row, err := q.UpdateFieldDefinition(ctx, params)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateField404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("metadata: update: %w", err)
+	}
+	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(row.ID.Bytes).String())
+	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
+// ArchiveField
+// ---------------------------------------------------------------------------
+
+func (h *Handler) ArchiveField(
+	ctx context.Context,
+	req openapi.ArchiveFieldRequestObject,
+) (openapi.ArchiveFieldResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ArchiveField401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !canAdminFields(id) {
+		return openapi.ArchiveField403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "field admin capability required"},
+		}, nil
+	}
+	q := New(h.Pool)
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if _, err := q.GetFieldDefinitionByID(ctx, pgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.ArchiveField404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if err := q.ArchiveFieldDefinition(ctx, ArchiveFieldDefinitionParams{
+		ID:                pgID,
+		UpdatedByUserRef:  &id.UserRef,
+	}); err != nil {
+		return nil, fmt.Errorf("metadata: archive: %w", err)
+	}
+	h.notifyCacheInvalidate(ctx, "field_definition", uuid.UUID(pgID.Bytes).String())
+	return openapi.ArchiveField204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetAssetFields
+// ---------------------------------------------------------------------------
+
+func (h *Handler) GetAssetFields(
+	ctx context.Context,
+	req openapi.GetAssetFieldsRequestObject,
+) (openapi.GetAssetFieldsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetAssetFields401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	q := New(h.Pool)
+	rows, err := q.ListAssetFieldValues(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list values: %w", err)
+	}
+	out := make([]openapi.AssetFieldValue, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, listAssetValueRowToAPI(r))
+	}
+	return openapi.GetAssetFields200JSONResponse(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// SetAssetFieldValue
+// ---------------------------------------------------------------------------
+
+func (h *Handler) SetAssetFieldValue(
+	ctx context.Context,
+	req openapi.SetAssetFieldValueRequestObject,
+) (openapi.SetAssetFieldValueResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.SetAssetFieldValue401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+
+	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
+
+	// Load the field definition so we can validate the incoming value
+	// shape matches the declared type.
+	qPool := New(h.Pool)
+	fieldRow, err := qPool.GetFieldDefinitionByID(ctx, pgField)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetAssetFieldValue404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if fieldRow.Status == "archived" {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "field is archived; values cannot be set"},
+		}, nil
+	}
+	if fieldRow.WriteCapability != nil && *fieldRow.WriteCapability != "" {
+		if !id.Can(*fieldRow.WriteCapability) {
+			return openapi.SetAssetFieldValue403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability for this field: " + *fieldRow.WriteCapability},
+			}, nil
+		}
+	}
+
+	upsert, valErr := buildUpsertParams(pgAsset, pgField, fieldRow.Type, req.Body, &id.UserRef)
+	if valErr != nil {
+		return openapi.SetAssetFieldValue400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: valErr.Error()},
+		}, nil
+	}
+
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("metadata: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qTx := New(tx)
+
+	// Snapshot the old value (if any) for the history entry.
+	prev, err := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+	})
+	hadOld := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("metadata: load previous: %w", err)
+	}
+
+	row, err := qTx.UpsertAssetFieldValue(ctx, upsert)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: upsert: %w", err)
+	}
+
+	// Audit history.
+	var oldJSON, newJSON []byte
+	if hadOld {
+		oldJSON, _ = valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, fieldRow.Type)
+	}
+	newJSON, _ = valueRowToJSON(row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef, fieldRow.Type)
+	if err := qTx.AppendAssetFieldValueHistory(ctx, AppendAssetFieldValueHistoryParams{
+		AssetID:           pgAsset,
+		FieldID:           pgField,
+		OldValue:          oldJSON,
+		NewValue:          newJSON,
+		SetBy:             upsert.SetBy,
+		ChangedByUserRef:  &id.UserRef,
+	}); err != nil {
+		return nil, fmt.Errorf("metadata: append history: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("metadata: commit: %w", err)
+	}
+
+	return openapi.SetAssetFieldValue200JSONResponse(
+		buildAssetValue(row.FieldID, fieldRow.Code, fieldRow.Label, fieldRow.Type,
+			row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef,
+			row.SetBy, row.SetAt, row.SetByUserRef),
+	), nil
+}
+
+// ---------------------------------------------------------------------------
+// ClearAssetFieldValue
+// ---------------------------------------------------------------------------
+
+func (h *Handler) ClearAssetFieldValue(
+	ctx context.Context,
+	req openapi.ClearAssetFieldValueRequestObject,
+) (openapi.ClearAssetFieldValueResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ClearAssetFieldValue401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	pgField := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
+
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("metadata: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qTx := New(tx)
+
+	prev, err := qTx.GetAssetFieldValue(ctx, GetAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	hadOld := err == nil
+
+	if err := qTx.DeleteAssetFieldValue(ctx, DeleteAssetFieldValueParams{
+		AssetID: pgAsset,
+		FieldID: pgField,
+	}); err != nil {
+		return nil, fmt.Errorf("metadata: delete: %w", err)
+	}
+
+	if hadOld {
+		oldJSON, _ := valueRowToJSON(prev.ValueText, prev.ValueNum, prev.ValueDate, prev.ValueOptions, prev.ValueRef, prev.Type)
+		if err := qTx.AppendAssetFieldValueHistory(ctx, AppendAssetFieldValueHistoryParams{
+			AssetID:          pgAsset,
+			FieldID:          pgField,
+			OldValue:         oldJSON,
+			NewValue:         nil,
+			SetBy:            "manual",
+			ChangedByUserRef: &id.UserRef,
+		}); err != nil {
+			return nil, fmt.Errorf("metadata: append history: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("metadata: commit: %w", err)
+	}
+	return openapi.ClearAssetFieldValue204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
+// GetAssetFieldValueHistory
+// ---------------------------------------------------------------------------
+
+func (h *Handler) GetAssetFieldValueHistory(
+	ctx context.Context,
+	req openapi.GetAssetFieldValueHistoryRequestObject,
+) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetAssetFieldValueHistory401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	limit := int32(50)
+	if req.Params.Limit != nil {
+		l := *req.Params.Limit
+		if l < 1 {
+			l = 1
+		}
+		if l > 500 {
+			l = 500
+		}
+		limit = int32(l)
+	}
+	q := New(h.Pool)
+	fieldID := pgtype.UUID{Bytes: uuid.UUID(req.FieldId), Valid: true}
+	rows, err := q.ListAssetFieldValueHistory(ctx, ListAssetFieldValueHistoryParams{
+		AssetID:  pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		FieldID:  fieldID,
+		RowLimit: limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("metadata: history: %w", err)
+	}
+	out := make([]openapi.FieldValueHistoryEntry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, historyRowToAPI(r))
+	}
+	return openapi.GetAssetFieldValueHistory200JSONResponse(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// Compile-time assertion: catches openapi-codegen signature drift.
+// ---------------------------------------------------------------------------
+
+var _ interface {
+	ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error)
+	CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error)
+	GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error)
+	UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error)
+	ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error)
+	GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error)
+	SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error)
+	ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error)
+	GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error)
+} = (*Handler)(nil)
+
+// notifyCacheInvalidate publishes a cache-invalidate event for the
+// upcoming Phase 1.10 cache layer. It's a no-op until subscribers
+// exist (Postgres LISTEN/NOTIFY discards events with no listeners),
+// but emitting here means the wiring is in place when caching lands.
+func (h *Handler) notifyCacheInvalidate(ctx context.Context, domain, key string) {
+	payload, _ := json.Marshal(map[string]string{
+		"domain": domain,
+		"key":    key,
+		"op":     "upsert",
+	})
+	if _, err := h.Pool.Exec(ctx, "SELECT pg_notify('cache_invalidate', $1)", string(payload)); err != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "metadata.notify.error",
+			slog.String("domain", domain),
+			slog.String("key", key),
+			slog.String("err", err.Error()),
+		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — input parsing, validation, type-specific marshalling.
+// ---------------------------------------------------------------------------
+
+func canAdminFields(id *auth.Identity) bool {
+	return id.Can(CapFieldsAdmin) || id.Can(CapSystemAdmin)
+}
+
+func validFieldType(t string) bool {
+	switch t {
+	case "text", "longtext", "rich_text",
+		"number", "boolean",
+		"date", "datetime",
+		"select", "multi_select", "tree",
+		"reference":
+		return true
+	}
+	return false
+}
+
+// buildUpsertParams validates the incoming AssetFieldValueWrite
+// against the field's declared type and returns ready-to-go sqlc
+// params. Each field type maps to exactly one value_* column;
+// everything else is forced to NULL so old values from a prior type
+// don't leak through.
+func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.AssetFieldValueWrite, userRef *int64) (UpsertAssetFieldValueParams, error) {
+	p := UpsertAssetFieldValueParams{
+		AssetID:        asset,
+		FieldID:        field,
+		SetBy:          "manual",
+		SetByUserRef:   userRef,
+	}
+	if in.SetBy != nil {
+		p.SetBy = string(*in.SetBy)
+	}
+
+	switch fieldType {
+	case "text", "longtext", "rich_text", "select", "tree":
+		if in.ValueText == nil {
+			return p, fmt.Errorf("field type %q requires value_text", fieldType)
+		}
+		p.ValueText = in.ValueText
+	case "number":
+		if in.ValueNum == nil {
+			return p, fmt.Errorf("field type %q requires value_num", fieldType)
+		}
+		v := float64(*in.ValueNum)
+		p.ValueNum = &v
+	case "boolean":
+		if in.ValueNum == nil {
+			return p, fmt.Errorf("boolean field requires value_num (0 or 1)")
+		}
+		v := float64(*in.ValueNum)
+		if v != 0 && v != 1 {
+			return p, fmt.Errorf("boolean field accepts 0 or 1 only")
+		}
+		p.ValueNum = &v
+	case "date", "datetime":
+		if in.ValueDate == nil {
+			return p, fmt.Errorf("field type %q requires value_date", fieldType)
+		}
+		p.ValueDate = pgtype.Timestamptz{Time: *in.ValueDate, Valid: true}
+	case "multi_select":
+		if in.ValueOptions == nil || len(*in.ValueOptions) == 0 {
+			return p, fmt.Errorf("multi_select field requires non-empty value_options")
+		}
+		p.ValueOptions = *in.ValueOptions
+	case "reference":
+		if in.ValueRef == nil {
+			return p, fmt.Errorf("reference field requires value_ref")
+		}
+		ref := uuid.UUID(*in.ValueRef)
+		p.ValueRef = pgtype.UUID{Bytes: ref, Valid: true}
+	default:
+		return p, fmt.Errorf("unknown field type %q", fieldType)
+	}
+	return p, nil
+}
+
+// valueRowToJSON encodes a typed value row into a JSONB blob suitable
+// for the history table — the single shape both old and new values
+// share regardless of underlying column.
+func valueRowToJSON(
+	text *string,
+	num *float64,
+	date pgtype.Timestamptz,
+	options []string,
+	ref pgtype.UUID,
+	fieldType string,
+) ([]byte, error) {
+	v := map[string]any{"type": fieldType}
+	switch {
+	case text != nil:
+		v["value"] = *text
+	case num != nil:
+		v["value"] = *num
+	case date.Valid:
+		v["value"] = date.Time.Format(time.RFC3339Nano)
+	case options != nil:
+		v["value"] = options
+	case ref.Valid:
+		v["value"] = uuid.UUID(ref.Bytes).String()
+	default:
+		v["value"] = nil
+	}
+	return json.Marshal(v)
+}
+
+// ---------------------------------------------------------------------------
+// Row-to-API conversions
+// ---------------------------------------------------------------------------
+
+// fieldDefToAPI converts an sqlc-generated FieldDefinition model
+// row into the OpenAPI response shape. The five field-def queries
+// all return the same model, so one helper covers them.
+func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
+	def := openapi.FieldDefinition{
+		Id:              openapi_types.UUID(r.ID.Bytes),
+		Code:            r.Code,
+		Label:           r.Label,
+		Description:     &r.Description,
+		Type:            openapi.FieldDefinitionType(r.Type),
+		Required:        r.Required,
+		Searchable:      r.Searchable,
+		AppliesTo:       r.AppliesTo,
+		ReadCapability:  r.ReadCapability,
+		WriteCapability: r.WriteCapability,
+		DisplayOrder:    int(r.DisplayOrder),
+		DisplayGroup:    r.DisplayGroup,
+		Status:          openapi.FieldDefinitionStatus(r.Status),
+		CreatedAt:       r.CreatedAt.Time,
+		UpdatedAt:       r.UpdatedAt.Time,
+	}
+	if r.FieldSetID.Valid {
+		v := openapi_types.UUID(r.FieldSetID.Bytes)
+		def.FieldSetId = &v
+	}
+	if r.DeprecatedReplacementID.Valid {
+		v := openapi_types.UUID(r.DeprecatedReplacementID.Bytes)
+		def.DeprecatedReplacementId = &v
+	}
+	if len(r.Options) > 0 {
+		var m map[string]any
+		if err := json.Unmarshal(r.Options, &m); err == nil {
+			def.Options = &m
+		}
+	}
+	if len(r.Source) > 0 && string(r.Source) != "null" {
+		var m map[string]any
+		if err := json.Unmarshal(r.Source, &m); err == nil {
+			def.Source = &m
+		}
+	}
+	return def
+}
+
+// listAssetValueRowToAPI builds the API shape from the JOIN row that
+// list-values returns (carries the field code/label/type alongside
+// the value columns).
+func listAssetValueRowToAPI(r ListAssetFieldValuesRow) openapi.AssetFieldValue {
+	return buildAssetValue(
+		r.FieldID, r.Code, r.Label, r.Type,
+		r.ValueText, r.ValueNum, r.ValueDate, r.ValueOptions, r.ValueRef,
+		r.SetBy, r.SetAt, r.SetByUserRef,
+	)
+}
+
+// buildAssetValue is the single helper for assembling an
+// openapi.AssetFieldValue from sqlc-side columns. Used by both the
+// list path (joined rows) and the upsert path (where we have the
+// field metadata loaded separately).
+func buildAssetValue(
+	fieldID pgtype.UUID,
+	code, label, fieldType string,
+	valueText *string,
+	valueNum *float64,
+	valueDate pgtype.Timestamptz,
+	valueOptions []string,
+	valueRef pgtype.UUID,
+	setBy string,
+	setAt pgtype.Timestamptz,
+	setByUserRef *int64,
+) openapi.AssetFieldValue {
+	out := openapi.AssetFieldValue{
+		FieldId:      openapi_types.UUID(fieldID.Bytes),
+		FieldCode:    code,
+		FieldLabel:   &label,
+		Type:         openapi.AssetFieldValueType(fieldType),
+		SetBy:        openapi.AssetFieldValueSetBy(setBy),
+		SetAt:        setAt.Time,
+		SetByUserRef: setByUserRef,
+	}
+	if valueText != nil {
+		out.ValueText = valueText
+	}
+	if valueNum != nil {
+		v := float32(*valueNum)
+		out.ValueNum = &v
+	}
+	if valueDate.Valid {
+		t := valueDate.Time
+		out.ValueDate = &t
+	}
+	if len(valueOptions) > 0 {
+		opts := valueOptions
+		out.ValueOptions = &opts
+	}
+	if valueRef.Valid {
+		ref := openapi_types.UUID(valueRef.Bytes)
+		out.ValueRef = &ref
+	}
+	return out
+}
+
+func historyRowToAPI(r AssetFieldValueHistory) openapi.FieldValueHistoryEntry {
+	e := openapi.FieldValueHistoryEntry{
+		Id:                  openapi_types.UUID(r.ID.Bytes),
+		AssetId:             openapi_types.UUID(r.AssetID.Bytes),
+		FieldId:             openapi_types.UUID(r.FieldID.Bytes),
+		ChangedAt:           r.ChangedAt.Time,
+		ChangedByUserRef:    r.ChangedByUserRef,
+		SetBy:               r.SetBy,
+	}
+	if len(r.OldValue) > 0 && string(r.OldValue) != "null" {
+		var m map[string]any
+		if err := json.Unmarshal(r.OldValue, &m); err == nil {
+			e.OldValue = &m
+		}
+	}
+	if len(r.NewValue) > 0 && string(r.NewValue) != "null" {
+		var m map[string]any
+		if err := json.Unmarshal(r.NewValue, &m); err == nil {
+			e.NewValue = &m
+		}
+	}
+	return e
+}
+
+// ---------------------------------------------------------------------------
+// Small option-extraction helpers — keep the handler bodies tidy.
+// ---------------------------------------------------------------------------
+
+func encodeJSON(m *map[string]any, fallback string) ([]byte, error) {
+	if m == nil || len(*m) == 0 {
+		return []byte(fallback), nil
+	}
+	return json.Marshal(*m)
+}
+
+func encodeJSONOptional(m *map[string]any) ([]byte, error) {
+	if m == nil || len(*m) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(*m)
+}
+
+func uuidFromOpenAPIPtr(u *openapi_types.UUID) pgtype.UUID {
+	if u == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: uuid.UUID(*u), Valid: true}
+}
+
+func strOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func int32Or(p *int, def int32) int32 {
+	if p == nil {
+		return def
+	}
+	return int32(*p)
+}
+
+func int32PtrOpt(p *int) *int32 {
+	if p == nil {
+		return nil
+	}
+	v := int32(*p)
+	return &v
+}
+
+func int64SliceOr(p *[]int64, def []int64) []int64 {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// appliesToOrNil — for PATCH, returns nil when caller didn't send
+// the array (= keep current), or the array itself when they did (=
+// replace).
+func appliesToOrNil(p *[]int64) []int64 {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// urlSafe ensures we never accidentally interpolate user input into
+// pg_notify payloads without escaping.
+var _ = url.QueryEscape

@@ -714,6 +714,255 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /fields:
+    get:
+      operationId: listFields
+      summary: List field definitions (the metadata schema)
+      description: |
+        Returns all field definitions, ordered by display group and
+        display order. Filter by status to see active / deprecated /
+        archived only. The result is the schema admins build through
+        the field-management UI.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, deprecated, archived]
+        - name: resource_type
+          in: query
+          required: false
+          description: |
+            When set, only fields whose `applies_to` is empty (=all)
+            or contains this resource_type ref are returned. Used by
+            the asset edit form to figure out which fields to show.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: List of field definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FieldDefinition" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createField
+      summary: Create a new field definition (admin)
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldDefinitionCreate" }
+      responses:
+        "201":
+          description: Field created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefinition" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /fields/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getField
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The field definition
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefinition" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateField
+      summary: Update a field definition (admin)
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldDefinitionUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefinition" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: archiveField
+      summary: Archive (soft-delete) a field definition (admin)
+      description: |
+        Sets status='archived'. Field values are NOT deleted — they
+        stay in `asset_field_value` and remain visible in
+        per-asset history. Re-create the field by code to restore.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Archived
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/fields:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getAssetFields
+      summary: All field values for an asset
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Map of field code -> typed value record
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AssetFieldValue" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/fields/{field_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: field_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setAssetFieldValue
+      summary: Set or replace a single field value
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssetFieldValueWrite" }
+      responses:
+        "200":
+          description: Value set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetFieldValue" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: clearAssetFieldValue
+      summary: Clear a field value
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Cleared
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/fields/{field_id}/history:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: field_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    get:
+      operationId: getAssetFieldValueHistory
+      summary: Audit trail of changes to one field on one asset
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Newest-first list of historical changes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FieldValueHistoryEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /resource_types:
     get:
       operationId: listResourceTypes
@@ -1107,6 +1356,142 @@ components:
         role_id:
           type: string
           format: uuid
+    FieldDefinition:
+      type: object
+      required: [id, code, label, type, required, searchable, applies_to, display_order, display_group, status, created_at, updated_at]
+      properties:
+        id:           { type: string, format: uuid }
+        code:         { type: string, description: "Federation-stable slug. Globally unique." }
+        label:        { type: string }
+        description:  { type: string }
+        type:
+          type: string
+          enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        options:
+          type: object
+          additionalProperties: true
+          description: "Type-dependent constraints / values. Shape per ADR 0012."
+        required:     { type: boolean }
+        searchable:   { type: boolean }
+        applies_to:
+          type: array
+          items: { type: integer, format: int64 }
+          description: "Resource type refs this field applies to. Empty = all."
+        field_set_id:    { type: string, format: uuid, nullable: true }
+        read_capability: { type: string, nullable: true }
+        write_capability: { type: string, nullable: true }
+        display_order:   { type: integer }
+        display_group:   { type: string }
+        source:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: "Auto-extraction source, e.g. {\"type\":\"exif\",\"tag\":\"DateTimeOriginal\"}."
+        status:
+          type: string
+          enum: [active, deprecated, archived]
+        deprecated_replacement_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    FieldDefinitionCreate:
+      type: object
+      required: [code, label, type]
+      properties:
+        code:          { type: string, minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }
+        label:         { type: string, minLength: 1, maxLength: 200 }
+        description:   { type: string }
+        type:
+          type: string
+          enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        options:       { type: object, additionalProperties: true }
+        required:      { type: boolean, default: false }
+        searchable:    { type: boolean, default: true }
+        applies_to:
+          type: array
+          items: { type: integer, format: int64 }
+        field_set_id:    { type: string, format: uuid, nullable: true }
+        read_capability: { type: string, nullable: true }
+        write_capability: { type: string, nullable: true }
+        display_order:   { type: integer, default: 100 }
+        display_group:   { type: string, default: general }
+        source:          { type: object, additionalProperties: true, nullable: true }
+    FieldDefinitionUpdate:
+      type: object
+      description: "Partial update; only present fields are touched."
+      properties:
+        label:         { type: string, minLength: 1, maxLength: 200 }
+        description:   { type: string }
+        options:       { type: object, additionalProperties: true }
+        required:      { type: boolean }
+        searchable:    { type: boolean }
+        applies_to:
+          type: array
+          items: { type: integer, format: int64 }
+        field_set_id:    { type: string, format: uuid, nullable: true }
+        read_capability: { type: string, nullable: true }
+        write_capability: { type: string, nullable: true }
+        display_order:   { type: integer }
+        display_group:   { type: string }
+        source:          { type: object, additionalProperties: true, nullable: true }
+        status:
+          type: string
+          enum: [active, deprecated, archived]
+        deprecated_replacement_id: { type: string, format: uuid, nullable: true }
+    AssetFieldValue:
+      type: object
+      required: [field_id, field_code, type, set_by, set_at]
+      description: "One field value as seen on an asset."
+      properties:
+        field_id:    { type: string, format: uuid }
+        field_code:  { type: string }
+        field_label: { type: string }
+        type:
+          type: string
+          enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        value_text:    { type: string, nullable: true }
+        value_num:     { type: number, nullable: true }
+        value_date:    { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref:     { type: string, format: uuid, nullable: true }
+        set_by:
+          type: string
+          enum: [manual, exif, iptc, xmp, api, import, computed]
+        set_at:       { type: string, format: date-time }
+        set_by_user_ref: { type: integer, format: int64, nullable: true }
+    AssetFieldValueWrite:
+      type: object
+      description: |
+        Pass whichever value_* field matches the target field's type.
+        The handler validates against field_definition.type and
+        rejects mismatches with 400.
+      properties:
+        value_text:    { type: string, nullable: true }
+        value_num:     { type: number, nullable: true }
+        value_date:    { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref:     { type: string, format: uuid, nullable: true }
+        set_by:
+          type: string
+          enum: [manual, exif, iptc, xmp, api, import, computed]
+          default: manual
+    FieldValueHistoryEntry:
+      type: object
+      required: [id, asset_id, field_id, changed_at, set_by]
+      properties:
+        id:                 { type: string, format: uuid }
+        asset_id:           { type: string, format: uuid }
+        field_id:           { type: string, format: uuid }
+        old_value:          { type: object, additionalProperties: true, nullable: true }
+        new_value:          { type: object, additionalProperties: true, nullable: true }
+        changed_at:         { type: string, format: date-time }
+        changed_by_user_ref: { type: integer, format: int64, nullable: true }
+        set_by:             { type: string }
     Asset:
       type: object
       required: [id, title, resource_type, status, created_at, updated_at, tags]
