@@ -5,6 +5,8 @@
 package auth
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,6 +21,17 @@ type ApiToken struct {
 	RevokedAt      pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	OriginServerID pgtype.UUID
+}
+
+type AuditEvent struct {
+	ID             pgtype.UUID
+	EventType      string
+	OccurredAt     pgtype.Timestamptz
+	SubjectUserRef *int64
+	ActorUserRef   *int64
+	Ip             *netip.Addr
+	UserAgent      *string
+	Metadata       []byte
 }
 
 type Capability struct {
@@ -53,6 +66,19 @@ type Role struct {
 type RoleCapability struct {
 	RoleID         pgtype.UUID
 	CapabilityCode string
+}
+
+type Session struct {
+	ID             pgtype.UUID
+	UserRef        int64
+	TokenHash      []byte
+	CreatedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	Ip             *netip.Addr
+	UserAgent      *string
+	OriginServerID pgtype.UUID
 }
 
 type StorageObject struct {

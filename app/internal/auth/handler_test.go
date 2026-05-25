@@ -62,8 +62,8 @@ func TestLogin_OK(t *testing.T) {
 		if !cookie.HttpOnly {
 			t.Error("cookie should be HttpOnly")
 		}
-		if cookie.SameSite != http.SameSiteStrictMode {
-			t.Error("cookie should be SameSite=Strict")
+		if cookie.SameSite != http.SameSiteLaxMode {
+			t.Error("cookie should be SameSite=Lax")
 		}
 
 		// Response body shape.
@@ -383,7 +383,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	})
 
 	// Real chi router wired exactly as the production server does it.
-	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7)
+	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7, nil, nil, nil)
 	resolver := &Resolver{Pool: pool, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	router := chi.NewRouter()

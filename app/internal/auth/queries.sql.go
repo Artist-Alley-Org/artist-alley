@@ -7,6 +7,7 @@ package auth
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -214,6 +215,49 @@ func (q *Queries) FindActiveApiToken(ctx context.Context, tokenHash []byte) (Fin
 	return i, err
 }
 
+const findActiveSession = `-- name: FindActiveSession :one
+SELECT s.id,
+       s.user_ref,
+       s.created_at,
+       s.last_used_at,
+       s.expires_at,
+       s.ip,
+       s.user_agent
+FROM sessions s
+WHERE s.token_hash = $1
+  AND s.revoked_at IS NULL
+  AND (s.expires_at IS NULL OR s.expires_at > NOW())
+LIMIT 1
+`
+
+type FindActiveSessionRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	Ip         *netip.Addr
+	UserAgent  *string
+}
+
+// Resolves an incoming cookie. Only returns rows that haven't been revoked
+// and haven't passed their hard expiry. The idle-timeout check lives in
+// code so the cutoff is configurable per request.
+func (q *Queries) FindActiveSession(ctx context.Context, tokenHash []byte) (FindActiveSessionRow, error) {
+	row := q.db.QueryRow(ctx, findActiveSession, tokenHash)
+	var i FindActiveSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserRef,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.Ip,
+		&i.UserAgent,
+	)
+	return i, err
+}
+
 const findUserBySession = `-- name: FindUserBySession :one
 SELECT ref,
        username,
@@ -314,6 +358,53 @@ func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, erro
 		&i.Name,
 		&i.Description,
 		&i.ParentID,
+	)
+	return i, err
+}
+
+const insertSession = `-- name: InsertSession :one
+
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_ref, created_at, last_used_at, expires_at
+`
+
+type InsertSessionParams struct {
+	UserRef   int64
+	TokenHash []byte
+	ExpiresAt pgtype.Timestamptz
+	Ip        *netip.Addr
+	UserAgent *string
+}
+
+type InsertSessionRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// sessions table (Phase 1.5)
+// ---------------------------------------------------------------------------
+// Records a fresh login. token_hash is sha256(cookie_value); the plaintext
+// never reaches the DB. ip/user_agent are best-effort observability.
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (InsertSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertSession,
+		arg.UserRef,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	var i InsertSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserRef,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -468,6 +559,61 @@ func (q *Queries) ListRoles(ctx context.Context) ([]ListRolesRow, error) {
 	return items, nil
 }
 
+const listSessionsForUser = `-- name: ListSessionsForUser :many
+SELECT id,
+       user_ref,
+       created_at,
+       last_used_at,
+       expires_at,
+       ip,
+       user_agent
+FROM sessions
+WHERE user_ref = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+ORDER BY last_used_at DESC
+`
+
+type ListSessionsForUserRow struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	CreatedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	Ip         *netip.Addr
+	UserAgent  *string
+}
+
+// Powers /auth/me/sessions. Returns active sessions ordered most recently
+// used first.
+func (q *Queries) ListSessionsForUser(ctx context.Context, userRef int64) ([]ListSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listSessionsForUser, userRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSessionsForUserRow
+	for rows.Next() {
+		var i ListSessionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserRef,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.Ip,
+			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()
@@ -489,6 +635,33 @@ func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeSession = `-- name: RevokeSession :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL
+`
+
+// Soft-deletes a session by id. Idempotent.
+func (q *Queries) RevokeSession(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, revokeSession, id)
+	return err
+}
+
+const revokeSessionByToken = `-- name: RevokeSessionByToken :exec
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE token_hash = $1
+  AND revoked_at IS NULL
+`
+
+// Revoke by cookie hash. Used by /auth/logout when we have the cookie
+// but no session id loaded.
+func (q *Queries) RevokeSessionByToken(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, revokeSessionByToken, tokenHash)
+	return err
 }
 
 const setUserRole = `-- name: SetUserRole :exec
@@ -544,5 +717,18 @@ WHERE id = $1
 // request.
 func (q *Queries) TouchApiToken(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchApiToken, id)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions
+SET last_used_at = NOW()
+WHERE id = $1
+`
+
+// Updates last_used_at on each authenticated request. Cheap and safe
+// to call on every hit; the index on last_used_at is partial-on-active.
+func (q *Queries) TouchSession(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchSession, id)
 	return err
 }

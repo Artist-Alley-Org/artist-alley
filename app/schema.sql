@@ -146,3 +146,33 @@ CREATE TABLE storage_pins (
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     PRIMARY KEY (object_hash, pin_subject_type, pin_subject_id)
 );
+
+-- migrations/00005_sessions.sql — first-class session table. One row per
+-- active login; replaces RS's single-session-per-user model while still
+-- maintaining user.session for PHP coexistence.
+CREATE TABLE sessions (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_ref         BIGINT       NOT NULL,
+    token_hash       BYTEA        NOT NULL UNIQUE,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_used_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at       TIMESTAMPTZ  NULL,
+    revoked_at       TIMESTAMPTZ  NULL,
+    ip               INET         NULL,
+    user_agent       TEXT         NULL,
+    origin_server_id UUID         NULL
+);
+
+-- migrations/00006_audit_events.sql — leaner replacement for RS's
+-- activity_log. Typed event_type + JSONB metadata; see app/internal/audit
+-- for the per-event-type shape.
+CREATE TABLE audit_events (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type        TEXT         NOT NULL,
+    occurred_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    subject_user_ref  BIGINT       NULL,
+    actor_user_ref    BIGINT       NULL,
+    ip                INET         NULL,
+    user_agent        TEXT         NULL,
+    metadata          JSONB        NOT NULL DEFAULT '{}'::jsonb
+);

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
@@ -26,9 +27,9 @@ type apiServer struct {
 	assets       *assets.Handler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, storageSvc *storage.Service) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder) *apiServer {
 	return &apiServer{
-		auth:         auth.NewHandler(pool, logger, scrambleKey, 0),
+		auth:         auth.NewHandler(pool, logger, scrambleKey, 0, sessions, limiter, auditRec),
 		resourceType: resourcetype.NewHandler(pool, logger),
 		assets:       assets.NewHandler(storageSvc, logger),
 	}

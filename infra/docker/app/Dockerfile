@@ -28,7 +28,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.20 AS runtime
 
 RUN apk add --no-cache ca-certificates tzdata \
- && addgroup -S app && adduser -S -G app app
+ && addgroup -S app && adduser -S -G app app \
+ && mkdir -p /var/lib/aa-storage \
+ && chown app:app /var/lib/aa-storage
 
 USER app
 WORKDIR /app

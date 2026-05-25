@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package storage
+package audit
 
 import (
 	"net/netip"

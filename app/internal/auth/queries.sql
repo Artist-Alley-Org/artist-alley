@@ -52,6 +52,72 @@ SET session   = NULL,
     logged_in = 0
 WHERE session = $1;
 
+-- ---------------------------------------------------------------------------
+-- sessions table (Phase 1.5)
+-- ---------------------------------------------------------------------------
+
+-- name: InsertSession :one
+-- Records a fresh login. token_hash is sha256(cookie_value); the plaintext
+-- never reaches the DB. ip/user_agent are best-effort observability.
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_ref, created_at, last_used_at, expires_at;
+
+-- name: FindActiveSession :one
+-- Resolves an incoming cookie. Only returns rows that haven't been revoked
+-- and haven't passed their hard expiry. The idle-timeout check lives in
+-- code so the cutoff is configurable per request.
+SELECT s.id,
+       s.user_ref,
+       s.created_at,
+       s.last_used_at,
+       s.expires_at,
+       s.ip,
+       s.user_agent
+FROM sessions s
+WHERE s.token_hash = $1
+  AND s.revoked_at IS NULL
+  AND (s.expires_at IS NULL OR s.expires_at > NOW())
+LIMIT 1;
+
+-- name: TouchSession :exec
+-- Updates last_used_at on each authenticated request. Cheap and safe
+-- to call on every hit; the index on last_used_at is partial-on-active.
+UPDATE sessions
+SET last_used_at = NOW()
+WHERE id = $1;
+
+-- name: RevokeSession :exec
+-- Soft-deletes a session by id. Idempotent.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND revoked_at IS NULL;
+
+-- name: RevokeSessionByToken :exec
+-- Revoke by cookie hash. Used by /auth/logout when we have the cookie
+-- but no session id loaded.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE token_hash = $1
+  AND revoked_at IS NULL;
+
+-- name: ListSessionsForUser :many
+-- Powers /auth/me/sessions. Returns active sessions ordered most recently
+-- used first.
+SELECT id,
+       user_ref,
+       created_at,
+       last_used_at,
+       expires_at,
+       ip,
+       user_agent
+FROM sessions
+WHERE user_ref = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+ORDER BY last_used_at DESC;
+
 -- name: CreateApiToken :one
 INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)

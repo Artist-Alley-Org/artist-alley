@@ -5,6 +5,8 @@
 package resourcetype
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,6 +21,17 @@ type ApiToken struct {
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+}
+
+type AuditEvent struct {
+	ID             pgtype.UUID        `json:"id"`
+	EventType      string             `json:"event_type"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	SubjectUserRef *int64             `json:"subject_user_ref"`
+	ActorUserRef   *int64             `json:"actor_user_ref"`
+	Ip             *netip.Addr        `json:"ip"`
+	UserAgent      *string            `json:"user_agent"`
+	Metadata       []byte             `json:"metadata"`
 }
 
 type Capability struct {
@@ -53,6 +66,19 @@ type Role struct {
 type RoleCapability struct {
 	RoleID         pgtype.UUID `json:"role_id"`
 	CapabilityCode string      `json:"capability_code"`
+}
+
+type Session struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserRef        int64              `json:"user_ref"`
+	TokenHash      []byte             `json:"token_hash"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	Ip             *netip.Addr        `json:"ip"`
+	UserAgent      *string            `json:"user_agent"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
 type StorageObject struct {
