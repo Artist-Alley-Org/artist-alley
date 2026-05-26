@@ -425,6 +425,16 @@ func (h *Handler) ListAssets(
 		s := string(*req.Params.Status)
 		statusPtr = &s
 	}
+	// `q` is mutually exclusive with `tag` in practice (the tag-join
+	// query template doesn't carry the search_text column). When both
+	// are supplied we honour `tag` and drop `q`.
+	var qText *string
+	if req.Params.Q != nil {
+		s := strings.TrimSpace(*req.Params.Q)
+		if s != "" {
+			qText = &s
+		}
+	}
 
 	q := New(h.Pool)
 
@@ -468,6 +478,7 @@ func (h *Handler) ListAssets(
 			OwnerUserRef:    ownerRef,
 			ResourceType:    resType,
 			Status:          statusPtr,
+			Q:               qText,
 			CursorCreatedAt: cursorTs,
 			CursorID:        cursorID,
 			RowLimit:        fetch,
