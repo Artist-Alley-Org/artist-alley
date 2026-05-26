@@ -266,6 +266,35 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Team struct {
+	ID             pgtype.UUID
+	Slug           string
+	Name           string
+	Description    string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+}
+
+type TeamClosure struct {
+	AncestorID   pgtype.UUID
+	DescendantID pgtype.UUID
+	Depth        int32
+}
+
+type TeamMembership struct {
+	TeamID          pgtype.UUID
+	RsUserID        int64
+	AddedAt         pgtype.Timestamptz
+	AddedByRsUserID *int64
+}
+
+type TeamParent struct {
+	ChildID  pgtype.UUID
+	ParentID pgtype.UUID
+}
+
 type User struct {
 	Ref                int64
 	Username           *string
@@ -291,6 +320,7 @@ type User struct {
 type UserCapabilityGrant struct {
 	RsUserID          int64
 	CapabilityCode    string
+	TeamID            pgtype.UUID
 	GrantedAt         pgtype.Timestamptz
 	GrantedByRsUserID *int64
 	Note              string
@@ -299,6 +329,7 @@ type UserCapabilityGrant struct {
 type UserCapabilityRevoke struct {
 	RsUserID          int64
 	CapabilityCode    string
+	TeamID            pgtype.UUID
 	RevokedAt         pgtype.Timestamptz
 	RevokedByRsUserID *int64
 	Note              string
@@ -307,6 +338,7 @@ type UserCapabilityRevoke struct {
 type UserRole struct {
 	RsUserID           int64
 	RoleID             pgtype.UUID
+	TeamID             pgtype.UUID
 	AssignedAt         pgtype.Timestamptz
 	AssignedByRsUserID *int64
 }

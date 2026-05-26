@@ -12,31 +12,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const assignedRoleForUser = `-- name: AssignedRoleForUser :one
-SELECT r.id, r.name, r.description, r.parent_id
+const assignedRolesForUser = `-- name: AssignedRolesForUser :many
+SELECT r.id, r.name, r.description, r.parent_id, ur.team_id
 FROM roles r
-JOIN user_role ur ON ur.role_id = r.id
+JOIN user_roles ur ON ur.role_id = r.id
 WHERE ur.rs_user_id = $1
+ORDER BY ur.team_id NULLS FIRST, r.name
 `
 
-type AssignedRoleForUserRow struct {
+type AssignedRolesForUserRow struct {
 	ID          pgtype.UUID
 	Name        string
 	Description string
 	ParentID    pgtype.UUID
+	TeamID      pgtype.UUID
 }
 
-// Returns the user's currently assigned role (id + name) or no rows.
-func (q *Queries) AssignedRoleForUser(ctx context.Context, rsUserID int64) (AssignedRoleForUserRow, error) {
-	row := q.db.QueryRow(ctx, assignedRoleForUser, rsUserID)
-	var i AssignedRoleForUserRow
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Description,
-		&i.ParentID,
-	)
-	return i, err
+// Returns every role the user has been assigned, with the optional
+// team scope. NULL team_id = global assignment. Replaces the old
+// AssignedRoleForUser (:one) — multi-role per user is supported as of
+// migration 00016.
+func (q *Queries) AssignedRolesForUser(ctx context.Context, rsUserID int64) ([]AssignedRolesForUserRow, error) {
+	rows, err := q.db.Query(ctx, assignedRolesForUser, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssignedRolesForUserRow
+	for rows.Next() {
+		var i AssignedRolesForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.ParentID,
+			&i.TeamID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const clearUserSession = `-- name: ClearUserSession :exec
@@ -71,10 +90,11 @@ func (q *Queries) ClearUserSessionByToken(ctx context.Context, session *string) 
 const countSystemAdmins = `-- name: CountSystemAdmins :one
 
 SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
-FROM user_role ur
+FROM user_roles ur
 JOIN role_capabilities rc ON rc.role_id = ur.role_id
 JOIN "user" u             ON u.ref     = ur.rs_user_id
 WHERE rc.capability_code = 'system.admin'
+  AND ur.team_id IS NULL
 `
 
 // ---------------------------------------------------------------------------
@@ -82,8 +102,10 @@ WHERE rc.capability_code = 'system.admin'
 // ---------------------------------------------------------------------------
 // Returns the number of real (still-existing) users whose assigned role
 // grants system.admin. The join against "user" filters out dangling
-// user_role rows left over from deleted users — the user table doesn't
-// cascade.
+// user_roles rows left over from deleted users — the user table doesn't
+// cascade. Counts only global role assignments (team_id IS NULL);
+// team-scoped system.admin would be a misconfiguration anyway since
+// system.admin is a global wildcard.
 func (q *Queries) CountSystemAdmins(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countSystemAdmins)
 	var value int64
@@ -191,8 +213,9 @@ const effectiveCapabilitiesForUser = `-- name: EffectiveCapabilitiesForUser :man
 WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
     FROM roles r
-    JOIN user_role ur ON ur.role_id = r.id
+    JOIN user_roles ur ON ur.role_id = r.id
     WHERE ur.rs_user_id = $1
+      AND ur.team_id IS NULL
 
     UNION ALL
 
@@ -212,6 +235,7 @@ all_caps AS (
     SELECT g.capability_code AS code
     FROM user_capability_grants g
     WHERE g.rs_user_id = $1
+      AND g.team_id IS NULL
 )
 SELECT ac.code
 FROM all_caps ac
@@ -219,14 +243,21 @@ WHERE ac.code NOT IN (
     SELECT v.capability_code
     FROM user_capability_revokes v
     WHERE v.rs_user_id = $1
+      AND v.team_id IS NULL
 )
 ORDER BY ac.code
 `
 
 // Returns the union of capabilities a user can exercise after all role
-// inheritance and per-user overrides resolve. The recursive CTE walks
-// the role hierarchy from the user's assigned role up to the chain
-// root, then we union in explicit grants and remove explicit revokes.
+// inheritance and per-user overrides resolve, for the *global* scope
+// (team_id IS NULL). The recursive CTE walks the role hierarchy from
+// every globally-assigned role, then unions in global grants and
+// removes global revokes.
+//
+// Phase 1.7.B-3 adds a scoped resolver that consults team-scoped
+// assignments. This query intentionally ignores team_id so existing
+// handlers that only ask for global caps continue to get the right
+// answer with no behavioural change.
 func (q *Queries) EffectiveCapabilitiesForUser(ctx context.Context, rsUserID int64) ([]string, error) {
 	rows, err := q.db.Query(ctx, effectiveCapabilitiesForUser, rsUserID)
 	if err != nil {
@@ -762,24 +793,34 @@ func (q *Queries) RevokeSessionByToken(ctx context.Context, tokenHash []byte) er
 	return err
 }
 
-const setUserRole = `-- name: SetUserRole :exec
-INSERT INTO user_role (rs_user_id, role_id, assigned_by_rs_user_id)
+const setUserGlobalRole = `-- name: SetUserGlobalRole :exec
+WITH _del AS (
+    DELETE FROM user_roles
+     WHERE rs_user_id = $1 AND team_id IS NULL
+)
+INSERT INTO user_roles (rs_user_id, role_id, assigned_by_rs_user_id)
 VALUES ($1, $2, $3)
-ON CONFLICT (rs_user_id) DO UPDATE SET
-    role_id                = EXCLUDED.role_id,
+ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
     assigned_at            = NOW(),
     assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id
 `
 
-type SetUserRoleParams struct {
+type SetUserGlobalRoleParams struct {
 	RsUserID           int64
 	RoleID             pgtype.UUID
 	AssignedByRsUserID *int64
 }
 
-// Idempotent assign-or-overwrite. Used by the admin endpoint.
-func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) error {
-	_, err := q.db.Exec(ctx, setUserRole, arg.RsUserID, arg.RoleID, arg.AssignedByRsUserID)
+// Replaces the user's *global* role assignment(s) with the supplied
+// role. Preserves the "exactly one global role per user" admin UX
+// from the singular SetUserRole, while leaving any team-scoped
+// assignments untouched.
+//
+// The DELETE-then-INSERT in a single statement-with-CTE is atomic at
+// the statement level (a single SQL statement runs in one snapshot),
+// so there's no window where the user has zero roles.
+func (q *Queries) SetUserGlobalRole(ctx context.Context, arg SetUserGlobalRoleParams) error {
+	_, err := q.db.Exec(ctx, setUserGlobalRole, arg.RsUserID, arg.RoleID, arg.AssignedByRsUserID)
 	return err
 }
 

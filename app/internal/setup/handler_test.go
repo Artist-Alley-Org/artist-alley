@@ -112,7 +112,7 @@ func TestSetupFlow_HappyPath(t *testing.T) {
 		// 5. user is assigned the Admin role
 		var roleName string
 		if err := fx.pool.QueryRow(ctx,
-			`SELECT r.name FROM user_role ur JOIN roles r ON r.id = ur.role_id
+			`SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
 			 JOIN "user" u ON u.ref = ur.rs_user_id WHERE u.username = $1`,
 			fx.adminUsername).Scan(&roleName); err != nil {
 			t.Fatalf("lookup role: %v", err)
@@ -308,7 +308,7 @@ func (f *fixture) cleanupAdmin(ctx context.Context) {
 	// back to true. We leave the user rows alone (the user could
 	// re-grant later) except for our specific test user.
 	_, _ = f.pool.Exec(ctx, `
-		DELETE FROM user_role
+		DELETE FROM user_roles
 		WHERE role_id IN (
 		    SELECT DISTINCT rc.role_id FROM role_capabilities rc
 		    WHERE rc.capability_code = 'system.admin'

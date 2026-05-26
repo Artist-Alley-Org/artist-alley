@@ -229,29 +229,68 @@ CREATE TABLE role_capabilities (
     PRIMARY KEY (role_id, capability_code)
 );
 
-CREATE TABLE user_role (
-    rs_user_id             BIGINT       NOT NULL PRIMARY KEY,
+-- teams (00015) is loaded before user_roles (00016) so the FK lands.
+CREATE TABLE teams (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug             TEXT         NOT NULL,
+    name             TEXT         NOT NULL,
+    description      TEXT         NOT NULL DEFAULT '',
+    origin_server_id UUID         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at       TIMESTAMPTZ  NULL,
+    UNIQUE NULLS NOT DISTINCT (origin_server_id, slug)
+);
+
+CREATE TABLE team_parents (
+    child_id  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    parent_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    PRIMARY KEY (child_id, parent_id),
+    CHECK (child_id <> parent_id)
+);
+
+CREATE TABLE team_closure (
+    ancestor_id   UUID    NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    descendant_id UUID    NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    depth         INTEGER NOT NULL,
+    PRIMARY KEY (ancestor_id, descendant_id)
+);
+
+CREATE TABLE team_memberships (
+    team_id             UUID         NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    rs_user_id          BIGINT       NOT NULL,
+    added_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    added_by_rs_user_id BIGINT       NULL,
+    PRIMARY KEY (team_id, rs_user_id)
+);
+
+CREATE TABLE user_roles (
+    rs_user_id             BIGINT       NOT NULL,
     role_id                UUID         NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    team_id                UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     assigned_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    assigned_by_rs_user_id BIGINT       NULL
+    assigned_by_rs_user_id BIGINT       NULL,
+    CONSTRAINT user_roles_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, role_id, team_id)
 );
 
 CREATE TABLE user_capability_grants (
     rs_user_id            BIGINT       NOT NULL,
     capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    team_id               UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     granted_by_rs_user_id BIGINT       NULL,
     note                  TEXT         NOT NULL DEFAULT '',
-    PRIMARY KEY (rs_user_id, capability_code)
+    CONSTRAINT user_capability_grants_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, capability_code, team_id)
 );
 
 CREATE TABLE user_capability_revokes (
     rs_user_id            BIGINT       NOT NULL,
     capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    team_id               UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     revoked_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     revoked_by_rs_user_id BIGINT       NULL,
     note                  TEXT         NOT NULL DEFAULT '',
-    PRIMARY KEY (rs_user_id, capability_code)
+    CONSTRAINT user_capability_revokes_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, capability_code, team_id)
 );
 
 -- migrations/00004_storage.sql — content-addressed storage layer.

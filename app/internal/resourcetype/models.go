@@ -266,6 +266,35 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Team struct {
+	ID             pgtype.UUID        `json:"id"`
+	Slug           string             `json:"slug"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type TeamClosure struct {
+	AncestorID   pgtype.UUID `json:"ancestor_id"`
+	DescendantID pgtype.UUID `json:"descendant_id"`
+	Depth        int32       `json:"depth"`
+}
+
+type TeamMembership struct {
+	TeamID          pgtype.UUID        `json:"team_id"`
+	RsUserID        int64              `json:"rs_user_id"`
+	AddedAt         pgtype.Timestamptz `json:"added_at"`
+	AddedByRsUserID *int64             `json:"added_by_rs_user_id"`
+}
+
+type TeamParent struct {
+	ChildID  pgtype.UUID `json:"child_id"`
+	ParentID pgtype.UUID `json:"parent_id"`
+}
+
 type User struct {
 	Ref                int64              `json:"ref"`
 	Username           *string            `json:"username"`
@@ -291,6 +320,7 @@ type User struct {
 type UserCapabilityGrant struct {
 	RsUserID          int64              `json:"rs_user_id"`
 	CapabilityCode    string             `json:"capability_code"`
+	TeamID            pgtype.UUID        `json:"team_id"`
 	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
 	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
 	Note              string             `json:"note"`
@@ -299,6 +329,7 @@ type UserCapabilityGrant struct {
 type UserCapabilityRevoke struct {
 	RsUserID          int64              `json:"rs_user_id"`
 	CapabilityCode    string             `json:"capability_code"`
+	TeamID            pgtype.UUID        `json:"team_id"`
 	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
 	RevokedByRsUserID *int64             `json:"revoked_by_rs_user_id"`
 	Note              string             `json:"note"`
@@ -307,6 +338,7 @@ type UserCapabilityRevoke struct {
 type UserRole struct {
 	RsUserID           int64              `json:"rs_user_id"`
 	RoleID             pgtype.UUID        `json:"role_id"`
+	TeamID             pgtype.UUID        `json:"team_id"`
 	AssignedAt         pgtype.Timestamptz `json:"assigned_at"`
 	AssignedByRsUserID *int64             `json:"assigned_by_rs_user_id"`
 }

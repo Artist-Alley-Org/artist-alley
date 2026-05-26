@@ -369,7 +369,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		`DELETE FROM api_tokens             WHERE rs_user_id = $1`,
 		`DELETE FROM user_capability_grants WHERE rs_user_id = $1`,
 		`DELETE FROM user_capability_revokes WHERE rs_user_id = $1`,
-		`DELETE FROM user_role              WHERE rs_user_id = $1`,
+		`DELETE FROM user_roles              WHERE rs_user_id = $1`,
 		`DELETE FROM sessions               WHERE user_ref   = $1`,
 	} {
 		if _, err := pool.Exec(ctx, sql, userRef); err != nil {
@@ -382,7 +382,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_role WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})
