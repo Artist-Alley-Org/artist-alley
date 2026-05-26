@@ -1,0 +1,23 @@
+<script lang="ts">
+  // Inline alert / status message — used for form-level errors and
+  // success notices. role="alert" announces it to screen readers.
+
+  type Tone = 'error' | 'info' | 'success';
+
+  interface Props {
+    tone?: Tone;
+    children?: import('svelte').Snippet;
+  }
+
+  let { tone = 'error', children }: Props = $props();
+
+  const tones: Record<Tone, string> = {
+    error: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-300',
+    info: 'border-border bg-surface-elevated text-fg-muted',
+    success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  };
+</script>
+
+<div role="alert" class="rounded-md border px-3 py-2 text-sm {tones[tone]}">
+  {@render children?.()}
+</div>

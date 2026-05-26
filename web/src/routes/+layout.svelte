@@ -2,12 +2,66 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
+  import { auth } from '$stores/auth.svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
 
   let { children } = $props();
 
   onMount(() => {
     theme.init();
   });
+
+  const showChrome = $derived(
+    !!auth.user && page.url.pathname !== '/login' && page.url.pathname !== '/setup'
+  );
+
+  async function handleSignOut() {
+    await auth.logout();
+    await goto('/login');
+  }
+
+  function cycleTheme() {
+    const next = theme.pref === 'light' ? 'dark' : theme.pref === 'dark' ? 'system' : 'light';
+    theme.set(next);
+  }
 </script>
 
-{@render children?.()}
+<div class="min-h-screen flex flex-col bg-surface text-fg">
+  {#if showChrome}
+    <header class="border-b border-border bg-surface-elevated">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+        <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
+          <span class="inline-block h-6 w-6 rounded bg-accent"></span>
+          artist-alley
+        </a>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onclick={cycleTheme}
+            class="rounded-md px-2.5 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface transition-colors"
+            title="Theme: {theme.pref}"
+            aria-label="Cycle theme"
+          >
+            {theme.pref === 'light' ? '☀' : theme.pref === 'dark' ? '☾' : '◐'}
+            <span class="ml-1 capitalize">{theme.pref}</span>
+          </button>
+          <div class="text-sm text-fg-muted">
+            {auth.user?.fullname || auth.user?.username}
+          </div>
+          <button
+            type="button"
+            onclick={handleSignOut}
+            class="rounded-md px-2.5 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </header>
+  {/if}
+
+  <main class="flex-1 flex flex-col">
+    {@render children?.()}
+  </main>
+</div>
