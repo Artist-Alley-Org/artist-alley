@@ -497,6 +497,18 @@ paths:
           required: false
           description: Single-tag filter (intersection with other filters).
           schema: { type: string }
+        - name: q
+          in: query
+          required: false
+          description: |
+            Plain-text search. Matched against the search_text TSVECTOR
+            on each asset (built from title + description + tags + the
+            searchable field-value text by the Phase 1.9 metadata
+            trigger). Whitespace-separated tokens AND together via
+            plainto_tsquery. Ignored when `tag` is also provided.
+            Phase 1.12 will replace this with the full search DSL (ADR
+            0010).
+          schema: { type: string, maxLength: 200 }
         - name: cursor
           in: query
           required: false

@@ -267,18 +267,21 @@ WHERE deleted_at IS NULL
   AND ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT  IS NULL OR resource_type  = $2::BIGINT)
   AND ($3::TEXT           IS NULL OR status          = $3::TEXT)
-  AND ($4::TIMESTAMPTZ IS NULL
-       OR created_at < $4::TIMESTAMPTZ
-       OR (created_at = $4::TIMESTAMPTZ
-           AND id < $5::UUID))
+  AND ($4::TEXT                IS NULL
+       OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($5::TIMESTAMPTZ IS NULL
+       OR created_at < $5::TIMESTAMPTZ
+       OR (created_at = $5::TIMESTAMPTZ
+           AND id < $6::UUID))
 ORDER BY created_at DESC, id DESC
-LIMIT $6::INTEGER
+LIMIT $7::INTEGER
 `
 
 type ListAssetsPageParams struct {
 	OwnerUserRef    *int64
 	ResourceType    *int64
 	Status          *string
+	Q               *string
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -303,11 +306,19 @@ type ListAssetsPageRow struct {
 // Cursor pagination: rows newer than the cursor timestamp, plus tie-
 // breaker on id. Filters are OR'd with NULL-checks so a single query
 // covers all the optional-filter combinations.
+//
+// `q` is an optional plain-text search query that runs against the
+// search_text TSVECTOR column (maintained by the Phase 1.9 metadata
+// trigger across asset title/description/tags + field values). Backed
+// by the assets_search_text_gin index. Phase 1.12 will replace this
+// with the proper search DSL (ADR 0010), but for the browse page MVP
+// a plain tsquery match is enough.
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
 		arg.OwnerUserRef,
 		arg.ResourceType,
 		arg.Status,
+		arg.Q,
 		arg.CursorCreatedAt,
 		arg.CursorID,
 		arg.RowLimit,

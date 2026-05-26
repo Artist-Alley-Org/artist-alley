@@ -39,6 +39,13 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- Cursor pagination: rows newer than the cursor timestamp, plus tie-
 -- breaker on id. Filters are OR'd with NULL-checks so a single query
 -- covers all the optional-filter combinations.
+--
+-- `q` is an optional plain-text search query that runs against the
+-- search_text TSVECTOR column (maintained by the Phase 1.9 metadata
+-- trigger across asset title/description/tags + field values). Backed
+-- by the assets_search_text_gin index. Phase 1.12 will replace this
+-- with the proper search DSL (ADR 0010), but for the browse page MVP
+-- a plain tsquery match is enough.
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, created_at, updated_at
@@ -47,6 +54,8 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('resource_type')::BIGINT  IS NULL OR resource_type  = sqlc.narg('resource_type')::BIGINT)
   AND (sqlc.narg('status')::TEXT           IS NULL OR status          = sqlc.narg('status')::TEXT)
+  AND (sqlc.narg('q')::TEXT                IS NULL
+       OR search_text @@ plainto_tsquery('english', sqlc.narg('q')::TEXT))
   AND (sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
        OR created_at < sqlc.narg('cursor_created_at')::TIMESTAMPTZ
        OR (created_at = sqlc.narg('cursor_created_at')::TIMESTAMPTZ
