@@ -1,0 +1,50 @@
+@import 'tailwindcss';
+
+/*
+ * artist-alley theme tokens.
+ *
+ * Tailwind v4 reads tokens out of @theme blocks and emits the matching
+ * utilities (bg-surface, text-fg, etc). Two palettes share the same
+ * token names so any utility resolves to the right value automatically
+ * once the .dark class is on <html>.
+ *
+ * Light defaults are tuned for content visibility; dark is the
+ * identity palette (ArtStation-like neutrals).
+ */
+
+@theme {
+  --color-surface: oklch(98% 0.005 250);
+  --color-surface-elevated: oklch(100% 0 0);
+  --color-fg: oklch(20% 0.015 260);
+  --color-fg-muted: oklch(50% 0.02 260);
+  --color-border: oklch(90% 0.01 260);
+  --color-accent: oklch(60% 0.18 250);
+  --color-accent-fg: oklch(98% 0.005 250);
+}
+
+@layer base {
+  html.dark {
+    --color-surface: oklch(13% 0.015 260);
+    --color-surface-elevated: oklch(18% 0.02 260);
+    --color-fg: oklch(96% 0.005 250);
+    --color-fg-muted: oklch(70% 0.02 260);
+    --color-border: oklch(28% 0.02 260);
+    --color-accent: oklch(72% 0.18 250);
+    --color-accent-fg: oklch(15% 0.02 260);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+}

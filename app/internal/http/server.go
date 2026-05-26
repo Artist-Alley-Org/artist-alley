@@ -97,6 +97,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		openapi.HandlerFromMux(strict, r)
 	})
 
+	// Static frontend (SvelteKit + Tailwind) — mounted last so the
+	// API routes above take precedence. In dev (no embed_web tag)
+	// this is a no-op; developers run `npm run dev` (the `web`
+	// service in docker-compose) on :5173. In prod (embed_web tag)
+	// the SvelteKit build is //go:embed-ded and served from /.
+	// See app/internal/http/static_{dev,embed}.go.
+	mountStaticFrontend(r)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "frontend.mode",
+		slog.Bool("embedded", hasEmbeddedFrontend()),
+	)
+
 	return &Server{
 		cfg:    cfg,
 		logger: logger,

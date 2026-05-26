@@ -1,0 +1,32 @@
+{
+  "name": "artist-alley-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "artist-alley frontend (SvelteKit + Tailwind, embedded into the Go binary at build time).",
+  "scripts": {
+    "dev": "vite dev --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "generate:api": "openapi-typescript ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} -o src/lib/api/schema.d.ts",
+    "postinstall": "svelte-kit sync && (test -f ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} && npm run generate:api || echo 'openapi.yaml not found yet; skipping API codegen')"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "latest",
+    "@sveltejs/kit": "latest",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "@tailwindcss/vite": "latest",
+    "@types/node": "latest",
+    "openapi-typescript": "latest",
+    "svelte": "latest",
+    "svelte-check": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "dependencies": {
+    "openapi-fetch": "latest"
+  }
+}

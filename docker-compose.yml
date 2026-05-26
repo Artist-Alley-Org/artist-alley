@@ -83,6 +83,45 @@ services:
       - postgres
     restart: unless-stopped
 
+  # SvelteKit frontend, dev-only (Vite HMR on :5173).
+  #
+  # The CI / prod image runs `npm run build` and pipes the output into
+  # the Go binary via //go:embed (see app/internal/http/static_embed.go).
+  # At prod runtime there is NO `web` container — `app` alone serves
+  # both /api/v1 and the SPA bundle, preserving the locked "one binary,
+  # three containers" target architecture.
+  #
+  # Opt-in via `docker compose --profile web up` (or run all services
+  # with `docker compose --profile web up -d`). Defaults to off so
+  # backend-only iterations don't need Node in the loop.
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    ports:
+      - "${VITE_HOST_PORT:-5173}:5173"
+    volumes:
+      # Bind-mount the whole web/ tree so file edits trigger Vite HMR.
+      # node_modules is masked by an anonymous volume so the image's
+      # baked-in modules are used (avoids host-Linux symlink + perms
+      # quirks on Windows / macOS).
+      - ./web:/app
+      - /app/node_modules
+      # The OpenAPI spec is the contract for the generated TS client.
+      # Mounted OUTSIDE /app so it doesn't create a stub file inside
+      # the bind-mounted web/ on the host.
+      - ./app/api/openapi.yaml:/opt/openapi.yaml:ro
+    environment:
+      AA_API_PROXY_TARGET: http://app:8080
+      AA_OPENAPI_SPEC: /opt/openapi.yaml
+    profiles: ["web"]
+    depends_on:
+      - app
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     ports:
