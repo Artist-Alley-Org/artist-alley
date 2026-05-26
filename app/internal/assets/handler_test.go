@@ -558,6 +558,27 @@ func (shimImpl) AddCollectionResource(context.Context, openapi.AddCollectionReso
 func (shimImpl) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	panic("RemoveCollectionResource called from assets test shim")
 }
+func (shimImpl) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	panic("ListPosts called from assets test shim")
+}
+func (shimImpl) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	panic("CreatePost called from assets test shim")
+}
+func (shimImpl) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	panic("GetPost called from assets test shim")
+}
+func (shimImpl) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	panic("UpdatePost called from assets test shim")
+}
+func (shimImpl) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	panic("DeletePost called from assets test shim")
+}
+func (shimImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	panic("AddPostAsset called from assets test shim")
+}
+func (shimImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	panic("RemovePostAsset called from assets test shim")
+}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()

@@ -249,6 +249,27 @@ func (rtOnly) AddCollectionResource(context.Context, openapi.AddCollectionResour
 func (rtOnly) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	panic("RemoveCollectionResource called from resourcetype test shim")
 }
+func (rtOnly) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	panic("ListPosts called from resourcetype test shim")
+}
+func (rtOnly) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	panic("CreatePost called from resourcetype test shim")
+}
+func (rtOnly) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	panic("GetPost called from resourcetype test shim")
+}
+func (rtOnly) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	panic("UpdatePost called from resourcetype test shim")
+}
+func (rtOnly) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	panic("DeletePost called from resourcetype test shim")
+}
+func (rtOnly) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	panic("AddPostAsset called from resourcetype test shim")
+}
+func (rtOnly) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	panic("RemovePostAsset called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

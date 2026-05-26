@@ -120,6 +120,15 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CollectionPost struct {
+	CollectionID pgtype.UUID        `json:"collection_id"`
+	PostID       pgtype.UUID        `json:"post_id"`
+	SortOrder    int32              `json:"sort_order"`
+	Pinned       bool               `json:"pinned"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	AddedAt      pgtype.Timestamptz `json:"added_at"`
+}
+
 type CollectionResource struct {
 	CollectionID pgtype.UUID        `json:"collection_id"`
 	AssetID      pgtype.UUID        `json:"asset_id"`
@@ -152,6 +161,35 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
 	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
+}
+
+type Post struct {
+	ID             pgtype.UUID        `json:"id"`
+	AuthorUserRef  int64              `json:"author_user_ref"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	Visibility     string             `json:"visibility"`
+	CoverAssetID   pgtype.UUID        `json:"cover_asset_id"`
+	PostedAt       pgtype.Timestamptz `json:"posted_at"`
+	LikeCount      int64              `json:"like_count"`
+	CommentCount   int64              `json:"comment_count"`
+	SearchText     interface{}        `json:"search_text"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PostAsset struct {
+	PostID    pgtype.UUID        `json:"post_id"`
+	AssetID   pgtype.UUID        `json:"asset_id"`
+	SortOrder int32              `json:"sort_order"`
+	AddedAt   pgtype.Timestamptz `json:"added_at"`
+}
+
+type PostTag struct {
+	PostID pgtype.UUID `json:"post_id"`
+	Tag    string      `json:"tag"`
 }
 
 type ResourceType struct {

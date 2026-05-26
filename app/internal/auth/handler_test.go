@@ -540,6 +540,27 @@ func (a authOnlyImpl) AddCollectionResource(_ context.Context, _ openapi.AddColl
 func (a authOnlyImpl) RemoveCollectionResource(_ context.Context, _ openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	panic("RemoveCollectionResource called from auth test shim")
 }
+func (a authOnlyImpl) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	panic("ListPosts called from auth test shim")
+}
+func (a authOnlyImpl) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	panic("CreatePost called from auth test shim")
+}
+func (a authOnlyImpl) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	panic("GetPost called from auth test shim")
+}
+func (a authOnlyImpl) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	panic("UpdatePost called from auth test shim")
+}
+func (a authOnlyImpl) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	panic("DeletePost called from auth test shim")
+}
+func (a authOnlyImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	panic("AddPostAsset called from auth test shim")
+}
+func (a authOnlyImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	panic("RemovePostAsset called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
