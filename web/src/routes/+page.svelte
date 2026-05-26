@@ -1,37 +1,27 @@
 <script lang="ts">
-  import { theme, type ThemePref } from '$stores/theme.svelte';
+  import { auth } from '$stores/auth.svelte';
 
-  const options: { value: ThemePref; label: string }[] = [
-    { value: 'light', label: 'Light' },
-    { value: 'system', label: 'System' },
-    { value: 'dark', label: 'Dark' },
-  ];
+  const greeting = $derived(() => {
+    const name = auth.user?.fullname || auth.user?.username || 'there';
+    const hour = new Date().getHours();
+    const period = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    return `Good ${period}, ${name}`;
+  });
 </script>
 
-<main class="min-h-screen flex flex-col items-center justify-center p-8">
-  <div class="max-w-md w-full text-center space-y-6">
-    <h1 class="text-3xl font-semibold tracking-tight">artist-alley</h1>
+<svelte:head>
+  <title>artist-alley</title>
+</svelte:head>
+
+<div class="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center">
+  <div class="max-w-2xl space-y-6">
+    <h1 class="text-3xl font-semibold tracking-tight">{greeting()}</h1>
     <p class="text-fg-muted">
-      Frontend scaffold. Phase 1.13.A — SvelteKit + Tailwind + theme. The
-      browse page lands in 1.13.D.
+      The browse page lands in Phase 1.13.D — once it does, this is where the recent-art grid renders.
     </p>
-
-    <div class="inline-flex rounded-lg border border-border bg-surface-elevated p-1">
-      {#each options as opt (opt.value)}
-        <button
-          class="px-3 py-1.5 text-sm rounded-md transition-colors"
-          class:bg-accent={theme.pref === opt.value}
-          class:text-accent-fg={theme.pref === opt.value}
-          class:text-fg-muted={theme.pref !== opt.value}
-          onclick={() => theme.set(opt.value)}
-        >
-          {opt.label}
-        </button>
-      {/each}
+    <div class="text-xs text-fg-muted pt-4">
+      Signed in as <code class="font-mono">{auth.user?.username}</code>
+      (ref {auth.user?.ref}, usergroup {auth.user?.usergroup ?? '—'})
     </div>
-
-    <p class="text-xs text-fg-muted">
-      Resolved theme: <code class="font-mono">{theme.resolved}</code>
-    </p>
   </div>
-</main>
+</div>
