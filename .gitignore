@@ -58,3 +58,4 @@ Thumbs.db
 # --- Reference-only plugin dirs (kept locally, used as blueprints) ---
 barts_grouping/
 barts_annotations/
+.playwright-mcp/

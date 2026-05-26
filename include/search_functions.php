@@ -1341,7 +1341,13 @@ function search_special($search, $sql_join, $fetchrows, $sql_prefix, $sql_suffix
             }
         }
 
-        $select->sql = "DISTINCT c.date_added,c.comment,r.hit_count score,length(c.comment) commentset, {$select->sql}";
+        // c.sortorder is added to the SELECT list because Postgres' strict
+        // DISTINCT rule requires every ORDER BY expression to also appear
+        // in the SELECT list — and the !collection ordering uses
+        // c.sortorder (see $order["collection"] in search_get_sort_order).
+        // MySQL is permissive here so this column was historically only in
+        // ORDER BY.
+        $select->sql = "DISTINCT c.sortorder,c.date_added,c.comment,r.hit_count score,length(c.comment) commentset, {$select->sql}";
         $sql->sql = $sql_prefix . "SELECT [SELECT_SQL] FROM resource r JOIN collection_resource c ON r.ref=c.resource " .
         $colcustperm->sql . " WHERE c.collection = ? AND (" . $sql_filter->sql . ") [GROUP_BY_SQL] [ORDER_BY_SQL] {$sql_suffix}";
 
@@ -1826,10 +1832,19 @@ function search_special($search, $sql_join, $fetchrows, $sql_prefix, $sql_suffix
             $reducedselect = preg_replace("/(,\s?r\\.field\\d+)/", "", $reducedselect); // remove any fieldXX columns from select
         }
 
+        // See the PG-strict-GROUP-BY comment below — same logic applies
+        // to the reduced (count / refs-only) shape: include rty.ref +
+        // access aliases so the inner SELECT survives Postgres strict
+        // mode. c.sortorder/c.date_added/c.comment are added when the
+        // collection-scoped search ORDER BY references them.
+        $reduced_group_by_sql = "GROUP BY r.ref, user_access, group_access, rty.ref";
+        if (substr($search, 0, 11) == '!collection') {
+            $reduced_group_by_sql .= ", c.sortorder, c.date_added, c.comment";
+        }
         $reduced_sql = clone $sql;
         $reduced_sql->sql = str_replace(
             ["[SELECT_SQL]", "[GROUP_BY_SQL]", "[ORDER_BY_SQL]"],
-            [$reducedselect, "GROUP BY r.ref", ""],
+            [$reducedselect, $reduced_group_by_sql, ""],
             $reduced_sql->sql
         );
         if (isset($hardlimit)) {
@@ -1839,9 +1854,26 @@ function search_special($search, $sql_join, $fetchrows, $sql_prefix, $sql_suffix
         if ($return_refs_only) {
             $sql = $reduced_sql;
         } else {
+            // Postgres' strict GROUP BY mode requires every selected
+            // non-aggregated column to appear in the GROUP BY clause (or
+            // be functionally dependent on its PK). MySQL was permissive
+            // here — RS uses `GROUP BY r.ref` everywhere even though the
+            // SELECT pulls in cols from joined tables. We add the
+            // canonical "always present" non-r columns to GROUP BY so
+            // every special-search shape passes PG strict mode.
+            //
+            // Safe because each of these has at most one value per
+            // (r.ref) within the join set (FK or single-collection scope),
+            // so adding them as group keys doesn't change row count.
+            // rty.ref is included so PG's functional-dependency inference
+            // unlocks all rty.* columns automatically.
+            $group_by_sql = "GROUP BY r.ref, user_access, group_access, rty.ref";
+            if (substr($search, 0, 11) == '!collection') {
+                $group_by_sql .= ", c.sortorder, c.date_added, c.comment";
+            }
             $sql->sql = str_replace(
                 ["[SELECT_SQL]", "[GROUP_BY_SQL]", "[ORDER_BY_SQL]"],
-                [$select->sql, "GROUP BY r.ref", "ORDER BY {$order_by}"],
+                [$select->sql, $group_by_sql, "ORDER BY {$order_by}"],
                 $sql->sql
             );
             if (isset($order_by_params)) {

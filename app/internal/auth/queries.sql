@@ -143,10 +143,13 @@ LIMIT 1;
 
 -- name: CreateUser :one
 -- Used by setup (initial admin) and later by the admin user-management
--- endpoints. RS quirks: usergroup is nullable (we don't carry RS's
--- group concept forward), approved defaults to 1.
-INSERT INTO "user" (username, password, fullname, email, approved, lang)
-VALUES ($1, $2, $3, $4, 1, $5)
+-- endpoints. usergroup is the RS-side permission group: while the Go
+-- side authorises via roles+capabilities, RS-rendered pages still gate
+-- on the `permissions` string of the assigned usergroup. Pass NULL to
+-- omit (Go-only user); pass 3 for the seeded Super Admin row.
+-- approved defaults to 1.
+INSERT INTO "user" (username, password, fullname, email, usergroup, approved, lang)
+VALUES ($1, $2, $3, $4, $5, 1, $6)
 RETURNING ref, username, fullname, email, usergroup, created;
 
 -- name: CreateApiToken :one

@@ -551,10 +551,67 @@ function aa_rewrite_mysql_fn(string $sql, string $fn, callable $rewrite): string
     return $out;
 }
 
+/**
+ * Replace MySQL `# comment` line comments with Postgres `-- comment`.
+ * String-literal-aware: skips `#` chars inside single- or double-quoted
+ * strings (Postgres-style '' / "" escapes).
+ */
+function aa_strip_hash_comments(string $sql): string
+{
+    $out = '';
+    $n = strlen($sql);
+    $inSingle = false;
+    $inDouble = false;
+    for ($i = 0; $i < $n; $i++) {
+        $c = $sql[$i];
+        if ($inSingle) {
+            $out .= $c;
+            if ($c === "'") {
+                if ($i + 1 < $n && $sql[$i + 1] === "'") {
+                    $out .= "'";
+                    $i++;
+                    continue;
+                }
+                $inSingle = false;
+            }
+            continue;
+        }
+        if ($inDouble) {
+            $out .= $c;
+            if ($c === '"') {
+                $inDouble = false;
+            }
+            continue;
+        }
+        if ($c === "'") {
+            $inSingle = true;
+            $out .= $c;
+            continue;
+        }
+        if ($c === '"') {
+            $inDouble = true;
+            $out .= $c;
+            continue;
+        }
+        if ($c === '#') {
+            $out .= '--';
+            continue;
+        }
+        $out .= $c;
+    }
+    return $out;
+}
+
 function aa_translate_mysql_to_pg(string $sql): string
 {
     // Backtick identifier quoting -> Postgres double quotes.
     $sql = str_replace('`', '"', $sql);
+
+    // MySQL '#' line comments are not valid in Postgres (only '--' and
+    // '/* */' are). Walk the string tracking single/double-quoted literal
+    // state and replace '#...EOL' with '--' so the comment survives in
+    // logs and the trailing SQL keeps working.
+    $sql = aa_strip_hash_comments($sql);
 
     // SHOW TABLES / SHOW INDEXES — MySQL metadata queries some RS
     // tooling pages still emit. Rewrite to pg_catalog lookups so they
@@ -696,6 +753,46 @@ function aa_translate_mysql_to_pg(string $sql): string
         '($1 = ANY(string_to_array($2, \',\')))',
         $sql
     );
+
+    // MySQL GROUP_CONCAT([DISTINCT] expr [ORDER BY ...] [SEPARATOR 'x'])
+    // -> Postgres STRING_AGG([DISTINCT] (expr)::text, ',' [ORDER BY ...]).
+    // Default separator in MySQL is ',', matching PG's required delimiter
+    // arg. We cast to ::text so the aggregate works on non-text columns
+    // (RS uses it on integer ref columns).
+    $sql = aa_rewrite_mysql_fn($sql, 'group_concat', function (array $args): string {
+        if (count($args) !== 1) {
+            return '';
+        }
+        $inner = $args[0];
+
+        $distinct = false;
+        if (preg_match('/^DISTINCT\s+/i', $inner)) {
+            $distinct = true;
+            $inner = preg_replace('/^DISTINCT\s+/i', '', $inner);
+        }
+
+        $sepLiteral = "','";
+        // MySQL accepts both 'x' and "x" as string literals for SEPARATOR;
+        // normalise double-quoted to single-quoted on the way out so the
+        // result is valid Postgres (where " is identifier-only).
+        if (preg_match('/\s+SEPARATOR\s+(\'[^\']*\'|"[^"]*")\s*$/i', $inner, $m)) {
+            $lit = $m[1];
+            if ($lit[0] === '"') {
+                $lit = "'" . str_replace("'", "''", substr($lit, 1, -1)) . "'";
+            }
+            $sepLiteral = $lit;
+            $inner = preg_replace('/\s+SEPARATOR\s+(?:\'[^\']*\'|"[^"]*")\s*$/i', '', $inner);
+        }
+
+        $orderBy = '';
+        if (preg_match('/\sORDER\s+BY\s+(.+)$/is', $inner, $m)) {
+            $orderBy = ' ORDER BY ' . trim($m[1]);
+            $inner = preg_replace('/\sORDER\s+BY\s+.+$/is', '', $inner);
+        }
+
+        $dist = $distinct ? 'DISTINCT ' : '';
+        return 'STRING_AGG(' . $dist . '(' . trim($inner) . ')::text, ' . $sepLiteral . $orderBy . ')';
+    });
 
     return $sql;
 }

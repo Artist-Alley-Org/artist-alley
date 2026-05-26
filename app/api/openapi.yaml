@@ -38,6 +38,13 @@ tags:
   - name: resource_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
+  - name: collections
+    description: |
+      User-owned groupings of assets, per ADR 0009. UUID-keyed,
+      federation-prepared. Three orthogonal axes — visibility
+      (private/shared/public), membership (manual/query/hybrid), and
+      lifecycle (permanent vs `expires_at`). Phase 1.11.A ships
+      manual membership; query and grants land in 1.11.B/C.
 
 paths:
   /auth/login:
@@ -963,6 +970,248 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /collections:
+    get:
+      operationId: listCollections
+      summary: List collections (filterable, paginated)
+      description: |
+        Returns collections ordered by `created_at DESC, id DESC` so
+        the newest entries are first. Filters and cursor pagination
+        match the assets list contract — pass back `next_cursor`
+        opaquely as `cursor` to retrieve the following page.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: owner_ref
+          in: query
+          required: false
+          description: Filter to collections owned by this RS user_ref.
+          schema: { type: integer, format: int64 }
+        - name: visibility
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [private, shared, public]
+        - name: featured
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of collections
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createCollection
+      summary: Create a new collection
+      description: |
+        Creates a manual-membership collection owned by the caller.
+        Query-membership and hybrid modes ship in 1.11.B; for now
+        only `membership=manual` is accepted.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionCreate" }
+      responses:
+        "201":
+          description: Collection created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /collections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCollection
+      summary: Fetch a single collection by id
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The collection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateCollection
+      summary: Partial update of a collection
+      description: |
+        Only fields present in the body are touched. Pass
+        `expires_at: null` to remove the TTL; omit the field to keep
+        the current value.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteCollection
+      summary: Hard-delete a collection
+      description: |
+        Drops the collection row; cascades to `collection_resources`
+        via the FK. The underlying assets are untouched.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/resources:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listCollectionResources
+      summary: List the assets pinned in a collection
+      description: |
+        Returns assets currently pinned in this collection (excludes
+        rows where the per-membership `expires_at` has passed), in
+        `sort_order ASC, added_at ASC` order so the list matches the
+        admin-arranged sequence. Joined onto assets for thumb/title
+        without an N+1.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of resources
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionResourceList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addCollectionResource
+      summary: Add (or re-pin) an asset in a collection
+      description: |
+        Idempotent on `(collection_id, asset_id)`. Re-adding an
+        existing membership updates `sort_order`, `pinned`, and
+        `expires_at` but keeps `added_at` fixed.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionResourceWrite" }
+      responses:
+        "204":
+          description: Resource added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/resources/{asset_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: asset_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removeCollectionResource
+      summary: Remove an asset from a collection
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed (or was already absent)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /resource_types:
     get:
       operationId: listResourceTypes
@@ -1492,6 +1741,157 @@ components:
         changed_at:         { type: string, format: date-time }
         changed_by_user_ref: { type: integer, format: int64, nullable: true }
         set_by:             { type: string }
+    Collection:
+      type: object
+      description: |
+        A user-owned collection of assets, per ADR 0009. UUID-keyed,
+        federation-prepared (`origin_server_id`), with three
+        orthogonal axes: visibility, membership, and lifecycle.
+      required:
+        [id, owner_user_ref, name, description, visibility, membership,
+         featured, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        owner_user_ref:   { type: integer, format: int64 }
+        name:             { type: string }
+        description:      { type: string }
+        visibility:
+          type: string
+          enum: [private, shared, public]
+        membership:
+          type: string
+          enum: [manual, query, hybrid]
+          description: |
+            `manual` only for 1.11.A. `query` and `hybrid` ship in
+            1.11.B once the search DSL (ADR 0010) lands.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: TTL. Null = permanent.
+        featured:         { type: boolean }
+        purpose:
+          type: string
+          nullable: true
+          description: |
+            Free-form admin-set hint ("for_review", "for_proofing", …).
+            Replaces RS's single-purpose `archived` flag.
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Federation home server. Null = local. Populated when
+            collections sync in from a peer in a later phase.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CollectionCreate:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [private, shared, public]
+          default: private
+        membership:
+          type: string
+          enum: [manual, query, hybrid]
+          default: manual
+          description: |
+            Only `manual` is accepted in 1.11.A; passing `query` or
+            `hybrid` returns 400 until 1.11.B ships.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        featured:    { type: boolean, default: false }
+        purpose:
+          type: string
+          nullable: true
+    CollectionUpdate:
+      type: object
+      description: |
+        Partial update; only present fields are touched. Pass
+        `expires_at: null` to clear the TTL.
+      properties:
+        name:        { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [private, shared, public]
+        membership:
+          type: string
+          enum: [manual, query, hybrid]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        featured:    { type: boolean }
+        purpose:
+          type: string
+          nullable: true
+    CollectionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Collection" }
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque token for the next page; omitted on the final page.
+            Pass back unchanged as the `cursor` query parameter.
+    CollectionResource:
+      type: object
+      description: |
+        One asset's membership in a collection, joined with the
+        asset's identifying columns so the UI can render without a
+        follow-up fetch.
+      required:
+        [collection_id, asset_id, sort_order, pinned, added_at,
+         title, resource_type, status]
+      properties:
+        collection_id: { type: string, format: uuid }
+        asset_id:      { type: string, format: uuid }
+        sort_order:    { type: integer }
+        pinned:        { type: boolean }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        added_at:      { type: string, format: date-time }
+        title:         { type: string }
+        resource_type: { type: integer, format: int64 }
+        status:        { type: string, enum: [draft, active, archived] }
+        file_hash:
+          type: string
+          nullable: true
+        asset_created_at: { type: string, format: date-time }
+    CollectionResourceWrite:
+      type: object
+      required: [asset_id]
+      properties:
+        asset_id:    { type: string, format: uuid }
+        sort_order:  { type: integer, default: 0 }
+        pinned:      { type: boolean, default: true }
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+    CollectionResourceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CollectionResource" }
+        next_cursor:
+          type: string
+          nullable: true
     Asset:
       type: object
       required: [id, title, resource_type, status, created_at, updated_at, tags]

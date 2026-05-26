@@ -137,17 +137,18 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO "user" (username, password, fullname, email, approved, lang)
-VALUES ($1, $2, $3, $4, 1, $5)
+INSERT INTO "user" (username, password, fullname, email, usergroup, approved, lang)
+VALUES ($1, $2, $3, $4, $5, 1, $6)
 RETURNING ref, username, fullname, email, usergroup, created
 `
 
 type CreateUserParams struct {
-	Username *string
-	Password *string
-	Fullname *string
-	Email    *string
-	Lang     *string
+	Username  *string
+	Password  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Lang      *string
 }
 
 type CreateUserRow struct {
@@ -160,14 +161,18 @@ type CreateUserRow struct {
 }
 
 // Used by setup (initial admin) and later by the admin user-management
-// endpoints. RS quirks: usergroup is nullable (we don't carry RS's
-// group concept forward), approved defaults to 1.
+// endpoints. usergroup is the RS-side permission group: while the Go
+// side authorises via roles+capabilities, RS-rendered pages still gate
+// on the `permissions` string of the assigned usergroup. Pass NULL to
+// omit (Go-only user); pass 3 for the seeded Super Admin row.
+// approved defaults to 1.
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
 	row := q.db.QueryRow(ctx, createUser,
 		arg.Username,
 		arg.Password,
 		arg.Fullname,
 		arg.Email,
+		arg.Usergroup,
 		arg.Lang,
 	)
 	var i CreateUserRow
