@@ -732,14 +732,18 @@ function aa_translate_mysql_to_pg(string $sql): string
     // equivalent is `needle = ANY(string_to_array(haystack, ','))`,
     // which is boolean — so we have to rewrite the surrounding
     // comparator at the same time. Three patterns, longest-match first:
-    //   FIND_IN_SET(a, b) <> 0  -> (a = ANY(string_to_array(b, ',')))
-    //   FIND_IN_SET(a, b) = 0   -> NOT (a = ANY(string_to_array(b, ',')))
-    //   FIND_IN_SET(a, b)       -> (a = ANY(string_to_array(b, ',')))
-    // RS's call sites use simple args (no nested parens), so the
-    // non-greedy [^,()]+ capture is sufficient.
+    //   FIND_IN_SET(a, b) <> 0    -> (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b) >  0    -> (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b) >= 1    -> (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b) =  0    -> NOT (a = ANY(string_to_array(b, ',')))
+    //   FIND_IN_SET(a, b)         -> (a = ANY(string_to_array(b, ',')))
+    //
+    // ">0" / ">=1" added after FIND_IN_SET in user_select_sql leaked
+    // a boolean > integer comparison into PG. RS's call sites use
+    // simple args (no nested parens), so non-greedy [^,()]+ is enough.
     $fis_args = '\s*([^,()]+?)\s*,\s*([^,()]+?)\s*';
     $sql = preg_replace(
-        '/\bFIND_IN_SET\s*\(' . $fis_args . '\)\s*<>\s*0\b/i',
+        '/\bFIND_IN_SET\s*\(' . $fis_args . '\)\s*(?:<>\s*0|>\s*0|>=\s*1)\b/i',
         '($1 = ANY(string_to_array($2, \',\')))',
         $sql
     );
