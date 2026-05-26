@@ -114,12 +114,31 @@ function get_user_collections($user, $find = "", $order_by = "name", $sort = "AS
         'bg_img_resource_ref',
         'order_by',
     ];
-    $query_select_columns = implode(', ', $collection_table_columns) . ', username, fullname, count';
+    // Outer query groups by `ref` to dedup the UNION (a single collection
+    // may appear via owner / shared-user / shared-group rows). Postgres'
+    // strict GROUP BY requires every non-grouped column to be aggregated;
+    // values are identical across the union paths for a given ref, so
+    // MIN()/MAX() is a no-op on the data. `count` becomes MAX so we
+    // surface the highest resource count across paths.
+    $outer_cols = ['ref'];
+    foreach ($collection_table_columns as $col) {
+        if ($col === 'ref') {
+            continue;
+        }
+        $outer_cols[] = "MIN({$col}) AS {$col}";
+    }
+    $outer_cols[] = 'MIN(username) AS username';
+    $outer_cols[] = 'MIN(fullname) AS fullname';
+    $outer_cols[] = 'MAX(count) AS count';
+    $query_select_columns = implode(', ', $outer_cols);
     $collection_select_columns = [];
     foreach ($collection_table_columns as $column_name) {
         $collection_select_columns[] = "c.{$column_name}";
     }
-    $collection_select_columns = implode(', ', $collection_select_columns) . ', u.username, u.fullname, count(r.resource) AS count';
+    // u.username / u.fullname wrapped in MIN() for Postgres' strict GROUP
+    // BY — there's one user row per c.user (FK), so MIN is a no-op on the
+    // value but lets the grouping pass.
+    $collection_select_columns = implode(', ', $collection_select_columns) . ', MIN(u.username) AS username, MIN(u.fullname) AS fullname, count(r.resource) AS count';
 
     $query = "SELECT {$query_select_columns}
                 FROM (
@@ -1131,8 +1150,8 @@ function search_public_collections($search = "", $order_by = "name", $sort = "AS
         "SELECT *
            FROM (
                          SELECT DISTINCT c.*,
-                                u.username,
-                                u.fullname,
+                                MIN(u.username) AS username,
+                                MIN(u.fullname) AS fullname,
                                 IF(c.`type` = %s AND COUNT(DISTINCT cc.ref)>0, true, false) AS is_featured_collection_category
                                 %s
                            FROM collection AS c

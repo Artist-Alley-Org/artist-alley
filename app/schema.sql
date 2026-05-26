@@ -163,6 +163,34 @@ CREATE TABLE asset_field_value_history (
     set_by              TEXT         NOT NULL DEFAULT 'manual'
 );
 
+-- migrations/00012_collections.sql — Phase 1.11 collection entity
+-- per ADR 0009. UUID-keyed, federation-ready, coexists with RS's
+-- legacy `collection` table.
+CREATE TABLE collections (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_ref    BIGINT       NOT NULL,
+    name              TEXT         NOT NULL,
+    description       TEXT         NOT NULL DEFAULT '',
+    visibility        TEXT         NOT NULL DEFAULT 'private',
+    membership        TEXT         NOT NULL DEFAULT 'manual',
+    expires_at        TIMESTAMPTZ  NULL,
+    featured          BOOLEAN      NOT NULL DEFAULT FALSE,
+    purpose           TEXT         NULL,
+    origin_server_id  UUID         NULL,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE collection_resources (
+    collection_id  UUID         NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    asset_id       UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    sort_order     INTEGER      NOT NULL DEFAULT 0,
+    pinned         BOOLEAN      NOT NULL DEFAULT TRUE,
+    expires_at     TIMESTAMPTZ  NULL,
+    added_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (collection_id, asset_id)
+);
+
 -- migrations/00001_api_tokens.sql + 00003_api_tokens_origin_server.sql.
 -- Owned outright by Go (goose).
 CREATE TABLE api_tokens (

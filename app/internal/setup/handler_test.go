@@ -444,6 +444,30 @@ func (shimImpl) ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldVal
 func (shimImpl) GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
 	panic("GetAssetFieldValueHistory called from setup test shim")
 }
+func (shimImpl) ListCollections(context.Context, openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
+	panic("ListCollections called from setup test shim")
+}
+func (shimImpl) CreateCollection(context.Context, openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
+	panic("CreateCollection called from setup test shim")
+}
+func (shimImpl) GetCollection(context.Context, openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
+	panic("GetCollection called from setup test shim")
+}
+func (shimImpl) UpdateCollection(context.Context, openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
+	panic("UpdateCollection called from setup test shim")
+}
+func (shimImpl) DeleteCollection(context.Context, openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
+	panic("DeleteCollection called from setup test shim")
+}
+func (shimImpl) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
+	panic("ListCollectionResources called from setup test shim")
+}
+func (shimImpl) AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
+	panic("AddCollectionResource called from setup test shim")
+}
+func (shimImpl) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
+	panic("RemoveCollectionResource called from setup test shim")
+}
 
 // ---------------------------------------------------------------------------
 // helpers

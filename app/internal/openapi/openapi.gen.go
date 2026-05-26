@@ -203,6 +203,153 @@ func (e AssetUpdateStatus) Valid() bool {
 	}
 }
 
+// Defines values for CollectionMembership.
+const (
+	CollectionMembershipHybrid CollectionMembership = "hybrid"
+	CollectionMembershipManual CollectionMembership = "manual"
+	CollectionMembershipQuery  CollectionMembership = "query"
+)
+
+// Valid indicates whether the value is a known member of the CollectionMembership enum.
+func (e CollectionMembership) Valid() bool {
+	switch e {
+	case CollectionMembershipHybrid:
+		return true
+	case CollectionMembershipManual:
+		return true
+	case CollectionMembershipQuery:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionVisibility.
+const (
+	CollectionVisibilityPrivate CollectionVisibility = "private"
+	CollectionVisibilityPublic  CollectionVisibility = "public"
+	CollectionVisibilityShared  CollectionVisibility = "shared"
+)
+
+// Valid indicates whether the value is a known member of the CollectionVisibility enum.
+func (e CollectionVisibility) Valid() bool {
+	switch e {
+	case CollectionVisibilityPrivate:
+		return true
+	case CollectionVisibilityPublic:
+		return true
+	case CollectionVisibilityShared:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionCreateMembership.
+const (
+	CollectionCreateMembershipHybrid CollectionCreateMembership = "hybrid"
+	CollectionCreateMembershipManual CollectionCreateMembership = "manual"
+	CollectionCreateMembershipQuery  CollectionCreateMembership = "query"
+)
+
+// Valid indicates whether the value is a known member of the CollectionCreateMembership enum.
+func (e CollectionCreateMembership) Valid() bool {
+	switch e {
+	case CollectionCreateMembershipHybrid:
+		return true
+	case CollectionCreateMembershipManual:
+		return true
+	case CollectionCreateMembershipQuery:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionCreateVisibility.
+const (
+	CollectionCreateVisibilityPrivate CollectionCreateVisibility = "private"
+	CollectionCreateVisibilityPublic  CollectionCreateVisibility = "public"
+	CollectionCreateVisibilityShared  CollectionCreateVisibility = "shared"
+)
+
+// Valid indicates whether the value is a known member of the CollectionCreateVisibility enum.
+func (e CollectionCreateVisibility) Valid() bool {
+	switch e {
+	case CollectionCreateVisibilityPrivate:
+		return true
+	case CollectionCreateVisibilityPublic:
+		return true
+	case CollectionCreateVisibilityShared:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionResourceStatus.
+const (
+	CollectionResourceStatusActive   CollectionResourceStatus = "active"
+	CollectionResourceStatusArchived CollectionResourceStatus = "archived"
+	CollectionResourceStatusDraft    CollectionResourceStatus = "draft"
+)
+
+// Valid indicates whether the value is a known member of the CollectionResourceStatus enum.
+func (e CollectionResourceStatus) Valid() bool {
+	switch e {
+	case CollectionResourceStatusActive:
+		return true
+	case CollectionResourceStatusArchived:
+		return true
+	case CollectionResourceStatusDraft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionUpdateMembership.
+const (
+	Hybrid CollectionUpdateMembership = "hybrid"
+	Manual CollectionUpdateMembership = "manual"
+	Query  CollectionUpdateMembership = "query"
+)
+
+// Valid indicates whether the value is a known member of the CollectionUpdateMembership enum.
+func (e CollectionUpdateMembership) Valid() bool {
+	switch e {
+	case Hybrid:
+		return true
+	case Manual:
+		return true
+	case Query:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CollectionUpdateVisibility.
+const (
+	CollectionUpdateVisibilityPrivate CollectionUpdateVisibility = "private"
+	CollectionUpdateVisibilityPublic  CollectionUpdateVisibility = "public"
+	CollectionUpdateVisibilityShared  CollectionUpdateVisibility = "shared"
+)
+
+// Valid indicates whether the value is a known member of the CollectionUpdateVisibility enum.
+func (e CollectionUpdateVisibility) Valid() bool {
+	switch e {
+	case CollectionUpdateVisibilityPrivate:
+		return true
+	case CollectionUpdateVisibilityPublic:
+		return true
+	case CollectionUpdateVisibilityShared:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	Session CurrentUserAuthMethod = "session"
@@ -416,21 +563,42 @@ func (e ListAssetsParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for ListCollectionsParamsVisibility.
+const (
+	ListCollectionsParamsVisibilityPrivate ListCollectionsParamsVisibility = "private"
+	ListCollectionsParamsVisibilityPublic  ListCollectionsParamsVisibility = "public"
+	ListCollectionsParamsVisibilityShared  ListCollectionsParamsVisibility = "shared"
+)
+
+// Valid indicates whether the value is a known member of the ListCollectionsParamsVisibility enum.
+func (e ListCollectionsParamsVisibility) Valid() bool {
+	switch e {
+	case ListCollectionsParamsVisibilityPrivate:
+		return true
+	case ListCollectionsParamsVisibilityPublic:
+		return true
+	case ListCollectionsParamsVisibilityShared:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListFieldsParamsStatus.
 const (
-	Active     ListFieldsParamsStatus = "active"
-	Archived   ListFieldsParamsStatus = "archived"
-	Deprecated ListFieldsParamsStatus = "deprecated"
+	ListFieldsParamsStatusActive     ListFieldsParamsStatus = "active"
+	ListFieldsParamsStatusArchived   ListFieldsParamsStatus = "archived"
+	ListFieldsParamsStatusDeprecated ListFieldsParamsStatus = "deprecated"
 )
 
 // Valid indicates whether the value is a known member of the ListFieldsParamsStatus enum.
 func (e ListFieldsParamsStatus) Valid() bool {
 	switch e {
-	case Active:
+	case ListFieldsParamsStatusActive:
 		return true
-	case Archived:
+	case ListFieldsParamsStatusArchived:
 		return true
-	case Deprecated:
+	case ListFieldsParamsStatusDeprecated:
 		return true
 	default:
 		return false
@@ -570,6 +738,124 @@ type Capability struct {
 	Code        string `json:"code"`
 	Description string `json:"description"`
 }
+
+// Collection A user-owned collection of assets, per ADR 0009. UUID-keyed,
+// federation-prepared (`origin_server_id`), with three
+// orthogonal axes: visibility, membership, and lifecycle.
+type Collection struct {
+	CreatedAt   time.Time `json:"created_at"`
+	Description string    `json:"description"`
+
+	// ExpiresAt TTL. Null = permanent.
+	ExpiresAt *time.Time         `json:"expires_at,omitempty"`
+	Featured  bool               `json:"featured"`
+	Id        openapi_types.UUID `json:"id"`
+
+	// Membership `manual` only for 1.11.A. `query` and `hybrid` ship in
+	// 1.11.B once the search DSL (ADR 0010) lands.
+	Membership CollectionMembership `json:"membership"`
+	Name       string               `json:"name"`
+
+	// OriginServerId Federation home server. Null = local. Populated when
+	// collections sync in from a peer in a later phase.
+	OriginServerId *openapi_types.UUID `json:"origin_server_id,omitempty"`
+	OwnerUserRef   int64               `json:"owner_user_ref"`
+
+	// Purpose Free-form admin-set hint ("for_review", "for_proofing", …).
+	// Replaces RS's single-purpose `archived` flag.
+	Purpose    *string              `json:"purpose,omitempty"`
+	UpdatedAt  time.Time            `json:"updated_at"`
+	Visibility CollectionVisibility `json:"visibility"`
+}
+
+// CollectionMembership `manual` only for 1.11.A. `query` and `hybrid` ship in
+// 1.11.B once the search DSL (ADR 0010) lands.
+type CollectionMembership string
+
+// CollectionVisibility defines model for Collection.Visibility.
+type CollectionVisibility string
+
+// CollectionCreate defines model for CollectionCreate.
+type CollectionCreate struct {
+	Description *string    `json:"description,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Featured    *bool      `json:"featured,omitempty"`
+
+	// Membership Only `manual` is accepted in 1.11.A; passing `query` or
+	// `hybrid` returns 400 until 1.11.B ships.
+	Membership *CollectionCreateMembership `json:"membership,omitempty"`
+	Name       string                      `json:"name"`
+	Purpose    *string                     `json:"purpose,omitempty"`
+	Visibility *CollectionCreateVisibility `json:"visibility,omitempty"`
+}
+
+// CollectionCreateMembership Only `manual` is accepted in 1.11.A; passing `query` or
+// `hybrid` returns 400 until 1.11.B ships.
+type CollectionCreateMembership string
+
+// CollectionCreateVisibility defines model for CollectionCreate.Visibility.
+type CollectionCreateVisibility string
+
+// CollectionList defines model for CollectionList.
+type CollectionList struct {
+	Items []Collection `json:"items"`
+
+	// NextCursor Opaque token for the next page; omitted on the final page.
+	// Pass back unchanged as the `cursor` query parameter.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// CollectionResource One asset's membership in a collection, joined with the
+// asset's identifying columns so the UI can render without a
+// follow-up fetch.
+type CollectionResource struct {
+	AddedAt        time.Time                `json:"added_at"`
+	AssetCreatedAt *time.Time               `json:"asset_created_at,omitempty"`
+	AssetId        openapi_types.UUID       `json:"asset_id"`
+	CollectionId   openapi_types.UUID       `json:"collection_id"`
+	ExpiresAt      *time.Time               `json:"expires_at,omitempty"`
+	FileHash       *string                  `json:"file_hash,omitempty"`
+	Pinned         bool                     `json:"pinned"`
+	ResourceType   int64                    `json:"resource_type"`
+	SortOrder      int                      `json:"sort_order"`
+	Status         CollectionResourceStatus `json:"status"`
+	Title          string                   `json:"title"`
+}
+
+// CollectionResourceStatus defines model for CollectionResource.Status.
+type CollectionResourceStatus string
+
+// CollectionResourceList defines model for CollectionResourceList.
+type CollectionResourceList struct {
+	Items      []CollectionResource `json:"items"`
+	NextCursor *string              `json:"next_cursor,omitempty"`
+}
+
+// CollectionResourceWrite defines model for CollectionResourceWrite.
+type CollectionResourceWrite struct {
+	AssetId   openapi_types.UUID `json:"asset_id"`
+	ExpiresAt *time.Time         `json:"expires_at,omitempty"`
+	Pinned    *bool              `json:"pinned,omitempty"`
+	SortOrder *int               `json:"sort_order,omitempty"`
+}
+
+// CollectionUpdate Partial update; only present fields are touched. Pass
+// `expires_at: null` to clear the TTL.
+type CollectionUpdate struct {
+	Description *string                     `json:"description,omitempty"`
+	ExpiresAt   *time.Time                  `json:"expires_at,omitempty"`
+	Featured    *bool                       `json:"featured,omitempty"`
+	Membership  *CollectionUpdateMembership `json:"membership,omitempty"`
+	Name        *string                     `json:"name,omitempty"`
+	Purpose     *string                     `json:"purpose,omitempty"`
+	Visibility  *CollectionUpdateVisibility `json:"visibility,omitempty"`
+}
+
+// CollectionUpdateMembership defines model for CollectionUpdate.Membership.
+type CollectionUpdateMembership string
+
+// CollectionUpdateVisibility defines model for CollectionUpdate.Visibility.
+type CollectionUpdateVisibility string
 
 // CreateApiTokenRequest defines model for CreateApiTokenRequest.
 type CreateApiTokenRequest struct {
@@ -918,6 +1204,25 @@ type DownloadAssetVariantParams struct {
 	Range *string `json:"Range,omitempty"`
 }
 
+// ListCollectionsParams defines parameters for ListCollections.
+type ListCollectionsParams struct {
+	// OwnerRef Filter to collections owned by this RS user_ref.
+	OwnerRef   *int64                           `form:"owner_ref,omitempty" json:"owner_ref,omitempty"`
+	Visibility *ListCollectionsParamsVisibility `form:"visibility,omitempty" json:"visibility,omitempty"`
+	Featured   *bool                            `form:"featured,omitempty" json:"featured,omitempty"`
+	Limit      *int                             `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor     *string                          `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListCollectionsParamsVisibility defines parameters for ListCollections.
+type ListCollectionsParamsVisibility string
+
+// ListCollectionResourcesParams defines parameters for ListCollectionResources.
+type ListCollectionResourcesParams struct {
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
 // ListFieldsParams defines parameters for ListFields.
 type ListFieldsParams struct {
 	Status *ListFieldsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
@@ -970,6 +1275,15 @@ type CreateApiTokenJSONRequestBody = CreateApiTokenRequest
 
 // SetUserRoleJSONRequestBody defines body for SetUserRole for application/json ContentType.
 type SetUserRoleJSONRequestBody = SetUserRoleRequest
+
+// CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
+type CreateCollectionJSONRequestBody = CollectionCreate
+
+// UpdateCollectionJSONRequestBody defines body for UpdateCollection for application/json ContentType.
+type UpdateCollectionJSONRequestBody = CollectionUpdate
+
+// AddCollectionResourceJSONRequestBody defines body for AddCollectionResource for application/json ContentType.
+type AddCollectionResourceJSONRequestBody = CollectionResourceWrite
 
 // CreateFieldJSONRequestBody defines body for CreateField for application/json ContentType.
 type CreateFieldJSONRequestBody = FieldDefinitionCreate
@@ -1051,6 +1365,30 @@ type ServerInterface interface {
 	// Assign a role to a user (admin)
 	// (PUT /auth/users/{ref}/role)
 	SetUserRole(w http.ResponseWriter, r *http.Request, ref int64)
+	// List collections (filterable, paginated)
+	// (GET /collections)
+	ListCollections(w http.ResponseWriter, r *http.Request, params ListCollectionsParams)
+	// Create a new collection
+	// (POST /collections)
+	CreateCollection(w http.ResponseWriter, r *http.Request)
+	// Hard-delete a collection
+	// (DELETE /collections/{id})
+	DeleteCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Fetch a single collection by id
+	// (GET /collections/{id})
+	GetCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Partial update of a collection
+	// (PATCH /collections/{id})
+	UpdateCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// List the assets pinned in a collection
+	// (GET /collections/{id}/resources)
+	ListCollectionResources(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params ListCollectionResourcesParams)
+	// Add (or re-pin) an asset in a collection
+	// (POST /collections/{id}/resources)
+	AddCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Remove an asset from a collection
+	// (DELETE /collections/{id}/resources/{asset_id})
+	RemoveCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, assetId openapi_types.UUID)
 	// List field definitions (the metadata schema)
 	// (GET /fields)
 	ListFields(w http.ResponseWriter, r *http.Request, params ListFieldsParams)
@@ -1222,6 +1560,54 @@ func (_ Unimplemented) RevokeApiToken(w http.ResponseWriter, r *http.Request, id
 // Assign a role to a user (admin)
 // (PUT /auth/users/{ref}/role)
 func (_ Unimplemented) SetUserRole(w http.ResponseWriter, r *http.Request, ref int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List collections (filterable, paginated)
+// (GET /collections)
+func (_ Unimplemented) ListCollections(w http.ResponseWriter, r *http.Request, params ListCollectionsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create a new collection
+// (POST /collections)
+func (_ Unimplemented) CreateCollection(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Hard-delete a collection
+// (DELETE /collections/{id})
+func (_ Unimplemented) DeleteCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Fetch a single collection by id
+// (GET /collections/{id})
+func (_ Unimplemented) GetCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Partial update of a collection
+// (PATCH /collections/{id})
+func (_ Unimplemented) UpdateCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List the assets pinned in a collection
+// (GET /collections/{id}/resources)
+func (_ Unimplemented) ListCollectionResources(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params ListCollectionResourcesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Add (or re-pin) an asset in a collection
+// (POST /collections/{id}/resources)
+func (_ Unimplemented) AddCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Remove an asset from a collection
+// (DELETE /collections/{id}/resources/{asset_id})
+func (_ Unimplemented) RemoveCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, assetId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2144,6 +2530,363 @@ func (siw *ServerInterfaceWrapper) SetUserRole(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ListCollections operation middleware
+func (siw *ServerInterfaceWrapper) ListCollections(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCollectionsParams
+
+	// ------------- Optional query parameter "owner_ref" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "owner_ref", r.URL.Query(), &params.OwnerRef, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "owner_ref"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner_ref", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "visibility" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "visibility", r.URL.Query(), &params.Visibility, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "visibility"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "visibility", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "featured" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "featured", r.URL.Query(), &params.Featured, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "featured"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "featured", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCollections(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCollection operation middleware
+func (siw *ServerInterfaceWrapper) CreateCollection(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCollection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteCollection operation middleware
+func (siw *ServerInterfaceWrapper) DeleteCollection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteCollection(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCollection operation middleware
+func (siw *ServerInterfaceWrapper) GetCollection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCollection(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateCollection operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCollection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCollection(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCollectionResources operation middleware
+func (siw *ServerInterfaceWrapper) ListCollectionResources(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCollectionResourcesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCollectionResources(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddCollectionResource operation middleware
+func (siw *ServerInterfaceWrapper) AddCollectionResource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddCollectionResource(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveCollectionResource operation middleware
+func (siw *ServerInterfaceWrapper) RemoveCollectionResource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "asset_id" -------------
+	var assetId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "asset_id", chi.URLParam(r, "asset_id"), &assetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "asset_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveCollectionResource(w, r, id, assetId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListFields operation middleware
 func (siw *ServerInterfaceWrapper) ListFields(w http.ResponseWriter, r *http.Request) {
 
@@ -2719,6 +3462,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/auth/users/{ref}/role", wrapper.SetUserRole)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/collections", wrapper.ListCollections)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/collections", wrapper.CreateCollection)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/collections/{id}", wrapper.DeleteCollection)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/collections/{id}", wrapper.GetCollection)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/collections/{id}", wrapper.UpdateCollection)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/collections/{id}/resources", wrapper.ListCollectionResources)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/collections/{id}/resources", wrapper.AddCollectionResource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/collections/{id}/resources/{asset_id}", wrapper.RemoveCollectionResource)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/fields", wrapper.ListFields)
@@ -3961,6 +4728,490 @@ func (response SetUserRole404JSONResponse) VisitSetUserRoleResponse(w http.Respo
 	return err
 }
 
+type ListCollectionsRequestObject struct {
+	Params ListCollectionsParams
+}
+
+type ListCollectionsResponseObject interface {
+	VisitListCollectionsResponse(w http.ResponseWriter) error
+}
+
+type ListCollections200JSONResponse CollectionList
+
+func (response ListCollections200JSONResponse) VisitListCollectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCollections401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCollections401JSONResponse) VisitListCollectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCollections500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListCollections500JSONResponse) VisitListCollectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCollectionRequestObject struct {
+	Body *CreateCollectionJSONRequestBody
+}
+
+type CreateCollectionResponseObject interface {
+	VisitCreateCollectionResponse(w http.ResponseWriter) error
+}
+
+type CreateCollection201JSONResponse Collection
+
+func (response CreateCollection201JSONResponse) VisitCreateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCollection400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateCollection400JSONResponse) VisitCreateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCollection401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateCollection401JSONResponse) VisitCreateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCollection500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateCollection500JSONResponse) VisitCreateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteCollectionRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type DeleteCollectionResponseObject interface {
+	VisitDeleteCollectionResponse(w http.ResponseWriter) error
+}
+
+type DeleteCollection204Response struct {
+}
+
+func (response DeleteCollection204Response) VisitDeleteCollectionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteCollection401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteCollection401JSONResponse) VisitDeleteCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteCollection403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteCollection403JSONResponse) VisitDeleteCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteCollection404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteCollection404JSONResponse) VisitDeleteCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCollectionRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type GetCollectionResponseObject interface {
+	VisitGetCollectionResponse(w http.ResponseWriter) error
+}
+
+type GetCollection200JSONResponse Collection
+
+func (response GetCollection200JSONResponse) VisitGetCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCollection401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCollection401JSONResponse) VisitGetCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCollection404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetCollection404JSONResponse) VisitGetCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCollectionRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *UpdateCollectionJSONRequestBody
+}
+
+type UpdateCollectionResponseObject interface {
+	VisitUpdateCollectionResponse(w http.ResponseWriter) error
+}
+
+type UpdateCollection200JSONResponse Collection
+
+func (response UpdateCollection200JSONResponse) VisitUpdateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCollection400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateCollection400JSONResponse) VisitUpdateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCollection401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UpdateCollection401JSONResponse) VisitUpdateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCollection403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response UpdateCollection403JSONResponse) VisitUpdateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCollection404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateCollection404JSONResponse) VisitUpdateCollectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCollectionResourcesRequestObject struct {
+	Id     openapi_types.UUID `json:"id"`
+	Params ListCollectionResourcesParams
+}
+
+type ListCollectionResourcesResponseObject interface {
+	VisitListCollectionResourcesResponse(w http.ResponseWriter) error
+}
+
+type ListCollectionResources200JSONResponse CollectionResourceList
+
+func (response ListCollectionResources200JSONResponse) VisitListCollectionResourcesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCollectionResources401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCollectionResources401JSONResponse) VisitListCollectionResourcesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCollectionResources404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ListCollectionResources404JSONResponse) VisitListCollectionResourcesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCollectionResourceRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *AddCollectionResourceJSONRequestBody
+}
+
+type AddCollectionResourceResponseObject interface {
+	VisitAddCollectionResourceResponse(w http.ResponseWriter) error
+}
+
+type AddCollectionResource204Response struct {
+}
+
+func (response AddCollectionResource204Response) VisitAddCollectionResourceResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type AddCollectionResource400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response AddCollectionResource400JSONResponse) VisitAddCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCollectionResource401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response AddCollectionResource401JSONResponse) VisitAddCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCollectionResource403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response AddCollectionResource403JSONResponse) VisitAddCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCollectionResource404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response AddCollectionResource404JSONResponse) VisitAddCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveCollectionResourceRequestObject struct {
+	Id      openapi_types.UUID `json:"id"`
+	AssetId openapi_types.UUID `json:"asset_id"`
+}
+
+type RemoveCollectionResourceResponseObject interface {
+	VisitRemoveCollectionResourceResponse(w http.ResponseWriter) error
+}
+
+type RemoveCollectionResource204Response struct {
+}
+
+func (response RemoveCollectionResource204Response) VisitRemoveCollectionResourceResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveCollectionResource401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RemoveCollectionResource401JSONResponse) VisitRemoveCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveCollectionResource403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response RemoveCollectionResource403JSONResponse) VisitRemoveCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveCollectionResource404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RemoveCollectionResource404JSONResponse) VisitRemoveCollectionResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListFieldsRequestObject struct {
 	Params ListFieldsParams
 }
@@ -4687,6 +5938,30 @@ type StrictServerInterface interface {
 	// Assign a role to a user (admin)
 	// (PUT /auth/users/{ref}/role)
 	SetUserRole(ctx context.Context, request SetUserRoleRequestObject) (SetUserRoleResponseObject, error)
+	// List collections (filterable, paginated)
+	// (GET /collections)
+	ListCollections(ctx context.Context, request ListCollectionsRequestObject) (ListCollectionsResponseObject, error)
+	// Create a new collection
+	// (POST /collections)
+	CreateCollection(ctx context.Context, request CreateCollectionRequestObject) (CreateCollectionResponseObject, error)
+	// Hard-delete a collection
+	// (DELETE /collections/{id})
+	DeleteCollection(ctx context.Context, request DeleteCollectionRequestObject) (DeleteCollectionResponseObject, error)
+	// Fetch a single collection by id
+	// (GET /collections/{id})
+	GetCollection(ctx context.Context, request GetCollectionRequestObject) (GetCollectionResponseObject, error)
+	// Partial update of a collection
+	// (PATCH /collections/{id})
+	UpdateCollection(ctx context.Context, request UpdateCollectionRequestObject) (UpdateCollectionResponseObject, error)
+	// List the assets pinned in a collection
+	// (GET /collections/{id}/resources)
+	ListCollectionResources(ctx context.Context, request ListCollectionResourcesRequestObject) (ListCollectionResourcesResponseObject, error)
+	// Add (or re-pin) an asset in a collection
+	// (POST /collections/{id}/resources)
+	AddCollectionResource(ctx context.Context, request AddCollectionResourceRequestObject) (AddCollectionResourceResponseObject, error)
+	// Remove an asset from a collection
+	// (DELETE /collections/{id}/resources/{asset_id})
+	RemoveCollectionResource(ctx context.Context, request RemoveCollectionResourceRequestObject) (RemoveCollectionResourceResponseObject, error)
 	// List field definitions (the metadata schema)
 	// (GET /fields)
 	ListFields(ctx context.Context, request ListFieldsRequestObject) (ListFieldsResponseObject, error)
@@ -5388,6 +6663,235 @@ func (sh *strictHandler) SetUserRole(w http.ResponseWriter, r *http.Request, ref
 	}
 }
 
+// ListCollections operation middleware
+func (sh *strictHandler) ListCollections(w http.ResponseWriter, r *http.Request, params ListCollectionsParams) {
+	var request ListCollectionsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCollections(ctx, request.(ListCollectionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCollections")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCollectionsResponseObject); ok {
+		if err := validResponse.VisitListCollectionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateCollection operation middleware
+func (sh *strictHandler) CreateCollection(w http.ResponseWriter, r *http.Request) {
+	var request CreateCollectionRequestObject
+
+	var body CreateCollectionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateCollection(ctx, request.(CreateCollectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateCollection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateCollectionResponseObject); ok {
+		if err := validResponse.VisitCreateCollectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteCollection operation middleware
+func (sh *strictHandler) DeleteCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request DeleteCollectionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteCollection(ctx, request.(DeleteCollectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteCollection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteCollectionResponseObject); ok {
+		if err := validResponse.VisitDeleteCollectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCollection operation middleware
+func (sh *strictHandler) GetCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request GetCollectionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCollection(ctx, request.(GetCollectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCollection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCollectionResponseObject); ok {
+		if err := validResponse.VisitGetCollectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateCollection operation middleware
+func (sh *strictHandler) UpdateCollection(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UpdateCollectionRequestObject
+
+	request.Id = id
+
+	var body UpdateCollectionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateCollection(ctx, request.(UpdateCollectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateCollection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateCollectionResponseObject); ok {
+		if err := validResponse.VisitUpdateCollectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCollectionResources operation middleware
+func (sh *strictHandler) ListCollectionResources(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params ListCollectionResourcesParams) {
+	var request ListCollectionResourcesRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCollectionResources(ctx, request.(ListCollectionResourcesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCollectionResources")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCollectionResourcesResponseObject); ok {
+		if err := validResponse.VisitListCollectionResourcesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddCollectionResource operation middleware
+func (sh *strictHandler) AddCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request AddCollectionResourceRequestObject
+
+	request.Id = id
+
+	var body AddCollectionResourceJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddCollectionResource(ctx, request.(AddCollectionResourceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddCollectionResource")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddCollectionResourceResponseObject); ok {
+		if err := validResponse.VisitAddCollectionResourceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveCollectionResource operation middleware
+func (sh *strictHandler) RemoveCollectionResource(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, assetId openapi_types.UUID) {
+	var request RemoveCollectionResourceRequestObject
+
+	request.Id = id
+	request.AssetId = assetId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveCollectionResource(ctx, request.(RemoveCollectionResourceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveCollectionResource")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveCollectionResourceResponseObject); ok {
+		if err := validResponse.VisitRemoveCollectionResourceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListFields operation middleware
 func (sh *strictHandler) ListFields(w http.ResponseWriter, r *http.Request, params ListFieldsParams) {
 	var request ListFieldsRequestObject
@@ -5697,156 +7201,184 @@ func (sh *strictHandler) DownloadStorageObjectVariant(w http.ResponseWriter, r *
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"yfau3l79ZwAAAP//",
+	"7H3pchtHsu6rZOBOhEi5AVKy7LGpmIhLa7F1RrZ4SGrG97p1iEJ3AiirUdVTVU0Io6uIeYjzDPfB5klO",
+	"VGb1BjQWUiRlzfiPRAC91JJ7ZX75vpfoWa4VKmd7R+97Bm2ulUX68J1IT/FvBVrnPyVaOVT0p8jzTCbC",
+	"Sa0OfrVa+e9sMsWZ8H/9weC4d9T7Xwf1ow/4V3vwzBhteh8+fIh6KdrEyNw/pHfU+1FkY21mmIIJr/wQ",
+	"9Z5rM5Jpiur2339cuCkq55+KKYwKBzNprVQTGo80mEIicjGSmXQSrR/dC+XQKJHxM299hK8Vvssx8cOz",
+	"aC7RAPKlUe8n7Z7rQqW3P4hTtLowCYLSDsb0zg9R77UShZtqI/+O6Z1uldSq2p+o3LEItAGpLkUm056/",
+	"PTzRv/A4l+f6LaonBv1G0wiz7NW4d/TL5tGUN54Vs5kwi96H6H0vNzpHQ+Rw9L7n/M/+j/Zoz6cIeSak",
+	"cvjOAV00gDNxiSAd/PMf/+3/kxYU+h016AqjMAUxEVINYtWLevhOzPIMe0c9IS5y4S7+/Ef8wR6O0v/8",
+	"9ufTb6aHkz8uHs1OD8X/fZj9nwf5z1/91It6bpH7G6wzUk1oDcpV6h39Ekb6prpMj37FxPU+vPkQ9Zbn",
+	"ebQ8zYRX7kLQ9nqe9X/1UuGw7+QMV9/up5BLg3bTParIMjHy03SmwI5nyLR1b1HItOtVmbDuorCbB7j1",
+	"ZUrMkPZ0+Qeb6JzXQTqc2c5rwhfCGLFYWXsaNT0+ai5l9eTVXYl6x9aiu5mdaNFmx9jHMsMLfOdQ2XDJ",
+	"1rWiW6bCTldp307Fw6++Bj0GN0XIpHrrhZfTRkwQwvyiHd9g5d/xYrRwPPdqtlK5rx+tf4hnuwmaKxDQ",
+	"DJ1IhSPxJNJU+qmI7KSx8vyC9kyfG8S+fzb8x9mrn76D8ikwyvQI9p79/OJ5BElhnZ7BWGKW2gjQJYP9",
+	"Qa9jw/VcofFUbC5IJF1rviaI6gv+qeMZq/dYJ1xBC4yqmHl6TY0Y+00SiZOXnqSESabyEtMGpTZIX0yu",
+	"xBxRz0mXdbNakadXJO8uVuPnL69GNdMlJmy8M0xmLT+yBlnlyk/FYQJyg5dSFzZbQJFnWqQrzDaAv05R",
+	"gUUXxcqzZPlzJhZovBoy2M+l8hqoUCkaGAo/16O4ODz8MlE478uU/sYhCJXyQxKRZWjuWRh6ij0aQi4V",
+	"7I2NnhHb50ZqE0a0D9LGKjU6zzFl9bZ19rsy5Mo2fRwDpDgWReavrkj/hnhiJt69RDVx097R14+i3kyq",
+	"8uOD6AoM03jMV4eHW56zbAF0csVaWn/uJdZfRFbgKgW+UsgSDS79BSAsWEQFWoFQQOTjZVybSeiGi0Sn",
+	"uIZH/M87Cmy+OBMjzLpVNrorqUh//WjRlIEzoQqRkSkmx72oJ3OX9KLeu1nu9z6X/qtZro2nCW86Fm4N",
+	"KfCjP1awl+RcDs8blr2ol2k1CX8amUwvwt+qmI3Q9KLeSOsMhWc5P/3wX1gEixnr4lmROXlRfXQGmUzG",
+	"aFAl2Dkr2veLNEjD6xlc/Aya0FqBGGZSXa2JBLfomzXPqtiJH7W8GYHWdhw2rfR2Qb7EgxWRR012CHdV",
+	"ZFjR7w7M+VcjXQeHnghrYT6VyZR8DB7z/cC0M+GSKVqS1E6YCTr+4Z4F/7pBrLwDMxUqzfhe6ffVsoNi",
+	"w8UXKY6lIsk88HexbjDox2m9W1a+ZS7dFB4dHrLob8uEmu9q0Vtz3k2z4u9EuzPRdpPdS2k7fJJqTtUf",
+	"G51qcmw6lJzCd+4iKYzlwEoHPY9E8tbrGk+3Q75yCH8r0CwgF0bMwGkYo0umdIV/XqxyMcEB+AnD3NtB",
+	"ZLwUxqBy4H/zBhA5KsK6nYyTZYOT5ryWUV/nJbktz8c4KTJg4/MxaJUtgpPgbTrrhycMgtNFMsV0AOdi",
+	"ArRUNlanz05eHj95RuMe+5k5MfEGHs/QFnmeSUxhr7BI1xx4cyRWthj1S+UPY22ALatLBJ3b/S723GbX",
+	"XttMu3Gf4xPZVysTe1LGC7uiKMH0WYpsOT2TSR1oXIBMUTk5lmhgDweTQQRxz5sPdmBQpHGP/Mc6QlT/",
+	"dHXnf4mYgzZq3tNF2U905m2F8Mil6YAfT997sykk1YXkrXiGsBHkaOD46SkcHh5+O4DXr1887b/FBaZR",
+	"rMaYoqEQXz83mAvjyXiojZxIdcER0AuZDvcj1ipuahBjpY2b6oknPRDv0B7BpbSSFzOCGXphbKcyj7yK",
+	"gkyOMVkkGXYR/G2EV9qBsKVA4fnLAfzkWfhPfllmwstKv73XU05jFK4wHOIMP5YW4FWCIeWCrY53yLp4",
+	"GOSVNvBg8ODB4HgAQ5LD5CHCcLoYGZkOwT8EpIoVXfUdaJWwRLLo2Ruenr2EPSaFB4f7kAmV2hAAXdb9",
+	"9Phe1ONHdwqFtQG8ZfpZndfziu5gqmcYgu3V1mQ6EdkATnReZHRW4AVtrGrytmAXKgGpgFxgATl631qB",
+	"AH+DgXwqbKC4K+vuHSJDqw5DXphc2w55U0etRDqTqu/1xlQqB3uxf+6FwUuJ87jnpY7/nButx1JN/Df/",
+	"/Mf/93riFPNMJGjh9OyeBSvVJMN+eCEMS8E9hHEmJjs6/FcP/ES9msubiiQ38pJ9HTv18sPzeDHKZNJB",
+	"M13Bo6XVrgK3zVVsvbvFMQ0eXB9m2ixTrxtkuomAe1OAVBb5WGS2vrghUJYlxYoFvxw1yBZQSRBpQSQJ",
+	"5p6dpApy5DHkgk/gSnmiTawqecJHJdZ7E1AoJzMIgsWP4QYkR0P9P9yq/ls8tt0AbxFrvVY1ud4AAdM8",
+	"NlPXTZjwDf1/VTv+VS7+ViAfiZH+KC11MsYfg55J5ylCs6U+ll6pkw0fq9oHKFQyFWqC6SZvAB2am7Xo",
+	"63mXR6LdoTEydO7ZhunBqqDWFxH8qqW3kIIZg7EqbwrW38IzQaKzYuaVi6ZZvn4BiVBgkMK0/lZdOBCx",
+	"Guss0/N+kbP702XZiDS9onilAV1cxyLiO3c0N+pF2fWOGxF0zfD61qs5PN5tVV0r4qyNu9AmRdN45k0e",
+	"yaw5YFkx95tL39i31gir6Uc1EW09Y9mNfW5WGFVMuV0o3Z5EqOJxS+x3FZa4CQKvSbbSNa0rGxTcpsbq",
+	"8sNVyl1al2pSm5fmSjGQMvgRYiGtGIhXALEa1stzRIGdITgNSYaCtYn3qa4Ry7hp82mbufRZ2CnXtElW",
+	"iYG0SJln0kgwa+/RTexBuUZ1gOTJC0gxz/QCRprOO+rVe7DD6tXpH23yrUM9kOiUwunSBstmJhaA79Ak",
+	"0uIAns1yt+DoHcxQKMtnqHyp1+iphvlUOArV+1+89xF+GMDeuTcP6vjQgdEZwkynmIF0FrMxO87exjjx",
+	"biY8GHz5mIwrpeex4vETJxlMPJ9zrpvSDlCNtUkwHewTx1wzv2W92cmB1teWRcuSSCzc9GKGbqo7HPIf",
+	"9Bzqc2aYCwuila3HtiOdXhMxDRoWtEVr2U1bznpqsPtMyGy3k/giy0qi2nrx7g663+OJ0UV+zRNBf/+a",
+	"iMfS9rAbW10ftVa+a9uejcdIdsaTZvbjajxz6dfVHDhvHGSXzTTKBVh0R7BHNJxMhVStFMv9WL3+6cWr",
+	"n2AP3+WZTKSDiRHK2X149vOTZyfnjR8MXuq3aPcH8NepcLGayTTNcO7pPJli8rY+r6KwOJO6VJNYveuX",
+	"y9NvvnxwJR6IejyyDYJBouXhYwrlsLOF11ZEuX5HBld6Y5jyllfyVa1XhsSM671Usy25W87kqb/6w5tl",
+	"Cg4Eu3MAa4mEG+GYFtV1Um+ZmrukW8qvlwRNMROqb1CkfrCcXgs2JEI2w+yJLrKUhGYmrYPqIMW/327N",
+	"S+K3dw2XjnKfVmepHXKSjnPshdOroz9tjgIMjoMW4nPecCc4XeqgP4HIstb27yCplgmi+xyjDqH2raO1",
+	"tFkxGcD3mR6JLFtAoeTfChx0+oDXCrvnBkkXXBiOR85QrTOxt8rtbdZhKm2eicVFJbHXXrHBreNz8/WO",
+	"wM3lw67Li2mcRO+e53i+yLGfYo4q9ZZ5opV1RkjlLBxwZoEdwNlU5Ng42nnwsDPL0TPaRdI6JNtBp5Z8",
+	"1GVV81ECP6Dz9ypQs/uMjwun+/jOGcGHV/yMCHAwGcD7mN4S945iykiIe1Hcc2JCXzwVDs/lDF/RkYPI",
+	"4t6Hwfqd3XQgWnn6NaFvdft/Y0lC1wnqz73/fDUK6Yrih5NM5oQqv6a6rEU2UVPELjPyMuvvkEW6g5Rf",
+	"F+Nvy/qbENIbD8Zz4RwaT/H/9Yvo//2N/+ew/+3Fm/t/6N2EkKzD3BNUaETW+dRlwVndRd7ZLYjRSj5e",
+	"0Y/eUXreuNDbfhLTFoI7RHx2kYlbhdZvTd58vOzoEhs7sPNNRbhWo/Y3Jg/+Hc2lz43Pb8u4uRvr43rc",
+	"181alNr6g7ROm8Uz5bpq0q52yMTHhVeyRMp7Pj55+0qp7TtepnB+cVlm53/U5ussvaEn1dm8O1hojcOm",
+	"RlZ0Y6Oq53UJ4Bde8IrsOJ3JDeHkMsbXKKf0N/zv8HmQ6FkzIYev3xICrJ91Jh0CjUB6h8hps9PBjLB2",
+	"rk17l6svW7Lpmy6buhH2W5pWO7T91RXLQxrxwcZoeEm6duClnmxY+m2zvOK8rj70riGX0ZLzYLcsCZQs",
+	"03NM6zqtrjibns1E32IuDEWhKRSkxzCWGUJ9Y53ZUoapY9UKGIXMMjoM4OxOTotbWIczCPbbIO4tFQP/",
+	"mk+iX3OcRLmaRBNKht9Kb4nOdGGuWz+ZdOV4viwSmSL4H8GvO9ipniuQCl6/aI1XzsTkmoc2J1NN3tj2",
+	"7DhvQFRFBM1hPmUTA+iKCIRNUKVSTcLiW22c5bzvphC4SrHluMPkM3ImzALeYit8+CDayWgTo/Uxvj7F",
+	"+JwYAVlVUk38inuyIS7htb/yNDrOCjpZJwSBr3ICsHJAJpwT3s6FVBpMmqFwozMcwFONFn56dR4rqZKs",
+	"8CSmpujNijYQA5XQJ3TUlQvDZqx/1AQd59JQUrxFR6gAicgyGB6Iwk0PZnjQfNCwSkEqTypidSlxXlYv",
+	"l4UCFDS/4unANhN5Vz2/Lqm1mvnqwp9xRmZYPKGScp1onR9zNYSfudGav7ODqyembihyb+dKbo3Yn/14",
+	"fvJEq7GcdOhwlZhFtYqleaq0CskmxrmMwu8ZPbsWIM3fVvS50bMLkaYGrW2LnWPjSK2H4lftfaVF017g",
+	"Stiuh041K8LGEGYuH7RtjSubA6s3aNN+zVff/PHjzgdp4OHBUXPBlxaqc+uQTne9eFhrC3gC2836XRZG",
+	"4cY1Ly7yJ9ovgVv/arYftmQQddmS3poNiTybbvW0EijX3zFz+e4nZQ2q7zgvW061CYYQDWrtejxlw8F2",
+	"qSUcyyyzMBXmEi2ZJkbPYHh8fHH27Pz1ycXTZ8+PX788v7g/BFSXcCmMF9gw0toNYsXHR7xPluwWiHtK",
+	"Q87PjXuPOV9TmxlkKC4pHULbUCZsYzXKhHrbnZg4k+qiMtVXkwnp96YFvuaSDQTP63YxEhYvCpOtv6LD",
+	"AjVOWtcXWUYKffW2mcsvbkVI0ZOXJVX3VaXo6f51V4lBF+8uNpZWPWrt5Mq+NRd4eTuas2iOeXV1lwfZ",
+	"tUobuCPP9GKGyr1Q487DVJH2KURX2gDTkIViCqW8vZUbnaC1lI6SEOsWBlMQLlbEJ3BGhnBIXrb+pVxk",
+	"GBJ42VBLhOK7zYzNFamsE1nG9SehIHeEY20Q6IzBv1qocLdIEl0o15niNrpYVUK5tm5isJPE0tFair9Y",
+	"S/HpqIOiHn35sBtagbAmLkYieYuqw1QZW/h/YL9seQ3j7cfp5Uzr0dSTWX3rWoo4q+Jey7mCtRzdKMJb",
+	"QpejrIHEdry1RZEU1sHUXhDldKTUmAI5mUVpzhEr08dhyK7jgGhk2My3wXfSOts4jK3Ch8tZXI1Xt2YS",
+	"1evRuZK1DlxZyKbEXTpiHVmdFQ7h9elL5hZvdlE+l+CIJwg3gNcWybQfFTJLY6ULN9GeHTKp3tqyPLI0",
+	"l/oGLTogCWT3B/CjWMAIAb3uipVwEBgNnJxRvbr32zOuP6EyrWXwralzuT06OBDGbbPjVvnoOJkhHBsH",
+	"p1RRZa+aebhrkt1rQlk5RUtHPqtFpwTLVmWnLznnB7/mOOk+60uLHDs41lsnINk/mgo75dy8zKBI67MN",
+	"koDSlqB1FWwMYTnBHA16Pw8M9ivUGsciMvDsAI5B4RxyqWLl32CdzDKgBPTKaePkQN601dh4N3hOpudo",
+	"Eu86TvEdtMGqqrEw5FQLhu3B6GHyZfoIvxp/PRgMDh88/LLXnXV9YQvammDx1o/4dtsNq1vkebzTNJB/",
+	"7zht+m7hEEg59KIrZ1jRaoUnR22qqYmhY7wrc14lUYoMJ4WRbnHmpV8QDSgMmuPCTetPz8tBM+rdSgXZ",
+	"CRpLZb7HCelhyiaOgOcKw4CVx77blw8hmQpjA3TRAF5YW2AKl1LEanjy6uwcOCZAOaJ2OIAzVFRQNDwO",
+	"wIakkI/gOxobhKcPBoMhkxyJciI6uqBeYy82OPSm30osp7g0lR9O+l4tCCcpV4pTVoFvAcljHS3KwEWm",
+	"J1INB8C5wHwRhd4If2lYohhohXB65mVoamEvRFEOmpmzg3ya70exImwQf9t8uoA5wlvEHKQr04Yfg0F6",
+	"/lTkOSrLpbsnP5wQmJO36hZg0HnqCYERRTlyfmBlHGCZfkUu/4wLRneUnRbYubeRGgY3nD47O4fjkxeD",
+	"WMXqnDPbsgqz4f59T6dGJO7+/aNS1lA+Hgn3EsDEk7wZU8GqMBgrzkWoXCDpaJ21yGU/0SlOUA1hzyLC",
+	"UOT5gcjlQfO3wULMsuH+IFbPDXFJStEt2Du7xMzhn6WLAC9RuUJk2WIf5l5ula8E6SycL3I8o1nHikdb",
+	"4WZZiqZSuG8Az1J/dRkio4nTYTHtc7aAuViA03GohWPcLUrK9ysGtqA5U6wsrITlwYyFzKhkQs9yWs0x",
+	"m6Hfa7ByoqiEwUJq5Ng1RpZjQrvwfZjKEQwTSjGkWMnDr/lfSHXyFo23mKHfNzPoX8IfTv769OjAmgT6",
+	"c/D/+zWFOI4VwGSamIHUrRVufTjyitk66LO9DStbER6kc1Qil7w7rBG4CKrlwfmV6UW9SzQMxNY7HDwY",
+	"HPKZL93fO+p9OTgcfElHCW5KkuqAgQv8nxN0XX4DV6XyZQw+kGGp0FhJRV6bIWHnGOsdhSL3ZquNFRcl",
+	"eTdBKvYA8qywYKXXAX7XHRr7GIxMpmjKwnlK+I8VmX9l/Tzzodf99JgXae+o91Jad8yjp4ghV0Vaik0s",
+	"pW/Si/ygRajoBqqEvlfOa1AyeVmnEnic66U5N7cGed1B/bzvfNxKPdnHP7JK2KqfdZ2yOv/4zjirE5Ow",
+	"T17k+vUNmBe0Pdr5fQv7uL9uFZ2YtAa49d2hkLZBNqGmNuAPBFxAKMGd17041MRteXfXnZmcSde6sco7",
+	"orNH8U7O/CqXGRf86UHHvr2J2hjUDw8PbwxRuMYt6kIVZu+8wibxguDR4YN1z6wGedACP/4Q9b7iEW++",
+	"qY0d3TSLiB+b1sIvb/yqN02kX974ZSoT05mzS4mzF6gA0/0SwrKszrO9NxQzth1yi5MQLQiytOnyCDj3",
+	"hRK2vY9Fp0yOxUKNNRmrlqkM1hkUM29awbCqrPUm17j5Gcgh2BWGMlYrOJT0uY1GCS0wSoadbEBSxop9",
+	"BeHYV5FerxEQJezV/ojXqkrPgUFrRotGQXZEGf8N58Dsd8nZUN9G0FZsV6N13+l0cbN0HNJGP7SN91Bf",
+	"scRCD2721Z3s43+AkAbLvLMDGzQQ5j8fduOVr9AtwZvThP2xwm0fotJgOHgv0w/Mdhl2pQf+KMxbtmT5",
+	"oXxd6o1PZ2EYPl4IN9wny7/iGaJsYpmZvsSUY+/fPwE7R8zRBMyZUN5tA5UTFzCpxyrTaoIGAsONFiDU",
+	"Qivsou2nNIyatltU9qjj2J2Hfe3NfcQP3XxThX7/kft6pseuzwtdbW63DA2mX3ttvke3ZmEOb5/9zkvC",
+	"+S0vdZc2atuhZFt4Y7s2LehssC3gOi3BNaeIb8h4T6bbEnIH8KoDdi8kVQQhDiOdLthvnOlUjiWmFJWE",
+	"oZ/ZEPbowH/fa8iQV7sCy/cYCot1zKGWDQf8iBYUHztztosROcv41pVMSGbeScncAZXzcNImpd+NkvkU",
+	"zLGkPA6YNBueZ7f4ec6XfeT27A7f2cCGXq0N72jzknOOHGYhVtJnC45iNSWGNNemfx5a4zjLmvjXlll4",
+	"VX1U+Jh3I/a6qefgfZlfu2SMLJmwGQqzvLu76Hu68aP0/Zfbb6q7At31XtP0QDT3+5PtcNT50Eb69Mfp",
+	"zKJDxJw1RUxNFLeke5ZxrT+FEmoKt1VhRj/Anaui3zSLnKEDbSr7pwogbmWZrQLrYMo1ILtpwGbVyJ0o",
+	"wzW1KjvoxJ8oGtynaHCVRc6TlYnISjPwM1GHRSodOCNk5qcRxu5NYl01itCKPnxaDXmL8vMjg6RfbQ+S",
+	"rjILp2R3nkmcGP2OoR9geBDCBgd8IEv8FWJyH+oM6IA/GKvOlk0DeHT4qEZQ53jFVFhQGqqnxcp/u0DH",
+	"iRkggOLrZYSoRixUZWuYzniDniv/Y+DrDK/Gyjpx6PockWyzdLWFI6kY3WN5E1fY9Ll347wH6Hnq4eHX",
+	"d/Xe0k8l53PvlM73plrpwmC6/3kIhXIbm8QFeaiOoMPMPR1AEuBSGCmUWxe9viuxMEXBJf/hsbTuG49G",
+	"VpiyBKa/kxhHiOq32ec4Zc459yO5vqm21OfwJvH2l/sSdbfc2sXy6/BG/LRhhmZCaV3/YvGChspNU/AL",
+	"RyczZVB6b1RkbyOQKc5y7bd5f4cANZHswXsnJhvdw1MKNZeU1dtxK8oINew1B/V7uHIHq8SFVV731K2i",
+	"KAhVe/A+/PVhrRXdUrl/4at/17qftdYVlB6Wlqq1THEMgsJNi9kIDvhIF+dwwI0pe78lBrhs0OGuTPCx",
+	"mrxw04PlosZOjnkprWuhI96Fu9loLrODi/kyeJXLLazvJAJxA8kNeIlm0cxk55oKSvJ7q/TcghjponVa",
+	"5x/2JuqtwXckgBeRh145QRFWyZVk9HTmSfwFjRx7ZyoxSODsIquxJf2gTs/KNEwGviuog0GZzxerH348",
+	"ftJ3U1T9EVWyUC6Cv4QzSP39hUULe1YD5YUGf4k6+8Qq01TpW4He7w/glQJbUA7sERDuRpnFUeaRcjKQ",
+	"07GikQ3C95wzQcfLVDVg7EX1C29RZxYZrc/thP1aMAJ3HO5rwtNuaw8/gDLNb7kw+LE3wDpWMqS71OeJ",
+	"PAtg2WQHd579UMfr5ISq9Sk/raylIspoFp62mKrFLJoDxWuyijIUJvSFrcmumbLvKZ+qV/wbA+Qzp9x0",
+	"0SOciTElU1IdN0UgCtXCAo7VXtkY5OHhI0BJGXdzsdhfQ8wsNbYbsC/1xLsRunDeV4W5sOqeg4y/lWp/",
+	"8LFy7lmZwBTIqQFcvGb1Z7gpFNok6E/HN08azHFNIv+4ZWVOBanY8PDykFRFI1ls4xKvMwG6037L4/7F",
+	"erhjozPsr6Idx6pQUldtQJYgjyOYSVVYWAY8HgAlwksbq/lUOGjgHpMW8awWcL1nWBYKrpDKj4ubNF82",
+	"UUs3mnQH3VQXLq3fJ6GhjsHIsLjLCmADLRG2wloKesH1GbaBYjEqHKQBBgOMH77lFH4UyZTo6J6N1bAN",
+	"YsHI8tLCr0WwSBhgIwBueCqwA6hm1ACTL6ckWCA3Ybm/CGQI/Qppm9Ng8F2uLRfSrIPVWJeKfkrLcRem",
+	"MsNQ724k80Z9RtYxDbiRAdvY0ApmxWkim6tZyAwHsmwic5HURneo7O5wR3ko4W1nYVmusNc8F9grjyPq",
+	"XgyczbE/+CQSh4bXSmc+PnkRBrsqYrYndXcWy8FIFypt16Zwbim9KFacjEO5pV69cXFsy369f59qwTzp",
+	"URmS/3T/Pgkp6Sgt1bs39Y2pcGIkLN+RCKW0gxHn+1yiwTSU3sJLbTFW0kVB3tD1BvtUC8cFYNwwg0ri",
+	"teJBegc+cUzsvN79dqMInqONYmWptsXpDFXde8OPZiaVg3FhyG7kBd+Q5B0I75b8oe5OKXed8R1e/6RM",
+	"7e5IPqUF5DpFJqA8E1I5fOfC4kpbUsCQvhiWJ8HjFj0N7i5Gv4U/W9xI1aLBqa74cIOmZ7LpSPleDqN7",
+	"0m7Q0F0cFG33dHhY6eDzCHKelvKh3hkYLeDF0w37Q7GUg/cGxx8Oyo4W6xKeSkSjnbaHK9922J+1ZWtv",
+	"bkeSdEAzXfdQzT8DhLVyov51E/2OaX4gyLTiiic2iglTY/9qVhQ35abQXKDCRrPgrS5ls7EwoReGWvAa",
+	"cR6ePjt7EoFM6Y8hWM1VVaHKFJUzMlQ2hYpTLvBkk3Gl5jRWM1H2zQ9FZZSUVNZXk3bPq/6bw0Y7vWGs",
+	"NNUiZgsqni87cVJCvB/FZciIpx6VhKLD7Tw7PYQnjVXauWK1tVx1DZe0IbJK5al3VL/aagy8WnB6tUZq",
+	"3a9odBheOc9ogLvcdtXmmhfsUFB6m/WeS51uNxZ9NlnyM6v8bJL8HhcXi1GGEXSWgjYnuovrwD0J+43+",
+	"tc1O/o0qyRqC5T89FTTvIAQGamVIveps2Qw+tGxuNKjT3Be6uvVPHS2i19vjjWbEt2SRL3fmvmNjvNlt",
+	"uSPYWm/Mv1UhJhnmSXPvu4l9SfVurcl8anQeznjqlTV6/hgSYRORhpzKRuvcErHADmN1KQXd+/zP7BNR",
+	"JXNGvZyDWqUwrSobPqwtt1yi6tuvufxNm2Y/CJNWVZq77Pr6cs1NC3t4Rzx73qKuz8Pneo7ePqxS+xvM",
+	"MVqATDcpm09X7rmhvLMs69ytuzCnsZXthblNfWhQjxnFnt4i5myCl0cDFElbX8d5h3rr01R0buaBUNb5",
+	"exVNxWHt2mQCJbmugjuodNKuoEWBaLNFCQkgA4Jfg9H38B2fV8XK6LmF+RQDHFWOpmn6NXhoSEUC3nPE",
+	"dD8CqWI1rPuNw7F3Ysuu8v7TkP3dEjCVnFByTcsUAXLG+8IYSoUB62lCJTiA/9DSj1sr77nzpPiwrpiN",
+	"DggLivGSQgHCT1882O6DnlbL2C3G/m19q1YD/40+Vk2Jn4Waqw5hAgnV3LCj3XGXif9Lp8lVhjVoBcO9",
+	"hokq0wjKfjv7wwGcYl+kKcMKx4oQYv2HBguzELLQYNZhBENejmHEiJ4tPh8VjpSghWHJ0EMYy3fdVu5x",
+	"mq5S060rwvJFVygufbSh6S7N83cN1ipK2KNC0H4u1X5dmLAr+2zWZQfvSxreoVJhDXVt39tQr6BNC9hW",
+	"jOxHli78pneOp11vWECR+21IvO708Eb/sI+ETFgB2VhjKVWgD2nV+NFGzfh86GnI/XlYRKbNHkRlEN5f",
+	"y6CE3nOwiMD4g3AAdbs9OIhViUZIB+0cUTCE81wioPJMGRneMkg2uKnRxWTKzggNuD8TSkwoGwxev1hn",
+	"9lQgIjtYOhsgFa/cOXAV2/CvU1ShfU/DgZtTP4lh3RKTAoQE7g17fxJZth8rbejIQkgVGqG34CTB4Jh8",
+	"vjK3IeCLjxa8WAHaK2UY3JnfHIb4pxRQRswNg/H7NtXzBvbtDeJYvrmz2vVG3/krJNCscMHnFj1fmQCj",
+	"AZbF6IGt9tfWqXcWXnJkkpb1lgyZ7ibSdxyOXqGbjvotRvq5+3D01bXsJw5gLxNix2HzElxGCZGxJYx9",
+	"5p0XltJ/ulcK33teATVQi0SA4S9xB//5j//2WmURK+vEwlttDMF5wQgJdNcwpGXNhFQV1LF363M0/QAL",
+	"wFgY5GYwETRCZSNuBsdBNX9dZ4jsmEdcM9M2u+241C//qqY1zw/2bA1YuF+hEu1KQOvD4mtW+vAuxcZ5",
+	"RSRpSy391muF7xjlqxHt7oor36EC+jRx5R0o6ffg8rL84BW5ssDwGqdlyW53k7hss9XtttkrKxy/cLui",
+	"pve05CvB3rDs7Drc97fQQVNed1cdwLHSajHTBWcJWLu26qDR9veOqg+ajYavUoXQXDV7I7V+jBOeZcvP",
+	"rrd7aX9506kNFL2ttC+6g46vFPbtVBP6k7IiYfBwQJXmWirHoMNJSCxhK8D4AXmai1Vh0URlASs3gEoZ",
+	"WRn2SmrwUjMCSiB/ffpyP4QeGzDl4fazH89PmhW6Adw1EdxW0btvGWMfL/XKoiQ/7pL1GGwx4iMFR3eW",
+	"afDw6PBbSkGnt0hbwaTXiXFDPiwsC4SGdubyMuVZjrkpFWXHK+2aDLFAx5592cW37Nxh+Z5+ijkqP6tY",
+	"hcwvQnznQk2glleEUi7HgWrtPggLqbR+3ikUyvk3lyPvbHm15MmEbT8LvcBuKTt1tX/nXWfWbK5jpCFC",
+	"yQOPm6QLtI/zELe5tp759uaK7ALrr06CW4qXccypsFUrwbJr/ePQqTDQprgUkjuR3oh/1M4ikEpk8u9B",
+	"DPRNocK7WQvBFywFviBubuokbkvXlE226t23UR3Np8hlHXV7dW4lRu3ulscRUfOVWJmqFWTdB4/qSWHv",
+	"6Xcw1dYd5Nq4qEJJC23L9lk6CbUoO6OWvlbV/vGeDc8EVJfSaEXPzo2+lGnVnmpTV9ZVxRccNyoKDQ2w",
+	"iVQdgQwIGBmh0r73N8sGeMZLFGPX1IY2eyPeoiHXfM1a9gtx0i8gbbRZvHGqbBNj9U4+bKZYYNhOu44m",
+	"2xB76xXmGUHV2FWIcadLYopI5hR0JBca1LHVFCvqD+VlP/XWcFU82F9KDS5KPmd9FkGryUVM1U7Npnue",
+	"cIjMRdltj5Iuqcue1e1qNK8nY8VHfNSDiqYKIpOXWMWmuURMloWtAoahd9wQxpmYUBFWkkm/VdQH1U71",
+	"HOJeOexyYHEPXv8cmn5RuwMIHeaCfpW2NjH8gLO5WATMgdAvhIfdNzguG8DF6rjRuqEuI9trAbMP97mo",
+	"yUKr/Yh3xsKDYpVLZcswiL4MzN3oOsLN0vyX4V16HurEaSu6c4L8xM+YAF4xBNqW/PdXJXpeYEY2tVut",
+	"DAdQNiclKJB1wEmMqqBn0gWgi8Sb3tQLj6huGafvnoVmg0BPKWmJO1Txn99eBoQkMpWTqYMnfFff28UB",
+	"B6MRQV8G7fm537x+e9bDLkbKR+JF3Z1t0urq2eniMsxTyI/+jCLw5cjBiHmzfVBTsjIfdMvWg/eEXLoT",
+	"LgOLvsATw5KOhyUh133Y4Ifz85NYMeZXICVOIMpDWlZJ4Rb2vKbWYBNTjCISwDNvLsWqumR/CS419B5S",
+	"9xwhF6mqqR/DGW1CQd0iEjriS6GT5/oIUy6c387eUe+/fjnsfyv64zfvv3704Q83i4z5O3xcg5Q+Yxi5",
+	"JS7lAD4rHCLrjSiuuzDyZqDCJeuJ+mPiTCgnExsUFFQjqLTQqHChJwMHENJYlUB4b3ER4InjXoC/u3h4",
+	"+OibuBdB3KN0wYuvHjyMe1Gs4t40swcWJ4eHh4cPBs7Gvf2dmbXGUfw0PPtJ0fR+5/5/De63OSZyLJMm",
+	"jiSBKBhMgwfQze40Aq/cukzXlzrx3IqXmOmc/N8RTqVKQU2kegd7XiXDN4fffENZNWzCerFCneR71JL3",
+	"8kGvcQbzfj10G6E/qbSKLLKrQpB/tQ/BZpStwdC+iFUVYqsg89bgvO21eznvB88peGslIt9cm7c1bOBI",
+	"h8b932sqYi+BXDKciGQBp2dw8sOJH8MEvcNfAYHAXtnl+v4wgi8fgnft9YwNHQLoofBORvaaw5jICGbo",
+	"ppr7pudGT4yYzYSTSeWJEXZH1R47mCY8eBcrPa4WykZlHUUJANTdK5udJoYUqdyvRu6WJ7vVvB+2DKNK",
+	"jEeMSScVNBKYSKyTI8fOFAShS4BYgdH7Ik0NWovpUTiPGGV65D3Ft7jgXC12rPfCDXY/ohJqJpKEsvDZ",
+	"2CP3FUThNC0ZRZz9qMaYhibSOaIJ3s4lGjlecCx87L8dUcRtOoAzxNCo9/Cb9lKUjUdXqjFDiJiC14lw",
+	"ONFc0k35TwzuQ1OrnPmA7Xoy1U5H8FQnhV+wCP7izdUIjotU6giSwjo941OAqIJ97cpa6hrVa4umzxWg",
+	"lOUm1cTW/VMjyNGU8/x2AK9fv3japyWPYhVWTGrVzw3mwjBwiEGvwN1UTyieLt4h02NdSB2rvVA2fcBF",
+	"0wdcMr0fNTOW97hq9IDysA648rQ8LcjkGJNFkiHs5WhmQlF9jm0VKuwP4GQqLHJ96jGVq9pY8VMbL3oM",
+	"9AYigoCQlZF8KStbD560NrhVZPzmw/8EAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

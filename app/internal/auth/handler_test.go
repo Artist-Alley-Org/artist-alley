@@ -516,6 +516,30 @@ func (a authOnlyImpl) ClearAssetFieldValue(_ context.Context, _ openapi.ClearAss
 func (a authOnlyImpl) GetAssetFieldValueHistory(_ context.Context, _ openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
 	panic("GetAssetFieldValueHistory called from auth test shim")
 }
+func (a authOnlyImpl) ListCollections(_ context.Context, _ openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
+	panic("ListCollections called from auth test shim")
+}
+func (a authOnlyImpl) CreateCollection(_ context.Context, _ openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
+	panic("CreateCollection called from auth test shim")
+}
+func (a authOnlyImpl) GetCollection(_ context.Context, _ openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
+	panic("GetCollection called from auth test shim")
+}
+func (a authOnlyImpl) UpdateCollection(_ context.Context, _ openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
+	panic("UpdateCollection called from auth test shim")
+}
+func (a authOnlyImpl) DeleteCollection(_ context.Context, _ openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
+	panic("DeleteCollection called from auth test shim")
+}
+func (a authOnlyImpl) ListCollectionResources(_ context.Context, _ openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
+	panic("ListCollectionResources called from auth test shim")
+}
+func (a authOnlyImpl) AddCollectionResource(_ context.Context, _ openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
+	panic("AddCollectionResource called from auth test shim")
+}
+func (a authOnlyImpl) RemoveCollectionResource(_ context.Context, _ openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
+	panic("RemoveCollectionResource called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

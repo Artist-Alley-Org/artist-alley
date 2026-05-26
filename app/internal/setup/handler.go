@@ -219,12 +219,20 @@ func (h *Handler) CompleteSetup(
 			fullnamePtr = &s
 		}
 	}
+	// usergroup 3 is the seeded "Super Admin" group from RS's
+	// dbstruct/data_usergroup.txt — it carries the `a` permission
+	// (and the full set of capability codes) RS-rendered pages check
+	// to expose the admin panel, browse bar, and per-resource-type
+	// access. The Go side still uses roles+capabilities; this is the
+	// RS-coexistence twin.
+	superAdminGroup := int64(3)
 	userRow, err := q.CreateUser(ctx, auth.CreateUserParams{
-		Username: &username,
-		Password: &hash,
-		Fullname: fullnamePtr,
-		Email:    &emailStr,
-		Lang:     nil,
+		Username:  &username,
+		Password:  &hash,
+		Fullname:  fullnamePtr,
+		Email:     &emailStr,
+		Usergroup: &superAdminGroup,
+		Lang:      nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("setup: insert user: %w", err)

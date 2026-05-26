@@ -3623,10 +3623,13 @@ function get_resource_types($types = "", $translate = true, $ignore_access = fal
  */
 function get_all_resource_types()
 {
+    // t.name wrapped in MIN() for Postgres' stricter GROUP BY semantics —
+    // there is exactly one tab row per rt.tab (FK), so the aggregate is
+    // a no-op on the value while satisfying the grouping rule.
     return ps_query(
         "
          SELECT " . columns_in("resource_type", "rt") . ",
-                t.name AS tab_name,
+                MIN(t.name) AS tab_name,
                 GROUP_CONCAT(rtfrt.resource_type_field ORDER BY rtfrt.resource_type_field) AS resource_type_field
            FROM resource_type rt
       LEFT JOIN tab t ON t.ref=rt.tab
@@ -8642,26 +8645,32 @@ function get_external_shares(array $filteropts)
         $conditional_sql = " WHERE " . implode(" AND ", $conditions);
     }
 
+    // GROUP BY access_key, collection — every other col is either an
+    // aggregate or wrapped in MIN() so Postgres' strict GROUP BY mode
+    // accepts the query. The (access_key, collection) pair uniquely
+    // identifies a share row in practice, so MIN is a no-op on values.
+    // collection / resource are int FKs; the '-' placeholder forces the
+    // expression to text — MySQL auto-coerces; Postgres needs the cast.
     $external_access_keys_query =
         "SELECT access_key,
-                ifnull(collection,'-') collection,
+                ifnull(collection::text,'-') collection,
                 CASE
-                    WHEN collection IS NULL THEN resource
+                    WHEN collection IS NULL THEN MIN(resource)::text
                     ELSE '-'
                 END AS 'resource',
-                user,
-                eak.email,
+                MIN(\"user\") AS \"user\",
+                MIN(eak.email) AS email,
                 min(date) date,
                 MAX(date) maxdate,
                 max(lastused) lastused,
-                eak.access,
-                eak.expires,
-                eak.usergroup,
-                eak.password_hash,
-                eak.upload,
-                ug.name sharedas,
-                u.fullname,
-                u.username
+                MIN(eak.access) AS access,
+                MIN(eak.expires) AS expires,
+                MIN(eak.usergroup) AS usergroup,
+                MIN(eak.password_hash) AS password_hash,
+                MIN(eak.upload) AS upload,
+                MIN(ug.name) sharedas,
+                MIN(u.fullname) AS fullname,
+                MIN(u.username) AS username
            FROM external_access_keys eak
       LEFT JOIN user u ON u.ref=eak.user
       LEFT JOIN usergroup ug ON ug.ref=eak.usergroup " .

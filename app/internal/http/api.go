@@ -10,6 +10,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -32,6 +33,7 @@ type apiServer struct {
 	storage      *storage.Handler
 	assets       *assets.Handler
 	metadata     *metadata.Handler
+	collections  *collections.Handler
 	setup        *setup.Handler
 }
 
@@ -42,6 +44,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
+		collections:  collections.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -174,6 +177,33 @@ func (s *apiServer) ClearAssetFieldValue(ctx context.Context, req openapi.ClearA
 }
 func (s *apiServer) GetAssetFieldValueHistory(ctx context.Context, req openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
 	return s.metadata.GetAssetFieldValueHistory(ctx, req)
+}
+
+// --- collections -----------------------------------------------------------
+
+func (s *apiServer) ListCollections(ctx context.Context, req openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
+	return s.collections.ListCollections(ctx, req)
+}
+func (s *apiServer) CreateCollection(ctx context.Context, req openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
+	return s.collections.CreateCollection(ctx, req)
+}
+func (s *apiServer) GetCollection(ctx context.Context, req openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
+	return s.collections.GetCollection(ctx, req)
+}
+func (s *apiServer) UpdateCollection(ctx context.Context, req openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
+	return s.collections.UpdateCollection(ctx, req)
+}
+func (s *apiServer) DeleteCollection(ctx context.Context, req openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
+	return s.collections.DeleteCollection(ctx, req)
+}
+func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
+	return s.collections.ListCollectionResources(ctx, req)
+}
+func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
+	return s.collections.AddCollectionResource(ctx, req)
+}
+func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
+	return s.collections.RemoveCollectionResource(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

@@ -105,6 +105,30 @@ type Capability struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type Collection struct {
+	ID             pgtype.UUID        `json:"id"`
+	OwnerUserRef   int64              `json:"owner_user_ref"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	Visibility     string             `json:"visibility"`
+	Membership     string             `json:"membership"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	Featured       bool               `json:"featured"`
+	Purpose        *string            `json:"purpose"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CollectionResource struct {
+	CollectionID pgtype.UUID        `json:"collection_id"`
+	AssetID      pgtype.UUID        `json:"asset_id"`
+	SortOrder    int32              `json:"sort_order"`
+	Pinned       bool               `json:"pinned"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	AddedAt      pgtype.Timestamptz `json:"added_at"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`

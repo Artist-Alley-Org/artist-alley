@@ -105,6 +105,30 @@ type Capability struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type Collection struct {
+	ID             pgtype.UUID
+	OwnerUserRef   int64
+	Name           string
+	Description    string
+	Visibility     string
+	Membership     string
+	ExpiresAt      pgtype.Timestamptz
+	Featured       bool
+	Purpose        *string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type CollectionResource struct {
+	CollectionID pgtype.UUID
+	AssetID      pgtype.UUID
+	SortOrder    int32
+	Pinned       bool
+	ExpiresAt    pgtype.Timestamptz
+	AddedAt      pgtype.Timestamptz
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string

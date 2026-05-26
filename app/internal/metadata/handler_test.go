@@ -556,3 +556,27 @@ func (metaShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObj
 func (metaShim) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from metadata test shim")
 }
+func (metaShim) ListCollections(context.Context, openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
+	panic("ListCollections called from metadata test shim")
+}
+func (metaShim) CreateCollection(context.Context, openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
+	panic("CreateCollection called from metadata test shim")
+}
+func (metaShim) GetCollection(context.Context, openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
+	panic("GetCollection called from metadata test shim")
+}
+func (metaShim) UpdateCollection(context.Context, openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
+	panic("UpdateCollection called from metadata test shim")
+}
+func (metaShim) DeleteCollection(context.Context, openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
+	panic("DeleteCollection called from metadata test shim")
+}
+func (metaShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
+	panic("ListCollectionResources called from metadata test shim")
+}
+func (metaShim) AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
+	panic("AddCollectionResource called from metadata test shim")
+}
+func (metaShim) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
+	panic("RemoveCollectionResource called from metadata test shim")
+}

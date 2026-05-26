@@ -1,0 +1,577 @@
+package collections_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/collections"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
+)
+
+// TestCollectionLifecycle covers create / get / patch / delete on the
+// collection entity, plus the ownership gate that prevents one user
+// from mutating another's collection.
+func TestCollectionLifecycle(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = ctx
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	ownerRouter, _ := makeRouter(t, pool, 720001, /*admin=*/ false)
+	intruderRouter, _ := makeRouter(t, pool, 720002, /*admin=*/ false)
+
+	// Missing body -> 400
+	bad := postJSON(t, ownerRouter, "/collections", map[string]any{})
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("missing name: status=%d want 400 body=%s", bad.Code, bad.Body.String())
+	}
+
+	// Create
+	rr := postJSON(t, ownerRouter, "/collections", map[string]any{
+		"name":        "ct_main",
+		"description": "test fixture",
+		"visibility":  "private",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var c openapi.Collection
+	mustDecode(t, rr.Body.Bytes(), &c)
+	if c.Name != "ct_main" {
+		t.Errorf("name=%q want ct_main", c.Name)
+	}
+	if c.Visibility != openapi.CollectionVisibilityPrivate {
+		t.Errorf("visibility=%q want private", c.Visibility)
+	}
+	if c.OwnerUserRef != 720001 {
+		t.Errorf("owner=%d want 720001", c.OwnerUserRef)
+	}
+	id := c.Id.String()
+
+	// Query/hybrid membership -> 400 in 1.11.A
+	deferred := postJSON(t, ownerRouter, "/collections", map[string]any{
+		"name":       "ct_query_not_yet",
+		"membership": "query",
+	})
+	if deferred.Code != http.StatusBadRequest {
+		t.Errorf("query membership: status=%d want 400 body=%s", deferred.Code, deferred.Body.String())
+	}
+
+	// Get -> 200
+	gRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(gRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if gRR.Code != http.StatusOK {
+		t.Fatalf("get: %d", gRR.Code)
+	}
+
+	// Patch (rename + feature)
+	pRR := patchJSON(t, ownerRouter, "/collections/"+id, map[string]any{
+		"name":     "ct_renamed",
+		"featured": true,
+	})
+	if pRR.Code != http.StatusOK {
+		t.Fatalf("patch: %d body=%s", pRR.Code, pRR.Body.String())
+	}
+	var patched openapi.Collection
+	mustDecode(t, pRR.Body.Bytes(), &patched)
+	if patched.Name != "ct_renamed" || !patched.Featured {
+		t.Errorf("patch didn't take: name=%q featured=%v", patched.Name, patched.Featured)
+	}
+
+	// Intruder cannot patch
+	intruderPatch := patchJSON(t, intruderRouter, "/collections/"+id, map[string]any{
+		"name": "ct_hijacked",
+	})
+	if intruderPatch.Code != http.StatusForbidden {
+		t.Errorf("intruder patch: status=%d want 403", intruderPatch.Code)
+	}
+
+	// Intruder cannot delete
+	intruderDel := deleteReq(t, intruderRouter, "/collections/"+id)
+	if intruderDel.Code != http.StatusForbidden {
+		t.Errorf("intruder delete: status=%d want 403", intruderDel.Code)
+	}
+
+	// Owner deletes -> 204
+	delRR := deleteReq(t, ownerRouter, "/collections/"+id)
+	if delRR.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d body=%s", delRR.Code, delRR.Body.String())
+	}
+
+	// Get after delete -> 404
+	missRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(missRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if missRR.Code != http.StatusNotFound {
+		t.Errorf("get after delete: %d want 404", missRR.Code)
+	}
+}
+
+// TestCollectionResources covers add / list / remove on the membership
+// side, including pagination and the cascade through DeleteCollection.
+func TestCollectionResources(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	router, userRef := makeRouter(t, pool, 720010, false)
+
+	// Create the collection
+	col := mustCreate(t, router, map[string]any{
+		"name":       "ct_with_members",
+		"visibility": "private",
+	})
+
+	// Adding to a non-existent asset -> 404
+	noAsset := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
+		"asset_id": uuid.New().String(),
+	})
+	if noAsset.Code != http.StatusNotFound {
+		t.Errorf("missing asset: status=%d want 404 body=%s", noAsset.Code, noAsset.Body.String())
+	}
+
+	// Insert two assets directly so we don't have to wire the assets
+	// handler in. The cleanup hook walks them by owner_user_ref.
+	asset1 := mustInsertAsset(t, pool, userRef, "asset-1")
+	asset2 := mustInsertAsset(t, pool, userRef, "asset-2")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM assets WHERE owner_user_ref = $1`, userRef)
+	})
+
+	// Add asset1 (sort_order defaults to 0), asset2 (sort_order 10)
+	r := postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
+		"asset_id": asset1,
+	})
+	if r.Code != http.StatusNoContent {
+		t.Fatalf("add asset1: %d body=%s", r.Code, r.Body.String())
+	}
+	r = postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
+		"asset_id":   asset2,
+		"sort_order": 10,
+	})
+	if r.Code != http.StatusNoContent {
+		t.Fatalf("add asset2: %d body=%s", r.Code, r.Body.String())
+	}
+
+	// Re-add asset1 with new sort_order to confirm upsert
+	r = postJSON(t, router, "/collections/"+col+"/resources", map[string]any{
+		"asset_id":   asset1,
+		"sort_order": 5,
+	})
+	if r.Code != http.StatusNoContent {
+		t.Fatalf("re-add asset1: %d body=%s", r.Code, r.Body.String())
+	}
+
+	// List -> 2 entries in (5, 10) sort_order
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("list resources: %d", listRR.Code)
+	}
+	var page openapi.CollectionResourceList
+	mustDecode(t, listRR.Body.Bytes(), &page)
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(page.Items))
+	}
+	if page.Items[0].SortOrder != 5 || page.Items[1].SortOrder != 10 {
+		t.Errorf("sort order: got %d, %d; want 5, 10", page.Items[0].SortOrder, page.Items[1].SortOrder)
+	}
+
+	// Page through with limit=1 to exercise the cursor
+	pageRR := httptest.NewRecorder()
+	router.ServeHTTP(pageRR, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources?limit=1", nil))
+	mustDecode(t, pageRR.Body.Bytes(), &page)
+	if len(page.Items) != 1 || page.NextCursor == nil {
+		t.Fatalf("first page: items=%d cursor=%v want 1 + cursor", len(page.Items), page.NextCursor)
+	}
+	page2RR := httptest.NewRecorder()
+	router.ServeHTTP(page2RR, httptest.NewRequest(http.MethodGet,
+		"/collections/"+col+"/resources?limit=1&cursor="+*page.NextCursor, nil))
+	var page2 openapi.CollectionResourceList
+	mustDecode(t, page2RR.Body.Bytes(), &page2)
+	if len(page2.Items) != 1 {
+		t.Errorf("second page: %d want 1", len(page2.Items))
+	}
+	if page2.NextCursor != nil {
+		t.Errorf("second page should have no next_cursor, got %q", *page2.NextCursor)
+	}
+
+	// Remove asset2 -> list shrinks to 1
+	rmRR := deleteReq(t, router, "/collections/"+col+"/resources/"+asset2)
+	if rmRR.Code != http.StatusNoContent {
+		t.Fatalf("remove: %d", rmRR.Code)
+	}
+	listRR2 := httptest.NewRecorder()
+	router.ServeHTTP(listRR2, httptest.NewRequest(http.MethodGet, "/collections/"+col+"/resources", nil))
+	var page3 openapi.CollectionResourceList
+	mustDecode(t, listRR2.Body.Bytes(), &page3)
+	if len(page3.Items) != 1 {
+		t.Errorf("after remove: %d want 1", len(page3.Items))
+	}
+
+	// Delete collection cascades to memberships
+	if dr := deleteReq(t, router, "/collections/"+col); dr.Code != http.StatusNoContent {
+		t.Fatalf("delete collection: %d", dr.Code)
+	}
+	var leftover int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM collection_resources WHERE collection_id = $1`, col).Scan(&leftover); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if leftover != 0 {
+		t.Errorf("collection_resources still has %d rows after cascade", leftover)
+	}
+}
+
+// TestListCollectionsFilters exercises the owner_ref and featured
+// filters on the list endpoint, and verifies cursor-based pagination
+// across two pages.
+func TestListCollectionsFilters(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	router, _ := makeRouter(t, pool, 720020, false)
+
+	// Make three with deterministic created_at spacing so the
+	// cursor pagination has stable ordering.
+	for i := 0; i < 3; i++ {
+		body := map[string]any{"name": fmt.Sprintf("ct_list_%d", i)}
+		if i == 0 {
+			body["featured"] = true
+		}
+		rr := postJSON(t, router, "/collections", body)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("seed %d: %d", i, rr.Code)
+		}
+	}
+
+	// owner_ref filter
+	mineRR := httptest.NewRecorder()
+	router.ServeHTTP(mineRR, httptest.NewRequest(http.MethodGet,
+		"/collections?owner_ref=720020", nil))
+	var page openapi.CollectionList
+	mustDecode(t, mineRR.Body.Bytes(), &page)
+	if len(page.Items) < 3 {
+		t.Errorf("owner_ref filter: %d want >=3", len(page.Items))
+	}
+
+	// featured=true should return only the one we set
+	featRR := httptest.NewRecorder()
+	router.ServeHTTP(featRR, httptest.NewRequest(http.MethodGet,
+		"/collections?owner_ref=720020&featured=true", nil))
+	mustDecode(t, featRR.Body.Bytes(), &page)
+	if len(page.Items) != 1 {
+		t.Fatalf("featured=true: got %d items", len(page.Items))
+	}
+	if page.Items[0].Name != "ct_list_0" {
+		t.Errorf("featured one: name=%q want ct_list_0", page.Items[0].Name)
+	}
+
+	// Cursor pagination: limit=2 then a second page using next_cursor
+	p1 := httptest.NewRecorder()
+	router.ServeHTTP(p1, httptest.NewRequest(http.MethodGet,
+		"/collections?owner_ref=720020&limit=2", nil))
+	mustDecode(t, p1.Body.Bytes(), &page)
+	if len(page.Items) != 2 || page.NextCursor == nil {
+		t.Fatalf("page1: items=%d cursor=%v", len(page.Items), page.NextCursor)
+	}
+	p2 := httptest.NewRecorder()
+	router.ServeHTTP(p2, httptest.NewRequest(http.MethodGet,
+		"/collections?owner_ref=720020&limit=2&cursor="+*page.NextCursor, nil))
+	var page2 openapi.CollectionList
+	mustDecode(t, p2.Body.Bytes(), &page2)
+	if len(page2.Items) < 1 {
+		t.Errorf("page2: %d items want >=1", len(page2.Items))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Plumbing
+// ---------------------------------------------------------------------------
+
+func makeRouter(t *testing.T, pool *pgxpool.Pool, userRef int64, admin bool) (chi.Router, int64) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// nil registry — cache integration is covered by cache_test.go;
+	// these tests stick to handler logic.
+	h := collections.NewHandler(pool, logger, nil)
+
+	caps := []string{}
+	if admin {
+		caps = []string{collections.CapCollectionsAdmin}
+	}
+	router := chi.NewRouter()
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := &auth.Identity{
+				UserRef:      userRef,
+				AuthMethod:   "session",
+				Capabilities: caps,
+			}
+			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
+		})
+	})
+	openapi.HandlerFromMux(openapi.NewStrictHandler(collShim{h: h}, nil), router)
+	return router, userRef
+}
+
+func cleanTestCollections(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	_, _ = pool.Exec(ctx, `DELETE FROM collection_resources WHERE collection_id IN (SELECT id FROM collections WHERE name LIKE 'ct_%')`)
+	_, _ = pool.Exec(ctx, `DELETE FROM collections WHERE name LIKE 'ct_%'`)
+}
+
+func mustCreate(t *testing.T, r chi.Router, body map[string]any) string {
+	t.Helper()
+	rr := postJSON(t, r, "/collections", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var c openapi.Collection
+	mustDecode(t, rr.Body.Bytes(), &c)
+	return c.Id.String()
+}
+
+func mustInsertAsset(t *testing.T, pool *pgxpool.Pool, userRef int64, title string) string {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO assets (title, resource_type, owner_user_ref) VALUES ($1, 1, $2) RETURNING id`,
+		title, userRef).Scan(&id); err != nil {
+		t.Fatalf("insert asset: %v", err)
+	}
+	return id.String()
+}
+
+func postJSON(t *testing.T, r chi.Router, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return rr
+}
+
+func patchJSON(t *testing.T, r chi.Router, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return rr
+}
+
+func deleteReq(t *testing.T, r chi.Router, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return rr
+}
+
+func mustDecode(t *testing.T, data []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(data, v); err != nil {
+		t.Fatalf("decode: %v\nbody=%s", err, data)
+	}
+}
+
+func openPool(t *testing.T, pwd string) *pgxpool.Pool {
+	t.Helper()
+	host := envOr("AA_DB_HOST", "postgres")
+	port := envOr("AA_DB_PORT", "5432")
+	user := envOr("AA_DB_USER", "artist_alley")
+	name := envOr("AA_DB_NAME", "artist_alley")
+	dsn := "host=" + host + " port=" + port + " user=" + user +
+		" dbname=" + name + " sslmode=disable password=" + pwd
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Fatalf("ping: %v", err)
+	}
+	return pool
+}
+
+func envOr(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return def
+}
+
+// ---------------------------------------------------------------------------
+// shim — implements every other StrictServerInterface method as a panic.
+// ---------------------------------------------------------------------------
+
+type collShim struct{ h *collections.Handler }
+
+func (s collShim) ListCollections(ctx context.Context, req openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
+	return s.h.ListCollections(ctx, req)
+}
+func (s collShim) CreateCollection(ctx context.Context, req openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
+	return s.h.CreateCollection(ctx, req)
+}
+func (s collShim) GetCollection(ctx context.Context, req openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
+	return s.h.GetCollection(ctx, req)
+}
+func (s collShim) UpdateCollection(ctx context.Context, req openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
+	return s.h.UpdateCollection(ctx, req)
+}
+func (s collShim) DeleteCollection(ctx context.Context, req openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
+	return s.h.DeleteCollection(ctx, req)
+}
+func (s collShim) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
+	return s.h.ListCollectionResources(ctx, req)
+}
+func (s collShim) AddCollectionResource(ctx context.Context, req openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
+	return s.h.AddCollectionResource(ctx, req)
+}
+func (s collShim) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
+	return s.h.RemoveCollectionResource(ctx, req)
+}
+
+func (collShim) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
+	panic("Login called from collections test shim")
+}
+func (collShim) Logout(context.Context, openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
+	panic("Logout called from collections test shim")
+}
+func (collShim) GetCurrentUser(context.Context, openapi.GetCurrentUserRequestObject) (openapi.GetCurrentUserResponseObject, error) {
+	panic("GetCurrentUser called from collections test shim")
+}
+func (collShim) ListApiTokens(context.Context, openapi.ListApiTokensRequestObject) (openapi.ListApiTokensResponseObject, error) {
+	panic("ListApiTokens called from collections test shim")
+}
+func (collShim) CreateApiToken(context.Context, openapi.CreateApiTokenRequestObject) (openapi.CreateApiTokenResponseObject, error) {
+	panic("CreateApiToken called from collections test shim")
+}
+func (collShim) RevokeApiToken(context.Context, openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
+	panic("RevokeApiToken called from collections test shim")
+}
+func (collShim) ListCapabilities(context.Context, openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
+	panic("ListCapabilities called from collections test shim")
+}
+func (collShim) ListRoles(context.Context, openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
+	panic("ListRoles called from collections test shim")
+}
+func (collShim) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequestObject) (openapi.GetMyCapabilitiesResponseObject, error) {
+	panic("GetMyCapabilities called from collections test shim")
+}
+func (collShim) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
+	panic("SetUserRole called from collections test shim")
+}
+func (collShim) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
+	panic("ListResourceTypes called from collections test shim")
+}
+func (collShim) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
+	panic("UploadStorageObject called from collections test shim")
+}
+func (collShim) DownloadStorageObject(context.Context, openapi.DownloadStorageObjectRequestObject) (openapi.DownloadStorageObjectResponseObject, error) {
+	panic("DownloadStorageObject called from collections test shim")
+}
+func (collShim) DownloadStorageObjectVariant(context.Context, openapi.DownloadStorageObjectVariantRequestObject) (openapi.DownloadStorageObjectVariantResponseObject, error) {
+	panic("DownloadStorageObjectVariant called from collections test shim")
+}
+func (collShim) CreateAsset(context.Context, openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
+	panic("CreateAsset called from collections test shim")
+}
+func (collShim) ListAssets(context.Context, openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error) {
+	panic("ListAssets called from collections test shim")
+}
+func (collShim) GetAsset(context.Context, openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error) {
+	panic("GetAsset called from collections test shim")
+}
+func (collShim) UpdateAsset(context.Context, openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
+	panic("UpdateAsset called from collections test shim")
+}
+func (collShim) DeleteAsset(context.Context, openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
+	panic("DeleteAsset called from collections test shim")
+}
+func (collShim) DownloadAssetFile(context.Context, openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
+	panic("DownloadAssetFile called from collections test shim")
+}
+func (collShim) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
+	panic("DownloadAssetVariant called from collections test shim")
+}
+func (collShim) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
+	panic("AddAssetTags called from collections test shim")
+}
+func (collShim) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
+	panic("RemoveAssetTag called from collections test shim")
+}
+func (collShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
+	panic("GetSetupStatus called from collections test shim")
+}
+func (collShim) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
+	panic("CompleteSetup called from collections test shim")
+}
+func (collShim) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
+	panic("ListFields called from collections test shim")
+}
+func (collShim) CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
+	panic("CreateField called from collections test shim")
+}
+func (collShim) GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
+	panic("GetField called from collections test shim")
+}
+func (collShim) UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
+	panic("UpdateField called from collections test shim")
+}
+func (collShim) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
+	panic("ArchiveField called from collections test shim")
+}
+func (collShim) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
+	panic("GetAssetFields called from collections test shim")
+}
+func (collShim) SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
+	panic("SetAssetFieldValue called from collections test shim")
+}
+func (collShim) ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
+	panic("ClearAssetFieldValue called from collections test shim")
+}
+func (collShim) GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
+	panic("GetAssetFieldValueHistory called from collections test shim")
+}
