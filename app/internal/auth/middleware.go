@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,19 @@ import (
 // Identity is what the resolver injects into the request context on a
 // successful authentication. nil in the context means the caller is
 // anonymous.
+//
+// Capabilities holds GLOBAL capability codes only (team_id IS NULL in
+// the user_capability_* tables). It exists as a flat []string for the
+// admin /auth/me/capabilities response and for legacy callers that
+// don't need team scope.
+//
+// scopedCaps holds team-scoped grants, pre-expanded via team_closure so
+// each descendant team is a literal entry. Per ADR 0010 Layer 5:
+//   - A role assignment scoped to team X grants all of that role's caps
+//     to X and (transitively) every descendant of X.
+//   - A grant scoped to team X likewise applies to X and descendants.
+//
+// Pure-memory lookup for Can(code, InTeam(t)) — no closure walk in Go.
 type Identity struct {
 	UserRef      int64
 	Username     string
@@ -24,24 +38,69 @@ type Identity struct {
 	Usergroup    *int64
 	AuthMethod   string     // "session" or "token"
 	TokenID      *uuid.UUID // populated when AuthMethod=="token"
-	Capabilities []string   // effective capability codes resolved at request start
+	Capabilities []string   // GLOBAL capability codes (closure-expanded, NULL team_id)
+
+	scopedCaps map[string]map[uuid.UUID]struct{} // code -> set of effective team IDs
 }
 
 // SuperAdminCapability bypasses every Can() check. Matches the
 // "system.admin" code seeded by migration 00002.
 const SuperAdminCapability = "system.admin"
 
+// canQuery accumulates Can() options. Currently just the team scope.
+type canQuery struct {
+	teamID *uuid.UUID
+}
+
+// CanOption configures a Can() check. Use [InTeam] to scope the check
+// to a specific team.
+type CanOption func(*canQuery)
+
+// InTeam scopes a Can() check to a specific team. The check passes if
+// the user holds the capability globally OR holds it for the given
+// team (or any ancestor of it; the closure expansion has already been
+// done at resolver time).
+func InTeam(id uuid.UUID) CanOption {
+	return func(q *canQuery) { q.teamID = &id }
+}
+
 // Can returns true when this identity is allowed to exercise the given
-// capability code. Holding [SuperAdminCapability] is a wildcard.
+// capability code in the requested scope.
 //
-// A nil identity is never authorised.
-func (id *Identity) Can(code string) bool {
+//   - Holding [SuperAdminCapability] globally is a wildcard regardless
+//     of the scope asked for.
+//   - Without [InTeam]: only global grants pass.
+//   - With [InTeam]: a global grant OR a scoped grant that includes
+//     the target team passes.
+//
+// A nil identity is never authorised. An empty capability code is
+// never authorised (avoids surprises if a caller forgets to wire one).
+func (id *Identity) Can(code string, opts ...CanOption) bool {
 	if id == nil || code == "" {
 		return false
 	}
+	// system.admin global wildcard — short-circuit before any scope work.
 	for _, c := range id.Capabilities {
-		if c == code || c == SuperAdminCapability {
+		if c == SuperAdminCapability {
 			return true
+		}
+	}
+	// Global grant for the requested code — works in any scope.
+	for _, c := range id.Capabilities {
+		if c == code {
+			return true
+		}
+	}
+	// Scoped check: did the caller ask for a team?
+	q := canQuery{}
+	for _, opt := range opts {
+		opt(&q)
+	}
+	if q.teamID != nil {
+		if codeMap, ok := id.scopedCaps[code]; ok {
+			if _, ok := codeMap[*q.teamID]; ok {
+				return true
+			}
 		}
 	}
 	return false
@@ -148,16 +207,16 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 	})
 }
 
-// loadCapabilities populates id.Capabilities with the user's effective
-// capability set. A failure here is non-fatal — we log it and proceed
-// with an empty capability set, which means the user can do nothing
-// privileged. That's safer than failing the whole request because of a
-// transient DB error in the cap lookup.
+// loadCapabilities populates id.Capabilities (global) and id.scopedCaps
+// (team-scoped, closure-expanded) from a single DB query. A failure
+// here is non-fatal — we log it and proceed with empty cap sets, which
+// means the user can do nothing privileged. That's safer than failing
+// the whole request because of a transient DB error in the cap lookup.
 func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identity) {
 	if id == nil {
 		return
 	}
-	caps, err := q.EffectiveCapabilitiesForUser(ctx, id.UserRef)
+	rows, err := q.EffectiveScopedCapabilitiesForUser(ctx, id.UserRef)
 	if err != nil {
 		r.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.caps.load.error",
 			slog.Int64("user_ref", id.UserRef),
@@ -165,7 +224,30 @@ func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identit
 		)
 		return
 	}
+	// Split into global (team_id NULL) and scoped (team_id non-NULL,
+	// pre-expanded via team_closure on the SQL side).
+	globalSet := make(map[string]struct{}, len(rows))
+	scoped := make(map[string]map[uuid.UUID]struct{})
+	for _, row := range rows {
+		if !row.TeamID.Valid {
+			globalSet[row.Code] = struct{}{}
+			continue
+		}
+		team := uuid.UUID(row.TeamID.Bytes)
+		set, ok := scoped[row.Code]
+		if !ok {
+			set = make(map[uuid.UUID]struct{})
+			scoped[row.Code] = set
+		}
+		set[team] = struct{}{}
+	}
+	caps := make([]string, 0, len(globalSet))
+	for code := range globalSet {
+		caps = append(caps, code)
+	}
+	sort.Strings(caps)
 	id.Capabilities = caps
+	id.scopedCaps = scoped
 }
 
 func (r *Resolver) resolveByToken(ctx context.Context, q *Queries, plaintext string) (*Identity, error) {

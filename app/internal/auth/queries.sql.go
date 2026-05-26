@@ -278,6 +278,109 @@ func (q *Queries) EffectiveCapabilitiesForUser(ctx context.Context, rsUserID int
 	return items, nil
 }
 
+const effectiveScopedCapabilitiesForUser = `-- name: EffectiveScopedCapabilitiesForUser :many
+WITH RECURSIVE role_chain(role_id, team_id, depth) AS (
+    -- Seed: every role assignment, preserving its team scope.
+    SELECT ur.role_id, ur.team_id, 0
+    FROM user_roles ur
+    WHERE ur.rs_user_id = $1
+
+    UNION ALL
+
+    -- Walk: ancestor role inherits the seed assignment's team scope.
+    SELECT r.parent_id, rc.team_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.role_id
+    WHERE r.parent_id IS NOT NULL AND rc.depth < 32
+),
+role_caps AS (
+    SELECT rcap.capability_code AS code, rch.team_id AS team_id
+    FROM role_chain rch
+    JOIN role_capabilities rcap ON rcap.role_id = rch.role_id
+),
+grant_caps AS (
+    SELECT g.capability_code AS code, g.team_id AS team_id
+    FROM user_capability_grants g
+    WHERE g.rs_user_id = $1
+),
+all_caps AS (
+    SELECT code, team_id FROM role_caps
+    UNION
+    SELECT code, team_id FROM grant_caps
+),
+non_revoked AS (
+    SELECT a.code, a.team_id
+    FROM all_caps a
+    WHERE NOT EXISTS (
+        SELECT 1 FROM user_capability_revokes v
+        WHERE v.rs_user_id = $1
+          AND v.capability_code = a.code
+          AND v.team_id IS NOT DISTINCT FROM a.team_id
+    )
+),
+expanded AS (
+    -- Global rows pass through unchanged.
+    SELECT code, NULL::uuid AS team_id FROM non_revoked WHERE team_id IS NULL
+    UNION
+    -- Scoped rows fan out via team_closure (includes the team itself
+    -- via the depth-0 self-row).
+    SELECT nr.code, tc.descendant_id
+    FROM non_revoked nr
+    JOIN team_closure tc ON tc.ancestor_id = nr.team_id
+    WHERE nr.team_id IS NOT NULL
+)
+SELECT code, team_id
+FROM expanded
+ORDER BY code, team_id NULLS FIRST
+`
+
+type EffectiveScopedCapabilitiesForUserRow struct {
+	Code   string
+	TeamID pgtype.UUID
+}
+
+// Returns (capability_code, team_id) tuples for every capability the
+// user can exercise. Used by the auth resolver to populate Identity
+// on every request.
+//
+// The query handles both axes of ADR 0010 in one shot:
+//   - Role inheritance — recursive CTE walks each role's parent chain
+//     up to a depth cap; team_id is propagated through the chain so a
+//     team-scoped role assignment scopes every inherited capability.
+//   - Team scope expansion — scoped grants are pre-expanded via
+//     team_closure (one row per descendant team). The resolver does
+//     pure-memory flat lookups after this; no closure walk in Go.
+//
+// team_id semantics:
+//   - NULL row → global capability (allows any scope including
+//     unscoped Can() checks).
+//   - non-NULL row → capability is effective on the specific team
+//     in that row (post-closure-expansion this includes all
+//     descendant teams).
+//
+// Revokes are matched with NULLs-not-distinct: a revoke at the same
+// (code, team_id) pair removes that effective row exactly. Revokes
+// DON'T expand through closure — they target the specific scope.
+func (q *Queries) EffectiveScopedCapabilitiesForUser(ctx context.Context, rsUserID int64) ([]EffectiveScopedCapabilitiesForUserRow, error) {
+	rows, err := q.db.Query(ctx, effectiveScopedCapabilitiesForUser, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EffectiveScopedCapabilitiesForUserRow
+	for rows.Next() {
+		var i EffectiveScopedCapabilitiesForUserRow
+		if err := rows.Scan(&i.Code, &i.TeamID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findActiveApiToken = `-- name: FindActiveApiToken :one
 SELECT id,
        rs_user_id,
