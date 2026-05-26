@@ -315,3 +315,50 @@ CREATE TABLE audit_events (
     user_agent        TEXT         NULL,
     metadata          JSONB        NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- migrations/00014_posts.sql — Phase 1.13.D-2.
+-- A Post is the feed entity. Wraps 1+ Assets via post_assets;
+-- carries the descriptive metadata (title/description/visibility/
+-- tags) and counters. Browse-page reads from posts; assets are
+-- members. like_count/comment_count are denormalised counters that
+-- 1.13.D-4 will start maintaining via triggers.
+CREATE TABLE posts (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    author_user_ref   BIGINT       NOT NULL,
+    title             TEXT         NOT NULL DEFAULT '',
+    description       TEXT         NOT NULL DEFAULT '',
+    visibility        TEXT         NOT NULL DEFAULT 'public',
+    cover_asset_id    UUID         NULL,
+    posted_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    like_count        BIGINT       NOT NULL DEFAULT 0,
+    comment_count     BIGINT       NOT NULL DEFAULT 0,
+    search_text       TSVECTOR     NULL,
+    origin_server_id  UUID         NULL,
+    deleted_at        TIMESTAMPTZ  NULL,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE post_assets (
+    post_id     UUID         NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    asset_id    UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    sort_order  INTEGER      NOT NULL DEFAULT 0,
+    added_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (post_id, asset_id)
+);
+
+CREATE TABLE post_tags (
+    post_id  UUID  NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag      TEXT  NOT NULL,
+    PRIMARY KEY (post_id, tag)
+);
+
+CREATE TABLE collection_posts (
+    collection_id  UUID         NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    post_id        UUID         NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    sort_order     INTEGER      NOT NULL DEFAULT 0,
+    pinned         BOOLEAN      NOT NULL DEFAULT TRUE,
+    expires_at     TIMESTAMPTZ  NULL,
+    added_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (collection_id, post_id)
+);

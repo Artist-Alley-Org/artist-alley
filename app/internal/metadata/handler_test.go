@@ -580,3 +580,24 @@ func (metaShim) AddCollectionResource(context.Context, openapi.AddCollectionReso
 func (metaShim) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	panic("RemoveCollectionResource called from metadata test shim")
 }
+func (metaShim) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	panic("ListPosts called from metadata test shim")
+}
+func (metaShim) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	panic("CreatePost called from metadata test shim")
+}
+func (metaShim) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	panic("GetPost called from metadata test shim")
+}
+func (metaShim) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	panic("UpdatePost called from metadata test shim")
+}
+func (metaShim) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	panic("DeletePost called from metadata test shim")
+}
+func (metaShim) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	panic("AddPostAsset called from metadata test shim")
+}
+func (metaShim) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	panic("RemovePostAsset called from metadata test shim")
+}

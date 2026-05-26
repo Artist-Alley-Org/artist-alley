@@ -14,6 +14,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -34,6 +35,7 @@ type apiServer struct {
 	assets       *assets.Handler
 	metadata     *metadata.Handler
 	collections  *collections.Handler
+	posts        *posts.Handler
 	setup        *setup.Handler
 }
 
@@ -45,6 +47,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		assets:       assets.NewHandler(pool, storageSvc, logger),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),
+		posts:        posts.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -204,6 +207,30 @@ func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCo
 }
 func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.collections.RemoveCollectionResource(ctx, req)
+}
+
+// --- posts -----------------------------------------------------------------
+
+func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	return s.posts.ListPosts(ctx, req)
+}
+func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	return s.posts.CreatePost(ctx, req)
+}
+func (s *apiServer) GetPost(ctx context.Context, req openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	return s.posts.GetPost(ctx, req)
+}
+func (s *apiServer) UpdatePost(ctx context.Context, req openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	return s.posts.UpdatePost(ctx, req)
+}
+func (s *apiServer) DeletePost(ctx context.Context, req openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	return s.posts.DeletePost(ctx, req)
+}
+func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	return s.posts.AddPostAsset(ctx, req)
+}
+func (s *apiServer) RemovePostAsset(ctx context.Context, req openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	return s.posts.RemovePostAsset(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

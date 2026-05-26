@@ -2,49 +2,56 @@
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
-  import AssetCard from '$components/AssetCard.svelte';
+  import PostCard from '$components/PostCard.svelte';
 
-  // Browse page — the first thing a logged-in user sees. Recent
-  // assets first, infinite scroll via IntersectionObserver. View
-  // mode switching lands in 1.13.E; for now this is the grid view.
+  // Browse page — feed of Posts (per Phase 1.13.D-2's model change).
+  // Each Post wraps 1+ assets; the card renders the cover. Grid mode
+  // (default); 1.13.E adds Masonry / Thumbnail / List + a switcher.
   //
   // Search is sourced from the URL's `?q=` so refreshes and shared
   // links reproduce the same result set. The search input itself
   // lives in the global navbar (see +layout.svelte) and goto()s
   // here with the updated query string. Server-side the match runs
-  // against the TSVECTOR `search_text` column on assets.
+  // against the TSVECTOR `search_text` column on posts (built from
+  // title + description + tags + member-asset search_text by the
+  // 00014 migration trigger).
 
-  interface Asset {
+  interface AssetSummary {
     id: string;
-    title: string;
-    description?: string;
-    resource_type: number;
-    owner_user_ref?: number | null;
-    status: string;
     file_hash?: string | null;
-    file_extension?: string | null;
+  }
+  interface PostMember {
+    asset_id: string;
+    sort_order: number;
+    asset: AssetSummary;
+  }
+  interface Post {
+    id: string;
+    author_user_ref: number;
+    title: string;
+    description: string;
+    visibility: 'private' | 'followers' | 'public';
+    cover_asset_id?: string | null;
+    posted_at: string;
+    like_count: number;
+    comment_count: number;
+    tags: string[];
+    members: PostMember[];
     created_at: string;
     updated_at: string;
-    tags: string[];
   }
 
   const PAGE = 36;
 
-  // Read the current query from the URL. SvelteKit re-runs reactive
-  // statements when `page` changes, so this triggers re-fetch on
-  // navigation.
   const query = $derived(page.url.searchParams.get('q') ?? '');
 
-  let items = $state<Asset[]>([]);
+  let items = $state<Post[]>([]);
   let nextCursor = $state<string | null>(null);
   let loading = $state(false);
   let initialLoaded = $state(false);
   let error = $state<string | null>(null);
   let sentinel: HTMLElement | undefined = $state();
 
-  // Increment to invalidate in-flight fetches when the query changes,
-  // so a slow response for the previous query can't overwrite the
-  // new result set.
   let generation = 0;
 
   async function fetchPage(q: string, cursor: string | null, reset: boolean) {
@@ -56,12 +63,10 @@
       if (q.trim() !== '') params.q = q.trim();
       if (!reset && cursor) params.cursor = cursor;
 
-      const { data, error: apiErr } = await api.GET('/assets', {
+      const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
       });
 
-      // Race-guard: if the query changed since this fetch started,
-      // drop the result.
       if (gen !== generation) return;
 
       if (apiErr || !data) {
@@ -70,7 +75,7 @@
         );
       }
 
-      const pageItems = (data.items ?? []) as Asset[];
+      const pageItems = (data.items ?? []) as Post[];
       items = reset ? pageItems : [...items, ...pageItems];
       nextCursor = (data.next_cursor as string | null) ?? null;
     } catch (e) {
@@ -83,8 +88,8 @@
     }
   }
 
-  // Reset and refetch every time the query changes. This covers the
-  // initial mount AND subsequent navigations from the navbar search.
+  // Reset and refetch every time the query changes. Covers initial
+  // mount AND subsequent navigations from the navbar search.
   $effect(() => {
     const q = query;
     untrack(() => {
@@ -95,9 +100,8 @@
     });
   });
 
-  // Infinite scroll: when the sentinel scrolls into view, fetch the
-  // next page. rootMargin gives a head-start so the next batch is in
-  // flight before the user hits the end.
+  // Infinite scroll: rootMargin head-start so the next batch is in
+  // flight before the user reaches the end.
   $effect(() => {
     const node = sentinel;
     if (!node) return;
@@ -142,29 +146,20 @@
 
   {#if showEmpty}
     <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-      <p class="font-medium text-fg">{query ? 'No matches' : 'No assets yet'}</p>
+      <p class="font-medium text-fg">{query ? 'No matches' : 'No posts yet'}</p>
       <p class="mt-1 text-sm">
         {query
           ? 'Try a different search term.'
-          : "Once assets are uploaded they'll appear here, newest first."}
+          : 'Once posts are uploaded they\'ll appear here, newest first.'}
       </p>
     </div>
   {:else}
-    <!--
-      Full-bleed grid (the 1.13.D shape). Responsive: 2 columns on
-      small phones up to 8 on extra-wide displays. Aspect-square
-      cards keep the layout stable regardless of image dimensions.
-      Masonry / thumbnail / list view-mode switching arrives in
-      1.13.E; the column count is the only knob here.
-    -->
     <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-      {#each items as asset (asset.id)}
-        <AssetCard {asset} />
+      {#each items as post (post.id)}
+        <PostCard {post} />
       {/each}
 
       {#if loading}
-        <!-- Skeleton cards while loading. Same shape as real ones so
-             the layout doesn't reflow when results arrive. -->
         {#each Array(8) as _, i (i)}
           <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
         {/each}
@@ -172,7 +167,6 @@
     </div>
 
     {#if hasMore}
-      <!-- IntersectionObserver target. -->
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
     {/if}
 

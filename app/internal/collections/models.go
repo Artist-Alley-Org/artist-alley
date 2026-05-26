@@ -120,6 +120,15 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type CollectionPost struct {
+	CollectionID pgtype.UUID
+	PostID       pgtype.UUID
+	SortOrder    int32
+	Pinned       bool
+	ExpiresAt    pgtype.Timestamptz
+	AddedAt      pgtype.Timestamptz
+}
+
 type CollectionResource struct {
 	CollectionID pgtype.UUID
 	AssetID      pgtype.UUID
@@ -152,6 +161,35 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz
 	CreatedByUserRef        *int64
 	UpdatedByUserRef        *int64
+}
+
+type Post struct {
+	ID             pgtype.UUID
+	AuthorUserRef  int64
+	Title          string
+	Description    string
+	Visibility     string
+	CoverAssetID   pgtype.UUID
+	PostedAt       pgtype.Timestamptz
+	LikeCount      int64
+	CommentCount   int64
+	SearchText     interface{}
+	OriginServerID pgtype.UUID
+	DeletedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type PostAsset struct {
+	PostID    pgtype.UUID
+	AssetID   pgtype.UUID
+	SortOrder int32
+	AddedAt   pgtype.Timestamptz
+}
+
+type PostTag struct {
+	PostID pgtype.UUID
+	Tag    string
 }
 
 type ResourceType struct {

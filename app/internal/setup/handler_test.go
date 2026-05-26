@@ -468,6 +468,27 @@ func (shimImpl) AddCollectionResource(context.Context, openapi.AddCollectionReso
 func (shimImpl) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	panic("RemoveCollectionResource called from setup test shim")
 }
+func (shimImpl) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
+	panic("ListPosts called from setup test shim")
+}
+func (shimImpl) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
+	panic("CreatePost called from setup test shim")
+}
+func (shimImpl) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
+	panic("GetPost called from setup test shim")
+}
+func (shimImpl) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
+	panic("UpdatePost called from setup test shim")
+}
+func (shimImpl) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
+	panic("DeletePost called from setup test shim")
+}
+func (shimImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
+	panic("AddPostAsset called from setup test shim")
+}
+func (shimImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
+	panic("RemovePostAsset called from setup test shim")
+}
 
 // ---------------------------------------------------------------------------
 // helpers

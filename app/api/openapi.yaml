@@ -38,6 +38,14 @@ tags:
   - name: resource_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
+  - name: posts
+    description: |
+      Feed entity. A Post wraps 1+ Assets with descriptive metadata
+      (title, description, tags, visibility) and carries
+      like/comment counters. Browse-page reads from /posts; assets
+      are the file-bearing members beneath. Single-asset uploads
+      still become Posts (a Post with one member) so the shape is
+      uniform end-to-end. Phase 1.13.D-2.
   - name: collections
     description: |
       User-owned groupings of assets, per ADR 0009. UUID-keyed,
@@ -979,6 +987,220 @@ paths:
                 items: { $ref: "#/components/schemas/FieldValueHistoryEntry" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts:
+    get:
+      operationId: listPosts
+      summary: List posts (paginated feed)
+      description: |
+        The browse-page feed. Public posts visible to authenticated
+        callers; the author's own posts of any visibility are also
+        returned. Phase 1.13.G adds anonymous access when the system
+        config allows it.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: author_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: visibility
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [private, followers, public]
+        - name: q
+          in: query
+          required: false
+          description: |
+            Plain-text search over the post's TSVECTOR. Phase 1.12
+            (search DSL) replaces this with the full query language.
+          schema: { type: string, maxLength: 200 }
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createPost
+      summary: Publish a new post
+      description: |
+        Wraps 1+ existing assets into a Post. The asset bytes are
+        already in storage (POST /storage/objects) and the asset
+        entities are already created (POST /assets); this endpoint
+        ties them together with the descriptive metadata.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostCreate" }
+      responses:
+        "201":
+          description: Post created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /posts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPost
+      summary: Fetch a post with its members + tags
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updatePost
+      summary: Partial update of a post
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deletePost
+      summary: Soft-delete a post
+      description: |
+        Removes the post from feed views. Member assets are not
+        deleted (an asset may belong to multiple posts; storage pins
+        are owned at the asset layer).
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/assets:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: addPostAsset
+      summary: Attach an existing asset to a post
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostAssetWrite" }
+      responses:
+        "204":
+          description: Member added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/assets/{asset_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: asset_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removePostAsset
+      summary: Remove an asset from a post
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1983,6 +2205,116 @@ components:
           description: |
             Pass back as the `cursor` query param to fetch the next
             page. null when the current page is the last.
+    Post:
+      type: object
+      description: |
+        Feed entity. Wraps 1+ assets with descriptive metadata. The
+        `members` array is the ordered list of assets in the post;
+        `cover_asset_id` is the one shown in feed/grid cards.
+      required:
+        [id, author_user_ref, title, description, visibility,
+         posted_at, like_count, comment_count, tags, members,
+         created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        author_user_ref:  { type: integer, format: int64 }
+        title:            { type: string }
+        description:      { type: string }
+        visibility:
+          type: string
+          enum: [private, followers, public]
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+        posted_at:        { type: string, format: date-time }
+        like_count:       { type: integer, format: int64 }
+        comment_count:    { type: integer, format: int64 }
+        tags:
+          type: array
+          items: { type: string }
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/PostMember" }
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+    PostMember:
+      type: object
+      description: |
+        An asset attached to a post, with its sort_order in the
+        carousel and the asset payload joined-in to avoid an N+1.
+      required: [asset_id, sort_order, asset]
+      properties:
+        asset_id:    { type: string, format: uuid }
+        sort_order:  { type: integer }
+        asset:       { $ref: "#/components/schemas/Asset" }
+    PostCreate:
+      type: object
+      required: [members]
+      properties:
+        title:        { type: string, maxLength: 500 }
+        description:  { type: string }
+        visibility:
+          type: string
+          enum: [private, followers, public]
+          default: public
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Defaults to members[0].asset_id when omitted.
+        members:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PostAssetWrite" }
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+        collection_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional — when set, the new post is added to this
+            collection at create time. Used by the context-aware
+            upload modal: dropping into /collections/{id} sets this.
+    PostUpdate:
+      type: object
+      description: Partial update; only present fields are touched.
+      properties:
+        title:        { type: string, maxLength: 500 }
+        description:  { type: string }
+        visibility:
+          type: string
+          enum: [private, followers, public]
+        cover_asset_id:
+          type: string
+          format: uuid
+          nullable: true
+        tags:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 64 }
+    PostAssetWrite:
+      type: object
+      required: [asset_id]
+      properties:
+        asset_id:    { type: string, format: uuid }
+        sort_order:  { type: integer, default: 0 }
+    PostList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Post" }
+        next_cursor:
+          type: string
+          nullable: true
     UploadResult:
       type: object
       required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id]
