@@ -115,7 +115,10 @@ services:
       # the bind-mounted web/ on the host.
       - ./app/api/openapi.yaml:/opt/openapi.yaml:ro
     environment:
-      AA_API_PROXY_TARGET: http://app:8080
+      # Vite proxies /api/* to nginx so the FastCGI split between
+      # /api/v1/legacy/* (PHP) and /api/v1/* (Go) is handled in one
+      # place. Override when running Vite outside Docker.
+      AA_API_PROXY_TARGET: http://nginx:80
       AA_OPENAPI_SPEC: /opt/openapi.yaml
     profiles: ["web"]
     depends_on:

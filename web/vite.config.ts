@@ -7,12 +7,15 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    // /api/v1 hits the Go binary directly during dev. In prod the Go
-    // binary serves both /api/v1 and the embedded frontend, so this
-    // proxy goes away.
+    // Dev API routing during the strangler-fig phase: nginx splits
+    // /api/v1/legacy/* (FastCGI → php-fpm → aa_api/) from /api/v1/*
+    // (HTTP → Go). Vite forwards the union to nginx as a single
+    // upstream so component code stays unaware of the split. See
+    // ADR 0015. Override the target with AA_API_PROXY_TARGET when
+    // running Vite outside Docker against a different host.
     proxy: {
       '/api': {
-        target: process.env.AA_API_PROXY_TARGET ?? 'http://app:8080',
+        target: process.env.AA_API_PROXY_TARGET ?? 'http://nginx:80',
         changeOrigin: true,
       },
     },

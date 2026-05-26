@@ -140,12 +140,25 @@ if (!$valid && !isset($system_login)) {
     $path = $_SERVER["REQUEST_URI"];
     debug("[authenticate.php] path = $path");
 
-    if (strpos($path, "/ajax") !== false) {
+    // AA_API_JSON_REQUEST is set by aa_api/_bootstrap.php so the
+    // legacy-proxy JSON wrappers get a JSON 401 instead of the HTML
+    // redirect intended for browser navigation. RS's existing /ajax/
+    // check is preserved alongside.
+    $aa_json_req = (defined('AA_API_JSON_REQUEST') && AA_API_JSON_REQUEST);
+    if (strpos($path, "/ajax") !== false || $aa_json_req) {
         if (isset($_COOKIE["user"])) {
             http_response_code(401);
+            if ($aa_json_req) {
+                header('Content-Type: application/json; charset=utf-8');
+                exit(json_encode(['error' => 'session expired']));
+            }
             exit($lang['error-sessionexpired']);
         } else {
             http_response_code(403);
+            if ($aa_json_req) {
+                header('Content-Type: application/json; charset=utf-8');
+                exit(json_encode(['error' => 'authentication required']));
+            }
             exit($lang['error-permissiondenied']);
         }
     }
