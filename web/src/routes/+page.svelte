@@ -1,8 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import PostCard from '$components/PostCard.svelte';
+  import PostModal from '$components/PostModal.svelte';
 
   // Browse page — feed of Posts (per Phase 1.13.D-2's model change).
   // Each Post wraps 1+ assets; the card renders the cover. Grid mode
@@ -125,6 +127,21 @@
 
   const hasMore = $derived(nextCursor !== null);
   const showEmpty = $derived(initialLoaded && items.length === 0 && !error);
+
+  // ?post={uuid} → overlay the PostModal on top of the feed. The
+  // feed stays mounted (no scroll loss, no re-fetch). PostCard's
+  // click handler sets this param via goto(); the modal's onClose
+  // clears it.
+  const modalPostId = $derived(page.url.searchParams.get('post'));
+
+  async function closeModal() {
+    const target = new URL(page.url);
+    target.searchParams.delete('post');
+    await goto(target.pathname + target.search, {
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
 </script>
 
 <svelte:head>
@@ -175,3 +192,7 @@
     {/if}
   {/if}
 </div>
+
+{#if modalPostId}
+  <PostModal postId={modalPostId} onClose={closeModal} />
+{/if}
