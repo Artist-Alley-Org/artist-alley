@@ -137,15 +137,48 @@
   // mark the asset broken and render the placeholder icon instead.
   let brokenSlides = $state<Set<string>>(new Set());
 
+  // Review mode — same modal, sidebar hidden, the preview pane
+  // becomes a zoom/pan/tile canvas. Toggled by the dedicated review
+  // button in the toolbar. Tile mode and the zoom/pan transform only
+  // apply while reviewMode is true; exiting review resets them.
+  let reviewMode = $state(false);
+  let tileMode = $state(false);
+
+  // Zoom/pan transform — only meaningful while reviewMode is true.
+  // zoom is multiplicative; panX/panY are translate offsets relative
+  // to the canvas center. drag* fields capture mousedown anchors so
+  // movement is computed as delta-from-anchor.
+  let zoom = $state(1);
+  let panX = $state(0);
+  let panY = $state(0);
+  let dragging = $state(false);
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let panStartX = 0;
+  let panStartY = 0;
+
+  // Canvas ref + intrinsic dimensions of the loaded review image.
+  // Tile-mode uses the natural pixel size so the repeating pattern
+  // looks correct.
+  let canvasEl = $state<HTMLDivElement | undefined>(undefined);
+  let imgNaturalW = $state(0);
+  let imgNaturalH = $state(0);
+
   // Sidebar collapsed state. Persists per-browser. `null` until the
   // mount effect resolves it — until then we render expanded.
   let sidebarCollapsed = $state(false);
+
+  // Footer thumb strip collapsed state. Persists per-browser. The
+  // collapsed state shows just a chevron + "n / total" so the
+  // viewer always knows where they are even with the strip hidden.
+  let stripCollapsed = $state(false);
 
   // ---- Derived ------------------------------------------------------------
 
   const currentMember = $derived(post?.members?.[selectedIdx] ?? null);
   const currentAssetId = $derived(currentMember?.asset_id ?? null);
   const hasMultipleMembers = $derived((post?.members?.length ?? 0) > 1);
+  const currentIsImage = $derived(isImageExt(currentMember?.asset?.file_extension ?? null));
 
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
@@ -166,8 +199,8 @@
     dialogEl?.showModal();
     document.body.classList.add('overflow-hidden');
     // Restore sidebar collapsed state.
-    const saved = localStorage.getItem('postModal.sidebarCollapsed');
-    if (saved === '1') sidebarCollapsed = true;
+    if (localStorage.getItem('postModal.sidebarCollapsed') === '1') sidebarCollapsed = true;
+    if (localStorage.getItem('postModal.stripCollapsed') === '1') stripCollapsed = true;
   });
 
   onDestroy(() => {
@@ -331,7 +364,15 @@
     const n = post.members.length;
     if (n === 0) return;
     const clamped = Math.max(0, Math.min(n - 1, idx));
-    if (hasMultipleMembers) {
+    if (reviewMode) {
+      // Review mode bypasses the scroller (there isn't one in this
+      // mode); just swap the asset and reset the view transform so
+      // the next image opens at 1:1, untransformed.
+      selectedIdx = clamped;
+      resetReviewView();
+      const nextExt = post.members[clamped]?.asset?.file_extension ?? null;
+      if (tileMode && !isImageExt(nextExt)) tileMode = false;
+    } else if (hasMultipleMembers) {
       scrollToMember(clamped);
     } else {
       selectedIdx = clamped;
@@ -439,10 +480,115 @@
         break;
       case 'i':
       case 'I':
-        e.preventDefault();
-        toggleSidebar();
+        if (!reviewMode) {
+          e.preventDefault();
+          toggleSidebar();
+        }
+        break;
+      case 't':
+      case 'T':
+        if (reviewMode && currentIsImage) {
+          e.preventDefault();
+          tileMode = !tileMode;
+        }
+        break;
+      case 'r':
+      case 'R':
+        if (reviewMode) {
+          e.preventDefault();
+          resetReviewView();
+        }
+        break;
+      case 'Escape':
+        if (reviewMode) {
+          e.preventDefault();
+          exitReview();
+        }
+        // ESC outside review mode falls through to the dialog's
+        // native close behavior (the platform's ESC-closes-dialog).
         break;
     }
+  }
+
+  // ---- Review mode --------------------------------------------------------
+
+  function enterReview() {
+    if (!post) return;
+    reviewMode = true;
+    resetReviewView();
+  }
+
+  function exitReview() {
+    reviewMode = false;
+    tileMode = false;
+    resetReviewView();
+  }
+
+  function resetReviewView() {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+  }
+
+  // Wheel zoom — zoom toward cursor. Disabled in tile mode (the
+  // pattern is fixed-size by definition; scaling it would just
+  // scale the view, not reveal anything new).
+  function handleWheel(e: WheelEvent) {
+    if (!reviewMode || tileMode) return;
+    const el = canvasEl;
+    if (!el) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.max(0.1, Math.min(20, zoom * factor));
+    // image_pt = (cursor - pan) / zoom  →  pan' = cursor - image_pt * zoom'
+    const ratio = newZoom / zoom;
+    panX = cx - (cx - panX) * ratio;
+    panY = cy - (cy - panY) * ratio;
+    zoom = newZoom;
+  }
+
+  function handleCanvasMouseDown(e: MouseEvent) {
+    if (!reviewMode || tileMode || e.button !== 0) return;
+    dragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    panStartX = panX;
+    panStartY = panY;
+  }
+
+  function handleWindowMouseMove(e: MouseEvent) {
+    if (!dragging) return;
+    panX = panStartX + (e.clientX - dragStartX);
+    panY = panStartY + (e.clientY - dragStartY);
+  }
+
+  function handleWindowMouseUp() {
+    dragging = false;
+  }
+
+  function handleReviewImgLoad(e: Event) {
+    const img = e.currentTarget as HTMLImageElement;
+    imgNaturalW = img.naturalWidth;
+    imgNaturalH = img.naturalHeight;
+  }
+
+  function toggleStrip() {
+    stripCollapsed = !stripCollapsed;
+    localStorage.setItem('postModal.stripCollapsed', stripCollapsed ? '1' : '0');
+  }
+
+  // Image-type gate — keeps T (tile) disabled for non-image
+  // resources (video, 3D, PDF).
+  function isImageExt(ext: string | null): boolean {
+    if (!ext) return false;
+    const e = ext.toLowerCase().replace(/^\./, '');
+    return [
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
+      'avif', 'heic', 'heif',
+    ].includes(e);
   }
 
   // Per-slide image error handling. First failure swaps col → /file
@@ -534,7 +680,11 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window
+  onkeydown={handleKeydown}
+  onmousemove={handleWindowMouseMove}
+  onmouseup={handleWindowMouseUp}
+/>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -549,6 +699,72 @@
     class="relative flex h-full w-full flex-col overflow-hidden bg-surface text-fg shadow-2xl sm:my-4 sm:h-[calc(100vh-2rem)] sm:rounded-lg"
     role="presentation"
   >
+    <!-- Top toolbar — review enter/exit (left), close (right). The
+         review button is the *only* way to enter review mode (per
+         user preference: no click-the-image affordance anywhere). -->
+    {#if post && !loading && !error}
+      <div class="pointer-events-none absolute left-0 right-0 top-0 z-30 flex items-start justify-between p-4">
+        <div class="pointer-events-auto flex items-center gap-2">
+          {#if !reviewMode}
+            {#if currentIsImage}
+              <button
+                type="button"
+                onclick={enterReview}
+                class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+                title="Open review (zoom, pan, tile)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                Review
+              </button>
+            {/if}
+          {:else}
+            <button
+              type="button"
+              onclick={exitReview}
+              class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+              title="Back to post (Esc)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+              Back
+            </button>
+            {#if currentIsImage}
+              <button
+                type="button"
+                onclick={() => (tileMode = !tileMode)}
+                class={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors ${tileMode ? 'bg-accent' : 'bg-black/60 hover:bg-black/80'}`}
+                aria-pressed={tileMode}
+                title="Tile (T) — texture pattern view"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                </svg>
+                Tile
+              </button>
+            {/if}
+            <button
+              type="button"
+              onclick={resetReviewView}
+              class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+              title="Reset zoom & pan (R)"
+            >
+              Reset
+            </button>
+            <span class="rounded-md bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
+              Wheel: zoom · Drag: pan
+            </span>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <!-- Close / back button — pinned top-right of the modal frame. -->
     <button
       type="button"
@@ -599,14 +815,49 @@
              and footer thumbnails both call goToMember(), which
              smooth-scrolls the matching slide into view. The reverse
              direction (manual scrolling drives selectedIdx) is wired
-             via an IntersectionObserver in the script. -->
+             via an IntersectionObserver in the script.
+             In review mode the scroller is replaced with a single
+             zoom/pan canvas for the current asset. -->
         <div class="relative flex flex-1 overflow-hidden bg-neutral-950">
-          {#if hasMultipleMembers}
+          {#if reviewMode && currentAssetId}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              bind:this={canvasEl}
+              onwheel={handleWheel}
+              onmousedown={handleCanvasMouseDown}
+              class="relative h-full w-full overflow-hidden"
+              class:cursor-grab={!dragging && !tileMode && currentIsImage}
+              class:cursor-grabbing={dragging}
+            >
+              {#if tileMode && currentIsImage}
+                <div
+                  class="absolute inset-0"
+                  style="background-image: url('/api/v1/assets/{currentAssetId}/file'); background-repeat: repeat; background-size: {imgNaturalW || 'auto'}px {imgNaturalH || 'auto'}px; background-position: center center;"
+                ></div>
+                <img
+                  src="/api/v1/assets/{currentAssetId}/file"
+                  alt=""
+                  onload={handleReviewImgLoad}
+                  class="pointer-events-none invisible absolute"
+                />
+              {:else}
+                <img
+                  src="/api/v1/assets/{currentAssetId}/file"
+                  alt={currentMember?.asset?.title || post.title}
+                  onload={handleReviewImgLoad}
+                  draggable="false"
+                  class="pointer-events-none absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
+                  style="transform: translate(calc(-50% + {panX}px), calc(-50% + {panY}px)) scale({zoom}); transform-origin: center center;"
+                />
+              {/if}
+            </div>
+          {:else if hasMultipleMembers}
             <div
               bind:this={scrollerEl}
               class="post-modal-scroller h-full w-full snap-y snap-mandatory overflow-y-auto"
             >
               {#each post.members as member, i (member.asset_id)}
+                {@const slideIsImage = isImageExt(member.asset?.file_extension ?? null)}
                 <div
                   data-slide-idx={i}
                   class="flex h-full w-full shrink-0 snap-start items-center justify-center"
@@ -625,7 +876,7 @@
                       alt={member.asset?.title || post.title}
                       data-asset-id={member.asset_id}
                       loading={i === selectedIdx ? 'eager' : 'lazy'}
-                      class="max-h-full max-w-full object-contain"
+                      class="h-full w-full object-contain"
                       onerror={handleSlideImgError}
                     />
                   {/if}
@@ -647,7 +898,7 @@
                   src={colVariantUrl(currentAssetId)}
                   alt={currentMember?.asset?.title || post.title}
                   data-asset-id={currentAssetId}
-                  class="max-h-full max-w-full object-contain"
+                  class="h-full w-full object-contain"
                   onerror={handleSlideImgError}
                 />
               {/if}
@@ -672,7 +923,7 @@
               aria-label="Previous asset"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m18 15-6-6-6 6" />
+                <path d={reviewMode ? 'm15 18-6-6 6-6' : 'm18 15-6-6-6 6'} />
               </svg>
             </button>
             <button
@@ -683,18 +934,23 @@
               aria-label="Next asset"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m6 9 6 6 6-6" />
+                <path d={reviewMode ? 'm9 18 6-6-6-6' : 'm6 9 6 6 6-6'} />
               </svg>
             </button>
-            <!-- Position indicator (n / total) — bottom-center. -->
-            <div class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
-              {selectedIdx + 1} / {post.members.length}
-            </div>
+            <!-- Position indicator (n / total) — bottom-center.
+                 Hidden in review mode because the footer strip
+                 collapsed-state already carries n / total. -->
+            {#if !reviewMode}
+              <div class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
+                {selectedIdx + 1} / {post.members.length}
+              </div>
+            {/if}
           {/if}
 
           <!-- Sidebar collapsed: show a re-open chevron tab in the
-               preview's right edge so the user can get it back. -->
-          {#if sidebarCollapsed}
+               preview's right edge so the user can get it back.
+               Suppressed in review mode (no sidebar there). -->
+          {#if sidebarCollapsed && !reviewMode}
             <button
               type="button"
               onclick={toggleSidebar}
@@ -709,8 +965,9 @@
           {/if}
         </div>
 
-        <!-- Sidebar (right). Collapsible. -->
-        {#if !sidebarCollapsed}
+        <!-- Sidebar (right). Hidden entirely in review mode so the
+             canvas can use the full modal width for zoom/pan. -->
+        {#if !sidebarCollapsed && !reviewMode}
           <aside class="flex flex-col border-t border-border bg-surface md:w-96 md:border-l md:border-t-0">
             <!-- Sticky author header. -->
             <header class="flex items-start gap-3 border-b border-border p-4">
@@ -864,40 +1121,61 @@
         {/if}
       </div>
 
-      <!-- Bottom member strip — only for posts with >1 member. -->
+      <!-- Bottom member strip — only for posts with >1 member.
+           Collapsible: the chevron toggle hides the thumbnail row
+           and leaves a slim header showing just "n / total" so the
+           viewer always knows where they are. In review mode the
+           strip is the only nav for switching assets (no scroll
+           snap), so the collapsed-state still shows position. -->
       {#if hasMultipleMembers}
-        <div class="border-t border-border bg-surface-elevated px-2 py-2">
-          <div class="flex gap-2 overflow-x-auto">
-            {#each post.members as member, i (member.asset_id)}
-              <button
-                type="button"
-                onclick={() => goToMember(i)}
-                class="relative h-16 w-16 shrink-0 overflow-hidden rounded border-2 transition-all"
-                class:border-accent={i === selectedIdx}
-                class:opacity-100={i === selectedIdx}
-                class:border-transparent={i !== selectedIdx}
-                class:opacity-50={i !== selectedIdx}
-                class:hover:opacity-100={i !== selectedIdx}
-                aria-label="Show asset {i + 1}"
-                aria-current={i === selectedIdx ? 'true' : undefined}
-              >
-                {#if member.asset?.file_hash}
-                  <img
-                    src={colVariantUrl(member.asset_id)}
-                    alt=""
-                    loading="lazy"
-                    class="h-full w-full object-cover"
-                  />
-                {:else}
-                  <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/40">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2" />
-                    </svg>
-                  </div>
-                {/if}
-              </button>
-            {/each}
-          </div>
+        <div class="border-t border-border bg-surface-elevated">
+          <button
+            type="button"
+            onclick={toggleStrip}
+            class="flex w-full items-center justify-center gap-1 py-1 text-xs text-fg-muted hover:bg-surface"
+            aria-expanded={!stripCollapsed}
+            aria-label={stripCollapsed ? 'Show asset strip' : 'Hide asset strip'}
+          >
+            {#if stripCollapsed}
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+              <span>{selectedIdx + 1} / {post.members.length}</span>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            {/if}
+          </button>
+          {#if !stripCollapsed}
+            <div class="flex gap-2 overflow-x-auto px-2 pb-2">
+              {#each post.members as member, i (member.asset_id)}
+                <button
+                  type="button"
+                  onclick={() => goToMember(i)}
+                  class="relative h-16 w-16 shrink-0 overflow-hidden rounded border-2 transition-all"
+                  class:border-accent={i === selectedIdx}
+                  class:opacity-100={i === selectedIdx}
+                  class:border-transparent={i !== selectedIdx}
+                  class:opacity-50={i !== selectedIdx}
+                  class:hover:opacity-100={i !== selectedIdx}
+                  aria-label="Show asset {i + 1}"
+                  aria-current={i === selectedIdx ? 'true' : undefined}
+                >
+                  {#if member.asset?.file_hash}
+                    <img
+                      src="/api/v1/assets/{member.asset_id}/file"
+                      alt=""
+                      loading="lazy"
+                      class="h-full w-full object-cover"
+                    />
+                  {:else}
+                    <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/40">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                      </svg>
+                    </div>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}
