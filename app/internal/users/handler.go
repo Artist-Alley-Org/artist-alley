@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +20,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -27,13 +29,52 @@ const (
 	CapSystemAdmin    = "system.admin"
 )
 
+// CacheDomain is the NOTIFY channel for per-user public-profile cache
+// entries. Exported because cross-package writers (the posts handler
+// on post create/delete, future federation imports) call
+// [InvalidateProfile] which references it.
+const CacheDomain = "user.profile"
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	// byRef caches the closure-resolved openapi.UserPublic by
+	// rs_user_id. nil-safe — nil means "no cache", every request
+	// hits the DB. The by-username path doesn't cache (rare URL,
+	// not worth the second-key bookkeeping); it always queries.
+	byRef *cache.Cache[openapi.UserPublic]
 }
 
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Logger: logger}
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Logger: logger}
+	if registry != nil {
+		// 5_000 entries comfortably fits ~1MB resident for typical
+		// profile sizes and covers the hot end of any plausible
+		// active-author set. Anything cold falls back to DB.
+		h.byRef = cache.Register[openapi.UserPublic](registry, CacheDomain, 5_000)
+	}
+	return h
+}
+
+// InvalidateProfile broadcasts a cache invalidation for the given
+// user's public-profile entry. Call after any DB write that could
+// change what /users/{ref} returns:
+//   - profile edits (UpsertUserProfile)
+//   - posts.CreatePost / DeletePost (post_count is part of the cached
+//     value, so author-side post mutations need to evict)
+//
+// Broadcast-only. Same-process callers without direct Cache access
+// rely on the Registry's LISTEN goroutine to dispatch the eviction.
+// Within this package, UpsertUserProfile uses byRef.Invalidate
+// directly for immediate local eviction.
+//
+// Safe to call with a nil registry (no-op).
+func InvalidateProfile(ctx context.Context, registry *cache.Registry, userRef int64) {
+	if registry == nil {
+		return
+	}
+	_ = registry.Emit(ctx, CacheDomain, strconv.FormatInt(userRef, 10))
 }
 
 // publicRow is the structural common shape of both GetUserPublicBy*
@@ -85,6 +126,12 @@ func (h *Handler) GetUserPublicByRef(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
+	key := strconv.FormatInt(req.Ref, 10)
+	if h.byRef != nil {
+		if v, ok := h.byRef.Get(key); ok {
+			return openapi.GetUserPublicByRef200JSONResponse(v), nil
+		}
+	}
 	q := New(h.Pool)
 	row, err := q.GetUserPublicByRef(ctx, req.Ref)
 	if err != nil {
@@ -98,6 +145,9 @@ func (h *Handler) GetUserPublicByRef(
 	out, err := h.rowToAPI(ctx, q, fromByRef(row))
 	if err != nil {
 		return nil, err
+	}
+	if h.byRef != nil {
+		h.byRef.Add(key, *out)
 	}
 	return openapi.GetUserPublicByRef200JSONResponse(*out), nil
 }
@@ -216,6 +266,13 @@ func (h *Handler) UpdateUserProfile(
 		return nil, fmt.Errorf("users: upsert profile: %w", err)
 	}
 
+	// The cached entry (if any) just went stale. Local-evict +
+	// broadcast in one Invalidate call — peer instances and the
+	// LISTEN goroutine pick up via NOTIFY.
+	if h.byRef != nil {
+		_ = h.byRef.Invalidate(ctx, strconv.FormatInt(req.Ref, 10))
+	}
+
 	row, err := q.GetUserPublicByRef(ctx, req.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("users: refetch: %w", err)
@@ -223,6 +280,9 @@ func (h *Handler) UpdateUserProfile(
 	out, err := h.rowToAPI(ctx, q, fromByRef(row))
 	if err != nil {
 		return nil, err
+	}
+	if h.byRef != nil {
+		h.byRef.Add(strconv.FormatInt(req.Ref, 10), *out)
 	}
 	return openapi.UpdateUserProfile200JSONResponse(*out), nil
 }

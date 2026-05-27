@@ -53,7 +53,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger),
-		users:        users.NewHandler(pool, logger),
+		users:        users.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
