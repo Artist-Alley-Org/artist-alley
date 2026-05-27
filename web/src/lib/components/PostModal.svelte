@@ -80,6 +80,20 @@
     member_since: string;
     post_count: number;
   }
+  interface AssetFieldValue {
+    field_id: string;
+    field_code: string;
+    field_label?: string;
+    type: 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
+        | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';
+    value_text?: string | null;
+    value_num?: number | null;
+    value_date?: string | null;
+    value_options?: string[] | null;
+    value_ref?: string | null;
+    set_by: string;
+    set_at: string;
+  }
 
   // ---- State --------------------------------------------------------------
 
@@ -94,6 +108,13 @@
   // optimistically on click, reverted on error.
   let liked = $state(false);
   let likeBusy = $state(false);
+
+  // Per-member asset metadata. Refetched whenever the selected member
+  // changes (the user navigates between assets in a multi-asset post).
+  // Keyed by asset_id so going back to a previously-viewed member
+  // serves from local cache without a re-fetch.
+  let fieldsByAsset = $state<Map<string, AssetFieldValue[]>>(new Map());
+  let fieldsLoading = $state(false);
 
   // Which member is the preview showing. Defaults to the cover, or
   // the first member if no cover is pinned.
@@ -122,6 +143,12 @@
   const postedRelative = $derived(post ? relativeTime(post.posted_at) : '');
   const postedAbsolute = $derived(post ? new Date(post.posted_at).toLocaleString() : '');
 
+  // The current asset's metadata field values, ready to render.
+  // Empty array while loading or when the asset has no fields.
+  const currentFields = $derived<AssetFieldValue[]>(
+    currentAssetId ? (fieldsByAsset.get(currentAssetId) ?? []) : [],
+  );
+
   // ---- Lifecycle ----------------------------------------------------------
 
   onMount(() => {
@@ -144,6 +171,34 @@
     const id = postId;
     void loadPost(id);
   });
+
+  // Fetch field values for whichever member is currently selected.
+  // Cached in fieldsByAsset; flipping back to a previously-viewed
+  // member is instant.
+  $effect(() => {
+    const aid = currentAssetId;
+    if (!aid) return;
+    if (fieldsByAsset.has(aid)) return;
+    void loadFields(aid);
+  });
+
+  async function loadFields(assetId: string) {
+    fieldsLoading = true;
+    try {
+      const { data } = await api.GET('/assets/{id}/fields', {
+        params: { path: { id: assetId } },
+      });
+      if (data) {
+        fieldsByAsset.set(assetId, data as AssetFieldValue[]);
+        // Reassign to trigger reactive update of the derived currentFields.
+        fieldsByAsset = new Map(fieldsByAsset);
+      }
+    } catch {
+      // Soft fail — sidebar just renders without the metadata block.
+    } finally {
+      fieldsLoading = false;
+    }
+  }
 
   async function loadPost(id: string) {
     loading = true;
@@ -344,6 +399,40 @@
     const parts = name.trim().split(/\s+/).slice(0, 2);
     return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
   }
+
+  // Pretty-print a field value based on its declared type. Returns the
+  // empty string for "no value" so the caller can drop the field.
+  // release_date intentionally renders as just the year — that's the
+  // sensible granularity for trading-card data.
+  function formatFieldValue(f: AssetFieldValue): string {
+    switch (f.type) {
+      case 'text':
+      case 'longtext':
+      case 'rich_text':
+        return (f.value_text ?? '').trim();
+      case 'number':
+        return f.value_num == null ? '' : String(f.value_num);
+      case 'boolean':
+        return f.value_text === 'true' ? 'Yes' : f.value_text === 'false' ? 'No' : '';
+      case 'date':
+      case 'datetime': {
+        if (!f.value_date) return '';
+        const d = new Date(f.value_date);
+        if (isNaN(d.getTime())) return '';
+        if (f.field_code === 'pokemon_release_date') return String(d.getUTCFullYear());
+        return f.type === 'date' ? d.toLocaleDateString() : d.toLocaleString();
+      }
+      case 'select':
+        return f.value_text ?? '';
+      case 'multi_select':
+        return (f.value_options ?? []).join(', ');
+      case 'tree':
+      case 'reference':
+        return f.value_ref ?? '';
+      default:
+        return '';
+    }
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -530,6 +619,26 @@
 
               {#if post.description}
                 <p class="mb-4 whitespace-pre-wrap text-fg-muted">{post.description}</p>
+              {/if}
+
+              <!-- Per-asset metadata. Only the currently-selected
+                   member's values are shown; switching members swaps
+                   the block. Empty values are dropped so a card with
+                   no flavor text doesn't get a blank row. -->
+              {#if currentFields.length > 0}
+                <dl class="mb-4 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 border-t border-border pt-4 text-xs">
+                  {#each currentFields as f (f.field_id)}
+                    {@const val = formatFieldValue(f)}
+                    {#if val}
+                      <dt class="truncate text-fg-muted" title={f.field_label || f.field_code}>
+                        {f.field_label || f.field_code}
+                      </dt>
+                      <dd class="min-w-0 break-words text-fg" class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}>
+                        {val}
+                      </dd>
+                    {/if}
+                  {/each}
+                </dl>
               {/if}
 
               {#if post.tags.length > 0}
