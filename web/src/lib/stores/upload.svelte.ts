@@ -24,6 +24,22 @@ import type { components } from '$api/schema';
 
 type AssetCreate = components['schemas']['AssetCreate'];
 
+// What a per-asset field value carries before the asset exists.
+// Mirrors AssetFieldValueWrite but indexed by field_id locally so the
+// upload row can carry its set of pending writes and we apply them
+// after the asset is created.
+export interface PendingFieldValue {
+  fieldId: string;
+  type:
+    | 'text' | 'longtext' | 'rich_text' | 'number' | 'boolean'
+    | 'date' | 'datetime' | 'select' | 'multi_select' | 'tree' | 'reference';
+  valueText?: string | null;
+  valueNum?: number | null;
+  valueDate?: string | null;
+  valueOptions?: string[] | null;
+  valueRef?: string | null;
+}
+
 // ---- Types ----------------------------------------------------------------
 
 export type UploadRowState =
@@ -58,6 +74,15 @@ export interface UploadRow {
   tags: string[];
   /** Last error message, for the retry surface. */
   error: string | null;
+  /**
+   * Per-asset metadata field values. Optional: empty by default, the
+   * user opens the "Metadata" disclosure on this row to populate it.
+   * Keyed by field_id. Written via PUT /assets/{id}/fields/{field_id}
+   * after the asset is created — runRow handles the sequencing.
+   */
+  fieldValues: Map<string, PendingFieldValue>;
+  /** True after the per-asset field values have been written. */
+  fieldsWritten: boolean;
 }
 
 export type PostMode = 'one-post' | 'one-per-file' | 'no-post';
@@ -280,6 +305,17 @@ class UploadState {
     this.composeError = null;
     this.composeBusy = true;
     try {
+      // Flush per-row field values BEFORE creating any posts. Each
+      // row's writes are independent — one bad field doesn't fail
+      // the rest (writeFieldValues already soft-fails individual
+      // writes), but a row with no fieldValues skips this step
+      // entirely.
+      for (const row of ready) {
+        if (row.fieldValues.size > 0 && !row.fieldsWritten) {
+          await this.writeFieldValues(row);
+          row.fieldsWritten = true;
+        }
+      }
       if (this.compose.enabled) {
         await this.createPosts(ready);
       }
@@ -338,6 +374,8 @@ class UploadState {
         title: defaultTitleFromFilename(file.name),
         tags: [],
         error: null,
+        fieldValues: new Map(),
+        fieldsWritten: false,
       });
     }
     this.rows = [...this.rows, ...additions];
@@ -370,18 +408,64 @@ class UploadState {
         file_hash: row.hash,
         file_extension: extensionOf(row.file.name),
         tags: row.tags,
+        // RS-derived: stuff the upload context into the asset's
+        // metadata JSONB so it's preserved even before the proper
+        // field_value extraction lands. This is what RS's
+        // resource_log + autocomplete macros capture at upload
+        // time (filename, size). Real EXIF / IPTC / XMP parsing
+        // lives in the async pipeline (Phase 1.15).
+        metadata: {
+          original_filename: row.file.name,
+          original_size_bytes: row.file.size,
+        },
       };
       const { data, error } = await api.POST('/assets', { body });
       if (error || !data) {
         throw new Error(extractError(error) ?? 'Failed to create asset.');
       }
       row.assetId = data.id;
+      // Per-asset metadata: the user may keep editing the field
+      // values after the row is ready (the disclosure is collapsed
+      // by default so most users open it AFTER the upload finishes).
+      // We flush field values at submit time instead of here.
       row.state = 'ready';
     } catch (e) {
       row.error = e instanceof Error ? e.message : 'Upload failed.';
       row.state = 'errored';
     } finally {
       this.kick();
+    }
+  }
+
+  /**
+   * Apply the row's pending per-asset field values via
+   * PUT /assets/{id}/fields/{field_id}. Soft-fail on individual
+   * writes — a bad value shouldn't abort the upload.
+   */
+  private async writeFieldValues(row: UploadRow): Promise<void> {
+    const aid = row.assetId;
+    if (!aid) return;
+    for (const v of row.fieldValues.values()) {
+      const body: Record<string, unknown> = { set_by: 'manual' };
+      if (typeof v.valueText === 'string') body.value_text = v.valueText;
+      if (typeof v.valueNum === 'number') body.value_num = v.valueNum;
+      if (typeof v.valueDate === 'string') body.value_date = v.valueDate;
+      if (Array.isArray(v.valueOptions)) body.value_options = v.valueOptions;
+      if (typeof v.valueRef === 'string') body.value_ref = v.valueRef;
+      try {
+        // Plain fetch — openapi-fetch's PUT for this endpoint hit a
+        // type/runtime mismatch we couldn't track down quickly. The
+        // shape is small and stable so this is fine.
+        await fetch(`/api/v1/assets/${aid}/fields/${v.fieldId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // Soft fail; the asset still exists, the user can edit the
+        // field value from the asset detail page later.
+      }
     }
   }
 
@@ -516,3 +600,46 @@ function extractError(err: unknown): string | undefined {
 
 // Singleton export. Same pattern as auth.svelte.ts.
 export const upload = new UploadState();
+
+// ---- Field-definition cache ----------------------------------------------
+//
+// Shared by every UploadFileRow's metadata editor. The field list
+// changes rarely; a per-resource_type in-memory cache for the
+// session is fine — no need to thread through the cache.Registry
+// equivalent on the frontend.
+
+const fieldsCache = new Map<number, Promise<FieldDef[]>>();
+
+export interface FieldDef {
+  id: string;
+  code: string;
+  label: string;
+  description?: string;
+  type: PendingFieldValue['type'];
+  options?: { values?: string[] };
+  required?: boolean;
+  display_order: number;
+  display_group: string;
+}
+
+/**
+ * Returns the field definitions visible to the upload form for a
+ * given resource_type. Cached for the session.
+ */
+export function fieldsForResourceType(resourceType: number): Promise<FieldDef[]> {
+  const cached = fieldsCache.get(resourceType);
+  if (cached) return cached;
+  const p = (async () => {
+    const { data, error } = await api.GET('/fields', {
+      params: { query: { status: 'active', resource_type: resourceType } },
+    });
+    if (error || !data) {
+      throw new Error(extractError(error) ?? 'Failed to load fields.');
+    }
+    return data as FieldDef[];
+  })();
+  fieldsCache.set(resourceType, p);
+  // Drop the cache entry on failure so the next attempt can retry.
+  p.catch(() => fieldsCache.delete(resourceType));
+  return p;
+}
