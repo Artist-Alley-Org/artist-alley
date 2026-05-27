@@ -333,6 +333,24 @@ func (rtOnly) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUs
 func (rtOnly) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from resourcetype test shim")
 }
+func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	panic("GetPostLike called from resourcetype test shim")
+}
+func (rtOnly) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	panic("LikePost called from resourcetype test shim")
+}
+func (rtOnly) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	panic("UnlikePost called from resourcetype test shim")
+}
+func (rtOnly) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	panic("ListPostComments called from resourcetype test shim")
+}
+func (rtOnly) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	panic("CreatePostComment called from resourcetype test shim")
+}
+func (rtOnly) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	panic("DeleteComment called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

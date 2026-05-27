@@ -17,6 +17,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/posts"
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
+	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
@@ -40,6 +41,7 @@ type apiServer struct {
 	posts        *posts.Handler
 	teams        *teams.Handler
 	users        *users.Handler
+	social       *social.Handler
 	setup        *setup.Handler
 }
 
@@ -54,6 +56,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
 		users:        users.NewHandler(pool, logger, cacheReg),
+		social:       social.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -222,6 +225,27 @@ func (s *apiServer) AddCollectionAcl(ctx context.Context, req openapi.AddCollect
 }
 func (s *apiServer) RemoveCollectionAcl(ctx context.Context, req openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	return s.collections.RemoveCollectionAcl(ctx, req)
+}
+
+// --- social ---------------------------------------------------------------
+
+func (s *apiServer) GetPostLike(ctx context.Context, req openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	return s.social.GetPostLike(ctx, req)
+}
+func (s *apiServer) LikePost(ctx context.Context, req openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	return s.social.LikePost(ctx, req)
+}
+func (s *apiServer) UnlikePost(ctx context.Context, req openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	return s.social.UnlikePost(ctx, req)
+}
+func (s *apiServer) ListPostComments(ctx context.Context, req openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	return s.social.ListPostComments(ctx, req)
+}
+func (s *apiServer) CreatePostComment(ctx context.Context, req openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	return s.social.CreatePostComment(ctx, req)
+}
+func (s *apiServer) DeleteComment(ctx context.Context, req openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	return s.social.DeleteComment(ctx, req)
 }
 
 // --- posts -----------------------------------------------------------------

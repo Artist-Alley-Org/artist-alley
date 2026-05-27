@@ -624,6 +624,24 @@ func (a authOnlyImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPu
 func (a authOnlyImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from auth test shim")
 }
+func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	panic("GetPostLike called from auth test shim")
+}
+func (a authOnlyImpl) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	panic("LikePost called from auth test shim")
+}
+func (a authOnlyImpl) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	panic("UnlikePost called from auth test shim")
+}
+func (a authOnlyImpl) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	panic("ListPostComments called from auth test shim")
+}
+func (a authOnlyImpl) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	panic("CreatePostComment called from auth test shim")
+}
+func (a authOnlyImpl) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	panic("DeleteComment called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -664,3 +664,21 @@ func (metaShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (metaShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from metadata_test test shim")
 }
+func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	panic("GetPostLike called from metadata_test test shim")
+}
+func (metaShim) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	panic("LikePost called from metadata_test test shim")
+}
+func (metaShim) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	panic("UnlikePost called from metadata_test test shim")
+}
+func (metaShim) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	panic("ListPostComments called from metadata_test test shim")
+}
+func (metaShim) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	panic("CreatePostComment called from metadata_test test shim")
+}
+func (metaShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	panic("DeleteComment called from metadata_test test shim")
+}
