@@ -209,6 +209,50 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const effectiveCapabilitiesForRoleName = `-- name: EffectiveCapabilitiesForRoleName :many
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM roles r
+    WHERE r.name = $1
+
+    UNION ALL
+
+    SELECT r.id, r.parent_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.parent_id
+    WHERE rc.depth < 32
+)
+SELECT DISTINCT rcap.capability_code AS code
+FROM role_chain rch
+JOIN role_capabilities rcap ON rcap.role_id = rch.id
+ORDER BY code
+`
+
+// Closure-walked capabilities for the named role, including everything
+// inherited from its parent chain. Used to populate the synthetic
+// Anonymous Identity that the middleware injects on unauthenticated
+// requests. No team scope (the Anonymous role isn't team-scoped by
+// design); the returned set is flat global codes.
+func (q *Queries) EffectiveCapabilitiesForRoleName(ctx context.Context, name string) ([]string, error) {
+	rows, err := q.db.Query(ctx, effectiveCapabilitiesForRoleName, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		items = append(items, code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const effectiveCapabilitiesForUser = `-- name: EffectiveCapabilitiesForUser :many
 WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth

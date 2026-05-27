@@ -333,6 +333,29 @@ SELECT code, team_id
 FROM expanded
 ORDER BY code, team_id NULLS FIRST;
 
+-- name: EffectiveCapabilitiesForRoleName :many
+-- Closure-walked capabilities for the named role, including everything
+-- inherited from its parent chain. Used to populate the synthetic
+-- Anonymous Identity that the middleware injects on unauthenticated
+-- requests. No team scope (the Anonymous role isn't team-scoped by
+-- design); the returned set is flat global codes.
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM roles r
+    WHERE r.name = $1
+
+    UNION ALL
+
+    SELECT r.id, r.parent_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.parent_id
+    WHERE rc.depth < 32
+)
+SELECT DISTINCT rcap.capability_code AS code
+FROM role_chain rch
+JOIN role_capabilities rcap ON rcap.role_id = rch.id
+ORDER BY code;
+
 -- name: AssignedRolesForUser :many
 -- Returns every role the user has been assigned, with the optional
 -- team scope. NULL team_id = global assignment. Replaces the old
