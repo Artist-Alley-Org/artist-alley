@@ -153,6 +153,7 @@ COMMENT ON TABLE collection_posts IS
 -- assets' own search_text is maintained by the Phase 1.9 metadata
 -- trigger; we just read from it.
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION rebuild_post_search_text(p_post_id UUID) RETURNS VOID AS $$
 DECLARE
     asset_search TEXT;
@@ -178,35 +179,42 @@ BEGIN
      WHERE id = p_post_id;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION posts_search_text_trigger() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM rebuild_post_search_text(NEW.id);
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER posts_search_text
 AFTER INSERT OR UPDATE OF title, description ON posts
 FOR EACH ROW EXECUTE FUNCTION posts_search_text_trigger();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION post_tags_search_text_trigger() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM rebuild_post_search_text(COALESCE(NEW.post_id, OLD.post_id));
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER post_tags_search_text
 AFTER INSERT OR UPDATE OR DELETE ON post_tags
 FOR EACH ROW EXECUTE FUNCTION post_tags_search_text_trigger();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION post_assets_search_text_trigger() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM rebuild_post_search_text(COALESCE(NEW.post_id, OLD.post_id));
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER post_assets_search_text
 AFTER INSERT OR UPDATE OR DELETE ON post_assets
