@@ -1,34 +1,45 @@
 <script lang="ts">
+  // /account home — full tile grid grouped by section.
+
   import { t } from '$stores/lang.svelte';
-
-  interface Tile {
-    href: string;
-    title: () => string;
-    blurb: string;
-  }
-
-  const tiles: Tile[] = [
-    { href: '/account/profile',     title: () => t('account.sections.profile'),     blurb: 'Display name, bio, avatar, links.' },
-    { href: '/account/preferences', title: () => t('account.sections.preferences'), blurb: 'Theme, language.' },
-    { href: '/account/preferences/ai', title: () => t('account.sections.ai'),       blurb: 'Per-user AI provider override.' },
-    { href: '/account/password',    title: () => t('account.sections.password'),    blurb: 'Change password.' },
-    { href: '/account/tokens',      title: () => t('account.sections.tokens'),      blurb: 'Personal access tokens.' },
-    { href: '/account/messages',    title: () => t('account.sections.messages'),    blurb: 'Inbox & notifications.' },
-  ];
+  import AdminIcon from '$components/AdminIcon.svelte';
+  import { ACCOUNT_GROUPS, itemsByGroup } from '$lib/account/sections';
 </script>
 
-<svelte:head><title>Account — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.title')} — artist-alley</title></svelte:head>
 
-<p class="mb-4 text-sm text-fg-muted">{t('account.overview.intro')}</p>
+<p class="mb-6 text-sm text-fg-muted">{t('account.overview.intro')}</p>
 
-<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-  {#each tiles as tile (tile.href)}
-    <a
-      href={tile.href}
-      class="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50"
-    >
-      <h2 class="text-base font-semibold text-fg">{tile.title()}</h2>
-      <p class="mt-1 text-sm text-fg-muted">{tile.blurb}</p>
-    </a>
+<div class="space-y-8">
+  {#each ACCOUNT_GROUPS as group (group.id)}
+    <section>
+      <header class="mb-3 flex items-center gap-2">
+        <span class="text-fg-muted"><AdminIcon name={group.iconKey} size={16} /></span>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
+          {t(`account.groups.${group.id}.title`)}
+        </h2>
+      </header>
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {#each itemsByGroup(group.id) as item (item.slug)}
+          <a
+            href={item.href}
+            class="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <h3 class="text-sm font-medium text-fg">
+                {t(`account.items.${item.slug}.title`)}
+              </h3>
+              {#if item.status === 'stub' && item.phase}
+                <span class="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                  {t('admin.status.phase', { phase: item.phase })}
+                </span>
+              {/if}
+            </div>
+            <p class="mt-1 text-xs text-fg-muted">{t(`account.items.${item.slug}.blurb`)}</p>
+          </a>
+        {/each}
+      </div>
+    </section>
   {/each}
 </div>

@@ -81,6 +81,15 @@
     <circle cx="12" cy="12" r="10" />
     <line x1="12" y1="16" x2="12" y2="12" />
     <line x1="12" y1="8" x2="12.01" y2="8" />
+  {:else if name === 'communication'}
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  {:else if name === 'workspace'}
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="14" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+  {:else if name === 'activity'}
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
   {:else}
     <circle cx="12" cy="12" r="9" />
   {/if}

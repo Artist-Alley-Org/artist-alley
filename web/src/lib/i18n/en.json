@@ -41,7 +41,44 @@
       "messages": "Messages"
     },
     "overview": {
-      "intro": "Manage your profile, preferences, and credentials."
+      "title": "Overview",
+      "intro": "Manage your profile, preferences, credentials, and the rest of your account."
+    },
+    "stub": {
+      "coming_soon": "This surface lands in a follow-up phase. The menu entry is here now so deep links work as features ship."
+    },
+    "groups": {
+      "identity":      { "title": "Identity" },
+      "communication": { "title": "Communication" },
+      "workspace":     { "title": "Workspace" },
+      "activity":      { "title": "Activity & insights" },
+      "help":          { "title": "Help" }
+    },
+    "items": {
+      "profile":        { "title": "Profile",         "blurb": "Display name, bio, avatar, links." },
+      "preferences":    { "title": "Preferences",     "blurb": "Theme and language." },
+      "ai":             { "title": "AI preferences", "blurb": "Per-user AI provider override." },
+      "password":       { "title": "Password",       "blurb": "Change your password." },
+      "security":       { "title": "Security",       "blurb": "Two-factor auth, recovery codes, login history." },
+      "sessions":       { "title": "Sessions",       "blurb": "Your active sessions across devices; revoke at will." },
+      "connected":      { "title": "Connected accounts", "blurb": "OAuth providers linked to this account." },
+
+      "messages":       { "title": "Messages",      "blurb": "Direct messages and inbox." },
+      "notifications":  { "title": "Notifications", "blurb": "What you get pinged about and where." },
+      "subscriptions":  { "title": "Subscriptions", "blurb": "Tags, users, and collections you follow." },
+
+      "tokens":         { "title": "API tokens",    "blurb": "Personal access tokens for scripts and integrations." },
+      "saved-searches": { "title": "Saved searches","blurb": "Queries you've pinned for quick recall." },
+      "bookmarks":      { "title": "Bookmarks",     "blurb": "Posts, assets, and collections you've starred." },
+      "drafts":         { "title": "Drafts",        "blurb": "Unpublished posts in progress." },
+      "trash":          { "title": "Trash",         "blurb": "Your soft-deleted items, recoverable for a while." },
+
+      "activity":  { "title": "Activity log", "blurb": "Recent actions you've taken on this install." },
+      "stats":     { "title": "Stats",        "blurb": "Upload count, reach, and other vanity metrics." },
+      "following": { "title": "Following",    "blurb": "People and tags you follow + your followers." },
+
+      "help":      { "title": "Help & support",  "blurb": "Documentation and how to reach us." },
+      "shortcuts": { "title": "Keyboard shortcuts", "blurb": "Cheatsheet for every keyboard shortcut." }
     },
     "profile": {
       "title": "Profile",
