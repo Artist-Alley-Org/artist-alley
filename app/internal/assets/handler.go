@@ -952,7 +952,7 @@ func computeThumbhash(ctx context.Context, svc *storage.Service, hash string, lo
 	if svc == nil {
 		return nil
 	}
-	rc, _, err := svc.Download(ctx, hash, "")
+	rc, _, err := svc.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
 		logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.thumbhash.download_failed",
 			slog.String("hash", hash),
