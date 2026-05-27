@@ -401,3 +401,28 @@ CREATE TABLE collection_posts (
     added_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     PRIMARY KEY (collection_id, post_id)
 );
+
+-- migrations/00017_acls.sql — per-resource and per-collection ACLs.
+-- ADR 0010 Layer 6.
+
+CREATE TABLE post_acls (
+    post_id               UUID         NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (post_id, principal_type, principal_id, permission)
+);
+
+CREATE TABLE collection_acls (
+    collection_id         UUID         NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (collection_id, principal_type, principal_id, permission)
+);
