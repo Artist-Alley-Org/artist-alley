@@ -10,6 +10,8 @@
   import { page } from '$app/state';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
+  import AdminIcon from '$components/AdminIcon.svelte';
+  import { ADMIN_SECTIONS } from '$lib/admin/sections';
 
   let { children } = $props();
 
@@ -18,21 +20,7 @@
   });
 
   const isAdmin = $derived(auth.can('system.admin'));
-
-  interface NavLink {
-    href: string;
-    label: () => string;
-  }
-
-  const links: NavLink[] = [
-    { href: '/admin/users',          label: () => t('admin_menu.users') },
-    { href: '/admin/roles',          label: () => t('admin_menu.roles') },
-    { href: '/admin/workflow',       label: () => t('admin_menu.workflow') },
-    { href: '/admin/fields',         label: () => t('admin_menu.fields') },
-    { href: '/admin/resource-types', label: () => t('admin_menu.resource_types') },
-    { href: '/admin/system',         label: () => t('admin_menu.system') },
-    { href: '/admin/system/log',     label: () => t('admin_menu.system_log') },
-  ];
+  const aboutActive = $derived(page.url.pathname.startsWith('/admin/about'));
 </script>
 
 <div class="mx-auto w-full max-w-7xl px-6 py-6">
@@ -48,22 +36,38 @@
     </div>
   {:else}
     <div class="grid grid-cols-1 gap-6 md:grid-cols-[16rem_1fr]">
-      <nav class="space-y-1 text-sm">
+      <nav class="space-y-0.5 text-sm">
         <a
           href="/admin"
           class={`block rounded-md px-3 py-1.5 ${page.url.pathname === '/admin' ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
         >
-          Overview
+          {t('admin_menu.overview')}
         </a>
-        {#each links as l (l.href)}
-          {@const active = page.url.pathname === l.href || page.url.pathname.startsWith(l.href + '/')}
+
+        {#each ADMIN_SECTIONS as section (section.slug)}
+          {@const href = `/admin/${section.slug}`}
+          {@const active = page.url.pathname === href || page.url.pathname.startsWith(href + '/')}
           <a
-            href={l.href}
-            class={`block rounded-md px-3 py-1.5 ${active ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+            {href}
+            class={`flex items-center gap-2 rounded-md px-3 py-1.5 ${active ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
           >
-            {l.label()}
+            <span class={active ? 'text-fg' : 'text-fg-muted'}>
+              <AdminIcon name={section.iconKey} size={15} />
+            </span>
+            <span>{t(`admin.sections.${section.slug}.title`)}</span>
           </a>
         {/each}
+
+        <div class="my-1 border-t border-border"></div>
+        <a
+          href="/admin/about"
+          class={`flex items-center gap-2 rounded-md px-3 py-1.5 ${aboutActive ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+        >
+          <span class={aboutActive ? 'text-fg' : 'text-fg-muted'}>
+            <AdminIcon name="about" size={15} />
+          </span>
+          <span>{t('admin_menu.about')}</span>
+        </a>
       </nav>
 
       <section>

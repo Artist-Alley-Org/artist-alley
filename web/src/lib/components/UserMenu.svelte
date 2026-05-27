@@ -31,18 +31,20 @@
     void lang.set(code);
     langOpen = false;
   }
+
+  const u = $derived(auth.user);
 </script>
 
-{#if auth.user}
+{#if u}
   <Menu align="right">
     {#snippet trigger({ open })}
       <span
         class="inline-flex items-center gap-2 rounded-full p-1 pr-3 hover:bg-surface-elevated"
         title="User menu"
       >
-        <Avatar name={auth.user.fullname || auth.user.username} sizeClass="h-8 w-8" />
+        <Avatar name={u.fullname || u.username} sizeClass="h-8 w-8" />
         <span class="hidden text-sm text-fg md:inline">
-          {auth.user.fullname || auth.user.username}
+          {u.fullname || u.username}
         </span>
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -60,12 +62,12 @@
     {/snippet}
 
     <p class="px-3 pb-2 pt-1 text-xs text-fg-muted">
-      {t('user_menu.signed_in_as', { username: auth.user.username })}
+      {t('user_menu.signed_in_as', { username: u.username })}
     </p>
     <div class="border-t border-border"></div>
 
     <a
-      href="/users/by-username/{auth.user.username}"
+      href="/users/by-username/{u.username}"
       role="menuitem"
       class="block px-3 py-1.5 text-sm text-fg hover:bg-surface-elevated"
     >

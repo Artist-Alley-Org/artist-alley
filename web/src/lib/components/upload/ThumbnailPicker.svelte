@@ -52,6 +52,7 @@
           body: {
             title: titleBase,
             resource_type: 1,
+            status: 'draft',
             file_hash: hash,
             file_extension: ext,
           },

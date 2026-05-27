@@ -405,6 +405,7 @@ class UploadState {
       const body: AssetCreate = {
         title: row.title || row.file.name,
         resource_type: DEFAULT_RESOURCE_TYPE,
+        status: 'draft',
         file_hash: row.hash,
         file_extension: extensionOf(row.file.name),
         tags: row.tags,

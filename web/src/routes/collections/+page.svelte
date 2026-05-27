@@ -65,6 +65,7 @@
           description: newDesc.trim(),
           visibility: newVisibility,
           membership: 'manual',
+          featured: false,
         },
       });
       if (apiErr || !data) {
