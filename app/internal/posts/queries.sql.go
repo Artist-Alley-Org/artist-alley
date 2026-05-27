@@ -121,36 +121,41 @@ func (q *Queries) AddPostTag(ctx context.Context, arg AddPostTagParams) error {
 const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id, team_id
-) VALUES ($1, $2, $3, $4, $5, $6)
+    author_user_ref, title, description, visibility, cover_asset_id,
+    cover_thumbnail_asset_id, team_id, state_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id, team_id,
-          created_at, updated_at
+          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at
 `
 
 type CreatePostParams struct {
-	AuthorUserRef int64
-	Title         string
-	Description   string
-	Visibility    string
-	CoverAssetID  pgtype.UUID
-	TeamID        pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	TeamID                pgtype.UUID
+	StateID               pgtype.UUID
 }
 
 type CreatePostRow struct {
-	ID             pgtype.UUID
-	AuthorUserRef  int64
-	Title          string
-	Description    string
-	Visibility     string
-	CoverAssetID   pgtype.UUID
-	PostedAt       pgtype.Timestamptz
-	LikeCount      int64
-	CommentCount   int64
-	OriginServerID pgtype.UUID
-	TeamID         pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	PostedAt              pgtype.Timestamptz
+	LikeCount             int64
+	CommentCount          int64
+	OriginServerID        pgtype.UUID
+	TeamID                pgtype.UUID
+	StateID               pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +164,10 @@ type CreatePostRow struct {
 // posted_at defaults to NOW() via the column default. team_id is
 // optional (NULL = un-scoped post; scoped post visibility is gated by
 // the post's team_id and the caller's scoped caps — see ADR 0010 L5).
+// cover_thumbnail_asset_id is an optional standalone thumbnail (not
+// a post member) used by the upload modal's "use a different image
+// as the cover" UX. state_id is the workflow state in the 'post'
+// domain — NULL means no workflow tracking.
 func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreatePostRow, error) {
 	row := q.db.QueryRow(ctx, createPost,
 		arg.AuthorUserRef,
@@ -166,7 +175,9 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		arg.Description,
 		arg.Visibility,
 		arg.CoverAssetID,
+		arg.CoverThumbnailAssetID,
 		arg.TeamID,
+		arg.StateID,
 	)
 	var i CreatePostRow
 	err := row.Scan(
@@ -176,11 +187,13 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.Description,
 		&i.Visibility,
 		&i.CoverAssetID,
+		&i.CoverThumbnailAssetID,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
 		&i.TeamID,
+		&i.StateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -189,26 +202,28 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 
 const getPost = `-- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id, team_id,
-       created_at, updated_at
+       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       origin_server_id, team_id, state_id, created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetPostRow struct {
-	ID             pgtype.UUID
-	AuthorUserRef  int64
-	Title          string
-	Description    string
-	Visibility     string
-	CoverAssetID   pgtype.UUID
-	PostedAt       pgtype.Timestamptz
-	LikeCount      int64
-	CommentCount   int64
-	OriginServerID pgtype.UUID
-	TeamID         pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	PostedAt              pgtype.Timestamptz
+	LikeCount             int64
+	CommentCount          int64
+	OriginServerID        pgtype.UUID
+	TeamID                pgtype.UUID
+	StateID               pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, error) {
@@ -221,11 +236,13 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 		&i.Description,
 		&i.Visibility,
 		&i.CoverAssetID,
+		&i.CoverThumbnailAssetID,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
 		&i.TeamID,
+		&i.StateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -465,8 +482,8 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 
 const listPostsPage = `-- name: ListPostsPage :many
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
-       created_at, updated_at
+       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       origin_server_id, team_id, state_id, created_at, updated_at
 FROM posts
 WHERE deleted_at IS NULL
   AND ($1::BIGINT IS NULL
@@ -498,18 +515,21 @@ type ListPostsPageParams struct {
 }
 
 type ListPostsPageRow struct {
-	ID             pgtype.UUID
-	AuthorUserRef  int64
-	Title          string
-	Description    string
-	Visibility     string
-	CoverAssetID   pgtype.UUID
-	PostedAt       pgtype.Timestamptz
-	LikeCount      int64
-	CommentCount   int64
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	PostedAt              pgtype.Timestamptz
+	LikeCount             int64
+	CommentCount          int64
+	OriginServerID        pgtype.UUID
+	TeamID                pgtype.UUID
+	StateID               pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 // Cursor pagination on (posted_at DESC, id DESC). Filters:
@@ -542,10 +562,13 @@ func (q *Queries) ListPostsPage(ctx context.Context, arg ListPostsPageParams) ([
 			&i.Description,
 			&i.Visibility,
 			&i.CoverAssetID,
+			&i.CoverThumbnailAssetID,
 			&i.PostedAt,
 			&i.LikeCount,
 			&i.CommentCount,
 			&i.OriginServerID,
+			&i.TeamID,
+			&i.StateID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -662,39 +685,45 @@ func (q *Queries) SoftDeletePost(ctx context.Context, id pgtype.UUID) error {
 
 const updatePost = `-- name: UpdatePost :one
 UPDATE posts SET
-    title          = COALESCE($1,          title),
-    description    = COALESCE($2,    description),
-    visibility     = COALESCE($3,     visibility),
-    cover_asset_id = COALESCE($4, cover_asset_id),
-    updated_at     = NOW()
-WHERE id = $5 AND deleted_at IS NULL
+    title                    = COALESCE($1,                    title),
+    description              = COALESCE($2,              description),
+    visibility               = COALESCE($3,               visibility),
+    cover_asset_id           = COALESCE($4,           cover_asset_id),
+    cover_thumbnail_asset_id = COALESCE($5, cover_thumbnail_asset_id),
+    state_id                 = COALESCE($6,                 state_id),
+    updated_at               = NOW()
+WHERE id = $7 AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id, team_id,
-          created_at, updated_at
+          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at
 `
 
 type UpdatePostParams struct {
-	Title        *string
-	Description  *string
-	Visibility   *string
-	CoverAssetID pgtype.UUID
-	ID           pgtype.UUID
+	Title                 *string
+	Description           *string
+	Visibility            *string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	StateID               pgtype.UUID
+	ID                    pgtype.UUID
 }
 
 type UpdatePostRow struct {
-	ID             pgtype.UUID
-	AuthorUserRef  int64
-	Title          string
-	Description    string
-	Visibility     string
-	CoverAssetID   pgtype.UUID
-	PostedAt       pgtype.Timestamptz
-	LikeCount      int64
-	CommentCount   int64
-	OriginServerID pgtype.UUID
-	TeamID         pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	PostedAt              pgtype.Timestamptz
+	LikeCount             int64
+	CommentCount          int64
+	OriginServerID        pgtype.UUID
+	TeamID                pgtype.UUID
+	StateID               pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 // COALESCE-based partial update — NULL args keep current values.
@@ -704,6 +733,8 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		arg.Description,
 		arg.Visibility,
 		arg.CoverAssetID,
+		arg.CoverThumbnailAssetID,
+		arg.StateID,
 		arg.ID,
 	)
 	var i UpdatePostRow
@@ -714,11 +745,13 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		&i.Description,
 		&i.Visibility,
 		&i.CoverAssetID,
+		&i.CoverThumbnailAssetID,
 		&i.PostedAt,
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
 		&i.TeamID,
+		&i.StateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

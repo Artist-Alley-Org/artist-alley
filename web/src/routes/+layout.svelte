@@ -3,14 +3,22 @@
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
   import { auth } from '$stores/auth.svelte';
+  import { upload } from '$stores/upload.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import SearchBar from '$components/SearchBar.svelte';
+  import NavUploadButton from '$components/NavUploadButton.svelte';
+  import UploadModal from '$components/upload/UploadModal.svelte';
+  import UploadDropZone from '$components/upload/UploadDropZone.svelte';
 
   let { children } = $props();
 
   onMount(() => {
     theme.init();
+    // Drop-anywhere-to-upload — install once globally. The store
+    // returns a cleanup but layouts don't unmount in normal use, so
+    // we ignore it.
+    upload.installGlobalDragListeners();
   });
 
   // Pages that show the global nav chrome. Login/setup keep the bare
@@ -84,6 +92,7 @@
         {/if}
 
         <div class="flex items-center gap-2 shrink-0">
+          <NavUploadButton />
           <button
             type="button"
             onclick={cycleTheme}
@@ -112,4 +121,12 @@
   <main class="flex-1 flex flex-col">
     {@render children?.()}
   </main>
+
+  {#if !!auth.user}
+    <!-- Upload modal + drop overlay are gated on auth: only signed-in
+         users can upload. Mounted globally so a drop anywhere on any
+         page can open the modal. -->
+    <UploadModal />
+    <UploadDropZone />
+  {/if}
 </div>

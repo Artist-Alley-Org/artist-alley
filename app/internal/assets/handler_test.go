@@ -507,6 +507,9 @@ func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObj
 func (shimImpl) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from assets test shim")
 }
+func (shimImpl) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from assets test shim")
+}
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from assets test shim")
 }

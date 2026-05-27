@@ -548,6 +548,9 @@ func (collShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObj
 func (collShim) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from collections test shim")
 }
+func (collShim) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from collections test shim")
+}
 func (collShim) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from collections test shim")
 }

@@ -24,40 +24,42 @@ type ApiToken struct {
 }
 
 type Asset struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Rating         *int32
-	UserRating     *float32
-	HitCount       int64
-	NewHitCount    int64
-	RequestCount   int64
-	ArchiveState   int32
-	Access         int32
-	ThumbWidth     *int32
-	ThumbHeight    *int32
-	ImageRed       *int16
-	ImageGreen     *int16
-	ImageBlue      *int16
-	ColourKey      *string
-	GeoLat         *float64
-	GeoLong        *float64
-	Country        *string
-	HasImage       bool
-	IsTranscoding  bool
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	StateID        pgtype.UUID
-	TeamID         pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	DeletedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Rating           *int32
+	UserRating       *float32
+	HitCount         int64
+	NewHitCount      int64
+	RequestCount     int64
+	ArchiveState     int32
+	Access           int32
+	ThumbWidth       *int32
+	ThumbHeight      *int32
+	ImageRed         *int16
+	ImageGreen       *int16
+	ImageBlue        *int16
+	ColourKey        *string
+	GeoLat           *float64
+	GeoLong          *float64
+	Country          *string
+	HasImage         bool
+	IsTranscoding    bool
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	TeamID           pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
 }
 
 type AssetFieldValue struct {
@@ -203,22 +205,23 @@ type Like struct {
 }
 
 type Post struct {
-	ID             pgtype.UUID
-	AuthorUserRef  int64
-	Title          string
-	Description    string
-	Visibility     string
-	CoverAssetID   pgtype.UUID
-	PostedAt       pgtype.Timestamptz
-	LikeCount      int64
-	CommentCount   int64
-	SearchText     interface{}
-	OriginServerID pgtype.UUID
-	StateID        pgtype.UUID
-	TeamID         pgtype.UUID
-	DeletedAt      pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                    pgtype.UUID
+	AuthorUserRef         int64
+	Title                 string
+	Description           string
+	Visibility            string
+	CoverAssetID          pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
+	PostedAt              pgtype.Timestamptz
+	LikeCount             int64
+	CommentCount          int64
+	SearchText            interface{}
+	OriginServerID        pgtype.UUID
+	StateID               pgtype.UUID
+	TeamID                pgtype.UUID
+	DeletedAt             pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type PostAcl struct {
@@ -427,6 +430,9 @@ type WorkflowState struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	Icon             string
+	Color            string
+	RequiresNote     bool
 	CreatedAt        pgtype.Timestamptz
 }
 

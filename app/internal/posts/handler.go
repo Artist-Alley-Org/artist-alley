@@ -147,6 +147,14 @@ func (h *Handler) CreatePost(
 		coverID = pgtype.UUID{Bytes: uuid.UUID(in.Members[0].AssetId), Valid: true}
 	}
 
+	// Optional standalone thumbnail (not a post member). Set when the
+	// upload modal's ThumbnailPicker option (c) is used — the user
+	// uploaded a separate image purely as the post's cover.
+	var coverThumbnailID pgtype.UUID
+	if in.CoverThumbnailAssetId != nil {
+		coverThumbnailID = pgtype.UUID{Bytes: uuid.UUID(*in.CoverThumbnailAssetId), Valid: true}
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("posts: begin tx: %w", err)
@@ -159,13 +167,23 @@ func (h *Handler) CreatePost(
 		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
 	}
 
+	// state_id: domain 'post' UUID, optional. DB FK guards the value;
+	// we don't validate the domain here — the workflow.Service will
+	// reject illegal transitions later if a typo slipped through.
+	var stateID pgtype.UUID
+	if in.StateId != nil {
+		stateID = pgtype.UUID{Bytes: uuid.UUID(*in.StateId), Valid: true}
+	}
+
 	row, err := q.CreatePost(ctx, CreatePostParams{
-		AuthorUserRef: id.UserRef,
-		Title:         strOr(in.Title, ""),
-		Description:   strOr(in.Description, ""),
-		Visibility:    visibility,
-		CoverAssetID:  coverID,
-		TeamID:        teamID,
+		AuthorUserRef:         id.UserRef,
+		Title:                 strOr(in.Title, ""),
+		Description:           strOr(in.Description, ""),
+		Visibility:            visibility,
+		CoverAssetID:          coverID,
+		CoverThumbnailAssetID: coverThumbnailID,
+		TeamID:                teamID,
+		StateID:               stateID,
 	})
 	if err != nil {
 		if isFKError(err, "posts_team_id_fkey") {
@@ -894,6 +912,10 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 		v := openapi_types.UUID(p.CoverAssetID.Bytes)
 		out.CoverAssetId = &v
 	}
+	if p.CoverThumbnailAssetID.Valid {
+		v := openapi_types.UUID(p.CoverThumbnailAssetID.Bytes)
+		out.CoverThumbnailAssetId = &v
+	}
 	if p.OriginServerID.Valid {
 		v := openapi_types.UUID(p.OriginServerID.Bytes)
 		out.OriginServerId = &v
@@ -901,6 +923,10 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 	if p.TeamID.Valid {
 		v := openapi_types.UUID(p.TeamID.Bytes)
 		out.TeamId = &v
+	}
+	if p.StateID.Valid {
+		v := openapi_types.UUID(p.StateID.Bytes)
+		out.StateId = &v
 	}
 	for _, m := range members {
 		out.Members = append(out.Members, openapi.PostMember{

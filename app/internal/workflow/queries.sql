@@ -2,12 +2,14 @@
 -- See migration 00018 and docs/adr/0010-permissions-teams-workflow.md.
 
 -- name: GetState :one
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE id = $1;
 
 -- name: GetStateByCode :one
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1 AND code = $2;
 
@@ -15,13 +17,15 @@ WHERE domain = $1 AND code = $2;
 -- The single is_initial row for the domain. Used at resource creation
 -- time to populate state_id with the correct entry point. Partial
 -- unique index guarantees at most one row.
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1 AND is_initial = TRUE
 LIMIT 1;
 
 -- name: ListStatesForDomain :many
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1
 ORDER BY sort_order, code;

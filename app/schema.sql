@@ -100,6 +100,10 @@ CREATE TABLE assets (
     origin_server_id   UUID         NULL,
     state_id           UUID         NULL, -- workflow_states; added by 00018
     team_id            UUID         NULL, -- teams; added by 00018
+    -- processing_status / thumbhash added by 00022_upload_seam.sql.
+    processing_status  TEXT         NOT NULL DEFAULT 'ready'
+        CHECK (processing_status IN ('pending', 'ready', 'failed')),
+    thumbhash          BYTEA        NULL,
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     deleted_at         TIMESTAMPTZ  NULL
@@ -370,6 +374,11 @@ CREATE TABLE posts (
     description       TEXT         NOT NULL DEFAULT '',
     visibility        TEXT         NOT NULL DEFAULT 'public',
     cover_asset_id    UUID         NULL,
+    -- cover_thumbnail_asset_id added by 00022_upload_seam.sql.
+    -- Standalone thumbnail asset, NOT a member of the post (the
+    -- upload modal's "use a separate image as the post thumb"
+    -- option). NULL = fall back to cover_asset_id behaviour.
+    cover_thumbnail_asset_id UUID   NULL REFERENCES assets(id) ON DELETE SET NULL,
     posted_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     like_count        BIGINT       NOT NULL DEFAULT 0,
     comment_count     BIGINT       NOT NULL DEFAULT 0,
@@ -444,6 +453,10 @@ CREATE TABLE workflow_states (
     is_initial          BOOLEAN      NOT NULL DEFAULT FALSE,
     is_terminal         BOOLEAN      NOT NULL DEFAULT FALSE,
     visible_by_default  BOOLEAN      NOT NULL DEFAULT TRUE,
+    -- icon / color / requires_note added by 00022_upload_seam.sql.
+    icon                TEXT         NOT NULL DEFAULT '',
+    color               TEXT         NOT NULL DEFAULT '',
+    requires_note       BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (domain, code)
 );

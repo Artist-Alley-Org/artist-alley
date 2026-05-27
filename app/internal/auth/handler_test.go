@@ -489,6 +489,9 @@ func (a authOnlyImpl) GetSetupStatus(_ context.Context, _ openapi.GetSetupStatus
 func (a authOnlyImpl) CompleteSetup(_ context.Context, _ openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from auth test shim")
 }
+func (a authOnlyImpl) ListWorkflowStates(_ context.Context, _ openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from auth test shim")
+}
 func (a authOnlyImpl) ListFields(_ context.Context, _ openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from auth test shim")
 }

@@ -63,7 +63,8 @@ func (q *Queries) GetAssetState(ctx context.Context, id pgtype.UUID) (GetAssetSt
 }
 
 const getInitialState = `-- name: GetInitialState :one
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1 AND is_initial = TRUE
 LIMIT 1
@@ -78,6 +79,9 @@ type GetInitialStateRow struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	Icon             string
+	Color            string
+	RequiresNote     bool
 }
 
 // The single is_initial row for the domain. Used at resource creation
@@ -95,6 +99,9 @@ func (q *Queries) GetInitialState(ctx context.Context, domain string) (GetInitia
 		&i.IsInitial,
 		&i.IsTerminal,
 		&i.VisibleByDefault,
+		&i.Icon,
+		&i.Color,
+		&i.RequiresNote,
 	)
 	return i, err
 }
@@ -121,7 +128,8 @@ func (q *Queries) GetPostState(ctx context.Context, id pgtype.UUID) (GetPostStat
 
 const getState = `-- name: GetState :one
 
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE id = $1
 `
@@ -135,6 +143,9 @@ type GetStateRow struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	Icon             string
+	Color            string
+	RequiresNote     bool
 }
 
 // Workflow state machine queries. Owned by app/internal/workflow.
@@ -151,12 +162,16 @@ func (q *Queries) GetState(ctx context.Context, id pgtype.UUID) (GetStateRow, er
 		&i.IsInitial,
 		&i.IsTerminal,
 		&i.VisibleByDefault,
+		&i.Icon,
+		&i.Color,
+		&i.RequiresNote,
 	)
 	return i, err
 }
 
 const getStateByCode = `-- name: GetStateByCode :one
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1 AND code = $2
 `
@@ -175,6 +190,9 @@ type GetStateByCodeRow struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	Icon             string
+	Color            string
+	RequiresNote     bool
 }
 
 func (q *Queries) GetStateByCode(ctx context.Context, arg GetStateByCodeParams) (GetStateByCodeRow, error) {
@@ -189,6 +207,9 @@ func (q *Queries) GetStateByCode(ctx context.Context, arg GetStateByCodeParams) 
 		&i.IsInitial,
 		&i.IsTerminal,
 		&i.VisibleByDefault,
+		&i.Icon,
+		&i.Color,
+		&i.RequiresNote,
 	)
 	return i, err
 }
@@ -221,7 +242,8 @@ func (q *Queries) InsertWorkflowAudit(ctx context.Context, arg InsertWorkflowAud
 }
 
 const listStatesForDomain = `-- name: ListStatesForDomain :many
-SELECT id, domain, code, label, sort_order, is_initial, is_terminal, visible_by_default
+SELECT id, domain, code, label, sort_order, is_initial, is_terminal,
+       visible_by_default, icon, color, requires_note
 FROM workflow_states
 WHERE domain = $1
 ORDER BY sort_order, code
@@ -236,6 +258,9 @@ type ListStatesForDomainRow struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	Icon             string
+	Color            string
+	RequiresNote     bool
 }
 
 func (q *Queries) ListStatesForDomain(ctx context.Context, domain string) ([]ListStatesForDomainRow, error) {
@@ -256,6 +281,9 @@ func (q *Queries) ListStatesForDomain(ctx context.Context, domain string) ([]Lis
 			&i.IsInitial,
 			&i.IsTerminal,
 			&i.VisibleByDefault,
+			&i.Icon,
+			&i.Color,
+			&i.RequiresNote,
 		); err != nil {
 			return nil, err
 		}

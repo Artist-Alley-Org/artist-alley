@@ -347,6 +347,9 @@ func (s shimImpl) GetSetupStatus(ctx context.Context, req openapi.GetSetupStatus
 func (s shimImpl) CompleteSetup(ctx context.Context, req openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	return s.h.CompleteSetup(ctx, req)
 }
+func (shimImpl) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from setup test shim")
+}
 
 func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
 	panic("Login called from setup test shim")

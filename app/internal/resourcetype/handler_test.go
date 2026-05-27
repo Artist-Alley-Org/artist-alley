@@ -198,6 +198,9 @@ func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObjec
 func (rtOnly) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from resourcetype test shim")
 }
+func (rtOnly) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from resourcetype test shim")
+}
 func (rtOnly) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from resourcetype test shim")
 }
