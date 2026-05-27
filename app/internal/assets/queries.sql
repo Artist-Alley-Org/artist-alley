@@ -1,18 +1,22 @@
 -- name: CreateAsset :one
 INSERT INTO assets (
     title, description, resource_type, owner_user_ref, status,
-    file_hash, file_extension, file_size_bytes, metadata, origin_server_id
+    file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
+    state_id, processing_status, thumbhash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13
 )
 RETURNING id, title, description, resource_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
-          origin_server_id, created_at, updated_at;
+          origin_server_id, state_id, processing_status, thumbhash,
+          created_at, updated_at;
 
 -- name: GetAsset :one
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
-       origin_server_id, created_at, updated_at
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -28,7 +32,8 @@ UPDATE assets SET
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, title, description, resource_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
-          origin_server_id, created_at, updated_at;
+          origin_server_id, state_id, processing_status, thumbhash,
+          created_at, updated_at;
 
 -- name: SoftDeleteAsset :exec
 UPDATE assets
@@ -48,7 +53,8 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- a plain tsquery match is enough.
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
-       origin_server_id, created_at, updated_at
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
 FROM assets
 WHERE deleted_at IS NULL
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
@@ -68,7 +74,8 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- query because the join breaks the COALESCE pattern.
 SELECT a.id, a.title, a.description, a.resource_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
-       a.origin_server_id, a.created_at, a.updated_at
+       a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
+       a.created_at, a.updated_at
 FROM assets a
 JOIN asset_tag t ON t.asset_id = a.id
 WHERE a.deleted_at IS NULL

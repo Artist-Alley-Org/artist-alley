@@ -30,42 +30,51 @@ func (q *Queries) AddAssetTag(ctx context.Context, arg AddAssetTagParams) error 
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, resource_type, owner_user_ref, status,
-    file_hash, file_extension, file_size_bytes, metadata, origin_server_id
+    file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
+    state_id, processing_status, thumbhash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13
 )
 RETURNING id, title, description, resource_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
-          origin_server_id, created_at, updated_at
+          origin_server_id, state_id, processing_status, thumbhash,
+          created_at, updated_at
 `
 
 type CreateAssetParams struct {
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
 }
 
 type CreateAssetRow struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (CreateAssetRow, error) {
@@ -80,6 +89,9 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		arg.FileSizeBytes,
 		arg.Metadata,
 		arg.OriginServerID,
+		arg.StateID,
+		arg.ProcessingStatus,
+		arg.Thumbhash,
 	)
 	var i CreateAssetRow
 	err := row.Scan(
@@ -94,6 +106,9 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.FileSizeBytes,
 		&i.Metadata,
 		&i.OriginServerID,
+		&i.StateID,
+		&i.ProcessingStatus,
+		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -103,25 +118,29 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
-       origin_server_id, created_at, updated_at
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetAssetRow struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, error) {
@@ -139,6 +158,9 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.FileSizeBytes,
 		&i.Metadata,
 		&i.OriginServerID,
+		&i.StateID,
+		&i.ProcessingStatus,
+		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -172,7 +194,8 @@ func (q *Queries) ListAssetTags(ctx context.Context, assetID pgtype.UUID) ([]str
 const listAssetsByTagPage = `-- name: ListAssetsByTagPage :many
 SELECT a.id, a.title, a.description, a.resource_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
-       a.origin_server_id, a.created_at, a.updated_at
+       a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
+       a.created_at, a.updated_at
 FROM assets a
 JOIN asset_tag t ON t.asset_id = a.id
 WHERE a.deleted_at IS NULL
@@ -199,19 +222,22 @@ type ListAssetsByTagPageParams struct {
 }
 
 type ListAssetsByTagPageRow struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // Same paginated list but constrained to a single tag. Separate
@@ -245,6 +271,9 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 			&i.FileSizeBytes,
 			&i.Metadata,
 			&i.OriginServerID,
+			&i.StateID,
+			&i.ProcessingStatus,
+			&i.Thumbhash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -261,7 +290,8 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 const listAssetsPage = `-- name: ListAssetsPage :many
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
-       origin_server_id, created_at, updated_at
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
 FROM assets
 WHERE deleted_at IS NULL
   AND ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
@@ -288,19 +318,22 @@ type ListAssetsPageParams struct {
 }
 
 type ListAssetsPageRow struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // Cursor pagination: rows newer than the cursor timestamp, plus tie-
@@ -342,6 +375,9 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.FileSizeBytes,
 			&i.Metadata,
 			&i.OriginServerID,
+			&i.StateID,
+			&i.ProcessingStatus,
+			&i.Thumbhash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -411,7 +447,8 @@ UPDATE assets SET
 WHERE id = $5 AND deleted_at IS NULL
 RETURNING id, title, description, resource_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
-          origin_server_id, created_at, updated_at
+          origin_server_id, state_id, processing_status, thumbhash,
+          created_at, updated_at
 `
 
 type UpdateAssetParams struct {
@@ -423,19 +460,22 @@ type UpdateAssetParams struct {
 }
 
 type UpdateAssetRow struct {
-	ID             pgtype.UUID
-	Title          string
-	Description    string
-	ResourceType   int64
-	OwnerUserRef   *int64
-	Status         string
-	FileHash       *string
-	FileExtension  *string
-	FileSizeBytes  *int64
-	Metadata       []byte
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	ResourceType     int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // Partial update via COALESCE: any field passed as NULL keeps its
@@ -461,6 +501,9 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.FileSizeBytes,
 		&i.Metadata,
 		&i.OriginServerID,
+		&i.StateID,
+		&i.ProcessingStatus,
+		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

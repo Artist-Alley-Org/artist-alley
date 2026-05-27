@@ -556,6 +556,9 @@ func (metaShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObj
 func (metaShim) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from metadata test shim")
 }
+func (metaShim) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from metadata test shim")
+}
 func (metaShim) ListCollections(context.Context, openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
 	panic("ListCollections called from metadata test shim")
 }

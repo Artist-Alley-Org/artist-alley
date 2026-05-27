@@ -22,6 +22,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/users"
+	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
 
 // apiServer aggregates every feature package's handler into the single
@@ -43,6 +44,7 @@ type apiServer struct {
 	users        *users.Handler
 	social       *social.Handler
 	setup        *setup.Handler
+	workflow     *workflow.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, storageBackend string) *apiServer {
@@ -58,6 +60,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		users:        users.NewHandler(pool, logger, cacheReg),
 		social:       social.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
+		workflow:     workflow.NewHandler(pool, logger, cacheReg),
 	}
 }
 
@@ -340,4 +343,10 @@ func (s *apiServer) GetSetupStatus(ctx context.Context, req openapi.GetSetupStat
 
 func (s *apiServer) CompleteSetup(ctx context.Context, req openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	return s.setup.CompleteSetup(ctx, req)
+}
+
+// --- workflow --------------------------------------------------------------
+
+func (s *apiServer) ListWorkflowStates(ctx context.Context, req openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	return s.workflow.ListWorkflowStates(ctx, req)
 }

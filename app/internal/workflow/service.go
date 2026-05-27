@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -63,6 +64,14 @@ var (
 	// ErrInvalidKind: caller passed a ResourceKind that isn't post or
 	// asset. Programming error; handler maps to 500.
 	ErrInvalidKind = errors.New("workflow: unknown resource kind")
+
+	// ErrNoteRequired: the target state has requires_note=true and the
+	// caller passed an empty note. Handler maps to 400. Patterned on
+	// RSE's archive_states.more_notes_flag — a transition into a
+	// "rejected" / "needs work" state without a reason is almost
+	// always a bug or a confused user, so we reject loudly rather
+	// than silently storing a blank note.
+	ErrNoteRequired = errors.New("workflow: target state requires a note")
 )
 
 // Service is the only sanctioned entry point for resource state changes.
@@ -158,6 +167,18 @@ func (s *Service) Transition(
 			return ErrTransitionNotAllowed
 		}
 		return fmt.Errorf("workflow: find transition: %w", err)
+	}
+
+	// 2.5 If the target state requires a note (e.g. a rejection
+	//     state), reject empty/whitespace-only notes before we touch
+	//     the capability check — the user gets the more actionable
+	//     400 rather than burning a permission round-trip first.
+	toState, err := q.GetState(ctx, pgToID)
+	if err != nil {
+		return fmt.Errorf("workflow: load target state: %w", err)
+	}
+	if toState.RequiresNote && strings.TrimSpace(note) == "" {
+		return ErrNoteRequired
 	}
 
 	// 3. Capability check.

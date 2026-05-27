@@ -6,32 +6,39 @@
 -- posted_at defaults to NOW() via the column default. team_id is
 -- optional (NULL = un-scoped post; scoped post visibility is gated by
 -- the post's team_id and the caller's scoped caps — see ADR 0010 L5).
+-- cover_thumbnail_asset_id is an optional standalone thumbnail (not
+-- a post member) used by the upload modal's "use a different image
+-- as the cover" UX. state_id is the workflow state in the 'post'
+-- domain — NULL means no workflow tracking.
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id, team_id
-) VALUES ($1, $2, $3, $4, $5, $6)
+    author_user_ref, title, description, visibility, cover_asset_id,
+    cover_thumbnail_asset_id, team_id, state_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id, team_id,
-          created_at, updated_at;
+          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id, team_id,
-       created_at, updated_at
+       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       origin_server_id, team_id, state_id, created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: UpdatePost :one
 -- COALESCE-based partial update — NULL args keep current values.
 UPDATE posts SET
-    title          = COALESCE(sqlc.narg('title'),          title),
-    description    = COALESCE(sqlc.narg('description'),    description),
-    visibility     = COALESCE(sqlc.narg('visibility'),     visibility),
-    cover_asset_id = COALESCE(sqlc.narg('cover_asset_id'), cover_asset_id),
-    updated_at     = NOW()
+    title                    = COALESCE(sqlc.narg('title'),                    title),
+    description              = COALESCE(sqlc.narg('description'),              description),
+    visibility               = COALESCE(sqlc.narg('visibility'),               visibility),
+    cover_asset_id           = COALESCE(sqlc.narg('cover_asset_id'),           cover_asset_id),
+    cover_thumbnail_asset_id = COALESCE(sqlc.narg('cover_thumbnail_asset_id'), cover_thumbnail_asset_id),
+    state_id                 = COALESCE(sqlc.narg('state_id'),                 state_id),
+    updated_at               = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id, team_id,
-          created_at, updated_at;
+          cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+          origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: SoftDeletePost :exec
 UPDATE posts SET deleted_at = NOW(), updated_at = NOW()
@@ -45,8 +52,8 @@ WHERE id = $1 AND deleted_at IS NULL;
 --   - q: plain-text TSVECTOR search across post search_text
 --   - tag: single-tag filter (intersects with q if both given)
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
-       created_at, updated_at
+       cover_thumbnail_asset_id, posted_at, like_count, comment_count,
+       origin_server_id, team_id, state_id, created_at, updated_at
 FROM posts
 WHERE deleted_at IS NULL
   AND (sqlc.narg('author_user_ref')::BIGINT IS NULL

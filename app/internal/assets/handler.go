@@ -13,6 +13,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	// Register image decoders for thumbhash. We use the std lib's
+	// JPEG/PNG/GIF decoders plus golang.org/x/image/webp/bmp/tiff so
+	// the same code path covers everything our isImageExt allows.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -23,6 +31,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"go.n16f.net/thumbhash"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -109,6 +121,38 @@ func (h *Handler) CreateAsset(
 		fileHashPtr = &fh
 	}
 
+	// Workflow state: caller-supplied UUID is taken verbatim; the DB
+	// FK guards against unknown values. We don't validate that the
+	// state belongs to the matching `asset:<resource_type>` domain
+	// here — that check kicks in on Transition() later. Tradeoff:
+	// permits a typo in the upload modal that would only surface on
+	// the first transition attempt; not worth a domain-lookup
+	// round-trip on every create.
+	var stateID pgtype.UUID
+	if in.StateId != nil {
+		stateID = pgtype.UUID{Bytes: uuid.UUID(*in.StateId), Valid: true}
+	}
+
+	// processing_status: image / video uploads queue for async
+	// post-processing (variant generation, EXIF, etc.); everything
+	// else is `ready` on day one because there's nothing to process.
+	processingStatus := "ready"
+	if needsProcessing(in.FileExtension) {
+		processingStatus = "pending"
+	}
+
+	// Thumbhash — synchronously computed for image extensions. ~1-3
+	// ms on a 4K image; we do it BEFORE the INSERT so the asset row
+	// is born with the placeholder. Failure here is soft: log + keep
+	// thumbhash=NULL. The feed card just won't have a blurred
+	// placeholder; the original /file URL still works.
+	var thumbhashBytes []byte
+	if fileHashPtr != nil && isImageExt(in.FileExtension) {
+		hCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		thumbhashBytes = computeThumbhash(hCtx, h.Storage, *fileHashPtr, h.Logger)
+		cancel()
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("assets: begin tx: %w", err)
@@ -117,16 +161,19 @@ func (h *Handler) CreateAsset(
 	q := New(tx)
 
 	row, err := q.CreateAsset(ctx, CreateAssetParams{
-		Title:          title,
-		Description:    strDefault(in.Description, ""),
-		ResourceType:   in.ResourceType,
-		OwnerUserRef:   &id.UserRef,
-		Status:         status,
-		FileHash:       fileHashPtr,
-		FileExtension:  in.FileExtension,
-		FileSizeBytes:  nil, // backfilled below from storage_objects if hash present
-		Metadata:       metadataJSON,
-		OriginServerID: pgtype.UUID{Valid: false},
+		Title:            title,
+		Description:      strDefault(in.Description, ""),
+		ResourceType:     in.ResourceType,
+		OwnerUserRef:     &id.UserRef,
+		Status:           status,
+		FileHash:         fileHashPtr,
+		FileExtension:    in.FileExtension,
+		FileSizeBytes:    nil, // backfilled below from storage_objects if hash present
+		Metadata:         metadataJSON,
+		OriginServerID:   pgtype.UUID{Valid: false},
+		StateID:          stateID,
+		ProcessingStatus: processingStatus,
+		Thumbhash:        thumbhashBytes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assets: insert: %w", err)
@@ -728,13 +775,14 @@ func decodeCursor(s string) (time.Time, uuid.UUID, error) {
 // columns; we normalise via rowToAssetRow/listRowToGetRow etc.
 func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 	a := openapi.Asset{
-		Id:           openapi_types.UUID(row.ID.Bytes),
-		Title:        row.Title,
-		ResourceType: row.ResourceType,
-		Status:       openapi.AssetStatus(row.Status),
-		CreatedAt:    row.CreatedAt.Time,
-		UpdatedAt:    row.UpdatedAt.Time,
-		Tags:         tags,
+		Id:               openapi_types.UUID(row.ID.Bytes),
+		Title:            row.Title,
+		ResourceType:     row.ResourceType,
+		Status:           openapi.AssetStatus(row.Status),
+		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
+		CreatedAt:        row.CreatedAt.Time,
+		UpdatedAt:        row.UpdatedAt.Time,
+		Tags:             tags,
 	}
 	if row.Description != "" {
 		d := row.Description
@@ -744,6 +792,17 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 	a.FileHash = row.FileHash
 	a.FileExtension = row.FileExtension
 	a.FileSizeBytes = row.FileSizeBytes
+	if row.StateID.Valid {
+		v := openapi_types.UUID(row.StateID.Bytes)
+		a.StateId = &v
+	}
+	if len(row.Thumbhash) > 0 {
+		// Base64-encoded for JSON transport. The frontend
+		// thumbhash decoder accepts both base64 and the raw byte
+		// array; base64 is the more common wire format.
+		v := base64.StdEncoding.EncodeToString(row.Thumbhash)
+		a.Thumbhash = &v
+	}
 	if len(row.Metadata) > 0 && string(row.Metadata) != "{}" {
 		var m map[string]interface{}
 		if err := json.Unmarshal(row.Metadata, &m); err == nil {
@@ -762,74 +821,161 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 // have a marshaller for.
 func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 	return GetAssetRow{
-		ID:             r.ID,
-		Title:          r.Title,
-		Description:    r.Description,
-		ResourceType:   r.ResourceType,
-		OwnerUserRef:   r.OwnerUserRef,
-		Status:         r.Status,
-		FileHash:       r.FileHash,
-		FileExtension:  r.FileExtension,
-		FileSizeBytes:  r.FileSizeBytes,
-		Metadata:       r.Metadata,
-		OriginServerID: r.OriginServerID,
-		CreatedAt:      r.CreatedAt,
-		UpdatedAt:      r.UpdatedAt,
+		ID:               r.ID,
+		Title:            r.Title,
+		Description:      r.Description,
+		ResourceType:     r.ResourceType,
+		OwnerUserRef:     r.OwnerUserRef,
+		Status:           r.Status,
+		FileHash:         r.FileHash,
+		FileExtension:    r.FileExtension,
+		FileSizeBytes:    r.FileSizeBytes,
+		Metadata:         r.Metadata,
+		OriginServerID:   r.OriginServerID,
+		StateID:          r.StateID,
+		ProcessingStatus: r.ProcessingStatus,
+		Thumbhash:        r.Thumbhash,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
 }
 
 func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 	return GetAssetRow{
-		ID:             r.ID,
-		Title:          r.Title,
-		Description:    r.Description,
-		ResourceType:   r.ResourceType,
-		OwnerUserRef:   r.OwnerUserRef,
-		Status:         r.Status,
-		FileHash:       r.FileHash,
-		FileExtension:  r.FileExtension,
-		FileSizeBytes:  r.FileSizeBytes,
-		Metadata:       r.Metadata,
-		OriginServerID: r.OriginServerID,
-		CreatedAt:      r.CreatedAt,
-		UpdatedAt:      r.UpdatedAt,
+		ID:               r.ID,
+		Title:            r.Title,
+		Description:      r.Description,
+		ResourceType:     r.ResourceType,
+		OwnerUserRef:     r.OwnerUserRef,
+		Status:           r.Status,
+		FileHash:         r.FileHash,
+		FileExtension:    r.FileExtension,
+		FileSizeBytes:    r.FileSizeBytes,
+		Metadata:         r.Metadata,
+		OriginServerID:   r.OriginServerID,
+		StateID:          r.StateID,
+		ProcessingStatus: r.ProcessingStatus,
+		Thumbhash:        r.Thumbhash,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
 }
 
 func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 	return GetAssetRow{
-		ID:             r.ID,
-		Title:          r.Title,
-		Description:    r.Description,
-		ResourceType:   r.ResourceType,
-		OwnerUserRef:   r.OwnerUserRef,
-		Status:         r.Status,
-		FileHash:       r.FileHash,
-		FileExtension:  r.FileExtension,
-		FileSizeBytes:  r.FileSizeBytes,
-		Metadata:       r.Metadata,
-		OriginServerID: r.OriginServerID,
-		CreatedAt:      r.CreatedAt,
-		UpdatedAt:      r.UpdatedAt,
+		ID:               r.ID,
+		Title:            r.Title,
+		Description:      r.Description,
+		ResourceType:     r.ResourceType,
+		OwnerUserRef:     r.OwnerUserRef,
+		Status:           r.Status,
+		FileHash:         r.FileHash,
+		FileExtension:    r.FileExtension,
+		FileSizeBytes:    r.FileSizeBytes,
+		Metadata:         r.Metadata,
+		OriginServerID:   r.OriginServerID,
+		StateID:          r.StateID,
+		ProcessingStatus: r.ProcessingStatus,
+		Thumbhash:        r.Thumbhash,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
 }
 
 func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 	return GetAssetRow{
-		ID:             r.ID,
-		Title:          r.Title,
-		Description:    r.Description,
-		ResourceType:   r.ResourceType,
-		OwnerUserRef:   r.OwnerUserRef,
-		Status:         r.Status,
-		FileHash:       r.FileHash,
-		FileExtension:  r.FileExtension,
-		FileSizeBytes:  r.FileSizeBytes,
-		Metadata:       r.Metadata,
-		OriginServerID: r.OriginServerID,
-		CreatedAt:      r.CreatedAt,
-		UpdatedAt:      r.UpdatedAt,
+		ID:               r.ID,
+		Title:            r.Title,
+		Description:      r.Description,
+		ResourceType:     r.ResourceType,
+		OwnerUserRef:     r.OwnerUserRef,
+		Status:           r.Status,
+		FileHash:         r.FileHash,
+		FileExtension:    r.FileExtension,
+		FileSizeBytes:    r.FileSizeBytes,
+		Metadata:         r.Metadata,
+		OriginServerID:   r.OriginServerID,
+		StateID:          r.StateID,
+		ProcessingStatus: r.ProcessingStatus,
+		Thumbhash:        r.Thumbhash,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
+}
+
+// imageExts is the lowercased file-extension set that gets a
+// thumbhash + processing_status='pending' at create time. Mirrors
+// the frontend's isImageExt (web/src/lib/components/PostModal.svelte)
+// — keep these in sync.
+var imageExts = map[string]struct{}{
+	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "webp": {},
+	"bmp": {}, "tiff": {}, "tif": {}, "avif": {}, "heic": {}, "heif": {},
+}
+
+func isImageExt(ext *string) bool {
+	if ext == nil {
+		return false
+	}
+	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
+	_, ok := imageExts[e]
+	return ok
+}
+
+// videoExts: same role for video. Coverage is "anything we'd want
+// to spin up a video.probe job for" — the actual transcode list
+// lives in the (future) video pipeline.
+var videoExts = map[string]struct{}{
+	"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
+	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
+}
+
+func needsProcessing(ext *string) bool {
+	if ext == nil {
+		return false
+	}
+	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
+	if _, ok := imageExts[e]; ok {
+		return true
+	}
+	if _, ok := videoExts[e]; ok {
+		return true
+	}
+	return false
+}
+
+// computeThumbhash downloads the original bytes, decodes them as an
+// image, and runs thumbhash. Returns nil on any failure — the caller
+// stores nil as NULL and the feed card falls back to a neutral
+// placeholder. This is intentionally soft-fail: we'd rather have an
+// asset without a placeholder than fail the upload.
+func computeThumbhash(ctx context.Context, svc *storage.Service, hash string, logger *slog.Logger) []byte {
+	if svc == nil {
+		return nil
+	}
+	rc, _, err := svc.Download(ctx, hash, "")
+	if err != nil {
+		logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.thumbhash.download_failed",
+			slog.String("hash", hash),
+			slog.String("err", err.Error()),
+		)
+		return nil
+	}
+	defer rc.Close()
+	// Cap the decoder input; thumbhash needs the whole image but a
+	// 100 MB ProRes still has us read the header only via
+	// image.Decode + the JPEG/PNG decoders. The 25 MB cap protects
+	// us from someone uploading a multi-GB tiff and us OOMing on
+	// the decode.
+	limited := io.LimitReader(rc, 25*1024*1024)
+	img, _, err := image.Decode(limited)
+	if err != nil {
+		logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.thumbhash.decode_failed",
+			slog.String("hash", hash),
+			slog.String("err", err.Error()),
+		)
+		return nil
+	}
+	return thumbhash.EncodeImage(img)
 }
 
 // Compile-time assertion: catches openapi-codegen signature drift.

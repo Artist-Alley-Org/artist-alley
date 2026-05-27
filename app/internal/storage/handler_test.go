@@ -213,6 +213,9 @@ func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObj
 func (shimImpl) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	panic("CompleteSetup called from storage test shim")
 }
+func (shimImpl) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
+	panic("ListWorkflowStates called from storage test shim")
+}
 func (shimImpl) CreateAsset(context.Context, openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
 	panic("CreateAsset called from storage test shim")
 }
