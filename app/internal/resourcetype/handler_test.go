@@ -315,6 +315,15 @@ func (rtOnly) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (open
 func (rtOnly) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
 	panic("RemovePostAcl called from resourcetype test shim")
 }
+func (rtOnly) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from resourcetype test shim")
+}
+func (rtOnly) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from resourcetype test shim")
+}
+func (rtOnly) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

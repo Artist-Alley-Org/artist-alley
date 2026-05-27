@@ -606,6 +606,15 @@ func (a authOnlyImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObjec
 func (a authOnlyImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
 	panic("RemovePostAcl called from auth test shim")
 }
+func (a authOnlyImpl) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from auth test shim")
+}
+func (a authOnlyImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from auth test shim")
+}
+func (a authOnlyImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

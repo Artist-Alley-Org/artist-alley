@@ -542,6 +542,156 @@ func (h *Handler) RemoveCollectionResource(
 }
 
 // ---------------------------------------------------------------------------
+// ACLs — additive grants on top of visibility (ADR 0010 L6)
+// ---------------------------------------------------------------------------
+//
+// Same shape as post ACLs: polymorphic principal, three permission
+// levels, optional expiry. Read access required to list; write access
+// required to mutate.
+
+func (h *Handler) ListCollectionAcls(
+	ctx context.Context,
+	req openapi.ListCollectionAclsRequestObject,
+) (openapi.ListCollectionAclsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListCollectionAcls401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := h.getByIDCached(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.ListCollectionAcls404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	// canRead: owner always; public visibility always; otherwise need
+	// mutate to view the ACL list (a stricter rule than read).
+	if row.OwnerUserRef != caller.UserRef && row.Visibility != "public" && !canMutateCollection(caller, row) {
+		return openapi.ListCollectionAcls403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
+		}, nil
+	}
+	rows, err := New(h.Pool).ListCollectionAcls(ctx, pgID)
+	if err != nil {
+		return nil, fmt.Errorf("collections: list acls: %w", err)
+	}
+	out := make([]openapi.AclEntry, 0, len(rows))
+	for _, r := range rows {
+		e := openapi.AclEntry{
+			PrincipalType: openapi.AclEntryPrincipalType(r.PrincipalType),
+			PrincipalId:   r.PrincipalID,
+			Permission:    openapi.AclEntryPermission(r.Permission),
+			GrantedAt:     r.GrantedAt.Time,
+		}
+		if r.GrantedByRsUserID != nil {
+			e.GrantedByRsUserId = r.GrantedByRsUserID
+		}
+		if r.ExpiresAt.Valid {
+			t := r.ExpiresAt.Time
+			e.ExpiresAt = &t
+		}
+		out = append(out, e)
+	}
+	return openapi.ListCollectionAcls200JSONResponse(out), nil
+}
+
+func (h *Handler) AddCollectionAcl(
+	ctx context.Context,
+	req openapi.AddCollectionAclRequestObject,
+) (openapi.AddCollectionAclResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.AddCollectionAcl401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.AddCollectionAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := h.getByIDCached(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.AddCollectionAcl404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if !canMutateCollection(caller, row) {
+		return openapi.AddCollectionAcl403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the collection owner"},
+		}, nil
+	}
+	var expires pgtype.Timestamptz
+	if req.Body.ExpiresAt != nil {
+		expires = pgtype.Timestamptz{Time: *req.Body.ExpiresAt, Valid: true}
+	}
+	if err := New(h.Pool).AddCollectionAcl(ctx, AddCollectionAclParams{
+		CollectionID:        pgID,
+		PrincipalType:       string(req.Body.PrincipalType),
+		PrincipalID:         req.Body.PrincipalId,
+		Permission:          string(req.Body.Permission),
+		GrantedByRsUserID:   &caller.UserRef,
+		ExpiresAt:           expires,
+	}); err != nil {
+		return nil, fmt.Errorf("collections: add acl: %w", err)
+	}
+	h.cacheInvalidate(ctx, pgID)
+	return openapi.AddCollectionAcl204Response{}, nil
+}
+
+func (h *Handler) RemoveCollectionAcl(
+	ctx context.Context,
+	req openapi.RemoveCollectionAclRequestObject,
+) (openapi.RemoveCollectionAclResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.RemoveCollectionAcl401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := h.getByIDCached(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RemoveCollectionAcl404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if !canMutateCollection(caller, row) {
+		return openapi.RemoveCollectionAcl403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the collection owner"},
+		}, nil
+	}
+	rows, err := New(h.Pool).RemoveCollectionAcl(ctx, RemoveCollectionAclParams{
+		CollectionID:  pgID,
+		PrincipalType: string(req.PrincipalType),
+		PrincipalID:   req.PrincipalId,
+		Permission:    string(req.Permission),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("collections: remove acl: %w", err)
+	}
+	if rows == 0 {
+		return openapi.RemoveCollectionAcl404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "ACL entry not found"},
+		}, nil
+	}
+	h.cacheInvalidate(ctx, pgID)
+	return openapi.RemoveCollectionAcl204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
 // Cache helpers
 // ---------------------------------------------------------------------------
 

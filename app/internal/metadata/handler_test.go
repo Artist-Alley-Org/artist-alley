@@ -646,3 +646,12 @@ func (metaShim) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (op
 func (metaShim) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
 	panic("RemovePostAcl called from metadata_test test shim")
 }
+func (metaShim) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from metadata_test test shim")
+}
+func (metaShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from metadata_test test shim")
+}
+func (metaShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from metadata_test test shim")
+}

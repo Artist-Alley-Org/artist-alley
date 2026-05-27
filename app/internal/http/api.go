@@ -211,6 +211,15 @@ func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCo
 func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.collections.RemoveCollectionResource(ctx, req)
 }
+func (s *apiServer) ListCollectionAcls(ctx context.Context, req openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	return s.collections.ListCollectionAcls(ctx, req)
+}
+func (s *apiServer) AddCollectionAcl(ctx context.Context, req openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	return s.collections.AddCollectionAcl(ctx, req)
+}
+func (s *apiServer) RemoveCollectionAcl(ctx context.Context, req openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	return s.collections.RemoveCollectionAcl(ctx, req)
+}
 
 // --- posts -----------------------------------------------------------------
 

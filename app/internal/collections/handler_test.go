@@ -641,3 +641,12 @@ func (collShim) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (op
 func (collShim) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
 	panic("RemovePostAcl called from collections_test test shim")
 }
+func (collShim) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from collections_test test shim")
+}
+func (collShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from collections_test test shim")
+}
+func (collShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from collections_test test shim")
+}

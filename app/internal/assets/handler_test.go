@@ -624,6 +624,15 @@ func (shimImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (op
 func (shimImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
 	panic("RemovePostAcl called from assets_test test shim")
 }
+func (shimImpl) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from assets_test test shim")
+}
+func (shimImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from assets_test test shim")
+}
+func (shimImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from assets_test test shim")
+}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()
