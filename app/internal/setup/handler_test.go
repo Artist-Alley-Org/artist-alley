@@ -543,6 +543,15 @@ func (shimImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclReques
 func (shimImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from setup_test test shim")
 }
+func (shimImpl) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from setup_test test shim")
+}
+func (shimImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from setup_test test shim")
+}
+func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from setup_test test shim")
+}
 
 // ---------------------------------------------------------------------------
 // helpers

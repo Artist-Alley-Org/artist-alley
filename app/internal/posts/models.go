@@ -150,6 +150,26 @@ type CollectionResource struct {
 	AddedAt      pgtype.Timestamptz
 }
 
+type Comment struct {
+	ID             pgtype.UUID
+	TargetKind     string
+	TargetID       pgtype.UUID
+	ParentID       pgtype.UUID
+	RootID         pgtype.UUID
+	Depth          int32
+	AuthorUserRef  int64
+	Body           string
+	BodyHtml       string
+	AnnotationType *string
+	AnnotationData []byte
+	LikeCount      int64
+	EditedAt       pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string
@@ -173,6 +193,13 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz
 	CreatedByUserRef        *int64
 	UpdatedByUserRef        *int64
+}
+
+type Like struct {
+	TargetKind string
+	TargetID   pgtype.UUID
+	RsUserID   int64
+	LikedAt    pgtype.Timestamptz
 }
 
 type Post struct {
@@ -357,6 +384,19 @@ type UserCapabilityRevoke struct {
 	RevokedAt         pgtype.Timestamptz
 	RevokedByRsUserID *int64
 	Note              string
+}
+
+type UserProfile struct {
+	RsUserID       int64
+	DisplayName    *string
+	Bio            string
+	AvatarUrl      *string
+	Location       string
+	WebsiteUrl     *string
+	SocialLinks    []byte
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type UserRole struct {

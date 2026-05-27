@@ -34,6 +34,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -47,6 +48,12 @@ type Handler struct {
 	Sessions *SessionManager
 	Limiter  *LoginLimiter
 	Audit    auditRecorder
+
+	// CacheReg is consulted by mutation paths (e.g. SetUserGlobalRole)
+	// to broadcast caps invalidations to the Resolver's cache. nil is
+	// safe — invalidation becomes a no-op, the cache eventually evicts
+	// the stale entry via LRU pressure.
+	CacheReg *cache.Registry
 
 	tokenPrefix string // overridable in tests
 }
@@ -76,7 +83,11 @@ func (nopAudit) Logout(context.Context, *http.Request, int64, string)           
 // session manager, login limiter, and audit recorder are required for
 // production wiring; pass nil for any of them in tests to get a no-op
 // fallback.
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, sessionDays int, sessions *SessionManager, limiter *LoginLimiter, audit auditRecorder) *Handler {
+//
+// cacheReg may be nil — in that case role-mutation paths don't
+// broadcast caps invalidations and the Resolver's cache eventually
+// evicts stale entries through LRU pressure. Production wires it.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, sessionDays int, sessions *SessionManager, limiter *LoginLimiter, audit auditRecorder, cacheReg *cache.Registry) *Handler {
 	if sessionDays <= 0 {
 		sessionDays = 7
 	}
@@ -97,6 +108,7 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, scrambleKey string, ses
 		Sessions:    sessions,
 		Limiter:     limiter,
 		Audit:       audit,
+		CacheReg:    cacheReg,
 	}
 }
 
@@ -602,6 +614,11 @@ func (h *Handler) SetUserRole(
 	}); err != nil {
 		return nil, err
 	}
+	// The caller's effective caps just changed — broadcast so the
+	// Resolver's caps cache (this instance + every federated peer)
+	// drops the stale entry. The very next request from this user
+	// gets fresh caps.
+	InvalidateUserCaps(ctx, h.CacheReg, req.Ref)
 	return openapi.SetUserRole204Response{}, nil
 }
 

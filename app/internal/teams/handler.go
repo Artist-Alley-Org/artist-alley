@@ -27,6 +27,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -39,13 +40,32 @@ const (
 
 const maxListLimit = 500
 
+// cacheDomainTeamByID is the NOTIFY channel for per-team-id cache
+// entries. Local writes invalidate via Cache.Invalidate; future
+// cross-package writers would use a registry.Emit helper (not
+// needed yet — no other package mutates teams today).
+const cacheDomainTeamByID = "team.id"
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	// byID caches the fetchTeam result (team row + direct parents)
+	// by UUID string. Team chips in the post modal + the upload
+	// modal team picker both repeatedly hit GetTeam; warm cache
+	// elides the join.
+	byID *cache.Cache[openapi.Team]
 }
 
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Logger: logger}
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Logger: logger}
+	if registry != nil {
+		// 1_000 teams is generous — most orgs have dozens, even
+		// huge studios have hundreds across all sub-teams. Per-row
+		// memory is ~1KB so the LRU stays under 1MB.
+		h.byID = cache.Register[openapi.Team](registry, cacheDomainTeamByID, 1_000)
+	}
+	return h
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +317,7 @@ func (h *Handler) UpdateTeam(
 		}
 		return nil, fmt.Errorf("teams: update: %w", err)
 	}
+	h.invalidateTeam(ctx, pgID)
 	full, err := h.fetchTeam(ctx, pgID)
 	if err != nil {
 		return nil, err
@@ -333,6 +354,7 @@ func (h *Handler) DeleteTeam(
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
 		}, nil
 	}
+	h.invalidateTeam(ctx, pgID)
 	return openapi.DeleteTeam204Response{}, nil
 }
 
@@ -405,6 +427,9 @@ func (h *Handler) AddTeamParent(
 		}
 		return nil, fmt.Errorf("teams: add parent: %w", err)
 	}
+	// The child's `parents` list just changed, so drop its cached
+	// merged shape.
+	h.invalidateTeam(ctx, pgChild)
 	return openapi.AddTeamParent204Response{}, nil
 }
 
@@ -423,8 +448,9 @@ func (h *Handler) RemoveTeamParent(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "teams.admin capability required"},
 		}, nil
 	}
+	pgChild := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	rows, err := New(h.Pool).RemoveTeamParent(ctx, RemoveTeamParentParams{
-		ChildID:  pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		ChildID:  pgChild,
 		ParentID: pgtype.UUID{Bytes: uuid.UUID(req.ParentId), Valid: true},
 	})
 	if err != nil {
@@ -435,6 +461,7 @@ func (h *Handler) RemoveTeamParent(
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "edge not found"},
 		}, nil
 	}
+	h.invalidateTeam(ctx, pgChild)
 	return openapi.RemoveTeamParent204Response{}, nil
 }
 
@@ -572,8 +599,16 @@ func (h *Handler) GetMyTeams(
 // ---------------------------------------------------------------------------
 
 // fetchTeam reads the team row + its direct parent links, returning
-// the API shape. Parents are joined in a single follow-up query.
+// the API shape. Reads through byID cache when present; on miss
+// queries the two SQLs and populates the cache.
 func (h *Handler) fetchTeam(ctx context.Context, id pgtype.UUID) (*openapi.Team, error) {
+	key := uuidString(id)
+	if h.byID != nil {
+		if v, ok := h.byID.Get(key); ok {
+			out := v
+			return &out, nil
+		}
+	}
 	q := New(h.Pool)
 	row, err := q.GetTeam(ctx, id)
 	if err != nil {
@@ -593,8 +628,22 @@ func (h *Handler) fetchTeam(ctx context.Context, id pgtype.UUID) (*openapi.Team,
 		})
 	}
 	out.Parents = &parentLinks
+	if h.byID != nil {
+		h.byID.Add(key, out)
+	}
 	return &out, nil
 }
+
+// invalidateTeam drops the local entry and broadcasts. Called by
+// every mutating endpoint after commit. Best-effort.
+func (h *Handler) invalidateTeam(ctx context.Context, id pgtype.UUID) {
+	if h.byID == nil {
+		return
+	}
+	_ = h.byID.Invalidate(ctx, uuidString(id))
+}
+
+func uuidString(u pgtype.UUID) string { return uuid.UUID(u.Bytes).String() }
 
 func (h *Handler) teamsToAPI(_ context.Context, rows []Team) ([]openapi.Team, error) {
 	out := make([]openapi.Team, 0, len(rows))

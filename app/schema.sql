@@ -467,3 +467,53 @@ CREATE TABLE workflow_audit (
     note                TEXT         NOT NULL DEFAULT '',
     transitioned_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- migrations/00020_comments_likes.sql — Phase 1.13.D-4.
+-- Polymorphic comments + likes across posts / assets / collections,
+-- with threading on comments and (kind=comment) like targets so
+-- replies can be liked too.
+
+CREATE TABLE comments (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    target_kind         TEXT         NOT NULL CHECK (target_kind IN ('post','asset','collection')),
+    target_id           UUID         NOT NULL,
+    parent_id           UUID         NULL REFERENCES comments(id) ON DELETE CASCADE,
+    root_id             UUID         NOT NULL,
+    depth               INTEGER      NOT NULL DEFAULT 0,
+    author_user_ref     BIGINT       NOT NULL,
+    body                TEXT         NOT NULL,
+    body_html           TEXT         NOT NULL DEFAULT '',
+    annotation_type     TEXT         NULL CHECK (annotation_type IN ('point','rect','timestamp','frame')),
+    annotation_data     JSONB        NULL,
+    like_count          BIGINT       NOT NULL DEFAULT 0,
+    edited_at           TIMESTAMPTZ  NULL,
+    deleted_at          TIMESTAMPTZ  NULL,
+    origin_server_id    UUID         NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE likes (
+    target_kind TEXT         NOT NULL CHECK (target_kind IN ('post','asset','comment')),
+    target_id   UUID         NOT NULL,
+    rs_user_id  BIGINT       NOT NULL,
+    liked_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (target_kind, target_id, rs_user_id)
+);
+
+-- migrations/00021_user_profiles.sql — display-layer profile data,
+-- federation-mirror unit. One row per user; defaults provide a working
+-- profile for users without a stored row.
+
+CREATE TABLE user_profiles (
+    rs_user_id       BIGINT       PRIMARY KEY,
+    display_name     TEXT         NULL,
+    bio              TEXT         NOT NULL DEFAULT '',
+    avatar_url       TEXT         NULL,
+    location         TEXT         NOT NULL DEFAULT '',
+    website_url      TEXT         NULL,
+    social_links     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    origin_server_id UUID         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);

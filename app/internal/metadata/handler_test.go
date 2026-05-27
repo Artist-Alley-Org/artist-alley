@@ -655,3 +655,12 @@ func (metaShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclReques
 func (metaShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from metadata_test test shim")
 }
+func (metaShim) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from metadata_test test shim")
+}
+func (metaShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from metadata_test test shim")
+}
+func (metaShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from metadata_test test shim")
+}

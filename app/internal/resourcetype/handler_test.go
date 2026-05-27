@@ -324,6 +324,15 @@ func (rtOnly) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestO
 func (rtOnly) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from resourcetype test shim")
 }
+func (rtOnly) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from resourcetype test shim")
+}
+func (rtOnly) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from resourcetype test shim")
+}
+func (rtOnly) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

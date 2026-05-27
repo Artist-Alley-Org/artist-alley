@@ -83,7 +83,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
-	resolver := &auth.Resolver{Pool: pool, Logger: logger, Sessions: sessions}
+	resolver := auth.NewResolver(pool, logger, sessions, cacheReg)
 	r.Route("/api/v1", func(r chi.Router) {
 		// Resolve identity (cookie or Bearer token) for every request
 		// under /api/v1. Anonymous requests still pass through — each

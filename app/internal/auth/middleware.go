@@ -6,12 +6,15 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 )
 
 // Identity is what the resolver injects into the request context on a
@@ -147,14 +150,81 @@ func WithIdentity(ctx context.Context, id *Identity) context.Context {
 	return context.WithValue(ctx, identityKey, id)
 }
 
+// CachedCapSet is the closure-expanded capability state for one
+// principal — the result of EffectiveScopedCapabilitiesForUser
+// pre-split into the (globalCaps, scopedCaps) shape Identity uses.
+// Caching the post-split form means cache hits skip both the DB
+// query AND the per-row split loop.
+type CachedCapSet struct {
+	Global []string
+	Scoped map[string]map[uuid.UUID]struct{}
+}
+
+// cacheDomainUserCaps is the NOTIFY domain for per-user-ref capability
+// sets. Cross-package writers (admin endpoints in other packages that
+// mutate role assignments, grants, revokes) call
+// [InvalidateUserCaps] to broadcast on this channel.
+const cacheDomainUserCaps = "auth.caps.user"
+
 // Resolver wires the auth-resolving middleware to its dependencies.
 // Sessions is required for cookie auth; pass nil to fall back to a
 // default-configured SessionManager (e.g. in tests).
+//
+// caps is the in-process LRU + NOTIFY-fed capability cache. nil means
+// "no cache" — every request hits the DB query in loadCapabilities.
+// Tests that don't care about caching can leave it nil; production
+// boots via [NewResolver] which wires it.
 type Resolver struct {
 	Pool     *pgxpool.Pool
 	Logger   *slog.Logger
 	Sessions *SessionManager
+
+	caps *cache.Cache[CachedCapSet]
 }
+
+// NewResolver constructs a Resolver and (when registry != nil) wires
+// up the capability cache. Cache size 10_000 fits ~1MB of resident
+// memory for a typical user's resolved cap set and bounds growth on
+// federation peers. Larger deployments tune via a config knob later.
+func NewResolver(pool *pgxpool.Pool, logger *slog.Logger, sessions *SessionManager, registry *cache.Registry) *Resolver {
+	r := &Resolver{
+		Pool:     pool,
+		Logger:   logger,
+		Sessions: sessions,
+	}
+	if registry != nil {
+		r.caps = cache.Register[CachedCapSet](registry, cacheDomainUserCaps, 10_000)
+	}
+	return r
+}
+
+// InvalidateUserCaps broadcasts a cache invalidation for the given
+// user's resolved capability set. Call after any DB write that could
+// change the user's effective caps — role assignment changes,
+// individual cap grants/revokes, role-capability mutations on roles
+// the user holds.
+//
+// This is the cross-package entry point: writers outside the auth
+// package (a future grants/revokes admin endpoint, federation
+// import) call it with the shared Registry. Within the auth package,
+// the Resolver's [InvalidateCaps] method is the lower-latency path —
+// it does local-evict immediately AND broadcasts to peers, so the
+// next request on the same process sees fresh caps without waiting
+// for the NOTIFY round-trip to the LISTEN goroutine.
+//
+// Safe to call with a nil registry (no-op) so callers don't have to
+// nil-guard.
+//
+// Best-effort: a failed NOTIFY logs (via the underlying Registry.Emit)
+// but doesn't propagate. We don't want a user-management write to
+// fail because the cache layer is transiently down.
+func InvalidateUserCaps(ctx context.Context, registry *cache.Registry, userRef int64) {
+	if registry == nil {
+		return
+	}
+	_ = registry.Emit(ctx, cacheDomainUserCaps, strconv.FormatInt(userRef, 10))
+}
+
 
 func (r *Resolver) sessions() *SessionManager {
 	if r.Sessions != nil {
@@ -208,13 +278,27 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 }
 
 // loadCapabilities populates id.Capabilities (global) and id.scopedCaps
-// (team-scoped, closure-expanded) from a single DB query. A failure
-// here is non-fatal — we log it and proceed with empty cap sets, which
-// means the user can do nothing privileged. That's safer than failing
-// the whole request because of a transient DB error in the cap lookup.
+// (team-scoped, closure-expanded). Reads through the caps cache when
+// present; on miss runs EffectiveScopedCapabilitiesForUser and
+// populates the cache. Invalidation is via [InvalidateUserCaps],
+// which any package mutating the user's role/grant/revoke state
+// calls after commit.
+//
+// A failure here is non-fatal — we log it and proceed with empty cap
+// sets, which means the user can do nothing privileged. That's safer
+// than failing the whole request because of a transient DB error in
+// the cap lookup.
 func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identity) {
 	if id == nil {
 		return
+	}
+	key := strconv.FormatInt(id.UserRef, 10)
+	if r.caps != nil {
+		if v, ok := r.caps.Get(key); ok {
+			id.Capabilities = v.Global
+			id.scopedCaps = v.Scoped
+			return
+		}
 	}
 	rows, err := q.EffectiveScopedCapabilitiesForUser(ctx, id.UserRef)
 	if err != nil {
@@ -248,6 +332,9 @@ func (r *Resolver) loadCapabilities(ctx context.Context, q *Queries, id *Identit
 	sort.Strings(caps)
 	id.Capabilities = caps
 	id.scopedCaps = scoped
+	if r.caps != nil {
+		r.caps.Add(key, CachedCapSet{Global: caps, Scoped: scoped})
+	}
 }
 
 // AnonymousRoleName is the seeded role used to represent unauthenticated

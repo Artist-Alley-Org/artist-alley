@@ -43,6 +43,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
 // Cache domain name. Stable string used as NOTIFY target — peer
@@ -81,10 +82,15 @@ type Handler struct {
 	Logger *slog.Logger
 
 	byID *cache.Cache[openapi.Post]
+	// Registry kept for cross-package invalidations (the author's
+	// user-profile cache holds a stale post_count after we
+	// create/delete a post). nil-safe — the helpers we call are
+	// already no-ops on a nil Registry.
+	registry *cache.Registry
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
-	h := &Handler{Pool: pool, Logger: logger}
+	h := &Handler{Pool: pool, Logger: logger, registry: registry}
 	if registry != nil {
 		// 10k entries comfortably fits ~10MB of resident memory for a
 		// typical post body and gives us a deep working set for the
@@ -225,6 +231,13 @@ func (h *Handler) CreatePost(
 	// also broadcasts NOTIFY so any peer that race-read this row
 	// (unlikely but possible) drops its copy.
 	h.cacheInvalidate(ctx, row.ID)
+
+	// The author's UserPublic cache holds a stale post_count now.
+	// Broadcast the invalidation; the users package's LISTEN
+	// dispatch picks it up and evicts. Cross-package import via the
+	// users.InvalidateProfile helper keeps the domain string in
+	// one place.
+	users.InvalidateProfile(ctx, h.registry, id.UserRef)
 
 	// Re-read with full member + tag join. The trigger has fired by
 	// now so search_text reflects the new state.
@@ -399,6 +412,9 @@ func (h *Handler) DeletePost(
 		return nil, fmt.Errorf("posts: delete: %w", err)
 	}
 	h.cacheInvalidate(ctx, pgID)
+	// post_count just went down for the author — drop their cached
+	// UserPublic so the next /users/{ref} read shows the new total.
+	users.InvalidateProfile(ctx, h.registry, cur.AuthorUserRef)
 	return openapi.DeletePost204Response{}, nil
 }
 

@@ -388,7 +388,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	})
 
 	// Real chi router wired exactly as the production server does it.
-	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7, nil, nil, nil)
+	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7, nil, nil, nil, nil)
 	resolver := &Resolver{Pool: pool, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	router := chi.NewRouter()
@@ -614,6 +614,15 @@ func (a authOnlyImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAcl
 }
 func (a authOnlyImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from auth test shim")
+}
+func (a authOnlyImpl) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from auth test shim")
+}
+func (a authOnlyImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from auth test shim")
+}
+func (a authOnlyImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from auth test shim")
 }
 
 // ---------------------------------------------------------------------------
