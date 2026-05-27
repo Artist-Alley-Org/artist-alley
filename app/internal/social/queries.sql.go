@@ -14,10 +14,10 @@ import (
 const createComment = `-- name: CreateComment :one
 
 INSERT INTO comments (
-    target_kind, target_id, parent_id, root_id, depth,
+    id, target_kind, target_id, parent_id, root_id, depth,
     author_user_ref, body, body_html, annotation_type, annotation_data
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
@@ -26,6 +26,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
 `
 
 type CreateCommentParams struct {
+	ID             pgtype.UUID
 	TargetKind     string
 	TargetID       pgtype.UUID
 	ParentID       pgtype.UUID
@@ -41,13 +42,13 @@ type CreateCommentParams struct {
 // ---------------------------------------------------------------------------
 // Comments
 // ---------------------------------------------------------------------------
-// For a top-level comment, pass parent_id NULL and set root_id later
-// via SetCommentRootSelf. For a reply, pass parent_id and root_id
-// (callers compute root_id from the parent's row). depth is computed
-// by the caller from parent.depth + 1, capped at the app-level
-// maximum.
+// The Go caller generates the id up front so top-level comments can
+// have root_id = id at INSERT time (the column is NOT NULL, so we
+// can't post-set it). For replies the caller passes the parent's
+// root_id; depth comes from parent.depth + 1.
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createComment,
+		arg.ID,
 		arg.TargetKind,
 		arg.TargetID,
 		arg.ParentID,
@@ -406,18 +407,6 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 		return nil, err
 	}
 	return items, nil
-}
-
-const setCommentRootSelf = `-- name: SetCommentRootSelf :exec
-UPDATE comments SET root_id = id WHERE id = $1 AND root_id <> id
-`
-
-// For top-level comments we know the id only after INSERT; this
-// second update sets root_id = id. Two statements is cheaper than
-// a CTE here and keeps CreateComment's parameter shape uniform.
-func (q *Queries) SetCommentRootSelf(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, setCommentRootSelf, id)
-	return err
 }
 
 const softDeleteComment = `-- name: SoftDeleteComment :execrows

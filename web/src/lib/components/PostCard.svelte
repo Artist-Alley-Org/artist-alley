@@ -5,6 +5,16 @@
   //
   // The masonry / thumbnail / list view modes land in Phase 1.13.E
   // — this card is the Grid mode (default).
+  //
+  // Click behavior (Phase 1.13.F-1): default left-click intercepts
+  // navigation and updates the URL to /?post={id}, which opens the
+  // modal as an overlay over the still-mounted feed. Modifier-key
+  // clicks (cmd/ctrl/shift, middle-click) fall through to the
+  // native href so users still get new-tab / new-window behavior
+  // — that path hits /posts/[id] which renders the modal standalone.
+
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
 
   interface AssetSummary {
     id: string;
@@ -68,10 +78,27 @@
   const createdShort = $derived(
     created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
   );
+
+  async function handleClick(e: MouseEvent) {
+    // Modifier-key / non-primary clicks fall through to the native
+    // <a href>. Standard browser behavior: new tab, new window,
+    // download — all preserved.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    const target = new URL(page.url);
+    target.searchParams.set('post', post.id);
+    await goto(target.pathname + target.search, {
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
 </script>
 
 <a
   href="/posts/{post.id}"
+  onclick={handleClick}
   class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
 >
   <div class="relative aspect-square bg-surface">

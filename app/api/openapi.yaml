@@ -1266,6 +1266,170 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /posts/{id}/like:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getPostLike
+      summary: Whether the current caller has liked this post
+      description: |
+        Used by the post modal on open to decide whether the Like
+        button shows the active state. Returns {liked: bool}.
+        Anonymous callers get 401.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Like state for the caller
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostLikeState" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: likePost
+      summary: Like a post
+      description: |
+        Idempotent — re-liking a post the caller already liked is a
+        no-op (counter doesn't bump twice). Requires `posts.like`
+        capability (granted to Base by default).
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Liked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: unlikePost
+      summary: Remove the caller's like on a post
+      description: |
+        404 if the caller hadn't liked the post (the optimistic-update
+        client uses this signal to revert its local state). Counter
+        is maintained by the 00020 trigger; we never decrement to
+        below zero.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unliked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/comments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostComments
+      summary: List the comment thread on a post
+      description: |
+        Returns LIVE comments (deleted_at IS NULL), grouped by root,
+        within each root sorted depth-then-time so replies appear
+        under their parent. Threads ordered newest-root-first.
+        Cursor pagination advances by root.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of comments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommentList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createPostComment
+      summary: Post a comment (or reply) on a post
+      description: |
+        Top-level comment when `parent_id` is omitted; reply when set.
+        Depth and root_id are computed server-side from the parent's
+        row. Requires `posts.comment` capability (Base default).
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommentCreate" }
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /comments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: deleteComment
+      summary: Soft-delete a comment
+      description: |
+        Authors can always delete their own (requires
+        `comments.delete.own`, Base default). Moderators can delete
+        any comment (requires `comments.delete.any`, Admin only).
+        Soft-deletes via deleted_at + empties body/body_html; the
+        counter trigger decrements posts.comment_count.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /posts/{id}/assets:
     parameters:
       - name: id
@@ -3166,6 +3330,83 @@ components:
           additionalProperties:
             type: string
             maxLength: 100
+
+    PostLikeState:
+      type: object
+      required: [liked]
+      properties:
+        liked: { type: boolean }
+
+    Comment:
+      type: object
+      description: |
+        A single comment in a thread. Threading is via parent_id +
+        root_id + depth (caller renders nested replies indented by
+        depth). annotation_* fields are NULL for plain comments; the
+        review-mode feature reuses the same row shape.
+      required:
+        [id, target_kind, target_id, root_id, depth, author_user_ref,
+         body, body_html, like_count, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        target_kind:
+          type: string
+          enum: [post, asset, collection]
+        target_id: { type: string, format: uuid }
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        root_id: { type: string, format: uuid }
+        depth: { type: integer }
+        author_user_ref: { type: integer, format: int64 }
+        body: { type: string }
+        body_html:
+          type: string
+          description: Server-rendered safe HTML; clients should render this rather than reformatting `body`.
+        annotation_type:
+          type: string
+          enum: [point, rect, timestamp, frame]
+          nullable: true
+        annotation_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+        like_count: { type: integer, format: int64 }
+        edited_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CommentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Comment" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    CommentCreate:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            When set, the new comment is a reply to this parent.
+            Depth and root_id are computed server-side from the
+            parent row.
 
     AclEntry:
       type: object

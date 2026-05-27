@@ -552,6 +552,24 @@ func (shimImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from setup_test test shim")
 }
+func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	panic("GetPostLike called from setup_test test shim")
+}
+func (shimImpl) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	panic("LikePost called from setup_test test shim")
+}
+func (shimImpl) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	panic("UnlikePost called from setup_test test shim")
+}
+func (shimImpl) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	panic("ListPostComments called from setup_test test shim")
+}
+func (shimImpl) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	panic("CreatePostComment called from setup_test test shim")
+}
+func (shimImpl) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	panic("DeleteComment called from setup_test test shim")
+}
 
 // ---------------------------------------------------------------------------
 // helpers

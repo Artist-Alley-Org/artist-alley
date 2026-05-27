@@ -659,3 +659,21 @@ func (collShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (collShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from collections_test test shim")
 }
+func (collShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
+	panic("GetPostLike called from collections_test test shim")
+}
+func (collShim) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
+	panic("LikePost called from collections_test test shim")
+}
+func (collShim) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
+	panic("UnlikePost called from collections_test test shim")
+}
+func (collShim) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
+	panic("ListPostComments called from collections_test test shim")
+}
+func (collShim) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
+	panic("CreatePostComment called from collections_test test shim")
+}
+func (collShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
+	panic("DeleteComment called from collections_test test shim")
+}

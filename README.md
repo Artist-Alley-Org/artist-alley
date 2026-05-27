@@ -1,42 +1,54 @@
 # artist-alley
 
-A self-hosted art review and archival tool for game studios.
+A self-hosted art review and archival tool for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
-> **Status:** Phase 1.0 — early development. Forked from [ResourceSpace](https://www.resourcespace.com/) trunk @ r28830 (2026-05-21). RS PHP runs on PostgreSQL (Phase 0.5) and the Go server skeleton is up (Phase 1.0). Not yet ready for production use.
+> **Status:** pre-MVP, active development. The architecture is settled; the feature set is still landing. Not production-ready.
 
 ---
 
 ## Why this exists
 
-Game studios review art and archive it across Slack, Miro, Teams, and shared drives. Knowledge fragments across mediums, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap. artist-alley is the attempt.
+Game studios review art and archive it across Slack, Miro, Teams, and shared drives. Knowledge fragments across tools, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap.
 
-It's built around three pillars:
+artist-alley is built around three pillars:
 
-1. **Artist-first, not archive-first.** Artists upload-and-forget. UX target: [ArtStation](https://www.artstation.com/) levels of simplicity. Metadata happens automatically where possible.
-2. **Review mode.** Tracks unreviewed assets since the last session, remembers your spot, supports both async commenting (Frame.io-style) and live presenter sessions (SSE).
+1. **Artist-first, not archive-first.** Artists upload-and-forget. Metadata happens automatically where possible. UX target: [ArtStation](https://www.artstation.com/) levels of simplicity.
+2. **Review mode.** Tracks unreviewed assets since the last session, remembers your spot, supports both async commenting (Frame.io-style) and live presenter sessions over SSE.
 3. **Three-click rule.** Any common action reachable in three clicks or fewer.
 
 ---
 
 ## Architecture
 
-artist-alley is a [Strangler Fig](https://martinfowler.com/bliki/StranglerFigApplication.html) on top of ResourceSpace.
+The target shape is intentionally small:
 
-- The forked **ResourceSpace** PHP code at the repo root provides the proven DAM substrate (resources, metadata, permissions, preview pipelines, plugin system, audit logs).
-- New capabilities are added as **sidecar services** under `services/` rather than as new PHP modules. Default language is Go; Python where ML stacks demand it.
-- A modern frontend in `web/` (SvelteKit) progressively replaces RS's PHP-rendered UI, starting with artist-facing flows.
-- A **PostgreSQL + pgvector** adjunct database holds new-feature data (review sessions, embeddings, modern annotations) and is linked to RS resources by `resource_id`. RS keeps its MySQL.
+- **One Go binary** serves the JSON API and embeds the SvelteKit SPA via `go:embed`.
+- **PostgreSQL** (with `pgvector`) holds everything — assets, metadata, embeddings, sessions, audit log.
+- **nginx** in front for TLS termination and static serving.
 
-See `docs/adr/` for the full set of architecture decisions.
+Three production containers, full stop: `nginx`, `app`, `postgres`. No microservices, no message bus, no sidecars.
 
-### Planned sidecars
+Storage is pluggable — filesystem by default, S3-compatible (S3 / R2 / Backblaze / MinIO) optional. The plugin model is WASM via [Extism](https://extism.org/), deferred until external plugin authors arrive.
 
-| Service | Purpose | Status |
-|---|---|---|
-| `services/ai-gateway` | Provider-agnostic AI: Anthropic, OpenAI, Azure OpenAI, Ollama, vLLM | Not started |
-| `services/review-sessions` | SSE-based live review sessions, presenter mode, async threads | Not started |
-| `services/video-pipeline` | HLS transcoding, frame-accurate scrub sprites, OG-quality preservation | Not started |
-| `services/embeddings` | Vector generation, provider-pluggable, indexed in pgvector | Not started |
+ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions.
+
+### Transitional state
+
+The project began as a fork of [ResourceSpace](https://www.resourcespace.com/) (BSD-3-Clause), a mature DAM with 20 years of battle-tested code. RS PHP still lives at the repo root and currently serves a shrinking set of legacy routes through `/api/v1/legacy/*` while the Go side ports each capability. When the last legacy route is replaced, the `php-fpm` container is removed and the repo collapses to the three-container shape. See [ADR 0003](docs/adr/0003-strangler-fig-internal.md), [ADR 0006](docs/adr/0006-go-as-target-backend.md), and [ADR 0015](docs/adr/0015-php-as-legacy-backend.md).
+
+---
+
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Backend | Go 1.26, `pgx`, `sqlc`, OpenAPI 3 (oapi-codegen) |
+| Frontend | SvelteKit, TypeScript, Vite |
+| Database | PostgreSQL 16 + pgvector |
+| Migrations | [goose](https://github.com/pressly/goose) |
+| Storage | filesystem (default), S3-compatible (optional) |
+| Search | Postgres `tsvector` (text), pgvector (semantic, future) |
+| License | BSD-3-Clause |
 
 ---
 
@@ -45,23 +57,18 @@ See `docs/adr/` for the full set of architecture decisions.
 Requirements: Docker with Compose v2.
 
 ```bash
-git clone <this-repo> artist-alley
+git clone git@github.com:mscrnt/artist-alley.git
 cd artist-alley
 ./scripts/bootstrap.sh
 ```
 
-`bootstrap.sh` will:
-- Create `.env` from `.env.example` with random passwords
-- Match container UIDs to your host user
-- Build and start the stack
-- Print the URL to finish ResourceSpace's installer
+`bootstrap.sh` creates `.env` with random passwords, matches container UIDs to your host user, and brings the stack up. The frontend dev container is opt-in:
 
-Open `http://localhost:8080` (or the port in your `.env`) and complete the RS setup. On the database screen, use:
+```bash
+docker compose --profile web up -d
+```
 
-- **MySQL server:** `mysql`
-- **MySQL user / password / database:** see the corresponding values in `.env`
-
-Stop with `docker compose down`. Persistent data lives in the `mysql-data`, `postgres-data`, and `filestore` Docker volumes.
+Open `http://localhost:8080` (or the port in your `.env`). Stop with `docker compose down`. Persistent data lives in named Docker volumes.
 
 ---
 
@@ -69,41 +76,33 @@ Stop with `docker compose down`. Persistent data lives in the `mysql-data`, `pos
 
 ```
 artist-alley/
-├── api/  batch/  css/  dbstruct/  documentation/  gfx/  iccprofiles/
-├── include/  js/  languages/  lib/  pages/  plugins/  templates/
-├── tests/  upgrade/  index.php  login.php  ...        # ResourceSpace fork
-│
-├── services/         # Go/Python sidecar services (Strangler Fig replacements)
-│   ├── ai-gateway/
-│   ├── review-sessions/
-│   ├── video-pipeline/
-│   └── embeddings/
-├── web/              # SvelteKit frontend
-├── infra/            # Dockerfiles, nginx config, postgres init, etc.
-│   ├── docker/
-│   ├── nginx/
-│   └── postgres/
-├── scripts/
-│   ├── bootstrap.sh  # one-shot dev environment setup
-│   └── rs-diff.sh    # compare this fork to upstream RS for cherry-picks
-├── docs/
-│   └── adr/          # Architecture Decision Records
+├── app/             # Go backend — the target architecture
+│   ├── cmd/         # binaries (server entrypoint)
+│   ├── internal/    # handlers, db, storage, auth, ...
+│   └── api/         # OpenAPI spec + generated server stubs
+├── web/             # SvelteKit frontend
+├── aa_api/          # PHP legacy JSON wrappers (transitional — shrinking)
+├── infra/           # Dockerfiles, nginx config, postgres init
+├── docs/adr/        # Architecture Decision Records
+├── scripts/         # bootstrap, test, seed scripts
+├── api/ batch/ include/ lib/ pages/ ...   # ResourceSpace fork (transitional)
 ├── docker-compose.yml
-├── .env.example
-├── LICENSE           # BSD-3-Clause (our additions)
-├── license.txt       # ResourceSpace's license, preserved
-└── README.md
+├── LICENSE          # BSD-3-Clause (our additions)
+└── license.txt      # ResourceSpace's notice, preserved
 ```
 
 ---
 
 ## Roadmap
 
-- **Phase 0** — Fork + containerize ResourceSpace. *(in progress)*
-- **Phase 1** — Artist MVP: bulk upload, 2D + video pipeline, browse, async comments, basic auth.
-- **Phase 2** — Review mode: draw annotations, timecode comments, live sessions over SSE.
-- **Phase 3** — AI + 3D: provider-agnostic AI gateway, auto-tagging, semantic search, glTF viewer.
-- **Phase 4** — Enterprise: OIDC/SAML SSO, RBAC depth, audit logs, Perforce / Git LFS integration.
+| Phase | Focus | Status |
+|---|---|---|
+| 0 | Fork + containerize | done |
+| 1 | Backend foundation: auth, assets, metadata, permissions, search, posts | **in progress** |
+| 2 | Artist MVP: upload UX, browse, feed, basic comments | next |
+| 3 | Review mode: annotations, timecode comments, live presenter sessions | planned |
+| 4 | AI + 3D: provider-agnostic AI gateway, semantic search, glTF viewer | planned |
+| 5 | Enterprise: OIDC/SAML SSO, audit logs, Perforce / Git LFS integration | planned |
 
 Each phase ends with a working, shippable application.
 
@@ -111,7 +110,7 @@ Each phase ends with a working, shippable application.
 
 ## Contributing
 
-Early days. If you've found this and want to help, open an issue first to align on scope. The architecture is documented in `docs/adr/`; please read 0001 through 0003 before proposing structural changes.
+Early days — please open an [issue](https://github.com/mscrnt/artist-alley/issues) or [Discussion](https://github.com/mscrnt/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the ADRs in [`docs/adr/`](docs/adr/) (especially 0006, 0008, 0010, 0014) before proposing structural changes.
 
 ---
 
@@ -119,4 +118,4 @@ Early days. If you've found this and want to help, open an issue first to align 
 
 artist-alley is licensed under **BSD-3-Clause** — see [LICENSE](LICENSE).
 
-The project is a fork of **ResourceSpace** by [Montala Limited](https://www.montala.com/), also under BSD-3-Clause. Their copyright notice is preserved in [license.txt](license.txt) and [documentation/licenses/](documentation/licenses/). Enormous gratitude to the RS contributors whose 20 years of work made this fork viable.
+The project is a fork of [ResourceSpace](https://www.resourcespace.com/) by [Montala Limited](https://www.montala.com/), also BSD-3-Clause. The original notice is preserved in [`license.txt`](license.txt) and [`documentation/licenses/`](documentation/licenses/). Sincere thanks to the RS contributors whose decades of work made this fork viable.

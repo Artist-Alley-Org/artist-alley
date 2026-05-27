@@ -60,9 +60,13 @@
 
 <div class="min-h-screen flex flex-col bg-surface text-fg">
   {#if showChrome}
-    <header class="border-b border-border bg-surface-elevated">
+    <!-- Header uses base 1rem (16px) — the web body-text gold standard.
+         Brand stays slightly larger; everything else inherits 1rem so
+         the navbar reads at comfortable scanning distance on big
+         monitors. -->
+    <header class="border-b border-border bg-surface-elevated text-base">
       <div class="flex items-center gap-4 px-6 py-3">
-        <a href="/" class="flex items-center gap-2 font-semibold tracking-tight shrink-0">
+        <a href="/" class="flex items-center gap-2 text-lg font-semibold tracking-tight shrink-0">
           <span class="inline-block h-6 w-6 rounded bg-accent"></span>
           artist-alley
         </a>
@@ -83,20 +87,20 @@
           <button
             type="button"
             onclick={cycleTheme}
-            class="rounded-md px-2.5 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface transition-colors"
+            class="rounded-md px-3 py-1.5 text-fg-muted hover:text-fg hover:bg-surface transition-colors"
             title="Theme: {theme.pref}"
             aria-label="Cycle theme"
           >
             {theme.pref === 'light' ? '☀' : theme.pref === 'dark' ? '☾' : '◐'}
             <span class="ml-1 capitalize">{theme.pref}</span>
           </button>
-          <div class="text-sm text-fg-muted">
+          <div class="text-fg-muted">
             {auth.user?.fullname || auth.user?.username}
           </div>
           <button
             type="button"
             onclick={handleSignOut}
-            class="rounded-md px-2.5 py-1.5 text-xs text-fg-muted hover:text-fg hover:bg-surface transition-colors"
+            class="rounded-md px-3 py-1.5 text-fg-muted hover:text-fg hover:bg-surface transition-colors"
           >
             Sign out
           </button>
