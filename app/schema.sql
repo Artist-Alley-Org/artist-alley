@@ -98,6 +98,8 @@ CREATE TABLE assets (
     is_transcoding     BOOLEAN      NOT NULL DEFAULT FALSE,
     metadata           JSONB        NOT NULL DEFAULT '{}'::jsonb,
     origin_server_id   UUID         NULL,
+    state_id           UUID         NULL, -- workflow_states; added by 00018
+    team_id            UUID         NULL, -- teams; added by 00018
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     deleted_at         TIMESTAMPTZ  NULL
@@ -373,6 +375,8 @@ CREATE TABLE posts (
     comment_count     BIGINT       NOT NULL DEFAULT 0,
     search_text       TSVECTOR     NULL,
     origin_server_id  UUID         NULL,
+    state_id          UUID         NULL, -- workflow_states; added by 00018
+    team_id           UUID         NULL, -- teams; added by 00018
     deleted_at        TIMESTAMPTZ  NULL,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -425,4 +429,41 @@ CREATE TABLE collection_acls (
     granted_by_rs_user_id BIGINT       NULL,
     expires_at            TIMESTAMPTZ  NULL,
     PRIMARY KEY (collection_id, principal_type, principal_id, permission)
+);
+
+-- migrations/00018_workflow.sql — workflow_states / workflow_transitions /
+-- workflow_audit. ADR 0010 Layer 7. Configurable state machine keyed
+-- by a TEXT domain ('post' | 'asset:<resource_type_ref>').
+
+CREATE TABLE workflow_states (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    domain              TEXT         NOT NULL,
+    code                TEXT         NOT NULL,
+    label               TEXT         NOT NULL,
+    sort_order          INTEGER      NOT NULL DEFAULT 0,
+    is_initial          BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_terminal         BOOLEAN      NOT NULL DEFAULT FALSE,
+    visible_by_default  BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (domain, code)
+);
+
+CREATE TABLE workflow_transitions (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_state_id       UUID         NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    to_state_id         UUID         NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    required_capability TEXT         NULL REFERENCES capabilities(code) ON DELETE SET NULL,
+    requires_team_scope BOOLEAN      NOT NULL DEFAULT FALSE,
+    CONSTRAINT workflow_transitions_unique UNIQUE NULLS NOT DISTINCT (from_state_id, to_state_id)
+);
+
+CREATE TABLE workflow_audit (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    resource_kind       TEXT         NOT NULL,
+    resource_id         UUID         NOT NULL,
+    from_state_id       UUID         NULL REFERENCES workflow_states(id) ON DELETE SET NULL,
+    to_state_id         UUID         NOT NULL REFERENCES workflow_states(id) ON DELETE SET NULL,
+    actor_rs_user_id    BIGINT       NULL,
+    note                TEXT         NOT NULL DEFAULT '',
+    transitioned_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

@@ -53,6 +53,8 @@ type Asset struct {
 	IsTranscoding  bool               `json:"is_transcoding"`
 	Metadata       []byte             `json:"metadata"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	StateID        pgtype.UUID        `json:"state_id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
@@ -120,6 +122,16 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CollectionAcl struct {
+	CollectionID      pgtype.UUID        `json:"collection_id"`
+	PrincipalType     string             `json:"principal_type"`
+	PrincipalID       string             `json:"principal_id"`
+	Permission        string             `json:"permission"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
 type CollectionPost struct {
 	CollectionID pgtype.UUID        `json:"collection_id"`
 	PostID       pgtype.UUID        `json:"post_id"`
@@ -175,9 +187,21 @@ type Post struct {
 	CommentCount   int64              `json:"comment_count"`
 	SearchText     interface{}        `json:"search_text"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	StateID        pgtype.UUID        `json:"state_id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PostAcl struct {
+	PostID            pgtype.UUID        `json:"post_id"`
+	PrincipalType     string             `json:"principal_type"`
+	PrincipalID       string             `json:"principal_id"`
+	Permission        string             `json:"permission"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 }
 
 type PostAsset struct {
@@ -341,4 +365,35 @@ type UserRole struct {
 	TeamID             pgtype.UUID        `json:"team_id"`
 	AssignedAt         pgtype.Timestamptz `json:"assigned_at"`
 	AssignedByRsUserID *int64             `json:"assigned_by_rs_user_id"`
+}
+
+type WorkflowAudit struct {
+	ID             pgtype.UUID        `json:"id"`
+	ResourceKind   string             `json:"resource_kind"`
+	ResourceID     pgtype.UUID        `json:"resource_id"`
+	FromStateID    pgtype.UUID        `json:"from_state_id"`
+	ToStateID      pgtype.UUID        `json:"to_state_id"`
+	ActorRsUserID  *int64             `json:"actor_rs_user_id"`
+	Note           string             `json:"note"`
+	TransitionedAt pgtype.Timestamptz `json:"transitioned_at"`
+}
+
+type WorkflowState struct {
+	ID               pgtype.UUID        `json:"id"`
+	Domain           string             `json:"domain"`
+	Code             string             `json:"code"`
+	Label            string             `json:"label"`
+	SortOrder        int32              `json:"sort_order"`
+	IsInitial        bool               `json:"is_initial"`
+	IsTerminal       bool               `json:"is_terminal"`
+	VisibleByDefault bool               `json:"visible_by_default"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowTransition struct {
+	ID                 pgtype.UUID `json:"id"`
+	FromStateID        pgtype.UUID `json:"from_state_id"`
+	ToStateID          pgtype.UUID `json:"to_state_id"`
+	RequiredCapability *string     `json:"required_capability"`
+	RequiresTeamScope  bool        `json:"requires_team_scope"`
 }
