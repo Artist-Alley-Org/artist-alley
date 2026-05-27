@@ -1,0 +1,46 @@
+{
+  "nav": {
+    "upload": "Subir",
+    "search_placeholder": "Buscar recursos…"
+  },
+  "user_menu": {
+    "signed_in_as": "Conectado como @{username}",
+    "profile": "Perfil",
+    "account_settings": "Ajustes de cuenta",
+    "theme": "Tema",
+    "theme_light": "Claro",
+    "theme_dark": "Oscuro",
+    "theme_system": "Sistema",
+    "language": "Idioma",
+    "api_tokens": "Tokens de API",
+    "sign_out": "Cerrar sesión"
+  },
+  "admin_menu": {
+    "title": "Administración",
+    "users": "Usuarios",
+    "roles": "Roles y permisos",
+    "workflow": "Estados de flujo",
+    "fields": "Campos y metadatos",
+    "resource_types": "Tipos de recurso",
+    "system": "Configuración del sistema",
+    "system_log": "Registro del sistema"
+  },
+  "account": {
+    "title": "Cuenta",
+    "sections": {
+      "profile": "Perfil",
+      "preferences": "Preferencias",
+      "ai": "IA",
+      "password": "Contraseña",
+      "tokens": "Tokens de API",
+      "messages": "Mensajes"
+    }
+  },
+  "admin": {
+    "title": "Administración"
+  },
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar"
+  }
+}

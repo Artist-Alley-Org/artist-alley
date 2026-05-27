@@ -312,7 +312,31 @@ func (h *Handler) GetCurrentUser(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	return openapi.GetCurrentUser200JSONResponse(identityToCurrentUser(id)), nil
+	cu := identityToCurrentUser(id)
+
+	// Pull language + theme from the user's profile so the frontend
+	// can hydrate the language store + theme on the first paint
+	// without a separate round-trip. One small SELECT; the row is
+	// missing entirely for users who haven't created a profile yet,
+	// in which case both prefs default to empty (= "follow system").
+	var lang, theme string
+	err := h.Pool.QueryRow(ctx,
+		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE rs_user_id = $1`,
+		id.UserRef,
+	).Scan(&lang, &theme)
+	if err == nil {
+		if lang != "" {
+			l := lang
+			cu.Language = &l
+		}
+		if theme != "" {
+			t := openapi.CurrentUserTheme(theme)
+			cu.Theme = &t
+		}
+	}
+	// pgx.ErrNoRows is fine; we leave the fields nil.
+
+	return openapi.GetCurrentUser200JSONResponse(cu), nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,224 @@
+{
+  "nav": {
+    "upload": "Upload",
+    "search_placeholder": "Search assets…",
+    "messages": "Messages",
+    "open_user_menu": "Open user menu",
+    "open_admin_menu": "Open admin menu"
+  },
+  "user_menu": {
+    "signed_in_as": "Signed in as @{username}",
+    "profile": "Profile",
+    "account_settings": "Account settings",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "theme_system": "System",
+    "language": "Language",
+    "api_tokens": "API tokens",
+    "sign_out": "Sign out"
+  },
+  "admin_menu": {
+    "title": "Admin",
+    "users": "Users",
+    "roles": "Roles & capabilities",
+    "workflow": "Workflow states",
+    "fields": "Fields & metadata",
+    "resource_types": "Resource types",
+    "system": "System config",
+    "system_log": "System log"
+  },
+  "account": {
+    "title": "Account",
+    "sections": {
+      "profile": "Profile",
+      "preferences": "Preferences",
+      "ai": "AI",
+      "password": "Password",
+      "tokens": "API tokens",
+      "messages": "Messages"
+    },
+    "overview": {
+      "intro": "Manage your profile, preferences, and credentials."
+    },
+    "profile": {
+      "title": "Profile",
+      "display_name": "Display name",
+      "display_name_help": "Leave blank to use your full name.",
+      "bio": "Bio",
+      "avatar_url": "Avatar URL",
+      "location": "Location",
+      "website_url": "Website",
+      "save": "Save profile",
+      "saved": "Profile saved."
+    },
+    "preferences": {
+      "title": "Preferences",
+      "intro": "These follow you across browsers when you sign in.",
+      "theme_label": "Theme",
+      "theme_system_help": "Match your OS / browser preference.",
+      "language_label": "Language",
+      "language_system_help": "Auto-detect from your browser.",
+      "save": "Save preferences",
+      "saved": "Preferences saved."
+    },
+    "ai": {
+      "title": "AI preferences",
+      "intro": "Override the system default AI provider for your own actions.",
+      "use_system_default": "Use the system default",
+      "coming_soon": "Per-user AI overrides land with the AI auto-tagging phase."
+    },
+    "password": {
+      "title": "Change password",
+      "coming_soon": "Password changes land in a follow-up phase."
+    },
+    "tokens": {
+      "title": "API tokens",
+      "intro": "Personal access tokens let scripts and integrations act on your behalf. Treat them like passwords.",
+      "create": "New token",
+      "name": "Name",
+      "scopes": "Scopes",
+      "expires_at": "Expires at",
+      "last_used": "Last used",
+      "revoke": "Revoke",
+      "no_tokens": "You haven't created any tokens yet."
+    },
+    "messages": {
+      "title": "Messages",
+      "coming_soon": "Inbox lands in a follow-up phase."
+    }
+  },
+  "admin": {
+    "title": "Admin",
+    "intro": "Manage the install. Changes here affect every user on this server.",
+    "tile": {
+      "users": "Manage users, group memberships, and role assignments.",
+      "roles": "View roles and the capabilities each one grants.",
+      "workflow": "Review the seeded workflow state machines.",
+      "fields": "Browse the metadata field schema.",
+      "resource_types": "Browse the resource type registry.",
+      "system": "Site, SMTP, authentication, AI providers, and logs."
+    },
+    "users": {
+      "title": "Users",
+      "no_users": "No users on this install yet.",
+      "username": "Username",
+      "fullname": "Full name",
+      "email": "Email",
+      "actions": "Actions"
+    },
+    "user_detail": {
+      "title": "User: {username}",
+      "role_label": "Role",
+      "role_save": "Update role",
+      "role_saved": "Role updated."
+    },
+    "roles": {
+      "title": "Roles & capabilities",
+      "no_roles": "No roles configured.",
+      "capabilities": "Capabilities"
+    },
+    "workflow": {
+      "title": "Workflow states",
+      "domain_label": "Domain",
+      "no_states": "No states defined for this domain."
+    },
+    "fields": {
+      "title": "Fields & metadata",
+      "no_fields": "No fields defined.",
+      "code": "Code",
+      "label": "Label",
+      "type": "Type",
+      "applies_to": "Applies to"
+    },
+    "resource_types": {
+      "title": "Resource types",
+      "coming_soon": "Resource-type editing lands in a follow-up phase."
+    },
+    "system": {
+      "title": "System configuration",
+      "intro": "Per-install settings. Persisted in the system_config table.",
+      "tile": {
+        "site": "Display name and base URL.",
+        "smtp": "Outbound email server.",
+        "auth": "Password policy and SSO providers.",
+        "ai": "AI provider list and default selection.",
+        "log": "Audit trail of admin actions."
+      },
+      "site": {
+        "title": "Site",
+        "name": "Site name",
+        "base_url": "Base URL",
+        "base_url_help": "Absolute URL the site is reachable at; used in outgoing emails.",
+        "save": "Save site",
+        "saved": "Site saved."
+      },
+      "smtp": {
+        "title": "SMTP",
+        "host": "Host",
+        "port": "Port",
+        "username": "Username",
+        "password": "Password",
+        "encryption": "Encryption",
+        "from_address": "From address",
+        "save": "Save SMTP",
+        "saved": "SMTP saved."
+      },
+      "auth": {
+        "title": "Authentication",
+        "password_policy": "Password policy",
+        "min_length": "Minimum length",
+        "require_upper": "Require uppercase",
+        "require_number": "Require number",
+        "require_symbol": "Require symbol",
+        "disallow_common": "Disallow common passwords",
+        "max_age_days": "Password max age (days, 0 = never)",
+        "sso_providers": "SSO providers",
+        "add_provider": "Add provider",
+        "no_providers": "No SSO providers configured.",
+        "provider_kind": "Kind",
+        "provider_display_name": "Display name",
+        "provider_enabled": "Enabled",
+        "remove_provider": "Remove",
+        "save": "Save authentication",
+        "saved": "Authentication saved."
+      },
+      "ai": {
+        "title": "AI providers",
+        "default_provider": "Default provider",
+        "no_default": "(none — AI features disabled)",
+        "providers": "Providers",
+        "add_provider": "Add provider",
+        "no_providers": "No AI providers configured.",
+        "kind": "Kind",
+        "display_name": "Display name",
+        "model": "Model",
+        "base_url": "Base URL (optional)",
+        "api_key": "API key",
+        "enabled": "Enabled",
+        "remove_provider": "Remove",
+        "save": "Save AI providers",
+        "saved": "AI providers saved."
+      },
+      "log": {
+        "title": "System log",
+        "coming_soon": "Unified audit log lands in a follow-up phase."
+      }
+    }
+  },
+  "common": {
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Remove",
+    "edit": "Edit",
+    "delete": "Delete",
+    "back": "Back",
+    "coming_soon": "Coming soon",
+    "error_generic": "Something went wrong.",
+    "no_permission": "You don't have permission to view this page."
+  },
+  "errors": {
+    "save_failed": "Couldn't save changes."
+  }
+}

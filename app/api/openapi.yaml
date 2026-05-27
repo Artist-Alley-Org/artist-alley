@@ -2927,6 +2927,19 @@ components:
           type: string
           enum: [session, token]
           description: How the caller was authenticated for this request.
+        language:
+          type: string
+          description: |
+            User's language pref (BCP47). Empty string = follow system /
+            browser. Joined from user_profiles at /auth/me time so the
+            frontend can hydrate the language store on first paint
+            without a separate round-trip.
+        theme:
+          type: string
+          enum: ['', 'light', 'dark']
+          description: |
+            User's theme pref. Empty string = follow system. Same
+            "join on /auth/me" rationale as `language`.
     ApiTokenSummary:
       type: object
       required: [id, name, created_at, scopes]

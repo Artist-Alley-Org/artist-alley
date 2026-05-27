@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
   import { auth } from '$stores/auth.svelte';
+  import { lang, t } from '$stores/lang.svelte';
   import { upload } from '$stores/upload.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -10,11 +11,24 @@
   import NavUploadButton from '$components/NavUploadButton.svelte';
   import UploadModal from '$components/upload/UploadModal.svelte';
   import UploadDropZone from '$components/upload/UploadDropZone.svelte';
+  import UserMenu from '$components/UserMenu.svelte';
+  import AdminMenu from '$components/AdminMenu.svelte';
+  import MessagesButton from '$components/MessagesButton.svelte';
 
   let { children } = $props();
 
   onMount(() => {
     theme.init();
+    // i18n: must run AFTER auth state has hydrated so user pref wins
+    // over the cookie. +layout.ts has populated `auth.user` by now
+    // via hydrateFrom — but caps don't ride that path, so we pull
+    // them here.
+    lang.init();
+    // Caps load unconditionally — `refreshCaps` bails early when
+    // there's no user. Without this, the admin menu stays hidden
+    // even for admins because +layout.ts's hydrateFrom doesn't
+    // populate caps (only user fields).
+    void auth.refreshCaps();
     // Drop-anywhere-to-upload — install once globally. The store
     // returns a cleanup but layouts don't unmount in normal use, so
     // we ignore it.
@@ -55,15 +69,7 @@
     await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
   }
 
-  async function handleSignOut() {
-    await auth.logout();
-    await goto('/login');
-  }
-
-  function cycleTheme() {
-    const next = theme.pref === 'light' ? 'dark' : theme.pref === 'dark' ? 'system' : 'light';
-    theme.set(next);
-  }
+  // Sign-out + theme cycling moved into UserMenu.
 </script>
 
 <div class="min-h-screen flex flex-col bg-surface text-fg">
@@ -84,35 +90,22 @@
             <SearchBar
               bind:value={searchValue}
               onsearch={handleSearch}
-              placeholder="Search assets…"
+              placeholder={t('nav.search_placeholder')}
             />
           </div>
         {:else}
           <div class="flex-1"></div>
         {/if}
 
+        <!-- Right cluster: upload button, messages, user menu, admin
+             menu. Theme + sign-out + language live inside the user
+             menu. AdminMenu self-gates on system.admin so non-admins
+             never see it. -->
         <div class="flex items-center gap-2 shrink-0">
           <NavUploadButton />
-          <button
-            type="button"
-            onclick={cycleTheme}
-            class="rounded-md px-3 py-1.5 text-fg-muted hover:text-fg hover:bg-surface transition-colors"
-            title="Theme: {theme.pref}"
-            aria-label="Cycle theme"
-          >
-            {theme.pref === 'light' ? '☀' : theme.pref === 'dark' ? '☾' : '◐'}
-            <span class="ml-1 capitalize">{theme.pref}</span>
-          </button>
-          <div class="text-fg-muted">
-            {auth.user?.fullname || auth.user?.username}
-          </div>
-          <button
-            type="button"
-            onclick={handleSignOut}
-            class="rounded-md px-3 py-1.5 text-fg-muted hover:text-fg hover:bg-surface transition-colors"
-          >
-            Sign out
-          </button>
+          <MessagesButton />
+          <UserMenu />
+          <AdminMenu />
         </div>
       </div>
     </header>
