@@ -121,10 +121,10 @@ func (q *Queries) AddPostTag(ctx context.Context, arg AddPostTagParams) error {
 const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id
-) VALUES ($1, $2, $3, $4, $5)
+    author_user_ref, title, description, visibility, cover_asset_id, team_id
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at
 `
 
@@ -134,6 +134,7 @@ type CreatePostParams struct {
 	Description   string
 	Visibility    string
 	CoverAssetID  pgtype.UUID
+	TeamID        pgtype.UUID
 }
 
 type CreatePostRow struct {
@@ -147,6 +148,7 @@ type CreatePostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -154,9 +156,9 @@ type CreatePostRow struct {
 // ---------------------------------------------------------------------------
 // posts (the entity)
 // ---------------------------------------------------------------------------
-// posted_at defaults to NOW() via the column default. If we ever
-// need to backdate (importer / federation peer pulling old posts),
-// we'll add a SetPostPostedAt query rather than overloading this.
+// posted_at defaults to NOW() via the column default. team_id is
+// optional (NULL = un-scoped post; scoped post visibility is gated by
+// the post's team_id and the caller's scoped caps — see ADR 0010 L5).
 func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreatePostRow, error) {
 	row := q.db.QueryRow(ctx, createPost,
 		arg.AuthorUserRef,
@@ -164,6 +166,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		arg.Description,
 		arg.Visibility,
 		arg.CoverAssetID,
+		arg.TeamID,
 	)
 	var i CreatePostRow
 	err := row.Scan(
@@ -177,6 +180,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -185,7 +189,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 
 const getPost = `-- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
+       posted_at, like_count, comment_count, origin_server_id, team_id,
        created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL
@@ -202,6 +206,7 @@ type GetPostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -220,6 +225,7 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -663,7 +669,7 @@ UPDATE posts SET
     updated_at     = NOW()
 WHERE id = $5 AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at
 `
 
@@ -686,6 +692,7 @@ type UpdatePostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -711,6 +718,7 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

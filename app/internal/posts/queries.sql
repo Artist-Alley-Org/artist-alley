@@ -3,19 +3,19 @@
 -- ---------------------------------------------------------------------------
 
 -- name: CreatePost :one
--- posted_at defaults to NOW() via the column default. If we ever
--- need to backdate (importer / federation peer pulling old posts),
--- we'll add a SetPostPostedAt query rather than overloading this.
+-- posted_at defaults to NOW() via the column default. team_id is
+-- optional (NULL = un-scoped post; scoped post visibility is gated by
+-- the post's team_id and the caller's scoped caps — see ADR 0010 L5).
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id
-) VALUES ($1, $2, $3, $4, $5)
+    author_user_ref, title, description, visibility, cover_asset_id, team_id
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at;
 
 -- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
+       posted_at, like_count, comment_count, origin_server_id, team_id,
        created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
@@ -30,7 +30,7 @@ UPDATE posts SET
     updated_at     = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at;
 
 -- name: SoftDeletePost :exec

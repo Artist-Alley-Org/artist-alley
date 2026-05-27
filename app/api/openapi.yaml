@@ -2807,6 +2807,16 @@ components:
           type: string
           format: uuid
           nullable: true
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional team scope (ADR 0010 Layer 5). When set, team-
+            scoped capability checks apply: callers who hold
+            `posts.read` scoped to this team or any ancestor team
+            can see the post regardless of visibility. NULL = no
+            team scope; only visibility / role / ACL gates apply.
         created_at:       { type: string, format: date-time }
         updated_at:       { type: string, format: date-time }
     PostMember:
@@ -2850,6 +2860,14 @@ components:
             Optional — when set, the new post is added to this
             collection at create time. Used by the context-aware
             upload modal: dropping into /collections/{id} sets this.
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional — scope the post to a team. The upload modal
+            will set this to the user's currently-selected team
+            when one is active.
     PostUpdate:
       type: object
       description: Partial update; only present fields are touched.

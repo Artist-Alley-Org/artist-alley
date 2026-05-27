@@ -148,14 +148,25 @@ func (h *Handler) CreatePost(
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := New(tx)
 
+	var teamID pgtype.UUID
+	if in.TeamId != nil {
+		teamID = pgtype.UUID{Bytes: uuid.UUID(*in.TeamId), Valid: true}
+	}
+
 	row, err := q.CreatePost(ctx, CreatePostParams{
 		AuthorUserRef: id.UserRef,
 		Title:         strOr(in.Title, ""),
 		Description:   strOr(in.Description, ""),
 		Visibility:    visibility,
 		CoverAssetID:  coverID,
+		TeamID:        teamID,
 	})
 	if err != nil {
+		if isFKError(err, "posts_team_id_fkey") {
+			return openapi.CreatePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "team not found"},
+			}, nil
+		}
 		return nil, fmt.Errorf("posts: create: %w", err)
 	}
 
@@ -870,6 +881,10 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 	if p.OriginServerID.Valid {
 		v := openapi_types.UUID(p.OriginServerID.Bytes)
 		out.OriginServerId = &v
+	}
+	if p.TeamID.Valid {
+		v := openapi_types.UUID(p.TeamID.Bytes)
+		out.TeamId = &v
 	}
 	for _, m := range members {
 		out.Members = append(out.Members, openapi.PostMember{
