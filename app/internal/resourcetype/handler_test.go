@@ -270,6 +270,60 @@ func (rtOnly) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (
 func (rtOnly) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	panic("RemovePostAsset called from resourcetype test shim")
 }
+func (rtOnly) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	panic("ListTeams called from resourcetype test shim")
+}
+func (rtOnly) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	panic("CreateTeam called from resourcetype test shim")
+}
+func (rtOnly) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	panic("GetTeam called from resourcetype test shim")
+}
+func (rtOnly) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	panic("UpdateTeam called from resourcetype test shim")
+}
+func (rtOnly) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	panic("DeleteTeam called from resourcetype test shim")
+}
+func (rtOnly) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	panic("ListTeamParents called from resourcetype test shim")
+}
+func (rtOnly) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	panic("AddTeamParent called from resourcetype test shim")
+}
+func (rtOnly) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	panic("RemoveTeamParent called from resourcetype test shim")
+}
+func (rtOnly) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	panic("ListTeamMembers called from resourcetype test shim")
+}
+func (rtOnly) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	panic("AddTeamMember called from resourcetype test shim")
+}
+func (rtOnly) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	panic("RemoveTeamMember called from resourcetype test shim")
+}
+func (rtOnly) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	panic("GetMyTeams called from resourcetype test shim")
+}
+func (rtOnly) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from resourcetype test shim")
+}
+func (rtOnly) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from resourcetype test shim")
+}
+func (rtOnly) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from resourcetype test shim")
+}
+func (rtOnly) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from resourcetype test shim")
+}
+func (rtOnly) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from resourcetype test shim")
+}
+func (rtOnly) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

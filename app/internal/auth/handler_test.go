@@ -369,7 +369,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		`DELETE FROM api_tokens             WHERE rs_user_id = $1`,
 		`DELETE FROM user_capability_grants WHERE rs_user_id = $1`,
 		`DELETE FROM user_capability_revokes WHERE rs_user_id = $1`,
-		`DELETE FROM user_role              WHERE rs_user_id = $1`,
+		`DELETE FROM user_roles              WHERE rs_user_id = $1`,
 		`DELETE FROM sessions               WHERE user_ref   = $1`,
 	} {
 		if _, err := pool.Exec(ctx, sql, userRef); err != nil {
@@ -382,7 +382,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_role WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE rs_user_id = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})
@@ -560,6 +560,60 @@ func (a authOnlyImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestO
 }
 func (a authOnlyImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	panic("RemovePostAsset called from auth test shim")
+}
+func (a authOnlyImpl) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	panic("ListTeams called from auth test shim")
+}
+func (a authOnlyImpl) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	panic("CreateTeam called from auth test shim")
+}
+func (a authOnlyImpl) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	panic("GetTeam called from auth test shim")
+}
+func (a authOnlyImpl) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	panic("UpdateTeam called from auth test shim")
+}
+func (a authOnlyImpl) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	panic("DeleteTeam called from auth test shim")
+}
+func (a authOnlyImpl) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	panic("ListTeamParents called from auth test shim")
+}
+func (a authOnlyImpl) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	panic("AddTeamParent called from auth test shim")
+}
+func (a authOnlyImpl) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	panic("RemoveTeamParent called from auth test shim")
+}
+func (a authOnlyImpl) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	panic("ListTeamMembers called from auth test shim")
+}
+func (a authOnlyImpl) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	panic("AddTeamMember called from auth test shim")
+}
+func (a authOnlyImpl) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	panic("RemoveTeamMember called from auth test shim")
+}
+func (a authOnlyImpl) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	panic("GetMyTeams called from auth test shim")
+}
+func (a authOnlyImpl) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from auth test shim")
+}
+func (a authOnlyImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from auth test shim")
+}
+func (a authOnlyImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from auth test shim")
+}
+func (a authOnlyImpl) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from auth test shim")
+}
+func (a authOnlyImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from auth test shim")
+}
+func (a authOnlyImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from auth test shim")
 }
 
 // ---------------------------------------------------------------------------

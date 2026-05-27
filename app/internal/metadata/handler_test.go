@@ -601,3 +601,57 @@ func (metaShim) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject)
 func (metaShim) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	panic("RemovePostAsset called from metadata test shim")
 }
+func (metaShim) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	panic("ListTeams called from metadata_test test shim")
+}
+func (metaShim) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	panic("CreateTeam called from metadata_test test shim")
+}
+func (metaShim) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	panic("GetTeam called from metadata_test test shim")
+}
+func (metaShim) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	panic("UpdateTeam called from metadata_test test shim")
+}
+func (metaShim) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	panic("DeleteTeam called from metadata_test test shim")
+}
+func (metaShim) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	panic("ListTeamParents called from metadata_test test shim")
+}
+func (metaShim) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	panic("AddTeamParent called from metadata_test test shim")
+}
+func (metaShim) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	panic("RemoveTeamParent called from metadata_test test shim")
+}
+func (metaShim) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	panic("ListTeamMembers called from metadata_test test shim")
+}
+func (metaShim) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	panic("AddTeamMember called from metadata_test test shim")
+}
+func (metaShim) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	panic("RemoveTeamMember called from metadata_test test shim")
+}
+func (metaShim) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	panic("GetMyTeams called from metadata_test test shim")
+}
+func (metaShim) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from metadata_test test shim")
+}
+func (metaShim) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from metadata_test test shim")
+}
+func (metaShim) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from metadata_test test shim")
+}
+func (metaShim) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from metadata_test test shim")
+}
+func (metaShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from metadata_test test shim")
+}
+func (metaShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from metadata_test test shim")
+}

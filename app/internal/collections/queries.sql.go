@@ -11,6 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addCollectionAcl = `-- name: AddCollectionAcl :exec
+INSERT INTO collection_acls (collection_id, principal_type, principal_id, permission,
+                             granted_by_rs_user_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (collection_id, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at
+`
+
+type AddCollectionAclParams struct {
+	CollectionID      pgtype.UUID
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
+func (q *Queries) AddCollectionAcl(ctx context.Context, arg AddCollectionAclParams) error {
+	_, err := q.db.Exec(ctx, addCollectionAcl,
+		arg.CollectionID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+		arg.GrantedByRsUserID,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const addCollectionResource = `-- name: AddCollectionResource :exec
 
 INSERT INTO collection_resources (
@@ -167,6 +198,46 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 	return i, err
 }
 
+const listCollectionAcls = `-- name: ListCollectionAcls :many
+
+SELECT collection_id, principal_type, principal_id, permission,
+       granted_at, granted_by_rs_user_id, expires_at
+FROM collection_acls
+WHERE collection_id = $1
+ORDER BY granted_at DESC, principal_type, principal_id, permission
+`
+
+// ---------------------------------------------------------------------------
+// ACLs (Phase 1.7.B-7c)
+// ---------------------------------------------------------------------------
+func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UUID) ([]CollectionAcl, error) {
+	rows, err := q.db.Query(ctx, listCollectionAcls, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CollectionAcl
+	for rows.Next() {
+		var i CollectionAcl
+		if err := rows.Scan(
+			&i.CollectionID,
+			&i.PrincipalType,
+			&i.PrincipalID,
+			&i.Permission,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCollectionResourcesPage = `-- name: ListCollectionResourcesPage :many
 SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
@@ -311,6 +382,34 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 		return nil, err
 	}
 	return items, nil
+}
+
+const removeCollectionAcl = `-- name: RemoveCollectionAcl :execrows
+DELETE FROM collection_acls
+WHERE collection_id = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4
+`
+
+type RemoveCollectionAclParams struct {
+	CollectionID  pgtype.UUID
+	PrincipalType string
+	PrincipalID   string
+	Permission    string
+}
+
+func (q *Queries) RemoveCollectionAcl(ctx context.Context, arg RemoveCollectionAclParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeCollectionAcl,
+		arg.CollectionID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removeCollectionResource = `-- name: RemoveCollectionResource :exec

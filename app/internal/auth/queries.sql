@@ -125,13 +125,16 @@ ORDER BY last_used_at DESC;
 -- name: CountSystemAdmins :one
 -- Returns the number of real (still-existing) users whose assigned role
 -- grants system.admin. The join against "user" filters out dangling
--- user_role rows left over from deleted users — the user table doesn't
--- cascade.
+-- user_roles rows left over from deleted users — the user table doesn't
+-- cascade. Counts only global role assignments (team_id IS NULL);
+-- team-scoped system.admin would be a misconfiguration anyway since
+-- system.admin is a global wildcard.
 SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
-FROM user_role ur
+FROM user_roles ur
 JOIN role_capabilities rc ON rc.role_id = ur.role_id
 JOIN "user" u             ON u.ref     = ur.rs_user_id
-WHERE rc.capability_code = 'system.admin';
+WHERE rc.capability_code = 'system.admin'
+  AND ur.team_id IS NULL;
 
 -- name: FindRoleByName :one
 -- Used by setup to look up the seeded "Admin" role without hardcoding
@@ -207,14 +210,21 @@ WHERE id = $1
 
 -- name: EffectiveCapabilitiesForUser :many
 -- Returns the union of capabilities a user can exercise after all role
--- inheritance and per-user overrides resolve. The recursive CTE walks
--- the role hierarchy from the user's assigned role up to the chain
--- root, then we union in explicit grants and remove explicit revokes.
+-- inheritance and per-user overrides resolve, for the *global* scope
+-- (team_id IS NULL). The recursive CTE walks the role hierarchy from
+-- every globally-assigned role, then unions in global grants and
+-- removes global revokes.
+--
+-- Phase 1.7.B-3 adds a scoped resolver that consults team-scoped
+-- assignments. This query intentionally ignores team_id so existing
+-- handlers that only ask for global caps continue to get the right
+-- answer with no behavioural change.
 WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
     FROM roles r
-    JOIN user_role ur ON ur.role_id = r.id
+    JOIN user_roles ur ON ur.role_id = r.id
     WHERE ur.rs_user_id = $1
+      AND ur.team_id IS NULL
 
     UNION ALL
 
@@ -234,6 +244,7 @@ all_caps AS (
     SELECT g.capability_code AS code
     FROM user_capability_grants g
     WHERE g.rs_user_id = $1
+      AND g.team_id IS NULL
 )
 SELECT ac.code
 FROM all_caps ac
@@ -241,22 +252,137 @@ WHERE ac.code NOT IN (
     SELECT v.capability_code
     FROM user_capability_revokes v
     WHERE v.rs_user_id = $1
+      AND v.team_id IS NULL
 )
 ORDER BY ac.code;
 
--- name: AssignedRoleForUser :one
--- Returns the user's currently assigned role (id + name) or no rows.
-SELECT r.id, r.name, r.description, r.parent_id
-FROM roles r
-JOIN user_role ur ON ur.role_id = r.id
-WHERE ur.rs_user_id = $1;
+-- name: EffectiveScopedCapabilitiesForUser :many
+-- Returns (capability_code, team_id) tuples for every capability the
+-- user can exercise. Used by the auth resolver to populate Identity
+-- on every request.
+--
+-- The query handles both axes of ADR 0010 in one shot:
+--   * Role inheritance — recursive CTE walks each role's parent chain
+--     up to a depth cap; team_id is propagated through the chain so a
+--     team-scoped role assignment scopes every inherited capability.
+--   * Team scope expansion — scoped grants are pre-expanded via
+--     team_closure (one row per descendant team). The resolver does
+--     pure-memory flat lookups after this; no closure walk in Go.
+--
+-- team_id semantics:
+--   * NULL row → global capability (allows any scope including
+--     unscoped Can() checks).
+--   * non-NULL row → capability is effective on the specific team
+--     in that row (post-closure-expansion this includes all
+--     descendant teams).
+--
+-- Revokes are matched with NULLs-not-distinct: a revoke at the same
+-- (code, team_id) pair removes that effective row exactly. Revokes
+-- DON'T expand through closure — they target the specific scope.
+WITH RECURSIVE role_chain(role_id, team_id, depth) AS (
+    -- Seed: every role assignment, preserving its team scope.
+    SELECT ur.role_id, ur.team_id, 0
+    FROM user_roles ur
+    WHERE ur.rs_user_id = $1
 
--- name: SetUserRole :exec
--- Idempotent assign-or-overwrite. Used by the admin endpoint.
-INSERT INTO user_role (rs_user_id, role_id, assigned_by_rs_user_id)
+    UNION ALL
+
+    -- Walk: ancestor role inherits the seed assignment's team scope.
+    SELECT r.parent_id, rc.team_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.role_id
+    WHERE r.parent_id IS NOT NULL AND rc.depth < 32
+),
+role_caps AS (
+    SELECT rcap.capability_code AS code, rch.team_id AS team_id
+    FROM role_chain rch
+    JOIN role_capabilities rcap ON rcap.role_id = rch.role_id
+),
+grant_caps AS (
+    SELECT g.capability_code AS code, g.team_id AS team_id
+    FROM user_capability_grants g
+    WHERE g.rs_user_id = $1
+),
+all_caps AS (
+    SELECT code, team_id FROM role_caps
+    UNION
+    SELECT code, team_id FROM grant_caps
+),
+non_revoked AS (
+    SELECT a.code, a.team_id
+    FROM all_caps a
+    WHERE NOT EXISTS (
+        SELECT 1 FROM user_capability_revokes v
+        WHERE v.rs_user_id = $1
+          AND v.capability_code = a.code
+          AND v.team_id IS NOT DISTINCT FROM a.team_id
+    )
+),
+expanded AS (
+    -- Global rows pass through unchanged.
+    SELECT code, NULL::uuid AS team_id FROM non_revoked WHERE team_id IS NULL
+    UNION
+    -- Scoped rows fan out via team_closure (includes the team itself
+    -- via the depth-0 self-row).
+    SELECT nr.code, tc.descendant_id
+    FROM non_revoked nr
+    JOIN team_closure tc ON tc.ancestor_id = nr.team_id
+    WHERE nr.team_id IS NOT NULL
+)
+SELECT code, team_id
+FROM expanded
+ORDER BY code, team_id NULLS FIRST;
+
+-- name: EffectiveCapabilitiesForRoleName :many
+-- Closure-walked capabilities for the named role, including everything
+-- inherited from its parent chain. Used to populate the synthetic
+-- Anonymous Identity that the middleware injects on unauthenticated
+-- requests. No team scope (the Anonymous role isn't team-scoped by
+-- design); the returned set is flat global codes.
+WITH RECURSIVE role_chain AS (
+    SELECT r.id, r.parent_id, 0 AS depth
+    FROM roles r
+    WHERE r.name = $1
+
+    UNION ALL
+
+    SELECT r.id, r.parent_id, rc.depth + 1
+    FROM roles r
+    JOIN role_chain rc ON r.id = rc.parent_id
+    WHERE rc.depth < 32
+)
+SELECT DISTINCT rcap.capability_code AS code
+FROM role_chain rch
+JOIN role_capabilities rcap ON rcap.role_id = rch.id
+ORDER BY code;
+
+-- name: AssignedRolesForUser :many
+-- Returns every role the user has been assigned, with the optional
+-- team scope. NULL team_id = global assignment. Replaces the old
+-- AssignedRoleForUser (:one) — multi-role per user is supported as of
+-- migration 00016.
+SELECT r.id, r.name, r.description, r.parent_id, ur.team_id
+FROM roles r
+JOIN user_roles ur ON ur.role_id = r.id
+WHERE ur.rs_user_id = $1
+ORDER BY ur.team_id NULLS FIRST, r.name;
+
+-- name: SetUserGlobalRole :exec
+-- Replaces the user's *global* role assignment(s) with the supplied
+-- role. Preserves the "exactly one global role per user" admin UX
+-- from the singular SetUserRole, while leaving any team-scoped
+-- assignments untouched.
+--
+-- The DELETE-then-INSERT in a single statement-with-CTE is atomic at
+-- the statement level (a single SQL statement runs in one snapshot),
+-- so there's no window where the user has zero roles.
+WITH _del AS (
+    DELETE FROM user_roles
+     WHERE rs_user_id = $1 AND team_id IS NULL
+)
+INSERT INTO user_roles (rs_user_id, role_id, assigned_by_rs_user_id)
 VALUES ($1, $2, $3)
-ON CONFLICT (rs_user_id) DO UPDATE SET
-    role_id                = EXCLUDED.role_id,
+ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
     assigned_at            = NOW(),
     assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id;
 

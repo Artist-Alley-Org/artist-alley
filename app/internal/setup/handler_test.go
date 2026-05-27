@@ -112,7 +112,7 @@ func TestSetupFlow_HappyPath(t *testing.T) {
 		// 5. user is assigned the Admin role
 		var roleName string
 		if err := fx.pool.QueryRow(ctx,
-			`SELECT r.name FROM user_role ur JOIN roles r ON r.id = ur.role_id
+			`SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
 			 JOIN "user" u ON u.ref = ur.rs_user_id WHERE u.username = $1`,
 			fx.adminUsername).Scan(&roleName); err != nil {
 			t.Fatalf("lookup role: %v", err)
@@ -308,7 +308,7 @@ func (f *fixture) cleanupAdmin(ctx context.Context) {
 	// back to true. We leave the user rows alone (the user could
 	// re-grant later) except for our specific test user.
 	_, _ = f.pool.Exec(ctx, `
-		DELETE FROM user_role
+		DELETE FROM user_roles
 		WHERE role_id IN (
 		    SELECT DISTINCT rc.role_id FROM role_capabilities rc
 		    WHERE rc.capability_code = 'system.admin'
@@ -488,6 +488,60 @@ func (shimImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject)
 }
 func (shimImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	panic("RemovePostAsset called from setup test shim")
+}
+func (shimImpl) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	panic("ListTeams called from setup_test test shim")
+}
+func (shimImpl) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	panic("CreateTeam called from setup_test test shim")
+}
+func (shimImpl) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	panic("GetTeam called from setup_test test shim")
+}
+func (shimImpl) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	panic("UpdateTeam called from setup_test test shim")
+}
+func (shimImpl) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	panic("DeleteTeam called from setup_test test shim")
+}
+func (shimImpl) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	panic("ListTeamParents called from setup_test test shim")
+}
+func (shimImpl) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	panic("AddTeamParent called from setup_test test shim")
+}
+func (shimImpl) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	panic("RemoveTeamParent called from setup_test test shim")
+}
+func (shimImpl) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	panic("ListTeamMembers called from setup_test test shim")
+}
+func (shimImpl) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	panic("AddTeamMember called from setup_test test shim")
+}
+func (shimImpl) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	panic("RemoveTeamMember called from setup_test test shim")
+}
+func (shimImpl) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	panic("GetMyTeams called from setup_test test shim")
+}
+func (shimImpl) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from setup_test test shim")
+}
+func (shimImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from setup_test test shim")
+}
+func (shimImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from setup_test test shim")
+}
+func (shimImpl) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	panic("ListCollectionAcls called from setup_test test shim")
+}
+func (shimImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	panic("AddCollectionAcl called from setup_test test shim")
+}
+func (shimImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	panic("RemoveCollectionAcl called from setup_test test shim")
 }
 
 // ---------------------------------------------------------------------------

@@ -3,19 +3,19 @@
 -- ---------------------------------------------------------------------------
 
 -- name: CreatePost :one
--- posted_at defaults to NOW() via the column default. If we ever
--- need to backdate (importer / federation peer pulling old posts),
--- we'll add a SetPostPostedAt query rather than overloading this.
+-- posted_at defaults to NOW() via the column default. team_id is
+-- optional (NULL = un-scoped post; scoped post visibility is gated by
+-- the post's team_id and the caller's scoped caps — see ADR 0010 L5).
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id
-) VALUES ($1, $2, $3, $4, $5)
+    author_user_ref, title, description, visibility, cover_asset_id, team_id
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at;
 
 -- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
+       posted_at, like_count, comment_count, origin_server_id, team_id,
        created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL;
@@ -30,7 +30,7 @@ UPDATE posts SET
     updated_at     = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at;
 
 -- name: SoftDeletePost :exec
@@ -158,3 +158,35 @@ WHERE cp.collection_id = $1
            AND cp.added_at > sqlc.narg('cursor_added_at')::TIMESTAMPTZ))
 ORDER BY cp.sort_order ASC, cp.added_at ASC
 LIMIT sqlc.arg('row_limit')::INTEGER;
+
+-- ---------------------------------------------------------------------------
+-- ACLs (Phase 1.7.B-7b)
+-- ---------------------------------------------------------------------------
+
+-- name: ListPostAcls :many
+-- All ACL rows on a post, newest first. The handler filters expired
+-- rows out of effective-access checks; this endpoint shows them so
+-- admins can see "X had read access until last week".
+SELECT post_id, principal_type, principal_id, permission,
+       granted_at, granted_by_rs_user_id, expires_at
+FROM post_acls
+WHERE post_id = $1
+ORDER BY granted_at DESC, principal_type, principal_id, permission;
+
+-- name: AddPostAcl :exec
+-- Idempotent on the full (post, principal, permission) PK. Adding the
+-- same row twice is a no-op (returns 204 the second time).
+INSERT INTO post_acls (post_id, principal_type, principal_id, permission,
+                       granted_by_rs_user_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (post_id, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at;
+
+-- name: RemovePostAcl :execrows
+DELETE FROM post_acls
+WHERE post_id = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4;

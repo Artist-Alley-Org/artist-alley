@@ -46,6 +46,39 @@ func (q *Queries) AddCollectionPost(ctx context.Context, arg AddCollectionPostPa
 	return err
 }
 
+const addPostAcl = `-- name: AddPostAcl :exec
+INSERT INTO post_acls (post_id, principal_type, principal_id, permission,
+                       granted_by_rs_user_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (post_id, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at
+`
+
+type AddPostAclParams struct {
+	PostID            pgtype.UUID
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
+// Idempotent on the full (post, principal, permission) PK. Adding the
+// same row twice is a no-op (returns 204 the second time).
+func (q *Queries) AddPostAcl(ctx context.Context, arg AddPostAclParams) error {
+	_, err := q.db.Exec(ctx, addPostAcl,
+		arg.PostID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+		arg.GrantedByRsUserID,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const addPostAsset = `-- name: AddPostAsset :exec
 
 INSERT INTO post_assets (post_id, asset_id, sort_order)
@@ -88,10 +121,10 @@ func (q *Queries) AddPostTag(ctx context.Context, arg AddPostTagParams) error {
 const createPost = `-- name: CreatePost :one
 
 INSERT INTO posts (
-    author_user_ref, title, description, visibility, cover_asset_id
-) VALUES ($1, $2, $3, $4, $5)
+    author_user_ref, title, description, visibility, cover_asset_id, team_id
+) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at
 `
 
@@ -101,6 +134,7 @@ type CreatePostParams struct {
 	Description   string
 	Visibility    string
 	CoverAssetID  pgtype.UUID
+	TeamID        pgtype.UUID
 }
 
 type CreatePostRow struct {
@@ -114,6 +148,7 @@ type CreatePostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -121,9 +156,9 @@ type CreatePostRow struct {
 // ---------------------------------------------------------------------------
 // posts (the entity)
 // ---------------------------------------------------------------------------
-// posted_at defaults to NOW() via the column default. If we ever
-// need to backdate (importer / federation peer pulling old posts),
-// we'll add a SetPostPostedAt query rather than overloading this.
+// posted_at defaults to NOW() via the column default. team_id is
+// optional (NULL = un-scoped post; scoped post visibility is gated by
+// the post's team_id and the caller's scoped caps — see ADR 0010 L5).
 func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreatePostRow, error) {
 	row := q.db.QueryRow(ctx, createPost,
 		arg.AuthorUserRef,
@@ -131,6 +166,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		arg.Description,
 		arg.Visibility,
 		arg.CoverAssetID,
+		arg.TeamID,
 	)
 	var i CreatePostRow
 	err := row.Scan(
@@ -144,6 +180,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -152,7 +189,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (CreateP
 
 const getPost = `-- name: GetPost :one
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
-       posted_at, like_count, comment_count, origin_server_id,
+       posted_at, like_count, comment_count, origin_server_id, team_id,
        created_at, updated_at
 FROM posts
 WHERE id = $1 AND deleted_at IS NULL
@@ -169,6 +206,7 @@ type GetPostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -187,6 +225,7 @@ func (q *Queries) GetPost(ctx context.Context, id pgtype.UUID) (GetPostRow, erro
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -274,6 +313,49 @@ func (q *Queries) ListCollectionPostsPage(ctx context.Context, arg ListCollectio
 			&i.CommentCount,
 			&i.PostCreatedAt,
 			&i.PostUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPostAcls = `-- name: ListPostAcls :many
+
+SELECT post_id, principal_type, principal_id, permission,
+       granted_at, granted_by_rs_user_id, expires_at
+FROM post_acls
+WHERE post_id = $1
+ORDER BY granted_at DESC, principal_type, principal_id, permission
+`
+
+// ---------------------------------------------------------------------------
+// ACLs (Phase 1.7.B-7b)
+// ---------------------------------------------------------------------------
+// All ACL rows on a post, newest first. The handler filters expired
+// rows out of effective-access checks; this endpoint shows them so
+// admins can see "X had read access until last week".
+func (q *Queries) ListPostAcls(ctx context.Context, postID pgtype.UUID) ([]PostAcl, error) {
+	rows, err := q.db.Query(ctx, listPostAcls, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PostAcl
+	for rows.Next() {
+		var i PostAcl
+		if err := rows.Scan(
+			&i.PostID,
+			&i.PrincipalType,
+			&i.PrincipalID,
+			&i.Permission,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -491,6 +573,34 @@ func (q *Queries) RemoveCollectionPost(ctx context.Context, arg RemoveCollection
 	return err
 }
 
+const removePostAcl = `-- name: RemovePostAcl :execrows
+DELETE FROM post_acls
+WHERE post_id = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4
+`
+
+type RemovePostAclParams struct {
+	PostID        pgtype.UUID
+	PrincipalType string
+	PrincipalID   string
+	Permission    string
+}
+
+func (q *Queries) RemovePostAcl(ctx context.Context, arg RemovePostAclParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removePostAcl,
+		arg.PostID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const removePostAsset = `-- name: RemovePostAsset :exec
 DELETE FROM post_assets WHERE post_id = $1 AND asset_id = $2
 `
@@ -559,7 +669,7 @@ UPDATE posts SET
     updated_at     = NOW()
 WHERE id = $5 AND deleted_at IS NULL
 RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
-          posted_at, like_count, comment_count, origin_server_id,
+          posted_at, like_count, comment_count, origin_server_id, team_id,
           created_at, updated_at
 `
 
@@ -582,6 +692,7 @@ type UpdatePostRow struct {
 	LikeCount      int64
 	CommentCount   int64
 	OriginServerID pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 }
@@ -607,6 +718,7 @@ func (q *Queries) UpdatePost(ctx context.Context, arg UpdatePostParams) (UpdateP
 		&i.LikeCount,
 		&i.CommentCount,
 		&i.OriginServerID,
+		&i.TeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

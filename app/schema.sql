@@ -98,6 +98,8 @@ CREATE TABLE assets (
     is_transcoding     BOOLEAN      NOT NULL DEFAULT FALSE,
     metadata           JSONB        NOT NULL DEFAULT '{}'::jsonb,
     origin_server_id   UUID         NULL,
+    state_id           UUID         NULL, -- workflow_states; added by 00018
+    team_id            UUID         NULL, -- teams; added by 00018
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     deleted_at         TIMESTAMPTZ  NULL
@@ -229,29 +231,68 @@ CREATE TABLE role_capabilities (
     PRIMARY KEY (role_id, capability_code)
 );
 
-CREATE TABLE user_role (
-    rs_user_id             BIGINT       NOT NULL PRIMARY KEY,
+-- teams (00015) is loaded before user_roles (00016) so the FK lands.
+CREATE TABLE teams (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug             TEXT         NOT NULL,
+    name             TEXT         NOT NULL,
+    description      TEXT         NOT NULL DEFAULT '',
+    origin_server_id UUID         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at       TIMESTAMPTZ  NULL,
+    UNIQUE NULLS NOT DISTINCT (origin_server_id, slug)
+);
+
+CREATE TABLE team_parents (
+    child_id  UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    parent_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    PRIMARY KEY (child_id, parent_id),
+    CHECK (child_id <> parent_id)
+);
+
+CREATE TABLE team_closure (
+    ancestor_id   UUID    NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    descendant_id UUID    NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    depth         INTEGER NOT NULL,
+    PRIMARY KEY (ancestor_id, descendant_id)
+);
+
+CREATE TABLE team_memberships (
+    team_id             UUID         NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    rs_user_id          BIGINT       NOT NULL,
+    added_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    added_by_rs_user_id BIGINT       NULL,
+    PRIMARY KEY (team_id, rs_user_id)
+);
+
+CREATE TABLE user_roles (
+    rs_user_id             BIGINT       NOT NULL,
     role_id                UUID         NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    team_id                UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     assigned_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    assigned_by_rs_user_id BIGINT       NULL
+    assigned_by_rs_user_id BIGINT       NULL,
+    CONSTRAINT user_roles_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, role_id, team_id)
 );
 
 CREATE TABLE user_capability_grants (
     rs_user_id            BIGINT       NOT NULL,
     capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    team_id               UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     granted_by_rs_user_id BIGINT       NULL,
     note                  TEXT         NOT NULL DEFAULT '',
-    PRIMARY KEY (rs_user_id, capability_code)
+    CONSTRAINT user_capability_grants_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, capability_code, team_id)
 );
 
 CREATE TABLE user_capability_revokes (
     rs_user_id            BIGINT       NOT NULL,
     capability_code       TEXT         NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
+    team_id               UUID         NULL REFERENCES teams(id) ON DELETE CASCADE,
     revoked_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     revoked_by_rs_user_id BIGINT       NULL,
     note                  TEXT         NOT NULL DEFAULT '',
-    PRIMARY KEY (rs_user_id, capability_code)
+    CONSTRAINT user_capability_revokes_unique UNIQUE NULLS NOT DISTINCT (rs_user_id, capability_code, team_id)
 );
 
 -- migrations/00004_storage.sql — content-addressed storage layer.
@@ -334,6 +375,8 @@ CREATE TABLE posts (
     comment_count     BIGINT       NOT NULL DEFAULT 0,
     search_text       TSVECTOR     NULL,
     origin_server_id  UUID         NULL,
+    state_id          UUID         NULL, -- workflow_states; added by 00018
+    team_id           UUID         NULL, -- teams; added by 00018
     deleted_at        TIMESTAMPTZ  NULL,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -361,4 +404,66 @@ CREATE TABLE collection_posts (
     expires_at     TIMESTAMPTZ  NULL,
     added_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     PRIMARY KEY (collection_id, post_id)
+);
+
+-- migrations/00017_acls.sql — per-resource and per-collection ACLs.
+-- ADR 0010 Layer 6.
+
+CREATE TABLE post_acls (
+    post_id               UUID         NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (post_id, principal_type, principal_id, permission)
+);
+
+CREATE TABLE collection_acls (
+    collection_id         UUID         NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (collection_id, principal_type, principal_id, permission)
+);
+
+-- migrations/00018_workflow.sql — workflow_states / workflow_transitions /
+-- workflow_audit. ADR 0010 Layer 7. Configurable state machine keyed
+-- by a TEXT domain ('post' | 'asset:<resource_type_ref>').
+
+CREATE TABLE workflow_states (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    domain              TEXT         NOT NULL,
+    code                TEXT         NOT NULL,
+    label               TEXT         NOT NULL,
+    sort_order          INTEGER      NOT NULL DEFAULT 0,
+    is_initial          BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_terminal         BOOLEAN      NOT NULL DEFAULT FALSE,
+    visible_by_default  BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (domain, code)
+);
+
+CREATE TABLE workflow_transitions (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_state_id       UUID         NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    to_state_id         UUID         NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    required_capability TEXT         NULL REFERENCES capabilities(code) ON DELETE SET NULL,
+    requires_team_scope BOOLEAN      NOT NULL DEFAULT FALSE,
+    CONSTRAINT workflow_transitions_unique UNIQUE NULLS NOT DISTINCT (from_state_id, to_state_id)
+);
+
+CREATE TABLE workflow_audit (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    resource_kind       TEXT         NOT NULL,
+    resource_id         UUID         NOT NULL,
+    from_state_id       UUID         NULL REFERENCES workflow_states(id) ON DELETE SET NULL,
+    to_state_id         UUID         NOT NULL REFERENCES workflow_states(id) ON DELETE SET NULL,
+    actor_rs_user_id    BIGINT       NULL,
+    note                TEXT         NOT NULL DEFAULT '',
+    transitioned_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

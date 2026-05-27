@@ -53,6 +53,8 @@ type Asset struct {
 	IsTranscoding  bool
 	Metadata       []byte
 	OriginServerID pgtype.UUID
+	StateID        pgtype.UUID
+	TeamID         pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	DeletedAt      pgtype.Timestamptz
@@ -120,6 +122,16 @@ type Collection struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type CollectionAcl struct {
+	CollectionID      pgtype.UUID
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
 type CollectionPost struct {
 	CollectionID pgtype.UUID
 	PostID       pgtype.UUID
@@ -175,9 +187,21 @@ type Post struct {
 	CommentCount   int64
 	SearchText     interface{}
 	OriginServerID pgtype.UUID
+	StateID        pgtype.UUID
+	TeamID         pgtype.UUID
 	DeletedAt      pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type PostAcl struct {
+	PostID            pgtype.UUID
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
 }
 
 type PostAsset struct {
@@ -266,6 +290,35 @@ type SystemConfig struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Team struct {
+	ID             pgtype.UUID
+	Slug           string
+	Name           string
+	Description    string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+}
+
+type TeamClosure struct {
+	AncestorID   pgtype.UUID
+	DescendantID pgtype.UUID
+	Depth        int32
+}
+
+type TeamMembership struct {
+	TeamID          pgtype.UUID
+	RsUserID        int64
+	AddedAt         pgtype.Timestamptz
+	AddedByRsUserID *int64
+}
+
+type TeamParent struct {
+	ChildID  pgtype.UUID
+	ParentID pgtype.UUID
+}
+
 type User struct {
 	Ref                int64
 	Username           *string
@@ -291,6 +344,7 @@ type User struct {
 type UserCapabilityGrant struct {
 	RsUserID          int64
 	CapabilityCode    string
+	TeamID            pgtype.UUID
 	GrantedAt         pgtype.Timestamptz
 	GrantedByRsUserID *int64
 	Note              string
@@ -299,6 +353,7 @@ type UserCapabilityGrant struct {
 type UserCapabilityRevoke struct {
 	RsUserID          int64
 	CapabilityCode    string
+	TeamID            pgtype.UUID
 	RevokedAt         pgtype.Timestamptz
 	RevokedByRsUserID *int64
 	Note              string
@@ -307,6 +362,38 @@ type UserCapabilityRevoke struct {
 type UserRole struct {
 	RsUserID           int64
 	RoleID             pgtype.UUID
+	TeamID             pgtype.UUID
 	AssignedAt         pgtype.Timestamptz
 	AssignedByRsUserID *int64
+}
+
+type WorkflowAudit struct {
+	ID             pgtype.UUID
+	ResourceKind   string
+	ResourceID     pgtype.UUID
+	FromStateID    pgtype.UUID
+	ToStateID      pgtype.UUID
+	ActorRsUserID  *int64
+	Note           string
+	TransitionedAt pgtype.Timestamptz
+}
+
+type WorkflowState struct {
+	ID               pgtype.UUID
+	Domain           string
+	Code             string
+	Label            string
+	SortOrder        int32
+	IsInitial        bool
+	IsTerminal       bool
+	VisibleByDefault bool
+	CreatedAt        pgtype.Timestamptz
+}
+
+type WorkflowTransition struct {
+	ID                 pgtype.UUID
+	FromStateID        pgtype.UUID
+	ToStateID          pgtype.UUID
+	RequiredCapability *string
+	RequiresTeamScope  bool
 }

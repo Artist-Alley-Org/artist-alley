@@ -53,6 +53,13 @@ tags:
       (private/shared/public), membership (manual/query/hybrid), and
       lifecycle (permanent vs `expires_at`). Phase 1.11.A ships
       manual membership; query and grants land in 1.11.B/C.
+  - name: teams
+    description: |
+      Organisational units with a DAG hierarchy. A team can have
+      multiple parents (Diablo R&D Character Art reports to Diablo R&D
+      AND Cross-Studio Art Review). Capability grants scoped to a team
+      apply to that team and all descendants via the materialised
+      `team_closure`. ADR 0010 Layer 4.
 
 paths:
   /auth/login:
@@ -1147,6 +1154,110 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /posts/{id}/acls:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostAcls
+      summary: List ACL entries on a post
+      description: |
+        Returns every ACL row attached to this post. ACL rows are
+        additive grants on top of the post's visibility and the
+        role / team-scope checks. Requires read access to the post.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ACL entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AclEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addPostAcl
+      summary: Grant a permission on a post to a principal
+      description: |
+        Inserts one ACL row. The same principal can hold multiple
+        permission levels (e.g. read AND write) — that's two POSTs.
+        Requires write access to the post (owner / posts.admin /
+        system.admin) so a contributor can't grant access beyond
+        their own ability to mutate.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AclCreate" }
+      responses:
+        "204":
+          description: ACL row added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/acls/{principal_type}/{principal_id}/{permission}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: principal_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, role, team]
+      - name: principal_id
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+      - name: permission
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [read, write, admin]
+    delete:
+      operationId: removePostAcl
+      summary: Revoke a specific permission row from a principal
+      description: |
+        Removes the exact (principal_type, principal_id, permission)
+        tuple. Other permission levels for the same principal stay
+        in place. 404 if the row doesn't exist.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /posts/{id}/assets:
     parameters:
       - name: id
@@ -1446,6 +1557,104 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /collections/{id}/acls:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listCollectionAcls
+      summary: List ACL entries on a collection
+      description: |
+        Returns every ACL row attached to this collection. ACLs are
+        additive grants on top of the collection's visibility +
+        collection_grant rows. Requires read access to the
+        collection.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ACL entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AclEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addCollectionAcl
+      summary: Grant a permission on a collection to a principal
+      description: |
+        Inserts one ACL row. Requires write access to the collection
+        (owner / collections.admin / system.admin).
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AclCreate" }
+      responses:
+        "204":
+          description: ACL row added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/acls/{principal_type}/{principal_id}/{permission}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: principal_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, role, team]
+      - name: principal_id
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+      - name: permission
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [read, write, admin]
+    delete:
+      operationId: removeCollectionAcl
+      summary: Revoke a specific permission row from a principal
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /resource_types:
     get:
       operationId: listResourceTypes
@@ -1465,6 +1674,364 @@ paths:
                   $ref: "#/components/schemas/ResourceType"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /teams:
+    get:
+      operationId: listTeams
+      summary: List teams (paginated; optional ancestor filter)
+      description: |
+        Returns every team the caller can see, ordered by name. When
+        `ancestor` is supplied, returns only that team and every team
+        in its closure (descendants), which lets the upload modal
+        scope a picker to "teams under Diablo R&D" without N+1.
+        Requires `teams.read`.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: ancestor
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of teams
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createTeam
+      summary: Create a team
+      description: |
+        Requires `teams.create`. The optional `parent_ids` array
+        attaches the new team as a child of each listed parent (the
+        DAG case — a team can report to multiple parents). Cycle
+        rejection is enforced by the team_parents trigger.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamCreate" }
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /teams/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getTeam
+      summary: Fetch a team with its direct parents
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The team
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateTeam
+      summary: Rename or re-describe a team
+      description: |
+        Patches `name` and/or `description`. Re-parenting goes through
+        the dedicated /teams/{id}/parents endpoints to keep the
+        closure-maintenance triggers' contract clear.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteTeam
+      summary: Soft-delete a team
+      description: |
+        Marks the team `deleted_at`; preserves closure rows for
+        historic audit. Cascading sweeps fire (ACL rows referencing
+        the team go via the 00017 trigger; user_roles rows go via
+        the FK CASCADE) only when the row is hard-deleted via admin
+        action, not via soft delete.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/parents:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listTeamParents
+      summary: List the team's direct parents
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Direct parent teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addTeamParent
+      summary: Add a parent edge (creates a DAG link)
+      description: |
+        Inserts `(parent_id, child_id)` into team_parents. The cycle-
+        rejection trigger returns 409 if the link would close a cycle.
+        Requires `teams.admin`.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent_id]
+              properties:
+                parent_id: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Linked
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /teams/{id}/parents/{parent_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: parent_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removeTeamParent
+      summary: Sever a parent edge
+      description: |
+        Removes the direct edge. The closure-rebuild trigger
+        recomputes ancestry, dropping any pair only reachable via
+        the removed edge. Requires `teams.admin`.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unlinked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listTeamMembers
+      summary: List a team's members
+      description: |
+        Returns rows from team_memberships. Membership does NOT
+        propagate to descendants — each member-of-a-team is an
+        explicit join.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Members of this team
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TeamMember" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addTeamMember
+      summary: Add a user to a team
+      description: |
+        Requires `teams.admin`. Idempotent — adding an existing
+        member is a no-op.
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rs_user_id]
+              properties:
+                rs_user_id: { type: integer, format: int64 }
+      responses:
+        "204":
+          description: Added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/members/{rs_user_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: rs_user_id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    delete:
+      operationId: removeTeamMember
+      summary: Remove a user from a team
+      tags: [teams]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /auth/me/teams:
+    get:
+      operationId: getMyTeams
+      summary: Teams the caller is a member of (direct memberships)
+      description: |
+        Returns rows from team_memberships for the caller's
+        rs_user_id. Use this in the upload modal to render a team
+        picker. Includes only direct memberships; the closure-walk
+        for capability resolution happens server-side.
+      tags: [teams, auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Caller's teams
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /setup/status:
     get:
@@ -2240,6 +2807,16 @@ components:
           type: string
           format: uuid
           nullable: true
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional team scope (ADR 0010 Layer 5). When set, team-
+            scoped capability checks apply: callers who hold
+            `posts.read` scoped to this team or any ancestor team
+            can see the post regardless of visibility. NULL = no
+            team scope; only visibility / role / ACL gates apply.
         created_at:       { type: string, format: date-time }
         updated_at:       { type: string, format: date-time }
     PostMember:
@@ -2283,6 +2860,14 @@ components:
             Optional — when set, the new post is added to this
             collection at create time. Used by the context-aware
             upload modal: dropping into /collections/{id} sets this.
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional — scope the post to a team. The upload modal
+            will set this to the user's currently-selected team
+            when one is active.
     PostUpdate:
       type: object
       description: Partial update; only present fields are touched.
@@ -2315,6 +2900,156 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    Team:
+      type: object
+      required: [id, slug, name, description, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug:
+          type: string
+          description: |
+            URL-friendly identifier, unique per origin server. Used in
+            display and (eventually) federation actor URIs.
+          maxLength: 80
+          example: diablo-rnd
+        name:
+          type: string
+          maxLength: 200
+          example: Diablo R&D
+        description:
+          type: string
+          maxLength: 500
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Set on rows mirroring a federated team. NULL = locally
+            owned.
+        parents:
+          type: array
+          description: |
+            Direct parent teams (single hop). Empty for root teams.
+            Closure-walked ancestors live behind the listTeams
+            `ancestor` filter; this field is just the edges out of
+            the current node.
+          items: { $ref: "#/components/schemas/TeamParentLink" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TeamParentLink:
+      type: object
+      required: [parent_id]
+      properties:
+        parent_id: { type: string, format: uuid }
+        parent_slug: { type: string }
+        parent_name: { type: string }
+
+    TeamCreate:
+      type: object
+      required: [slug, name]
+      properties:
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 80
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 500
+        parent_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: |
+            Optional list of teams to link as parents. Each insert
+            fires the cycle-rejection trigger; the first one that
+            would close a cycle returns 409.
+
+    TeamUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 500
+
+    TeamList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Team" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    AclEntry:
+      type: object
+      required: [principal_type, principal_id, permission, granted_at]
+      properties:
+        principal_type:
+          type: string
+          enum: [user, role, team]
+        principal_id:
+          type: string
+          description: |
+            BIGINT user.ref for principal_type=user; UUID for role/team.
+            Stored as text so the polymorphic column fits all three.
+          maxLength: 64
+        permission:
+          type: string
+          enum: [read, write, admin]
+        granted_at: { type: string, format: date-time }
+        granted_by_rs_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Time-boxed grant. NULL = permanent. The handler-side check
+            ignores rows whose expires_at < NOW().
+
+    AclCreate:
+      type: object
+      required: [principal_type, principal_id, permission]
+      properties:
+        principal_type:
+          type: string
+          enum: [user, role, team]
+        principal_id:
+          type: string
+          maxLength: 64
+        permission:
+          type: string
+          enum: [read, write, admin]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    TeamMember:
+      type: object
+      required: [team_id, rs_user_id, added_at]
+      properties:
+        team_id: { type: string, format: uuid }
+        rs_user_id: { type: integer, format: int64 }
+        added_at: { type: string, format: date-time }
+        added_by_rs_user_id:
+          type: integer
+          format: int64
+          nullable: true
+
     UploadResult:
       type: object
       required: [hash, size, content_type, deduped, pin_subject_type, pin_subject_id]
@@ -2385,6 +3120,12 @@ components:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: Authenticated but missing required capabilities
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Conflict (slug taken, would create cycle, etc.)
       content:
         application/json:
           schema:

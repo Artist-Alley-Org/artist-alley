@@ -105,3 +105,30 @@ WHERE cr.collection_id = $1
            AND cr.added_at > sqlc.narg('cursor_added_at')::TIMESTAMPTZ))
 ORDER BY cr.sort_order ASC, cr.added_at ASC
 LIMIT sqlc.arg('row_limit')::INTEGER;
+
+-- ---------------------------------------------------------------------------
+-- ACLs (Phase 1.7.B-7c)
+-- ---------------------------------------------------------------------------
+
+-- name: ListCollectionAcls :many
+SELECT collection_id, principal_type, principal_id, permission,
+       granted_at, granted_by_rs_user_id, expires_at
+FROM collection_acls
+WHERE collection_id = $1
+ORDER BY granted_at DESC, principal_type, principal_id, permission;
+
+-- name: AddCollectionAcl :exec
+INSERT INTO collection_acls (collection_id, principal_type, principal_id, permission,
+                             granted_by_rs_user_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (collection_id, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at;
+
+-- name: RemoveCollectionAcl :execrows
+DELETE FROM collection_acls
+WHERE collection_id = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4;

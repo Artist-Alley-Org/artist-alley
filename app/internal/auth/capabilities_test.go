@@ -51,11 +51,11 @@ func TestEffectiveCapabilities_ResolvesRoleChain(t *testing.T) {
 		dirID := seedRole(t, ctx, fx.pool, "test_Director", &artistID, "test.director")
 
 		// Put the test user into the Director role.
-		if err := q.SetUserRole(ctx, SetUserRoleParams{
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			RsUserID: fx.userRef,
 			RoleID:   pgtype.UUID{Bytes: dirID, Valid: true},
 		}); err != nil {
-			t.Fatalf("SetUserRole: %v", err)
+			t.Fatalf("SetUserGlobalRole: %v", err)
 		}
 
 		caps, err := q.EffectiveCapabilitiesForUser(ctx, fx.userRef)
@@ -77,11 +77,11 @@ func TestEffectiveCapabilities_GrantsAndRevokes(t *testing.T) {
 		seedCap(t, ctx, fx.pool, "test.to_revoke")
 		roleID := seedRole(t, ctx, fx.pool, "test_GrantsRevokes", nil, "test.role_cap", "test.to_revoke")
 
-		if err := q.SetUserRole(ctx, SetUserRoleParams{
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			RsUserID: fx.userRef,
 			RoleID:   pgtype.UUID{Bytes: roleID, Valid: true},
 		}); err != nil {
-			t.Fatalf("SetUserRole: %v", err)
+			t.Fatalf("SetUserGlobalRole: %v", err)
 		}
 
 		if _, err := fx.pool.Exec(ctx,
@@ -128,7 +128,7 @@ func TestHandlers_CapabilityEnforcement(t *testing.T) {
 			t.Fatalf("lookup Admin role: %v", err)
 		}
 		q := New(fx.pool)
-		if err := q.SetUserRole(ctx, SetUserRoleParams{
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			RsUserID: fx.userRef,
 			RoleID:   adminID,
 		}); err != nil {
@@ -159,7 +159,7 @@ func TestGetMyCapabilities_FullShape(t *testing.T) {
 			t.Fatalf("lookup Admin: %v", err)
 		}
 		q := New(fx.pool)
-		if err := q.SetUserRole(ctx, SetUserRoleParams{RsUserID: fx.userRef, RoleID: adminID}); err != nil {
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{RsUserID: fx.userRef, RoleID: adminID}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
 		}
 

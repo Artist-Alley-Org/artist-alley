@@ -19,6 +19,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/teams"
 )
 
 // apiServer aggregates every feature package's handler into the single
@@ -36,6 +37,7 @@ type apiServer struct {
 	metadata     *metadata.Handler
 	collections  *collections.Handler
 	posts        *posts.Handler
+	teams        *teams.Handler
 	setup        *setup.Handler
 }
 
@@ -48,6 +50,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
+		teams:        teams.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -208,6 +211,15 @@ func (s *apiServer) AddCollectionResource(ctx context.Context, req openapi.AddCo
 func (s *apiServer) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.collections.RemoveCollectionResource(ctx, req)
 }
+func (s *apiServer) ListCollectionAcls(ctx context.Context, req openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
+	return s.collections.ListCollectionAcls(ctx, req)
+}
+func (s *apiServer) AddCollectionAcl(ctx context.Context, req openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
+	return s.collections.AddCollectionAcl(ctx, req)
+}
+func (s *apiServer) RemoveCollectionAcl(ctx context.Context, req openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
+	return s.collections.RemoveCollectionAcl(ctx, req)
+}
 
 // --- posts -----------------------------------------------------------------
 
@@ -231,6 +243,54 @@ func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRe
 }
 func (s *apiServer) RemovePostAsset(ctx context.Context, req openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	return s.posts.RemovePostAsset(ctx, req)
+}
+func (s *apiServer) ListPostAcls(ctx context.Context, req openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	return s.posts.ListPostAcls(ctx, req)
+}
+func (s *apiServer) AddPostAcl(ctx context.Context, req openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	return s.posts.AddPostAcl(ctx, req)
+}
+func (s *apiServer) RemovePostAcl(ctx context.Context, req openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	return s.posts.RemovePostAcl(ctx, req)
+}
+
+// --- teams -----------------------------------------------------------------
+
+func (s *apiServer) ListTeams(ctx context.Context, req openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	return s.teams.ListTeams(ctx, req)
+}
+func (s *apiServer) CreateTeam(ctx context.Context, req openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	return s.teams.CreateTeam(ctx, req)
+}
+func (s *apiServer) GetTeam(ctx context.Context, req openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	return s.teams.GetTeam(ctx, req)
+}
+func (s *apiServer) UpdateTeam(ctx context.Context, req openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	return s.teams.UpdateTeam(ctx, req)
+}
+func (s *apiServer) DeleteTeam(ctx context.Context, req openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	return s.teams.DeleteTeam(ctx, req)
+}
+func (s *apiServer) ListTeamParents(ctx context.Context, req openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	return s.teams.ListTeamParents(ctx, req)
+}
+func (s *apiServer) AddTeamParent(ctx context.Context, req openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	return s.teams.AddTeamParent(ctx, req)
+}
+func (s *apiServer) RemoveTeamParent(ctx context.Context, req openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	return s.teams.RemoveTeamParent(ctx, req)
+}
+func (s *apiServer) ListTeamMembers(ctx context.Context, req openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	return s.teams.ListTeamMembers(ctx, req)
+}
+func (s *apiServer) AddTeamMember(ctx context.Context, req openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	return s.teams.AddTeamMember(ctx, req)
+}
+func (s *apiServer) RemoveTeamMember(ctx context.Context, req openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	return s.teams.RemoveTeamMember(ctx, req)
+}
+func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	return s.teams.GetMyTeams(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

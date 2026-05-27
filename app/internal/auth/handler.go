@@ -509,26 +509,36 @@ func (h *Handler) GetMyCapabilities(
 	}
 
 	q := New(h.Pool)
-	roleRow, err := q.AssignedRoleForUser(ctx, id.UserRef)
+	// The API surface currently exposes a single "role" field; with the
+	// multi-role model (00016) we surface the user's first GLOBAL role
+	// assignment for that field — team-scoped assignments aren't
+	// representable here. The 1.7.B-7 OpenAPI widening will switch this
+	// to a roles[] list with optional team scope per entry.
+	roleRows, err := q.AssignedRolesForUser(ctx, id.UserRef)
+	if err != nil {
+		return nil, err
+	}
 	var roleOpenapi *openapi.Role
-	if err == nil {
-		caps, err := q.ListRoleCapabilities(ctx, roleRow.ID)
+	for _, r := range roleRows {
+		if r.TeamID.Valid {
+			continue // skip team-scoped assignments for the single-role field
+		}
+		caps, err := q.ListRoleCapabilities(ctx, r.ID)
 		if err != nil {
 			return nil, err
 		}
 		ro := openapi.Role{
-			Id:           openapi_types.UUID(roleRow.ID.Bytes),
-			Name:         roleRow.Name,
-			Description:  roleRow.Description,
+			Id:           openapi_types.UUID(r.ID.Bytes),
+			Name:         r.Name,
+			Description:  r.Description,
 			Capabilities: caps,
 		}
-		if roleRow.ParentID.Valid {
-			p := openapi_types.UUID(roleRow.ParentID.Bytes)
+		if r.ParentID.Valid {
+			p := openapi_types.UUID(r.ParentID.Bytes)
 			ro.ParentId = &p
 		}
 		roleOpenapi = &ro
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
+		break
 	}
 
 	grants, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_grants WHERE rs_user_id = $1 ORDER BY capability_code`, id.UserRef)
@@ -582,10 +592,13 @@ func (h *Handler) SetUserRole(
 		return nil, err
 	}
 
-	if err := q.SetUserRole(ctx, SetUserRoleParams{
-		RsUserID:            req.Ref,
-		RoleID:              roleUUID,
-		AssignedByRsUserID:  &id.UserRef,
+	// Sets the user's GLOBAL role (replaces any existing global
+	// assignment; leaves team-scoped assignments intact). The admin
+	// endpoint shape hasn't changed; only the storage semantics did.
+	if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
+		RsUserID:           req.Ref,
+		RoleID:             roleUUID,
+		AssignedByRsUserID: &id.UserRef,
 	}); err != nil {
 		return nil, err
 	}
