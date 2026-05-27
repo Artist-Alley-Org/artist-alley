@@ -23,6 +23,8 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.location, '')                         AS location,
        p.website_url,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
+       COALESCE(p.language, '')                         AS language,
+       COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
@@ -40,6 +42,8 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.location, '')                         AS location,
        p.website_url,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
+       COALESCE(p.language, '')                         AS language,
+       COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
@@ -57,9 +61,10 @@ WHERE author_user_ref = $1 AND deleted_at IS NULL;
 -- The handler picks whether COALESCE-style PATCH or full overwrite
 -- semantics apply; the query accepts the values to write.
 INSERT INTO user_profiles (
-    rs_user_id, display_name, bio, avatar_url, location, website_url, social_links
+    rs_user_id, display_name, bio, avatar_url, location, website_url,
+    social_links, language, theme
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (rs_user_id) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     bio          = EXCLUDED.bio,
@@ -67,6 +72,9 @@ ON CONFLICT (rs_user_id) DO UPDATE SET
     location     = EXCLUDED.location,
     website_url  = EXCLUDED.website_url,
     social_links = EXCLUDED.social_links,
+    language     = EXCLUDED.language,
+    theme        = EXCLUDED.theme,
     updated_at   = NOW()
 RETURNING rs_user_id, display_name, bio, avatar_url, location,
-          website_url, social_links, origin_server_id, created_at, updated_at;
+          website_url, social_links, language, theme,
+          origin_server_id, created_at, updated_at;

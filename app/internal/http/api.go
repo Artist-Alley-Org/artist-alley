@@ -12,6 +12,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/i18n"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
@@ -45,6 +46,8 @@ type apiServer struct {
 	social       *social.Handler
 	setup        *setup.Handler
 	workflow     *workflow.Handler
+	sysconfigH   *sysconfig.Handler
+	i18n         *i18n.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, storageBackend string) *apiServer {
@@ -61,6 +64,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:       social.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
+		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
+		i18n:         i18n.NewHandler(logger),
 	}
 }
 
@@ -349,4 +354,37 @@ func (s *apiServer) CompleteSetup(ctx context.Context, req openapi.CompleteSetup
 
 func (s *apiServer) ListWorkflowStates(ctx context.Context, req openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
 	return s.workflow.ListWorkflowStates(ctx, req)
+}
+
+// --- sysconfig (admin) -----------------------------------------------------
+
+func (s *apiServer) GetSiteConfig(ctx context.Context, req openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
+	return s.sysconfigH.GetSiteConfig(ctx, req)
+}
+func (s *apiServer) UpdateSiteConfig(ctx context.Context, req openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
+	return s.sysconfigH.UpdateSiteConfig(ctx, req)
+}
+func (s *apiServer) GetSMTPConfig(ctx context.Context, req openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
+	return s.sysconfigH.GetSMTPConfig(ctx, req)
+}
+func (s *apiServer) UpdateSMTPConfig(ctx context.Context, req openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
+	return s.sysconfigH.UpdateSMTPConfig(ctx, req)
+}
+func (s *apiServer) GetAuthConfig(ctx context.Context, req openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
+	return s.sysconfigH.GetAuthConfig(ctx, req)
+}
+func (s *apiServer) UpdateAuthConfig(ctx context.Context, req openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
+	return s.sysconfigH.UpdateAuthConfig(ctx, req)
+}
+func (s *apiServer) GetAIConfig(ctx context.Context, req openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
+	return s.sysconfigH.GetAIConfig(ctx, req)
+}
+func (s *apiServer) UpdateAIConfig(ctx context.Context, req openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
+	return s.sysconfigH.UpdateAIConfig(ctx, req)
+}
+
+// --- i18n ------------------------------------------------------------------
+
+func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
+	return s.i18n.ListLocales(ctx, req)
 }

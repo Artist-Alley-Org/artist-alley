@@ -2389,6 +2389,215 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /i18n/locales:
+    get:
+      operationId: listLocales
+      summary: List supported UI locales
+      description: |
+        Returns the locales the frontend has a catalogue for. Used by
+        the language picker in the user menu and on the account
+        preferences page. Static per server build; the response is
+        derived from the bundled frontend catalogues plus a small
+        completion-pct hint.
+      tags: [i18n]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of supported locales
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Locale" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /admin/system/site:
+    get:
+      operationId: getSiteConfig
+      summary: Read the site configuration (name, base URL)
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current site config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateSiteConfig
+      summary: Update the site configuration
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SiteConfig" }
+      responses:
+        "200":
+          description: Updated site config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/system/smtp:
+    get:
+      operationId: getSMTPConfig
+      summary: Read the SMTP configuration
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current SMTP config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SMTPConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateSMTPConfig
+      summary: Update the SMTP configuration
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SMTPConfig" }
+      responses:
+        "200":
+          description: Updated SMTP config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SMTPConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/system/auth:
+    get:
+      operationId: getAuthConfig
+      summary: Read the auth (password policy + SSO providers) configuration
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current auth config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateAuthConfig
+      summary: Update the auth configuration
+      description: |
+        Persists the password policy and SSO provider list. The
+        providers are stored but NOT enforced for login yet —
+        enforcement (LDAP/SAML/OAuth login flows) is its own future
+        phase. Per-provider config (`config` map) is opaque here;
+        the integration code validates the shape at use time.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthConfig" }
+      responses:
+        "200":
+          description: Updated auth config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/system/ai:
+    get:
+      operationId: getAIConfig
+      summary: Read the AI provider configuration
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current AI config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateAIConfig
+      summary: Update the AI provider configuration
+      description: |
+        Persists the AI provider list and default-provider selection.
+        Providers are stored but NOT yet used for inference — the
+        AI auto-tagging / search phase wires the providers into a
+        real client. API keys are stored as plain strings for now
+        (admin-only table); a secrets-backend migration is planned.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIConfig" }
+      responses:
+        "200":
+          description: Updated AI config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -2570,6 +2779,131 @@ components:
         from_address:
           type: string
           example: "ArtSite <noreply@example.com>"
+    AuthConfig:
+      type: object
+      description: |
+        Authentication + SSO configuration. Persisted under the
+        sysconfig key `auth`. The password policy applies only to
+        local accounts; SSO logins are validated by the upstream
+        identity provider. SSO providers are STORED here but not yet
+        USED at login time — enforcement lands in a follow-up phase.
+      required: [password_policy, sso_providers]
+      properties:
+        password_policy:
+          type: object
+          required: [min_length, require_upper, require_number, require_symbol, disallow_common, max_age_days]
+          properties:
+            min_length:     { type: integer, minimum: 0, maximum: 256, default: 0 }
+            require_upper:  { type: boolean, default: false }
+            require_number: { type: boolean, default: false }
+            require_symbol: { type: boolean, default: false }
+            disallow_common:
+              type: boolean
+              default: false
+              description: Reject common-password list ("password", "123456", ...).
+            max_age_days:
+              type: integer
+              minimum: 0
+              maximum: 36500
+              default: 0
+              description: 0 = passwords never expire.
+        sso_providers:
+          type: array
+          items:
+            type: object
+            required: [kind, enabled, display_name]
+            properties:
+              id:
+                type: string
+                description: |
+                  Stable identifier assigned by the admin UI on create.
+                  Empty on a freshly-added provider; the handler fills
+                  it in. Used as OAuth `state` and as the row key for
+                  later edits.
+              kind:
+                type: string
+                enum: [ldap, saml, google, github, x]
+              enabled:     { type: boolean }
+              display_name: { type: string }
+              config:
+                type: object
+                additionalProperties: true
+                description: |
+                  Per-kind opaque config. For LDAP: server URL, base
+                  DN, bind credentials, search filter. For SAML: IdP
+                  metadata URL, SP entity ID, certs. For OAuth
+                  (Google/GitHub/X): client_id, client_secret,
+                  redirect_uri, scopes. Validated at use time by the
+                  integration code, not by this endpoint.
+    AIConfig:
+      type: object
+      description: |
+        AI provider configuration. Persisted under the sysconfig key
+        `ai`. API keys are stored as plain strings for now (admin-
+        only table; never federated); a secrets-backend migration is
+        planned.
+      required: [providers]
+      properties:
+        default_provider_id:
+          type: string
+          description: |
+            Picks the `providers[*].id` used when nothing else
+            specifies. Empty = no default (callers must choose, or
+            AI features stay disabled).
+        providers:
+          type: array
+          items:
+            type: object
+            required: [kind, enabled, display_name]
+            properties:
+              id:           { type: string }
+              kind:
+                type: string
+                enum: [openai, anthropic, google, local]
+              enabled:      { type: boolean }
+              display_name: { type: string }
+              model:        { type: string, description: "e.g. gpt-4o, claude-sonnet-4-6" }
+              base_url:
+                type: string
+                description: Override for self-hosted / proxied endpoints.
+              api_key:
+                type: string
+                description: |
+                  Raw API key (interim — will move to a secrets
+                  backend reference). Sent and stored as-is.
+              config:
+                type: object
+                additionalProperties: true
+                description: |
+                  Per-kind opaque config (temperature defaults,
+                  system prompts, rate limits, ...). Integration code
+                  owns the schema.
+    Locale:
+      type: object
+      description: |
+        One UI locale the frontend has a catalogue for. Used by the
+        language picker. `completion_pct` is the share of source-of-
+        truth (en) keys translated — useful for showing "(70%)"
+        beside a locale name so users know it's incomplete.
+      required: [code, name, native_name, completion_pct]
+      properties:
+        code:
+          type: string
+          description: IETF BCP47 tag (e.g. "en", "es-AR").
+        name:
+          type: string
+          description: English name (e.g. "Spanish (Argentina)").
+        native_name:
+          type: string
+          description: Endonym (e.g. "Español (Argentina)").
+        region:
+          type: string
+          description: Optional regional sub-tag (e.g. "AR").
+        completion_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: 0..100 — share of en keys this catalogue translates.
     CurrentUser:
       type: object
       required: [ref, username, auth_method]
@@ -3402,6 +3736,19 @@ components:
             Free-form platform → handle map. Frontend renders known
             platforms (twitter, instagram, artstation, ...) as icon
             links; unknown keys are ignored.
+        language:
+          type: string
+          description: |
+            IETF BCP47 language tag (e.g. "en", "es-AR"). Empty string
+            = "use system / browser default". Drives the i18n
+            switcher in the user menu.
+        theme:
+          type: string
+          enum: ['', 'light', 'dark']
+          description: |
+            UI theme preference. Empty string = follow system / OS.
+            Persisted alongside the profile so it follows the user
+            across browsers.
         member_since: { type: string, format: date-time }
         post_count:
           type: integer
@@ -3447,6 +3794,18 @@ components:
           additionalProperties:
             type: string
             maxLength: 100
+        language:
+          type: string
+          maxLength: 35
+          description: |
+            BCP47 tag, or empty string to reset to "system default".
+            Validated only loosely server-side — frontend constrains
+            the picker to a known list.
+        theme:
+          type: string
+          enum: ['', 'light', 'dark']
+          description: |
+            Empty string resets the pref to "follow system".
 
     PostLikeState:
       type: object

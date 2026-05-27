@@ -680,3 +680,31 @@ func (collShim) CreatePostComment(context.Context, openapi.CreatePostCommentRequ
 func (collShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	panic("DeleteComment called from collections_test test shim")
 }
+
+func (collShim) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
+	panic("GetSiteConfig called from collections test shim")
+}
+func (collShim) UpdateSiteConfig(context.Context, openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
+	panic("UpdateSiteConfig called from collections test shim")
+}
+func (collShim) GetSMTPConfig(context.Context, openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
+	panic("GetSMTPConfig called from collections test shim")
+}
+func (collShim) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
+	panic("UpdateSMTPConfig called from collections test shim")
+}
+func (collShim) GetAuthConfig(context.Context, openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
+	panic("GetAuthConfig called from collections test shim")
+}
+func (collShim) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
+	panic("UpdateAuthConfig called from collections test shim")
+}
+func (collShim) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
+	panic("GetAIConfig called from collections test shim")
+}
+func (collShim) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
+	panic("UpdateAIConfig called from collections test shim")
+}
+func (collShim) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
+	panic("ListLocales called from collections test shim")
+}

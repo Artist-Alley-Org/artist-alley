@@ -685,3 +685,31 @@ func (metaShim) CreatePostComment(context.Context, openapi.CreatePostCommentRequ
 func (metaShim) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	panic("DeleteComment called from metadata_test test shim")
 }
+
+func (metaShim) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
+	panic("GetSiteConfig called from metadata test shim")
+}
+func (metaShim) UpdateSiteConfig(context.Context, openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
+	panic("UpdateSiteConfig called from metadata test shim")
+}
+func (metaShim) GetSMTPConfig(context.Context, openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
+	panic("GetSMTPConfig called from metadata test shim")
+}
+func (metaShim) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
+	panic("UpdateSMTPConfig called from metadata test shim")
+}
+func (metaShim) GetAuthConfig(context.Context, openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
+	panic("GetAuthConfig called from metadata test shim")
+}
+func (metaShim) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
+	panic("UpdateAuthConfig called from metadata test shim")
+}
+func (metaShim) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
+	panic("GetAIConfig called from metadata test shim")
+}
+func (metaShim) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
+	panic("UpdateAIConfig called from metadata test shim")
+}
+func (metaShim) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
+	panic("ListLocales called from metadata test shim")
+}

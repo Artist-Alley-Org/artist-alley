@@ -526,6 +526,11 @@ CREATE TABLE user_profiles (
     location         TEXT         NOT NULL DEFAULT '',
     website_url      TEXT         NULL,
     social_links     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    -- language / theme added by 00023_app_shell.sql. '' = use system /
+    -- browser default; otherwise BCP47 code (language) or light|dark.
+    language         TEXT         NOT NULL DEFAULT '',
+    theme            TEXT         NOT NULL DEFAULT ''
+                                  CHECK (theme IN ('', 'light', 'dark')),
     origin_server_id UUID         NULL,
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()

@@ -405,3 +405,31 @@ func envOr(key, def string) string {
 	}
 	return def
 }
+
+func (rtOnly) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
+	panic("GetSiteConfig called from resourcetype test shim")
+}
+func (rtOnly) UpdateSiteConfig(context.Context, openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
+	panic("UpdateSiteConfig called from resourcetype test shim")
+}
+func (rtOnly) GetSMTPConfig(context.Context, openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
+	panic("GetSMTPConfig called from resourcetype test shim")
+}
+func (rtOnly) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
+	panic("UpdateSMTPConfig called from resourcetype test shim")
+}
+func (rtOnly) GetAuthConfig(context.Context, openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
+	panic("GetAuthConfig called from resourcetype test shim")
+}
+func (rtOnly) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
+	panic("UpdateAuthConfig called from resourcetype test shim")
+}
+func (rtOnly) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
+	panic("GetAIConfig called from resourcetype test shim")
+}
+func (rtOnly) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
+	panic("UpdateAIConfig called from resourcetype test shim")
+}
+func (rtOnly) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
+	panic("ListLocales called from resourcetype test shim")
+}

@@ -761,3 +761,31 @@ func (p poolTxShim) QueryRow(ctx context.Context, sql string, args ...any) pgxRo
 type strCmd string
 
 func (s strCmd) String() string { return string(s) }
+
+func (a authOnlyImpl) GetSiteConfig(_ context.Context, _ openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
+	panic("GetSiteConfig called from auth test shim")
+}
+func (a authOnlyImpl) UpdateSiteConfig(_ context.Context, _ openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
+	panic("UpdateSiteConfig called from auth test shim")
+}
+func (a authOnlyImpl) GetSMTPConfig(_ context.Context, _ openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
+	panic("GetSMTPConfig called from auth test shim")
+}
+func (a authOnlyImpl) UpdateSMTPConfig(_ context.Context, _ openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
+	panic("UpdateSMTPConfig called from auth test shim")
+}
+func (a authOnlyImpl) GetAuthConfig(_ context.Context, _ openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
+	panic("GetAuthConfig called from auth test shim")
+}
+func (a authOnlyImpl) UpdateAuthConfig(_ context.Context, _ openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
+	panic("UpdateAuthConfig called from auth test shim")
+}
+func (a authOnlyImpl) GetAIConfig(_ context.Context, _ openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
+	panic("GetAIConfig called from auth test shim")
+}
+func (a authOnlyImpl) UpdateAIConfig(_ context.Context, _ openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
+	panic("UpdateAIConfig called from auth test shim")
+}
+func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
+	panic("ListLocales called from auth test shim")
+}
