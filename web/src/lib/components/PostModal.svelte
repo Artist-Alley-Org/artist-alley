@@ -117,8 +117,25 @@
   let fieldsLoading = $state(false);
 
   // Which member is the preview showing. Defaults to the cover, or
-  // the first member if no cover is pinned.
+  // the first member if no cover is pinned. For multi-asset posts
+  // this is kept in sync with which slide is currently centered in
+  // the vertical scroller (see the IntersectionObserver effect).
   let selectedIdx = $state(0);
+
+  // The vertical scroller that hosts the per-member slides. One slide
+  // per member, full-height, scroll-snap-aligned. Bound from the
+  // template; populated only when post.members.length > 1.
+  let scrollerEl = $state<HTMLDivElement | undefined>(undefined);
+
+  // While a programmatic scroll (e.g. arrow nav, thumb-strip click,
+  // or initial cover-asset snap) is in flight, suppress the
+  // observer-driven selectedIdx update so we don't fight ourselves.
+  let suppressScrollSync = $state(false);
+
+  // Per-slide image-error tracking. When the col variant 404s for an
+  // asset we swap to /file (full-res) once; if that also fails we
+  // mark the asset broken and render the placeholder icon instead.
+  let brokenSlides = $state<Set<string>>(new Set());
 
   // Sidebar collapsed state. Persists per-browser. `null` until the
   // mount effect resolves it — until then we render expanded.
@@ -128,12 +145,6 @@
 
   const currentMember = $derived(post?.members?.[selectedIdx] ?? null);
   const currentAssetId = $derived(currentMember?.asset_id ?? null);
-  const previewColUrl = $derived(
-    currentAssetId ? `/api/v1/assets/${currentAssetId}/variants/col` : '',
-  );
-  const previewFileUrl = $derived(
-    currentAssetId ? `/api/v1/assets/${currentAssetId}/file` : '',
-  );
   const hasMultipleMembers = $derived((post?.members?.length ?? 0) > 1);
 
   const isOwner = $derived(
@@ -206,6 +217,7 @@
     post = null;
     author = null;
     selectedIdx = 0;
+    brokenSlides = new Set();
     try {
       const { data, error: apiErr } = await api.GET('/posts/{id}', {
         params: { path: { id } },
@@ -309,12 +321,99 @@
     );
   }
 
-  function selectMember(idx: number) {
+  // Jump to a member by index. For multi-asset posts this scrolls the
+  // matching slide into view (which the IntersectionObserver picks up
+  // and mirrors back into selectedIdx) — for single-asset posts it's
+  // just a state change. Clamped, not wrapped: scroll-snap UX prefers
+  // a hard stop at the edges over jumping back to the top/bottom.
+  function goToMember(idx: number) {
     if (!post) return;
     const n = post.members.length;
     if (n === 0) return;
-    selectedIdx = ((idx % n) + n) % n; // wrap, handles negative
+    const clamped = Math.max(0, Math.min(n - 1, idx));
+    if (hasMultipleMembers) {
+      scrollToMember(clamped);
+    } else {
+      selectedIdx = clamped;
+    }
   }
+
+  // Programmatic scroll to a slide. Disables the observer briefly so
+  // the smooth-scroll doesn't fight with the selectedIdx we just set.
+  function scrollToMember(idx: number) {
+    const el = scrollerEl;
+    if (!el) {
+      selectedIdx = idx;
+      return;
+    }
+    const slide = el.querySelector<HTMLElement>(`[data-slide-idx="${idx}"]`);
+    if (!slide) {
+      selectedIdx = idx;
+      return;
+    }
+    suppressScrollSync = true;
+    selectedIdx = idx;
+    slide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Smooth-scroll has no completion event; 500ms is a generous
+    // upper bound for the distances we ever scroll inside the modal.
+    setTimeout(() => {
+      suppressScrollSync = false;
+    }, 500);
+  }
+
+  // Watch the vertical scroller and mirror whichever slide is
+  // currently centered into `selectedIdx`. Re-runs when post.members
+  // changes (a new post is loaded) so observers are wired against the
+  // new slide nodes.
+  $effect(() => {
+    const el = scrollerEl;
+    const memberCount = post?.members?.length ?? 0;
+    if (!el || memberCount <= 1) return;
+    const slides = el.querySelectorAll<HTMLElement>('[data-slide-idx]');
+    if (slides.length === 0) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (suppressScrollSync) return;
+        // Pick the entry with the highest intersectionRatio that is
+        // currently intersecting; that's the slide the user is
+        // looking at.
+        let best: IntersectionObserverEntry | null = null;
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          if (!best || e.intersectionRatio > best.intersectionRatio) best = e;
+        }
+        if (!best) return;
+        const idx = Number((best.target as HTMLElement).dataset.slideIdx);
+        if (!Number.isNaN(idx) && idx !== selectedIdx) selectedIdx = idx;
+      },
+      { root: el, threshold: [0.5, 0.75, 1] },
+    );
+    for (const s of slides) io.observe(s);
+    return () => io.disconnect();
+  });
+
+  // When a new post loads with a cover asset that isn't the first
+  // member, snap the scroller to that slide on mount. One-shot per
+  // post: the effect tracks post.id so it fires only on post change,
+  // not on every selectedIdx update (which would chase the observer
+  // and cause jitter).
+  let lastSnappedPostId = $state<string | null>(null);
+  $effect(() => {
+    const el = scrollerEl;
+    if (!el || !post) return;
+    if (post.members.length <= 1) return;
+    if (post.id === lastSnappedPostId) return;
+    lastSnappedPostId = post.id;
+    if (selectedIdx === 0) return;
+    const slide = el.querySelector<HTMLElement>(`[data-slide-idx="${selectedIdx}"]`);
+    if (slide) {
+      suppressScrollSync = true;
+      slide.scrollIntoView({ behavior: 'instant' as ScrollBehavior, block: 'start' });
+      setTimeout(() => {
+        suppressScrollSync = false;
+      }, 0);
+    }
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     // Ignore key handling while focus is in a text input — comment
@@ -325,15 +424,17 @@
     }
     switch (e.key) {
       case 'ArrowLeft':
+      case 'ArrowUp':
         if (hasMultipleMembers) {
           e.preventDefault();
-          selectMember(selectedIdx - 1);
+          goToMember(selectedIdx - 1);
         }
         break;
       case 'ArrowRight':
+      case 'ArrowDown':
         if (hasMultipleMembers) {
           e.preventDefault();
-          selectMember(selectedIdx + 1);
+          goToMember(selectedIdx + 1);
         }
         break;
       case 'i':
@@ -344,23 +445,21 @@
     }
   }
 
-  // Image fallback: col variant first, then full file, then placeholder.
-  let imgError = $state(false);
-  let triedFallback = $state(false);
-  $effect(() => {
-    // Reset error state whenever the selected member changes.
-    void currentAssetId;
-    imgError = false;
-    triedFallback = false;
-  });
-  function handleImgError(e: Event) {
+  // Per-slide image error handling. First failure swaps col → /file
+  // (full original); second failure marks the asset broken so the
+  // template renders a placeholder icon. Keyed by asset_id on a data
+  // attribute so one handler covers every slide.
+  function handleSlideImgError(e: Event) {
     const img = e.currentTarget as HTMLImageElement;
-    if (!triedFallback && previewFileUrl) {
-      triedFallback = true;
-      img.src = previewFileUrl;
+    const aid = img.dataset.assetId;
+    if (!aid) return;
+    if (img.dataset.fallback === '1') {
+      brokenSlides.add(aid);
+      brokenSlides = new Set(brokenSlides);
       return;
     }
-    imgError = true;
+    img.dataset.fallback = '1';
+    img.src = `/api/v1/assets/${aid}/file`;
   }
 
   function colVariantUrl(assetId: string): string {
@@ -494,17 +593,67 @@
     {:else if post}
       <div class="flex flex-1 flex-col overflow-hidden md:flex-row">
         <!-- Preview pane (left). Always dark backdrop — galleries look
-             best on dark regardless of the surrounding theme. -->
-        <div class="relative flex flex-1 items-center justify-center overflow-hidden bg-neutral-950">
-          {#if currentAssetId && !imgError}
-            <img
-              src={previewColUrl}
-              alt={currentMember?.asset?.title || post.title}
-              class="max-h-full max-w-full object-contain"
-              onerror={handleImgError}
-            />
+             best on dark regardless of the surrounding theme.
+             For multi-asset posts this is a vertical scroller: one
+             slide per member, scroll-snap aligned. The arrow buttons
+             and footer thumbnails both call goToMember(), which
+             smooth-scrolls the matching slide into view. The reverse
+             direction (manual scrolling drives selectedIdx) is wired
+             via an IntersectionObserver in the script. -->
+        <div class="relative flex flex-1 overflow-hidden bg-neutral-950">
+          {#if hasMultipleMembers}
+            <div
+              bind:this={scrollerEl}
+              class="post-modal-scroller h-full w-full snap-y snap-mandatory overflow-y-auto"
+            >
+              {#each post.members as member, i (member.asset_id)}
+                <div
+                  data-slide-idx={i}
+                  class="flex h-full w-full shrink-0 snap-start items-center justify-center"
+                >
+                  {#if brokenSlides.has(member.asset_id)}
+                    <div class="text-neutral-500">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                      </svg>
+                    </div>
+                  {:else}
+                    <img
+                      src={colVariantUrl(member.asset_id)}
+                      alt={member.asset?.title || post.title}
+                      data-asset-id={member.asset_id}
+                      loading={i === selectedIdx ? 'eager' : 'lazy'}
+                      class="max-h-full max-w-full object-contain"
+                      onerror={handleSlideImgError}
+                    />
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else if currentAssetId}
+            <div class="flex h-full w-full items-center justify-center">
+              {#if currentAssetId && brokenSlides.has(currentAssetId)}
+                <div class="text-neutral-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="9" cy="9" r="2" />
+                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                  </svg>
+                </div>
+              {:else}
+                <img
+                  src={colVariantUrl(currentAssetId)}
+                  alt={currentMember?.asset?.title || post.title}
+                  data-asset-id={currentAssetId}
+                  class="max-h-full max-w-full object-contain"
+                  onerror={handleSlideImgError}
+                />
+              {/if}
+            </div>
           {:else}
-            <div class="text-neutral-500">
+            <div class="flex h-full w-full items-center justify-center text-neutral-500">
               <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <circle cx="9" cy="9" r="2" />
@@ -517,22 +666,24 @@
           {#if hasMultipleMembers}
             <button
               type="button"
-              onclick={() => selectMember(selectedIdx - 1)}
-              class="absolute left-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+              onclick={() => goToMember(selectedIdx - 1)}
+              disabled={selectedIdx === 0}
+              class="absolute left-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/75 disabled:opacity-30 disabled:hover:bg-black/50"
               aria-label="Previous asset"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m15 18-6-6 6-6" />
+                <path d="m18 15-6-6-6 6" />
               </svg>
             </button>
             <button
               type="button"
-              onclick={() => selectMember(selectedIdx + 1)}
-              class="absolute right-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+              onclick={() => goToMember(selectedIdx + 1)}
+              disabled={selectedIdx === post.members.length - 1}
+              class="absolute right-3 top-1/2 z-10 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/75 disabled:opacity-30 disabled:hover:bg-black/50"
               aria-label="Next asset"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m9 18 6-6-6-6" />
+                <path d="m6 9 6 6 6-6" />
               </svg>
             </button>
             <!-- Position indicator (n / total) — bottom-center. -->
@@ -720,7 +871,7 @@
             {#each post.members as member, i (member.asset_id)}
               <button
                 type="button"
-                onclick={() => selectMember(i)}
+                onclick={() => goToMember(i)}
                 class="relative h-16 w-16 shrink-0 overflow-hidden rounded border-2 transition-all"
                 class:border-accent={i === selectedIdx}
                 class:opacity-100={i === selectedIdx}
@@ -759,6 +910,15 @@
     inset: 0;
   }
   dialog.post-modal:not([open]) {
+    display: none;
+  }
+  /* Hide the native scrollbar on the per-member scroller — the
+     position indicator + footer strip already communicate position,
+     and a visible scrollbar overlapping the image looks unfinished. */
+  :global(.post-modal-scroller) {
+    scrollbar-width: none;
+  }
+  :global(.post-modal-scroller::-webkit-scrollbar) {
     display: none;
   }
 </style>
