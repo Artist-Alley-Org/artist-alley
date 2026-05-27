@@ -255,7 +255,7 @@
       rows="2"
       maxlength="10000"
       disabled={posting}
-      class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus:border-accent focus:outline-none disabled:opacity-50"
+      class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:border-border-strong focus:outline-none disabled:opacity-50"
     ></textarea>
     <div class="flex justify-end">
       <button
@@ -269,7 +269,7 @@
   </form>
 
   {#if error}
-    <p role="alert" class="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+    <p role="alert" class="rounded-md border border-danger/40 bg-danger-container px-3 py-2 text-xs text-danger">
       {error}
     </p>
   {/if}
@@ -327,7 +327,7 @@
               {#if auth.user?.ref === root.author_user_ref}
                 <button
                   type="button"
-                  class="hover:text-red-500"
+                  class="hover:text-danger"
                   onclick={() => deleteComment(root.id)}
                 >
                   Delete
@@ -372,7 +372,7 @@
                 {#if auth.user?.ref === reply.author_user_ref}
                   <button
                     type="button"
-                    class="hover:text-red-500"
+                    class="hover:text-danger"
                     onclick={() => deleteComment(reply.id)}
                   >
                     Delete
@@ -398,7 +398,7 @@
               rows="2"
               maxlength="10000"
               disabled={posting}
-              class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus:border-accent focus:outline-none disabled:opacity-50"
+              class="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-fg placeholder:text-fg-muted/70 focus-visible:border-border-strong focus:outline-none disabled:opacity-50"
             ></textarea>
             <div class="flex justify-end gap-2">
               <button

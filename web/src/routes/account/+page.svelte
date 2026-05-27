@@ -31,7 +31,7 @@
                 {t(`account.items.${item.slug}.title`)}
               </h3>
               {#if item.status === 'stub' && item.phase}
-                <span class="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                <span class="shrink-0 rounded-full bg-warning-container px-2 py-0.5 text-[10px] font-medium text-warning">
                   {t('admin.status.phase', { phase: item.phase })}
                 </span>
               {/if}

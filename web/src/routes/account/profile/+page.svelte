@@ -101,7 +101,7 @@
       <input
         type="text"
         bind:value={displayName}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         maxlength="100"
       />
       <span class="mt-1 block text-xs text-fg-muted">{t('account.profile.display_name_help')}</span>
@@ -112,7 +112,7 @@
       <textarea
         bind:value={bio}
         rows="3"
-        class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         maxlength="1000"
       ></textarea>
     </label>
@@ -122,7 +122,7 @@
       <input
         type="url"
         bind:value={avatarUrl}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         maxlength="1024"
       />
     </label>
@@ -132,7 +132,7 @@
       <input
         type="text"
         bind:value={location}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         maxlength="100"
       />
     </label>
@@ -142,18 +142,18 @@
       <input
         type="url"
         bind:value={websiteUrl}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         maxlength="500"
       />
     </label>
 
     {#if error}
-      <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
         {error}
       </p>
     {/if}
     {#if saved}
-      <p class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
+      <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">
         {t('account.profile.saved')}
       </p>
     {/if}

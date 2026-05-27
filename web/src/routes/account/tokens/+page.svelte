@@ -101,14 +101,14 @@
       type="text"
       bind:value={newName}
       placeholder={t('account.tokens.name')}
-      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
       required
     />
     <input
       type="text"
       bind:value={newScopes}
       placeholder={t('account.tokens.scopes') + ' (comma-separated, optional)'}
-      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
     />
     <button
       type="submit"
@@ -119,13 +119,13 @@
     </button>
   </form>
   {#if justCreatedToken}
-    <div class="mt-3 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-      <p class="font-medium text-amber-700">Save this token — it is never shown again:</p>
+    <div class="mt-3 rounded border border-warning/40 bg-warning-container p-3 text-sm">
+      <p class="font-medium text-warning">Save this token — it is never shown again:</p>
       <code class="mt-1 block break-all rounded bg-surface px-2 py-1 font-mono text-xs">{justCreatedToken}</code>
     </div>
   {/if}
   {#if error}
-    <p role="alert" class="mt-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">{error}</p>
+    <p role="alert" class="mt-3 rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{error}</p>
   {/if}
 </section>
 
@@ -155,7 +155,7 @@
             <button
               type="button"
               onclick={() => void revoke(tk.id)}
-              class="rounded-md border border-red-500/40 px-3 py-1 text-xs text-red-600 hover:bg-red-500/10"
+              class="rounded-md border border-danger/40 px-3 py-1 text-xs text-danger hover:bg-danger-container"
             >
               {t('account.tokens.revoke')}
             </button>

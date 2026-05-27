@@ -73,7 +73,7 @@
   </section>
 
   {#if saved}
-    <p class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
+    <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">
       {t('account.preferences.saved')}
     </p>
   {/if}

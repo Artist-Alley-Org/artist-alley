@@ -156,7 +156,7 @@
   {/if}
 
   {#if error}
-    <div role="alert" class="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
+    <div role="alert" class="rounded-md border border-danger/40 bg-danger-container px-4 py-3 text-sm text-danger">
       {error}
     </div>
   {/if}

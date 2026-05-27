@@ -90,7 +90,7 @@
               <div class="grid grid-cols-1 gap-2 md:grid-cols-[10rem_1fr_auto_auto]">
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.kind')}</span>
-                  <select bind:value={providers[idx].kind} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none">
+                  <select bind:value={providers[idx].kind} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none">
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="google">Google</option>
@@ -99,28 +99,28 @@
                 </label>
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.display_name')}</span>
-                  <input type="text" bind:value={providers[idx].display_name} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none" />
+                  <input type="text" bind:value={providers[idx].display_name} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none" />
                 </label>
                 <label class="inline-flex items-end gap-1">
                   <input type="checkbox" bind:checked={providers[idx].enabled} class="h-4 w-4 accent-accent" />
                   <span class="pb-1 text-xs text-fg-muted">{t('admin.system.ai.enabled')}</span>
                 </label>
-                <button type="button" onclick={() => removeProvider(idx)} class="self-end rounded-md border border-red-500/40 px-2 py-1 text-xs text-red-600 hover:bg-red-500/10">
+                <button type="button" onclick={() => removeProvider(idx)} class="self-end rounded-md border border-danger/40 px-2 py-1 text-xs text-danger hover:bg-danger-container">
                   {t('admin.system.ai.remove_provider')}
                 </button>
               </div>
               <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.model')}</span>
-                  <input type="text" bind:value={providers[idx].model} placeholder="gpt-4o" class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none" />
+                  <input type="text" bind:value={providers[idx].model} placeholder="gpt-4o" class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none" />
                 </label>
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.base_url')}</span>
-                  <input type="url" bind:value={providers[idx].base_url} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none" />
+                  <input type="url" bind:value={providers[idx].base_url} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none" />
                 </label>
                 <label>
                   <span class="block text-xs text-fg-muted">{t('admin.system.ai.api_key')}</span>
-                  <input type="password" bind:value={providers[idx].api_key} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none" />
+                  <input type="password" bind:value={providers[idx].api_key} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none" />
                 </label>
               </div>
             </article>
@@ -131,7 +131,7 @@
 
     <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
       <h3 class="text-sm font-medium text-fg">{t('admin.system.ai.default_provider')}</h3>
-      <select bind:value={defaultProviderId} class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus:border-accent focus:outline-none">
+      <select bind:value={defaultProviderId} class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none">
         <option value="">{t('admin.system.ai.no_default')}</option>
         {#each providers as p (p.id ?? p.display_name)}
           {#if p.id}
@@ -142,10 +142,10 @@
     </section>
 
     {#if error}
-      <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">{error}</p>
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{error}</p>
     {/if}
     {#if saved}
-      <p class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">{t('admin.system.ai.saved')}</p>
+      <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">{t('admin.system.ai.saved')}</p>
     {/if}
 
     <button type="submit" disabled={saving} class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">

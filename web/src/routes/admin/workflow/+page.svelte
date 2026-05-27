@@ -44,7 +44,7 @@
     <select
       bind:value={domain}
       onchange={() => void load()}
-      class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
     >
       <option value="post">post</option>
       <option value="asset:1">asset:1 (Photo)</option>
@@ -71,8 +71,8 @@
           <p class="font-mono text-xs text-fg-muted">{s.code}</p>
         </div>
         <div class="text-xs text-fg-muted">
-          {#if s.is_initial}<span class="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-700">initial</span>{/if}
-          {#if s.is_terminal}<span class="ml-1 rounded bg-red-500/15 px-2 py-0.5 text-red-700">terminal</span>{/if}
+          {#if s.is_initial}<span class="rounded bg-success-container px-2 py-0.5 text-success">initial</span>{/if}
+          {#if s.is_terminal}<span class="ml-1 rounded bg-danger-container px-2 py-0.5 text-danger">terminal</span>{/if}
         </div>
       </article>
     {/each}

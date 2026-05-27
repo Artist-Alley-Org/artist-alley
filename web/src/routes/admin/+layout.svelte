@@ -31,7 +31,7 @@
   {#if !auth.ready}
     <p class="text-fg-muted">{t('common.loading')}</p>
   {:else if !isAdmin}
-    <div class="rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-700">
+    <div class="rounded-lg border border-danger/40 bg-danger-container p-4 text-sm text-danger">
       {t('common.no_permission')}
     </div>
   {:else}

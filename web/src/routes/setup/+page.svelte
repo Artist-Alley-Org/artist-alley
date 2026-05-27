@@ -263,7 +263,7 @@
               <select
                 bind:value={smtpEncryption}
                 disabled={submitting}
-                class="block w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent"
+                class="block w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="none">None</option>
                 <option value="starttls">STARTTLS</option>

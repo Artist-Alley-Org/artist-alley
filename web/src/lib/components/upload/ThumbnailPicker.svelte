@@ -189,11 +189,11 @@
           <div class="h-full bg-accent" style="width: {Math.round(coverProgress * 100)}%"></div>
         </div>
       {:else if coverState === 'ready'}
-        <p class="text-emerald-600 dark:text-emerald-400">
+        <p class="text-success">
           Cover ready: {coverFileName}
         </p>
       {:else if coverState === 'errored'}
-        <p class="text-red-600 dark:text-red-400">Failed: {coverError}</p>
+        <p class="text-danger">Failed: {coverError}</p>
       {/if}
     </div>
   {/if}

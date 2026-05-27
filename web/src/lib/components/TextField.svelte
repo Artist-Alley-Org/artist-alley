@@ -67,12 +67,12 @@
     bind:value
     class="block w-full rounded-md border bg-surface-elevated px-3 py-2 text-sm text-fg
            placeholder:text-fg-muted/60
-           focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface focus-visible:ring-ring
            disabled:opacity-50 disabled:cursor-not-allowed
-           {hasError ? 'border-red-500' : 'border-border'}"
+           {hasError ? 'border-danger' : 'border-border'}"
   />
   {#if hasError}
-    <p id={helperId} class="text-xs text-red-500" role="alert">{error}</p>
+    <p id={helperId} class="text-xs text-danger" role="alert">{error}</p>
   {:else if helper}
     <p id={helperId} class="text-xs text-fg-muted">{helper}</p>
   {/if}

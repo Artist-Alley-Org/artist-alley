@@ -63,7 +63,7 @@
   {#if loading}
     <p class="text-fg-muted">Loading…</p>
   {:else if error}
-    <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">
+    <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
       {error}
     </p>
   {:else if collection}

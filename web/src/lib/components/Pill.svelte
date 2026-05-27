@@ -18,7 +18,7 @@
 
 {#if count > 0}
   <span
-    class="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
+    class="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-danger"
     aria-label={label ?? `${count} notifications`}
   >
     {display}

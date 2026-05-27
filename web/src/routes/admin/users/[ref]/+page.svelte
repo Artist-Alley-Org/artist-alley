@@ -76,7 +76,7 @@
 {#if loading}
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else if error}
-  <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">{error}</p>
+  <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{error}</p>
 {:else if user}
   <header class="mb-6 flex items-center gap-3">
     <Avatar name={user.display_name} src={user.avatar_url} sizeClass="h-12 w-12" />
@@ -90,7 +90,7 @@
     <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.role_label')}</h3>
     <select
       bind:value={selectedRole}
-      class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+      class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
     >
       <option value="">—</option>
       {#each roles as r (r.id)}
@@ -106,7 +106,7 @@
       {saving ? t('common.loading') : t('admin.user_detail.role_save')}
     </button>
     {#if saved}
-      <p class="text-sm text-emerald-600">{t('admin.user_detail.role_saved')}</p>
+      <p class="text-sm text-success">{t('admin.user_detail.role_saved')}</p>
     {/if}
   </section>
 {/if}

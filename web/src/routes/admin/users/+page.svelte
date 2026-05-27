@@ -51,7 +51,7 @@
 {#if loading}
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else if error}
-  <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">{error}</p>
+  <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{error}</p>
 {:else}
   <p class="rounded-md bg-surface-elevated px-4 py-6 text-center text-sm text-fg-muted">
     {t('admin.users.no_users')} — listing endpoint lands in a follow-up phase. For now you can edit role assignments at /admin/users/{'\u007B'}ref{'\u007D'} once you know a user's ref.

@@ -67,16 +67,16 @@
     <div class="grid grid-cols-[1fr_8rem] gap-2">
       <label class="block">
         <span class="text-sm text-fg-muted">{t('admin.system.smtp.host')}</span>
-        <input type="text" bind:value={host} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+        <input type="text" bind:value={host} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
       </label>
       <label class="block">
         <span class="text-sm text-fg-muted">{t('admin.system.smtp.port')}</span>
-        <input type="number" bind:value={port} min="1" max="65535" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+        <input type="number" bind:value={port} min="1" max="65535" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
       </label>
     </div>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.encryption')}</span>
-      <select bind:value={encryption} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none">
+      <select bind:value={encryption} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none">
         <option value="none">none</option>
         <option value="starttls">STARTTLS</option>
         <option value="tls">TLS</option>
@@ -84,22 +84,22 @@
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.username')}</span>
-      <input type="text" bind:value={username} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+      <input type="text" bind:value={username} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.password')}</span>
-      <input type="password" bind:value={password} placeholder="(unchanged)" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+      <input type="password" bind:value={password} placeholder="(unchanged)" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.from_address')}</span>
-      <input type="email" bind:value={fromAddress} placeholder="artist-alley <noreply@example.com>" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+      <input type="email" bind:value={fromAddress} placeholder="artist-alley <noreply@example.com>" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
     </label>
 
     {#if error}
-      <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">{error}</p>
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{error}</p>
     {/if}
     {#if saved}
-      <p class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">{t('admin.system.smtp.saved')}</p>
+      <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">{t('admin.system.smtp.saved')}</p>
     {/if}
 
     <button type="submit" disabled={saving} class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">

@@ -106,17 +106,17 @@
         type="text"
         bind:value={newName}
         placeholder="Name"
-        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
       />
       <input
         type="text"
         bind:value={newDesc}
         placeholder="Description (optional)"
-        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
       />
       <select
         bind:value={newVisibility}
-        class="rounded border border-border bg-surface px-2 py-1.5 text-sm focus:border-accent focus:outline-none"
+        class="rounded border border-border bg-surface px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
       >
         <option value="private">Private</option>
         <option value="shared">Shared</option>
@@ -136,7 +136,7 @@
   {#if loading}
     <p class="text-fg-muted">Loading…</p>
   {:else if error}
-    <p role="alert" class="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">
+    <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
       {error}
     </p>
   {:else if collections.length === 0}
