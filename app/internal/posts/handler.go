@@ -594,6 +594,157 @@ func (h *Handler) RemovePostAsset(
 }
 
 // ---------------------------------------------------------------------------
+// ACLs — additive grants on top of role/team/visibility (ADR 0010 L6)
+// ---------------------------------------------------------------------------
+//
+// Authorization: reading the ACL list requires read access to the post
+// (canReadPost). Adding/removing requires write access (canMutatePost)
+// so a viewer can't expand their own access by editing the ACL list.
+
+func (h *Handler) ListPostAcls(
+	ctx context.Context,
+	req openapi.ListPostAclsRequestObject,
+) (openapi.ListPostAclsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListPostAcls401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	full, err := h.fetchFullPost(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.ListPostAcls404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if !canReadPost(caller, full) {
+		return openapi.ListPostAcls403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
+		}, nil
+	}
+	rows, err := New(h.Pool).ListPostAcls(ctx, pgID)
+	if err != nil {
+		return nil, fmt.Errorf("posts: list acls: %w", err)
+	}
+	out := make([]openapi.AclEntry, 0, len(rows))
+	for _, r := range rows {
+		e := openapi.AclEntry{
+			PrincipalType: openapi.AclEntryPrincipalType(r.PrincipalType),
+			PrincipalId:   r.PrincipalID,
+			Permission:    openapi.AclEntryPermission(r.Permission),
+			GrantedAt:     r.GrantedAt.Time,
+		}
+		if r.GrantedByRsUserID != nil {
+			e.GrantedByRsUserId = r.GrantedByRsUserID
+		}
+		if r.ExpiresAt.Valid {
+			t := r.ExpiresAt.Time
+			e.ExpiresAt = &t
+		}
+		out = append(out, e)
+	}
+	return openapi.ListPostAcls200JSONResponse(out), nil
+}
+
+func (h *Handler) AddPostAcl(
+	ctx context.Context,
+	req openapi.AddPostAclRequestObject,
+) (openapi.AddPostAclResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.AddPostAcl401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.AddPostAcl400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+	cur, err := q.GetPost(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.AddPostAcl404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if !canMutatePost(caller, cur.AuthorUserRef) {
+		return openapi.AddPostAcl403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
+		}, nil
+	}
+
+	var expires pgtype.Timestamptz
+	if req.Body.ExpiresAt != nil {
+		expires = pgtype.Timestamptz{Time: *req.Body.ExpiresAt, Valid: true}
+	}
+	if err := q.AddPostAcl(ctx, AddPostAclParams{
+		PostID:              pgID,
+		PrincipalType:       string(req.Body.PrincipalType),
+		PrincipalID:         req.Body.PrincipalId,
+		Permission:          string(req.Body.Permission),
+		GrantedByRsUserID:   &caller.UserRef,
+		ExpiresAt:           expires,
+	}); err != nil {
+		return nil, fmt.Errorf("posts: add acl: %w", err)
+	}
+	h.cacheInvalidate(ctx, pgID)
+	return openapi.AddPostAcl204Response{}, nil
+}
+
+func (h *Handler) RemovePostAcl(
+	ctx context.Context,
+	req openapi.RemovePostAclRequestObject,
+) (openapi.RemovePostAclResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.RemovePostAcl401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+	cur, err := q.GetPost(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RemovePostAcl404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if !canMutatePost(caller, cur.AuthorUserRef) {
+		return openapi.RemovePostAcl403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
+		}, nil
+	}
+	rows, err := q.RemovePostAcl(ctx, RemovePostAclParams{
+		PostID:        pgID,
+		PrincipalType: string(req.PrincipalType),
+		PrincipalID:   req.PrincipalId,
+		Permission:    string(req.Permission),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("posts: remove acl: %w", err)
+	}
+	if rows == 0 {
+		return openapi.RemovePostAcl404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "ACL entry not found"},
+		}, nil
+	}
+	h.cacheInvalidate(ctx, pgID)
+	return openapi.RemovePostAcl204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
 // Internal: fetch + cache plumbing
 // ---------------------------------------------------------------------------
 
@@ -829,4 +980,7 @@ var _ interface {
 	DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error)
 	AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error)
 	RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error)
+	ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error)
+	AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error)
+	RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error)
 } = (*Handler)(nil)

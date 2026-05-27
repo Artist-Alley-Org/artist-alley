@@ -632,3 +632,12 @@ func (collShim) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberReques
 func (collShim) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	panic("GetMyTeams called from collections_test test shim")
 }
+func (collShim) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from collections_test test shim")
+}
+func (collShim) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from collections_test test shim")
+}
+func (collShim) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from collections_test test shim")
+}

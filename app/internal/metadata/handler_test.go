@@ -637,3 +637,12 @@ func (metaShim) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberReques
 func (metaShim) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	panic("GetMyTeams called from metadata_test test shim")
 }
+func (metaShim) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from metadata_test test shim")
+}
+func (metaShim) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from metadata_test test shim")
+}
+func (metaShim) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from metadata_test test shim")
+}

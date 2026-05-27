@@ -597,6 +597,15 @@ func (a authOnlyImpl) RemoveTeamMember(context.Context, openapi.RemoveTeamMember
 func (a authOnlyImpl) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	panic("GetMyTeams called from auth test shim")
 }
+func (a authOnlyImpl) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from auth test shim")
+}
+func (a authOnlyImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from auth test shim")
+}
+func (a authOnlyImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -1154,6 +1154,110 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /posts/{id}/acls:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostAcls
+      summary: List ACL entries on a post
+      description: |
+        Returns every ACL row attached to this post. ACL rows are
+        additive grants on top of the post's visibility and the
+        role / team-scope checks. Requires read access to the post.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ACL entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AclEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addPostAcl
+      summary: Grant a permission on a post to a principal
+      description: |
+        Inserts one ACL row. The same principal can hold multiple
+        permission levels (e.g. read AND write) — that's two POSTs.
+        Requires write access to the post (owner / posts.admin /
+        system.admin) so a contributor can't grant access beyond
+        their own ability to mutate.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AclCreate" }
+      responses:
+        "204":
+          description: ACL row added
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/acls/{principal_type}/{principal_id}/{permission}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: principal_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, role, team]
+      - name: principal_id
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+      - name: permission
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [read, write, admin]
+    delete:
+      operationId: removePostAcl
+      summary: Revoke a specific permission row from a principal
+      description: |
+        Removes the exact (principal_type, principal_id, permission)
+        tuple. Other permission levels for the same principal stay
+        in place. 404 if the row doesn't exist.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /posts/{id}/assets:
     parameters:
       - name: id
@@ -2769,6 +2873,53 @@ components:
           items: { $ref: "#/components/schemas/Team" }
         next_cursor:
           type: string
+          nullable: true
+
+    AclEntry:
+      type: object
+      required: [principal_type, principal_id, permission, granted_at]
+      properties:
+        principal_type:
+          type: string
+          enum: [user, role, team]
+        principal_id:
+          type: string
+          description: |
+            BIGINT user.ref for principal_type=user; UUID for role/team.
+            Stored as text so the polymorphic column fits all three.
+          maxLength: 64
+        permission:
+          type: string
+          enum: [read, write, admin]
+        granted_at: { type: string, format: date-time }
+        granted_by_rs_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Time-boxed grant. NULL = permanent. The handler-side check
+            ignores rows whose expires_at < NOW().
+
+    AclCreate:
+      type: object
+      required: [principal_type, principal_id, permission]
+      properties:
+        principal_type:
+          type: string
+          enum: [user, role, team]
+        principal_id:
+          type: string
+          maxLength: 64
+        permission:
+          type: string
+          enum: [read, write, admin]
+        expires_at:
+          type: string
+          format: date-time
           nullable: true
 
     TeamMember:

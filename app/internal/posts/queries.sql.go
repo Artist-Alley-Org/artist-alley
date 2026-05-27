@@ -46,6 +46,39 @@ func (q *Queries) AddCollectionPost(ctx context.Context, arg AddCollectionPostPa
 	return err
 }
 
+const addPostAcl = `-- name: AddPostAcl :exec
+INSERT INTO post_acls (post_id, principal_type, principal_id, permission,
+                       granted_by_rs_user_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (post_id, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at
+`
+
+type AddPostAclParams struct {
+	PostID            pgtype.UUID
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
+// Idempotent on the full (post, principal, permission) PK. Adding the
+// same row twice is a no-op (returns 204 the second time).
+func (q *Queries) AddPostAcl(ctx context.Context, arg AddPostAclParams) error {
+	_, err := q.db.Exec(ctx, addPostAcl,
+		arg.PostID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+		arg.GrantedByRsUserID,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const addPostAsset = `-- name: AddPostAsset :exec
 
 INSERT INTO post_assets (post_id, asset_id, sort_order)
@@ -285,6 +318,49 @@ func (q *Queries) ListCollectionPostsPage(ctx context.Context, arg ListCollectio
 	return items, nil
 }
 
+const listPostAcls = `-- name: ListPostAcls :many
+
+SELECT post_id, principal_type, principal_id, permission,
+       granted_at, granted_by_rs_user_id, expires_at
+FROM post_acls
+WHERE post_id = $1
+ORDER BY granted_at DESC, principal_type, principal_id, permission
+`
+
+// ---------------------------------------------------------------------------
+// ACLs (Phase 1.7.B-7b)
+// ---------------------------------------------------------------------------
+// All ACL rows on a post, newest first. The handler filters expired
+// rows out of effective-access checks; this endpoint shows them so
+// admins can see "X had read access until last week".
+func (q *Queries) ListPostAcls(ctx context.Context, postID pgtype.UUID) ([]PostAcl, error) {
+	rows, err := q.db.Query(ctx, listPostAcls, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PostAcl
+	for rows.Next() {
+		var i PostAcl
+		if err := rows.Scan(
+			&i.PostID,
+			&i.PrincipalType,
+			&i.PrincipalID,
+			&i.Permission,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPostAssets = `-- name: ListPostAssets :many
 SELECT pa.post_id, pa.asset_id, pa.sort_order, pa.added_at,
        a.title, a.description, a.resource_type, a.owner_user_ref,
@@ -489,6 +565,34 @@ type RemoveCollectionPostParams struct {
 func (q *Queries) RemoveCollectionPost(ctx context.Context, arg RemoveCollectionPostParams) error {
 	_, err := q.db.Exec(ctx, removeCollectionPost, arg.CollectionID, arg.PostID)
 	return err
+}
+
+const removePostAcl = `-- name: RemovePostAcl :execrows
+DELETE FROM post_acls
+WHERE post_id = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4
+`
+
+type RemovePostAclParams struct {
+	PostID        pgtype.UUID
+	PrincipalType string
+	PrincipalID   string
+	Permission    string
+}
+
+func (q *Queries) RemovePostAcl(ctx context.Context, arg RemovePostAclParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removePostAcl,
+		arg.PostID,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removePostAsset = `-- name: RemovePostAsset :exec

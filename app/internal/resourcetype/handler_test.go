@@ -306,6 +306,15 @@ func (rtOnly) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestO
 func (rtOnly) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	panic("GetMyTeams called from resourcetype test shim")
 }
+func (rtOnly) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	panic("ListPostAcls called from resourcetype test shim")
+}
+func (rtOnly) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	panic("AddPostAcl called from resourcetype test shim")
+}
+func (rtOnly) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	panic("RemovePostAcl called from resourcetype test shim")
+}
 
 // --- test helpers -----------------------------------------------------------
 

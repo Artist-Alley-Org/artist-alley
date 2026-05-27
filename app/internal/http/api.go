@@ -235,6 +235,15 @@ func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRe
 func (s *apiServer) RemovePostAsset(ctx context.Context, req openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	return s.posts.RemovePostAsset(ctx, req)
 }
+func (s *apiServer) ListPostAcls(ctx context.Context, req openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
+	return s.posts.ListPostAcls(ctx, req)
+}
+func (s *apiServer) AddPostAcl(ctx context.Context, req openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
+	return s.posts.AddPostAcl(ctx, req)
+}
+func (s *apiServer) RemovePostAcl(ctx context.Context, req openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
+	return s.posts.RemovePostAcl(ctx, req)
+}
 
 // --- teams -----------------------------------------------------------------
 
