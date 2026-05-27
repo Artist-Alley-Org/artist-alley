@@ -388,7 +388,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	})
 
 	// Real chi router wired exactly as the production server does it.
-	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7, nil, nil, nil)
+	handler := NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), testScrambleKey, 7, nil, nil, nil, nil)
 	resolver := &Resolver{Pool: pool, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	router := chi.NewRouter()

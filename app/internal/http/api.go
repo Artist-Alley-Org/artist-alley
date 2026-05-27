@@ -45,7 +45,7 @@ type apiServer struct {
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, storageBackend string) *apiServer {
 	return &apiServer{
-		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec),
+		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
 		resourceType: resourcetype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger),
