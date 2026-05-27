@@ -42,27 +42,20 @@ LIMIT $3 OFFSET $4;
 -- ---------------------------------------------------------------------------
 
 -- name: CreateComment :one
--- For a top-level comment, pass parent_id NULL and set root_id later
--- via SetCommentRootSelf. For a reply, pass parent_id and root_id
--- (callers compute root_id from the parent's row). depth is computed
--- by the caller from parent.depth + 1, capped at the app-level
--- maximum.
+-- The Go caller generates the id up front so top-level comments can
+-- have root_id = id at INSERT time (the column is NOT NULL, so we
+-- can't post-set it). For replies the caller passes the parent's
+-- root_id; depth comes from parent.depth + 1.
 INSERT INTO comments (
-    target_kind, target_id, parent_id, root_id, depth,
+    id, target_kind, target_id, parent_id, root_id, depth,
     author_user_ref, body, body_html, annotation_type, annotation_data
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
           origin_server_id, created_at, updated_at;
-
--- name: SetCommentRootSelf :exec
--- For top-level comments we know the id only after INSERT; this
--- second update sets root_id = id. Two statements is cheaper than
--- a CTE here and keeps CreateComment's parameter shape uniform.
-UPDATE comments SET root_id = id WHERE id = $1 AND root_id <> id;
 
 -- name: GetComment :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,

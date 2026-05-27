@@ -288,9 +288,13 @@ func (h *Handler) CreatePostComment(
 		}, nil
 	}
 
-	// Resolve parent + root + depth.
+	// Generate the new comment's id up front so a top-level comment
+	// can satisfy the NOT NULL root_id constraint with root_id = id at
+	// INSERT time. Replies copy the parent's root_id.
+	newID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+
 	var parentID pgtype.UUID
-	var rootID pgtype.UUID
+	rootID := newID
 	depth := int32(0)
 	if req.Body.ParentId != nil {
 		parentID = pgtype.UUID{Bytes: uuid.UUID(*req.Body.ParentId), Valid: true}
@@ -313,28 +317,21 @@ func (h *Handler) CreatePostComment(
 		depth = parentRow.Depth + 1
 	}
 
-	q := New(h.Pool)
-	row, err := q.CreateComment(ctx, CreateCommentParams{
+	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
+		ID:             newID,
 		TargetKind:     "post",
 		TargetID:       pgPostID,
 		ParentID:       parentID,
-		RootID:         rootID, // zero for now; will set self below for top-level
+		RootID:         rootID,
 		Depth:          depth,
 		AuthorUserRef:  caller.UserRef,
 		Body:           body,
-		BodyHtml:       "", // Phase 1.13.F-3 ships a server-side sanitiser; for now we render `body` client-side
+		BodyHtml:       "", // server-side markdown sanitiser is a later phase
 		AnnotationType: nil,
 		AnnotationData: nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: create comment: %w", err)
-	}
-	// For top-level comments, set root_id = id post-insert.
-	if !rootID.Valid {
-		if err := q.SetCommentRootSelf(ctx, row.ID); err != nil {
-			return nil, fmt.Errorf("social: set root self: %w", err)
-		}
-		row.RootID = row.ID
 	}
 	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(row)), nil
 }
