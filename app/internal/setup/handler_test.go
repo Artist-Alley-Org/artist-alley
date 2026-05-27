@@ -489,6 +489,42 @@ func (shimImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject)
 func (shimImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
 	panic("RemovePostAsset called from setup test shim")
 }
+func (shimImpl) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
+	panic("ListTeams called from setup_test test shim")
+}
+func (shimImpl) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
+	panic("CreateTeam called from setup_test test shim")
+}
+func (shimImpl) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
+	panic("GetTeam called from setup_test test shim")
+}
+func (shimImpl) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
+	panic("UpdateTeam called from setup_test test shim")
+}
+func (shimImpl) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
+	panic("DeleteTeam called from setup_test test shim")
+}
+func (shimImpl) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
+	panic("ListTeamParents called from setup_test test shim")
+}
+func (shimImpl) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
+	panic("AddTeamParent called from setup_test test shim")
+}
+func (shimImpl) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
+	panic("RemoveTeamParent called from setup_test test shim")
+}
+func (shimImpl) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
+	panic("ListTeamMembers called from setup_test test shim")
+}
+func (shimImpl) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
+	panic("AddTeamMember called from setup_test test shim")
+}
+func (shimImpl) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
+	panic("RemoveTeamMember called from setup_test test shim")
+}
+func (shimImpl) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
+	panic("GetMyTeams called from setup_test test shim")
+}
 
 // ---------------------------------------------------------------------------
 // helpers
