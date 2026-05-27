@@ -150,6 +150,26 @@ type CollectionResource struct {
 	AddedAt      pgtype.Timestamptz `json:"added_at"`
 }
 
+type Comment struct {
+	ID             pgtype.UUID        `json:"id"`
+	TargetKind     string             `json:"target_kind"`
+	TargetID       pgtype.UUID        `json:"target_id"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	RootID         pgtype.UUID        `json:"root_id"`
+	Depth          int32              `json:"depth"`
+	AuthorUserRef  int64              `json:"author_user_ref"`
+	Body           string             `json:"body"`
+	BodyHtml       string             `json:"body_html"`
+	AnnotationType *string            `json:"annotation_type"`
+	AnnotationData []byte             `json:"annotation_data"`
+	LikeCount      int64              `json:"like_count"`
+	EditedAt       pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`
@@ -173,6 +193,13 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
 	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
+}
+
+type Like struct {
+	TargetKind string             `json:"target_kind"`
+	TargetID   pgtype.UUID        `json:"target_id"`
+	RsUserID   int64              `json:"rs_user_id"`
+	LikedAt    pgtype.Timestamptz `json:"liked_at"`
 }
 
 type Post struct {
