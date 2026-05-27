@@ -28,6 +28,7 @@
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
+  import CommentsThread from './CommentsThread.svelte';
 
   interface Props {
     postId: string;
@@ -88,6 +89,11 @@
   let author = $state<UserPublic | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  // Like state for the current viewer. Loaded on post fetch, toggled
+  // optimistically on click, reverted on error.
+  let liked = $state(false);
+  let likeBusy = $state(false);
 
   // Which member is the preview showing. Defaults to the cover, or
   // the first member if no cover is pinned.
@@ -167,10 +173,50 @@
       // Author lookup — independent fetch. Surface failure as just
       // a placeholder header; the post itself is the main payload.
       void loadAuthor(post.author_user_ref);
+      // Like state for the current viewer. Initialized parallel to
+      // the post fetch so the button shows the right state on open.
+      void loadLikeState(id);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadLikeState(id: string) {
+    try {
+      const { data } = await api.GET('/posts/{id}/like', {
+        params: { path: { id } },
+      });
+      if (data) liked = data.liked;
+    } catch {
+      // Soft-fail; default false is the safe stance.
+      liked = false;
+    }
+  }
+
+  async function toggleLike() {
+    if (!post || likeBusy) return;
+    likeBusy = true;
+    // Optimistic toggle.
+    const wasLiked = liked;
+    liked = !wasLiked;
+    post.like_count = Math.max(post.like_count + (wasLiked ? -1 : 1), 0);
+    try {
+      const path = { id: post.id };
+      const { error: apiErr } = wasLiked
+        ? await api.DELETE('/posts/{id}/like', { params: { path } })
+        : await api.POST('/posts/{id}/like', { params: { path } });
+      if (apiErr) {
+        // Revert.
+        liked = wasLiked;
+        post.like_count = Math.max(post.like_count + (wasLiked ? 1 : -1), 0);
+      }
+    } catch {
+      liked = wasLiked;
+      if (post) post.like_count = Math.max(post.like_count + (wasLiked ? 1 : -1), 0);
+    } finally {
+      likeBusy = false;
     }
   }
 
@@ -312,7 +358,7 @@
   aria-labelledby="post-modal-title"
 >
   <div
-    class="relative mx-auto flex h-full w-full max-w-screen-2xl flex-col overflow-hidden bg-surface text-fg shadow-2xl sm:my-4 sm:h-[calc(100vh-2rem)] sm:rounded-lg"
+    class="relative flex h-full w-full flex-col overflow-hidden bg-surface text-fg shadow-2xl sm:my-4 sm:h-[calc(100vh-2rem)] sm:rounded-lg"
     role="presentation"
   >
     <!-- Close / back button — pinned top-right of the modal frame. -->
@@ -500,22 +546,32 @@
                 </div>
               {/if}
 
-              <!-- Engagement counts (read-only this phase; F-3 wires
-                   the like + comment buttons). -->
-              <div class="mt-4 flex items-center gap-4 border-t border-border pt-4 text-xs text-fg-muted">
-                <span class="inline-flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <!-- Engagement: active like + comment-count display. -->
+              <div class="mt-4 flex items-center gap-3 border-t border-border pt-4">
+                <button
+                  type="button"
+                  onclick={toggleLike}
+                  disabled={likeBusy}
+                  class="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm transition-colors disabled:opacity-50"
+                  class:text-fg={!liked}
+                  class:text-red-500={liked}
+                  class:border-red-500={liked}
+                  class:bg-red-500-10={liked}
+                  aria-pressed={liked}
+                  title={liked ? 'Unlike' : 'Like'}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
                   </svg>
                   {post.like_count}
-                </span>
-                <span class="inline-flex items-center gap-1">
+                </button>
+                <span class="inline-flex items-center gap-1 text-sm text-fg-muted">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
                   </svg>
                   {post.comment_count}
                 </span>
-                <span class="ml-auto" title={postedAbsolute}>{postedRelative}</span>
+                <span class="ml-auto text-xs text-fg-muted" title={postedAbsolute}>{postedRelative}</span>
               </div>
 
               {#if isOwner}
@@ -539,9 +595,9 @@
                 </div>
               {/if}
 
-              <!-- F-3 placeholder for the comment thread. -->
-              <div class="mt-6 rounded-md border border-dashed border-border p-4 text-center text-xs text-fg-muted">
-                Comments thread + like button arrive in F-3.
+              <!-- Comment thread + composer. -->
+              <div class="mt-6">
+                <CommentsThread postId={post.id} />
               </div>
             </div>
           </aside>
