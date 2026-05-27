@@ -20,6 +20,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
 // apiServer aggregates every feature package's handler into the single
@@ -38,6 +39,7 @@ type apiServer struct {
 	collections  *collections.Handler
 	posts        *posts.Handler
 	teams        *teams.Handler
+	users        *users.Handler
 	setup        *setup.Handler
 }
 
@@ -51,6 +53,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger),
+		users:        users.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 	}
 }
@@ -291,6 +294,18 @@ func (s *apiServer) RemoveTeamMember(ctx context.Context, req openapi.RemoveTeam
 }
 func (s *apiServer) GetMyTeams(ctx context.Context, req openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
 	return s.teams.GetMyTeams(ctx, req)
+}
+
+// --- users -----------------------------------------------------------------
+
+func (s *apiServer) GetUserPublicByRef(ctx context.Context, req openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	return s.users.GetUserPublicByRef(ctx, req)
+}
+func (s *apiServer) GetUserPublicByUsername(ctx context.Context, req openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	return s.users.GetUserPublicByUsername(ctx, req)
+}
+func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	return s.users.UpdateUserProfile(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

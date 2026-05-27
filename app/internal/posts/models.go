@@ -386,6 +386,19 @@ type UserCapabilityRevoke struct {
 	Note              string
 }
 
+type UserProfile struct {
+	RsUserID       int64
+	DisplayName    *string
+	Bio            string
+	AvatarUrl      *string
+	Location       string
+	WebsiteUrl     *string
+	SocialLinks    []byte
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type UserRole struct {
 	RsUserID           int64
 	RoleID             pgtype.UUID

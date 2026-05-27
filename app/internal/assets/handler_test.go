@@ -633,6 +633,15 @@ func (shimImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclReques
 func (shimImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from assets_test test shim")
 }
+func (shimImpl) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from assets_test test shim")
+}
+func (shimImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from assets_test test shim")
+}
+func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from assets_test test shim")
+}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()

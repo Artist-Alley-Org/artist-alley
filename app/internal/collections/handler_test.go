@@ -650,3 +650,12 @@ func (collShim) AddCollectionAcl(context.Context, openapi.AddCollectionAclReques
 func (collShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from collections_test test shim")
 }
+func (collShim) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from collections_test test shim")
+}
+func (collShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from collections_test test shim")
+}
+func (collShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from collections_test test shim")
+}

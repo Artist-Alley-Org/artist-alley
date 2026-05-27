@@ -615,6 +615,15 @@ func (a authOnlyImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAcl
 func (a authOnlyImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
 	panic("RemoveCollectionAcl called from auth test shim")
 }
+func (a authOnlyImpl) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
+	panic("GetUserPublicByRef called from auth test shim")
+}
+func (a authOnlyImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
+	panic("GetUserPublicByUsername called from auth test shim")
+}
+func (a authOnlyImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
+	panic("UpdateUserProfile called from auth test shim")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

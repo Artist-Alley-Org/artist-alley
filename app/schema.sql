@@ -500,3 +500,20 @@ CREATE TABLE likes (
     liked_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     PRIMARY KEY (target_kind, target_id, rs_user_id)
 );
+
+-- migrations/00021_user_profiles.sql — display-layer profile data,
+-- federation-mirror unit. One row per user; defaults provide a working
+-- profile for users without a stored row.
+
+CREATE TABLE user_profiles (
+    rs_user_id       BIGINT       PRIMARY KEY,
+    display_name     TEXT         NULL,
+    bio              TEXT         NOT NULL DEFAULT '',
+    avatar_url       TEXT         NULL,
+    location         TEXT         NOT NULL DEFAULT '',
+    website_url      TEXT         NULL,
+    social_links     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    origin_server_id UUID         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);

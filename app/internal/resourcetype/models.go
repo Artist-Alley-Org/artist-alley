@@ -386,6 +386,19 @@ type UserCapabilityRevoke struct {
 	Note              string             `json:"note"`
 }
 
+type UserProfile struct {
+	RsUserID       int64              `json:"rs_user_id"`
+	DisplayName    *string            `json:"display_name"`
+	Bio            string             `json:"bio"`
+	AvatarUrl      *string            `json:"avatar_url"`
+	Location       string             `json:"location"`
+	WebsiteUrl     *string            `json:"website_url"`
+	SocialLinks    []byte             `json:"social_links"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserRole struct {
 	RsUserID           int64              `json:"rs_user_id"`
 	RoleID             pgtype.UUID        `json:"role_id"`

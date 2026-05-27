@@ -60,6 +60,14 @@ tags:
       AND Cross-Studio Art Review). Capability grants scoped to a team
       apply to that team and all descendants via the materialised
       `team_closure`. ADR 0010 Layer 4.
+  - name: users
+    description: |
+      Public-facing user profiles. The RS `user` table holds auth-bearing
+      data we never expose; `user_profiles` (Phase 1.13.D-4) holds the
+      display-layer fields (display_name, bio, avatar_url, social_links).
+      Reads merge both tables and substitute defaults when no profile
+      row exists. Federation: the profile is the unit that gets
+      mirrored to peer sites.
 
 paths:
   /auth/login:
@@ -2009,6 +2017,88 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /users/{ref}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getUserPublicByRef
+      summary: Public profile for a user (by RS ref)
+      description: |
+        Returns the merged user + user_profile view used to render
+        author headers in the post modal, the /@username profile page,
+        and federation actor representations. Profile-less users
+        render fine with substituted defaults.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPublic" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateUserProfile
+      summary: Edit a user's profile (self or moderator)
+      description: |
+        Self-edit always allowed; editing other users requires the
+        `users.profile.edit.any` capability (Admin by default).
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserProfileUpdate" }
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPublic" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/by-username/{username}:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+    get:
+      operationId: getUserPublicByUsername
+      summary: Public profile by username (used by /@username URLs)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPublic" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /auth/me/teams:
     get:
       operationId: getMyTeams
@@ -2990,6 +3080,92 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    UserPublic:
+      type: object
+      description: |
+        Merged user + profile view. `display_name` is the resolved
+        display string (profile.display_name → user.fullname →
+        user.username, first non-empty). `avatar_url` is null for
+        users without an uploaded avatar; the frontend renders a
+        generated initials disc in that case.
+      required:
+        [ref, username, display_name, member_since, post_count]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        fullname:
+          type: string
+          nullable: true
+          description: |
+            The raw user.fullname value, for the rare case a caller
+            needs the unresolved string (account settings page). Most
+            UI surfaces should use display_name instead.
+        display_name:
+          type: string
+          description: |
+            Resolved display string ready to render — never empty.
+        bio: { type: string }
+        avatar_url:
+          type: string
+          nullable: true
+        location: { type: string }
+        website_url:
+          type: string
+          format: uri
+          nullable: true
+        social_links:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Free-form platform → handle map. Frontend renders known
+            platforms (twitter, instagram, artstation, ...) as icon
+            links; unknown keys are ignored.
+        member_since: { type: string, format: date-time }
+        post_count:
+          type: integer
+          format: int64
+          description: Total live posts authored by this user.
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Set on profiles mirroring a remote site's user. NULL =
+            locally-owned account.
+
+    UserProfileUpdate:
+      type: object
+      description: |
+        PATCH semantics — only present fields are updated, but the
+        schema treats each field as the new full value (no JSON
+        Merge Patch nested ops). Clearing a field is sending an
+        empty string (for text) or null (for nullable URLs).
+      properties:
+        display_name:
+          type: string
+          nullable: true
+          maxLength: 100
+        bio:
+          type: string
+          maxLength: 1000
+        avatar_url:
+          type: string
+          nullable: true
+          maxLength: 1024
+        location:
+          type: string
+          maxLength: 100
+        website_url:
+          type: string
+          nullable: true
+          format: uri
+          maxLength: 500
+        social_links:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 100
 
     AclEntry:
       type: object
