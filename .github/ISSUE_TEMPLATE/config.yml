@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or general discussion
+    url: https://github.com/mscrnt/artist-alley/discussions
+    about: Ask questions, share ideas, or chat about the project. Issues are for actionable bugs and concrete feature proposals.
