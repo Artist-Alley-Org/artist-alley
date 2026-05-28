@@ -397,6 +397,8 @@ type UserProfile struct {
 	Location       string
 	WebsiteUrl     *string
 	SocialLinks    []byte
+	Language       string
+	Theme          string
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz

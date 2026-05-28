@@ -1,0 +1,36 @@
+---
+title: Reference
+description: Auto-generated reference material — API surface, database schema, architecture decisions.
+---
+
+Everything on these pages is generated at build time from the source of
+truth in the repo. If something looks wrong, the fix is in the code or
+the spec, not here.
+
+## Sources
+
+- **API surface** → [`app/api/openapi.yaml`](https://github.com/mscrnt/artist-alley/blob/main/app/api/openapi.yaml)
+  &rarr; [API reference](/api/reference/)
+- **Database schema** → [`app/schema.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/schema.sql)
+  &rarr; [Database schema](/reference/schema/)
+- **Architecture decisions** → [`docs/adr/*.md`](https://github.com/mscrnt/artist-alley/tree/main/docs/adr)
+  &rarr; sidebar group "Architecture Decisions"
+
+## Regenerating
+
+Reference pages regenerate on every site build. To preview locally:
+
+```bash
+cd site
+pnpm install
+pnpm dev
+```
+
+The `prebuild` step in `site/package.json` runs:
+
+1. `scripts/sync-adrs.mjs` — copies `docs/adr/*.md` into the docs
+   collection with frontmatter inferred from each file's h1.
+2. `scripts/sync-openapi.mjs` — copies `app/api/openapi.yaml` to
+   `public/openapi.yaml` so the `starlight-openapi` plugin can read it.
+3. `scripts/generate-schema-docs.mjs` — parses `app/schema.sql` and
+   emits a single `reference/schema.mdx` page.

@@ -52,6 +52,7 @@
           body: {
             title: titleBase,
             resource_type: 1,
+            status: 'draft',
             file_hash: hash,
             file_extension: ext,
           },
@@ -103,7 +104,7 @@
   }
 </script>
 
-<div class="space-y-3 rounded-lg border border-border bg-surface p-4">
+<div class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
   <p class="text-sm font-medium text-fg">Post cover thumbnail</p>
 
   <!-- Mode selector -->
@@ -188,11 +189,11 @@
           <div class="h-full bg-accent" style="width: {Math.round(coverProgress * 100)}%"></div>
         </div>
       {:else if coverState === 'ready'}
-        <p class="text-emerald-600 dark:text-emerald-400">
+        <p class="text-success">
           Cover ready: {coverFileName}
         </p>
       {:else if coverState === 'errored'}
-        <p class="text-red-600 dark:text-red-400">Failed: {coverError}</p>
+        <p class="text-danger">Failed: {coverError}</p>
       {/if}
     </div>
   {/if}

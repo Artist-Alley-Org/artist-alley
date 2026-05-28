@@ -1,0 +1,25 @@
+{
+  "nav": {
+    "upload": "Téléverser",
+    "search_placeholder": "Rechercher…"
+  },
+  "user_menu": {
+    "signed_in_as": "Connecté en tant que @{username}",
+    "profile": "Profil",
+    "account_settings": "Paramètres du compte",
+    "theme": "Thème",
+    "theme_light": "Clair",
+    "theme_dark": "Sombre",
+    "theme_system": "Système",
+    "language": "Langue",
+    "api_tokens": "Jetons d'API",
+    "sign_out": "Se déconnecter"
+  },
+  "admin_menu": {
+    "title": "Administration"
+  },
+  "common": {
+    "save": "Enregistrer",
+    "cancel": "Annuler"
+  }
+}

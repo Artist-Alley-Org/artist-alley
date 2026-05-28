@@ -1,0 +1,26 @@
+{
+  "name": "@artist-alley/site",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "artist-alley documentation, whitepaper, and API reference. Static site built with Astro + Starlight, deployed to Cloudflare Pages.",
+  "scripts": {
+    "prebuild": "node scripts/sync-adrs.mjs && node scripts/sync-openapi.mjs && node scripts/generate-schema-docs.mjs",
+    "predev": "node scripts/sync-adrs.mjs && node scripts/sync-openapi.mjs && node scripts/generate-schema-docs.mjs",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/mdx": "^4.2.0",
+    "@astrojs/sitemap": "^3.5.0",
+    "@astrojs/starlight": "^0.36.0",
+    "astro": "^5.16.0",
+    "sharp": "^0.34.0",
+    "starlight-openapi": "^0.20.0",
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@10.25.0"
+}

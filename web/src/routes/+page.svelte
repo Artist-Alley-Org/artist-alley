@@ -1,10 +1,15 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import PostCard from '$components/PostCard.svelte';
   import PostModal from '$components/PostModal.svelte';
+  import BrowseFooter from '$components/BrowseFooter.svelte';
+  import PostListTable from '$components/PostListTable.svelte';
+  import { browseView } from '$stores/browseView.svelte';
+
+  onMount(() => { browseView.init(); });
 
   // Browse page — feed of Posts (per Phase 1.13.D-2's model change).
   // Each Post wraps 1+ assets; the card renders the cover. Grid mode
@@ -64,6 +69,12 @@
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
       if (!reset && cursor) params.cursor = cursor;
+      // Feed filter + direction from the BrowseFooter store. Backend
+      // support for `filter` (team / trending / following) and `dir`
+      // lands incrementally — until then unknown params are ignored
+      // and the default newest-first feed comes back.
+      params.filter = browseView.filter;
+      params.dir = browseView.feedDir;
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
@@ -90,10 +101,14 @@
     }
   }
 
-  // Reset and refetch every time the query changes. Covers initial
-  // mount AND subsequent navigations from the navbar search.
+  // Reset and refetch every time the query, feed filter, or feed
+  // direction changes. The read of all three inside the effect body
+  // (outside untrack) is what subscribes us to them.
   $effect(() => {
     const q = query;
+    // Touch the filter + direction so the effect re-runs on switch.
+    browseView.filter;
+    browseView.feedDir;
     untrack(() => {
       items = [];
       nextCursor = null;
@@ -156,7 +171,7 @@
   {/if}
 
   {#if error}
-    <div role="alert" class="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
+    <div role="alert" class="rounded-md border border-danger/40 bg-danger-container px-4 py-3 text-sm text-danger">
       {error}
     </div>
   {/if}
@@ -171,17 +186,48 @@
       </p>
     </div>
   {:else}
-    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-      {#each items as post (post.id)}
-        <PostCard {post} />
-      {/each}
-
-      {#if loading}
-        {#each Array(8) as _, i (i)}
-          <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+    <!--
+      Layout is driven by browseView (footer switcher + localStorage).
+        grid / thumbnail → CSS grid with --cols
+        masonry          → CSS multi-column for variable heights
+        list             → vertical stack (cols=1)
+      --cols is set inline so user adjustments take effect without a
+      Tailwind rebuild.
+    -->
+    {#if browseView.mode === 'list'}
+      <PostListTable {items} {loading} />
+    {:else if browseView.mode === 'masonry'}
+      <div
+        class="posts-masonry"
+        style="column-count: {browseView.cols}"
+      >
+        {#each items as post (post.id)}
+          <div class="mb-2 break-inside-avoid">
+            <PostCard {post} />
+          </div>
         {/each}
-      {/if}
-    </div>
+        {#if loading}
+          {#each Array(8) as _, i (i)}
+            <div class="mb-2 break-inside-avoid aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+          {/each}
+        {/if}
+      </div>
+    {:else}
+      <div
+        class="posts-grid gap-2"
+        style="--cols: {browseView.cols}"
+      >
+        {#each items as post (post.id)}
+          <PostCard {post} />
+        {/each}
+
+        {#if loading}
+          {#each Array(8) as _, i (i)}
+            <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
     {#if hasMore}
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
@@ -196,3 +242,24 @@
 {#if modalPostId}
   <PostModal postId={modalPostId} onClose={closeModal} />
 {/if}
+
+<!-- Floating browse controls: view switcher + back-to-top. Stays
+     mounted alongside the feed so the user can change layouts without
+     losing scroll position. -->
+<BrowseFooter />
+
+<style>
+  /* Grid utility driven by the --cols custom property (the
+     BrowseFooter writes this on the container). gap is on the
+     element to stay Tailwind-controllable. */
+  :global(.posts-grid) {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
+  }
+  /* Masonry uses CSS multi-column flow. column-gap mirrors the
+     posts-grid gap so the visual rhythm matches when toggling
+     between modes. */
+  :global(.posts-masonry) {
+    column-gap: 0.5rem;
+  }
+</style>

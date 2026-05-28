@@ -802,7 +802,7 @@
       </div>
     {:else if error}
       <div class="flex flex-1 items-center justify-center p-8">
-        <div role="alert" class="max-w-md rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-300">
+        <div role="alert" class="max-w-md rounded-md border border-danger/40 bg-danger-container px-4 py-3 text-sm text-danger">
           {error}
         </div>
       </div>
@@ -818,7 +818,7 @@
              via an IntersectionObserver in the script.
              In review mode the scroller is replaced with a single
              zoom/pan canvas for the current asset. -->
-        <div class="relative flex flex-1 overflow-hidden bg-neutral-950">
+        <div class="relative flex flex-1 overflow-hidden bg-black">
           {#if reviewMode && currentAssetId}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
@@ -863,7 +863,7 @@
                   class="flex h-full w-full shrink-0 snap-start items-center justify-center"
                 >
                   {#if brokenSlides.has(member.asset_id)}
-                    <div class="text-neutral-500">
+                    <div class="text-fg-muted">
                       <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="2" />
                         <circle cx="9" cy="9" r="2" />
@@ -886,7 +886,7 @@
           {:else if currentAssetId}
             <div class="flex h-full w-full items-center justify-center">
               {#if currentAssetId && brokenSlides.has(currentAssetId)}
-                <div class="text-neutral-500">
+                <div class="text-fg-muted">
                   <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                     <circle cx="9" cy="9" r="2" />
@@ -904,7 +904,7 @@
               {/if}
             </div>
           {:else}
-            <div class="flex h-full w-full items-center justify-center text-neutral-500">
+            <div class="flex h-full w-full items-center justify-center text-fg-muted">
               <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <circle cx="9" cy="9" r="2" />
@@ -1071,9 +1071,9 @@
                   disabled={likeBusy}
                   class="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm transition-colors disabled:opacity-50"
                   class:text-fg={!liked}
-                  class:text-red-500={liked}
-                  class:border-red-500={liked}
-                  class:bg-red-500-10={liked}
+                  class:text-danger={liked}
+                  class:border-danger={liked}
+                  class:bg-danger-container={liked}
                   aria-pressed={liked}
                   title={liked ? 'Unlike' : 'Like'}
                 >
@@ -1103,7 +1103,7 @@
                   </button>
                   <button
                     type="button"
-                    class="rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-500 transition-colors hover:bg-red-500/10"
+                    class="rounded-md border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger-container"
                     disabled
                     title="Deletion lands in a later phase"
                   >

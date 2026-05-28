@@ -1,0 +1,16 @@
+/* artist-alley docs theme overrides. Keep light — Starlight defaults are good. */
+
+:root {
+  --sl-font-system:
+    "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+/* Slightly tighter table styling for schema reference. */
+:root .sl-markdown-content table {
+  font-size: 0.9rem;
+}
+:root .sl-markdown-content table th,
+:root .sl-markdown-content table td {
+  padding: 0.35rem 0.6rem;
+}

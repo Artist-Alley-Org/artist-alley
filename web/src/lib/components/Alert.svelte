@@ -12,9 +12,9 @@
   let { tone = 'error', children }: Props = $props();
 
   const tones: Record<Tone, string> = {
-    error: 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-300',
+    error: 'border-danger/40 bg-danger-container text-on-danger-container',
     info: 'border-border bg-surface-elevated text-fg-muted',
-    success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    success: 'border-success/40 bg-success-container text-on-success-container',
   };
 </script>
 

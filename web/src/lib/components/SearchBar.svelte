@@ -87,9 +87,9 @@
     oninput={onInput}
     onkeydown={onKey}
     aria-label="Search"
-    class="w-full rounded-full border border-border bg-surface-elevated pl-10 pr-10 py-2 text-sm text-fg
-           placeholder:text-fg-muted/60
-           focus:outline-none focus:ring-2 focus:ring-accent"
+    class="w-full rounded-full border border-border-strong bg-surface pl-10 pr-10 py-2 text-sm text-fg
+           placeholder:text-fg-muted
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   />
   {#if value}
     <button

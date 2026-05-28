@@ -1,0 +1,19 @@
+# Astro
+.astro/
+dist/
+
+# Node
+node_modules/
+
+# Build-time generated content (re-created by prebuild scripts)
+src/content/docs/adr/
+src/content/docs/reference/schema.mdx
+public/openapi.yaml
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

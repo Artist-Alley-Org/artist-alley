@@ -1,0 +1,37 @@
+---
+title: Design pillars
+description: The three principles we use to make product decisions.
+---
+
+artist-alley is built around three pillars. When a design decision is
+ambiguous, we resolve it by asking which pillar the choice serves best.
+
+## 1. Artist-first, not archive-first
+
+Artists upload and forget. Metadata happens automatically where possible.
+
+- File-format defaults: dropping a folder Just Works.
+- EXIF, dimensions, color profile, embedded thumbnails parsed on ingest.
+- Optional automatic tags via embeddings (pgvector).
+- Required fields are kept to an absolute minimum.
+
+**UX target:** [ArtStation](https://www.artstation.com/) levels of
+simplicity for upload.
+
+## 2. Review mode
+
+Reviewers come back to artist-alley over and over. The tool is shaped
+for that loop.
+
+- Tracks unreviewed assets since your last session.
+- Remembers your spot — you can leave mid-batch and resume.
+- Async commenting (Frame.io-style on top of each asset).
+- Live presenter sessions over SSE for sync review meetings.
+
+## 3. Three-click rule
+
+Any common action — upload, find, comment, share, approve — reachable in
+three clicks or fewer. Friction is the enemy of an archive that gets used.
+
+When a workflow takes more than three clicks, the design is wrong, not
+the user.

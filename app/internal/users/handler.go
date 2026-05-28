@@ -91,6 +91,8 @@ type publicRow struct {
 	Location              string
 	WebsiteURL            *string
 	SocialLinks           []byte // raw JSONB
+	Language              string
+	Theme                 string
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -99,7 +101,8 @@ func fromByRef(r GetUserPublicByRefRow) publicRow {
 		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
-		SocialLinks: r.SocialLinks, ProfileOriginServerID: r.ProfileOriginServerID,
+		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
+		ProfileOriginServerID: r.ProfileOriginServerID,
 	}
 }
 
@@ -108,7 +111,8 @@ func fromByUsername(r GetUserPublicByUsernameRow) publicRow {
 		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
-		SocialLinks: r.SocialLinks, ProfileOriginServerID: r.ProfileOriginServerID,
+		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
+		ProfileOriginServerID: r.ProfileOriginServerID,
 	}
 }
 
@@ -253,6 +257,21 @@ func (h *Handler) UpdateUserProfile(
 		}
 		socialLinks = b
 	}
+	language := existing.Language
+	if req.Body.Language != nil {
+		language = *req.Body.Language
+	}
+	theme := existing.Theme
+	if req.Body.Theme != nil {
+		switch string(*req.Body.Theme) {
+		case "", "light", "dark":
+			theme = string(*req.Body.Theme)
+		default:
+			return openapi.UpdateUserProfile400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "theme must be '', 'light', or 'dark'"},
+			}, nil
+		}
+	}
 
 	if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
 		RsUserID:    req.Ref,
@@ -262,6 +281,8 @@ func (h *Handler) UpdateUserProfile(
 		Location:    location,
 		WebsiteUrl:  websiteURL,
 		SocialLinks: socialLinks,
+		Language:    language,
+		Theme:       theme,
 	}); err != nil {
 		return nil, fmt.Errorf("users: upsert profile: %w", err)
 	}
@@ -345,6 +366,14 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 	if len(socialMap) > 0 {
 		m := socialMap
 		out.SocialLinks = &m
+	}
+	if r.Language != "" {
+		l := r.Language
+		out.Language = &l
+	}
+	if r.Theme != "" {
+		t := openapi.UserPublicTheme(r.Theme)
+		out.Theme = &t
 	}
 	if r.ProfileOriginServerID.Valid {
 		v := openapi_types.UUID(r.ProfileOriginServerID.Bytes)

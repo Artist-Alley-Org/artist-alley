@@ -38,6 +38,8 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.location, '')                         AS location,
        p.website_url,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
+       COALESCE(p.language, '')                         AS language,
+       COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
@@ -55,6 +57,8 @@ type GetUserPublicByRefRow struct {
 	Location              string
 	WebsiteUrl            *string
 	SocialLinks           []byte
+	Language              string
+	Theme                 string
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -85,6 +89,8 @@ func (q *Queries) GetUserPublicByRef(ctx context.Context, ref int64) (GetUserPub
 		&i.Location,
 		&i.WebsiteUrl,
 		&i.SocialLinks,
+		&i.Language,
+		&i.Theme,
 		&i.ProfileOriginServerID,
 	)
 	return i, err
@@ -101,6 +107,8 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.location, '')                         AS location,
        p.website_url,
        COALESCE(p.social_links, '{}'::jsonb)            AS social_links,
+       COALESCE(p.language, '')                         AS language,
+       COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
 LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
@@ -118,6 +126,8 @@ type GetUserPublicByUsernameRow struct {
 	Location              string
 	WebsiteUrl            *string
 	SocialLinks           []byte
+	Language              string
+	Theme                 string
 	ProfileOriginServerID pgtype.UUID
 }
 
@@ -136,6 +146,8 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 		&i.Location,
 		&i.WebsiteUrl,
 		&i.SocialLinks,
+		&i.Language,
+		&i.Theme,
 		&i.ProfileOriginServerID,
 	)
 	return i, err
@@ -143,9 +155,10 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 
 const upsertUserProfile = `-- name: UpsertUserProfile :one
 INSERT INTO user_profiles (
-    rs_user_id, display_name, bio, avatar_url, location, website_url, social_links
+    rs_user_id, display_name, bio, avatar_url, location, website_url,
+    social_links, language, theme
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (rs_user_id) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     bio          = EXCLUDED.bio,
@@ -153,9 +166,12 @@ ON CONFLICT (rs_user_id) DO UPDATE SET
     location     = EXCLUDED.location,
     website_url  = EXCLUDED.website_url,
     social_links = EXCLUDED.social_links,
+    language     = EXCLUDED.language,
+    theme        = EXCLUDED.theme,
     updated_at   = NOW()
 RETURNING rs_user_id, display_name, bio, avatar_url, location,
-          website_url, social_links, origin_server_id, created_at, updated_at
+          website_url, social_links, language, theme,
+          origin_server_id, created_at, updated_at
 `
 
 type UpsertUserProfileParams struct {
@@ -166,6 +182,8 @@ type UpsertUserProfileParams struct {
 	Location    string
 	WebsiteUrl  *string
 	SocialLinks []byte
+	Language    string
+	Theme       string
 }
 
 // Caller's own profile edit. Idempotent — overwrites existing fields.
@@ -180,6 +198,8 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		arg.Location,
 		arg.WebsiteUrl,
 		arg.SocialLinks,
+		arg.Language,
+		arg.Theme,
 	)
 	var i UserProfile
 	err := row.Scan(
@@ -190,6 +210,8 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		&i.Location,
 		&i.WebsiteUrl,
 		&i.SocialLinks,
+		&i.Language,
+		&i.Theme,
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,

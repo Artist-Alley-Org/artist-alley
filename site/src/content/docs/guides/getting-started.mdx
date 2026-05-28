@@ -1,0 +1,48 @@
+---
+title: Getting started
+description: Stand up artist-alley locally for development or a small studio trial.
+---
+
+:::caution[Pre-MVP]
+artist-alley is in active development. These steps reflect the current
+dev layout in the repo, not a stable shipping artifact.
+:::
+
+## Prerequisites
+
+- Docker + Docker Compose
+- ~10 GB of disk for postgres + a starter filestore
+- A free TCP port for the web UI
+
+## Local development
+
+```bash
+git clone git@github.com:mscrnt/artist-alley.git
+cd artist-alley
+cp .env.example .env
+docker compose up -d --build
+```
+
+The CI workflow uses the same compose stack — what passes in CI is what
+runs on your machine. See
+[`.github/workflows/ci.yml`](https://github.com/mscrnt/artist-alley/blob/main/.github/workflows/ci.yml).
+
+## Verifying the stack
+
+```bash
+# Postgres ready:
+docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley
+
+# Hit the Go health endpoint:
+curl -s http://localhost:8080/healthz
+```
+
+## What's next
+
+- Read the [API reference](/api/reference/) to see the surface you can talk to.
+- Read the [for-artists guide](/guides/for-artists/) for the upload flow.
+- Read the [for-operators guide](/guides/for-operators/) for production
+  deployment thinking.
+
+_This page will get fleshed out as the binary stabilises and we publish
+release artifacts._

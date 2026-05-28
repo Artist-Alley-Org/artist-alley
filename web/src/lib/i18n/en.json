@@ -1,0 +1,544 @@
+{
+  "nav": {
+    "upload": "Upload",
+    "search_placeholder": "Search assets…",
+    "messages": "Messages",
+    "notifications": "Notifications",
+    "notifications_coming_soon": "Notifications — coming soon",
+    "open_user_menu": "Open user menu",
+    "open_admin_menu": "Open admin menu",
+    "explore": "Explore",
+    "gallery": "Gallery",
+    "blogs": "Blogs",
+    "collections": "Collections",
+    "review": "Review",
+    "advanced_search": "Advanced search"
+  },
+  "search": {
+    "intro": "Build a precise query — filter by tag, resource type, field value, date range, and more.",
+    "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search."
+  },
+  "blogs": {
+    "intro": "Long-form writing from artists and curators.",
+    "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
+  },
+  "review": {
+    "intro": "Critique requests, approval queues, and per-asset annotations.",
+    "coming_soon": "The review surface lands in a follow-up phase."
+  },
+  "browse": {
+    "footer": {
+      "label": "Browse controls",
+      "toggle": "Change view",
+      "dec_size": "Smaller cards",
+      "inc_size": "Larger cards",
+      "back_to_top": "Back to top"
+    },
+    "view": {
+      "grid": "Grid",
+      "masonry": "Masonry",
+      "thumbnail": "Thumbnail",
+      "list": "List"
+    },
+    "filter": {
+      "label": "Feed filter",
+      "team": "Team",
+      "trending": "Trending",
+      "latest": "Latest",
+      "following": "Following"
+    },
+    "sort": {
+      "toggle": "Toggle sort direction",
+      "newest_first": "Newest first",
+      "oldest_first": "Oldest first",
+      "newest": "Newest",
+      "oldest": "Oldest"
+    },
+    "columns": "Columns",
+    "reset_columns": "Reset to default columns",
+    "list": {
+      "post_singular": "post",
+      "post_plural": "posts",
+      "untitled": "Untitled"
+    },
+    "col": {
+      "thumbnail": "",
+      "title": "Title",
+      "author": "Author",
+      "visibility": "Visibility",
+      "tags": "Tags",
+      "members": "Assets",
+      "likes": "Likes",
+      "comments": "Comments",
+      "posted_at": "Posted",
+      "description": "Description"
+    }
+  },
+  "user_menu": {
+    "signed_in_as": "Signed in as @{username}",
+    "profile": "Profile",
+    "account_settings": "Account settings",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "theme_system": "System",
+    "language": "Language",
+    "api_tokens": "API tokens",
+    "sign_out": "Sign out"
+  },
+  "admin_menu": {
+    "title": "Admin",
+    "overview": "Overview",
+    "about": "About",
+    "users": "Users",
+    "roles": "Roles & capabilities",
+    "workflow": "Workflow states",
+    "fields": "Fields & metadata",
+    "resource_types": "Resource types",
+    "system": "System config",
+    "system_log": "System log"
+  },
+  "account": {
+    "title": "Account",
+    "sections": {
+      "profile": "Profile",
+      "preferences": "Preferences",
+      "ai": "AI",
+      "password": "Password",
+      "tokens": "API tokens",
+      "messages": "Messages"
+    },
+    "overview": {
+      "title": "Overview",
+      "intro": "Manage your profile, preferences, credentials, and the rest of your account."
+    },
+    "stub": {
+      "coming_soon": "This surface lands in a follow-up phase. The menu entry is here now so deep links work as features ship."
+    },
+    "groups": {
+      "identity":      { "title": "Identity" },
+      "communication": { "title": "Communication" },
+      "workspace":     { "title": "Workspace" },
+      "activity":      { "title": "Activity & insights" },
+      "help":          { "title": "Help" }
+    },
+    "items": {
+      "profile":        { "title": "Profile",         "blurb": "Display name, bio, avatar, links." },
+      "preferences":    { "title": "Preferences",     "blurb": "Theme and language." },
+      "ai":             { "title": "AI preferences", "blurb": "Per-user AI provider override." },
+      "password":       { "title": "Password",       "blurb": "Change your password." },
+      "security":       { "title": "Security",       "blurb": "Two-factor auth, recovery codes, login history." },
+      "sessions":       { "title": "Sessions",       "blurb": "Your active sessions across devices; revoke at will." },
+      "connected":      { "title": "Connected accounts", "blurb": "OAuth providers linked to this account." },
+
+      "messages":       { "title": "Messages",      "blurb": "Direct messages and inbox." },
+      "notifications":  { "title": "Notifications", "blurb": "What you get pinged about and where." },
+      "subscriptions":  { "title": "Subscriptions", "blurb": "Tags, users, and collections you follow." },
+
+      "tokens":         { "title": "API tokens",    "blurb": "Personal access tokens for scripts and integrations." },
+      "saved-searches": { "title": "Saved searches","blurb": "Queries you've pinned for quick recall." },
+      "bookmarks":      { "title": "Bookmarks",     "blurb": "Posts, assets, and collections you've starred." },
+      "drafts":         { "title": "Drafts",        "blurb": "Unpublished posts in progress." },
+      "trash":          { "title": "Trash",         "blurb": "Your soft-deleted items, recoverable for a while." },
+
+      "activity":  { "title": "Activity log", "blurb": "Recent actions you've taken on this install." },
+      "stats":     { "title": "Stats",        "blurb": "Upload count, reach, and other vanity metrics." },
+      "following": { "title": "Following",    "blurb": "People and tags you follow + your followers." },
+
+      "help":      { "title": "Help & support",  "blurb": "Documentation and how to reach us." },
+      "shortcuts": { "title": "Keyboard shortcuts", "blurb": "Cheatsheet for every keyboard shortcut." }
+    },
+    "profile": {
+      "title": "Profile",
+      "display_name": "Display name",
+      "display_name_help": "Leave blank to use your full name.",
+      "bio": "Bio",
+      "avatar_url": "Avatar URL",
+      "location": "Location",
+      "website_url": "Website",
+      "save": "Save profile",
+      "saved": "Profile saved."
+    },
+    "preferences": {
+      "title": "Preferences",
+      "intro": "These follow you across browsers when you sign in.",
+      "theme_label": "Theme",
+      "theme_system_help": "Match your OS / browser preference.",
+      "language_label": "Language",
+      "language_system_help": "Auto-detect from your browser.",
+      "save": "Save preferences",
+      "saved": "Preferences saved."
+    },
+    "ai": {
+      "title": "AI preferences",
+      "intro": "Override the system default AI provider for your own actions.",
+      "use_system_default": "Use the system default",
+      "coming_soon": "Per-user AI overrides land with the AI auto-tagging phase."
+    },
+    "password": {
+      "title": "Change password",
+      "coming_soon": "Password changes land in a follow-up phase."
+    },
+    "tokens": {
+      "title": "API tokens",
+      "intro": "Personal access tokens let scripts and integrations act on your behalf. Treat them like passwords.",
+      "create": "New token",
+      "name": "Name",
+      "scopes": "Scopes",
+      "expires_at": "Expires at",
+      "last_used": "Last used",
+      "revoke": "Revoke",
+      "no_tokens": "You haven't created any tokens yet."
+    },
+    "messages": {
+      "title": "Messages",
+      "coming_soon": "Inbox lands in a follow-up phase."
+    }
+  },
+  "admin": {
+    "title": "Admin",
+    "intro": "Manage the install. Changes here affect every user on this server.",
+    "status": {
+      "live": "Live",
+      "stub": "Stub",
+      "phase": "Phase {phase}"
+    },
+    "about": {
+      "title": "About",
+      "intro": "Version, build, and license information.",
+      "product": "Product",
+      "version": "Version",
+      "build": "Build",
+      "license": "License",
+      "upstream": "Upstream"
+    },
+    "api_explorer": {
+      "title": "API Explorer",
+      "intro": "Interactive browser for every endpoint in the OpenAPI spec.",
+      "coming_soon": "Scalar embed lands in the next commit of this phase.",
+      "see_yaml": "Source of truth lives at"
+    },
+    "sections": {
+      "identity": {
+        "title": "Identity & access",
+        "intro": "Users, roles, groups, sessions, and the audit trail.",
+        "tiles": {
+          "users":              { "title": "Users",                "blurb": "List, search, suspend, and assign roles." },
+          "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
+          "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
+          "sessions":           { "title": "Sessions",             "blurb": "Active sessions across all users; revoke at will." },
+          "audit":              { "title": "Audit log",            "blurb": "Trail of admin actions, separate from workflow audit." },
+          "workflow":           { "title": "Workflow states",      "blurb": "Per-domain state machines and their transitions." },
+          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." }
+        }
+      },
+      "content": {
+        "title": "Content & metadata",
+        "intro": "Resource types, fields, taxonomies, and the text that wraps them.",
+        "tiles": {
+          "resource_types":  { "title": "Resource types",   "blurb": "Resource type registry and the fields each applies." },
+          "fields":          { "title": "Field definitions","blurb": "Metadata schema across every domain." },
+          "field_options":   { "title": "Field options",   "blurb": "Controlled vocabularies for select / multiselect fields." },
+          "field_sets":      { "title": "Field sets",      "blurb": "Bundle related fields for reuse across types." },
+          "taxonomy":        { "title": "Tag taxonomy",    "blurb": "Tag hierarchy, aliases, and merge tools." },
+          "site_text":       { "title": "Site text",       "blurb": "Override built-in strings without forking the catalogue." },
+          "email_templates": { "title": "Email templates", "blurb": "Customize outbound mail bodies per event." },
+          "featured":        { "title": "Featured content","blurb": "Homepage curation and pinned collections." },
+          "defaults":        { "title": "Group defaults",  "blurb": "Resource defaults applied when a group uploads." }
+        }
+      },
+      "storage": {
+        "title": "Storage & assets",
+        "intro": "Backends, usage, dedupe, and the byte-level cleanup tools.",
+        "tiles": {
+          "backends":   { "title": "Storage backends", "blurb": "Filesystem or S3 config and active backend selection." },
+          "usage":      { "title": "Storage usage",   "blurb": "Disk used by hash, top assets, top users." },
+          "variants":   { "title": "Variants & previews", "blurb": "Generated sizes and their parameters." },
+          "orphans":    { "title": "Orphan bytes",    "blurb": "Storage entries no live asset references." },
+          "duplicates": { "title": "Duplicate detection", "blurb": "Phash-based clustering and merge tools." },
+          "checksums":  { "title": "Checksum verification", "blurb": "Re-hash stored bytes and report drift." },
+          "reimport":   { "title": "Bulk re-import",  "blurb": "Re-scan and re-process from source." },
+          "trash":      { "title": "Trash",           "blurb": "Recently deleted assets pending purge." }
+        }
+      },
+      "jobs": {
+        "title": "Processing pipeline",
+        "intro": "Background jobs, workers, and the render farm bridge.",
+        "tiles": {
+          "queue":       { "title": "Job queue",     "blurb": "Live queue dashboard and depth per kind." },
+          "workers":     { "title": "Workers",       "blurb": "Active workers, capabilities, and last-heartbeat." },
+          "kinds":       { "title": "Job kinds",     "blurb": "Catalogue of job kinds and their retry config." },
+          "failed":      { "title": "Failed jobs",   "blurb": "Inspect, retry, or cancel failed jobs." },
+          "schedules":   { "title": "Schedules",     "blurb": "Cron-style periodic jobs." },
+          "live":        { "title": "Live progress", "blurb": "SSE stream of running jobs and progress." },
+          "render_farm": { "title": "Render farm",   "blurb": "Tractor / external render-farm adapter status." }
+        }
+      },
+      "search": {
+        "title": "Search & discovery",
+        "intro": "Index health, analytics, and the saved / smart query surfaces.",
+        "tiles": {
+          "index":     { "title": "Search index",   "blurb": "TSVECTOR health and per-domain coverage." },
+          "reindex":   { "title": "Reindex",         "blurb": "Rebuild the search index for any domain." },
+          "analytics": { "title": "Search analytics","blurb": "Top queries, no-result queries, click-through." },
+          "synonyms":  { "title": "Synonyms & boosts","blurb": "Stem expansions and per-term boosts." },
+          "saved":     { "title": "Saved searches",  "blurb": "Admin view of every user's saved searches." },
+          "smart":     { "title": "Smart collections","blurb": "Query-driven membership editor." }
+        }
+      },
+      "automation": {
+        "title": "Workflow & automation",
+        "intro": "State machines, triggers, webhooks, and the audit they emit.",
+        "tiles": {
+          "workflow":          { "title": "Workflow states", "blurb": "Per-domain state machines and transitions." },
+          "audit":             { "title": "Workflow audit",  "blurb": "Trail of state transitions per record." },
+          "triggers":          { "title": "Triggers",        "blurb": "Event → action rules across the install." },
+          "webhooks":          { "title": "Webhooks",        "blurb": "Outbound HTTP calls on selected events." },
+          "notifications":     { "title": "Notification rules","blurb": "Who gets pinged for what event." },
+          "scheduled_exports": { "title": "Scheduled exports","blurb": "Recurring dumps to S3 or filesystem." }
+        }
+      },
+      "moderation": {
+        "title": "Community & moderation",
+        "intro": "Reports, the moderation queue, and the safety knobs around them.",
+        "tiles": {
+          "reports":        { "title": "Reports",         "blurb": "User-submitted reports awaiting review." },
+          "queue":          { "title": "Moderation queue","blurb": "Pending posts and comments under review." },
+          "comments":       { "title": "Comment moderation","blurb": "Per-post comment moderation tools." },
+          "banned":         { "title": "Banned users & IPs","blurb": "Block list across user / IP / range." },
+          "flagging_rules": { "title": "Flagging rules",  "blurb": "Auto-flag triggers and the rules behind them." },
+          "anonymous":      { "title": "Anonymous browse","blurb": "Whether non-signed-in visitors can browse." },
+          "rate_limits":    { "title": "Rate limiting",   "blurb": "Per-user and per-IP rate-limit policy." }
+        }
+      },
+      "federation": {
+        "title": "Federation",
+        "intro": "Peer servers, sync state, and the policy that governs both.",
+        "tiles": {
+          "peers":       { "title": "Peer servers",   "blurb": "Federated instances and handshake state." },
+          "inbound":     { "title": "Inbound feeds",  "blurb": "Subscriptions to peer content." },
+          "outbound":    { "title": "Outbound feeds", "blurb": "What this instance publishes to peers." },
+          "sync_status": { "title": "Sync status",    "blurb": "Last-seen and lag per peer." },
+          "conflicts":   { "title": "Conflict resolution","blurb": "Edits that diverged across instances." },
+          "activitypub": { "title": "ActivityPub config","blurb": "AP-specific federation settings." },
+          "blocklist":   { "title": "Block list",     "blurb": "Peers this instance refuses to federate with." }
+        }
+      },
+      "integrations": {
+        "title": "Integrations",
+        "intro": "APIs, OAuth apps, webhooks, and the plugin registry.",
+        "tiles": {
+          "api_explorer": { "title": "API Explorer",  "blurb": "Interactive browser for every endpoint." },
+          "api_tokens":   { "title": "API tokens",    "blurb": "Admin view of every user's personal tokens." },
+          "oauth_apps":   { "title": "OAuth applications","blurb": "Third-party apps registered with this install." },
+          "webhooks":     { "title": "Outbound webhooks","blurb": "Cross-listed from automation; managed here." },
+          "plugins":      { "title": "Plugins",       "blurb": "Enable, disable, and configure per-plugin settings." },
+          "outbound":     { "title": "Outbound services","blurb": "CDN, AI providers, and mail relay status." }
+        }
+      },
+      "system": {
+        "title": "System",
+        "intro": "Per-install settings. Persisted in the system_config table.",
+        "tiles": {
+          "site":         { "title": "Site",          "blurb": "Display name and base URL." },
+          "smtp":         { "title": "SMTP",          "blurb": "Outbound email server." },
+          "auth":         { "title": "Authentication","blurb": "Password policy and SSO providers." },
+          "ai":           { "title": "AI providers",  "blurb": "Provider list and the default selection." },
+          "log":          { "title": "System log",    "blurb": "Audit trail of admin actions." },
+          "themes":       { "title": "Themes & branding","blurb": "Brand colors and custom CSS hooks." },
+          "maintenance":  { "title": "Maintenance mode","blurb": "Read-only mode and the banner shown to users." },
+          "feature_flags":{ "title": "Feature flags", "blurb": "Per-flag rollout toggles." },
+          "backup":       { "title": "Backup & restore","blurb": "Snapshot and restore the install." },
+          "dbtools":      { "title": "Database tools","blurb": "Vacuum, reindex, and migration status." },
+          "performance":  { "title": "Performance",   "blurb": "Request throughput, p95 latency, query times." },
+          "health":       { "title": "Health",        "blurb": "DB, storage, and queue connectivity probes." }
+        }
+      },
+      "reports": {
+        "title": "Reports & analytics",
+        "intro": "Usage, activity, performance, and the dashboards that surface them.",
+        "tiles": {
+          "asset_usage":    { "title": "Asset usage",  "blurb": "Views, downloads, and the hot-asset list." },
+          "user_activity":  { "title": "User activity","blurb": "Uploads, comments, last-active per user." },
+          "storage_trends": { "title": "Storage trends","blurb": "Disk growth over time and per backend." },
+          "job_perf":       { "title": "Job performance","blurb": "Throughput and failure rate per job kind." },
+          "dashboards":     { "title": "Custom dashboards","blurb": "Drag-drop tiles with saved layouts." },
+          "scheduled":      { "title": "Scheduled reports","blurb": "Emailed digests on a cron." },
+          "export":         { "title": "Export",        "blurb": "CSV and S3 destinations for any report." }
+        }
+      },
+      "tools": {
+        "title": "Maintenance tools",
+        "intro": "One-shot operations against the install — use with care.",
+        "tiles": {
+          "reindex":         { "title": "Reindex search",    "blurb": "Rebuild TSVECTOR coverage for any domain." },
+          "regen_previews":  { "title": "Regenerate previews","blurb": "Re-render every variant for selected assets." },
+          "re_exif":         { "title": "Re-extract EXIF",   "blurb": "Pull metadata out of stored bytes again." },
+          "checksum_verify": { "title": "Verify checksums",  "blurb": "Hash stored bytes and report drift." },
+          "find_orphans":    { "title": "Find orphan bytes", "blurb": "Storage with no live asset reference." },
+          "find_missing":    { "title": "Find missing files","blurb": "Asset rows whose bytes vanished." },
+          "dummy_data":      { "title": "Dummy data",        "blurb": "Generator for dev / test scenarios." },
+          "bulk_import":     { "title": "Bulk import",       "blurb": "CSV or folder-tree ingest pipeline." },
+          "bulk_export":     { "title": "Bulk export",       "blurb": "Dump selected assets to filesystem or S3." },
+          "migrate":         { "title": "Migration helpers", "blurb": "DB / filestore migration utilities." }
+        }
+      },
+      "help": {
+        "title": "Help & about",
+        "intro": "Documentation, shortcuts, release notes, and how to reach support.",
+        "tiles": {
+          "docs":          { "title": "Documentation",   "blurb": "Per-feature documentation index." },
+          "shortcuts":     { "title": "Keyboard shortcuts","blurb": "Cheatsheet for every keyboard shortcut." },
+          "about":         { "title": "About",           "blurb": "Version, build, and license info." },
+          "release_notes": { "title": "Release notes",   "blurb": "Changelog across published versions." },
+          "support":       { "title": "Support",         "blurb": "How to reach us and where to file issues." }
+        }
+      }
+    },
+    "tile": {
+      "users": "Manage users, group memberships, and role assignments.",
+      "roles": "View roles and the capabilities each one grants.",
+      "workflow": "Review the seeded workflow state machines.",
+      "fields": "Browse the metadata field schema.",
+      "resource_types": "Browse the resource type registry.",
+      "system": "Site, SMTP, authentication, AI providers, and logs."
+    },
+    "users": {
+      "title": "Users",
+      "no_users": "No users on this install yet.",
+      "username": "Username",
+      "fullname": "Full name",
+      "email": "Email",
+      "actions": "Actions"
+    },
+    "user_detail": {
+      "title": "User: {username}",
+      "role_label": "Role",
+      "role_save": "Update role",
+      "role_saved": "Role updated."
+    },
+    "roles": {
+      "title": "Roles & capabilities",
+      "no_roles": "No roles configured.",
+      "capabilities": "Capabilities"
+    },
+    "workflow": {
+      "title": "Workflow states",
+      "domain_label": "Domain",
+      "no_states": "No states defined for this domain."
+    },
+    "fields": {
+      "title": "Fields & metadata",
+      "no_fields": "No fields defined.",
+      "code": "Code",
+      "label": "Label",
+      "type": "Type",
+      "applies_to": "Applies to"
+    },
+    "resource_types": {
+      "title": "Resource types",
+      "coming_soon": "Resource-type editing lands in a follow-up phase."
+    },
+    "system": {
+      "title": "System configuration",
+      "intro": "Per-install settings. Persisted in the system_config table.",
+      "tile": {
+        "site": "Display name and base URL.",
+        "smtp": "Outbound email server.",
+        "auth": "Password policy and SSO providers.",
+        "ai": "AI provider list and default selection.",
+        "log": "Audit trail of admin actions."
+      },
+      "site": {
+        "title": "Site",
+        "name": "Site name",
+        "base_url": "Base URL",
+        "base_url_help": "Absolute URL the site is reachable at; used in outgoing emails.",
+        "save": "Save site",
+        "saved": "Site saved."
+      },
+      "smtp": {
+        "title": "SMTP",
+        "host": "Host",
+        "port": "Port",
+        "username": "Username",
+        "password": "Password",
+        "encryption": "Encryption",
+        "from_address": "From address",
+        "save": "Save SMTP",
+        "saved": "SMTP saved."
+      },
+      "auth": {
+        "title": "Authentication",
+        "password_policy": "Password policy",
+        "min_length": "Minimum length",
+        "require_upper": "Require uppercase",
+        "require_number": "Require number",
+        "require_symbol": "Require symbol",
+        "disallow_common": "Disallow common passwords",
+        "max_age_days": "Password max age (days, 0 = never)",
+        "sso_providers": "SSO providers",
+        "add_provider": "Add provider",
+        "no_providers": "No SSO providers configured.",
+        "provider_kind": "Kind",
+        "provider_display_name": "Display name",
+        "provider_enabled": "Enabled",
+        "remove_provider": "Remove",
+        "save": "Save authentication",
+        "saved": "Authentication saved."
+      },
+      "ai": {
+        "title": "AI providers",
+        "default_provider": "Default provider",
+        "no_default": "(none — AI features disabled)",
+        "providers": "Providers",
+        "add_provider": "Add provider",
+        "no_providers": "No AI providers configured.",
+        "kind": "Kind",
+        "display_name": "Display name",
+        "model": "Model",
+        "base_url": "Base URL (optional)",
+        "api_key": "API key",
+        "enabled": "Enabled",
+        "remove_provider": "Remove",
+        "save": "Save AI providers",
+        "saved": "AI providers saved."
+      },
+      "log": {
+        "title": "System log",
+        "coming_soon": "Unified audit log lands in a follow-up phase."
+      },
+      "themes": {
+        "title": "Themes & branding",
+        "intro": "Pick install-wide fonts for the brand mark, headings, body, and code. Changes preview live and apply to every user once saved.",
+        "brand_label": "Brand font",
+        "brand_help": "Logo / hero only. Display faces (Limelight, Bebas Neue) are designed for short stylized text — never body copy.",
+        "display_label": "Heading font",
+        "display_help": "H1–H3 headings. Falls back to the body font when set to the default.",
+        "sans_label": "Body font",
+        "sans_help": "All UI text and long-form copy. The system stack is the safest default and never hits the network.",
+        "mono_label": "Code / numeric font",
+        "mono_help": "Code blocks, hashes, and tabular numbers in tables.",
+        "use_default": "Use default",
+        "save": "Save appearance",
+        "saved": "Appearance saved.",
+        "reset": "Reset to defaults"
+      }
+    }
+  },
+  "common": {
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Remove",
+    "edit": "Edit",
+    "delete": "Delete",
+    "back": "Back",
+    "coming_soon": "Coming soon",
+    "error_generic": "Something went wrong.",
+    "no_permission": "You don't have permission to view this page."
+  },
+  "errors": {
+    "save_failed": "Couldn't save changes."
+  }
+}

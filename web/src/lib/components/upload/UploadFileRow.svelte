@@ -116,8 +116,8 @@
   );
 
   const stateClass = $derived(
-    row.state === 'ready' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-    : row.state === 'errored' ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+    row.state === 'ready' ? 'bg-success-container text-on-success-container'
+    : row.state === 'errored' ? 'bg-danger-container text-on-danger-container'
     : row.state === 'queued' ? 'bg-surface-elevated text-fg-muted'
     : 'bg-accent/15 text-accent',
   );
@@ -156,7 +156,7 @@
   }
 </script>
 
-<div class="flex gap-3 rounded-lg border border-border bg-surface p-3">
+<div class="flex gap-3 rounded-lg border border-border bg-surface-elevated p-3">
   <!-- Thumb: the file as an inline blob URL. For non-image files
        the browser will fail to load — we fall back to a generic
        icon via onerror. -->
@@ -186,7 +186,7 @@
         type="text"
         bind:value={row.title}
         placeholder={row.file.name}
-        class="min-w-0 flex-1 rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+        class="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
         aria-label="Asset title"
       />
       <span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium {stateClass}">
@@ -218,10 +218,10 @@
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
       <span>{humanSize(row.file.size)}</span>
       {#if row.deduped}
-        <span class="text-emerald-600 dark:text-emerald-400">· Dedup'd from existing bytes</span>
+        <span class="text-success">· Dedup'd from existing bytes</span>
       {/if}
       {#if row.error}
-        <span class="text-red-600 dark:text-red-400">· {row.error}</span>
+        <span class="text-danger">· {row.error}</span>
         <button
           type="button"
           onclick={() => upload.retryRow(row.id)}
@@ -278,7 +278,7 @@
           {#if metaLoading}
             <p class="text-xs text-fg-muted">Loading fields…</p>
           {:else if metaError}
-            <p class="text-xs text-red-600 dark:text-red-400">{metaError}</p>
+            <p class="text-xs text-danger">{metaError}</p>
           {:else if metaFields && metaFields.length === 0}
             <p class="text-xs text-fg-muted">No fields configured for this resource type.</p>
           {:else}
@@ -294,14 +294,14 @@
                         type="text"
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).value })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'longtext'}
                       <textarea
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLTextAreaElement).value })}
                         rows="2"
-                        class="mt-0.5 w-full resize-y rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full resize-y rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       ></textarea>
                     {:else if f.type === 'number'}
                       <input
@@ -311,7 +311,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueNum: v === '' ? null : Number(v) });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'boolean'}
                       <label class="mt-0.5 inline-flex items-center gap-2 text-sm">
@@ -331,7 +331,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'datetime'}
                       <input
@@ -341,13 +341,13 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'select'}
                       <select
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLSelectElement).value || null })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus:border-accent focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       >
                         <option value="">—</option>
                         {#each (f.options?.values ?? []) as opt (opt)}

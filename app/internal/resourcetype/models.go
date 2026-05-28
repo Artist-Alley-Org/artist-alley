@@ -397,6 +397,8 @@ type UserProfile struct {
 	Location       string             `json:"location"`
 	WebsiteUrl     *string            `json:"website_url"`
 	SocialLinks    []byte             `json:"social_links"`
+	Language       string             `json:"language"`
+	Theme          string             `json:"theme"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
