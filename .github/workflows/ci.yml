@@ -126,20 +126,25 @@ jobs:
           '
 
       - name: svelte-check (frontend type check)
-        # The web image's `postinstall` skips API codegen because
-        # openapi.yaml isn't in the build context. Regenerate now
-        # against the live spec (bind-mounted at /opt/openapi.yaml)
-        # so svelte-check has up-to-date types. `npm run check`
-        # itself can spike memory; cap the V8 heap so a runaway
-        # tsserver child can't get OOM-killed silently.
-        #
-        # `--user root` for the regen step: the bind-mounted /app
-        # dir is owned by the runner host user, not the in-image
-        # `node` (UID 1000), so writing schema.d.ts from `node`
-        # gets EACCES. Generate as root, then svelte-check itself
-        # only needs read access.
+        # Two-step:
+        #   1. Generate src/lib/api/schema.d.ts directly on the runner
+        #      host (gitignored, so a fresh checkout never has it).
+        #      We avoid `docker compose exec` here — bind-mount perms
+        #      between the host runner user and the in-image `node`
+        #      user have been flaky and surface as 137 / EACCES.
+        #      A one-shot container that runs as the runner host UID
+        #      sidesteps both.
+        #   2. Exec into the long-running web container for the actual
+        #      svelte-check pass. Cap the V8 heap so tsserver can't be
+        #      silently OOM-killed.
         run: |
-          docker compose exec -T --user root web sh -c 'cd /app && AA_OPENAPI_SPEC=/opt/openapi.yaml npm run generate:api'
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${PWD}/web":/app \
+            -v "${PWD}/app/api/openapi.yaml":/opt/openapi.yaml:ro \
+            -w /app \
+            artist-alley-web \
+            npx --yes openapi-typescript /opt/openapi.yaml -o /app/src/lib/api/schema.d.ts
           docker compose exec -T -e NODE_OPTIONS='--max-old-space-size=4096' web sh -c 'cd /app && npm run check'
 
       - name: Run artist-alley integration tests (PHP + Go)
