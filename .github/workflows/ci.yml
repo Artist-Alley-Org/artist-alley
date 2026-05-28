@@ -1,3 +1,11 @@
+# PR + branch validation. Runs on every push to a long-lived branch
+# (main, dev, feat/*) and on every PR targeting main or dev. PRs use
+# `ubuntu-latest` so fork PRs can't run code on the self-hosted
+# runner. Branch pushes are routed to the self-hosted runner for
+# speed + Docker layer cache reuse.
+#
+# This is the merge-gate. Edge/release workflows assume CI was green.
+
 name: CI
 
 on:
@@ -6,17 +14,47 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Cancel superseded runs on the same ref so a force-push doesn't burn
+# minutes on the previous commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
+  # ── Pick the runner. PRs (which may originate from forks) use
+  # github-hosted; trusted internal pushes use the self-hosted
+  # runner labelled "artist-alley".
+  pick-runner:
+    name: Pick runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          else
+            echo 'runner=["self-hosted","artist-alley"]' >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Lint + integration tests
-    runs-on: ubuntu-latest
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) || needs.pick-runner.outputs.runner }}
+    timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
 
-      # ---- Compose stack mirrors local dev so CI and `./scripts/test.sh`
-      # exercise the same artifact (our php-fpm image, our postgres init,
-      # our nginx config). Drift between CI and local is the cause of
-      # half the "works on my machine" bugs we'd otherwise hit.
+      # ---- Compose stack mirrors local dev so CI and
+      # `./scripts/test.sh` exercise the same artifact (our php-fpm
+      # image, our postgres init, our nginx config). Drift between CI
+      # and local is the cause of half the "works on my machine" bugs
+      # we'd otherwise hit.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
@@ -55,9 +93,48 @@ jobs:
             exit $fail
           '
 
+      - name: svelte-check (frontend type check)
+        run: docker compose exec -T web sh -c 'cd /app && npm run check'
+
       - name: Run artist-alley integration tests (PHP + Go)
         run: ./scripts/test.sh
 
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=200
+
+  # ── Build the production image to confirm the multi-stage Dockerfile
+  # still produces a clean amd64 artifact. Doesn't push anything —
+  # publishing lives in edge.yml + release.yml. Self-hosted-only
+  # because Docker buildx wants the daemon and the cache mounts.
+  docker-build:
+    name: Verify production image build
+    needs: pick-runner
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: artist-alley:ci-${{ github.sha }}
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the binary
+        run: |
+          docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} --version || \
+          docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} -h || true

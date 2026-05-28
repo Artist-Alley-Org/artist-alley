@@ -1,0 +1,68 @@
+# Anything noisy or environment-specific stays out of the build
+# context so multi-arch builds stay fast and the layer hashes are
+# reproducible.
+
+# VCS + IDE
+.git
+.github
+.gitignore
+.dockerignore
+.editorconfig
+.vscode
+.idea
+
+# Local env + secrets
+.env
+.env.*
+!.env.example
+
+# Test artefacts + reports
+*.log
+coverage.*
+.playwright-mcp/
+.svelte-kit/
+*.cover.out
+*.out
+
+# Node + Go build outputs that the multi-stage rebuilds anyway
+web/node_modules
+web/build
+app/internal/http/static_assets/*
+!app/internal/http/static_assets/.embed-placeholder
+!app/internal/http/static_assets/.gitignore
+
+# Dev-time storage + database state
+filestore/
+storage/
+postgres-data/
+
+# Screenshots, scratch images, working PDFs
+*.png
+!web/static/**/*.png
+*.jpg
+*.jpeg
+*.pdf
+
+# Docker Compose dev overrides
+docker-compose.override.yml
+
+# Local docs build output
+site/build
+site/.astro
+site/.vercel
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# RS upstream — we vendor reference code for diffs but never ship
+# any of it in the runtime image.
+ResourceSpace-*
+Reference_Plugins/
+plugins/
+languages/
+include/
+pages/
+api/
+batch/
+hooks/

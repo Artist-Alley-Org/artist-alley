@@ -55,6 +55,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             { label: "Getting started", link: "/guides/getting-started/" },
+            { label: "Installing", link: "/guides/install/" },
             { label: "For artists", link: "/guides/for-artists/" },
             { label: "For reviewers", link: "/guides/for-reviewers/" },
             { label: "For operators", link: "/guides/for-operators/" },

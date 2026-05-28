@@ -1,0 +1,45 @@
+# Cloudflare Pages cache headers.
+# CF auto-purges the edge cache on every deploy, so long s-maxage values
+# are safe — readers always get the latest version after a deploy lands.
+# First-match wins, so list specifics before catch-alls.
+
+# Astro-bundled JS/CSS with hashed filenames. Filename changes per deploy,
+# so the old cache entry naturally points to old content. Far-future immutable.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Hashed font / image assets Astro might emit alongside _astro.
+/_image/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Pagefind search index. Filenames aren't content-hashed, so don't mark
+# immutable, but it's regenerated each build and stable in between — 1 day.
+/pagefind/*
+  Cache-Control: public, max-age=86400
+
+# Auto-generated reference artifacts that change with each deploy.
+/openapi.yaml
+  Cache-Control: public, max-age=300, s-maxage=86400, stale-while-revalidate=604800
+
+# Static assets in /public — modest browser cache, long edge cache.
+/favicon.ico
+  Cache-Control: public, max-age=86400
+/*.svg
+  Cache-Control: public, max-age=86400, s-maxage=2592000
+/*.png
+  Cache-Control: public, max-age=86400, s-maxage=2592000
+/*.webp
+  Cache-Control: public, max-age=86400, s-maxage=2592000
+
+# Sitemap + robots — change with each deploy, but readers refresh rarely.
+/sitemap*.xml
+  Cache-Control: public, max-age=3600, s-maxage=86400
+/robots.txt
+  Cache-Control: public, max-age=3600, s-maxage=86400
+
+# Everything else — HTML pages.
+#   max-age=300        — browser holds 5 min, so SPA-feeling internal nav.
+#   s-maxage=2592000   — CF edge holds 30 days (purged on deploy anyway).
+#   stale-while-revalidate=604800 — serve stale + refetch in background.
+/*
+  Cache-Control: public, max-age=300, s-maxage=2592000, stale-while-revalidate=604800
