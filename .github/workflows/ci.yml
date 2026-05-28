@@ -77,8 +77,19 @@ jobs:
         # was cancelled or timed out. Clear them so the new run boots
         # from a clean slate AND frees up the 15452 port if a stale
         # container is sitting on it.
+        #
+        # `compose down` only knows containers tied to the current
+        # project's docker-compose.yml; an orphan container left over
+        # from a previous workspace (with the same name but a stale
+        # network ref) survives that and breaks the next `compose up`.
+        # The `docker rm -f` pass catches those by name prefix.
         run: |
           docker compose down -v --remove-orphans || true
+          stale=$(docker ps -aq --filter "name=^artist-alley-")
+          if [ -n "$stale" ]; then
+            docker rm -f $stale || true
+          fi
+          docker network prune -f || true
 
       - name: Build and start the stack
         # --profile web pulls in the Node/Vite container so the
