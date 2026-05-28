@@ -439,6 +439,22 @@
       "log": {
         "title": "System log",
         "coming_soon": "Unified audit log lands in a follow-up phase."
+      },
+      "themes": {
+        "title": "Themes & branding",
+        "intro": "Pick install-wide fonts for the brand mark, headings, body, and code. Changes preview live and apply to every user once saved.",
+        "brand_label": "Brand font",
+        "brand_help": "Logo / hero only. Display faces (Limelight, Bebas Neue) are designed for short stylized text — never body copy.",
+        "display_label": "Heading font",
+        "display_help": "H1–H3 headings. Falls back to the body font when set to the default.",
+        "sans_label": "Body font",
+        "sans_help": "All UI text and long-form copy. The system stack is the safest default and never hits the network.",
+        "mono_label": "Code / numeric font",
+        "mono_help": "Code blocks, hashes, and tabular numbers in tables.",
+        "use_default": "Use default",
+        "save": "Save appearance",
+        "saved": "Appearance saved.",
+        "reset": "Reset to defaults"
       }
     }
   },
