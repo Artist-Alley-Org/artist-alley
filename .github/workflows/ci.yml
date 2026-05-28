@@ -24,6 +24,123 @@ permissions:
   contents: read
 
 jobs:
+  # ── Frontend type-check + production build. Pure Node work, so
+  # always runs on the GitHub-hosted ubuntu runner — no docker stack
+  # needed. Splitting this out keeps the self-hosted runner focused
+  # on integration tests that genuinely need the compose stack, and
+  # sidesteps the bind-mount / docker-from-docker EACCES + SIGKILL
+  # issues we hit trying to run svelte-check inside the dev image.
+  frontend-check:
+    name: Frontend type-check + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Generate API schema (TypeScript types from openapi.yaml)
+        working-directory: web
+        env:
+          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
+        run: npm run generate:api
+
+      - name: svelte-check
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm run check
+
+      - name: vite build (catches errors svelte-check can't)
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm run build
+
+  # ── `php -l` over every PHP file. Doesn't need the DB or the rest
+  # of the stack — just a PHP binary. Runs on ubuntu so it can land
+  # in ~30s instead of waiting for compose to bring postgres up.
+  php-lint:
+    name: PHP syntax check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+      - name: php -l every .php under include/ pages/ api/ batch/
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r f; do
+            if ! php -l "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::syntax error"
+              php -l "$f" || true
+              fail=1
+            fi
+          done < <(find include pages api batch -type f -name "*.php")
+          exit $fail
+
+  # ── Detect stale generated code. Re-runs sqlc + oapi-codegen +
+  # openapi-typescript against the in-tree specs and `git diff`s the
+  # result. Catches the common footgun of editing openapi.yaml or a
+  # queries.sql file without committing the regenerated output.
+  codegen-drift:
+    name: Codegen drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: app/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install codegen tools
+        run: |
+          docker pull sqlc/sqlc:latest
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+      - name: Regenerate Go specs (sqlc + oapi-codegen)
+        run: |
+          docker run --rm -v "${PWD}/app":/src -w /src sqlc/sqlc:latest generate
+          (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
+
+      - name: Regenerate frontend TypeScript schema
+        working-directory: web
+        env:
+          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
+        run: |
+          npm ci
+          npm run generate:api
+
+      - name: Fail if any tracked file changed
+        run: |
+          # `web/src/lib/api/schema.d.ts` is gitignored, so a diff on
+          # it doesn't surface here; that's OK because frontend-check
+          # exercises it in svelte-check + vite build.
+          if ! git diff --exit-code; then
+            echo "::error::Generated code is stale. Run ./scripts/generate.sh and commit the result."
+            exit 1
+          fi
+
   # ── Pick the runner. PRs (which may originate from forks) use
   # github-hosted; trusted internal pushes use the self-hosted
   # runner labelled "artist-alley".
@@ -42,7 +159,7 @@ jobs:
           fi
 
   test:
-    name: Lint + integration tests
+    name: Integration tests (PHP + Go, full compose stack)
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) || needs.pick-runner.outputs.runner }}
     timeout-minutes: 30
@@ -92,10 +209,7 @@ jobs:
           docker network prune -f || true
 
       - name: Build and start the stack
-        # --profile web pulls in the Node/Vite container so the
-        # svelte-check step below has something to exec into. Local
-        # backend-only iterations omit it; CI needs the full surface.
-        run: docker compose --profile web up -d --build
+        run: docker compose up -d --build
 
       - name: Wait for postgres to be ready
         run: |
@@ -109,43 +223,6 @@ jobs:
           echo "postgres never became ready" >&2
           docker compose logs postgres
           exit 1
-
-      - name: PHP syntax check (every .php under include/, pages/, api/, batch/)
-        run: |
-          docker compose exec -T php bash -c '
-            set -e
-            fail=0
-            for f in $(find include pages api batch -type f -name "*.php"); do
-              if ! php -l "$f" > /dev/null 2>&1; then
-                echo "::error file=$f::syntax error"
-                php -l "$f" || true
-                fail=1
-              fi
-            done
-            exit $fail
-          '
-
-      - name: svelte-check (frontend type check)
-        # Two-step:
-        #   1. Generate src/lib/api/schema.d.ts directly on the runner
-        #      host (gitignored, so a fresh checkout never has it).
-        #      We avoid `docker compose exec` here — bind-mount perms
-        #      between the host runner user and the in-image `node`
-        #      user have been flaky and surface as 137 / EACCES.
-        #      A one-shot container that runs as the runner host UID
-        #      sidesteps both.
-        #   2. Exec into the long-running web container for the actual
-        #      svelte-check pass. Cap the V8 heap so tsserver can't be
-        #      silently OOM-killed.
-        run: |
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "${PWD}/web":/app \
-            -v "${PWD}/app/api/openapi.yaml":/opt/openapi.yaml:ro \
-            -w /app \
-            artist-alley-web \
-            npx --yes openapi-typescript /opt/openapi.yaml -o /app/src/lib/api/schema.d.ts
-          docker compose exec -T -e NODE_OPTIONS='--max-old-space-size=4096' web sh -c 'cd /app && npm run check'
 
       - name: Run artist-alley integration tests (PHP + Go)
         run: ./scripts/test.sh
