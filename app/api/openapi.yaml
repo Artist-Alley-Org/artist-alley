@@ -1516,6 +1516,26 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
+        - name: tab
+          in: query
+          required: false
+          description: |
+            Pre-canned filter for the collections hub:
+            - `mine` — collections owned by the caller (any visibility)
+            - `featured` — visibility=public AND featured=true
+            - `public` — visibility=public (every install-public collection)
+            - `shared` — collections the caller has ACL access to but doesn't own
+            - `all` — every collection the caller is allowed to see (default)
+            `tab` is mutually-exclusive with `owner_ref`/`visibility`/`featured`
+            — when set it overrides those.
+          schema:
+            type: string
+            enum: [mine, featured, public, shared, all]
+        - name: q
+          in: query
+          required: false
+          description: Free-text filter on `name` (case-insensitive substring).
+          schema: { type: string, maxLength: 200 }
         - name: limit
           in: query
           required: false

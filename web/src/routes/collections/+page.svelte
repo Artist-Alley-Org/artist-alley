@@ -1,52 +1,83 @@
 <script lang="ts">
-  // Collections index. Lists the user's own collections + every
-  // collection they can see (the API enforces visibility). Click
-  // through to /collections/{id} where the upload modal prefills
-  // the collection context.
+  // Collections hub. The page is the user's "all places to put
+  // posts" entry point. Five tabs (mine / featured / public /
+  // shared / all) live on top; the body is a CollectionCard grid;
+  // a header search filters by name; a "New" button opens the
+  // create-collection modal.
   //
-  // This is intentionally minimal in this phase — a richer
-  // collection-browser (search, filter, featured tab, etc.) lands
-  // in the dedicated collections phase. For now it's just enough
-  // surface that the upload modal's context prefill has somewhere
-  // to live.
+  // Tabs map to the `tab` query param on GET /collections so the
+  // backend does the filtering — keeps the hub responsive even
+  // when the install grows past a few hundred collections.
 
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
-  import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
+  import CollectionCard from '$components/CollectionCard.svelte';
+  import NewCollectionModal from '$components/NewCollectionModal.svelte';
+
+  type Tab = 'mine' | 'featured' | 'public' | 'shared' | 'all';
 
   interface CollectionRow {
     id: string;
     name: string;
     description: string;
     visibility: string;
+    featured: boolean;
     owner_user_ref: number;
     created_at: string;
   }
 
+  const TABS: { id: Tab; key: string }[] = [
+    { id: 'mine', key: 'collections.tab_mine' },
+    { id: 'featured', key: 'collections.tab_featured' },
+    { id: 'public', key: 'collections.tab_public' },
+    { id: 'shared', key: 'collections.tab_shared' },
+    { id: 'all', key: 'collections.tab_all' },
+  ];
+
+  let tab = $state<Tab>('mine');
+  let q = $state('');
   let collections = $state<CollectionRow[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let newOpen = $state(false);
 
-  // Create-collection form state.
-  let creating = $state(false);
-  let newName = $state('');
-  let newDesc = $state('');
-  let newVisibility = $state<'private' | 'shared' | 'public'>('private');
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
   onMount(() => {
+    const initial = (page.url.searchParams.get('tab') as Tab) ?? 'mine';
+    tab = TABS.some((t) => t.id === initial) ? initial : 'mine';
+    q = page.url.searchParams.get('q') ?? '';
     void load();
   });
+
+  function syncUrl() {
+    const url = new URL(page.url);
+    if (tab === 'mine') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', tab);
+    if (q.trim()) url.searchParams.set('q', q.trim());
+    else url.searchParams.delete('q');
+    void goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+  }
 
   async function load() {
     loading = true;
     error = null;
     try {
       const { data, error: apiErr } = await api.GET('/collections', {
-        params: { query: { limit: 200 } },
+        params: {
+          query: {
+            tab,
+            q: q.trim() || undefined,
+            limit: 200,
+          },
+        },
       });
       if (apiErr) {
-        error = (apiErr as { error?: string }).error ?? 'Failed to load.';
+        error = (apiErr as { error?: string }).error ?? t('collections.error_load');
         return;
       }
       collections = (data?.items ?? []) as CollectionRow[];
@@ -55,124 +86,136 @@
     }
   }
 
-  async function createCollection() {
-    if (!newName.trim() || creating) return;
-    creating = true;
-    try {
-      const { data, error: apiErr } = await api.POST('/collections', {
-        body: {
-          name: newName.trim(),
-          description: newDesc.trim(),
-          visibility: newVisibility,
-          membership: 'manual',
-          featured: false,
-        },
-      });
-      if (apiErr || !data) {
-        error = (apiErr as { error?: string } | undefined)?.error ?? 'Failed to create.';
-        return;
-      }
-      collections = [data as CollectionRow, ...collections];
-      newName = '';
-      newDesc = '';
-      newVisibility = 'private';
-    } finally {
-      creating = false;
-    }
+  function setTab(next: Tab) {
+    if (next === tab) return;
+    tab = next;
+    syncUrl();
+    void load();
   }
 
-  function openUploadHere(id: string) {
-    upload.open_({ collectionId: id });
+  function onSearchInput() {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      syncUrl();
+      void load();
+    }, 250);
   }
+
+  function handleCreated(c: CollectionRow) {
+    collections = [c, ...collections];
+  }
+
+  const visibleTabs = $derived.by(() => {
+    if (auth.user) return TABS;
+    return TABS.filter((t) => t.id !== 'mine' && t.id !== 'shared');
+  });
 </script>
 
 <svelte:head>
-  <title>Collections — artist-alley</title>
+  <title>{t('collections.title')} — artist-alley</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-6xl px-6 py-6">
-  <header class="mb-6 flex items-baseline justify-between">
-    <h1 class="text-2xl font-semibold">Collections</h1>
-    <p class="text-sm text-fg-muted">
-      Group posts and assets together — share, organise, or stage for review.
-    </p>
+<div class="w-full px-4 py-6 sm:px-6">
+  <!-- Header: title + new button + search -->
+  <header class="mb-5">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold">{t('collections.title')}</h1>
+        <p class="mt-1 text-sm text-fg-muted">{t('collections.tagline')}</p>
+      </div>
+      {#if auth.user}
+        <button
+          type="button"
+          onclick={() => (newOpen = true)}
+          class="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent/90"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          {t('collections.new')}
+        </button>
+      {/if}
+    </div>
+
+    <!-- Tabs + search bar -->
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div role="tablist" class="-mb-px flex flex-wrap gap-1">
+        {#each visibleTabs as tDef (tDef.id)}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === tDef.id}
+            onclick={() => setTab(tDef.id)}
+            class="rounded-t-md border-b-2 px-3 py-1.5 text-sm font-medium transition-colors"
+            class:border-accent={tab === tDef.id}
+            class:text-accent={tab === tDef.id}
+            class:border-transparent={tab !== tDef.id}
+            class:text-fg-muted={tab !== tDef.id}
+            class:hover:text-fg={tab !== tDef.id}
+          >
+            {t(tDef.key)}
+          </button>
+        {/each}
+      </div>
+
+      <div class="relative w-full max-w-xs">
+        <input
+          type="search"
+          bind:value={q}
+          oninput={onSearchInput}
+          placeholder={t('collections.search_placeholder')}
+          class="w-full rounded-md border border-border bg-surface py-1.5 pl-9 pr-3 text-sm focus-visible:border-border-strong focus:outline-none"
+        />
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted">
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+      </div>
+    </div>
   </header>
 
-  <!-- New collection composer -->
-  <section class="mb-6 rounded-lg border border-border bg-surface-elevated p-4">
-    <h2 class="mb-3 text-sm font-medium text-fg">New collection</h2>
-    <div class="grid grid-cols-1 gap-2 md:grid-cols-[2fr_3fr_auto_auto]">
-      <input
-        type="text"
-        bind:value={newName}
-        placeholder="Name"
-        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
-      />
-      <input
-        type="text"
-        bind:value={newDesc}
-        placeholder="Description (optional)"
-        class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
-      />
-      <select
-        bind:value={newVisibility}
-        class="rounded border border-border bg-surface px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
-      >
-        <option value="private">Private</option>
-        <option value="shared">Shared</option>
-        <option value="public">Public</option>
-      </select>
-      <button
-        type="button"
-        onclick={createCollection}
-        disabled={creating || !newName.trim()}
-        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
-      >
-        {creating ? 'Creating…' : 'Create'}
-      </button>
-    </div>
-  </section>
-
+  <!-- Body -->
   {#if loading}
-    <p class="text-fg-muted">Loading…</p>
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+      {#each { length: 8 } as _, i (i)}
+        <div class="overflow-hidden rounded-xl border border-border bg-surface-elevated">
+          <div class="aspect-[4/3] animate-pulse bg-surface"></div>
+          <div class="p-3">
+            <div class="h-3 w-2/3 animate-pulse rounded bg-surface"></div>
+            <div class="mt-2 h-3 w-1/2 animate-pulse rounded bg-surface"></div>
+          </div>
+        </div>
+      {/each}
+    </div>
   {:else if error}
     <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
       {error}
     </p>
   {:else if collections.length === 0}
-    <p class="rounded-md bg-surface-elevated px-4 py-6 text-center text-fg-muted">
-      No collections yet. Create one above to get started.
-    </p>
+    <div class="rounded-lg border border-dashed border-border bg-surface-elevated/50 px-6 py-12 text-center">
+      <p class="text-sm text-fg-muted">{t(`collections.empty_${tab}`)}</p>
+      {#if auth.user && (tab === 'mine' || tab === 'all')}
+        <button
+          type="button"
+          onclick={() => (newOpen = true)}
+          class="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+        >
+          {t('collections.new_first')}
+        </button>
+      {/if}
+    </div>
   {:else}
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
       {#each collections as c (c.id)}
-        <article class="rounded-lg border border-border bg-surface-elevated p-4">
-          <a href="/collections/{c.id}" class="block">
-            <h3 class="text-base font-semibold text-fg hover:underline">{c.name}</h3>
-            {#if c.description}
-              <p class="mt-1 line-clamp-2 text-sm text-fg-muted">{c.description}</p>
-            {/if}
-            <p class="mt-3 text-xs text-fg-muted">
-              {c.visibility} · created {new Date(c.created_at).toLocaleDateString()}
-            </p>
-          </a>
-          {#if auth.user && c.owner_user_ref === auth.user.ref}
-            <button
-              type="button"
-              onclick={() => openUploadHere(c.id)}
-              class="mt-3 inline-flex items-center gap-1 rounded-md border border-border bg-surface-elevated px-2.5 py-1 text-xs text-fg-muted hover:text-fg"
-              title="Upload directly into this collection"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              Upload here
-            </button>
-          {/if}
-        </article>
+        <CollectionCard collection={c} />
       {/each}
     </div>
   {/if}
 </div>
+
+<NewCollectionModal
+  open={newOpen}
+  onclose={() => (newOpen = false)}
+  oncreate={handleCreated}
+/>

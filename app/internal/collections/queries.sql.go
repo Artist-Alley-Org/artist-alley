@@ -321,22 +321,34 @@ const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
        created_at, updated_at
-FROM collections
+FROM collections c
 WHERE ($1::BIGINT  IS NULL OR owner_user_ref = $1::BIGINT)
-  AND ($2::TEXT        IS NULL OR visibility     = $2::TEXT)
-  AND ($3::BOOLEAN       IS NULL OR featured       = $3::BOOLEAN)
-  AND ($4::TIMESTAMPTZ IS NULL
-       OR created_at < $4::TIMESTAMPTZ
-       OR (created_at = $4::TIMESTAMPTZ
-           AND id < $5::UUID))
+  AND ($2::BIGINT   IS NULL OR owner_user_ref <> $2::BIGINT)
+  AND ($3::TEXT        IS NULL OR visibility     = $3::TEXT)
+  AND ($4::BOOLEAN       IS NULL OR featured       = $4::BOOLEAN)
+  AND ($5::TEXT            IS NULL OR name ILIKE '%' || $5::TEXT || '%')
+  AND ($6::BIGINT IS NULL OR EXISTS (
+         SELECT 1 FROM collection_acls a
+          WHERE a.collection_id = c.id
+            AND a.principal_type = 'user'
+            AND a.principal_id   = $6::BIGINT::TEXT
+            AND (a.expires_at IS NULL OR a.expires_at > NOW())
+       ))
+  AND ($7::TIMESTAMPTZ IS NULL
+       OR created_at < $7::TIMESTAMPTZ
+       OR (created_at = $7::TIMESTAMPTZ
+           AND id < $8::UUID))
 ORDER BY created_at DESC, id DESC
-LIMIT $6::INTEGER
+LIMIT $9::INTEGER
 `
 
 type ListCollectionsPageParams struct {
 	OwnerUserRef    *int64
+	ExcludeOwner    *int64
 	Visibility      *string
 	Featured        *bool
+	QName           *string
+	SharedWithUser  *int64
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
 	RowLimit        int32
@@ -344,11 +356,21 @@ type ListCollectionsPageParams struct {
 
 // Cursor pagination on (created_at DESC, id DESC). Filters are
 // nullable narg() so a single query covers every combo.
+//
+// `q_name` is an optional case-insensitive substring match on the
+// collection's display name; the handler ILIKE-escapes the input.
+//
+// `shared_with_user` powers the "Shared" hub tab: collections the
+// caller has an ACL grant on but doesn't own. The handler also passes
+// the caller's user_ref into `exclude_owner` to drop owned rows.
 func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]Collection, error) {
 	rows, err := q.db.Query(ctx, listCollectionsPage,
 		arg.OwnerUserRef,
+		arg.ExcludeOwner,
 		arg.Visibility,
 		arg.Featured,
+		arg.QName,
+		arg.SharedWithUser,
 		arg.CursorCreatedAt,
 		arg.CursorID,
 		arg.RowLimit,
