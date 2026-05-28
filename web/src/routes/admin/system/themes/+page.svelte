@@ -117,7 +117,7 @@
   <form onsubmit={(e) => { e.preventDefault(); void save(); }} class="max-w-3xl space-y-4">
     {#each slots as s (s.slot)}
       {@const id = currentId(s.slot)}
-      <section class="rounded-lg border border-border bg-surface p-4">
+      <section class="rounded-lg border border-border bg-surface-elevated p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <h3 class="text-sm font-medium text-fg">{t(s.titleKey)}</h3>
@@ -126,7 +126,7 @@
           <select
             value={picks[`${s.slot === 'sans' ? 'body' : s.slot}_font` as keyof AppearancePicks]}
             onchange={(e) => setSlot(s.slot, (e.currentTarget as HTMLSelectElement).value)}
-            class="rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">{t('admin.system.themes.use_default')} ({DEFAULT_BY_SLOT[s.slot]})</option>
             {#each fontsForSlot(s.slot) as f (f.id)}
@@ -135,9 +135,11 @@
           </select>
         </div>
 
-        <!-- Live preview chip — renders the current pick in its own face. -->
+        <!-- Live preview chip — renders the current pick in its own
+             face. Steps down to bg-surface so it reads as a "well"
+             inside the elevated card. -->
         <div
-          class="mt-3 rounded-md border border-border-subtle bg-surface-elevated px-4 py-3 text-xl"
+          class="mt-3 rounded-md border border-border-subtle bg-surface px-4 py-3 text-xl"
           style="font-family: {previewFamilyFor(id)}"
         >
           {s.sample}
@@ -164,7 +166,7 @@
         type="button"
         onclick={resetToDefaults}
         disabled={saving}
-        class="rounded-md border border-border bg-surface-elevated px-3 py-1.5 text-sm text-fg-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted hover:bg-state-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
       >
         {t('admin.system.themes.reset')}
       </button>

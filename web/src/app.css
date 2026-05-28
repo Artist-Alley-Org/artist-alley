@@ -32,10 +32,12 @@
   --color-surface-elevated: oklch(100% 0      0);    /* cards, popovers, nav */
   --color-surface-overlay:  oklch(100% 0      0);    /* modals, dialogs */
 
-  /* ── Foreground tiers (paired with surfaces; AA verified) */
+  /* ── Foreground tiers (paired with surfaces; AA verified)
+       Light fg-muted slightly darkened to oklch(42%) so secondary
+       text on the warm-cream surface clears AA body comfortably. */
   --color-fg:          oklch(20% 0.015 80);          /* high-emphasis text */
-  --color-fg-muted:    oklch(50% 0.020 80);          /* secondary copy, captions */
-  --color-fg-disabled: oklch(70% 0.015 80);          /* disabled controls (M2: 38% emphasis) */
+  --color-fg-muted:    oklch(42% 0.012 80);          /* secondary copy, captions */
+  --color-fg-disabled: oklch(70% 0.010 80);          /* disabled controls (M2: 38% emphasis) */
   --color-on-accent:   oklch(98% 0.005 80);          /* fg on accent fills */
 
   /* ── Structural (3:1 against surface — WCAG 1.4.11) */
@@ -88,10 +90,14 @@
     --color-surface-elevated: oklch(17% 0.020 250);
     --color-surface-overlay:  oklch(21% 0.020 250);
 
-    /* ── Foreground */
+    /* ── Foreground
+         fg-muted bumped to oklch(78% / chroma 0.008) so secondary
+         text on surface-elevated hits APCA Lc ≈ 80 (AA body comfort
+         + AAA UI). The lower chroma keeps it reading as neutral grey
+         instead of dim blue. */
     --color-fg:          oklch(96% 0.005 250);
-    --color-fg-muted:    oklch(70% 0.020 250);
-    --color-fg-disabled: oklch(50% 0.015 250);
+    --color-fg-muted:    oklch(78% 0.008 250);
+    --color-fg-disabled: oklch(55% 0.010 250);
     --color-on-accent:   oklch(15% 0.020 250);
 
     /* ── Structural */

@@ -40,7 +40,7 @@
 {:else}
   <div class="space-y-3">
     {#each roles as r (r.id)}
-      <article class="rounded-lg border border-border bg-surface p-4">
+      <article class="rounded-lg border border-border bg-surface-elevated p-4">
         <h3 class="text-base font-semibold text-fg">{r.name}</h3>
         {#if r.description}
           <p class="mt-1 text-sm text-fg-muted">{r.description}</p>

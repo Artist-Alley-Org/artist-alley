@@ -77,7 +77,7 @@
   }
 </script>
 
-<div class="space-y-4 rounded-lg border border-border bg-surface p-4">
+<div class="space-y-4 rounded-lg border border-border bg-surface-elevated p-4">
   <!-- "Create a post" toggle. When off, the rest of the form
        collapses — the upload still happens, just no post wraps the
        resulting assets. -->
@@ -98,14 +98,14 @@
         bind:value={upload.compose.title}
         placeholder="Post title (optional)"
         maxlength="500"
-        class="w-full rounded border border-border bg-surface-elevated px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
         aria-label="Post title"
       />
       <textarea
         bind:value={upload.compose.description}
         placeholder="Describe your post (optional)"
         rows="2"
-        class="w-full resize-y rounded border border-border bg-surface-elevated px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="w-full resize-y rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
         aria-label="Post description"
       ></textarea>
     </div>

@@ -21,25 +21,54 @@
 
   const isAdmin = $derived(auth.can('system.admin'));
   const aboutActive = $derived(page.url.pathname.startsWith('/admin/about'));
+  const overviewActive = $derived(page.url.pathname === '/admin');
 </script>
 
-<div class="mx-auto w-full max-w-7xl px-6 py-6">
-  <header class="mb-6">
-    <h1 class="text-2xl font-semibold">{t('admin.title')}</h1>
-  </header>
+<!--
+  Admin shell: fills the available viewport (the global +layout.svelte
+  already gives <main> the `flex-1` slot under the sticky navbar). Two
+  panes:
+    * left  — sidebar nav, fixed width, sticky to the top of the
+              content viewport so the section list stays visible while
+              the right pane scrolls
+    * right — content, owns its own padding + scroll
 
+  The top offset `top-14` matches the sticky navbar height (3.5rem ≈
+  navbar py-3 + content). Adjust both together if the navbar resizes.
+-->
+<div class="flex flex-1 min-h-0">
   {#if !auth.ready}
-    <p class="text-fg-muted">{t('common.loading')}</p>
+    <div class="flex-1 p-6 text-fg-muted">{t('common.loading')}</div>
   {:else if !isAdmin}
-    <div class="rounded-lg border border-danger/40 bg-danger-container p-4 text-sm text-danger">
-      {t('common.no_permission')}
+    <div class="flex-1 p-6">
+      <div class="rounded-lg border border-danger/40 bg-danger-container p-4 text-sm text-on-danger-container">
+        {t('common.no_permission')}
+      </div>
     </div>
   {:else}
-    <div class="grid grid-cols-1 gap-6 md:grid-cols-[16rem_1fr]">
-      <nav class="space-y-0.5 text-sm">
+    <!--
+      Sidebar reads at 15px (text-[15px]) — between text-sm (14) and
+      text-base (16). The text-sm default was too thin to scan
+      comfortably in dark mode.
+
+      Background tier: `bg-surface-elevated` (solid, no alpha) so the
+      sidebar reads as a distinct surface from the content column. The
+      active-item fill uses `bg-accent-container` — a soft accent
+      tint that ships with a paired `text-on-accent-container`
+      foreground at definition time, so contrast is structurally
+      guaranteed in both palettes.
+
+      Inactive items use `text-fg-muted` against the elevated surface
+      (≈7.5:1 in dark, ≈6:1 in light — AA body and AAA UI).
+    -->
+    <aside
+      class="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-border bg-surface-elevated px-3 py-4 md:block"
+      aria-label={t('admin.title')}
+    >
+      <nav class="space-y-0.5 text-[15px]">
         <a
           href="/admin"
-          class={`block rounded-md px-3 py-1.5 ${page.url.pathname === '/admin' ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+          class={`block rounded-md px-3 py-2 ${overviewActive ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
         >
           {t('admin_menu.overview')}
         </a>
@@ -49,30 +78,30 @@
           {@const active = page.url.pathname === href || page.url.pathname.startsWith(href + '/')}
           <a
             {href}
-            class={`flex items-center gap-2 rounded-md px-3 py-1.5 ${active ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+            class={`flex items-center gap-2.5 rounded-md px-3 py-2 ${active ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
           >
-            <span class={active ? 'text-fg' : 'text-fg-muted'}>
-              <AdminIcon name={section.iconKey} size={15} />
+            <span class={active ? 'text-on-accent-container' : 'text-fg-muted'}>
+              <AdminIcon name={section.iconKey} size={17} />
             </span>
             <span>{t(`admin.sections.${section.slug}.title`)}</span>
           </a>
         {/each}
 
-        <div class="my-1 border-t border-border"></div>
+        <div class="my-2 border-t border-border"></div>
         <a
           href="/admin/about"
-          class={`flex items-center gap-2 rounded-md px-3 py-1.5 ${aboutActive ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+          class={`flex items-center gap-2.5 rounded-md px-3 py-2 ${aboutActive ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
         >
-          <span class={aboutActive ? 'text-fg' : 'text-fg-muted'}>
-            <AdminIcon name="about" size={15} />
+          <span class={aboutActive ? 'text-on-accent-container' : 'text-fg-muted'}>
+            <AdminIcon name="about" size={17} />
           </span>
           <span>{t('admin_menu.about')}</span>
         </a>
       </nav>
+    </aside>
 
-      <section>
-        {@render children?.()}
-      </section>
-    </div>
+    <section class="flex-1 min-w-0 px-6 py-6">
+      {@render children?.()}
+    </section>
   {/if}
 </div>

@@ -38,12 +38,12 @@
     {@const blurbK = `${tileKey(section.slug, tile.key)}.blurb`}
     {#if tile.status === 'future'}
       <div
-        class="cursor-not-allowed rounded-lg border border-dashed border-border bg-surface/40 p-4 opacity-70"
+        class="cursor-not-allowed rounded-lg border border-dashed border-border bg-surface-elevated/50 p-4 opacity-70"
         aria-disabled="true"
       >
         <div class="flex items-start justify-between gap-2">
           <h3 class="text-sm font-medium text-fg-muted">{t(titleK)}</h3>
-          <span class="shrink-0 rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-fg-muted">
+          <span class="shrink-0 rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-fg-muted">
             {t('admin.status.phase', { phase: tile.phase ?? '?' })}
           </span>
         </div>
@@ -52,7 +52,7 @@
     {:else}
       <a
         href={tile.href}
-        class="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50"
+        class="rounded-lg border border-border bg-surface-elevated p-4 transition-colors hover:border-accent hover:bg-state-hover"
       >
         <div class="flex items-start justify-between gap-2">
           <h3 class="text-sm font-medium text-fg">{t(titleK)}</h3>

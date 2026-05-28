@@ -15,7 +15,7 @@
   {#each ADMIN_SECTIONS as section (section.slug)}
     <a
       href={`/admin/${section.slug}`}
-      class="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50"
+      class="rounded-lg border border-border bg-surface-elevated p-4 transition-colors hover:border-accent hover:bg-state-hover"
     >
       <div class="flex items-start gap-3">
         <span class="mt-0.5 text-fg-muted">
@@ -33,7 +33,7 @@
 
   <a
     href="/admin/about"
-    class="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50"
+    class="rounded-lg border border-border bg-surface-elevated p-4 transition-colors hover:border-accent hover:bg-state-hover"
   >
     <div class="flex items-start gap-3">
       <span class="mt-0.5 text-fg-muted">

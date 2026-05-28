@@ -73,7 +73,7 @@
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else}
   <form onsubmit={(e) => { e.preventDefault(); void save(); }} class="max-w-3xl space-y-6">
-    <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
       <header class="flex items-center justify-between">
         <h3 class="text-sm font-medium text-fg">{t('admin.system.ai.providers')}</h3>
         <button type="button" onclick={addProvider} class="rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted hover:text-fg">
@@ -129,9 +129,9 @@
       {/if}
     </section>
 
-    <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
       <h3 class="text-sm font-medium text-fg">{t('admin.system.ai.default_provider')}</h3>
-      <select bind:value={defaultProviderId} class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none">
+      <select bind:value={defaultProviderId} class="w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none">
         <option value="">{t('admin.system.ai.no_default')}</option>
         {#each providers as p (p.id ?? p.display_name)}
           {#if p.id}

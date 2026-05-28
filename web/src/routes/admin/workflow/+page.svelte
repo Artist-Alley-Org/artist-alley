@@ -61,7 +61,7 @@
 {:else}
   <div class="space-y-2">
     {#each states as s (s.id)}
-      <article class="flex items-center gap-3 rounded-lg border border-border bg-surface p-3">
+      <article class="flex items-center gap-3 rounded-lg border border-border bg-surface-elevated p-3">
         <span
           class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
           style:background-color={s.color || '#64748b'}

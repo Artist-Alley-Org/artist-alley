@@ -156,7 +156,7 @@
   }
 </script>
 
-<div class="flex gap-3 rounded-lg border border-border bg-surface p-3">
+<div class="flex gap-3 rounded-lg border border-border bg-surface-elevated p-3">
   <!-- Thumb: the file as an inline blob URL. For non-image files
        the browser will fail to load — we fall back to a generic
        icon via onerror. -->
@@ -186,7 +186,7 @@
         type="text"
         bind:value={row.title}
         placeholder={row.file.name}
-        class="min-w-0 flex-1 rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
         aria-label="Asset title"
       />
       <span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium {stateClass}">
@@ -294,14 +294,14 @@
                         type="text"
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).value })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'longtext'}
                       <textarea
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLTextAreaElement).value })}
                         rows="2"
-                        class="mt-0.5 w-full resize-y rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full resize-y rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       ></textarea>
                     {:else if f.type === 'number'}
                       <input
@@ -311,7 +311,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueNum: v === '' ? null : Number(v) });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'boolean'}
                       <label class="mt-0.5 inline-flex items-center gap-2 text-sm">
@@ -331,7 +331,7 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'datetime'}
                       <input
@@ -341,13 +341,13 @@
                           const v = (e.currentTarget as HTMLInputElement).value;
                           commitField(f, { valueDate: v === '' ? null : new Date(v).toISOString() });
                         }}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       />
                     {:else if f.type === 'select'}
                       <select
                         value={pending?.valueText ?? ''}
                         onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLSelectElement).value || null })}
-                        class="mt-0.5 w-full rounded border border-border bg-surface-elevated px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
+                        class="mt-0.5 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
                       >
                         <option value="">—</option>
                         {#each (f.options?.values ?? []) as opt (opt)}

@@ -146,7 +146,7 @@
   {:else}
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each collections as c (c.id)}
-        <article class="rounded-lg border border-border bg-surface p-4">
+        <article class="rounded-lg border border-border bg-surface-elevated p-4">
           <a href="/collections/{c.id}" class="block">
             <h3 class="text-base font-semibold text-fg hover:underline">{c.name}</h3>
             {#if c.description}

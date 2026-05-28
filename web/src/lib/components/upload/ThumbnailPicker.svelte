@@ -104,7 +104,7 @@
   }
 </script>
 
-<div class="space-y-3 rounded-lg border border-border bg-surface p-4">
+<div class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
   <p class="text-sm font-medium text-fg">Post cover thumbnail</p>
 
   <!-- Mode selector -->

@@ -6,6 +6,6 @@
 
 <h2 class="mb-4 text-xl font-semibold">{t('admin.resource_types.title')}</h2>
 
-<div class="rounded-lg border border-border bg-surface p-4 text-sm text-fg-muted">
+<div class="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-fg-muted">
   <p>{t('admin.resource_types.coming_soon')}</p>
 </div>

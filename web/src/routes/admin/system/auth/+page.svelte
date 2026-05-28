@@ -81,16 +81,16 @@
   <p class="text-fg-muted">{t('common.loading')}</p>
 {:else}
   <form onsubmit={(e) => { e.preventDefault(); void save(); }} class="max-w-3xl space-y-6">
-    <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
       <h3 class="text-sm font-medium text-fg">{t('admin.system.auth.password_policy')}</h3>
       <div class="grid grid-cols-2 gap-3">
         <label class="text-sm">
           <span class="block text-xs text-fg-muted">{t('admin.system.auth.min_length')}</span>
-          <input type="number" min="0" max="256" bind:value={policy.min_length} class="mt-1 w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+          <input type="number" min="0" max="256" bind:value={policy.min_length} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
         </label>
         <label class="text-sm">
           <span class="block text-xs text-fg-muted">{t('admin.system.auth.max_age_days')}</span>
-          <input type="number" min="0" max="36500" bind:value={policy.max_age_days} class="mt-1 w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+          <input type="number" min="0" max="36500" bind:value={policy.max_age_days} class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
         </label>
       </div>
       <div class="grid grid-cols-2 gap-2">
@@ -101,7 +101,7 @@
       </div>
     </section>
 
-    <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
+    <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
       <header class="flex items-center justify-between">
         <h3 class="text-sm font-medium text-fg">{t('admin.system.auth.sso_providers')}</h3>
         <button type="button" onclick={addProvider} class="rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted hover:text-fg">

@@ -6,6 +6,6 @@
 
 <h2 class="mb-2 text-xl font-semibold">{t('account.messages.title')}</h2>
 
-<div class="max-w-xl rounded-lg border border-border bg-surface p-4 text-sm text-fg-muted">
+<div class="max-w-xl rounded-lg border border-border bg-surface-elevated p-4 text-sm text-fg-muted">
   <p>{t('account.messages.coming_soon')}</p>
 </div>

@@ -86,11 +86,11 @@
     </div>
   </header>
 
-  <section class="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4">
+  <section class="max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
     <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.role_label')}</h3>
     <select
       bind:value={selectedRole}
-      class="w-full rounded border border-border bg-surface-elevated px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      class="w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
     >
       <option value="">—</option>
       {#each roles as r (r.id)}
