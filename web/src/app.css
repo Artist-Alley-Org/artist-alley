@@ -27,8 +27,11 @@
  */
 
 @theme {
-  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not shadow) */
-  --color-surface:          oklch(98%  0.008  80);   /* page bg — warm cream */
+  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not shadow)
+       Light mode: page sits slightly darker than pure white so the
+       elevated cards stand out against it. Dark mode: deeper page +
+       higher elevated step (see html.dark block). */
+  --color-surface:          oklch(96%  0.012  80);   /* page bg — warm cream */
   --color-surface-elevated: oklch(100% 0      0);    /* cards, popovers, nav */
   --color-surface-overlay:  oklch(100% 0      0);    /* modals, dialogs */
 
@@ -85,10 +88,12 @@
 
 @layer base {
   html.dark {
-    /* ── Surfaces (cool blue-grey, off-black; preserves OLED breathing) */
+    /* ── Surfaces (cool blue-grey, off-black; preserves OLED breathing)
+         Surface-elevated bumped to oklch(21%) so cards stand off the
+         page bg (13%) with ~8 L points of visible separation. */
     --color-surface:          oklch(13% 0.015 250);
-    --color-surface-elevated: oklch(17% 0.020 250);
-    --color-surface-overlay:  oklch(21% 0.020 250);
+    --color-surface-elevated: oklch(21% 0.022 250);
+    --color-surface-overlay:  oklch(26% 0.022 250);
 
     /* ── Foreground
          fg-muted bumped to oklch(78% / chroma 0.008) so secondary
