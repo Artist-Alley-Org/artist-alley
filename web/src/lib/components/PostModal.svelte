@@ -29,6 +29,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import CommentsThread from './CommentsThread.svelte';
+  import VideoPlayer from './VideoPlayer.svelte';
 
   interface Props {
     postId: string;
@@ -179,6 +180,7 @@
   const currentAssetId = $derived(currentMember?.asset_id ?? null);
   const hasMultipleMembers = $derived((post?.members?.length ?? 0) > 1);
   const currentIsImage = $derived(isImageExt(currentMember?.asset?.file_extension ?? null));
+  const currentIsVideo = $derived(isVideoExt(currentMember?.asset?.file_extension ?? null));
 
   const isOwner = $derived(
     !!auth.user && !!post && auth.user.ref === post.author_user_ref,
@@ -605,6 +607,12 @@
     ].includes(e);
   }
 
+  function isVideoExt(ext: string | null): boolean {
+    if (!ext) return false;
+    const e = ext.toLowerCase().replace(/^\./, '');
+    return ['mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp', 'flv', 'm4v', 'ts'].includes(e);
+  }
+
   // Per-slide image error handling. First failure swaps col → /file
   // (full original); second failure marks the asset broken so the
   // template renders a placeholder icon. Keyed by asset_id on a data
@@ -839,7 +847,7 @@
              In review mode the scroller is replaced with a single
              zoom/pan canvas for the current asset. -->
         <div class="relative flex flex-1 overflow-hidden bg-black">
-          {#if reviewMode && currentAssetId}
+          {#if reviewMode && currentAssetId && !currentIsVideo}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               bind:this={canvasEl}
@@ -879,12 +887,33 @@
               class="post-modal-scroller h-full w-full snap-y snap-mandatory overflow-y-auto"
             >
               {#each post.members as member, i (member.asset_id)}
-                {@const slideIsImage = isImageExt(member.asset?.file_extension ?? null)}
+                {@const slideIsVideo = isVideoExt(member.asset?.file_extension ?? null)}
                 <div
                   data-slide-idx={i}
                   class="flex h-full w-full shrink-0 snap-start items-center justify-center"
                 >
-                  {#if brokenSlides.has(member.asset_id)}
+                  {#if slideIsVideo}
+                    <!-- Animator review player — frame-accurate scrub,
+                         JKL transport, sprite preview. Only mount the
+                         currently visible slide so scrolling between
+                         heavy timelines doesn't thrash decoders.
+                         Video never goes through the brokenSlides
+                         img-error path; if HLS isn't ready the player
+                         itself falls back to /file. -->
+                    {#if i === selectedIdx}
+                      <div class="h-full w-full" data-asset-id={member.asset_id}>
+                        <VideoPlayer assetId={member.asset_id} />
+                      </div>
+                    {:else}
+                      <img
+                        src={`/api/v1/assets/${member.asset_id}/variants/poster`}
+                        alt={member.asset?.title || post.title}
+                        data-asset-id={member.asset_id}
+                        loading="lazy"
+                        class="h-full w-full object-contain"
+                      />
+                    {/if}
+                  {:else if brokenSlides.has(member.asset_id)}
                     <div class="text-fg-muted">
                       <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -914,6 +943,10 @@
                     <circle cx="9" cy="9" r="2" />
                     <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
                   </svg>
+                </div>
+              {:else if currentIsVideo}
+                <div class="h-full w-full">
+                  <VideoPlayer assetId={currentAssetId} />
                 </div>
               {:else}
                 <img

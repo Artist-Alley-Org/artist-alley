@@ -19,11 +19,21 @@
   interface AssetSummary {
     id: string;
     file_hash?: string | null;
+    file_extension?: string | null;
     thumbhash?: string | null;
   }
   interface PostMemberSummary {
     asset_id: string;
     asset: AssetSummary;
+  }
+
+  const VIDEO_EXTS = new Set([
+    'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',
+    'flv', 'm4v', 'ts',
+  ]);
+  function isVideoAsset(a: AssetSummary | undefined | null): boolean {
+    if (!a?.file_extension) return false;
+    return VIDEO_EXTS.has(a.file_extension.toLowerCase().replace(/^\./, ''));
   }
   interface Post {
     id: string;
@@ -111,6 +121,39 @@
     imgError = true;
   }
 
+  // Hover scrub preview for video covers. Animates the sprite sheet
+  // already produced by preview.video — a single image download
+  // (well-cached, content-addressed) gives ~100 frames of scrub. No
+  // video decode, no extra network round-trips after first hover.
+  const coverIsVideo = $derived(
+    post.members.find((m) => m.asset_id === coverAssetId)?.asset && isVideoAsset(post.members.find((m) => m.asset_id === coverAssetId)!.asset),
+  );
+  const spriteUrl = $derived(coverAssetId ? `/api/v1/assets/${coverAssetId}/variants/sprites.jpg` : '');
+
+  let hovering = $state(false);
+  let spriteFrame = $state(0);
+  let spriteInterval: ReturnType<typeof setInterval> | null = null;
+  const SPRITE_COLS = 10;
+  const SPRITE_ROWS = 10;
+  const SPRITE_CELL = SPRITE_COLS * SPRITE_ROWS;
+
+  function onHoverEnter() {
+    hovering = true;
+    if (!coverIsVideo) return;
+    if (spriteInterval) return;
+    spriteInterval = setInterval(() => {
+      spriteFrame = (spriteFrame + 1) % SPRITE_CELL;
+    }, 120); // ~8 fps — feels lively without being seizurish
+  }
+  function onHoverLeave() {
+    hovering = false;
+    if (spriteInterval) {
+      clearInterval(spriteInterval);
+      spriteInterval = null;
+    }
+    spriteFrame = 0;
+  }
+
   const memberCount = $derived(post.members.length);
   const created = $derived(new Date(post.created_at));
   const createdShort = $derived(
@@ -137,6 +180,8 @@
 <a
   href="/posts/{post.id}"
   onclick={handleClick}
+  onmouseenter={onHoverEnter}
+  onmouseleave={onHoverLeave}
   class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
 >
   <div
@@ -155,6 +200,22 @@
         onload={onLoad}
         onerror={onError}
       />
+      {#if coverIsVideo && hovering}
+        <!-- Sprite-sheet scrub preview. The sheet is 10×10 = 100
+             frames spanning the duration; we walk it at ~8 fps so
+             the user sees a quick "trailer" of the video. -->
+        <div
+          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
+          style="background-image: url({spriteUrl}); background-size: 1000% 1000%; background-position: {(spriteFrame % SPRITE_COLS) * (100 / (SPRITE_COLS - 1))}% {Math.floor(spriteFrame / SPRITE_COLS) * (100 / (SPRITE_ROWS - 1))}%;"
+        ></div>
+      {/if}
+      {#if coverIsVideo}
+        <!-- Play-glyph badge to advertise "this is a video". -->
+        <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
+          video
+        </div>
+      {/if}
     {:else if !placeholder}
       <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

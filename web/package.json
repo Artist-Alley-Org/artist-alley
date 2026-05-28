@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@scalar/api-reference": "^1.57.5",
+    "hls.js": "^1.6.16",
     "openapi-fetch": "latest",
     "thumbhash": "^0.1.1"
   }

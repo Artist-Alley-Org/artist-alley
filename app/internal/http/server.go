@@ -95,10 +95,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry := jobs.NewRegistry()
 	jobSvc := jobs.NewService(pool, logger, jobRegistry)
 
-	// Register the raster preview handler (Phase 1.18.A's first job
-	// type). Vector / video / audio / PDF / font / 3D handlers plug
-	// in here as they ship.
+	// Register preview handlers. preview.raster ships in 1.18.A;
+	// preview.video adds the HLS / poster / scrub-sprite pipeline
+	// in 1.18.B-1 (with GPU-encoder auto-detection at boot). Other
+	// handlers (svg / audio / pdf / font / 3D) plug in here.
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
@@ -111,6 +113,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// records the security requirements; codegen-enforced
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
+
+		// HLS variants live at multi-segment keys like
+		// `hls/master.m3u8`, `hls/720p/seg00012.ts`. chi's default
+		// `{variant}` param is non-greedy ([^/]+), so the openapi-
+		// derived route only matches single-segment variants. Register
+		// a wildcard ahead of the strict handler that streams any
+		// `hls/*` variant straight from storage. The middleware/
+		// VariantCache still picks these up by path.
+		r.Get("/assets/{id}/variants/hls/*", handlers.NewHLSHandler(pool, storageSvc, logger).ServeHTTP)
 
 		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)

@@ -270,12 +270,16 @@ func (h *Handler) CreateAsset(
 }
 
 // jobTypeForExt picks the preview-job type for a given file extension.
-// Phase 1.18.A only routes to preview.raster; vector/video/audio/etc.
-// handlers register themselves and this dispatcher grows when they do.
+// preview.raster handles still images; preview.video runs the HLS
+// pipeline. Other formats (audio/svg/pdf/font/3D) land in follow-ups.
 func jobTypeForExt(ext *string) jobs.JobType {
-	// For now everything that comes through needsProcessing() is
-	// raster (image extensions). Video routing lands with the
-	// preview.video handler in 1.18.B.
+	if ext == nil {
+		return jobs.TypePreviewRaster
+	}
+	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
+	if _, ok := videoExts[e]; ok {
+		return jobs.TypePreviewVideo
+	}
 	return jobs.TypePreviewRaster
 }
 

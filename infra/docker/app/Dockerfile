@@ -27,7 +27,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ---- runtime stage --------------------------------------------------------
 FROM alpine:3.20 AS runtime
 
-RUN apk add --no-cache ca-certificates tzdata \
+# ffmpeg is the workhorse for preview.video / preview.audio jobs
+# (HLS encoding, frame extraction, waveform render). Alpine's package
+# ships with libx264 + libvpx + opus + aac. GPU encoders (NVENC,
+# QSV, VAAPI) aren't built into the alpine ffmpeg; the worker probes
+# at boot and falls back cleanly to libx264 when they're absent — so
+# a CPU-only deployment still works, and a future debian-based image
+# can drop in GPU encoders without code changes.
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
  && addgroup -S app && adduser -S -G app app \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
