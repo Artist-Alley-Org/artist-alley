@@ -6,6 +6,7 @@
   import PostCard from '$components/PostCard.svelte';
   import PostModal from '$components/PostModal.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
+  import PostListTable from '$components/PostListTable.svelte';
   import { browseView } from '$stores/browseView.svelte';
 
   onMount(() => { browseView.init(); });
@@ -183,7 +184,9 @@
       --cols is set inline so user adjustments take effect without a
       Tailwind rebuild.
     -->
-    {#if browseView.mode === 'masonry'}
+    {#if browseView.mode === 'list'}
+      <PostListTable {items} {loading} />
+    {:else if browseView.mode === 'masonry'}
       <div
         class="posts-masonry"
         style="column-count: {browseView.cols}"

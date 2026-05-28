@@ -34,6 +34,25 @@
       "masonry": "Masonry",
       "thumbnail": "Thumbnail",
       "list": "List"
+    },
+    "columns": "Columns",
+    "reset_columns": "Reset to default columns",
+    "list": {
+      "post_singular": "post",
+      "post_plural": "posts",
+      "untitled": "Untitled"
+    },
+    "col": {
+      "thumbnail": "",
+      "title": "Title",
+      "author": "Author",
+      "visibility": "Visibility",
+      "tags": "Tags",
+      "members": "Assets",
+      "likes": "Likes",
+      "comments": "Comments",
+      "posted_at": "Posted",
+      "description": "Description"
     }
   },
   "user_menu": {

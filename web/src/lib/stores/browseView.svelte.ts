@@ -6,7 +6,8 @@
 //   grid       — square cards in a fixed-column grid
 //   masonry    — CSS multi-column flow (variable card heights)
 //   thumbnail  — same as grid but +3 cols (denser preview wall)
-//   list       — single-column vertical stack
+//   list       — sortable spreadsheet-style table with toggleable
+//                columns (see LIST_COLUMNS)
 //
 // The store hands the +page.svelte body two derived values:
 //   layoutMode  — translates `mode` into the kind of layout to apply
@@ -16,9 +17,12 @@
 import { browser } from '$app/environment';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list';
+export type SortDir = 'asc' | 'desc';
 
 const STORAGE_MODE = 'aa_browse_mode';
 const STORAGE_SIZE = 'aa_browse_size';
+const STORAGE_COLS = 'aa_browse_list_cols';
+const STORAGE_SORT = 'aa_browse_list_sort';
 
 // Size range. `size` is the user's slider position; the actual
 // rendered cols depend on view mode (see resolveCols).
@@ -62,9 +66,80 @@ function resolveCols(mode: ViewMode, size: number): number {
   return size + 1;
 }
 
+// ── List-view column registry. Each column id is a stable string the
+//    UI uses for visibility + sort persistence. Adding a column here
+//    plus the matching i18n key under browse.col.* is enough for it to
+//    appear in the picker. Default visibility keeps the initial table
+//    readable on smaller widths.
+export interface ListColumnDef {
+  id: string;
+  labelKey: string;
+  defaultVisible: boolean;
+  sortable: boolean;
+  align?: 'left' | 'right' | 'center';
+  /** CSS width for the <col>. Concrete widths give the table a
+   *  predictable rhythm without enabling drag-to-resize yet. */
+  width?: string;
+}
+
+export const LIST_COLUMNS: ListColumnDef[] = [
+  { id: 'thumbnail',    labelKey: 'browse.col.thumbnail', defaultVisible: true,  sortable: false, align: 'center', width: '3.5rem' },
+  { id: 'title',        labelKey: 'browse.col.title',     defaultVisible: true,  sortable: true,  align: 'left',  width: 'minmax(16rem, 2fr)' },
+  { id: 'author',       labelKey: 'browse.col.author',    defaultVisible: true,  sortable: true,  align: 'left',  width: '10rem' },
+  { id: 'visibility',   labelKey: 'browse.col.visibility',defaultVisible: false, sortable: true,  align: 'left',  width: '7rem' },
+  { id: 'tags',         labelKey: 'browse.col.tags',      defaultVisible: true,  sortable: false, align: 'left',  width: 'minmax(10rem, 1fr)' },
+  { id: 'members',      labelKey: 'browse.col.members',   defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
+  { id: 'likes',        labelKey: 'browse.col.likes',     defaultVisible: true,  sortable: true,  align: 'right', width: '5rem' },
+  { id: 'comments',     labelKey: 'browse.col.comments',  defaultVisible: false, sortable: true,  align: 'right', width: '5rem' },
+  { id: 'posted_at',    labelKey: 'browse.col.posted_at', defaultVisible: true,  sortable: true,  align: 'right', width: '9rem' },
+  { id: 'description',  labelKey: 'browse.col.description', defaultVisible: false, sortable: false, align: 'left', width: 'minmax(12rem, 2fr)' },
+];
+
+const DEFAULT_VISIBLE_COLS = LIST_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.id);
+
+function readColumns(): string[] {
+  if (!browser) return DEFAULT_VISIBLE_COLS;
+  try {
+    const raw = localStorage.getItem(STORAGE_COLS);
+    if (!raw) return DEFAULT_VISIBLE_COLS;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return DEFAULT_VISIBLE_COLS;
+    const known = new Set(LIST_COLUMNS.map((c) => c.id));
+    const kept = arr.filter((id): id is string => typeof id === 'string' && known.has(id));
+    return kept.length > 0 ? kept : DEFAULT_VISIBLE_COLS;
+  } catch {
+    return DEFAULT_VISIBLE_COLS;
+  }
+}
+function writeColumns(ids: string[]): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_COLS, JSON.stringify(ids)); } catch { /* */ }
+}
+
+function readSort(): { col: string; dir: SortDir } {
+  if (!browser) return { col: 'posted_at', dir: 'desc' };
+  try {
+    const raw = localStorage.getItem(STORAGE_SORT);
+    if (!raw) return { col: 'posted_at', dir: 'desc' };
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.col === 'string' && (parsed?.dir === 'asc' || parsed?.dir === 'desc')) {
+      return { col: parsed.col, dir: parsed.dir };
+    }
+  } catch { /* */ }
+  return { col: 'posted_at', dir: 'desc' };
+}
+function writeSort(s: { col: string; dir: SortDir }): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_SORT, JSON.stringify(s)); } catch { /* */ }
+}
+
 class BrowseViewState {
   mode = $state<ViewMode>(DEFAULT_MODE);
   size = $state<number>(DEFAULT_SIZE);
+  /** Visible list-view columns, in the order they appear. */
+  listColumns = $state<string[]>(DEFAULT_VISIBLE_COLS);
+  /** Sort key + direction for the list view. */
+  sort = $state<{ col: string; dir: SortDir }>({ col: 'posted_at', dir: 'desc' });
   hydrated = $state(false);
 
   /** Concrete column count for the current mode + size. */
@@ -86,7 +161,46 @@ class BrowseViewState {
     if (this.hydrated) return;
     this.mode = readMode();
     this.size = readSize();
+    this.listColumns = readColumns();
+    this.sort = readSort();
     this.hydrated = true;
+  }
+
+  /** Resolve visible column defs in the user's chosen order. */
+  get visibleColumns(): ListColumnDef[] {
+    const byId = new Map(LIST_COLUMNS.map((c) => [c.id, c]));
+    return this.listColumns
+      .map((id) => byId.get(id))
+      .filter((c): c is ListColumnDef => !!c);
+  }
+
+  toggleColumn(id: string): void {
+    if (this.listColumns.includes(id)) {
+      this.listColumns = this.listColumns.filter((c) => c !== id);
+    } else {
+      // Insert in the catalogue's canonical order so toggling on a
+      // column doesn't dump it at the right edge of the table.
+      const order = LIST_COLUMNS.map((c) => c.id);
+      const set = new Set([...this.listColumns, id]);
+      this.listColumns = order.filter((cid) => set.has(cid));
+    }
+    writeColumns(this.listColumns);
+  }
+
+  resetColumns(): void {
+    this.listColumns = DEFAULT_VISIBLE_COLS;
+    writeColumns(this.listColumns);
+  }
+
+  /** Cycle the sort for a column: asc → desc → keep desc. Clicking a
+   *  different column starts fresh on asc. */
+  cycleSort(col: string): void {
+    if (this.sort.col === col) {
+      this.sort = { col, dir: this.sort.dir === 'asc' ? 'desc' : 'asc' };
+    } else {
+      this.sort = { col, dir: 'asc' };
+    }
+    writeSort(this.sort);
   }
 
   setMode(m: ViewMode): void {

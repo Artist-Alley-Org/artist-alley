@@ -36,6 +36,22 @@
 
   let expanded = $state(false);
 
+  // Show back-to-top only when the user has actually scrolled down.
+  // Tracks main's scrollTop via a passive listener; we use a 200px
+  // threshold so it doesn't pop in/out at the slightest scroll.
+  let scrolled = $state(false);
+
+  $effect(() => {
+    const main = document.querySelector('main');
+    if (!main) return;
+    const onScroll = () => {
+      scrolled = main.scrollTop > 200;
+    };
+    onScroll();
+    main.addEventListener('scroll', onScroll, { passive: true });
+    return () => main.removeEventListener('scroll', onScroll);
+  });
+
   const activeView = $derived(VIEWS.find((v) => v.id === browseView.mode) ?? VIEWS[0]);
   const otherViews = $derived(VIEWS.filter((v) => v.id !== browseView.mode));
 
@@ -222,7 +238,9 @@
     </div>
   </div>
 
-  <!-- Back-to-top -->
+  <!-- Back-to-top — hidden when main is at the top so the cluster
+       stays minimal until the user actually scrolls. -->
+  {#if scrolled}
   <button
     type="button"
     onclick={backToTop}
@@ -235,4 +253,5 @@
       <polyline points="5 12 12 5 19 12" />
     </svg>
   </button>
+  {/if}
 </div>
