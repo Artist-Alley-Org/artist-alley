@@ -25,18 +25,21 @@
 </script>
 
 <!--
-  Admin shell: fills the available viewport (the global +layout.svelte
-  already gives <main> the `flex-1` slot under the sticky navbar). Two
-  panes:
-    * left  — sidebar nav, fixed width, sticky to the top of the
-              content viewport so the section list stays visible while
-              the right pane scrolls
-    * right — content, owns its own padding + scroll
+  Admin shell: fills <main>'s viewport area exactly (h-full) and
+  prevents <main> from scrolling — sidebar + content each own their
+  own scroll. The global layout puts the navbar above main and gives
+  <main> overflow-y-auto for normal pages; here we override by making
+  the admin root exactly the size of main, so main has nothing to
+  scroll.
 
-  The top offset `top-14` matches the sticky navbar height (3.5rem ≈
-  navbar py-3 + content). Adjust both together if the navbar resizes.
+  Panes:
+    * aside  — overflow-y-auto so the sidebar list can scroll if it
+               ever grows past viewport. Never moves with the right
+               pane's scroll.
+    * section — overflow-y-auto for the right-hand content. Always
+                scrolls independently of the sidebar.
 -->
-<div class="flex flex-1 min-h-0">
+<div class="flex h-full overflow-hidden">
   {#if !auth.ready}
     <div class="flex-1 p-6 text-fg-muted">{t('common.loading')}</div>
   {:else if !isAdmin}
@@ -62,7 +65,7 @@
       (≈7.5:1 in dark, ≈6:1 in light — AA body and AAA UI).
     -->
     <aside
-      class="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-border bg-surface-elevated px-3 py-4 md:block"
+      class="hidden h-full w-64 shrink-0 overflow-y-auto border-r border-border bg-surface-elevated px-3 py-4 md:block"
       aria-label={t('admin.title')}
     >
       <nav class="space-y-0.5 text-[15px]">
@@ -100,7 +103,7 @@
       </nav>
     </aside>
 
-    <section class="flex-1 min-w-0 px-6 py-6">
+    <section class="flex flex-1 min-w-0 flex-col overflow-y-auto px-6 py-6">
       {@render children?.()}
     </section>
   {/if}

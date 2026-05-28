@@ -78,18 +78,14 @@
   // Sign-out + theme cycling moved into UserMenu.
 </script>
 
-<div class="min-h-screen flex flex-col bg-surface text-fg">
+<div class="flex h-screen flex-col overflow-hidden bg-surface text-fg">
   {#if showChrome}
-    <!-- Sticky chrome — header pins to the top so admin / browse /
-         post-detail surfaces keep the nav anchored as the user scrolls.
-         z-30 sits above the page content but below modal scrims (z-40).
-         backdrop-blur softens the boundary against image-heavy pages.
-
-         Header uses base 1rem (16px) — the web body-text gold standard.
-         Brand stays slightly larger; everything else inherits 1rem so
-         the navbar reads at comfortable scanning distance on big
-         monitors. -->
-    <header class="sticky top-0 z-30 border-b border-border bg-surface-elevated/95 backdrop-blur supports-[backdrop-filter]:bg-surface-elevated/80 text-base">
+    <!-- Header anchors at the top of the fixed-height shell. <main>
+         is the scroll context for normal pages; admin overrides main
+         with its own h-full / overflow-hidden flex container.
+         backdrop-blur softens the boundary against image-heavy pages
+         when scroll content sits underneath. -->
+    <header class="shrink-0 border-b border-border bg-surface-elevated text-base">
       <div class="flex items-center gap-4 px-6 py-3">
         <a href="/" class="font-brand flex items-center gap-2 text-2xl tracking-tight shrink-0">
           <span class="inline-block h-6 w-6 rounded bg-accent"></span>
@@ -122,7 +118,7 @@
     </header>
   {/if}
 
-  <main class="flex-1 flex flex-col">
+  <main class="flex flex-1 flex-col overflow-y-auto">
     {@render children?.()}
   </main>
 

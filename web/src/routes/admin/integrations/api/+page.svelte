@@ -57,16 +57,19 @@
 
 <svelte:head><title>{t('admin.api_explorer.title')} — artist-alley</title></svelte:head>
 
-<header class="mb-4">
+<header class="mb-4 shrink-0">
   <h2 class="text-xl font-semibold">{t('admin.api_explorer.title')}</h2>
   <p class="mt-1 text-sm text-fg-muted">{t('admin.api_explorer.intro')}</p>
 </header>
 
-<!-- Scalar mounts inside this container. Sized to fill the admin
-     content column; let Scalar manage its own internal scroll. -->
+<!-- Scalar mounts inside this container. Fills the admin section's
+     remaining vertical space; Scalar manages its own internal scroll
+     within. The parent section (in admin/+layout.svelte) is a
+     flex-col so flex-1 + min-h-0 carve out exactly what's left after
+     the header. -->
 <div
   bind:this={container}
-  class="scalar-host h-[calc(100vh-16rem)] min-h-[40rem] overflow-hidden rounded-lg border border-border bg-surface"
+  class="scalar-host flex-1 min-h-[28rem] overflow-hidden rounded-lg border border-border bg-surface"
 ></div>
 
 <style>
