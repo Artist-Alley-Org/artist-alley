@@ -21,6 +21,21 @@
     "intro": "Long-form writing from artists and curators.",
     "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
   },
+  "browse": {
+    "footer": {
+      "label": "Browse controls",
+      "toggle": "Change view",
+      "dec_size": "Smaller cards",
+      "inc_size": "Larger cards",
+      "back_to_top": "Back to top"
+    },
+    "view": {
+      "grid": "Grid",
+      "masonry": "Masonry",
+      "thumbnail": "Thumbnail",
+      "list": "List"
+    }
+  },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
     "profile": "Profile",

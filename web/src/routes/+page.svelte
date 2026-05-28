@@ -1,10 +1,14 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import PostCard from '$components/PostCard.svelte';
   import PostModal from '$components/PostModal.svelte';
+  import BrowseFooter from '$components/BrowseFooter.svelte';
+  import { browseView } from '$stores/browseView.svelte';
+
+  onMount(() => { browseView.init(); });
 
   // Browse page — feed of Posts (per Phase 1.13.D-2's model change).
   // Each Post wraps 1+ assets; the card renders the cover. Grid mode
@@ -171,17 +175,46 @@
       </p>
     </div>
   {:else}
-    <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-      {#each items as post (post.id)}
-        <PostCard {post} />
-      {/each}
-
-      {#if loading}
-        {#each Array(8) as _, i (i)}
-          <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+    <!--
+      Layout is driven by browseView (footer switcher + localStorage).
+        grid / thumbnail → CSS grid with --cols
+        masonry          → CSS multi-column for variable heights
+        list             → vertical stack (cols=1)
+      --cols is set inline so user adjustments take effect without a
+      Tailwind rebuild.
+    -->
+    {#if browseView.mode === 'masonry'}
+      <div
+        class="posts-masonry"
+        style="column-count: {browseView.cols}"
+      >
+        {#each items as post (post.id)}
+          <div class="mb-2 break-inside-avoid">
+            <PostCard {post} />
+          </div>
         {/each}
-      {/if}
-    </div>
+        {#if loading}
+          {#each Array(8) as _, i (i)}
+            <div class="mb-2 break-inside-avoid aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+          {/each}
+        {/if}
+      </div>
+    {:else}
+      <div
+        class="posts-grid gap-2"
+        style="--cols: {browseView.cols}"
+      >
+        {#each items as post (post.id)}
+          <PostCard {post} />
+        {/each}
+
+        {#if loading}
+          {#each Array(8) as _, i (i)}
+            <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
     {#if hasMore}
       <div bind:this={sentinel} class="h-px w-full" aria-hidden="true"></div>
@@ -196,3 +229,24 @@
 {#if modalPostId}
   <PostModal postId={modalPostId} onClose={closeModal} />
 {/if}
+
+<!-- Floating browse controls: view switcher + back-to-top. Stays
+     mounted alongside the feed so the user can change layouts without
+     losing scroll position. -->
+<BrowseFooter />
+
+<style>
+  /* Grid utility driven by the --cols custom property (the
+     BrowseFooter writes this on the container). gap is on the
+     element to stay Tailwind-controllable. */
+  :global(.posts-grid) {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
+  }
+  /* Masonry uses CSS multi-column flow. column-gap mirrors the
+     posts-grid gap so the visual rhythm matches when toggling
+     between modes. */
+  :global(.posts-masonry) {
+    column-gap: 0.5rem;
+  }
+</style>
