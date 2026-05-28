@@ -57,24 +57,21 @@ jobs:
       # we'd otherwise hit.
       - name: Materialise .env for the stack
         # The self-hosted runner already runs the user's own Postgres
-        # on the default 5432, so we move the CI stack's host-port
-        # binding to a high port to avoid the "port is already
-        # allocated" failure. Inside the docker network the service
-        # name `postgres` is still reachable on 5432 — only the host
-        # bind moves.
+        # on 5432, so the CI stack uses 15452 for its host binding.
         run: |
           cp .env.example .env
           sed -i "s/^MYSQL_ROOT_PASSWORD=.*/MYSQL_ROOT_PASSWORD=ci_unused/" .env
           sed -i "s/^MYSQL_PASSWORD=.*/MYSQL_PASSWORD=ci_unused/" .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
-          # Use a non-default host port for the postgres + nginx
-          # bindings so they don't clash with anything else running
-          # on the runner.
-          {
-            echo "POSTGRES_HOST_PORT=15432"
-            echo "NGINX_HTTP_PORT=18080"
-            echo "VITE_HOST_PORT=15173"
-          } >> .env
+          echo "POSTGRES_HOST_PORT=15452" >> .env
+
+      - name: Sweep any leaked CI containers from previous runs
+        # Self-hosted runners can leak containers if a previous job
+        # was cancelled or timed out. Clear them so the new run boots
+        # from a clean slate AND frees up the 15452 port if a stale
+        # container is sitting on it.
+        run: |
+          docker compose down -v --remove-orphans || true
 
       - name: Build and start the stack
         run: docker compose up -d --build
@@ -116,6 +113,10 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=200
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v --remove-orphans || true
 
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
