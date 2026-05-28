@@ -140,10 +140,36 @@
   }
 
   body {
-    font-family:
-      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-      Roboto, 'Helvetica Neue', Arial, sans-serif;
+    /* --font-sans is set by the appearance store at boot. The fallback
+       stack is the canonical 2025 system stack so first paint reads
+       cleanly even before the store has loaded. */
+    font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system,
+      BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      sans-serif);
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
   }
+
+  /* Heading default: --font-display falls back to --font-sans then the
+     system stack. Components that want the brand display face
+     explicitly (logos, hero text) opt in via `font-brand`. */
+  h1, h2, h3 {
+    font-family: var(--font-display, var(--font-sans));
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo,
+      Consolas, 'Liberation Mono', monospace);
+  }
+}
+
+@utility font-brand {
+  font-family: var(--font-brand, var(--font-display, var(--font-sans)));
+}
+@utility font-display {
+  font-family: var(--font-display, var(--font-sans));
+}
+@utility font-mono-tabular {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace);
+  font-variant-numeric: tabular-nums;
 }

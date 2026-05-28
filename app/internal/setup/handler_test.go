@@ -655,3 +655,13 @@ func (shimImpl) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObj
 func (shimImpl) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from setup test shim")
 }
+
+func (shimImpl) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	panic("GetAppearanceConfig called from setup test shim")
+}
+func (shimImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	panic("UpdateAppearanceConfig called from setup test shim")
+}
+func (shimImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	panic("GetPublicAppearance called from setup test shim")
+}

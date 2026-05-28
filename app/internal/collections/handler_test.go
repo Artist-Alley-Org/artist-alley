@@ -708,3 +708,13 @@ func (collShim) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObj
 func (collShim) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from collections test shim")
 }
+
+func (collShim) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	panic("GetAppearanceConfig called from collections test shim")
+}
+func (collShim) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	panic("UpdateAppearanceConfig called from collections test shim")
+}
+func (collShim) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	panic("GetPublicAppearance called from collections test shim")
+}

@@ -382,6 +382,15 @@ func (s *apiServer) GetAIConfig(ctx context.Context, req openapi.GetAIConfigRequ
 func (s *apiServer) UpdateAIConfig(ctx context.Context, req openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAIConfig(ctx, req)
 }
+func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	return s.sysconfigH.GetAppearanceConfig(ctx, req)
+}
+func (s *apiServer) UpdateAppearanceConfig(ctx context.Context, req openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	return s.sysconfigH.UpdateAppearanceConfig(ctx, req)
+}
+func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	return s.sysconfigH.GetPublicAppearance(ctx, req)
+}
 
 // --- i18n ------------------------------------------------------------------
 

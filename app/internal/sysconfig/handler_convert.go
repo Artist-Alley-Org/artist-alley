@@ -360,6 +360,76 @@ func aiConfigUpdateDenial(err error401or403) openapi.UpdateAIConfigResponseObjec
 	return nil
 }
 
+// ---------------------------------------------------------------------------
+// Appearance
+// ---------------------------------------------------------------------------
+
+func appearanceToAPI(v AppearanceConfig) openapi.AppearanceConfig {
+	out := openapi.AppearanceConfig{}
+	if v.BrandFont != "" {
+		s := v.BrandFont
+		out.BrandFont = &s
+	}
+	if v.DisplayFont != "" {
+		s := v.DisplayFont
+		out.DisplayFont = &s
+	}
+	if v.BodyFont != "" {
+		s := v.BodyFont
+		out.BodyFont = &s
+	}
+	if v.MonoFont != "" {
+		s := v.MonoFont
+		out.MonoFont = &s
+	}
+	return out
+}
+
+func apiToAppearance(v openapi.AppearanceConfig) AppearanceConfig {
+	out := AppearanceConfig{}
+	if v.BrandFont != nil {
+		out.BrandFont = *v.BrandFont
+	}
+	if v.DisplayFont != nil {
+		out.DisplayFont = *v.DisplayFont
+	}
+	if v.BodyFont != nil {
+		out.BodyFont = *v.BodyFont
+	}
+	if v.MonoFont != nil {
+		out.MonoFont = *v.MonoFont
+	}
+	return out
+}
+
+func appearanceConfigDenial(err error401or403) openapi.GetAppearanceConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.GetAppearanceConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.GetAppearanceConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+func appearanceConfigUpdateDenial(err error401or403) openapi.UpdateAppearanceConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.UpdateAppearanceConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.UpdateAppearanceConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
 // fmt usage marker so the import sticks even if we later remove the
 // only fmt call (currently in handler.go).
 var _ = fmt.Sprintf

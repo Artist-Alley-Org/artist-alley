@@ -29,11 +29,12 @@ import (
 
 // Capability codes. Stable strings; seeded by migration 00023.
 const (
-	CapConfigRead  = "system.config.read"
-	CapConfigWrite = "system.config.write"
-	CapAuthWrite   = "system.auth.write"
-	CapAIWrite     = "system.ai.write"
-	CapSystemAdmin = "system.admin"
+	CapConfigRead       = "system.config.read"
+	CapConfigWrite      = "system.config.write"
+	CapAuthWrite        = "system.auth.write"
+	CapAIWrite          = "system.ai.write"
+	CapAppearanceWrite  = "system.appearance.write"
+	CapSystemAdmin      = "system.admin"
 )
 
 // Handler implements the system-config slice of the API.
@@ -231,4 +232,62 @@ func (h *Handler) UpdateAIConfig(
 		}, nil
 	}
 	return openapi.UpdateAIConfig200JSONResponse(aiToAPI(cfg)), nil
+}
+
+// ---------------------------------------------------------------------------
+// Appearance
+// ---------------------------------------------------------------------------
+//
+// Appearance has two read endpoints:
+//   * GET /admin/system/appearance     — admin-only, full settings shape
+//   * GET /appearance                  — public, used by the frontend at
+//                                        boot to pick fonts before login.
+// Only the admin write endpoint exists for mutation.
+
+func (h *Handler) GetAppearanceConfig(
+	ctx context.Context,
+	_ openapi.GetAppearanceConfigRequestObject,
+) (openapi.GetAppearanceConfigResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapConfigRead); denied != nil {
+		return appearanceConfigDenial(denied), nil
+	}
+	cfg, err := h.Store.GetAppearance(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get appearance: %w", err)
+	}
+	return openapi.GetAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+}
+
+func (h *Handler) UpdateAppearanceConfig(
+	ctx context.Context,
+	req openapi.UpdateAppearanceConfigRequestObject,
+) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapAppearanceWrite); denied != nil {
+		return appearanceConfigUpdateDenial(denied), nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateAppearanceConfig400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	cfg := apiToAppearance(*req.Body)
+	if err := h.Store.SetAppearance(ctx, cfg); err != nil {
+		return openapi.UpdateAppearanceConfig400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
+}
+
+// GetPublicAppearance is the unauthenticated read used by the frontend
+// to pick which fonts to load before the user has signed in.
+func (h *Handler) GetPublicAppearance(
+	ctx context.Context,
+	_ openapi.GetPublicAppearanceRequestObject,
+) (openapi.GetPublicAppearanceResponseObject, error) {
+	cfg, err := h.Store.GetAppearance(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get public appearance: %w", err)
+	}
+	return openapi.GetPublicAppearance200JSONResponse(appearanceToAPI(cfg)), nil
 }

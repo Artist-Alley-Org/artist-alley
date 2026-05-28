@@ -789,3 +789,13 @@ func (a authOnlyImpl) UpdateAIConfig(_ context.Context, _ openapi.UpdateAIConfig
 func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from auth test shim")
 }
+
+func (authOnlyImpl) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	panic("GetAppearanceConfig called from auth test shim")
+}
+func (authOnlyImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	panic("UpdateAppearanceConfig called from auth test shim")
+}
+func (authOnlyImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	panic("GetPublicAppearance called from auth test shim")
+}

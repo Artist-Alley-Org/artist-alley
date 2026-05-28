@@ -5,6 +5,7 @@
   import { auth } from '$stores/auth.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { upload } from '$stores/upload.svelte';
+  import { appearance } from '$stores/appearance.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import SearchBar from '$components/SearchBar.svelte';
@@ -19,6 +20,11 @@
 
   onMount(() => {
     theme.init();
+    // Appearance (admin-chosen font slots). Applies cached picks
+    // synchronously then refreshes from /appearance in the background.
+    // Public endpoint — runs even for anonymous visitors so logged-out
+    // pages get the right brand fonts.
+    appearance.init();
     // i18n: must run AFTER auth state has hydrated so user pref wins
     // over the cookie. +layout.ts has populated `auth.user` by now
     // via hydrateFrom — but caps don't ride that path, so we pull
@@ -80,7 +86,7 @@
          monitors. -->
     <header class="border-b border-border bg-surface-elevated text-base">
       <div class="flex items-center gap-4 px-6 py-3">
-        <a href="/" class="flex items-center gap-2 text-lg font-semibold tracking-tight shrink-0">
+        <a href="/" class="font-brand flex items-center gap-2 text-2xl tracking-tight shrink-0">
           <span class="inline-block h-6 w-6 rounded bg-accent"></span>
           artist-alley
         </a>

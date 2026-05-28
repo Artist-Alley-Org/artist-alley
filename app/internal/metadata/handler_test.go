@@ -713,3 +713,13 @@ func (metaShim) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObj
 func (metaShim) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from metadata test shim")
 }
+
+func (metaShim) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	panic("GetAppearanceConfig called from metadata test shim")
+}
+func (metaShim) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	panic("UpdateAppearanceConfig called from metadata test shim")
+}
+func (metaShim) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	panic("GetPublicAppearance called from metadata test shim")
+}

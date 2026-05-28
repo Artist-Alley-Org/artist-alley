@@ -433,3 +433,13 @@ func (rtOnly) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObjec
 func (rtOnly) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from resourcetype test shim")
 }
+
+func (rtOnly) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
+	panic("GetAppearanceConfig called from resourcetype test shim")
+}
+func (rtOnly) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
+	panic("UpdateAppearanceConfig called from resourcetype test shim")
+}
+func (rtOnly) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
+	panic("GetPublicAppearance called from resourcetype test shim")
+}

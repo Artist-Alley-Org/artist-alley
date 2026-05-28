@@ -2598,6 +2598,77 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/appearance:
+    get:
+      operationId: getAppearanceConfig
+      summary: Read the per-install appearance configuration
+      description: |
+        Returns the admin-chosen font slots (brand / display / body /
+        mono). Each slot holds a font catalogue ID; empty means the
+        slot uses the frontend default.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current appearance config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateAppearanceConfig
+      summary: Update the per-install appearance configuration
+      description: |
+        Persists the brand / display / body / mono font slot IDs.
+        Empty string in any field means "use the slot default".
+        Requires the `system.appearance.write` capability (auto-granted
+        to admins).
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppearanceConfig" }
+      responses:
+        "200":
+          description: Updated appearance config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /appearance:
+    get:
+      operationId: getPublicAppearance
+      summary: Read the appearance configuration for the frontend boot path
+      description: |
+        Unauthenticated read of the brand / display / body / mono font
+        slot IDs. The frontend calls this at boot to know which fonts
+        to load before the user has signed in. Returns the same shape
+        as the admin endpoint — there are no admin-only fields in
+        AppearanceConfig.
+      tags: [system]
+      security: []
+      responses:
+        "200":
+          description: Current appearance config (public)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppearanceConfig" }
+
 components:
   securitySchemes:
     cookieAuth:
@@ -2878,6 +2949,35 @@ components:
                   Per-kind opaque config (temperature defaults,
                   system prompts, rate limits, ...). Integration code
                   owns the schema.
+    AppearanceConfig:
+      type: object
+      description: |
+        Per-install brand and typography choices. Each field holds a
+        font catalogue ID (e.g. `limelight`, `inter-variable`,
+        `system-sans`); the frontend resolves the ID to an
+        `@font-face` declaration at boot. Empty string means the slot
+        uses the frontend's default.
+      properties:
+        brand_font:
+          type: string
+          description: |
+            Logo / hero font slot. Recommended for display faces
+            (Limelight, Bebas Neue, Playfair Display); body text never
+            uses this slot.
+        display_font:
+          type: string
+          description: |
+            H1–H3 heading slot. Falls back to the body font when empty.
+        body_font:
+          type: string
+          description: |
+            Body / UI text slot. Falls back to the system sans-serif
+            stack when empty.
+        mono_font:
+          type: string
+          description: |
+            Code / tabular numerics slot. Falls back to the system
+            monospace stack when empty.
     Locale:
       type: object
       description: |
