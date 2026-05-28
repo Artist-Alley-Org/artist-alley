@@ -96,12 +96,22 @@
 
   // Use the raw /file endpoint — it returns the original bytes for
   // any asset with a stored file. Variant URLs (col, thumb, etc.)
-  // 404 until the image pipeline (Phase 1.15) generates them, so we
-  // skip the fallback dance and let CSS hide broken images via
-  // alt="" + the cell's background.
+  // 404 until the image pipeline (Phase 1.15) generates them.
   function thumbUrl(post: Post): string | null {
     const id = coverAssetId(post);
     return id ? `/api/v1/assets/${id}/file` : null;
+  }
+
+  // Svelte action: hides the <img> on load failure (404, corrupt
+  // bytes, network error). Direct DOM mutation — since the action
+  // never updates and src isn't re-derived after mount, Svelte's
+  // reactive rebinding never overwrites the inline `display:none`.
+  // alt="" + display:none means broken images leave no glyph
+  // behind; the parent cell's background shows through cleanly.
+  function hideOnError(node: HTMLImageElement) {
+    const onError = () => { node.style.display = 'none'; };
+    node.addEventListener('error', onError);
+    return { destroy() { node.removeEventListener('error', onError); } };
   }
 
   function fmtDate(s: string): string {
@@ -186,16 +196,20 @@
             >
               {#if col.id === 'thumbnail'}
                 {@const url = thumbUrl(post)}
-                {#if url}
-                  <img
-                    src={url}
-                    alt=""
-                    loading="lazy"
-                    class="h-8 w-8 rounded bg-surface object-cover"
-                  />
-                {:else}
-                  <div class="h-8 w-8 rounded border border-border bg-surface"></div>
-                {/if}
+                <!-- Cell renders a sized placeholder square; the <img>
+                     sits on top and either fills it on load or hides
+                     itself on error, letting the placeholder show. -->
+                <div class="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-border bg-surface">
+                  {#if url}
+                    <img
+                      src={url}
+                      alt=""
+                      loading="lazy"
+                      class="absolute inset-0 h-full w-full object-cover"
+                      use:hideOnError
+                    />
+                  {/if}
+                </div>
               {:else if col.id === 'title'}
                 <span class="truncate text-fg" title={post.title || ''}>{post.title || t('browse.list.untitled')}</span>
               {:else if col.id === 'author'}

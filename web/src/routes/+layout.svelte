@@ -57,6 +57,7 @@
   // Active-state for the Collections nav link. Derived in script so we
   // don't run a {@const} inside <nav> (Svelte forbids that placement).
   const collectionsActive = $derived(page.url.pathname.startsWith('/collections'));
+  const reviewActive = $derived(page.url.pathname.startsWith('/review'));
 
   // Search query is the source-of-truth in the URL so a refresh or
   // shared link reproduces the same result set.
@@ -108,6 +109,12 @@
             class={`rounded-md px-3 py-1.5 text-sm font-medium ${collectionsActive ? 'bg-state-selected text-fg' : 'text-fg hover:bg-state-hover'}`}
           >
             {t('nav.collections')}
+          </a>
+          <a
+            href="/review"
+            class={`rounded-md px-3 py-1.5 text-sm font-medium ${reviewActive ? 'bg-state-selected text-fg' : 'text-fg hover:bg-state-hover'}`}
+          >
+            {t('nav.review')}
           </a>
         </nav>
 

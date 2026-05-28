@@ -69,6 +69,12 @@
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
       if (!reset && cursor) params.cursor = cursor;
+      // Feed filter + direction from the BrowseFooter store. Backend
+      // support for `filter` (team / trending / following) and `dir`
+      // lands incrementally — until then unknown params are ignored
+      // and the default newest-first feed comes back.
+      params.filter = browseView.filter;
+      params.dir = browseView.feedDir;
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },
@@ -95,10 +101,14 @@
     }
   }
 
-  // Reset and refetch every time the query changes. Covers initial
-  // mount AND subsequent navigations from the navbar search.
+  // Reset and refetch every time the query, feed filter, or feed
+  // direction changes. The read of all three inside the effect body
+  // (outside untrack) is what subscribes us to them.
   $effect(() => {
     const q = query;
+    // Touch the filter + direction so the effect re-runs on switch.
+    browseView.filter;
+    browseView.feedDir;
     untrack(() => {
       items = [];
       nextCursor = null;

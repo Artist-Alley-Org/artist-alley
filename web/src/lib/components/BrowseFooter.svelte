@@ -1,26 +1,29 @@
 <script lang="ts">
-  // Floating footer for the browse feed: view switcher + back-to-top.
+  // Floating footer for the browse feed.
   //
-  // Layout
-  //   collapsed →  [⊞ view] [↑ top]
-  //   expanded  →  [⊠ option]
-  //                [⊠ option]
-  //                [⊠ option]
-  //                [−] [⊞ active] [＋]   [↑ top]
+  // Layout (left → right)
+  //   [view switcher] [back-to-top]
+  //                       … flex spacer …
+  //                       [team | trending | latest | following]
+  //                       … flex spacer …
+  //                                                       [sort ↑↓]
   //
-  // The view switcher cycles between four modes — grid / masonry /
-  // thumbnail / list — and the size +/- knobs adjust the number of
-  // columns within the current mode. Picks persist to localStorage so
-  // the next visit honours the user's layout. Backed by `BrowseView`
-  // helpers in $lib/stores/browseView.svelte so the +page.svelte body
-  // reads the resolved column count without owning the math.
+  // View switcher cycles between four modes — grid / masonry /
+  // thumbnail / list — and the size ± knobs adjust the column count
+  // within the current mode.
   //
-  // Back-to-top scrolls the closest <main> ancestor (the global
-  // layout's overflow container) to the top. Page-level <html>/<body>
-  // scrolling doesn't apply here — the app-shell locks the viewport
-  // and only main scrolls.
+  // Filter pill is a segmented control. Setting the active segment
+  // updates browseView.filter, which +page.svelte feeds to /posts as
+  // a query param. Backend support for trending / following / team
+  // lands incrementally — until then the param is sent and the
+  // server returns the default newest-first feed.
+  //
+  // Sort toggle flips the feed direction (asc ↔ desc).
+  //
+  // Back-to-top scrolls main to 0 and only shows once the user has
+  // actually scrolled.
 
-  import { browseView, type ViewMode } from '$stores/browseView.svelte';
+  import { browseView, type ViewMode, type FeedFilter } from '$stores/browseView.svelte';
   import { t } from '$stores/lang.svelte';
 
   // ── View catalogue. Order chosen so the icons cluster naturally:
@@ -41,6 +44,11 @@
   // threshold so it doesn't pop in/out at the slightest scroll.
   let scrolled = $state(false);
 
+  // Scroll listener — only tracks scrolled position; does NOT
+  // reference `expanded` so toggling it doesn't tear down + re-run
+  // the effect (which previously closed the menu the moment it
+  // opened, because the initial onScroll() call fired with the new
+  // expanded state).
   $effect(() => {
     const main = document.querySelector('main');
     if (!main) return;
@@ -54,6 +62,16 @@
 
   const activeView = $derived(VIEWS.find((v) => v.id === browseView.mode) ?? VIEWS[0]);
   const otherViews = $derived(VIEWS.filter((v) => v.id !== browseView.mode));
+
+  // Filter pill catalogue. Order matches the user's spec: team
+  // (group-scoped), trending (engagement), latest (newest), following
+  // (subscribed users).
+  const FILTERS: Array<{ id: FeedFilter; labelKey: string }> = [
+    { id: 'team',      labelKey: 'browse.filter.team' },
+    { id: 'trending',  labelKey: 'browse.filter.trending' },
+    { id: 'latest',    labelKey: 'browse.filter.latest' },
+    { id: 'following', labelKey: 'browse.filter.following' },
+  ];
 
   function pick(mode: ViewMode) {
     browseView.setMode(mode);
@@ -93,15 +111,20 @@
 </script>
 
 <!--
-  The floating cluster sits inside the browse page so it doesn't bleed
-  into other routes. `pointer-events-none` on the outer wrapper lets
-  clicks pass through to the cards underneath; each button re-enables
-  pointer events locally.
+  The floating cluster spans the bottom of the browse viewport.
+  `pointer-events-none` on the outer wrapper lets clicks pass through
+  to the cards underneath; each button re-enables pointer events
+  locally. Three regions:
+    left    — view switcher + back-to-top
+    middle  — segmented filter (team / trending / latest / following)
+    right   — feed sort direction toggle
 -->
 <div
-  class="pointer-events-none fixed bottom-4 left-4 z-20 flex items-end gap-3"
+  class="pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3"
   aria-label={t('browse.footer.label')}
 >
+  <!-- LEFT cluster: view switcher + back-to-top -->
+  <div class="flex items-end gap-3">
   <!-- View switcher -->
   <div class="pointer-events-auto flex flex-col items-center gap-1.5">
     {#if expanded}
@@ -114,7 +137,7 @@
           onclick={() => pick(v.id)}
           title={t(v.labelKey)}
           aria-label={t(v.labelKey)}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {#if v.icon === 'grid'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -166,7 +189,7 @@
           disabled={!browseView.canDec}
           title={t('browse.footer.dec_size')}
           aria-label={t('browse.footer.dec_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="5" y1="12" x2="19" y2="12" />
@@ -227,7 +250,7 @@
           disabled={!browseView.canInc}
           title={t('browse.footer.inc_size')}
           aria-label={t('browse.footer.inc_size')}
-          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -246,7 +269,7 @@
     onclick={backToTop}
     title={t('browse.footer.back_to_top')}
     aria-label={t('browse.footer.back_to_top')}
-    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-elevated text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="19" x2="12" y2="5" />
@@ -254,4 +277,57 @@
     </svg>
   </button>
   {/if}
+  </div>
+
+  <!-- MIDDLE cluster: segmented filter (centred via flex spacers). -->
+  <div class="flex flex-1 justify-center">
+    <div
+      class="pointer-events-auto inline-flex items-center rounded-full border border-border bg-surface-elevated p-1 shadow-lg"
+      role="tablist"
+      aria-label={t('browse.filter.label')}
+    >
+      {#each FILTERS as f (f.id)}
+        {@const active = browseView.filter === f.id}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={active}
+          onclick={() => browseView.setFilter(f.id)}
+          class={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? 'bg-accent text-on-accent' : 'text-fg-muted hover:text-fg'}`}
+        >
+          {t(f.labelKey)}
+        </button>
+      {/each}
+    </div>
+  </div>
+
+  <!-- RIGHT cluster: sort direction toggle. -->
+  <button
+    type="button"
+    onclick={() => browseView.toggleFeedDir()}
+    title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
+    aria-label={t('browse.sort.toggle')}
+    class="pointer-events-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      {#if browseView.feedDir === 'desc'}
+        <!-- arrows pointing down (newest first) -->
+        <path d="M3 6h13" />
+        <path d="M3 12h9" />
+        <path d="M3 18h5" />
+        <path d="m17 8 4 4-4 4" />
+        <path d="M21 12H12" />
+      {:else}
+        <!-- arrows pointing up (oldest first) -->
+        <path d="M3 6h5" />
+        <path d="M3 12h9" />
+        <path d="M3 18h13" />
+        <path d="m17 16 4-4-4-4" />
+        <path d="M21 12H12" />
+      {/if}
+    </svg>
+    <span class="hidden sm:inline">
+      {browseView.feedDir === 'desc' ? t('browse.sort.newest') : t('browse.sort.oldest')}
+    </span>
+  </button>
 </div>

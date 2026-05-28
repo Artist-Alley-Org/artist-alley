@@ -11,6 +11,7 @@
     "gallery": "Gallery",
     "blogs": "Blogs",
     "collections": "Collections",
+    "review": "Review",
     "advanced_search": "Advanced search"
   },
   "search": {
@@ -20,6 +21,10 @@
   "blogs": {
     "intro": "Long-form writing from artists and curators.",
     "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
+  },
+  "review": {
+    "intro": "Critique requests, approval queues, and per-asset annotations.",
+    "coming_soon": "The review surface lands in a follow-up phase."
   },
   "browse": {
     "footer": {
@@ -34,6 +39,20 @@
       "masonry": "Masonry",
       "thumbnail": "Thumbnail",
       "list": "List"
+    },
+    "filter": {
+      "label": "Feed filter",
+      "team": "Team",
+      "trending": "Trending",
+      "latest": "Latest",
+      "following": "Following"
+    },
+    "sort": {
+      "toggle": "Toggle sort direction",
+      "newest_first": "Newest first",
+      "oldest_first": "Oldest first",
+      "newest": "Newest",
+      "oldest": "Oldest"
     },
     "columns": "Columns",
     "reset_columns": "Reset to default columns",

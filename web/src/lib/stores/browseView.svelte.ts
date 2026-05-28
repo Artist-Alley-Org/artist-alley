@@ -18,11 +18,14 @@ import { browser } from '$app/environment';
 
 export type ViewMode = 'grid' | 'masonry' | 'thumbnail' | 'list';
 export type SortDir = 'asc' | 'desc';
+export type FeedFilter = 'team' | 'trending' | 'latest' | 'following';
 
 const STORAGE_MODE = 'aa_browse_mode';
 const STORAGE_SIZE = 'aa_browse_size';
 const STORAGE_COLS = 'aa_browse_list_cols';
 const STORAGE_SORT = 'aa_browse_list_sort';
+const STORAGE_FILTER = 'aa_browse_filter';
+const STORAGE_FEED_DIR = 'aa_browse_feed_dir';
 
 // Size range. `size` is the user's slider position; the actual
 // rendered cols depend on view mode (see resolveCols).
@@ -133,6 +136,27 @@ function writeSort(s: { col: string; dir: SortDir }): void {
   try { localStorage.setItem(STORAGE_SORT, JSON.stringify(s)); } catch { /* */ }
 }
 
+const VALID_FILTERS: ReadonlyArray<FeedFilter> = ['team', 'trending', 'latest', 'following'];
+function readFilter(): FeedFilter {
+  if (!browser) return 'latest';
+  const v = localStorage.getItem(STORAGE_FILTER);
+  return (VALID_FILTERS as ReadonlyArray<string>).includes(v ?? '') ? (v as FeedFilter) : 'latest';
+}
+function writeFilter(v: FeedFilter): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_FILTER, v); } catch { /* */ }
+}
+
+function readFeedDir(): SortDir {
+  if (!browser) return 'desc';
+  const v = localStorage.getItem(STORAGE_FEED_DIR);
+  return v === 'asc' || v === 'desc' ? v : 'desc';
+}
+function writeFeedDir(v: SortDir): void {
+  if (!browser) return;
+  try { localStorage.setItem(STORAGE_FEED_DIR, v); } catch { /* */ }
+}
+
 class BrowseViewState {
   mode = $state<ViewMode>(DEFAULT_MODE);
   size = $state<number>(DEFAULT_SIZE);
@@ -140,6 +164,10 @@ class BrowseViewState {
   listColumns = $state<string[]>(DEFAULT_VISIBLE_COLS);
   /** Sort key + direction for the list view. */
   sort = $state<{ col: string; dir: SortDir }>({ col: 'posted_at', dir: 'desc' });
+  /** Which feed segment is active (team / trending / latest / following). */
+  filter = $state<FeedFilter>('latest');
+  /** Sort direction for the feed itself (newest-first vs oldest-first). */
+  feedDir = $state<SortDir>('desc');
   hydrated = $state(false);
 
   /** Concrete column count for the current mode + size. */
@@ -163,7 +191,19 @@ class BrowseViewState {
     this.size = readSize();
     this.listColumns = readColumns();
     this.sort = readSort();
+    this.filter = readFilter();
+    this.feedDir = readFeedDir();
     this.hydrated = true;
+  }
+
+  setFilter(v: FeedFilter): void {
+    this.filter = v;
+    writeFilter(v);
+  }
+
+  toggleFeedDir(): void {
+    this.feedDir = this.feedDir === 'asc' ? 'desc' : 'asc';
+    writeFeedDir(this.feedDir);
   }
 
   /** Resolve visible column defs in the user's chosen order. */
