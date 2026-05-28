@@ -44,8 +44,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install web deps
+        # `npm ci` would refuse to backfill optional native deps
+        # missing from the lockfile (our lockfile was generated in
+        # the alpine web container so it only pins the musl rolldown
+        # binding; ubuntu needs the gnu variant). `npm install`
+        # resolves the right binding per host without rewriting any
+        # committed file.
         working-directory: web
-        run: npm ci
+        run: npm install --no-audit --prefer-offline
 
       - name: Generate API schema (TypeScript types from openapi.yaml)
         working-directory: web
@@ -124,11 +130,12 @@ jobs:
           (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
 
       - name: Regenerate frontend TypeScript schema
+        # See frontend-check for why `npm install` not `npm ci`.
         working-directory: web
         env:
           AA_OPENAPI_SPEC: ../app/api/openapi.yaml
         run: |
-          npm ci
+          npm install --no-audit --prefer-offline
           npm run generate:api
 
       - name: Fail if any tracked file changed
