@@ -44,14 +44,19 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install web deps
-        # `npm ci` would refuse to backfill optional native deps
-        # missing from the lockfile (our lockfile was generated in
-        # the alpine web container so it only pins the musl rolldown
-        # binding; ubuntu needs the gnu variant). `npm install`
-        # resolves the right binding per host without rewriting any
-        # committed file.
+        # Our committed lockfile was generated inside the alpine web
+        # container so it only pins @rolldown/binding-linux-x64-musl.
+        # On an ubuntu runner (glibc), rolldown wants the gnu variant
+        # and neither `npm ci` nor `npm install` will backfill it
+        # because the lockfile says it's not in the tree.
+        # Per https://github.com/npm/cli/issues/4828 the documented
+        # fix is to nuke the lockfile before install so resolution
+        # picks the right per-platform optional dep. We don't commit
+        # the regenerated lockfile back.
         working-directory: web
-        run: npm install --no-audit --prefer-offline
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit
 
       - name: Generate API schema (TypeScript types from openapi.yaml)
         working-directory: web
@@ -130,12 +135,13 @@ jobs:
           (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
 
       - name: Regenerate frontend TypeScript schema
-        # See frontend-check for why `npm install` not `npm ci`.
+        # See frontend-check for why we drop the lockfile.
         working-directory: web
         env:
           AA_OPENAPI_SPEC: ../app/api/openapi.yaml
         run: |
-          npm install --no-audit --prefer-offline
+          rm -f package-lock.json
+          npm install --no-audit
           npm run generate:api
 
       - name: Fail if any tracked file changed
