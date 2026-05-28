@@ -110,3 +110,62 @@ WITH wipe AS (
 INSERT INTO asset_tag (asset_id, tag)
 SELECT $1, unnest($2::TEXT[])
 ON CONFLICT (asset_id, tag) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Preview-pipeline state transitions (Phase 1.18.A)
+-- ---------------------------------------------------------------------------
+
+-- name: MarkAssetProcessing :exec
+-- Worker claimed a preview job for this asset. Best-effort — failing
+-- here just means the admin queue view shows the asset as pending a
+-- moment longer.
+UPDATE assets
+   SET processing_status     = 'processing',
+       processing_started_at = COALESCE(processing_started_at, NOW()),
+       processing_attempts   = processing_attempts + 1,
+       updated_at            = NOW()
+ WHERE id = $1
+   AND processing_status <> 'ready';
+
+-- name: MarkAssetReady :exec
+-- All configured variants are written; flip to steady state.
+UPDATE assets
+   SET processing_status      = 'ready',
+       processing_finished_at = NOW(),
+       processing_error       = NULL,
+       updated_at             = NOW()
+ WHERE id = $1;
+
+-- name: MarkAssetFailed :exec
+-- Variant generation hit a terminal error. The admin UI surfaces
+-- processing_error and offers a retry that re-enqueues.
+UPDATE assets
+   SET processing_status      = 'failed',
+       processing_error       = sqlc.arg('processing_error')::TEXT,
+       processing_finished_at = NOW(),
+       updated_at             = NOW()
+ WHERE id = $1;
+
+-- name: ListAssetsForBackfill :many
+-- Backfill helper. Returns asset rows whose extension is in the given
+-- allowlist and whose processing_status is anything other than the
+-- in-flight states. The admin / CLI uses this to enqueue jobs for
+-- existing data.
+SELECT id, file_hash, file_extension
+  FROM assets
+ WHERE deleted_at IS NULL
+   AND file_hash  IS NOT NULL
+   AND file_extension IS NOT NULL
+   AND lower(file_extension) = ANY(sqlc.arg('extensions')::TEXT[])
+ ORDER BY COALESCE(file_size_bytes, 0) ASC, id ASC
+ LIMIT sqlc.arg('row_limit')::INTEGER;
+
+-- name: SetAssetThumbhashIfMissing :exec
+-- Only writes when the column is NULL — never overwrites an existing
+-- thumbhash so the preview worker can backfill cheaply without
+-- racing the synchronous compute in CreateAsset.
+UPDATE assets
+   SET thumbhash  = $2,
+       updated_at = NOW()
+ WHERE id = $1
+   AND thumbhash IS NULL;

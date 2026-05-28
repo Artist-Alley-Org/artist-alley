@@ -37,6 +37,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
@@ -57,12 +58,17 @@ type Handler struct {
 	Pool    *pgxpool.Pool
 	Storage *storage.Service
 	Logger  *slog.Logger
+	// Jobs is the background-job service. Used to enqueue
+	// preview-generation jobs (and, later, EXIF + AI + checksum work)
+	// after a successful asset create. Nil-safe — tests may pass nil
+	// to skip the enqueue.
+	Jobs *jobs.Service
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
-func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Storage: storageSvc, Logger: logger}
+func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service) *Handler {
+	return &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc}
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +238,45 @@ func (h *Handler) CreateAsset(
 		}
 	}
 
+	// Enqueue async variant generation. Worker picks this up within
+	// seconds and writes col/preview/screen/hires under the asset's
+	// hash. The frontend renders the thumbhash placeholder until the
+	// first variant lands and then polls with backoff. Failure to
+	// enqueue here is a soft error — the row is still 'pending' so a
+	// future backfill catches it; we don't want a queue blip to fail
+	// uploads.
+	if h.Jobs != nil && fileHashPtr != nil && processingStatus == "pending" {
+		// Photos / typical mixed uploads run at PriorityHigh so the
+		// queue is FIFO-by-arrival for the user-facing path. Big
+		// files can demote themselves once we have size at create
+		// time (the create body doesn't carry it today).
+		priority := jobs.PriorityHigh
+		payload := map[string]string{
+			"asset_id":       newID.String(),
+			"file_hash":      *fileHashPtr,
+			"file_extension": strDefault(in.FileExtension, ""),
+		}
+		if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
+			Priority: &priority,
+		}); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+				slog.String("asset_id", newID.String()),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+
 	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
+}
+
+// jobTypeForExt picks the preview-job type for a given file extension.
+// Phase 1.18.A only routes to preview.raster; vector/video/audio/etc.
+// handlers register themselves and this dispatcher grows when they do.
+func jobTypeForExt(ext *string) jobs.JobType {
+	// For now everything that comes through needsProcessing() is
+	// raster (image extensions). Video routing lands with the
+	// preview.video handler in 1.18.B.
+	return jobs.TypePreviewRaster
 }
 
 // ---------------------------------------------------------------------------

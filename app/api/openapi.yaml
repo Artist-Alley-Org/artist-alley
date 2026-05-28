@@ -313,6 +313,144 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  # ── Background-job queue (Phase 1.18.A). The same HTTP surface
+  # serves three worker shapes: in-process workers (used by the local
+  # app), external render farms (BARTS-style — claim a batch, execute
+  # on big iron, post results back), and federated peer instances
+  # that opt in to help us drain our queue.
+  /jobs/claim:
+    post:
+      operationId: claimJobs
+      summary: Atomically claim a batch of pending jobs
+      description: |
+        Pulls up to `limit` pending jobs whose `type` is in the
+        `types` allowlist (omit `types` to claim any type the caller
+        is authorised to run). Each claimed job is marked `running`
+        with a lease — the worker must call `/jobs/{id}/heartbeat`
+        before the lease expires or the watchdog will requeue it.
+
+        Auth: any authenticated caller for now. A future phase adds a
+        `worker` token kind that scopes claim/complete/fail without
+        granting any read access elsewhere.
+      tags: [jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobClaimRequest" }
+      responses:
+        "200":
+          description: Claimed jobs (possibly an empty array)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobClaimResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /jobs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getJob
+      summary: Fetch a job's current state
+      tags: [jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{id}/heartbeat:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: heartbeatJob
+      summary: Extend the lease on a running job
+      description: |
+        Workers should call this faster than the lease window
+        (default 5 minutes). Returns 409 if the lease was already
+        taken by another worker.
+      tags: [jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkerIdentity" }
+      responses:
+        "204": { description: Lease extended }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { description: Lease lost — another worker took the job }
+
+  /jobs/{id}/complete:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: completeJob
+      summary: Mark a running job as done
+      tags: [jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobCompleteRequest" }
+      responses:
+        "204": { description: Marked done }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { description: Lease lost }
+
+  /jobs/{id}/fail:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: failJob
+      summary: Record a failure on a running job
+      description: |
+        If `terminal=true` the job goes straight to status=failed and
+        will not be retried. Otherwise the job returns to `pending`
+        unless its attempts count reached `max_attempts`.
+      tags: [jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobFailRequest" }
+      responses:
+        "204": { description: Failure recorded }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { description: Lease lost }
+
   /storage/objects:
     post:
       operationId: uploadStorageObject
@@ -3738,6 +3876,118 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    # ── Background-job queue schemas (Phase 1.18.A).
+    Job:
+      type: object
+      required:
+        [id, type, status, priority, attempts, max_attempts,
+         enqueued_at]
+      properties:
+        id:               { type: string, format: uuid }
+        type:             { type: string, example: preview.raster }
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [pending, running, done, failed, cancelled]
+        priority:         { type: integer }
+        attempts:         { type: integer }
+        max_attempts:     { type: integer }
+        claimed_by:       { type: string, nullable: true }
+        claimed_at:       { type: string, format: date-time, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        last_error:       { type: string, nullable: true }
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+        scheduled_for:    { type: string, format: date-time, nullable: true }
+        enqueued_at:      { type: string, format: date-time }
+        started_at:       { type: string, format: date-time, nullable: true }
+        finished_at:      { type: string, format: date-time, nullable: true }
+    JobClaim:
+      type: object
+      required: [id, type, payload, attempts, max_attempts, lease_seconds]
+      description: |
+        Trimmed view of a Job that workers actually need to execute
+        the work. `lease_seconds` tells the worker how often to
+        heartbeat before the watchdog reclaims the job.
+      properties:
+        id:            { type: string, format: uuid }
+        type:          { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        attempts:      { type: integer }
+        max_attempts:  { type: integer }
+        lease_seconds: { type: integer }
+    JobClaimRequest:
+      type: object
+      description: |
+        Body for POST /jobs/claim. `types` is the allowlist of job
+        types this worker is willing to run; omit to claim any.
+        `worker_id` is a stable string the server records in
+        `claimed_by` for diagnostic tracing.
+      properties:
+        types:
+          type: array
+          items: { type: string }
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 25
+          default: 1
+        worker_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+    JobClaimResponse:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/JobClaim" }
+    WorkerIdentity:
+      type: object
+      required: [worker_id]
+      description: Body for heartbeat; identifies the worker holding the lease.
+      properties:
+        worker_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+    JobCompleteRequest:
+      type: object
+      required: [worker_id]
+      properties:
+        worker_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+    JobFailRequest:
+      type: object
+      required: [worker_id, error]
+      properties:
+        worker_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+        error:
+          type: string
+        terminal:
+          type: boolean
+          default: false
 
     Team:
       type: object

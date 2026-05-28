@@ -443,3 +443,20 @@ func (rtOnly) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceCo
 func (rtOnly) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("GetPublicAppearance called from resourcetype test shim")
 }
+
+// --- jobs stubs (Phase 1.18.A) -------------------------------------------
+func (rtOnly) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	panic("ClaimJobs called from test shim")
+}
+func (rtOnly) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	panic("GetJob called from test shim")
+}
+func (rtOnly) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	panic("HeartbeatJob called from test shim")
+}
+func (rtOnly) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	panic("CompleteJob called from test shim")
+}
+func (rtOnly) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	panic("FailJob called from test shim")
+}

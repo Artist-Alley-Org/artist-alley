@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,6 +22,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
@@ -29,10 +33,11 @@ import (
 // Server bundles the [http.Server] with its dependencies so the
 // run-loop can shut it down cleanly.
 type Server struct {
-	cfg    config.Config
-	logger *slog.Logger
-	pool   *pgxpool.Pool
-	srv    *http.Server
+	cfg     config.Config
+	logger  *slog.Logger
+	pool    *pgxpool.Pool
+	srv     *http.Server
+	workers *jobs.Pool // background worker pool; nil if disabled
 }
 
 // New builds a Server with routes wired up but not yet listening.
@@ -53,6 +58,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recover(logger))
+	r.Use(middleware.VariantCache)
 
 	health := &handlers.Health{
 		Pool:    pool,
@@ -80,6 +86,20 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		return nil, fmt.Errorf("cache registry: %w", err)
 	}
 
+	// Background-job infrastructure (Phase 1.18.A). The Registry is
+	// process-wide so any package that wants to add a job type
+	// registers a Handler before workers start. The Service wraps the
+	// jobs table; the Pool spins up in-process workers that drain it.
+	// External / federated workers reuse the same Service via the
+	// /jobs/claim HTTP surface.
+	jobRegistry := jobs.NewRegistry()
+	jobSvc := jobs.NewService(pool, logger, jobRegistry)
+
+	// Register the raster preview handler (Phase 1.18.A's first job
+	// type). Vector / video / audio / PDF / font / 3D handlers plug
+	// in here as they ship.
+	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
+
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
@@ -92,10 +112,20 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// authorization comes in Phase 1.3).
 		r.Use(resolver.ResolveIdentity)
 
-		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, backend.Name())
+		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 	})
+
+	// Worker pool. Sized to NumCPU/2 so we don't starve the request
+	// pipeline on small hosts. Empty Types = drain every registered
+	// type — keeping the wiring trivial for single-process installs.
+	workers := &jobs.Pool{
+		Service: jobSvc,
+		Logger:  logger,
+		Size:    workerPoolSize(cfg),
+		Types:   nil,
+	}
 
 	// Static frontend (SvelteKit + Tailwind) — mounted last so the
 	// API routes above take precedence. In dev (no embed_web tag)
@@ -118,7 +148,22 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
+		workers: workers,
 	}, nil
+}
+
+// workerPoolSize picks a sensible default — NumCPU/2 capped at 8 so a
+// 64-core host doesn't spin up a thundering herd against the DB.
+// Override knob can land on cfg in 1.18.E if any install needs it.
+func workerPoolSize(cfg config.Config) int {
+	n := runtime.NumCPU() / 2
+	if n < 1 {
+		n = 1
+	}
+	if n > 8 {
+		n = 8
+	}
+	return n
 }
 
 // buildStorageBackend picks the storage.Backend implementation named
@@ -148,6 +193,22 @@ func buildStorageBackend(cfg config.Config) (storage.Backend, error) {
 // server itself errors. On cancellation it performs a graceful shutdown
 // bounded by 15 seconds.
 func (s *Server) Run(ctx context.Context) error {
+	// Start the in-process worker pool first so jobs are draining
+	// before any HTTP traffic enqueues new work. instanceID is just
+	// the hostname for now; once federation lands it'll come from
+	// system_config (origin_server_id).
+	if s.workers != nil {
+		instanceID, _ := os.Hostname()
+		if instanceID == "" {
+			instanceID = "local"
+		}
+		s.workers.Start(ctx, instanceID)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "jobs.pool.start",
+			slog.Int("workers", s.workers.Size),
+		)
+		defer s.workers.Stop()
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

@@ -19,6 +19,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
@@ -48,14 +49,15 @@ type apiServer struct {
 	workflow     *workflow.Handler
 	sysconfigH   *sysconfig.Handler
 	i18n         *i18n.Handler
+	jobs         *jobs.HTTPHandler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, storageBackend string) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
 	return &apiServer{
 		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
 		resourceType: resourcetype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
-		assets:       assets.NewHandler(pool, storageSvc, logger),
+		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
@@ -66,7 +68,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
 		i18n:         i18n.NewHandler(logger),
+		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 	}
+}
+
+// --- jobs ------------------------------------------------------------------
+
+func (s *apiServer) ClaimJobs(ctx context.Context, req openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	return s.jobs.ClaimJobs(ctx, req)
+}
+func (s *apiServer) GetJob(ctx context.Context, req openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	return s.jobs.GetJob(ctx, req)
+}
+func (s *apiServer) HeartbeatJob(ctx context.Context, req openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	return s.jobs.HeartbeatJob(ctx, req)
+}
+func (s *apiServer) CompleteJob(ctx context.Context, req openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	return s.jobs.CompleteJob(ctx, req)
+}
+func (s *apiServer) FailJob(ctx context.Context, req openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	return s.jobs.FailJob(ctx, req)
 }
 
 // --- auth ------------------------------------------------------------------

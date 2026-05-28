@@ -53,7 +53,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	const userRef int64 = 424343
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger)
+	assetsH := assets.NewHandler(pool, svc, logger, nil)
 
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
@@ -283,7 +283,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 	const userRef int64 = 424344
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger)
+	assetsH := assets.NewHandler(pool, svc, logger, nil)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +336,7 @@ func TestCreateAssetInputValidation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger)
+	assetsH := assets.NewHandler(pool, svc, logger, nil)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -728,4 +728,21 @@ func (shimImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearance
 }
 func (shimImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("GetPublicAppearance called from assets test shim")
+}
+
+// --- jobs stubs (Phase 1.18.A) -------------------------------------------
+func (shimImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	panic("ClaimJobs called from test shim")
+}
+func (shimImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	panic("GetJob called from test shim")
+}
+func (shimImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	panic("HeartbeatJob called from test shim")
+}
+func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	panic("CompleteJob called from test shim")
+}
+func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	panic("FailJob called from test shim")
 }

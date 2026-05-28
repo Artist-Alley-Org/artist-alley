@@ -24,42 +24,46 @@ type ApiToken struct {
 }
 
 type Asset struct {
-	ID               pgtype.UUID
-	Title            string
-	Description      string
-	ResourceType     int64
-	OwnerUserRef     *int64
-	Status           string
-	FileHash         *string
-	FileExtension    *string
-	FileSizeBytes    *int64
-	Rating           *int32
-	UserRating       *float32
-	HitCount         int64
-	NewHitCount      int64
-	RequestCount     int64
-	ArchiveState     int32
-	Access           int32
-	ThumbWidth       *int32
-	ThumbHeight      *int32
-	ImageRed         *int16
-	ImageGreen       *int16
-	ImageBlue        *int16
-	ColourKey        *string
-	GeoLat           *float64
-	GeoLong          *float64
-	Country          *string
-	HasImage         bool
-	IsTranscoding    bool
-	Metadata         []byte
-	OriginServerID   pgtype.UUID
-	StateID          pgtype.UUID
-	TeamID           pgtype.UUID
-	ProcessingStatus string
-	Thumbhash        []byte
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	DeletedAt        pgtype.Timestamptz
+	ID                   pgtype.UUID
+	Title                string
+	Description          string
+	ResourceType         int64
+	OwnerUserRef         *int64
+	Status               string
+	FileHash             *string
+	FileExtension        *string
+	FileSizeBytes        *int64
+	Rating               *int32
+	UserRating           *float32
+	HitCount             int64
+	NewHitCount          int64
+	RequestCount         int64
+	ArchiveState         int32
+	Access               int32
+	ThumbWidth           *int32
+	ThumbHeight          *int32
+	ImageRed             *int16
+	ImageGreen           *int16
+	ImageBlue            *int16
+	ColourKey            *string
+	GeoLat               *float64
+	GeoLong              *float64
+	Country              *string
+	HasImage             bool
+	IsTranscoding        bool
+	Metadata             []byte
+	OriginServerID       pgtype.UUID
+	StateID              pgtype.UUID
+	TeamID               pgtype.UUID
+	ProcessingStatus     string
+	Thumbhash            []byte
+	ProcessingAttempts   int32
+	ProcessingError      *string
+	ProcessingStartedAt  pgtype.Timestamptz
+	ProcessingFinishedAt pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	DeletedAt            pgtype.Timestamptz
 }
 
 type AssetFieldValue struct {
@@ -195,6 +199,26 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz
 	CreatedByUserRef        *int64
 	UpdatedByUserRef        *int64
+}
+
+type Job struct {
+	ID             pgtype.UUID
+	Type           string
+	Payload        []byte
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	Result         []byte
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
 }
 
 type Like struct {

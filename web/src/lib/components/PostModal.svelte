@@ -575,6 +575,20 @@
     imgNaturalH = img.naturalHeight;
   }
 
+  // hires → /file fallback. The worker may not have generated the
+  // hires variant yet (just-uploaded), and some originals don't have
+  // hires at all (non-raster types). Either case: fall back to the
+  // original. Triggered once per <img>; the `dataset.fallback` flag
+  // prevents loops if /file is also broken.
+  function handleReviewImgError(e: Event) {
+    const img = e.currentTarget as HTMLImageElement;
+    if (img.dataset.fallback) return;
+    img.dataset.fallback = '1';
+    if (currentAssetId) {
+      img.src = `/api/v1/assets/${currentAssetId}/file`;
+    }
+  }
+
   function toggleStrip() {
     stripCollapsed = !stripCollapsed;
     localStorage.setItem('postModal.stripCollapsed', stripCollapsed ? '1' : '0');
@@ -610,6 +624,12 @@
 
   function colVariantUrl(assetId: string): string {
     return `/api/v1/assets/${assetId}/variants/col`;
+  }
+
+  // hires is the modal's main image — ~4K longest side at JPEG q95.
+  // Falls back to /file on 404 (worker may still be generating).
+  function hiresVariantUrl(assetId: string): string {
+    return `/api/v1/assets/${assetId}/variants/hires`;
   }
 
   // Tag click → /?tag=foo (real search semantics; ?tag is already a
@@ -835,14 +855,16 @@
                   style="background-image: url('/api/v1/assets/{currentAssetId}/file'); background-repeat: repeat; background-size: {imgNaturalW || 'auto'}px {imgNaturalH || 'auto'}px; background-position: center center;"
                 ></div>
                 <img
-                  src="/api/v1/assets/{currentAssetId}/file"
+                  src={hiresVariantUrl(currentAssetId)}
+                  onerror={handleReviewImgError}
                   alt=""
                   onload={handleReviewImgLoad}
                   class="pointer-events-none invisible absolute"
                 />
               {:else}
                 <img
-                  src="/api/v1/assets/{currentAssetId}/file"
+                  src={hiresVariantUrl(currentAssetId)}
+                  onerror={handleReviewImgError}
                   alt={currentMember?.asset?.title || post.title}
                   onload={handleReviewImgLoad}
                   draggable="false"
@@ -872,7 +894,7 @@
                     </div>
                   {:else}
                     <img
-                      src={colVariantUrl(member.asset_id)}
+                      src={hiresVariantUrl(member.asset_id)}
                       alt={member.asset?.title || post.title}
                       data-asset-id={member.asset_id}
                       loading={i === selectedIdx ? 'eager' : 'lazy'}
@@ -895,7 +917,7 @@
                 </div>
               {:else}
                 <img
-                  src={colVariantUrl(currentAssetId)}
+                  src={hiresVariantUrl(currentAssetId)}
                   alt={currentMember?.asset?.title || post.title}
                   data-asset-id={currentAssetId}
                   class="h-full w-full object-contain"
@@ -1160,10 +1182,17 @@
                 >
                   {#if member.asset?.file_hash}
                     <img
-                      src="/api/v1/assets/{member.asset_id}/file"
+                      src={colVariantUrl(member.asset_id)}
                       alt=""
                       loading="lazy"
                       class="h-full w-full object-cover"
+                      onerror={(e) => {
+                        const img = e.currentTarget as HTMLImageElement;
+                        if (!img.dataset.fallback) {
+                          img.dataset.fallback = '1';
+                          img.src = `/api/v1/assets/${member.asset_id}/file`;
+                        }
+                      }}
                     />
                   {:else}
                     <div class="flex h-full w-full items-center justify-center bg-surface text-fg-muted/40">

@@ -287,6 +287,52 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 	return items, nil
 }
 
+const listAssetsForBackfill = `-- name: ListAssetsForBackfill :many
+SELECT id, file_hash, file_extension
+  FROM assets
+ WHERE deleted_at IS NULL
+   AND file_hash  IS NOT NULL
+   AND file_extension IS NOT NULL
+   AND lower(file_extension) = ANY($1::TEXT[])
+ ORDER BY COALESCE(file_size_bytes, 0) ASC, id ASC
+ LIMIT $2::INTEGER
+`
+
+type ListAssetsForBackfillParams struct {
+	Extensions []string
+	RowLimit   int32
+}
+
+type ListAssetsForBackfillRow struct {
+	ID            pgtype.UUID
+	FileHash      *string
+	FileExtension *string
+}
+
+// Backfill helper. Returns asset rows whose extension is in the given
+// allowlist and whose processing_status is anything other than the
+// in-flight states. The admin / CLI uses this to enqueue jobs for
+// existing data.
+func (q *Queries) ListAssetsForBackfill(ctx context.Context, arg ListAssetsForBackfillParams) ([]ListAssetsForBackfillRow, error) {
+	rows, err := q.db.Query(ctx, listAssetsForBackfill, arg.Extensions, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetsForBackfillRow
+	for rows.Next() {
+		var i ListAssetsForBackfillRow
+		if err := rows.Scan(&i.ID, &i.FileHash, &i.FileExtension); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAssetsPage = `-- name: ListAssetsPage :many
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
@@ -391,6 +437,64 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 	return items, nil
 }
 
+const markAssetFailed = `-- name: MarkAssetFailed :exec
+UPDATE assets
+   SET processing_status      = 'failed',
+       processing_error       = $2::TEXT,
+       processing_finished_at = NOW(),
+       updated_at             = NOW()
+ WHERE id = $1
+`
+
+type MarkAssetFailedParams struct {
+	ID              pgtype.UUID
+	ProcessingError string
+}
+
+// Variant generation hit a terminal error. The admin UI surfaces
+// processing_error and offers a retry that re-enqueues.
+func (q *Queries) MarkAssetFailed(ctx context.Context, arg MarkAssetFailedParams) error {
+	_, err := q.db.Exec(ctx, markAssetFailed, arg.ID, arg.ProcessingError)
+	return err
+}
+
+const markAssetProcessing = `-- name: MarkAssetProcessing :exec
+
+UPDATE assets
+   SET processing_status     = 'processing',
+       processing_started_at = COALESCE(processing_started_at, NOW()),
+       processing_attempts   = processing_attempts + 1,
+       updated_at            = NOW()
+ WHERE id = $1
+   AND processing_status <> 'ready'
+`
+
+// ---------------------------------------------------------------------------
+// Preview-pipeline state transitions (Phase 1.18.A)
+// ---------------------------------------------------------------------------
+// Worker claimed a preview job for this asset. Best-effort — failing
+// here just means the admin queue view shows the asset as pending a
+// moment longer.
+func (q *Queries) MarkAssetProcessing(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markAssetProcessing, id)
+	return err
+}
+
+const markAssetReady = `-- name: MarkAssetReady :exec
+UPDATE assets
+   SET processing_status      = 'ready',
+       processing_finished_at = NOW(),
+       processing_error       = NULL,
+       updated_at             = NOW()
+ WHERE id = $1
+`
+
+// All configured variants are written; flip to steady state.
+func (q *Queries) MarkAssetReady(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markAssetReady, id)
+	return err
+}
+
 const removeAssetTag = `-- name: RemoveAssetTag :exec
 DELETE FROM asset_tag WHERE asset_id = $1 AND tag = $2
 `
@@ -423,6 +527,27 @@ type ReplaceAssetTagsParams struct {
 // AssetUpdate when the request body sends a `tags` array.
 func (q *Queries) ReplaceAssetTags(ctx context.Context, arg ReplaceAssetTagsParams) error {
 	_, err := q.db.Exec(ctx, replaceAssetTags, arg.AssetID, arg.Column2)
+	return err
+}
+
+const setAssetThumbhashIfMissing = `-- name: SetAssetThumbhashIfMissing :exec
+UPDATE assets
+   SET thumbhash  = $2,
+       updated_at = NOW()
+ WHERE id = $1
+   AND thumbhash IS NULL
+`
+
+type SetAssetThumbhashIfMissingParams struct {
+	ID        pgtype.UUID
+	Thumbhash []byte
+}
+
+// Only writes when the column is NULL — never overwrites an existing
+// thumbhash so the preview worker can backfill cheaply without
+// racing the synchronous compute in CreateAsset.
+func (q *Queries) SetAssetThumbhashIfMissing(ctx context.Context, arg SetAssetThumbhashIfMissingParams) error {
+	_, err := q.db.Exec(ctx, setAssetThumbhashIfMissing, arg.ID, arg.Thumbhash)
 	return err
 }
 

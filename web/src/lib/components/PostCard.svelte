@@ -1,24 +1,25 @@
 <script lang="ts">
-  // Grid-mode tile for a Post. Renders the cover asset (or first
-  // member when no cover is pinned) as the square-cropped tile;
-  // shows post title + author + member count on hover.
+  // Grid-mode tile for a Post. Three layers like AssetCard:
   //
-  // The masonry / thumbnail / list view modes land in Phase 1.13.E
-  // — this card is the Grid mode (default).
+  //   1. Thumbhash placeholder background (instant).
+  //   2. Col-sized JPEG variant (fades in).
+  //   3. Fallback chain: retry with backoff → /file → icon.
   //
   // Click behavior (Phase 1.13.F-1): default left-click intercepts
   // navigation and updates the URL to /?post={id}, which opens the
   // modal as an overlay over the still-mounted feed. Modifier-key
   // clicks (cmd/ctrl/shift, middle-click) fall through to the
-  // native href so users still get new-tab / new-window behavior
-  // — that path hits /posts/[id] which renders the modal standalone.
+  // native href so users still get new-tab / new-window behavior.
 
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { decodeThumbhash } from '$lib/util/thumbhash';
 
   interface AssetSummary {
     id: string;
     file_hash?: string | null;
+    thumbhash?: string | null;
   }
   interface PostMemberSummary {
     asset_id: string;
@@ -46,6 +47,9 @@
     post.cover_asset_id ??
       (post.members.length > 0 ? post.members[0].asset_id : null),
   );
+  const coverThumbhash = $derived(
+    post.members.find((m) => m.asset_id === coverAssetId)?.asset?.thumbhash ?? null,
+  );
   const hasFile = $derived(
     coverAssetId !== null &&
       post.members.some(
@@ -60,14 +64,48 @@
     coverAssetId ? `/api/v1/assets/${coverAssetId}/file` : '',
   );
 
-  let imgError = $state(false);
-  let triedFallback = $state(false);
+  let placeholder = $state<string | null>(null);
+  onMount(() => {
+    placeholder = decodeThumbhash(coverThumbhash);
+  });
+  $effect(() => {
+    placeholder = decodeThumbhash(coverThumbhash);
+  });
 
-  function handleImgError(e: Event) {
-    const img = e.currentTarget as HTMLImageElement;
-    if (!triedFallback && fullUrl) {
-      triedFallback = true;
-      img.src = fullUrl;
+  let imgSrc = $state('');
+  let imgLoaded = $state(false);
+  let attempt = $state(0);
+  let imgError = $state(false);
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const BACKOFF_MS = [800, 1500, 3000, 6000, 12000, 30000];
+
+  $effect(() => {
+    if (!colUrl || !hasFile) {
+      imgSrc = '';
+      return;
+    }
+    imgSrc = colUrl;
+    imgLoaded = false;
+    attempt = 0;
+    imgError = false;
+  });
+
+  function onLoad() {
+    imgLoaded = true;
+  }
+
+  function onError() {
+    if (retryTimer) clearTimeout(retryTimer);
+    if (attempt < BACKOFF_MS.length && imgSrc === colUrl) {
+      const wait = BACKOFF_MS[attempt];
+      attempt += 1;
+      retryTimer = setTimeout(() => {
+        imgSrc = `${colUrl}?r=${attempt}`;
+      }, wait);
+      return;
+    }
+    if (imgSrc !== fullUrl && fullUrl) {
+      imgSrc = fullUrl;
       return;
     }
     imgError = true;
@@ -101,16 +139,23 @@
   onclick={handleClick}
   class="group block overflow-hidden rounded-lg bg-surface-elevated border border-border hover:border-fg-muted/60 transition-colors"
 >
-  <div class="relative aspect-square bg-surface">
+  <div
+    class="relative aspect-square bg-surface bg-cover bg-center"
+    style={placeholder ? `background-image: url(${placeholder})` : undefined}
+  >
     {#if hasFile && !imgError}
       <img
-        src={colUrl}
+        src={imgSrc}
         alt={post.title}
         loading="lazy"
-        class="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-        onerror={handleImgError}
+        decoding="async"
+        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-200 group-hover:scale-[1.02]"
+        class:opacity-0={!imgLoaded}
+        class:opacity-100={imgLoaded}
+        onload={onLoad}
+        onerror={onError}
       />
-    {:else}
+    {:else if !placeholder}
       <div class="absolute inset-0 flex items-center justify-center text-fg-muted/40">
         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2" />
