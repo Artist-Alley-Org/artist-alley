@@ -1,33 +1,59 @@
 <script lang="ts">
-  // Collection detail. Minimal in this phase — name + description +
-  // an "Upload here" CTA. The upload modal's context prefill picks
-  // up the collection_id from the URL pattern (NavUploadButton's
-  // regex), so any drop-anywhere or button click while on this
-  // page lands the new post into THIS collection.
+  // Collection detail page.
   //
-  // A richer view (posts/resources grid, member management, ACL
-  // editor, removal) lands in the dedicated collections phase.
+  // Top section is the header bar — breadcrumbs + name + visibility
+  // badge + owner. Below it sits an action toolbar (Upload here,
+  // Share, Edit, More menu). The body is the member grid: for now
+  // the asset-level membership table (`collection_resources`) since
+  // post-level membership lands in a follow-up commit.
+  //
+  // Modals for Edit and Share live inline so closing them doesn't
+  // unmount the page.
 
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
   import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
+  import { invalidate as invalidateCovers } from '$stores/collectionCovers.svelte';
+  import AssetCard from '$components/AssetCard.svelte';
+  import Menu from '$components/Menu.svelte';
+  import EditCollectionModal from '$components/EditCollectionModal.svelte';
+  import ShareCollectionModal from '$components/ShareCollectionModal.svelte';
 
   interface Collection {
     id: string;
     name: string;
     description: string;
     visibility: string;
+    featured: boolean;
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
   }
 
+  interface MemberRow {
+    asset_id: string;
+    title: string;
+    resource_type: number;
+    file_hash: string | null;
+    sort_order: number;
+    added_at: string;
+    asset_created_at?: string | null;
+  }
+
   let collection = $state<Collection | null>(null);
+  let members = $state<MemberRow[]>([]);
   let loading = $state(true);
+  let membersLoading = $state(true);
   let error = $state<string | null>(null);
+  let editOpen = $state(false);
+  let shareOpen = $state(false);
+  let copyFeedback = $state(false);
 
   const id = $derived(page.params.id ?? '');
+  const isOwner = $derived(!!collection && !!auth.user && collection.owner_user_ref === auth.user.ref);
 
   onMount(() => {
     void load();
@@ -41,67 +67,258 @@
         params: { path: { id } },
       });
       if (apiErr || !data) {
-        error = (apiErr as { error?: string } | undefined)?.error ?? 'Collection not found.';
+        error = (apiErr as { error?: string } | undefined)?.error ?? t('collections.error_not_found');
         return;
       }
       collection = data as Collection;
     } finally {
       loading = false;
     }
+    void loadMembers();
+  }
+
+  async function loadMembers() {
+    membersLoading = true;
+    try {
+      const { data } = await api.GET('/collections/{id}/resources', {
+        params: { path: { id }, query: { limit: 200 } },
+      });
+      members = ((data?.items ?? []) as MemberRow[]);
+    } finally {
+      membersLoading = false;
+    }
   }
 
   function uploadHere() {
     upload.open_({ collectionId: id });
   }
+
+  async function copyLink() {
+    const link = `${location.origin}/collections/${id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      copyFeedback = true;
+      setTimeout(() => (copyFeedback = false), 1800);
+    } catch {
+      // No-op on clipboard failure.
+    }
+  }
+
+  function handleSaved(updated: Collection) {
+    collection = updated;
+    invalidateCovers(updated.id);
+  }
+
+  const visibilityLabel = $derived(
+    collection?.visibility === 'public'
+      ? t('collections.vis_public')
+      : collection?.visibility === 'shared'
+        ? t('collections.vis_shared')
+        : t('collections.vis_private'),
+  );
 </script>
 
 <svelte:head>
-  <title>{collection?.name ?? 'Collection'} — artist-alley</title>
+  <title>{collection?.name ?? t('collections.title')} — artist-alley</title>
 </svelte:head>
 
-<div class="mx-auto w-full max-w-5xl px-6 py-6">
+<div class="w-full px-4 py-6 sm:px-6">
   {#if loading}
-    <p class="text-fg-muted">Loading…</p>
+    <p class="text-fg-muted">{t('common.loading')}</p>
   {:else if error}
     <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
       {error}
     </p>
   {:else if collection}
-    <header class="mb-6">
-      <div class="flex items-start justify-between gap-4">
+    <!-- Header -->
+    <header class="mb-4">
+      <nav class="text-xs text-fg-muted">
+        <a href="/collections" class="hover:underline">{t('collections.title')}</a>
+        <span class="px-1">/</span>
+        <span>{collection.name}</span>
+      </nav>
+      <div class="mt-2 flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <p class="text-xs text-fg-muted">
-            <a href="/collections" class="hover:underline">Collections</a> ·
-            {collection.visibility}
-          </p>
-          <h1 class="mt-1 text-2xl font-semibold">{collection.name}</h1>
+          <div class="flex items-center gap-2">
+            <h1 class="truncate text-2xl font-semibold">{collection.name}</h1>
+            <span class="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
+              {visibilityLabel}
+            </span>
+            {#if collection.featured}
+              <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent">
+                {t('collections.featured')}
+              </span>
+            {/if}
+          </div>
           {#if collection.description}
-            <p class="mt-2 text-fg-muted">{collection.description}</p>
+            <p class="mt-2 max-w-3xl text-sm text-fg-muted">{collection.description}</p>
           {/if}
         </div>
+      </div>
+    </header>
+
+    <!-- Action toolbar -->
+    <div class="mb-6 flex flex-wrap items-center gap-2 border-b border-border pb-3">
+      <button
+        type="button"
+        disabled
+        title={t('collections.add_posts_soon')}
+        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg-muted opacity-60"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        {t('collections.add_posts')}
+      </button>
+
+      {#if isOwner}
         <button
           type="button"
           onclick={uploadHere}
-          class="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-accent/90"
+          class="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="17 8 12 3 7 8" />
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
-          Upload to this collection
+          {t('collections.upload_here')}
         </button>
-      </div>
-    </header>
+      {/if}
 
-    <!-- Contents listing is the dedicated collections phase. For
-         now, the meta is the page. -->
-    <section class="rounded-lg border border-border bg-surface-elevated p-6 text-center text-fg-muted">
-      <p class="text-sm">Contents listing lands in the collections phase.</p>
-      <p class="mt-1 text-xs">
-        For now, use "Upload to this collection" to drop new posts into it, or
-        drag files anywhere on this page.
-      </p>
-    </section>
+      <button
+        type="button"
+        onclick={() => (shareOpen = true)}
+        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        </svg>
+        {t('collections.share')}
+      </button>
+
+      <button
+        type="button"
+        onclick={copyLink}
+        class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+        {copyFeedback ? t('common.copied') : t('common.copy_link')}
+      </button>
+
+      {#if isOwner}
+        <Menu align="right">
+          {#snippet trigger({ open })}
+            <button
+              type="button"
+              aria-label={t('collections.more')}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              class="inline-flex items-center rounded-md border border-border bg-surface px-2 py-1.5 text-sm hover:bg-surface-elevated"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="19" cy="12" r="1" />
+                <circle cx="5" cy="12" r="1" />
+              </svg>
+            </button>
+          {/snippet}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => (editOpen = true)}
+            class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
+          >
+            {t('collections.edit')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled
+            class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+            title={t('collections.manage_members_soon')}
+          >
+            {t('collections.manage_members')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled
+            class="block w-full px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+            title={t('collections.set_cover_soon')}
+          >
+            {t('collections.set_cover')}
+          </button>
+          <hr class="my-1 border-border" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled
+            class="block w-full px-3 py-1.5 text-left text-sm text-danger opacity-60"
+            title={t('collections.delete_soon')}
+          >
+            {t('collections.delete')}
+          </button>
+        </Menu>
+      {/if}
+    </div>
+
+    <!-- Member grid -->
+    {#if membersLoading}
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+        {#each { length: 10 } as _, i (i)}
+          <div class="aspect-square animate-pulse rounded-lg bg-surface-elevated"></div>
+        {/each}
+      </div>
+    {:else if members.length === 0}
+      <section class="rounded-lg border border-dashed border-border bg-surface-elevated/50 px-6 py-12 text-center">
+        <p class="text-sm text-fg-muted">{t('collections.detail_empty')}</p>
+        {#if isOwner}
+          <button
+            type="button"
+            onclick={uploadHere}
+            class="mt-3 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+          >
+            {t('collections.upload_first')}
+          </button>
+        {/if}
+      </section>
+    {:else}
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+        {#each members as m (m.asset_id)}
+          <AssetCard
+            asset={{
+              id: m.asset_id,
+              title: m.title,
+              file_hash: m.file_hash,
+              resource_type: m.resource_type,
+              created_at: m.asset_created_at ?? m.added_at,
+            }}
+          />
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>
+
+{#if collection}
+  <EditCollectionModal
+    open={editOpen}
+    collection={collection}
+    onclose={() => (editOpen = false)}
+    onsaved={handleSaved}
+  />
+  <ShareCollectionModal
+    open={shareOpen}
+    collectionId={collection.id}
+    onclose={() => (shareOpen = false)}
+  />
+{/if}

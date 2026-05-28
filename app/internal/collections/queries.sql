@@ -48,13 +48,29 @@ DELETE FROM collections WHERE id = $1;
 -- name: ListCollectionsPage :many
 -- Cursor pagination on (created_at DESC, id DESC). Filters are
 -- nullable narg() so a single query covers every combo.
+--
+-- `q_name` is an optional case-insensitive substring match on the
+-- collection's display name; the handler ILIKE-escapes the input.
+--
+-- `shared_with_user` powers the "Shared" hub tab: collections the
+-- caller has an ACL grant on but doesn't own. The handler also passes
+-- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
        created_at, updated_at
-FROM collections
+FROM collections c
 WHERE (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
+  AND (sqlc.narg('exclude_owner')::BIGINT   IS NULL OR owner_user_ref <> sqlc.narg('exclude_owner')::BIGINT)
   AND (sqlc.narg('visibility')::TEXT        IS NULL OR visibility     = sqlc.narg('visibility')::TEXT)
   AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR featured       = sqlc.narg('featured')::BOOLEAN)
+  AND (sqlc.narg('q_name')::TEXT            IS NULL OR name ILIKE '%' || sqlc.narg('q_name')::TEXT || '%')
+  AND (sqlc.narg('shared_with_user')::BIGINT IS NULL OR EXISTS (
+         SELECT 1 FROM collection_acls a
+          WHERE a.collection_id = c.id
+            AND a.principal_type = 'user'
+            AND a.principal_id   = sqlc.narg('shared_with_user')::BIGINT::TEXT
+            AND (a.expires_at IS NULL OR a.expires_at > NOW())
+       ))
   AND (sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
        OR created_at < sqlc.narg('cursor_created_at')::TIMESTAMPTZ
        OR (created_at = sqlc.narg('cursor_created_at')::TIMESTAMPTZ

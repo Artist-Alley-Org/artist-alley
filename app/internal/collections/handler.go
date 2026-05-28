@@ -330,13 +330,61 @@ func (h *Handler) ListCollections(
 		visPtr = &s
 	}
 
+	// Hub `tab` is a pre-canned filter that overrides owner/visibility/
+	// featured. The mapping below mirrors the OpenAPI doc; an unknown
+	// tab falls through to the no-tab branch (treated as "all").
+	ownerPtr := req.Params.OwnerRef
+	featuredPtr := req.Params.Featured
+	var excludeOwnerPtr *int64
+	var sharedWithPtr *int64
+	caller := auth.IdentityFromContext(ctx)
+	if req.Params.Tab != nil && caller != nil {
+		switch *req.Params.Tab {
+		case openapi.ListCollectionsParamsTabMine:
+			ownerPtr = &caller.UserRef
+			visPtr = nil
+			featuredPtr = nil
+		case openapi.ListCollectionsParamsTabFeatured:
+			vis := "public"
+			visPtr = &vis
+			f := true
+			featuredPtr = &f
+			ownerPtr = nil
+		case openapi.ListCollectionsParamsTabPublic:
+			vis := "public"
+			visPtr = &vis
+			ownerPtr = nil
+			featuredPtr = nil
+		case openapi.ListCollectionsParamsTabShared:
+			sharedWithPtr = &caller.UserRef
+			excludeOwnerPtr = &caller.UserRef
+			ownerPtr = nil
+			visPtr = nil
+			featuredPtr = nil
+		case openapi.ListCollectionsParamsTabAll:
+			// no overrides — the listing already enforces visibility
+			// at the row level via the existing filter.
+		}
+	}
+
+	var qNamePtr *string
+	if req.Params.Q != nil {
+		q := strings.TrimSpace(*req.Params.Q)
+		if q != "" {
+			qNamePtr = &q
+		}
+	}
+
 	// Fetch limit+1 to know whether there's a next page without a
 	// separate COUNT.
 	fetch := limit + 1
 	rows, err := New(h.Pool).ListCollectionsPage(ctx, ListCollectionsPageParams{
-		OwnerUserRef:    req.Params.OwnerRef,
+		OwnerUserRef:    ownerPtr,
+		ExcludeOwner:    excludeOwnerPtr,
 		Visibility:      visPtr,
-		Featured:        req.Params.Featured,
+		Featured:        featuredPtr,
+		QName:           qNamePtr,
+		SharedWithUser:  sharedWithPtr,
 		CursorCreatedAt: cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
