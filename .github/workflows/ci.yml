@@ -115,7 +115,15 @@ jobs:
           '
 
       - name: svelte-check (frontend type check)
-        run: docker compose exec -T web sh -c 'cd /app && npm run check'
+        # The web image's `postinstall` skips API codegen because
+        # openapi.yaml isn't in the build context. Regenerate now
+        # against the live spec (bind-mounted at /opt/openapi.yaml)
+        # so svelte-check has up-to-date types. `npm run check`
+        # itself can spike memory; cap the V8 heap so a runaway
+        # tsserver child can't get OOM-killed silently.
+        run: |
+          docker compose exec -T web sh -c 'cd /app && AA_OPENAPI_SPEC=/opt/openapi.yaml npm run generate:api'
+          docker compose exec -T -e NODE_OPTIONS='--max-old-space-size=4096' web sh -c 'cd /app && npm run check'
 
       - name: Run artist-alley integration tests (PHP + Go)
         run: ./scripts/test.sh
