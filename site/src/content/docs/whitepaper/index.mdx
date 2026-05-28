@@ -24,9 +24,8 @@ to work in, and durable for studios to keep running for years.
 
 ## What we explicitly aren't
 
-- A general-purpose DAM. The legacy ResourceSpace bits we forked from
-  are being progressively replaced; see ADR 0003 on the strangler-fig
-  approach.
+- A general-purpose DAM. We're shaped specifically for studio art-review
+  workflows.
 - A pipeline integration platform. We're a destination for finished and
   in-progress art, not a Perforce/ShotGrid replacement.
 - A SaaS product. Self-hosted by design.
@@ -37,7 +36,7 @@ to work in, and durable for studios to keep running for years.
   `go:embed`.
 - **Three production containers.** `nginx`, `app`, `postgres`. That's it.
 - **Postgres-only.** No MySQL adjunct. See ADR 0005.
-- **Open source.** BSD-3-Clause. See ADR 0002.
+- **Open source.** BSD-3-Clause.
 
 Read on:
 

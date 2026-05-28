@@ -42,15 +42,13 @@ handlers will fail to compile if the Go signatures drift from the spec.
 The rendered reference lives at [API reference](/api/reference/) and is
 re-rendered on every push.
 
-## Strangler-fig migration
+## Schema
 
-The repo is a hard fork of ResourceSpace (see ADR 0001). New code under
-`/app/` and `/web/` progressively replaces the legacy PHP under `/api/`,
-`/include/`, etc., following the strangler-fig pattern (ADR 0003).
-
-The Postgres schema for the Go side is declared in
+The Postgres schema is declared in
 [`app/schema.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/schema.sql)
-and surfaced here at [Database schema](/reference/schema/).
+and surfaced here at [Database schema](/reference/schema/). The schema is
+the source of truth — `sqlc` type-checks Go queries against it at build
+time, so type drift gets caught before code ships.
 
 ## Why these choices
 
