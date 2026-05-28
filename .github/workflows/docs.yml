@@ -49,9 +49,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up pnpm
+        # Version is read from site/package.json's "packageManager"
+        # field — pnpm/action-setup@v4 rejects passing both `version:`
+        # and a packageManager declaration at once.
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          package_json_file: site/package.json
 
       - name: Set up Node
         uses: actions/setup-node@v4

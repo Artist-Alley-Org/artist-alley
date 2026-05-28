@@ -28,6 +28,12 @@ const config = {
     // `export const prerender = false` in their +page.ts.
     prerender: {
       handleHttpError: 'warn',
+      // Dynamic routes (/posts/[id], /admin/[section], /account/[stub],
+      // /collections/[id]) can't be crawled at build time because the
+      // shell can't enumerate ids without auth. Skip them — the SPA
+      // fallback serves index.html at runtime and the client router
+      // resolves the dynamic segment.
+      handleUnseenRoutes: 'ignore',
     },
 
     alias: {
