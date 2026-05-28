@@ -81,7 +81,10 @@ jobs:
           docker compose down -v --remove-orphans || true
 
       - name: Build and start the stack
-        run: docker compose up -d --build
+        # --profile web pulls in the Node/Vite container so the
+        # svelte-check step below has something to exec into. Local
+        # backend-only iterations omit it; CI needs the full surface.
+        run: docker compose --profile web up -d --build
 
       - name: Wait for postgres to be ready
         run: |

@@ -60,3 +60,11 @@ barts_grouping/
 barts_annotations/
 .playwright-mcp/
 Reference_Plugins/
+
+# --- Local demo seeders (reference an external dataset; kept off main) ---
+scripts/seed-demo-studio.py
+scripts/seed-demo-pokemon-shuffle.sql
+collections-*.png
+project-*.png
+browse-*.png
+post-*.png
