@@ -1,0 +1,56 @@
+---
+title: artist-alley
+description: Self-hosted art review and archival tool for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.
+template: splash
+hero:
+  tagline: Self-hosted art review and archival for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Read the whitepaper
+      link: /whitepaper/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/mscrnt/artist-alley
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## Three pillars
+
+<CardGrid stagger>
+  <Card title="Artist-first" icon="pencil">
+    Upload-and-forget. Metadata happens automatically where possible.
+    UX target: ArtStation-level simplicity.
+  </Card>
+  <Card title="Review mode" icon="approve-check">
+    Tracks unreviewed assets since your last session, remembers your spot,
+    supports async commenting and live presenter sessions over SSE.
+  </Card>
+  <Card title="Three-click rule" icon="rocket">
+    Any common action reachable in three clicks or fewer. Friction is
+    the enemy of an archive that gets used.
+  </Card>
+</CardGrid>
+
+## Architecture in one diagram
+
+```mermaid
+flowchart LR
+  artist[Artist / Reviewer]
+  artist -->|HTTPS| nginx[nginx]
+  nginx --> app[(Go binary<br/>embeds SvelteKit SPA)]
+  app --> pg[(Postgres + pgvector)]
+```
+
+Three production containers, no microservices, no message bus, no sidecars.
+See the [whitepaper](/whitepaper/) for the full design, or jump straight to
+the [API reference](/api/reference/).
+
+:::note[Pre-MVP]
+Status: pre-MVP, active development. The architecture is settled; the
+feature set is still landing. Not production-ready.
+:::

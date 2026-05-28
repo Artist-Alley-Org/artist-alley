@@ -1,0 +1,47 @@
+---
+title: Why artist-alley
+description: The problem we're solving and the principles that shape the product.
+---
+
+## The problem
+
+Game studios review art and archive it across Slack, Miro, Teams, and shared
+drives. Knowledge fragments across tools. Review is inconsistent. Assets
+become hard to find a few years later. No good self-hosted tool fills the
+gap — the open-source DAM space optimizes for archivists, not artists, and
+the polished review tools are all SaaS-only and not aimed at game studios.
+
+artist-alley exists to be the missing piece: a self-hosted art-review and
+archival tool that's pleasant for artists to upload to, fast for reviewers
+to work in, and durable for studios to keep running for years.
+
+## Audience
+
+- **Artists** — upload work, see review notes, version their iterations.
+- **Reviewers** — work through unreviewed assets fast, leave async
+  feedback, or run live presenter sessions.
+- **Operators** — stand up a single binary, point it at Postgres, done.
+
+## What we explicitly aren't
+
+- A general-purpose DAM. The legacy ResourceSpace bits we forked from
+  are being progressively replaced; see ADR 0003 on the strangler-fig
+  approach.
+- A pipeline integration platform. We're a destination for finished and
+  in-progress art, not a Perforce/ShotGrid replacement.
+- A SaaS product. Self-hosted by design.
+
+## Non-negotiables
+
+- **Single-binary deploy.** One Go binary. SvelteKit SPA is embedded via
+  `go:embed`.
+- **Three production containers.** `nginx`, `app`, `postgres`. That's it.
+- **Postgres-only.** No MySQL adjunct. See ADR 0005.
+- **Open source.** BSD-3-Clause. See ADR 0002.
+
+Read on:
+
+- [Architecture](/whitepaper/architecture/) — how the binary, database,
+  and frontend fit together.
+- [Design pillars](/whitepaper/pillars/) — the principles we use to make
+  product decisions.

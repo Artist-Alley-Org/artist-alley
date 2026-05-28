@@ -1,0 +1,28 @@
+---
+title: For operators
+description: Production deployment, configuration, and operational notes.
+---
+
+:::caution[Pre-MVP]
+There is no stable release yet. Production deployment guidance will land
+once we ship a tagged release artifact.
+:::
+
+The shape we're targeting:
+
+- **Three production containers.** `nginx` + `app` (Go) + `postgres`.
+  No microservices, no message bus, no sidecars.
+- **Single binary.** The Go binary embeds the SvelteKit SPA via
+  `go:embed`. Updating the app is a binary swap.
+- **Postgres-only.** No MySQL, no Redis. pgvector is the only extension.
+  See [ADR 0005](/adr/0005-postgres-only-no-mysql/).
+- **Configuration via env.** No XML, no YAML soup. Everything via
+  environment variables; sensible defaults for development.
+- **Backup is `pg_dump` + the filestore.** Two things to back up. No
+  proprietary export format.
+
+Operator-relevant ADRs:
+
+- [Postgres-only, no MySQL](/adr/0005-postgres-only-no-mysql/)
+- [Adjunct Postgres data model](/adr/0004-adjunct-postgres-data-model/)
+- [BSD-3-Clause license](/adr/0002-bsd-3-clause-license/)
