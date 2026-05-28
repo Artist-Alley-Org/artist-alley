@@ -1,20 +1,52 @@
 ---
 title: Getting started
-description: Stand up artist-alley locally for development or a small studio trial.
+description: Pick a path — try it, install it, or hack on it.
 ---
 
-:::caution[Pre-MVP]
-artist-alley is in active development. These steps reflect the current
-dev layout in the repo, not a stable shipping artifact.
-:::
+artist-alley is shipped as a single Go binary with the SvelteKit
+frontend embedded. There are three common starting points; pick the
+one that matches what you're doing.
 
-## Prerequisites
+## I want to try it
+
+The fastest path is the published Docker image. Bring your own
+Postgres (or run one in the same compose stack):
+
+```bash
+docker run -d --name artist-alley \
+  -p 8080:8080 \
+  -e AA_DB_HOST=postgres.local \
+  -e AA_DB_PASSWORD=secret \
+  -e AA_SCRAMBLE_KEY=$(openssl rand -hex 32) \
+  -v artist-alley-storage:/var/lib/aa-storage \
+  ghcr.io/mscrnt/artist-alley:latest
+```
+
+Open [http://localhost:8080](http://localhost:8080) and walk through
+first-run setup. The full install matrix (Docker Compose, `.deb`,
+`.rpm`, static binary, Homebrew) lives in the
+[Install guide](/guides/install/).
+
+## I want to install it for a team
+
+Read the [Install guide](/guides/install/) — pick `.deb` or `.rpm`
+for a real server, or run the published Docker image behind your
+existing reverse proxy. The [For operators](/guides/for-operators/)
+guide covers Postgres setup, storage backends (filesystem or any
+S3-compatible bucket), backups, and updates.
+
+## I want to hack on the code
+
+Local development uses Docker Compose so the stack you run is the
+stack CI exercises — no "works on my machine" drift.
+
+### Prerequisites
 
 - Docker + Docker Compose
-- ~10 GB of disk for postgres + a starter filestore
-- A free TCP port for the web UI
+- ~10 GB of disk for Postgres + a starter filestore
+- A free TCP port for the web UI (default 8080)
 
-## Local development
+### Boot the stack
 
 ```bash
 git clone git@github.com:mscrnt/artist-alley.git
@@ -23,11 +55,12 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The CI workflow uses the same compose stack — what passes in CI is what
-runs on your machine. See
-[`.github/workflows/ci.yml`](https://github.com/mscrnt/artist-alley/blob/main/.github/workflows/ci.yml).
+Frontend (Vite dev server with HMR) lives on `:5173`; the Go server
+talks to it via nginx on `:8080`. Edit Svelte files in `web/src/` and
+they hot-reload; edit Go files and run `docker compose up -d --build`
+to rebuild the app container.
 
-## Verifying the stack
+### Verifying the stack
 
 ```bash
 # Postgres ready:
@@ -35,14 +68,18 @@ docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley
 
 # Hit the Go health endpoint:
 curl -s http://localhost:8080/healthz
+
+# Run the integration tests:
+./scripts/test.sh
 ```
 
-## What's next
+The same `./scripts/test.sh` runs in CI — see
+[`.github/workflows/ci.yml`](https://github.com/mscrnt/artist-alley/blob/main/.github/workflows/ci.yml).
 
-- Read the [API reference](/api/reference/) to see the surface you can talk to.
-- Read the [for-artists guide](/guides/for-artists/) for the upload flow.
-- Read the [for-operators guide](/guides/for-operators/) for production
-  deployment thinking.
+## What to read next
 
-_This page will get fleshed out as the binary stabilises and we publish
-release artifacts._
+- [API reference](/api/reference/) — every endpoint with request /
+  response shapes.
+- [Architecture](/whitepaper/architecture/) — how the binary,
+  database, and frontend fit together.
+- [Architecture Decisions](/adr/) — the why behind the big calls.

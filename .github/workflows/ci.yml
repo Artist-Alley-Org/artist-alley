@@ -56,14 +56,21 @@ jobs:
       # and local is the cause of half the "works on my machine" bugs
       # we'd otherwise hit.
       - name: Materialise .env for the stack
-        # The self-hosted runner already runs the user's own Postgres
-        # on 5432, so the CI stack uses 15452 for its host binding.
+        # The self-hosted runner already runs the user's own services
+        # on the default ports (postgres 5432, nginx 8080, vite 5173),
+        # so the CI stack uses high ports for every host binding.
         run: |
           cp .env.example .env
           sed -i "s/^MYSQL_ROOT_PASSWORD=.*/MYSQL_ROOT_PASSWORD=ci_unused/" .env
           sed -i "s/^MYSQL_PASSWORD=.*/MYSQL_PASSWORD=ci_unused/" .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
-          echo "POSTGRES_HOST_PORT=15452" >> .env
+          {
+            echo "POSTGRES_HOST_PORT=15452"
+            echo "NGINX_HTTP_PORT=18188"
+            echo "VITE_HOST_PORT=15173"
+            echo "MINIO_API_PORT=19100"
+            echo "MINIO_CONSOLE_PORT=19101"
+          } >> .env
 
       - name: Sweep any leaked CI containers from previous runs
         # Self-hosted runners can leak containers if a previous job

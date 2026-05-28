@@ -1,20 +1,21 @@
 ---
 title: Reference
-description: Auto-generated reference material — API surface, database schema, architecture decisions.
+description: Auto-generated reference material — API surface, database schema, install config, architecture decisions.
 ---
 
-Everything on these pages is generated at build time from the source of
-truth in the repo. If something looks wrong, the fix is in the code or
-the spec, not here.
+Everything on these pages is generated at build time from the source
+of truth in the repo. If something looks wrong, the fix is in the
+code or the spec, not here.
 
 ## Sources
 
-- **API surface** → [`app/api/openapi.yaml`](https://github.com/mscrnt/artist-alley/blob/main/app/api/openapi.yaml)
-  &rarr; [API reference](/api/reference/)
-- **Database schema** → [`app/schema.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/schema.sql)
-  &rarr; [Database schema](/reference/schema/)
-- **Architecture decisions** → [`docs/adr/*.md`](https://github.com/mscrnt/artist-alley/tree/main/docs/adr)
-  &rarr; sidebar group "Architecture Decisions"
+| Page                                | Generated from |
+|-------------------------------------|----------------|
+| [API reference](/api/reference/)    | [`app/api/openapi.yaml`](https://github.com/mscrnt/artist-alley/blob/main/app/api/openapi.yaml) — `oapi-codegen` types + `starlight-openapi` rendering |
+| [Database schema](/reference/schema/) | [`app/internal/db/migrations/*.sql`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/db/migrations) — parsed by `generate-schema-docs.mjs` |
+| Install config table on [Install guide](/guides/install/#configuration-reference) | [`docs/install/config/aa.env.example`](https://github.com/mscrnt/artist-alley/blob/main/docs/install/config/aa.env.example) — parsed by `sync-install-config.mjs` |
+| [Roadmap](/roadmap/)                | [`docs/roadmap.md`](https://github.com/mscrnt/artist-alley/blob/main/docs/roadmap.md) — synced by `sync-roadmap.mjs` |
+| Architecture Decisions (sidebar)    | [`docs/adr/*.md`](https://github.com/mscrnt/artist-alley/tree/main/docs/adr) — copied by `sync-adrs.mjs` |
 
 ## Regenerating
 
@@ -26,11 +27,20 @@ pnpm install
 pnpm dev
 ```
 
-The `prebuild` step in `site/package.json` runs:
+The `prebuild` step in `site/package.json` runs these in order:
 
 1. `scripts/sync-adrs.mjs` — copies `docs/adr/*.md` into the docs
    collection with frontmatter inferred from each file's h1.
 2. `scripts/sync-openapi.mjs` — copies `app/api/openapi.yaml` to
-   `public/openapi.yaml` so the `starlight-openapi` plugin can read it.
-3. `scripts/generate-schema-docs.mjs` — parses `app/schema.sql` and
+   `public/openapi.yaml` so the `starlight-openapi` plugin can read
+   it.
+3. `scripts/generate-schema-docs.mjs` — parses the migrations and
    emits a single `reference/schema.mdx` page.
+4. `scripts/sync-install-config.mjs` — parses
+   `docs/install/config/aa.env.example` into a Starlight partial that
+   the install guide imports.
+5. `scripts/sync-roadmap.mjs` — copies `docs/roadmap.md` into the
+   site as a top-level page.
+
+Adding a new auto-sync is one more `node scripts/whatever.mjs &&`
+in the `prebuild` chain.

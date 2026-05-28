@@ -7,10 +7,14 @@ hero:
   image:
     file: ../../assets/logo.svg
   actions:
-    - text: Read the whitepaper
-      link: /whitepaper/
+    - text: Install
+      link: /guides/install/
       icon: right-arrow
       variant: primary
+    - text: Read the whitepaper
+      link: /whitepaper/
+      icon: open-book
+      variant: secondary
     - text: View on GitHub
       link: https://github.com/mscrnt/artist-alley
       icon: external
@@ -23,16 +27,20 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid stagger>
   <Card title="Artist-first" icon="pencil">
-    Upload-and-forget. Metadata happens automatically where possible.
-    UX target: ArtStation-level simplicity.
+    Upload-and-forget. Drag a folder onto the page, files queue and
+    push in the background, metadata is inferred where possible.
+    Posts wrap one or many assets; the cover thumbnail is yours
+    to pick.
   </Card>
-  <Card title="Review mode" icon="approve-check">
-    Tracks unreviewed assets since your last session, remembers your spot,
-    supports async commenting and live presenter sessions over SSE.
+  <Card title="Review-grade" icon="approve-check">
+    Per-post detail modal with inline comments + likes, multi-asset
+    scroll-through, dedicated review canvas with zoom/pan/tile, and
+    workflow states the team controls — not the tool.
   </Card>
   <Card title="Three-click rule" icon="rocket">
-    Any common action reachable in three clicks or fewer. Friction is
-    the enemy of an archive that gets used.
+    Any common action — upload, find, comment, approve — reachable in
+    three clicks or fewer. Friction is the enemy of an archive that
+    gets used.
   </Card>
 </CardGrid>
 
@@ -43,14 +51,50 @@ flowchart LR
   artist[Artist / Reviewer]
   artist -->|HTTPS| nginx[nginx]
   nginx --> app[(Go binary<br/>embeds SvelteKit SPA)]
-  app --> pg[(Postgres + pgvector)]
+  app --> pg[(Postgres)]
+  app --> blob[(Filesystem or S3)]
 ```
 
-Three production containers, no microservices, no message bus, no sidecars.
-See the [whitepaper](/whitepaper/) for the full design, or jump straight to
-the [API reference](/api/reference/).
+One binary. One database. One storage volume (or an S3 bucket).
+No microservices, no message bus, no sidecars. Configure it via
+environment variables, drop the binary on a host, point it at
+Postgres — done.
 
-:::note[Pre-MVP]
-Status: pre-MVP, active development. The architecture is settled; the
-feature set is still landing. Not production-ready.
-:::
+## Ship channels
+
+artist-alley ships through every channel a self-hosted server can
+land on. From any release tag (`vX.Y.Z`):
+
+<CardGrid>
+  <Card title="Docker" icon="seti:docker">
+    `ghcr.io/mscrnt/artist-alley:latest` (mirrored to Docker Hub),
+    multi-arch (amd64 + arm64), Sigstore-signed.
+  </Card>
+  <Card title="apt / dnf" icon="linux">
+    `.deb` and `.rpm` packages with a hardened systemd unit and
+    `/etc/artist-alley/aa.env` config template. Postinstall walks
+    you through the next steps.
+  </Card>
+  <Card title="Static binary" icon="document">
+    `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`
+    on the GitHub Releases page with SHA256SUMS + SBOM.
+  </Card>
+  <Card title="Homebrew" icon="apple">
+    `brew install mscrnt/tap/artist-alley` for macOS dev installs.
+  </Card>
+</CardGrid>
+
+Full instructions: **[Installing artist-alley](/guides/install/)**.
+
+## Where to next
+
+- **Operators** — [Install](/guides/install/) walks you through every
+  channel; [For operators](/guides/for-operators/) covers Postgres,
+  storage, backup, updates, and federation.
+- **Artists** — [For artists](/guides/for-artists/) covers upload,
+  posts, tags, and how versioning works.
+- **Reviewers** — [For reviewers](/guides/for-reviewers/) covers the
+  post detail modal, review canvas, comments, and likes.
+- **Builders** — [Whitepaper](/whitepaper/) for design intent,
+  [Architecture](/whitepaper/architecture/) for the codebase shape,
+  [API reference](/api/reference/) for the wire.

@@ -43,6 +43,7 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Overview", link: "/" },
+        { label: "Roadmap", link: "/roadmap/", badge: { text: "WIP", variant: "tip" } },
         {
           label: "Whitepaper",
           items: [
