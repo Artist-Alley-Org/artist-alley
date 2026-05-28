@@ -3,8 +3,23 @@
     "upload": "Upload",
     "search_placeholder": "Search assets…",
     "messages": "Messages",
+    "notifications": "Notifications",
+    "notifications_coming_soon": "Notifications — coming soon",
     "open_user_menu": "Open user menu",
-    "open_admin_menu": "Open admin menu"
+    "open_admin_menu": "Open admin menu",
+    "explore": "Explore",
+    "gallery": "Gallery",
+    "blogs": "Blogs",
+    "collections": "Collections",
+    "advanced_search": "Advanced search"
+  },
+  "search": {
+    "intro": "Build a precise query — filter by tag, resource type, field value, date range, and more.",
+    "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search."
+  },
+  "blogs": {
+    "intro": "Long-form writing from artists and curators.",
+    "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
   },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
