@@ -26,6 +26,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -102,17 +103,31 @@ func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
 // modelExts mirrors the dispatcher map in assets.handler.go.
 //
-// Native Blender importers cover the bulk of the list. mview is the
-// odd one: Blender can't read it, so we convert the archive to glTF
-// binary in-process via the Go mview/glb decoder before staging it
-// for the turntable render. The browser viewer also has a live
+// Native Blender importers cover the bulk of the list. mview goes
+// through the in-process Go mview/glb decoder; format3dExts (MD2 /
+// MD3 / MDL, see below) go through our own native Go importers
+// before the turntable. The browser viewer also has a live
 // marmoset.js path as a fallback for formats this decoder doesn't
 // yet cover (animated rigs, skinning).
 var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
 	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
+	"md2": {}, "md3": {}, "mdl": {},
 }
+
+// format3dExts is the set of formats served by the in-tree
+// preview/format3d Go importer. We convert these to .glb up-front
+// and then fall through to the standard Blender turntable, same
+// dance .mview already does. Keep in sync with the per-format
+// Decode* funcs in the format3d package.
+var format3dExts = map[string]format3dDecoder{
+	"md2": format3d.DecodeMD2,
+	"md3": format3d.DecodeMD3,
+	"mdl": format3d.DecodeMDL,
+}
+
+type format3dDecoder func(io.Reader) (*format3d.Model, error)
 
 func isModelExt(ext string) bool {
 	_, ok := modelExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
@@ -176,6 +191,27 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// A conversion failure is non-fatal: the safety-net thumbnail
 	// already populated the raster ladder, marmoset.js still serves
 	// the live view, and we just skip the heavy Blender frames.
+	// format3d (MD2 / MD3 / MDL) — in-tree Go importer. Same shape
+	// as .mview: convert to .glb in the workdir, swap sourcePath, fall
+	// through to the standard Blender turntable. Soft-fail: a parse
+	// failure logs and skips the turntable (raster ladder still
+	// works since the source is just bytes).
+	if dec, ok := format3dExts[strings.ToLower(strings.TrimPrefix(p.FileExtension, "."))]; ok {
+		glbPath, err := h.convertFormat3D(jobCtx, work.sourcePath, dec)
+		if err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.format3d_convert_failed",
+				slog.String("asset_id", p.AssetID.String()),
+				slog.String("ext", p.FileExtension),
+				slog.String("err", err.Error()))
+			h.markReady(jobCtx, p.AssetID)
+			return json.Marshal(ModelResult{
+				FrameCount: 0,
+				WorkS:      time.Since(started).Seconds(),
+			})
+		}
+		work.sourcePath = glbPath
+	}
+
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
 		h.extractMviewThumbBestEffort(jobCtx, p.FileHash, work.sourcePath)
 		glbPath, err := h.convertMviewToGLB(jobCtx, work.sourcePath)
@@ -358,6 +394,42 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_fan_failed",
 			slog.String("err", err.Error()))
 	}
+}
+
+// convertFormat3D runs an in-tree format3d decoder against the
+// staged source file and writes the resulting glTF binary next to
+// it. Returns the .glb path so the caller can swap work.sourcePath
+// before the standard Blender turntable runs.
+//
+// Streams the source through the decoder rather than reading the
+// whole file into memory, then asks format3d.WriteGLB to encode
+// directly to a file handle. Peak memory ≈ source size + decoded
+// mesh, well under the worker's MaxSourceBytes cap.
+func (h *ModelHandler) convertFormat3D(ctx context.Context, src string, dec format3dDecoder) (string, error) {
+	_ = ctx // dec is pure CPU; ctx cancel checked at the caller's frame
+	in, err := os.Open(src)
+	if err != nil {
+		return "", fmt.Errorf("open: %w", err)
+	}
+	defer in.Close()
+	model, err := dec(in)
+	if err != nil {
+		return "", fmt.Errorf("decode: %w", err)
+	}
+	glbPath := strings.TrimSuffix(src, filepath.Ext(src)) + ".glb"
+	out, err := os.Create(glbPath)
+	if err != nil {
+		return "", fmt.Errorf("create glb: %w", err)
+	}
+	if err := format3d.WriteGLB(model, out); err != nil {
+		_ = out.Close()
+		_ = os.Remove(glbPath)
+		return "", fmt.Errorf("write glb: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return "", fmt.Errorf("close glb: %w", err)
+	}
+	return glbPath, nil
 }
 
 // convertMviewToGLB runs the in-process Marmoset → glTF binary

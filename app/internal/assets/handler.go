@@ -1034,6 +1034,7 @@ var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
 	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
+	"md2": {}, "md3": {}, "mdl": {},
 }
 
 // resourceTypeFor returns the canonical resource_type ref for a file
