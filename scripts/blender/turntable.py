@@ -59,6 +59,13 @@ def parse_args() -> argparse.Namespace:
                     help="poster render resolution (square)")
     ap.add_argument("--frames", type=int, default=36)
     ap.add_argument("--res", type=int, default=512)
+    ap.add_argument("--engine", default="cycles",
+                    choices=("cycles", "workbench"),
+                    help="render engine for the turntable + reference views. "
+                         "Cycles = full PBR (slow, photoreal). Workbench = "
+                         "viewport-style matcap (fast, consistent across "
+                         "untextured formats). Poster pass always uses "
+                         "workbench regardless of this setting.")
     ap.add_argument("--samples", type=int, default=32,
                     help="cycles samples per frame (lower = faster, noisier)")
     return ap.parse_args(argv)
@@ -378,21 +385,23 @@ def install_lights(target: Vector, dimensions: Vector) -> None:
         o.rotation_quaternion = direction.to_track_quat("-Z", "Y")
         bpy.context.scene.collection.objects.link(o)
 
-    # Energies reduced ~45% from the original v1 levels — the previous
-    # numbers were tuned against AgX tone-mapping, but we render under
-    # the "Standard" linear view transform so highlights weren't being
-    # rolled off and the final col looked over-exposed.
-    add("key",  (1.0, 0.98, 0.94), 320, ( 2.5, -1.5,  2.0))
-    add("fill", (0.75, 0.85, 1.0), 110, (-2.5, -0.5,  0.5))
-    add("rim",  (1.0, 1.0, 1.0),   220, ( 0.0,  2.0,  2.5))
+    # Aim for a soft matcap-style read like the workbench poster:
+    # weak directional lights + strong neutral ambient so the surface
+    # shape carries through gradients instead of harsh specular bands.
+    # Direct lights cut ~70% from the v1 levels; the world background
+    # is now the dominant illuminator (3× the v1 strength) at a
+    # mid-grey so the model sits in even soft light.
+    add("key",  (1.0, 0.98, 0.94), 180, ( 2.5, -1.5,  2.0))
+    add("fill", (0.75, 0.85, 1.0),  60, (-2.5, -0.5,  0.5))
+    add("rim",  (1.0, 1.0, 1.0),   120, ( 0.0,  2.0,  2.5))
 
     world = bpy.context.scene.world or bpy.data.worlds.new("World")
     bpy.context.scene.world = world
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     if bg:
-        bg.inputs[0].default_value = (0.05, 0.05, 0.06, 1.0)
-        bg.inputs[1].default_value = 0.6
+        bg.inputs[0].default_value = (0.35, 0.35, 0.38, 1.0)
+        bg.inputs[1].default_value = 1.0
 
 
 # ----------------------------------------------------------------------------
@@ -400,7 +409,12 @@ def install_lights(target: Vector, dimensions: Vector) -> None:
 # ----------------------------------------------------------------------------
 
 def _configure_film(res: int) -> None:
-    """Shared output settings — both engines write PNG at `res` square."""
+    """Shared output settings — both engines write PNG at `res` square.
+    View transform is set by the per-engine configurers below: Cycles
+    wants AgX to roll off highlights from area lights; Workbench's
+    studio matcap already reads as a neutral mid-tone, so it stays on
+    Standard (which the test users said looks good).
+    """
     s = bpy.context.scene
     r = s.render
     r.resolution_x = res
@@ -411,8 +425,17 @@ def _configure_film(res: int) -> None:
     r.image_settings.color_mode = "RGB"
     r.image_settings.color_depth = "8"
     r.image_settings.compression = 15
-    s.view_settings.view_transform = "Standard"
-    s.view_settings.look = "None"
+
+
+def _set_view_transform(name: str, look: str = "None") -> None:
+    s = bpy.context.scene
+    enum_keys = s.view_settings.bl_rna.properties["view_transform"].enum_items.keys()
+    if name in enum_keys:
+        s.view_settings.view_transform = name
+        s.view_settings.look = look
+    else:
+        s.view_settings.view_transform = "Standard"
+        s.view_settings.look = "None"
 
 
 def configure_render(res: int, samples: int) -> None:
@@ -430,6 +453,7 @@ def configure_render(res: int, samples: int) -> None:
     s.cycles.transmission_bounces = 2
     s.cycles.transparent_max_bounces = 4
     s.cycles.volume_bounces = 0
+    _set_view_transform("AgX", look="AgX - Base Contrast")
 
 
 def configure_workbench_render(res: int) -> None:
@@ -451,6 +475,7 @@ def configure_workbench_render(res: int) -> None:
     shading.show_shadows = False
     shading.show_cavity = True
     shading.cavity_type = "WORLD"
+    _set_view_transform("Standard", look="None")
 
 
 def render_to(path: str) -> None:
@@ -511,7 +536,10 @@ def main() -> None:
         render_to(args.poster_output)
         return
 
-    configure_render(args.res, args.samples)
+    if args.engine == "workbench":
+        configure_workbench_render(args.res)
+    else:
+        configure_render(args.res, args.samples)
     scene = bpy.context.scene
 
     if not args.output:

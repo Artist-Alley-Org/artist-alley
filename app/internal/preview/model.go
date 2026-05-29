@@ -593,6 +593,10 @@ func (h *ModelHandler) renderTurntable(ctx context.Context, src, framesDir strin
 	// --python-exit-code 1: critical. Without it, Blender exits 0 even
 	//   if our script raises an unhandled exception, and the Go handler
 	//   thinks the render succeeded.
+	// --engine: A/B test against a textured torus showed Workbench
+	//   wins on every format except .blend, where the source often
+	//   carries full PBR setups that Cycles needs to render
+	//   faithfully. See engineForExt().
 	// `--` separates Blender's args from the script's argv.
 	cmd := exec.CommandContext(ctx, h.blenderBin(),
 		"--background",
@@ -603,6 +607,7 @@ func (h *ModelHandler) renderTurntable(ctx context.Context, src, framesDir strin
 		"--",
 		"--input", src,
 		"--output", framesDir,
+		"--engine", engineForExt(filepath.Ext(src)),
 		"--frames", strconv.Itoa(h.Frames),
 		"--res", strconv.Itoa(h.Res),
 		"--samples", strconv.Itoa(h.Samples),
@@ -651,6 +656,28 @@ func (h *ModelHandler) renderPoster(ctx context.Context, src, posterPath string)
 		return fmt.Errorf("blender poster: %w: %s", err, tail)
 	}
 	return nil
+}
+
+// engineForExt picks the best-looking Blender render engine for a
+// given 3D source extension, determined by the A/B sweep at
+// scripts/blender/ab_engine_test.py against a textured torus.
+//
+// Workbench (matcap-style viewport shading) reads better for almost
+// every format: it produces clean, evenly lit thumbnails with crisp
+// silhouettes that match the static col poster — no over-bright
+// Cycles specular blooming. The exception is .blend, where the
+// source usually ships its own PBR shader graph, lights, and HDRI
+// that only Cycles can render faithfully.
+//
+// .mview converts to .glb before reaching this function (see
+// convertMviewToGLB), so it inherits glb's workbench choice.
+func engineForExt(ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "blend":
+		return "cycles"
+	default:
+		return "workbench"
+	}
 }
 
 func (h *ModelHandler) blenderBin() string {
