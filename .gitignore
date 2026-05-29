@@ -6,6 +6,7 @@
 # --- Local reference materials (not part of the project) ---
 _docker_reference/
 *.zip
+*.mview
 
 # --- ResourceSpace local state ---
 # RS writes per-install secrets into include/config.php

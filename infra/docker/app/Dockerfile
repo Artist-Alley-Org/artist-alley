@@ -63,8 +63,8 @@ ARG BLENDER_VERSION=4.2.9
 ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
 
 # Runtime libs blender dlopens on startup even in --background mode
-# (libgl, libxrender, etc.); ffmpeg drives preview.video. xz-utils is
-# only needed for the extraction step.
+# (libgl, libxrender, etc.); ffmpeg drives preview.video. xz-utils +
+# curl are only needed for the extraction step.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl xz-utils ffmpeg \
         libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \

@@ -26,11 +26,13 @@ import (
 // own fetchThumbnail() relies on this: 'thumbnail.jpg' lives early in
 // the archive so a partial 64KB GET is enough to extract it.
 //
-// We don't need the LZ77 decompressor for thumbnails: JPEG is already
-// compressed, so the thumbnail entry is invariably stored with flag 0
-// (uncompressed). The handler refuses compressed entries with a clear
-// error rather than embedding a parser for Marmoset's custom LZ77
-// variant — that can land as a follow-up if a sample ever shows up.
+// The flag-0 fast path covers thumbnails, which are JPEG (LZW doesn't
+// help an already-entropy-coded stream). Compressed entries get the
+// LZW decoder below — a clean port of github.com/majimboo/mviewer's
+// archive.rs::decompress (custom 12-bit LZW, 4096-entry dict, dict
+// resets when full). That code path means we can also reach textures
+// and scene.json later if a phase wants to convert mview → glb at
+// ingest.
 
 const (
 	// mviewMaxStringLen caps null-terminated string reads so a
@@ -59,10 +61,10 @@ type MviewEntry struct {
 	Data             []byte
 }
 
-// ErrMviewEntryCompressed is returned when the requested entry has
-// the LZ77 flag set. The thumbnail is invariably stored uncompressed;
-// any other compressed entry is a follow-up to support.
-var ErrMviewEntryCompressed = errors.New("mview: entry is compressed (LZ77 decompressor not implemented)")
+// ErrMviewDecompress signals a corrupt or truncated LZW stream — the
+// usual cause is a malformed source file; a clean .mview from
+// Marmoset never trips this path.
+var ErrMviewDecompress = errors.New("mview: lzw decompression failed")
 
 // ExtractMviewThumbnail streams the archive in `r` and returns the
 // first entry whose name is "thumbnail.jpg". Reads sequentially so
@@ -85,7 +87,7 @@ func ExtractMviewEntry(r io.Reader, want string) ([]byte, error) {
 		}
 		if entry.Name == want {
 			if entry.Flags&mviewFlagCompressed != 0 {
-				return nil, ErrMviewEntryCompressed
+				return decompressLZW(entry.Data, int(entry.UncompressedSize))
 			}
 			return entry.Data, nil
 		}
@@ -145,4 +147,124 @@ func readCString(br *bufio.Reader, maxLen int) (string, error) {
 		_ = buf.WriteByte(b)
 	}
 	return "", fmt.Errorf("cstring exceeded %d bytes without null", maxLen)
+}
+
+// decompressLZW expands a Marmoset-flavoured LZW stream into output of
+// uncompressed_len bytes. Ported from
+// github.com/majimboo/mviewer/blob/master/src/archive.rs::decompress.
+//
+// Notable shape of the algorithm:
+//   * 12-bit codes packed two-per-three-bytes, with the parity of the
+//     code index `r` deciding which nybble lands where.
+//   * Dict starts at 256 (literal range covers all bytes); each step
+//     adds an entry pointing at (prev_offset, prev_length + 1).
+//   * The "code == next_code" branch is the classic LZW corner case
+//     where the encoder produced a code that wasn't in the decoder's
+//     dict yet — the new entry is `prev + first_byte_of_prev`.
+//   * Dict capacity is 4096; reset to 256 once full.
+//
+// We translate the Rust `bail!` calls into ErrMviewDecompress wraps so
+// the upstream extractor can surface a clean error.
+func decompressLZW(input []byte, outputLen int) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, fmt.Errorf("%w: empty stream", ErrMviewDecompress)
+	}
+	out := make([]byte, outputLen)
+	var (
+		tableOffsets [4096]int
+		tableLengths [4096]int
+		nextCode     = 256
+		writeIdx     = 0
+		prevOffset   = 0
+		prevLength   = 1
+	)
+
+	ensureRoom := func(n int) error {
+		if writeIdx+n > outputLen {
+			return fmt.Errorf("%w: overflow", ErrMviewDecompress)
+		}
+		return nil
+	}
+
+	out[writeIdx] = input[0]
+	writeIdx++
+
+	r := 1
+	for {
+		packedIdx := r + (r >> 1)
+		if packedIdx+1 >= len(input) {
+			break
+		}
+		m := int(input[packedIdx+1])
+		n := int(input[packedIdx])
+		var code int
+		if r&1 == 1 {
+			code = (m << 4) | (n >> 4)
+		} else {
+			code = ((m & 15) << 8) | n
+		}
+
+		var entryOffset, entryLength int
+		switch {
+		case code < nextCode:
+			if code < 256 {
+				if err := ensureRoom(1); err != nil {
+					return nil, err
+				}
+				out[writeIdx] = byte(code)
+				entryOffset = writeIdx
+				writeIdx++
+				entryLength = 1
+			} else {
+				entryOffset = writeIdx
+				length := tableLengths[code]
+				src := tableOffsets[code]
+				end := src + length
+				if err := ensureRoom(length); err != nil {
+					return nil, err
+				}
+				for src < end {
+					out[writeIdx] = out[src]
+					writeIdx++
+					src++
+				}
+				entryLength = length
+			}
+		case code == nextCode:
+			entryOffset = writeIdx
+			length := prevLength + 1
+			src := prevOffset
+			end := prevOffset + prevLength
+			if err := ensureRoom(length); err != nil {
+				return nil, err
+			}
+			for src < end {
+				out[writeIdx] = out[src]
+				writeIdx++
+				src++
+			}
+			out[writeIdx] = out[prevOffset]
+			writeIdx++
+			entryLength = length
+		default:
+			// Code outside the known dict — corrupt or truncated
+			// stream. Bail out and let the caller surface it.
+			return nil, fmt.Errorf("%w: code %d out of range (next=%d)", ErrMviewDecompress, code, nextCode)
+		}
+
+		tableOffsets[nextCode] = prevOffset
+		tableLengths[nextCode] = prevLength + 1
+		nextCode++
+		prevOffset = entryOffset
+		prevLength = entryLength
+		if nextCode >= 4096 {
+			nextCode = 256
+		}
+		r++
+	}
+
+	if writeIdx != outputLen {
+		return nil, fmt.Errorf("%w: expected %d bytes, got %d", ErrMviewDecompress, outputLen, writeIdx)
+	}
+	return out, nil
 }

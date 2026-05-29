@@ -53,12 +53,45 @@ func TestExtractMviewThumbnail_SkipsPriorEntries(t *testing.T) {
 	}
 }
 
-func TestExtractMviewThumbnail_CompressedEntryRejected(t *testing.T) {
-	// Compressed flag set — we don't have an LZ77 decompressor yet.
-	archive := buildEntry("thumbnail.jpg", "image/jpeg", mviewFlagCompressed, []byte{0x42})
-	_, err := ExtractMviewThumbnail(bytes.NewReader(archive))
-	if !errors.Is(err, ErrMviewEntryCompressed) {
-		t.Fatalf("expected ErrMviewEntryCompressed, got %v", err)
+func TestExtractMviewThumbnail_CompressedTruncatedStream(t *testing.T) {
+	// Compressed flag set, but the input has 1 byte while
+	// uncompressed_size says 100. The decoder produces just the
+	// literal first byte and then hits the length-mismatch guard.
+	var buf bytes.Buffer
+	buf.WriteString("thumbnail.jpg")
+	buf.WriteByte(0)
+	buf.WriteString("image/jpeg")
+	buf.WriteByte(0)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(mviewFlagCompressed))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(100))
+	buf.WriteByte(0x42)
+	_, err := ExtractMviewThumbnail(bytes.NewReader(buf.Bytes()))
+	if !errors.Is(err, ErrMviewDecompress) {
+		t.Fatalf("expected ErrMviewDecompress on length mismatch, got %v", err)
+	}
+}
+
+func TestDecompressLZW_LiteralByteStream(t *testing.T) {
+	// "Smoke test": a stream where every code is a literal byte (no
+	// dictionary lookups). With 12-bit codes packed two-per-three-
+	// bytes, encoding the sequence [0x41 0x42 0x43] is:
+	//   - first byte of output = first byte of input = 0x41
+	//   - then r=1 reads code at packedIdx=1 → (input[2]<<4)|(input[1]>>4)
+	//   - r=2 reads code at packedIdx=3 → ((input[3]&15)<<8)|input[2]
+	// Building a stream that decompresses to [0x41,0x42,0x43] requires
+	// encoding codes 0x042 and 0x043 in that packed shape:
+	//   r=1: code 0x042 → (m<<4)|(n>>4)=0x042 → m=0x04, n=0x20
+	//   r=2: code 0x043 → ((m&15)<<8)|n=0x043 → m=0x00, n=0x43
+	// Encoder layout (bytes 0..4): 0x41, 0x20, 0x04, 0x43, 0x00
+	in := []byte{0x41, 0x20, 0x04, 0x43, 0x00}
+	out, err := decompressLZW(in, 3)
+	if err != nil {
+		t.Fatalf("decompress failed: %v", err)
+	}
+	want := []byte{0x41, 0x42, 0x43}
+	if !bytes.Equal(out, want) {
+		t.Fatalf("decompress mismatch: got %x want %x", out, want)
 	}
 }
 
