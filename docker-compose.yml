@@ -30,6 +30,8 @@ services:
       args:
         GO_VERSION: "1.26"
         BUILD_VERSION: ${AA_VERSION:-dev}
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
     expose:
       - "8080"
     environment:

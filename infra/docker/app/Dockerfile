@@ -1,10 +1,17 @@
 # artist-alley Go server image.
 #
 # Multi-stage: build the static binary in a Go toolchain image, then
-# copy it into a minimal runtime. Final image is ~20 MB.
+# copy it into a minimal runtime. Runtime bundles ffmpeg + a pinned
+# Blender 4.2 LTS so the preview.video and preview.model handlers can
+# run inline — final image is ~1.4 GB. Still one container.
 
 ARG GO_VERSION=1.26
 ARG BUILD_VERSION=dev
+# Match the in-container `app` user to the host UID/GID so the bind-
+# mounted /var/lib/aa-storage volume stays writable across image
+# rebuilds. Other services (php, web) already accept these via compose.
+ARG UID=1000
+ARG GID=1000
 
 # ---- build stage ----------------------------------------------------------
 FROM golang:${GO_VERSION}-alpine AS build
@@ -25,30 +32,55 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     ./cmd/aa
 
 # ---- runtime stage --------------------------------------------------------
-# debian-slim instead of alpine because Blender (preview.model worker)
-# doesn't ship as a clean apk and the binary is built against glibc.
-# Adds ~50 MB over alpine before blender; with blender + ffmpeg the
-# final image is ~700 MB. The trade-off buys us a single unified
-# pipeline: one container produces image / video / 3D previews.
+# debian-slim instead of alpine because the official Blender tarball
+# (preview.model worker) is built against glibc. Final image lands
+# around ~1.4 GB; the cost buys one container that handles every
+# preview job kind (image / video / 3D) under a shared queue.
 FROM debian:bookworm-slim AS runtime
 
-# - ffmpeg: preview.video / preview.audio (HLS, sprite sheet, poster).
-# - blender: preview.model (turntable render → sprite sheet + posters).
-#   Headless via --background; uses Cycles CPU (no GPU stack baked in,
-#   so it runs anywhere; deployments with GPUs can swap the base image
-#   to nvidia/cuda + register the same blender binary).
-# - libgl1 / libxrender1 / libxi6 / libxxf86vm1 / libxfixes3 / libxkbcommon0:
-#   blender links these even in --background mode (it dlopens GL on
-#   startup); without them the binary aborts before reaching the script.
-# - python3-pil: post-process the 36 PNG frames into a single sprite
-#   sheet without bundling extra Python with the blender install.
-# - scripts/blender/turntable.py is mounted by the compose file (worker
-#   role) rather than baked into the image so iteration is cheap.
+# - ffmpeg: drives preview.video (HLS encode, sprite sheet, poster).
+# - blender (Cycles CPU): drives preview.model (turntable + sprite
+#   sheet). No GPU stack baked in so it runs anywhere; deployments with
+#   GPUs can layer nvidia/cuda + reuse the same binary.
+# - libgl1 / libegl1 / libxrender1 / libxi6 / libxxf86vm1 / libxfixes3 /
+#   libxkbcommon0 / libxext6 / libsm6 / libice6: blender dlopens GL +
+#   X libs on startup even in --background; without them the binary
+#   aborts before our script runs.
+# - turntable.py is baked into the image at /app/blender/turntable.py
+#   via the COPY below — the Go handler defaults its ScriptPath to
+#   that location.
+ARG UID
+ARG GID
+
+# Blender pin. We deliberately do NOT use debian's `blender` package:
+# bookworm ships 3.4.1 (2022) and its bundled glTF / FBX add-ons use
+# `np.bool` which NumPy 1.20+ removed — version-skew that's been broken
+# for years. Pulling the official portable tarball gives us a known
+# Blender 4.2 LTS build that bundles its own Python + numpy, so the
+# add-ons match the runtime they were written against. LTS line is
+# supported through July 2027.
+ARG BLENDER_VERSION=4.2.9
+ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572846
+
+# Runtime libs blender dlopens on startup even in --background mode
+# (libgl, libxrender, etc.); ffmpeg drives preview.video. xz-utils is
+# only needed for the extraction step.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata ffmpeg blender python3-pil \
-        libgl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 \
+        ca-certificates tzdata curl xz-utils ffmpeg \
+        libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
+        libxkbcommon0 libxext6 libsm6 libice6 \
  && rm -rf /var/lib/apt/lists/* \
- && groupadd --system app && useradd --system --gid app app \
+ && curl -fL -o /tmp/blender.tar.xz \
+        "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+ && echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - \
+ && mkdir -p /opt/blender \
+ && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
+ && ln -s /opt/blender/blender /usr/local/bin/blender \
+ && rm /tmp/blender.tar.xz \
+ && apt-get purge -y curl xz-utils \
+ && apt-get autoremove -y \
+ && groupadd --gid "${GID}" app \
+ && useradd --uid "${UID}" --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
 
