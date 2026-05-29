@@ -211,6 +211,27 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		return json.Marshal(result)
 	}
 
+	// Fast poster: render a single workbench frame in ~1s and fan it
+	// through the raster ladder before launching the slow Cycles
+	// turntable. Lets the browse card show a real thumbnail while the
+	// 22-second turntable render is still in flight. Best-effort: any
+	// failure logs and falls through — the Cycles path below will fill
+	// col from frame 0 once it finishes.
+	if !posterDone {
+		posterPath := filepath.Join(work.dir, "poster.png")
+		if err := h.renderPoster(jobCtx, work.sourcePath, posterPath); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_render_failed",
+				slog.String("asset_id", p.AssetID.String()),
+				slog.String("err", err.Error()))
+		} else if err := h.fanRasterLadder(jobCtx, p.FileHash, posterPath); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.poster_fan_failed",
+				slog.String("err", err.Error()))
+		} else {
+			result.Variants = append(result.Variants, "poster")
+			posterDone = true // skip the Cycles-frame-0 ladder below
+		}
+	}
+
 	// Blender writes to <out>/turntable/*.png + <out>/views/*.png so
 	// the Go side and the script speak the same layout.
 	renderOut := work.dir
@@ -597,6 +618,37 @@ func (h *ModelHandler) renderTurntable(ctx context.Context, src, framesDir strin
 			tail = "..." + tail[len(tail)-800:]
 		}
 		return fmt.Errorf("blender exit: %w: %s", err, tail)
+	}
+	return nil
+}
+
+// renderPoster invokes the same turntable.py with --poster-output, which
+// short-circuits to a single Workbench-engine render (~1s) instead of
+// the 22s Cycles turntable. Used to seed the col / preview / screen
+// thumbnail ladder while the full render is still in flight.
+func (h *ModelHandler) renderPoster(ctx context.Context, src, posterPath string) error {
+	if err := os.MkdirAll(filepath.Dir(posterPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir poster: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, h.blenderBin(),
+		"--background",
+		"--factory-startup",
+		"--disable-autoexec",
+		"--python-exit-code", "1",
+		"--python", h.scriptPath(),
+		"--",
+		"--input", src,
+		"--poster-output", posterPath,
+	)
+	var stderr, stdout bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		tail := strings.TrimSpace(stderr.String())
+		if len(tail) > 800 {
+			tail = "..." + tail[len(tail)-800:]
+		}
+		return fmt.Errorf("blender poster: %w: %s", err, tail)
 	}
 	return nil
 }

@@ -49,7 +49,14 @@ def parse_args() -> argparse.Namespace:
         argv = argv[argv.index("--") + 1:]
     ap = argparse.ArgumentParser(description="3D turntable + top/bottom renderer")
     ap.add_argument("--input", required=True, help="path to source model")
-    ap.add_argument("--output", required=True, help="output directory root")
+    ap.add_argument("--output", required=False, default="",
+                    help="output directory root (turntable mode)")
+    ap.add_argument("--poster-output", required=False, default="",
+                    help="if set, render a single workbench poster to this path "
+                         "and exit. Skips the slow Cycles turntable + reference "
+                         "views.")
+    ap.add_argument("--poster-res", type=int, default=384,
+                    help="poster render resolution (square)")
     ap.add_argument("--frames", type=int, default=36)
     ap.add_argument("--res", type=int, default=512)
     ap.add_argument("--samples", type=int, default=32,
@@ -388,7 +395,8 @@ def install_lights(target: Vector, dimensions: Vector) -> None:
 # render config
 # ----------------------------------------------------------------------------
 
-def configure_render(res: int, samples: int) -> None:
+def _configure_film(res: int) -> None:
+    """Shared output settings — both engines write PNG at `res` square."""
     s = bpy.context.scene
     r = s.render
     r.resolution_x = res
@@ -399,7 +407,14 @@ def configure_render(res: int, samples: int) -> None:
     r.image_settings.color_mode = "RGB"
     r.image_settings.color_depth = "8"
     r.image_settings.compression = 15
+    s.view_settings.view_transform = "Standard"
+    s.view_settings.look = "None"
 
+
+def configure_render(res: int, samples: int) -> None:
+    """Cycles config — used for the turntable + reference views."""
+    _configure_film(res)
+    s = bpy.context.scene
     s.render.engine = "CYCLES"
     s.cycles.device = "CPU"
     s.cycles.samples = samples
@@ -412,8 +427,26 @@ def configure_render(res: int, samples: int) -> None:
     s.cycles.transparent_max_bounces = 4
     s.cycles.volume_bounces = 0
 
-    s.view_settings.view_transform = "Standard"
-    s.view_settings.look = "None"
+
+def configure_workbench_render(res: int) -> None:
+    """Workbench engine — no raytracing, just rasterised solid + textures.
+
+    Roughly 20-30× faster than Cycles at the cost of no GI / no PBR /
+    no proper shadows. Good enough for the col / preview / screen
+    thumbnail ladder where the user just needs to recognise the model
+    while the slow Cycles turntable is still rendering.
+    """
+    _configure_film(res)
+    s = bpy.context.scene
+    s.render.engine = "BLENDER_WORKBENCH"
+    # Studio lighting + matcap-ish shading reads as 3D without needing
+    # any of the scene's lights to render.
+    shading = s.display.shading
+    shading.light = "STUDIO"
+    shading.color_type = "TEXTURE"  # picks up texture maps if present
+    shading.show_shadows = False
+    shading.show_cavity = True
+    shading.cavity_type = "WORLD"
 
 
 def render_to(path: str) -> None:
@@ -447,8 +480,38 @@ def main() -> None:
 
     install_lights(target, dimensions)
     cam, pivot = install_camera(target, dimensions)
+
+    # Poster mode — a single workbench render at azimuth 0, no Cycles,
+    # no top/bottom views. The model handler invokes us in this mode
+    # first to seed the col thumbnail before kicking off the long
+    # Cycles turntable run.
+    if args.poster_output:
+        configure_workbench_render(args.poster_res)
+        scene = bpy.context.scene
+        aspect = scene.render.resolution_x / scene.render.resolution_y
+        cam_data = cam.data
+        fov_h = 2 * math.atan(cam_data.sensor_width / (2 * cam_data.lens))
+        fov_v = fov_h / aspect
+        w, d, hgt = dimensions.x, dimensions.y, dimensions.z
+        padding = 1.15
+        t = math.radians(20)
+        v_ext = abs(hgt) * math.cos(t) + abs(d) * math.sin(t)
+        h_ext = max(abs(w), abs(d))
+        d_v = (v_ext * padding) / (2 * math.tan(fov_v / 2)) if v_ext > 0 else 0
+        d_h = (h_ext * padding) / (2 * math.tan(fov_h / 2)) if h_ext > 0 else 0
+        distance = max(d_v, d_h, 0.1)
+        cam.parent = pivot
+        cam.location = (0, -distance, distance * math.tan(t))
+        cam.rotation_euler = (math.radians(70), 0, 0)
+        pivot.rotation_euler = (0, 0, math.radians(-90))
+        render_to(args.poster_output)
+        return
+
     configure_render(args.res, args.samples)
     scene = bpy.context.scene
+
+    if not args.output:
+        raise SystemExit("turntable mode requires --output")
 
     # Per-view distance via FOV math — replaces the old `radius * 2.6`
     # heuristic, which over-zoomed wide/tall models because the bbox
