@@ -9,7 +9,7 @@
   // rooms (1.18.B-5) land, they wire to the shell ONCE; every kind
   // of asset gets them for free.
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, type Snippet } from 'svelte';
   import type { ViewController } from './controller';
   import { defaultController, kindForExtension } from './controller';
   import ImageView from './ImageView.svelte';
@@ -40,9 +40,43 @@
         still works), hotkeys are inert, and the 3D bodies don't grab
         the pointer. The Review button or a double-click flips this on. */
     reviewMode?: boolean;
+    /** Host-provided content for the right pane when NOT in review
+        mode. PostModal injects its post metadata snippet here; the
+        standalone /assets/[id] page can pass asset-only info; an
+        embedded viewer can pass anything. When reviewMode flips on
+        the pane swaps to the kind-aware tools panel the viewer owns. */
+    metadataSlot?: Snippet;
+    /** Bindable pane open/closed state so the host can persist the
+        user's preference in its own localStorage. Default open when
+        there's something to show. */
+    paneCollapsed?: boolean;
+    /** Optional callback the host wires up to cycle between sibling
+        assets via the wheel (when not in review mode). Defining this
+        flips on a debounced wheel handler that calls back with the
+        intended direction; undefined leaves wheel alone so the parent
+        page can scroll normally. */
+    onWheelNavigate?: (dir: 'prev' | 'next') => void;
   }
 
-  let { asset, active = true, reviewMode = false }: Props = $props();
+  let {
+    asset,
+    active = true,
+    reviewMode = false,
+    metadataSlot,
+    paneCollapsed = $bindable(false),
+    onWheelNavigate,
+  }: Props = $props();
+
+  // The right pane is shown when there's something to put in it:
+  // review tools are always available for an active viewer; the
+  // metadata slot is host-provided. No slot + no review = no pane
+  // (so a small card preview doesn't grow an empty sidebar).
+  const paneEnabled = $derived(reviewMode || !!metadataSlot);
+  const paneOpen = $derived(paneEnabled && !paneCollapsed);
+
+  function togglePane() {
+    paneCollapsed = !paneCollapsed;
+  }
 
   const kind = $derived(kindForExtension(asset.file_extension));
   let controller = $state(defaultController());
@@ -56,10 +90,30 @@
   let panY = $state(0);
   let dragging = $state(false);
 
+  // Debounce wheel-navigate so a trackpad's continuous wheel events
+  // don't skip past N assets in one swipe. ~250ms feels right: fast
+  // enough to spam, slow enough that a single intentional flick
+  // doesn't double-fire.
+  let lastWheelNavAt = 0;
+
   function onCanvasWheel(e: WheelEvent) {
-    // Outside review mode the viewer is display-only — let the wheel
-    // bubble so the modal scroll-snap (or page scroller) can take it.
-    if (!reviewMode) return;
+    // Outside review mode: optionally cycle assets on wheel (host opts
+    // in via the onWheelNavigate prop — when there's only one sibling
+    // to scroll to, the host just doesn't pass the prop). Otherwise
+    // let the wheel bubble so the page can scroll normally.
+    if (!reviewMode) {
+      if (onWheelNavigate && Math.abs(e.deltaY) > 0) {
+        const now = Date.now();
+        if (now - lastWheelNavAt > 250) {
+          lastWheelNavAt = now;
+          e.preventDefault();
+          onWheelNavigate(e.deltaY > 0 ? 'next' : 'prev');
+        } else {
+          e.preventDefault();
+        }
+      }
+      return;
+    }
     // 3D bodies own all input (orbit controls + model-viewer's camera
     // wheel-zoom). The outer pan/zoom layer doesn't make sense in a
     // 3D world and would fight the orbit. Let the event reach the body.
@@ -316,19 +370,32 @@
       class:pointer-events-none={!reviewMode}
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
     >
-      {#if kind === 'video'}
-        <VideoView {asset} bind:controller />
-      {:else if kind === 'image'}
-        <ImageView {asset} bind:controller />
-      {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
-        <ModelView {asset} bind:controller {reviewMode} />
-      {:else}
-        <PlaceholderView {asset} bind:controller />
-      {/if}
+      <!-- {#key} forces a fresh view-body mount when the asset id
+           changes. Without this, three.js / model-viewer keep the old
+           scene loaded when a host swaps assets without unmounting
+           the AssetViewer (the common multi-asset carousel pattern).
+           Side-effect: pan/zoom resets per asset, which is what users
+           expect when navigating to a new image anyway. -->
+      {#key asset.id}
+        {#if kind === 'video'}
+          <VideoView {asset} bind:controller />
+        {:else if kind === 'image'}
+          <ImageView {asset} bind:controller />
+        {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
+          <ModelView {asset} bind:controller {reviewMode} />
+        {:else}
+          <PlaceholderView {asset} bind:controller />
+        {/if}
+      {/key}
     </div>
 
-    <!-- HUD: anchor display + extra metadata -->
-    <div class="pointer-events-none absolute right-3 top-3 rounded bg-black/70 px-2 py-1 font-mono text-xs">
+    <!-- HUD: anchor display + extra metadata. Shifts left when the
+         right pane is open so the pane doesn't cover it. -->
+    <div
+      class="pointer-events-none absolute top-3 rounded bg-black/70 px-2 py-1 font-mono text-xs transition-[right] duration-200"
+      class:right-3={!paneOpen}
+      class:right-[25rem]={paneOpen}
+    >
       {#if controller.hasTimeline}
         {controller.formatAnchor(controller.currentFrame)} · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
       {/if}
@@ -340,8 +407,13 @@
       {/if}
     </div>
 
-    <!-- Top-right buttons -->
-    <div class="absolute right-3 top-12 flex flex-col gap-2">
+    <!-- Top-right buttons. Same shift as the HUD so the pane doesn't
+         cover them when open. -->
+    <div
+      class="absolute top-12 flex flex-col gap-2 transition-[right] duration-200"
+      class:right-3={!paneOpen}
+      class:right-[25rem]={paneOpen}
+    >
       {#if controller.hasTimeline}
         <button type="button" onclick={() => (goToOpen = !goToOpen)} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" title="Jump to frame (G)" aria-label="Jump to frame">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
@@ -375,6 +447,92 @@
           <button type="submit" class="rounded bg-accent px-2 py-1 text-xs font-medium text-white">Go</button>
         </form>
       </div>
+    {/if}
+
+    <!-- Annotation overlay layer (placeholder for Phase 1.18.B-6).
+         Sized to the viewport for now; B-6 will narrow it to the
+         asset's rendered rect (image bounds, video frame, etc.) so
+         annotations land on content, not letterboxing. -->
+    <div class="pointer-events-none absolute inset-0 z-20" data-role="annotation-layer"></div>
+
+    <!-- Right pane: overlay (not a flex sibling) so the asset
+         underneath cycles independently when the host swaps assets,
+         while the pane stays put. Content swaps on reviewMode: tools
+         in review, host's metadataSlot otherwise. Slide in/out via
+         translate-x — keeps the asset full-width visually when closed
+         and gives a nice transition either way. -->
+    {#if paneEnabled}
+      <aside
+        class="absolute right-0 top-0 bottom-0 z-30 flex w-96 max-w-[40vw] flex-col border-l border-border bg-surface text-fg shadow-2xl transition-transform duration-200 ease-out"
+        class:translate-x-full={paneCollapsed}
+        aria-label={reviewMode ? 'Review tools' : 'Asset details'}
+      >
+        <header class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+          <h2 class="text-sm font-medium">
+            {#if reviewMode}Review tools{:else}Details{/if}
+          </h2>
+          <button
+            type="button"
+            onclick={togglePane}
+            class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-surface-elevated hover:text-fg"
+            aria-label="Collapse panel"
+            title="Collapse (i)"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+          </button>
+        </header>
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          {#if reviewMode}
+            <!-- Tools panel placeholder. Phase 1.18.B-12b-2 brings the
+                 kind-aware tool set (lighting, grid, wireframe,
+                 animation transport, camera presets, exposure). -->
+            <div class="p-4 text-sm text-fg-muted">
+              <p class="mb-2 font-medium text-fg">Tools for {kind}</p>
+              <p>Coming in Phase 1.18.B-12b-2:</p>
+              <ul class="ml-4 mt-2 list-disc space-y-1 text-xs">
+                {#if kind === '3d'}
+                  <li>Lighting: env / exposure / shadow</li>
+                  <li>Grid + axis gizmo</li>
+                  <li>Wireframe cycle</li>
+                  <li>Camera presets (front / top / iso)</li>
+                  <li>Animation transport</li>
+                  <li>Section / slicing plane</li>
+                {:else if kind === 'video'}
+                  <li>Loop region presets</li>
+                  <li>Frame-step granularity</li>
+                  <li>Audio waveform</li>
+                {:else if kind === 'image'}
+                  <li>Zoom presets (fit / fill / 100% / 200%)</li>
+                  <li>Tile mode</li>
+                  <li>Pixel inspector</li>
+                {:else}
+                  <li>Kind-specific tools</li>
+                {/if}
+              </ul>
+            </div>
+          {:else if metadataSlot}
+            {@render metadataSlot()}
+          {/if}
+        </div>
+      </aside>
+
+      {#if paneCollapsed}
+        <!-- Re-open tab on the right edge so the user can recover the
+             pane after collapsing it. -->
+        <button
+          type="button"
+          onclick={togglePane}
+          class="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-md bg-black/60 px-2 py-3 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+          aria-label="Show panel"
+          title="Show panel (i)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+      {/if}
     {/if}
   </div>
 
