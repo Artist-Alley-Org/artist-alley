@@ -121,9 +121,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// `{variant}` param is non-greedy ([^/]+), so the openapi-
 		// derived route only matches single-segment variants. Register
 		// a wildcard ahead of the strict handler that streams any
-		// `hls/*` variant straight from storage. The middleware/
-		// VariantCache still picks these up by path.
-		r.Get("/assets/{id}/variants/hls/*", handlers.NewHLSHandler(pool, storageSvc, logger).ServeHTTP)
+		// `hls/*` / `turntable/*` / `views/*` variant straight from
+		// storage. The middleware/VariantCache still picks these up by
+		// path. Same handler shape, different prefix per route.
+		r.Get("/assets/{id}/variants/hls/*",
+			handlers.NewPathVariantHandler(pool, storageSvc, logger, "hls").ServeHTTP)
+		r.Get("/assets/{id}/variants/turntable/*",
+			handlers.NewPathVariantHandler(pool, storageSvc, logger, "turntable").ServeHTTP)
+		r.Get("/assets/{id}/variants/views/*",
+			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
 		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)

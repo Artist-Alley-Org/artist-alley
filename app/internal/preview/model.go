@@ -140,22 +140,31 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 
 	result := ModelResult{FrameCount: h.Frames}
 
-	// If both the col variant AND the sprite sheet already exist, the
-	// render is a no-op. Cheap path for re-queues.
+	// Cheap re-queue path: if every output we'd produce is already on
+	// storage we have nothing to do. Sentinel set = the four anchor
+	// variants whose presence guarantees the whole bundle landed in a
+	// previous run (raster ladder + sprite sheet + per-frame CLIP set
+	// + reference views).
 	posterDone := h.variantExists(jobCtx, p.FileHash, "col")
 	spritesDone := h.variantExists(jobCtx, p.FileHash, "sprites.jpg")
-	if posterDone && spritesDone {
-		result.Skipped = append(result.Skipped, "col", "sprites")
+	framesDone := h.variantExists(jobCtx, p.FileHash, "turntable/0000.png")
+	viewsDone := h.variantExists(jobCtx, p.FileHash, "views/top.png")
+	if posterDone && spritesDone && framesDone && viewsDone {
+		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views")
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
 	}
 
-	framesDir := filepath.Join(work.dir, "frames")
-	if err := h.renderTurntable(jobCtx, work.sourcePath, framesDir); err != nil {
+	// Blender writes to <out>/turntable/*.png + <out>/views/*.png so
+	// the Go side and the script speak the same layout.
+	renderOut := work.dir
+	if err := h.renderTurntable(jobCtx, work.sourcePath, renderOut); err != nil {
 		h.markFailed(jobCtx, p.AssetID, err.Error())
 		return nil, fmt.Errorf("preview.model: render: %w", err)
 	}
+	framesDir := filepath.Join(renderOut, "turntable")
+	viewsDir := filepath.Join(renderOut, "views")
 
 	// --- raster ladder: fan frame 0 into col / preview / screen / hires ---
 	if posterDone {
@@ -166,6 +175,30 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			return nil, fmt.Errorf("preview.model: raster ladder: %w", err)
 		}
 		result.Variants = append(result.Variants, "raster")
+	}
+
+	// --- per-frame turntable variants (CLIP training set) ----------------
+	// Each frame uploaded as `turntable/NNNN.png` so a downstream
+	// trainer can pull them by index. PNG (not JPEG) to keep the
+	// signal clean for the encoder; the bundle is ~36 × 80KB ≈ 3MB
+	// per asset which is cheap at our scale.
+	if framesDone {
+		result.Skipped = append(result.Skipped, "frames")
+	} else if err := h.writeFrameVariants(jobCtx, p.FileHash, framesDir); err != nil {
+		return nil, fmt.Errorf("preview.model: frame variants: %w", err)
+	} else {
+		result.Variants = append(result.Variants, "frames")
+	}
+
+	// --- reference views: top + bottom -----------------------------------
+	// Single PNG renders the viewer can offer as 'top-down' / 'looking
+	// up' insets later. Not part of the scrub.
+	if viewsDone {
+		result.Skipped = append(result.Skipped, "views")
+	} else if err := h.writeReferenceViews(jobCtx, p.FileHash, viewsDir); err != nil {
+		return nil, fmt.Errorf("preview.model: views: %w", err)
+	} else {
+		result.Variants = append(result.Variants, "views")
 	}
 
 	// --- sprite sheet + VTT (turntable scrub) -----------------------------
@@ -180,6 +213,72 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	h.markReady(jobCtx, p.AssetID)
 	result.WorkS = time.Since(started).Seconds()
 	return json.Marshal(result)
+}
+
+// writeFrameVariants uploads each turntable frame as its own variant
+// under `turntable/NNNN.png`. Idempotent per-variant so a re-queue
+// after a partial upload only fills the gaps.
+func (h *ModelHandler) writeFrameVariants(ctx context.Context, hash, framesDir string) error {
+	for i := 0; i < h.Frames; i++ {
+		key := fmt.Sprintf("turntable/%04d.png", i)
+		if h.variantExists(ctx, hash, key) {
+			continue
+		}
+		path := filepath.Join(framesDir, fmt.Sprintf("frame_%04d.png", i))
+		if err := h.uploadFile(ctx, hash, key, path, "image/png"); err != nil {
+			return fmt.Errorf("upload frame %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// writeReferenceViews uploads top + bottom orthographic-ish reference
+// renders as `views/top.png` and `views/bottom.png`. Best-effort per
+// view — a missing file is a soft fail so a Blender render that wrote
+// only one view doesn't tank the whole job.
+func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir string) error {
+	for _, name := range []string{"top", "bottom"} {
+		key := "views/" + name + ".png"
+		if h.variantExists(ctx, hash, key) {
+			continue
+		}
+		path := filepath.Join(viewsDir, name+".png")
+		if _, err := os.Stat(path); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.view_missing",
+				slog.String("view", name),
+				slog.String("path", path))
+			continue
+		}
+		if err := h.uploadFile(ctx, hash, key, path, "image/png"); err != nil {
+			return fmt.Errorf("upload %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// uploadFile streams a local file into storage at (hash, key) and
+// upserts the variant row. Shared by writeFrameVariants and
+// writeReferenceViews so the upload path stays in one place.
+func (h *ModelHandler) uploadFile(ctx context.Context, hash, key, path, contentType string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", key, err)
+	}
+	defer f.Close()
+	if _, err := h.Storage.Backend.Put(ctx, hash, key, f); err != nil {
+		return fmt.Errorf("backend put %s: %w", key, err)
+	}
+	info, err := f.Stat()
+	if err == nil {
+		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
+			ObjectHash:  hash,
+			VariantKey:  key,
+			SizeBytes:   info.Size(),
+			ContentType: contentType,
+			Metadata:    []byte("{}"),
+		})
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

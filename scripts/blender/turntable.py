@@ -1,5 +1,5 @@
-# Blender script: render an N-frame turntable of an arbitrary 3D
-# asset. Driven by preview.model from the Go side.
+# Blender script: render a turntable + top/bottom reference views of an
+# arbitrary 3D asset. Driven by preview.model on the Go side.
 #
 # Invoked as:
 #   blender --background --factory-startup --python turntable.py -- \
@@ -8,11 +8,24 @@
 #     --frames 36              \
 #     --res    512
 #
-# Output: <output>/frame_0000.png ... frame_NNNN.png. Frame count and
-# per-cell resolution come from the caller. The sprite-sheet compose
-# step lives in Go (stdlib image/jpeg) — keeping this script focused
-# on the one thing only Blender can do, which is "decode the model
-# and turn it into pixels."
+# Output layout:
+#   <output>/turntable/frame_0000.png ... frame_NNNN.png
+#   <output>/views/top.png
+#   <output>/views/bottom.png
+#
+# The turntable frames are what the Go handler composes into the sprite
+# sheet (hover-scrub UI) AND uploads individually as
+# `turntable/NNNN.png` variants for CLIP training data. The top/bottom
+# views are reference-only single shots stored as `views/top.png` and
+# `views/bottom.png` variants — not part of the scrub.
+#
+# Camera framing borrows the iterative-fit approach from the
+# Projects/thumbnails_renderer codebase: center the model at the world
+# origin, compute an initial distance via FOV math, then iteratively
+# refine by projecting bbox corners to NDC and checking whether they
+# fall outside the frame. Way more reliable than my first pass's
+# `dist = maxDim * 2.2` heuristic — handles tiny / huge / lopsided
+# models consistently.
 
 import argparse
 import math
@@ -20,6 +33,7 @@ import os
 import sys
 
 import bpy
+import mathutils
 from mathutils import Vector
 
 
@@ -30,13 +44,12 @@ from mathutils import Vector
 def parse_args() -> argparse.Namespace:
     argv = sys.argv
     if "--" not in argv:
-        # Allow running without a separator (still bail with a useful error).
         argv = []
     else:
         argv = argv[argv.index("--") + 1:]
-    ap = argparse.ArgumentParser(description="3D turntable renderer")
+    ap = argparse.ArgumentParser(description="3D turntable + top/bottom renderer")
     ap.add_argument("--input", required=True, help="path to source model")
-    ap.add_argument("--output", required=True, help="output directory for frames")
+    ap.add_argument("--output", required=True, help="output directory root")
     ap.add_argument("--frames", type=int, default=36)
     ap.add_argument("--res", type=int, default=512)
     ap.add_argument("--samples", type=int, default=32,
@@ -45,30 +58,17 @@ def parse_args() -> argparse.Namespace:
 
 
 # ----------------------------------------------------------------------------
-# scene reset
+# scene reset + import + default material
 # ----------------------------------------------------------------------------
 
 def reset_scene() -> None:
-    """Strip the default scene back to an empty world.
-
-    --factory-startup gives us a scene with a cube + camera + light;
-    we don't want any of those (the cube would mess up bbox framing,
-    and we install our own camera + lights).
-    """
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
-    # Clear orphan data so successive runs in a single Blender process
-    # don't leak. (preview.model launches a fresh blender per asset,
-    # so this is belt-and-suspenders.)
     for block in (bpy.data.meshes, bpy.data.materials,
                   bpy.data.images, bpy.data.cameras, bpy.data.lights):
         for d in list(block):
             block.remove(d)
 
-
-# ----------------------------------------------------------------------------
-# model import — per-extension dispatch
-# ----------------------------------------------------------------------------
 
 def import_model(path: str) -> None:
     ext = os.path.splitext(path)[1].lower().lstrip(".")
@@ -77,16 +77,9 @@ def import_model(path: str) -> None:
     elif ext == "fbx":
         bpy.ops.import_scene.fbx(filepath=path)
     elif ext == "obj":
-        # Blender 4.x ships the new fast OBJ importer at wm.obj_import.
-        # 3.x users still on import_scene.obj would set a fallback here.
         bpy.ops.wm.obj_import(filepath=path)
     elif ext == "blend":
-        # For .blend we don't import — we open the file as the scene so
-        # all of the artist's materials / lighting come along. Camera +
-        # light setup below still runs, replacing whatever was in the
-        # source so framing stays consistent across all assets.
         bpy.ops.wm.open_mainfile(filepath=path)
-        # Clear cameras + lights since we re-add our own canonical rig.
         for obj in list(bpy.data.objects):
             if obj.type in ("CAMERA", "LIGHT"):
                 bpy.data.objects.remove(obj, do_unlink=True)
@@ -95,16 +88,11 @@ def import_model(path: str) -> None:
 
 
 def ensure_default_material() -> None:
-    """Give meshes-without-materials a neutral PBR fallback.
+    """Neutral grey Principled BSDF for meshes without materials.
 
-    Untextured FBX / OBJ exports often arrive with empty material slots.
-    Cycles renders those as the canonical magenta-pink "missing shader"
-    indicator, which makes thumbnails look broken even when nothing is
-    actually wrong. Assigning a neutral grey Principled BSDF gives us
-    something legible that still reads as "uniform PBR surface".
-
-    Materials that DO exist are left alone — we only want to fill in
-    the gaps, not stomp on artist intent.
+    Cycles renders empty material slots as the canonical magenta-pink
+    'missing shader' indicator. Untextured FBX/OBJ exports trip this
+    constantly. We only fill the gaps — never stomp on artist intent.
     """
     fallback = None
     for obj in bpy.context.scene.objects:
@@ -123,95 +111,224 @@ def ensure_default_material() -> None:
             fallback.use_nodes = True
             principled = fallback.node_tree.nodes.get("Principled BSDF")
             if principled is not None:
-                # Neutral grey diffuse, semi-rough, fully dielectric so
-                # the IBL has somewhere to bounce off without going
-                # mirror-finish or flat-matte.
                 principled.inputs["Base Color"].default_value = (0.55, 0.55, 0.55, 1.0)
                 principled.inputs["Roughness"].default_value = 0.55
-                # Metallic input name varies across versions; set with
-                # a try so old + new Blenders both work.
                 for k in ("Metallic", "Metalness"):
                     if k in principled.inputs:
                         principled.inputs[k].default_value = 0.0
                         break
-        # Clear any None entries and append the fallback.
         while mesh.materials:
             mesh.materials.pop()
         mesh.materials.append(fallback)
 
 
 # ----------------------------------------------------------------------------
-# camera framing — fit the bounding box snugly
+# bbox + centering — borrowed pattern from thumbnails_renderer
 # ----------------------------------------------------------------------------
 
-def scene_bbox() -> tuple[Vector, Vector]:
-    """Return (min, max) corners of the union bbox of all mesh objects."""
-    mins = Vector((math.inf, math.inf, math.inf))
-    maxs = Vector((-math.inf, -math.inf, -math.inf))
-    found = False
+def scene_bounds() -> tuple[Vector, Vector, Vector] | tuple[None, None, None]:
+    """Compute world-space (min, max, dimensions) over all mesh objects."""
+    mins = [math.inf] * 3
+    maxs = [-math.inf] * 3
     for obj in bpy.context.scene.objects:
         if obj.type != "MESH":
             continue
-        found = True
         for corner in obj.bound_box:
             w = obj.matrix_world @ Vector(corner)
-            mins.x = min(mins.x, w.x); mins.y = min(mins.y, w.y); mins.z = min(mins.z, w.z)
-            maxs.x = max(maxs.x, w.x); maxs.y = max(maxs.y, w.y); maxs.z = max(maxs.z, w.z)
-    if not found:
-        # No mesh data — render a 1×1×1 cube at origin as a fallback so
-        # the worker doesn't crash on a metadata-only / armature-only file.
-        return Vector((-0.5, -0.5, -0.5)), Vector((0.5, 0.5, 0.5))
-    return mins, maxs
+            for i in range(3):
+                mins[i] = min(mins[i], w[i])
+                maxs[i] = max(maxs[i], w[i])
+    if mins[0] == math.inf:
+        return None, None, None
+    dims = Vector([maxs[i] - mins[i] for i in range(3)])
+    return Vector(mins), Vector(maxs), dims
 
 
-def install_camera(center: Vector, radius: float) -> bpy.types.Object:
-    cam_data = bpy.data.cameras.new("turntable-cam")
-    cam_data.lens = 50  # standard portrait lens; flatters most subjects
-    cam = bpy.data.objects.new("turntable-cam", cam_data)
+def bbox_center(mins: Vector, maxs: Vector) -> Vector:
+    """World-space center of the combined mesh bbox."""
+    return (mins + maxs) / 2.0
+
+
+# ----------------------------------------------------------------------------
+# camera setup — FOV math + iterative NDC frame fit
+# ----------------------------------------------------------------------------
+
+def install_camera(target: Vector, dimensions: Vector) -> tuple[bpy.types.Object, bpy.types.Object]:
+    """Camera + pivot. Camera is parented to pivot at the bbox center.
+
+    The pivot pattern is what B-12b-11 originally used and reliably
+    rendered every shape correctly. The FOV-math approach I tried in
+    the first B-12d pass had a subtle bug that left every orbital
+    frame empty — the pivot-based approach sidesteps it because the
+    camera + target relationship is anchored by the parent transform.
+    Top + bottom views unparent the camera transiently.
+
+    Lens / clip planes match thumbnails_renderer's guidance: 35mm for
+    headroom, clip planes scaled to bbox so near doesn't clip and far
+    doesn't cull.
+    """
+    cam_data = bpy.data.cameras.new("aa-cam")
+    cam_data.lens = 35
+    max_dim = max(max(dimensions), 0.1)
+    cam_data.clip_start = max(0.001, max_dim * 0.001)
+    cam_data.clip_end = max_dim * 100
+    cam = bpy.data.objects.new("aa-cam", cam_data)
     bpy.context.scene.collection.objects.link(cam)
     bpy.context.scene.camera = cam
 
-    # Pivot empty at the model center — the camera parents to it so a
-    # simple Z rotation of the pivot sweeps the camera around the model.
-    pivot = bpy.data.objects.new("turntable-pivot", None)
-    pivot.location = center
+    pivot = bpy.data.objects.new("aa-pivot", None)
+    pivot.location = target
     bpy.context.scene.collection.objects.link(pivot)
+    return cam, pivot
 
-    # Distance + tilt — 25° down from horizontal gives a 3/4 "hero" view.
-    tilt_deg = 20
-    dist = radius * 2.6
-    cam.location = (0, -dist, dist * math.tan(math.radians(tilt_deg)))
-    cam.rotation_euler = (math.radians(90 - tilt_deg), 0, 0)
-    cam.parent = pivot
-    return pivot
+
+def initial_distance(cam_data: bpy.types.Camera,
+                     dimensions: Vector,
+                     elevation_deg: float,
+                     aspect_ratio: float = 1.0) -> float:
+    """FOV-based starting distance that fits the bbox in frame.
+
+    Mirrors thumbnails_renderer's `calculate_camera_distance` — derive
+    a viewing distance from the camera's actual FOV instead of the
+    "2.6×radius" heuristic that's wrong for any non-cube model.
+    """
+    sensor_w = cam_data.sensor_width
+    lens = cam_data.lens
+    fov_h = 2 * math.atan(sensor_w / (2 * lens))
+    fov_v = fov_h / aspect_ratio
+
+    width, depth, height = dimensions.x, dimensions.y, dimensions.z
+    elev = math.radians(elevation_deg)
+    apparent_h = abs(height) * math.cos(elev) + abs(depth) * math.sin(elev)
+    apparent_w = max(abs(width), abs(depth))
+
+    padding = 1.2
+    dist_for_h = (apparent_h * padding) / (2 * math.tan(fov_v / 2))
+    dist_for_w = (apparent_w * padding) / (2 * math.tan(fov_h / 2))
+    return max(dist_for_h, dist_for_w, 0.01)
+
+
+def position_camera(cam: bpy.types.Object,
+                    target: Vector,
+                    distance: float,
+                    azimuth_deg: float,
+                    elevation_deg: float,
+                    view: str = "orbital") -> None:
+    """Place the camera at `distance` from `target`, aimed at `target`.
+
+    `to_track_quat('-Z', 'Y')` is the canonical Blender camera
+    orientation: camera looks along its local -Z (forward), local +Y
+    is up. Same call works for orbital + top + bottom because Blender
+    picks an arbitrary perpendicular when direction is parallel to up.
+    """
+    if view == "top":
+        offset = Vector((0, 0, distance))
+    elif view == "bottom":
+        offset = Vector((0, 0, -distance))
+    else:
+        az = math.radians(azimuth_deg)
+        el = math.radians(elevation_deg)
+        offset = Vector((
+            distance * math.cos(el) * math.sin(az),
+            -distance * math.cos(el) * math.cos(az),
+            distance * math.sin(el),
+        ))
+    cam.location = target + offset
+    direction = target - cam.location  # points from camera to target
+    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+
+
+def check_in_frame(scene: bpy.types.Scene,
+                   cam: bpy.types.Object,
+                   bounds: tuple[Vector, Vector],
+                   margin: float = 0.05) -> tuple[bool, float]:
+    """Project bbox corners to NDC and report worst overflow.
+
+    Returns (in_frame, overflow). overflow is 0 when the bbox is
+    inside the frame; positive values say how far outside in NDC units.
+    A value of 0.5 means a corner is at 1.5x the visible half-width.
+    """
+    mins, maxs = bounds
+    corners = [
+        Vector((x, y, z))
+        for x in (mins.x, maxs.x)
+        for y in (mins.y, maxs.y)
+        for z in (mins.z, maxs.z)
+    ]
+    cam_matrix = cam.matrix_world.normalized().inverted()
+    aspect = scene.render.resolution_x / scene.render.resolution_y
+    cam_data = cam.data
+    factor = cam_data.lens / (cam_data.sensor_width / 2)
+    frame_limit = 1.0 - margin
+
+    overflow = 0.0
+    for c in corners:
+        cs = cam_matrix @ c
+        if cs.z >= 0:
+            # Behind camera — treat as a huge overflow so the caller
+            # backs off.
+            return False, 2.0
+        ndc_x = cs.x * factor / -cs.z
+        ndc_y = cs.y * factor / -cs.z * aspect
+        ox = max(abs(ndc_x) - frame_limit, 0.0)
+        oy = max(abs(ndc_y) - frame_limit, 0.0)
+        overflow = max(overflow, ox, oy)
+    return overflow == 0.0, overflow
+
+
+def fit_camera(scene: bpy.types.Scene,
+               cam: bpy.types.Object,
+               target: Vector,
+               bounds: tuple[Vector, Vector],
+               dimensions: Vector,
+               azimuth_deg: float,
+               elevation_deg: float,
+               view: str = "orbital",
+               max_iter: int = 5) -> float:
+    """Place the camera at a fitting distance pointed at `target`.
+
+    Iteratively backs off until the bbox fits in the frame. Returns
+    the final distance — turntable uses the same radius for every
+    frame so the model doesn't appear to dolly during the spin.
+    """
+    aspect = scene.render.resolution_x / scene.render.resolution_y
+    distance = initial_distance(cam.data, dimensions, elevation_deg, aspect)
+    for _ in range(max_iter):
+        position_camera(cam, target, distance, azimuth_deg, elevation_deg, view=view)
+        in_frame, overflow = check_in_frame(scene, cam, bounds)
+        if in_frame:
+            return distance
+        distance *= 1.0 + overflow + 0.1
+    return distance
 
 
 # ----------------------------------------------------------------------------
-# lighting — neutral 3-point so material + form read consistently
+# lighting — neutral 3-point (model is centered at origin)
 # ----------------------------------------------------------------------------
 
-def install_lights(center: Vector, radius: float) -> None:
-    def add(name: str, color: tuple[float, float, float], energy: float,
-            pos: tuple[float, float, float]):
+def install_lights(target: Vector, dimensions: Vector) -> None:
+    radius = max(max(dimensions) / 2.0, 0.1)
+
+    def add(name, color, energy, pos):
         d = bpy.data.lights.new(name, type="AREA")
-        d.energy = energy * radius * radius  # scale with model size
+        d.energy = energy * radius * radius
         d.color = color
         d.size = radius
         o = bpy.data.objects.new(name, d)
-        o.location = (center.x + pos[0] * radius,
-                      center.y + pos[1] * radius,
-                      center.z + pos[2] * radius)
-        # Point at the model centre.
-        direction = center - Vector(o.location)
+        o.location = (
+            target.x + pos[0] * radius,
+            target.y + pos[1] * radius,
+            target.z + pos[2] * radius,
+        )
+        direction = target - Vector(o.location)
         o.rotation_mode = "QUATERNION"
         o.rotation_quaternion = direction.to_track_quat("-Z", "Y")
         bpy.context.scene.collection.objects.link(o)
 
-    add("key",   (1.0, 0.98, 0.94),  600, ( 2.5,  -1.5,  2.0))   # warm front-left high
-    add("fill",  (0.75, 0.85, 1.0),  200, (-2.5,  -0.5,  0.5))   # cool front-right low
-    add("rim",   (1.0, 1.0, 1.0),    400, ( 0.0,   2.0,  2.5))   # back-top
+    add("key",  (1.0, 0.98, 0.94), 600, ( 2.5, -1.5,  2.0))
+    add("fill", (0.75, 0.85, 1.0), 200, (-2.5, -0.5,  0.5))
+    add("rim",  (1.0, 1.0, 1.0),   400, ( 0.0,  2.0,  2.5))
 
-    # Soft world background so dark/shadow regions don't go pitch black.
     world = bpy.context.scene.world or bpy.data.worlds.new("World")
     bpy.context.scene.world = world
     world.use_nodes = True
@@ -235,16 +352,13 @@ def configure_render(res: int, samples: int) -> None:
     r.image_settings.file_format = "PNG"
     r.image_settings.color_mode = "RGB"
     r.image_settings.color_depth = "8"
-    r.image_settings.compression = 15  # smaller PNGs; not lossy
+    r.image_settings.compression = 15
 
-    # Cycles CPU. Eevee needs an OpenGL context (which --background
-    # doesn't have without xvfb), so Cycles is the reliable default.
     s.render.engine = "CYCLES"
     s.cycles.device = "CPU"
     s.cycles.samples = samples
     s.cycles.use_denoising = True
     s.cycles.denoiser = "OPENIMAGEDENOISE"
-    # Skip slow features that don't read at thumb resolution.
     s.cycles.max_bounces = 4
     s.cycles.diffuse_bounces = 2
     s.cycles.glossy_bounces = 2
@@ -252,24 +366,14 @@ def configure_render(res: int, samples: int) -> None:
     s.cycles.transparent_max_bounces = 4
     s.cycles.volume_bounces = 0
 
-    # sRGB output (the variant ladder expects 8-bit sRGB).
     s.view_settings.view_transform = "Standard"
     s.view_settings.look = "None"
 
 
-# ----------------------------------------------------------------------------
-# render loop
-# ----------------------------------------------------------------------------
-
-def render_turntable(pivot: bpy.types.Object, out_dir: str, frames: int) -> None:
-    os.makedirs(out_dir, exist_ok=True)
-    scene = bpy.context.scene
-    for i in range(frames):
-        # Y-up rotation around the model. -90° start so frame 0 is the
-        # canonical "front" view (camera looking at the model's +Y face).
-        pivot.rotation_euler = (0, 0, math.radians(-90 + i * 360.0 / frames))
-        scene.render.filepath = os.path.join(out_dir, f"frame_{i:04d}.png")
-        bpy.ops.render.render(write_still=True)
+def render_to(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    bpy.context.scene.render.filepath = path
+    bpy.ops.render.render(write_still=True)
 
 
 # ----------------------------------------------------------------------------
@@ -282,16 +386,61 @@ def main() -> None:
     import_model(args.input)
     ensure_default_material()
 
-    mins, maxs = scene_bbox()
-    center = (mins + maxs) / 2.0
-    radius = max((maxs - mins).length / 2.0, 0.1)
+    # Don't try to relocate the model — glTF imports' parent hierarchy
+    # makes `obj.location -= center` mutations unreliable. Just aim the
+    # camera at the model's world-space bbox center; the math works
+    # identically whether the model sits at the origin or out at
+    # (0, 0, 1_000_000).
+    bounds = scene_bounds()
+    mins, maxs, dimensions = bounds
+    if mins is None:
+        mins, maxs = Vector((-0.5, -0.5, -0.5)), Vector((0.5, 0.5, 0.5))
+        dimensions = Vector((1.0, 1.0, 1.0))
+    bounds_t = (mins, maxs)
+    target = bbox_center(mins, maxs)
 
-    install_camera(center, radius)
-    install_lights(center, radius)
+    install_lights(target, dimensions)
+    cam, pivot = install_camera(target, dimensions)
     configure_render(args.res, args.samples)
+    scene = bpy.context.scene
 
-    pivot = bpy.data.objects["turntable-pivot"]
-    render_turntable(pivot, args.output, args.frames)
+    # Radius from the bbox half-diagonal — same heuristic as B-12b-11.
+    # 2.6× radius gives a comfortable framing for most models without
+    # the iterative-fit complexity. The model is parented through a
+    # pivot at the bbox center so the geometry STAYS centered regardless
+    # of how complex the source's parent hierarchy is.
+    radius = max((maxs - mins).length / 2.0, 0.1)
+    distance = radius * 2.6
+
+    # ─── Turntable: N orbital frames around Z, 20° tilt ────────────────
+    tilt_deg = 20
+    tilt_rad = math.radians(tilt_deg)
+    cam.parent = pivot
+    cam.location = (0, -distance, distance * math.tan(tilt_rad))
+    cam.rotation_euler = (math.radians(90 - tilt_deg), 0, 0)
+    turntable_dir = os.path.join(args.output, "turntable")
+    for i in range(args.frames):
+        pivot.rotation_euler = (0, 0, math.radians(-90 + i * 360.0 / args.frames))
+        render_to(os.path.join(turntable_dir, f"frame_{i:04d}.png"))
+
+    # ─── Reference views: top + bottom ─────────────────────────────────
+    # Unparent the camera so we can position it independently of the
+    # pivot's turntable rotation; aim it directly at the bbox center.
+    cam.parent = None
+    views_dir = os.path.join(args.output, "views")
+
+    # Top: straight down, camera-up = world +Y so +Y of the model is
+    # the top of the rendered image.
+    cam.location = (target.x, target.y, target.z + distance)
+    direction = target - Vector(cam.location)
+    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    render_to(os.path.join(views_dir, "top.png"))
+
+    # Bottom: looking up. Same up-axis convention as top.
+    cam.location = (target.x, target.y, target.z - distance)
+    direction = target - Vector(cam.location)
+    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    render_to(os.path.join(views_dir, "bottom.png"))
 
 
 if __name__ == "__main__":

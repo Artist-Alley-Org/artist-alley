@@ -20,22 +20,38 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
-// HLSHandler serves multi-segment HLS variants
-// (`hls/master.m3u8`, `hls/720p/playlist.m3u8`, `hls/480p/seg00000.ts`,
-// …). The OpenAPI-derived variant route only matches single-segment
-// variant keys because chi's default param is non-greedy; this handler
-// is registered ahead of the strict handler to catch the rest.
-type HLSHandler struct {
+// PathVariantHandler serves variants whose key contains slashes
+// (`hls/master.m3u8`, `turntable/0007.png`, `views/top.png`, …). The
+// OpenAPI-derived `{variant}` chi param is non-greedy by default so
+// only single-segment keys hit the strict server; we register this
+// handler ahead of it under wildcard routes to catch the rest.
+//
+// Prefix is the path segment that owns the route (e.g. 'hls',
+// 'turntable', 'views') — the handler prepends 'Prefix + "/"' to
+// the wildcard remainder to form the full variant key.
+type PathVariantHandler struct {
 	Pool    *pgxpool.Pool
 	Storage *storage.Service
 	Logger  *slog.Logger
+	Prefix  string
 }
 
-func NewHLSHandler(pool *pgxpool.Pool, st *storage.Service, logger *slog.Logger) *HLSHandler {
-	return &HLSHandler{Pool: pool, Storage: st, Logger: logger}
+// HLSHandler is the legacy name we still use for the hls wildcard
+// route. Identical to PathVariantHandler but Prefix is fixed.
+type HLSHandler = PathVariantHandler
+
+func NewHLSHandler(pool *pgxpool.Pool, st *storage.Service, logger *slog.Logger) *PathVariantHandler {
+	return NewPathVariantHandler(pool, st, logger, "hls")
 }
 
-func (h *HLSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// NewPathVariantHandler binds a handler to (pool, storage, prefix).
+// The same shape powers every nested-variant route — hls, turntable,
+// views — so adding a new one is a single r.Get() line at registration.
+func NewPathVariantHandler(pool *pgxpool.Pool, st *storage.Service, logger *slog.Logger, prefix string) *PathVariantHandler {
+	return &PathVariantHandler{Pool: pool, Storage: st, Logger: logger, Prefix: prefix}
+}
+
+func (h *PathVariantHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if auth.IdentityFromContext(r.Context()) == nil {
 		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
 		return
@@ -51,7 +67,11 @@ func (h *HLSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	variant := "hls/" + rest
+	prefix := h.Prefix
+	if prefix == "" {
+		prefix = "hls"
+	}
+	variant := prefix + "/" + rest
 	if err := storage.ValidateVariantKey(variant); err != nil {
 		http.Error(w, `{"error":"invalid variant key"}`, http.StatusBadRequest)
 		return
@@ -95,7 +115,7 @@ func (h *HLSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
-func (h *HLSHandler) resolveHash(ctx context.Context, id uuid.UUID) (string, bool, error) {
+func (h *PathVariantHandler) resolveHash(ctx context.Context, id uuid.UUID) (string, bool, error) {
 	row, err := assets.New(h.Pool).GetAsset(ctx, pgtype.UUID{Bytes: id, Valid: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
