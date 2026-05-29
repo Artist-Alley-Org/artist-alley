@@ -20,7 +20,9 @@
   // Native + three-loader 3D paths we ship today. Other 3D
   // extensions (mview, blend, mb, ma, max, usd*) fall through to
   // the placeholder until 1.18.B-10/11 ship dedicated paths.
-  const SUPPORTED_3D = new Set(['glb', 'gltf', 'fbx', 'obj']);
+  // 'mview' is here too — ModelView routes that one to marmoset.js
+  // instead of the three.js stack.
+  const SUPPORTED_3D = new Set(['glb', 'gltf', 'fbx', 'obj', 'mview']);
 
   interface Asset {
     id: string;

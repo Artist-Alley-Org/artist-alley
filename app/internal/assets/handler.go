@@ -1001,12 +1001,13 @@ var videoExts = map[string]struct{}{
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
 }
 
-// modelExts: formats the Blender-headless turntable handler can ingest
-// (kept in sync with preview/model.go). Closed/proprietary formats
-// like .mb / .ma / .max stay on a placeholder until we wire a Maya/Max
-// worker tier.
+// modelExts: formats the preview.3d handler can ingest. glb/gltf/fbx/
+// obj/blend go through Blender; mview goes through the Marmoset
+// archive parser to extract the embedded thumbnail. Closed/proprietary
+// formats like .mb / .ma / .max stay on a placeholder until we wire a
+// Maya/Max worker tier.
 var modelExts = map[string]struct{}{
-	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {},
+	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 }
 
 func needsProcessing(ext *string) bool {

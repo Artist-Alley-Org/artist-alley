@@ -86,6 +86,8 @@
     try {
       if (ext === 'glb' || ext === 'gltf' || ext === 'fbx' || ext === 'obj') {
         await mountThree(ext);
+      } else if (ext === 'mview') {
+        await mountMarmoset();
       } else {
         loadError = `${ext} viewer not yet implemented`;
       }
@@ -94,6 +96,73 @@
     } finally {
       loading = false;
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // .mview via Marmoset's WebViewer. Closed source, distributed as a
+  // single JS file from viewer.marmoset.co. We script-tag it on demand
+  // so the main bundle doesn't ship a network dependency for users who
+  // never open an .mview asset.
+  //
+  // The server-side preview.model handler already extracts the embedded
+  // thumbnail.jpg from the .mview archive and fans it through the
+  // raster ladder — so cards render fine without ever touching this
+  // code path. This mount runs only when the user opens the asset in
+  // the viewer.
+  // -----------------------------------------------------------------------
+
+  async function mountMarmoset() {
+    await ensureMarmosetScript();
+    if (!container) return;
+    const w = container.clientWidth || 800;
+    const h = container.clientHeight || 600;
+    const mv: any = (window as any).marmoset;
+    if (!mv || typeof mv.WebViewer !== 'function') {
+      loadError = 'marmoset.js failed to expose WebViewer';
+      return;
+    }
+    const viewer = new mv.WebViewer(w, h, fileUrl);
+    container.appendChild(viewer.domRoot);
+    // Auto-load on mount so the user doesn't have to press play.
+    // Marmoset's docs say loadScene() is async and idempotent.
+    try { viewer.loadScene?.(); } catch { /* ignore — falls back to the play button */ }
+
+    controller.hudExtra = 'MVIEW';
+    controller.tools = {
+      frameAll: () => { try { viewer.resetCamera?.(); } catch { /* ignore */ } },
+    };
+
+    const ro = new ResizeObserver(() => {
+      if (!container) return;
+      const W = container.clientWidth || w;
+      const H = container.clientHeight || h;
+      try { viewer.resize?.(W, H); } catch { /* ignore */ }
+    });
+    ro.observe(container);
+
+    cleanupFn = () => {
+      ro.disconnect();
+      try { viewer.unload?.(); } catch { /* ignore */ }
+      try { container?.removeChild(viewer.domRoot); } catch { /* ignore */ }
+      controller.tools = null;
+    };
+  }
+
+  // Idempotent loader for the marmoset.js global. Mounting multiple
+  // .mview assets in one session only fetches the script once.
+  let marmosetScriptPromise: Promise<void> | null = null;
+  function ensureMarmosetScript(): Promise<void> {
+    if ((window as any).marmoset) return Promise.resolve();
+    if (marmosetScriptPromise) return marmosetScriptPromise;
+    marmosetScriptPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://viewer.marmoset.co/main/marmoset.js';
+      s.crossOrigin = 'anonymous';
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('marmoset.js failed to load'));
+      document.head.appendChild(s);
+    });
+    return marmosetScriptPromise;
   }
 
   // -----------------------------------------------------------------------

@@ -100,8 +100,14 @@ func NewModelHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Stor
 func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
 // modelExts mirrors the dispatcher map in assets.handler.go.
+//
+// mview is the Marmoset Viewer format. The Blender pipeline can't
+// open these (no public importer); we extract the embedded
+// thumbnail.jpg entry directly and skip the turntable / views work.
+// The browser viewer (frontend) renders the live model via
+// marmoset.js.
 var modelExts = map[string]struct{}{
-	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {},
+	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 }
 
 func isModelExt(ext string) bool {
@@ -130,6 +136,15 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	defer cancel()
 
 	h.markProcessing(jobCtx, p.AssetID)
+
+	// mview is a closed format Blender can't open. The archive
+	// embeds a 'thumbnail.jpg' entry we can extract directly — no
+	// Blender, no companion staging, no turntable, just the thumb
+	// fanned into the raster ladder. The live model is rendered by
+	// marmoset.js in the browser viewer.
+	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
+		return h.handleMview(jobCtx, p, started)
+	}
 
 	work, cleanup, err := h.stage(jobCtx, p.FileHash, p.FileExtension)
 	if err != nil {
@@ -269,6 +284,115 @@ func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir s
 		if err := h.uploadFile(ctx, hash, key, path, "image/png"); err != nil {
 			return fmt.Errorf("upload %s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// handleMview is the .mview fast-path. The Marmoset Viewer format
+// embeds a thumbnail.jpg entry near the start of the archive; we
+// stream the source bytes through the parser, lift the JPEG out, and
+// fan it into the standard raster ladder. No Blender invocation, no
+// turntable / views variants — the live model is rendered client-side
+// by marmoset.js.
+//
+// If the thumbnail extraction fails (corrupt archive, future format
+// change, compressed entry we don't yet support), we mark the asset
+// ready WITHOUT a raster ladder. The browser viewer still works (it
+// fetches the model itself), and the asset card falls through its
+// existing 404 → /file → icon fallback chain.
+func (h *ModelHandler) handleMview(ctx context.Context, p ModelPayload, started time.Time) (json.RawMessage, error) {
+	result := ModelResult{FrameCount: 0}
+
+	if h.variantExists(ctx, p.FileHash, "col") {
+		result.Skipped = append(result.Skipped, "raster")
+		h.markReady(ctx, p.AssetID)
+		result.WorkS = time.Since(started).Seconds()
+		return json.Marshal(result)
+	}
+
+	rc, info, err := h.Storage.Download(ctx, p.FileHash, storage.VariantOriginal)
+	if err != nil {
+		h.markFailed(ctx, p.AssetID, err.Error())
+		return nil, fmt.Errorf("preview.model.mview: download: %w", err)
+	}
+	defer rc.Close()
+	if info != nil && info.Size > h.MaxSourceBytes {
+		h.markFailed(ctx, p.AssetID, fmt.Sprintf("mview source too large: %d", info.Size))
+		return nil, &jobs.TerminalError{Err: fmt.Errorf("mview source too large: %d", info.Size)}
+	}
+	// Cap the read to MaxSourceBytes so a runaway archive can't OOM
+	// the worker. The thumbnail lives near the start of the archive,
+	// so even a 64KB cap would usually work — the cap here is just a
+	// safety net.
+	src := io.LimitReader(rc, h.MaxSourceBytes+1)
+	thumb, err := ExtractMviewThumbnail(src)
+	if err != nil {
+		// Soft fail: mark ready so the viewer + card render the model
+		// directly (browser marmoset.js handles its own preview load).
+		// The col 404 will fall through the card's existing chain.
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_extract_failed",
+			slog.String("asset_id", p.AssetID.String()),
+			slog.String("err", err.Error()))
+		h.markReady(ctx, p.AssetID)
+		result.Skipped = append(result.Skipped, "raster")
+		result.WorkS = time.Since(started).Seconds()
+		return json.Marshal(result)
+	}
+
+	if err := h.fanThumbBytes(ctx, p.FileHash, thumb); err != nil {
+		return nil, fmt.Errorf("preview.model.mview: fan raster: %w", err)
+	}
+	result.Variants = append(result.Variants, "raster")
+
+	h.markReady(ctx, p.AssetID)
+	result.WorkS = time.Since(started).Seconds()
+	return json.Marshal(result)
+}
+
+// fanThumbBytes decodes a JPEG and writes it through the raster
+// variant ladder. Shared by the mview path; could be repurposed by
+// any future "we already have a poster, just resize it" worker.
+func (h *ModelHandler) fanThumbBytes(ctx context.Context, hash string, jpegBytes []byte) error {
+	if h.SysConfig == nil {
+		return nil
+	}
+	cfg, err := h.SysConfig.GetPreviews(ctx)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	src, err := jpeg.Decode(bytes.NewReader(jpegBytes))
+	if err != nil {
+		return fmt.Errorf("decode thumb: %w", err)
+	}
+	for _, v := range cfg.Variants {
+		if v.Key == storage.VariantOriginal {
+			continue
+		}
+		if h.variantExists(ctx, hash, v.Key) {
+			continue
+		}
+		dst := resizeFor(src, v)
+		var buf bytes.Buffer
+		contentType, err := encodeImage(&buf, dst, v)
+		if err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_encode_failed",
+				slog.String("variant", v.Key),
+				slog.String("err", err.Error()))
+			continue
+		}
+		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_put_failed",
+				slog.String("variant", v.Key),
+				slog.String("err", err.Error()))
+			continue
+		}
+		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
+			ObjectHash:  hash,
+			VariantKey:  v.Key,
+			SizeBytes:   int64(buf.Len()),
+			ContentType: contentType,
+			Metadata:    []byte("{}"),
+		})
 	}
 	return nil
 }
