@@ -997,6 +997,7 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 var imageExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "webp": {},
 	"bmp": {}, "tiff": {}, "tif": {}, "avif": {}, "heic": {}, "heif": {},
+	"svg": {},
 }
 
 func isImageExt(ext *string) bool {

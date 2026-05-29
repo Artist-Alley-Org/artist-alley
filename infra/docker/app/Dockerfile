@@ -67,6 +67,7 @@ ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572
 # curl are only needed for the extraction step.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl xz-utils ffmpeg \
+        librsvg2-bin \
         libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
         libxkbcommon0 libxext6 libsm6 libice6 \
  && rm -rf /var/lib/apt/lists/* \

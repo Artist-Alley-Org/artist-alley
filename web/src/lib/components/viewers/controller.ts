@@ -169,9 +169,13 @@ function noop() { /* default impl */ }
 // AssetCard agree on what kind of asset they're looking at.
 // ---------------------------------------------------------------------------
 
+// Kept in sync with app/internal/assets/handler.go::imageExts. SVG is
+// in here so it routes to ImageView (rendered natively by the
+// browser via <img>) and gets a rasterized variant ladder produced by
+// the backend SVG decoder (oksvg).
 const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
-  'avif', 'heic', 'heif',
+  'avif', 'heic', 'heif', 'svg',
 ]);
 const VIDEO_EXTS = new Set([
   'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',

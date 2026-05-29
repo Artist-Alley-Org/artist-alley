@@ -32,7 +32,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"image/jpeg"
 	"image/png"
@@ -126,7 +125,7 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 
 	h.markProcessing(ctx, p.AssetID)
 
-	src, err := h.loadSource(ctx, p.FileHash)
+	src, err := h.loadSourceWithExt(ctx, p.FileHash, p.FileExtension)
 	if err != nil {
 		h.markFailed(ctx, p.AssetID, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
@@ -169,6 +168,14 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 // ---------------------------------------------------------------------------
 
 func (h *RasterHandler) loadSource(ctx context.Context, hash string) (image.Image, error) {
+	return h.loadSourceWithExt(ctx, hash, "")
+}
+
+// loadSourceWithExt is the extension-aware variant. SVG sources are
+// rasterised via oksvg + rasterx (pure Go, no cgo, no subprocess) at
+// a 2048² square so the downstream variant chain has a high-DPI
+// source to resize from. Other formats fall through to image.Decode.
+func (h *RasterHandler) loadSourceWithExt(ctx context.Context, hash, ext string) (image.Image, error) {
 	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
 		return nil, fmt.Errorf("download original: %w", err)
@@ -178,6 +185,9 @@ func (h *RasterHandler) loadSource(ctx context.Context, hash string) (image.Imag
 		return nil, fmt.Errorf("source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
 	}
 	r := io.LimitReader(rc, h.MaxSourceBytes+1)
+	if strings.EqualFold(strings.TrimPrefix(ext, "."), "svg") {
+		return decodeSVG(r)
+	}
 	img, _, err := image.Decode(r)
 	if err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
@@ -301,10 +311,16 @@ func encodeImage(w io.Writer, img image.Image, v sysconfig.PreviewVariant) (stri
 		return "image/png", nil
 	default:
 		// JPEG (also the fallback for WebP until 1.18.E ships the
-		// encoder). JPEG can't carry alpha — pre-composite over
-		// white so partially-transparent sources don't go black.
+		// encoder). JPEG can't carry alpha. If the source actually
+		// uses transparency we promote the variant to PNG so it
+		// renders correctly against any backdrop instead of getting
+		// silently flattened over white. Opaque sources stay on JPEG
+		// for the size win.
 		if hasAlpha(img) {
-			img = flattenOverWhite(img)
+			if err := png.Encode(w, img); err != nil {
+				return "", err
+			}
+			return "image/png", nil
 		}
 		if err := jpeg.Encode(w, img, &jpeg.Options{Quality: v.Quality}); err != nil {
 			return "", err
@@ -331,14 +347,6 @@ func hasAlpha(img image.Image) bool {
 		}
 	}
 	return false
-}
-
-func flattenOverWhite(src image.Image) image.Image {
-	b := src.Bounds()
-	out := image.NewRGBA(b)
-	draw.Draw(out, b, image.NewUniform(color.White), image.Point{}, draw.Src)
-	draw.Draw(out, b, src, b.Min, draw.Over)
-	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +414,7 @@ func (h *RasterHandler) markFailed(ctx context.Context, id uuid.UUID, msg string
 var rasterExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "bmp": {},
 	"tif": {}, "tiff": {}, "webp": {},
+	"svg": {},
 }
 
 func isRasterExt(ext string) bool {
