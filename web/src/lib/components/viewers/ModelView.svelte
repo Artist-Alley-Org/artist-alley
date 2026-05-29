@@ -127,35 +127,36 @@
       // Soft fail — companions are an enhancement, not a requirement.
     }
 
-    // LoadingManager rewrites every URL the loader requests. Match
-    // case-insensitively + try a few common variants ('textures/foo.png'
-    // vs 'Textures/foo.png' vs 'foo.png') because exporters disagree on
-    // casing + path conventions all the time.
+    // LoadingManager rewrites every URL the loader requests so
+    // textures + MTL references resolve to companion fetch URLs.
+    //
+    // Loaders pass URLs that look like '/api/v1/assets/X/companions/
+    // {mtl_id}/Textures/foo.png' — the MTL's base URL plus the relative
+    // path the MTL specified. Prefix-stripping is fragile (the base
+    // varies depending on which file is the loader's anchor), so we
+    // tail-match the URL against every known companion path instead.
+    // Falls back to bare basename so a glTF asking for 'textures/foo.png'
+    // resolves to a 'foo.png' companion the user uploaded flat.
     const manager = new THREE.LoadingManager();
     if (companions.size > 0) {
-      const lowerLookup = new Map<string, string>();
-      for (const [k, v] of companions) lowerLookup.set(k.toLowerCase(), v);
+      const lowerEntries = Array.from(companions, ([k, v]) => [k.toLowerCase(), v] as const);
       manager.setURLModifier((url) => {
-        // GLTFLoader / OBJLoader pass through absolute-looking URLs
-        // they built relative to the model URL. Strip the model path
-        // prefix so we match against the same shape the user uploaded.
-        const stripped = url
-          .replace(/^https?:\/\/[^/]+/, '')
-          .replace(/^\/api\/v1\/assets\/[^/]+\/file\/?/, '')
-          .replace(/^\.?\/+/, '');
-        if (!stripped) return url;
-        // Exact match first, then case-insensitive, then bare basename
-        // (last-resort: a glTF asking for 'textures/foo.png' resolves
-        // to 'foo.png' if that's all the user uploaded).
-        const exact = companions.get(stripped);
-        if (exact) return exact;
-        const ci = lowerLookup.get(stripped.toLowerCase());
-        if (ci) return ci;
-        const basename = stripped.split('/').pop() ?? '';
-        const bnExact = companions.get(basename);
-        if (bnExact) return bnExact;
-        const bnCi = lowerLookup.get(basename.toLowerCase());
-        if (bnCi) return bnCi;
+        const lower = url.toLowerCase();
+        for (const [path, companionUrl] of lowerEntries) {
+          // Exact tail match: URL ends with '/<path>' or equals '<path>'
+          // (the leading slash check kills false positives like
+          // 'foo.png' matching 'unfoo.png').
+          if (lower.endsWith('/' + path) || lower === path) {
+            return companionUrl;
+          }
+        }
+        // Last-resort basename match.
+        const lastSlash = lower.lastIndexOf('/');
+        const basename = lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
+        for (const [path, companionUrl] of lowerEntries) {
+          const cBasename = path.slice(path.lastIndexOf('/') + 1);
+          if (cBasename === basename) return companionUrl;
+        }
         return url;
       });
     }
