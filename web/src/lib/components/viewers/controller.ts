@@ -28,6 +28,75 @@ export type ViewKind =
   | '3d'
   | 'placeholder';
 
+// Per-kind review tools the shell renders in its right pane. Each
+// group is optional — view bodies populate only what they support
+// (ModelView fills the 3D set, ImageView could later fill a
+// `zoomPresets` group, VideoView could expose audio/waveform toggles).
+// The shell renders any group that's defined and skips the rest, so
+// adding a new tool is "add to the interface + populate from the
+// view body" without touching the panel layout.
+export interface ViewTools {
+  // ── Numeric controls — sliders. value is the live state the panel
+  //    reads; set is the mutator the panel calls on drag.
+  exposure?: ToolNumeric;
+  envIntensity?: ToolNumeric;
+  autoRotateSpeed?: ToolNumeric;
+
+  // ── Toggles
+  grid?: ToolToggle;
+  axes?: ToolToggle;
+  autoRotate?: ToolToggle;
+  groundShadow?: ToolToggle;
+
+  // ── Cycle (3-or-more-state buttons)
+  wireframe?: ToolCycle<'off' | 'on' | 'overlay'>;
+
+  // ── One-shot actions
+  frameAll?: () => void;
+  resetCamera?: () => void;
+
+  // ── Camera presets (when supported). Closed enum so the shell can
+  //    render the icons consistently.
+  cameraPreset?: (preset: CameraPreset) => void;
+
+  // ── Animations (3D + video). Populated when the asset has clips;
+  //    the shell renders a clip selector + transport bar from this.
+  animations?: AnimationState | null;
+}
+
+export type CameraPreset = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'iso';
+
+export interface ToolNumeric {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  label?: string;
+  set: (v: number) => void;
+}
+
+export interface ToolToggle {
+  enabled: boolean;
+  toggle: () => void;
+}
+
+export interface ToolCycle<T extends string> {
+  mode: T;
+  options: readonly T[];
+  cycle: () => void;
+}
+
+export interface AnimationClip {
+  name: string;
+  duration: number;
+}
+
+export interface AnimationState {
+  clips: AnimationClip[];
+  current: number;      // index into clips
+  select: (idx: number) => void;
+}
+
 export interface ViewController {
   // Identity
   kind: ViewKind;
@@ -62,6 +131,11 @@ export interface ViewController {
   // formatting differs (timecode vs page X / Y vs MM:SS).
   formatAnchor: (frame: number) => string;
   hudExtra: string;
+
+  // Per-kind review tools. View bodies populate this on mount; the
+  // shell's right pane reads from it when reviewMode is on. Null
+  // means "no tools for this kind yet" (e.g. placeholder body).
+  tools: ViewTools | null;
 }
 
 export function defaultController(): ViewController {
@@ -84,6 +158,7 @@ export function defaultController(): ViewController {
     setRate: noop,
     formatAnchor: (n) => String(n),
     hudExtra: '',
+    tools: null,
   };
 }
 

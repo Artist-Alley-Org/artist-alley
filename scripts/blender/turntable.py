@@ -94,6 +94,52 @@ def import_model(path: str) -> None:
         raise SystemExit(f"unsupported extension: {ext}")
 
 
+def ensure_default_material() -> None:
+    """Give meshes-without-materials a neutral PBR fallback.
+
+    Untextured FBX / OBJ exports often arrive with empty material slots.
+    Cycles renders those as the canonical magenta-pink "missing shader"
+    indicator, which makes thumbnails look broken even when nothing is
+    actually wrong. Assigning a neutral grey Principled BSDF gives us
+    something legible that still reads as "uniform PBR surface".
+
+    Materials that DO exist are left alone — we only want to fill in
+    the gaps, not stomp on artist intent.
+    """
+    fallback = None
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH":
+            continue
+        mesh = obj.data
+        needs_default = (
+            not mesh.materials
+            or len(mesh.materials) == 0
+            or all(m is None for m in mesh.materials)
+        )
+        if not needs_default:
+            continue
+        if fallback is None:
+            fallback = bpy.data.materials.new(name="aa_default_grey")
+            fallback.use_nodes = True
+            principled = fallback.node_tree.nodes.get("Principled BSDF")
+            if principled is not None:
+                # Neutral grey diffuse, semi-rough, fully dielectric so
+                # the IBL has somewhere to bounce off without going
+                # mirror-finish or flat-matte.
+                principled.inputs["Base Color"].default_value = (0.55, 0.55, 0.55, 1.0)
+                principled.inputs["Roughness"].default_value = 0.55
+                # Metallic input name varies across versions; set with
+                # a try so old + new Blenders both work.
+                for k in ("Metallic", "Metalness"):
+                    if k in principled.inputs:
+                        principled.inputs[k].default_value = 0.0
+                        break
+        # Clear any None entries and append the fallback.
+        while mesh.materials:
+            mesh.materials.pop()
+        mesh.materials.append(fallback)
+
+
 # ----------------------------------------------------------------------------
 # camera framing — fit the bounding box snugly
 # ----------------------------------------------------------------------------
@@ -234,6 +280,7 @@ def main() -> None:
     args = parse_args()
     reset_scene()
     import_model(args.input)
+    ensure_default_material()
 
     mins, maxs = scene_bbox()
     center = (mins + maxs) / 2.0
