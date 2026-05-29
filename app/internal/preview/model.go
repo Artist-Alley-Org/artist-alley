@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	mview "github.com/mscrnt/mviewer/go"
 	xdraw "golang.org/x/image/draw"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
@@ -101,11 +102,11 @@ func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
 // modelExts mirrors the dispatcher map in assets.handler.go.
 //
-// mview is the Marmoset Viewer format. The Blender pipeline can't
-// open these (no public importer); we extract the embedded
-// thumbnail.jpg entry directly and skip the turntable / views work.
-// The browser viewer (frontend) renders the live model via
-// marmoset.js.
+// mview is the Marmoset Viewer format. Blender can't open it directly,
+// so we convert the archive to glTF binary in-process via the Go
+// mview/glb decoder before staging it for the turntable render. The
+// browser viewer also has a live marmoset.js path as a fallback for
+// formats this decoder doesn't yet cover (animated rigs, skinning).
 var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 }
@@ -161,22 +162,32 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			slog.String("err", err.Error()))
 	}
 
-	// .mview gets the embedded thumbnail extracted as a safety net,
-	// then short-circuits — Blender can't open the format and we
-	// don't ship a server-side renderer for it yet. The browser
-	// viewer falls back to marmoset.js for the live view. A future
-	// commit replaces this branch with an in-process Go conversion
-	// to GLB so the standard Blender turntable can take over (the
-	// Go port lives in a separate library so it can be PR'd back
-	// upstream once it covers the format).
+	// .mview gets two passes:
+	//   1. Best-effort thumbnail extract — always grabs the
+	//      embedded thumbnail.jpg so the col variant exists even
+	//      if the GLB conversion fails.
+	//   2. In-process convert to GLB. On success we swap sourcePath
+	//      to the .glb so the standard Blender turntable below
+	//      picks it up; the conversion gives us real turntable +
+	//      reference views matching the rest of the 3D pipeline.
+	// A conversion failure is non-fatal: the safety-net thumbnail
+	// already populated the raster ladder, marmoset.js still serves
+	// the live view, and we just skip the heavy Blender frames.
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
 		h.extractMviewThumbBestEffort(jobCtx, p.FileHash, work.sourcePath)
-		h.markReady(jobCtx, p.AssetID)
-		return json.Marshal(ModelResult{
-			FrameCount: 0,
-			Variants:   []string{"raster"},
-			WorkS:      time.Since(started).Seconds(),
-		})
+		glbPath, err := h.convertMviewToGLB(work.sourcePath)
+		if err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
+				slog.String("asset_id", p.AssetID.String()),
+				slog.String("err", err.Error()))
+			h.markReady(jobCtx, p.AssetID)
+			return json.Marshal(ModelResult{
+				FrameCount: 0,
+				Variants:   []string{"raster"},
+				WorkS:      time.Since(started).Seconds(),
+			})
+		}
+		work.sourcePath = glbPath
 	}
 
 	result := ModelResult{FrameCount: h.Frames}
@@ -313,7 +324,7 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 		return
 	}
 	defer f.Close()
-	thumb, err := ExtractMviewThumbnail(io.LimitReader(f, h.MaxSourceBytes+1))
+	thumb, err := mview.ExtractThumbnail(io.LimitReader(f, h.MaxSourceBytes+1))
 	if err != nil {
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_extract_failed",
 			slog.String("err", err.Error()))
@@ -323,6 +334,32 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_thumb_fan_failed",
 			slog.String("err", err.Error()))
 	}
+}
+
+// convertMviewToGLB runs the in-process Marmoset → glTF binary
+// converter and writes the result next to the .mview source in the
+// workdir. Returns the path to the new .glb so the caller can swap
+// the Blender input over.
+func (h *ModelHandler) convertMviewToGLB(mviewPath string) (string, error) {
+	in, err := os.Open(mviewPath)
+	if err != nil {
+		return "", fmt.Errorf("open mview: %w", err)
+	}
+	defer in.Close()
+	glbPath := strings.TrimSuffix(mviewPath, filepath.Ext(mviewPath)) + ".glb"
+	out, err := os.Create(glbPath)
+	if err != nil {
+		return "", fmt.Errorf("create glb: %w", err)
+	}
+	if err := mview.ConvertToGLB(in, out); err != nil {
+		_ = out.Close()
+		_ = os.Remove(glbPath)
+		return "", fmt.Errorf("convert: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return "", fmt.Errorf("close glb: %w", err)
+	}
+	return glbPath, nil
 }
 
 

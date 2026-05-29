@@ -10,10 +10,14 @@ require (
 	github.com/getkin/kin-openapi v0.139.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/mscrnt/mviewer/go v0.0.0-20260529175032-ae77c863f86b
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/pressly/goose/v3 v3.27.1
+	go.n16f.net/thumbhash v1.1.0
 	golang.org/x/crypto v0.52.0
+	golang.org/x/image v0.32.0
 )
 
 require (
@@ -34,7 +38,6 @@ require (
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -45,12 +48,11 @@ require (
 	github.com/oasdiff/yaml v0.1.0 // indirect
 	github.com/oasdiff/yaml3 v0.0.13 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
+	github.com/qmuntal/gltf v0.28.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
-	go.n16f.net/thumbhash v1.1.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/image v0.32.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
