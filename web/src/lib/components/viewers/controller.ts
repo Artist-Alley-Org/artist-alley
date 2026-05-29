@@ -128,3 +128,6 @@ export function isImageExt(ext: string | null | undefined): boolean {
 export function isVideoExt(ext: string | null | undefined): boolean {
   return kindForExtension(ext) === 'video';
 }
+export function is3DExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === '3d';
+}

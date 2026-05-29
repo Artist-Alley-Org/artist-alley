@@ -14,7 +14,13 @@
   import { defaultController, kindForExtension } from './controller';
   import ImageView from './ImageView.svelte';
   import VideoView from './VideoView.svelte';
+  import ModelView from './ModelView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
+
+  // Native + three-loader 3D paths we ship today. Other 3D
+  // extensions (mview, blend, mb, ma, max, usd*) fall through to
+  // the placeholder until 1.18.B-10/11 ship dedicated paths.
+  const SUPPORTED_3D = new Set(['glb', 'gltf', 'fbx', 'obj']);
 
   interface Asset {
     id: string;
@@ -290,6 +296,8 @@
         <VideoView {asset} bind:controller />
       {:else if kind === 'image'}
         <ImageView {asset} bind:controller />
+      {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
+        <ModelView {asset} bind:controller />
       {:else}
         <PlaceholderView {asset} bind:controller />
       {/if}

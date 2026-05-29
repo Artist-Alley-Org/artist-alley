@@ -27,13 +27,12 @@
     asset: AssetSummary;
   }
 
-  const VIDEO_EXTS = new Set([
-    'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',
-    'flv', 'm4v', 'ts',
-  ]);
+  import { isVideoExt, is3DExt } from './viewers/controller';
   function isVideoAsset(a: AssetSummary | undefined | null): boolean {
-    if (!a?.file_extension) return false;
-    return VIDEO_EXTS.has(a.file_extension.toLowerCase().replace(/^\./, ''));
+    return isVideoExt(a?.file_extension);
+  }
+  function is3DAsset(a: AssetSummary | undefined | null): boolean {
+    return is3DExt(a?.file_extension);
   }
   interface Post {
     id: string;
@@ -125,9 +124,9 @@
   // already produced by preview.video — a single image download
   // (well-cached, content-addressed) gives ~100 frames of scrub. No
   // video decode, no extra network round-trips after first hover.
-  const coverIsVideo = $derived(
-    post.members.find((m) => m.asset_id === coverAssetId)?.asset && isVideoAsset(post.members.find((m) => m.asset_id === coverAssetId)!.asset),
-  );
+  const coverAsset = $derived(post.members.find((m) => m.asset_id === coverAssetId)?.asset);
+  const coverIsVideo = $derived(!!coverAsset && isVideoAsset(coverAsset));
+  const coverIs3D = $derived(!!coverAsset && is3DAsset(coverAsset));
   const spriteUrl = $derived(coverAssetId ? `/api/v1/assets/${coverAssetId}/variants/sprites.jpg` : '');
 
   let hovering = $state(false);
@@ -214,6 +213,12 @@
         <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
           <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4" /></svg>
           video
+        </div>
+      {:else if coverIs3D}
+        <!-- Cube glyph for 3D assets. -->
+        <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.27 6.96 12 12.01 20.73 6.96" /><line x1="12" y1="22.08" x2="12" y2="12" /></svg>
+          3D
         </div>
       {/if}
     {:else if !placeholder}
