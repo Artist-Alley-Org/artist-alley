@@ -103,23 +103,107 @@
 
   async function mountThree(kind: 'glb' | 'gltf' | 'fbx' | 'obj') {
     const THREE = await import('three');
+
+    // ─── Companion lookup ────────────────────────────────────────────
+    // Fetch the asset's sidecar files BEFORE loading. The viewer's
+    // LoadingManager rewrites every relative resource URL the loader
+    // asks for ('textures/foo.png', 'character.mtl', etc.) through
+    // these entries — so as long as the user uploaded the right files,
+    // the model's external references just resolve.
+    //
+    // Best-effort: 401 / 404 / network errors just mean "no companions
+    // attached"; we fall back to the bare model and let the loader
+    // render whatever it can without external textures.
+    const companions = new Map<string, string>();
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}/companions`, { credentials: 'include' });
+      if (r.ok) {
+        const list = (await r.json()) as Array<{ id: string; path: string }>;
+        for (const c of list) {
+          companions.set(c.path, `/api/v1/assets/${asset.id}/companions/${c.id}`);
+        }
+      }
+    } catch {
+      // Soft fail — companions are an enhancement, not a requirement.
+    }
+
+    // LoadingManager rewrites every URL the loader requests. Match
+    // case-insensitively + try a few common variants ('textures/foo.png'
+    // vs 'Textures/foo.png' vs 'foo.png') because exporters disagree on
+    // casing + path conventions all the time.
+    const manager = new THREE.LoadingManager();
+    if (companions.size > 0) {
+      const lowerLookup = new Map<string, string>();
+      for (const [k, v] of companions) lowerLookup.set(k.toLowerCase(), v);
+      manager.setURLModifier((url) => {
+        // GLTFLoader / OBJLoader pass through absolute-looking URLs
+        // they built relative to the model URL. Strip the model path
+        // prefix so we match against the same shape the user uploaded.
+        const stripped = url
+          .replace(/^https?:\/\/[^/]+/, '')
+          .replace(/^\/api\/v1\/assets\/[^/]+\/file\/?/, '')
+          .replace(/^\.?\/+/, '');
+        if (!stripped) return url;
+        // Exact match first, then case-insensitive, then bare basename
+        // (last-resort: a glTF asking for 'textures/foo.png' resolves
+        // to 'foo.png' if that's all the user uploaded).
+        const exact = companions.get(stripped);
+        if (exact) return exact;
+        const ci = lowerLookup.get(stripped.toLowerCase());
+        if (ci) return ci;
+        const basename = stripped.split('/').pop() ?? '';
+        const bnExact = companions.get(basename);
+        if (bnExact) return bnExact;
+        const bnCi = lowerLookup.get(basename.toLowerCase());
+        if (bnCi) return bnCi;
+        return url;
+      });
+    }
+
     let model: any;
     if (kind === 'glb' || kind === 'gltf') {
       const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
       const result = await new Promise<any>((res, rej) => {
-        new GLTFLoader().load(fileUrl, res, undefined, rej);
+        new GLTFLoader(manager).load(fileUrl, res, undefined, rej);
       });
       model = result.scene;
       // result.animations is available here; B-12b-3 wires AnimationMixer.
     } else if (kind === 'fbx') {
       const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader.js');
       model = await new Promise<any>((res, rej) => {
-        new FBXLoader().load(fileUrl, res, undefined, rej);
+        new FBXLoader(manager).load(fileUrl, res, undefined, rej);
       });
     } else {
+      // OBJ has the most demanding sidecar story — geometry alone is
+      // useless without the MTL chain (materials + texture references).
+      // If the user uploaded an MTL companion, load it FIRST via
+      // MTLLoader, then hand the parsed materials to OBJLoader.
       const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
+      const objLoader = new OBJLoader(manager);
+
+      let mtlCompanionUrl: string | null = null;
+      for (const [path, url] of companions) {
+        if (path.toLowerCase().endsWith('.mtl')) {
+          mtlCompanionUrl = url;
+          break;
+        }
+      }
+      if (mtlCompanionUrl) {
+        try {
+          const { MTLLoader } = await import('three/examples/jsm/loaders/MTLLoader.js');
+          const mtlLoader = new MTLLoader(manager);
+          const materials = await new Promise<any>((res, rej) => {
+            mtlLoader.load(mtlCompanionUrl!, res, undefined, rej);
+          });
+          materials.preload();
+          objLoader.setMaterials(materials);
+        } catch {
+          // Couldn't parse the MTL — OBJ still loads as untextured;
+          // material upgrade below gives it neutral grey PBR.
+        }
+      }
       model = await new Promise<any>((res, rej) => {
-        new OBJLoader().load(fileUrl, res, undefined, rej);
+        objLoader.load(fileUrl, res, undefined, rej);
       });
     }
 
