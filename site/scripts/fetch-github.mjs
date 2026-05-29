@@ -29,9 +29,21 @@ const HEADERS_BASE = {
 };
 
 // --- transport: fetch() or gh CLI ------------------------------------------
+//
+// Priority order:
+//   1. gh / gh.exe on PATH (local dev) — uses the user's logged-in auth which
+//      is usually scoped correctly for private repos.
+//   2. GITHUB_TOKEN / GH_TOKEN env var (CI, Cloudflare Pages) — only used
+//      when gh isn't available, so a stale local PAT in the env doesn't
+//      poison the local dev experience.
+//   3. Stub snapshot — keeps the build green when neither is available.
 
-const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 const ghBinary = pickGhBinary();
+// Only honor the env token when gh isn't available; otherwise stale PATs
+// silently overrule a working `gh auth login`.
+const token = ghBinary
+  ? null
+  : (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null);
 
 function pickGhBinary() {
   // Try gh.exe first on WSL (the user's documented preference); fall back to gh.
