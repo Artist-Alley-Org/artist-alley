@@ -161,8 +161,8 @@ const latestTag = gh?.releases?.[0]?.tag_name;
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(180deg, rgba(13, 17, 23, 0) 0%, rgba(13, 17, 23, 0.6) 100%),
-        linear-gradient(120deg, #0d1117 0%, #14182a 50%, #0d1117 100%);
+        linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--aa-hero-bg-a) 60%, transparent) 100%),
+        linear-gradient(120deg, var(--aa-hero-bg-a) 0%, var(--aa-hero-bg-b) 50%, var(--aa-hero-bg-a) 100%);
       background-size: 200% 200%;
       animation: heroXShift 18s ease-in-out infinite;
     }
@@ -170,7 +170,7 @@ const latestTag = gh?.releases?.[0]?.tag_name;
       position: absolute;
       inset: 0;
       background-image:
-        radial-gradient(circle, rgba(124, 58, 237, 0.08) 1px, transparent 1px);
+        radial-gradient(circle, var(--aa-hero-dot-grid) 1px, transparent 1px);
       background-size: 28px 28px;
       mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 75%);
       -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 75%);
@@ -179,19 +179,23 @@ const latestTag = gh?.releases?.[0]?.tag_name;
       position: absolute;
       border-radius: 50%;
       filter: blur(80px);
-      opacity: 0.45;
-      mix-blend-mode: screen;
+      opacity: 0.55;
+      /* `screen` is great on dark, weird on light — `multiply` looks better on
+         white. plus-lighter splits the difference. */
+      mix-blend-mode: plus-lighter;
     }
+    :root[data-theme="light"] .hero-x-bg-glow { mix-blend-mode: multiply; opacity: 0.4; }
+
     .hero-x-bg-glow--a {
       width: 520px; height: 520px;
       top: -160px; left: -120px;
-      background: radial-gradient(circle, rgba(124, 58, 237, 0.6), transparent 65%);
+      background: radial-gradient(circle, var(--aa-glow-purple), transparent 65%);
       animation: heroXFloatA 22s ease-in-out infinite;
     }
     .hero-x-bg-glow--b {
       width: 420px; height: 420px;
       bottom: -140px; right: -100px;
-      background: radial-gradient(circle, rgba(46, 160, 67, 0.5), transparent 65%);
+      background: radial-gradient(circle, var(--aa-glow-green), transparent 65%);
       animation: heroXFloatB 26s ease-in-out infinite;
     }
 
@@ -290,7 +294,7 @@ const latestTag = gh?.releases?.[0]?.tag_name;
       letter-spacing: -0.03em;
       color: var(--sl-color-white, #fff);
       text-wrap: balance;
-      background: linear-gradient(180deg, #ffffff 0%, #c9d1d9 100%);
+      background: linear-gradient(180deg, var(--aa-hero-text-from) 0%, var(--aa-hero-text-to) 100%);
       background-clip: text;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -320,7 +324,7 @@ const latestTag = gh?.releases?.[0]?.tag_name;
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
       gap: 0.5rem 1.5rem;
-      background: rgba(13, 17, 23, 0.6);
+      background: var(--aa-stats-bg);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border: 1px solid var(--sl-color-hairline, #30363d);

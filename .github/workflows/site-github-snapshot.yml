@@ -1,0 +1,66 @@
+# Periodically refresh site/src/content/github/snapshot.json with the
+# latest GitHub state (issues, PRs, commits, releases, contributors,
+# languages, commit activity) and commit the diff back to the branch.
+# Cloudflare Pages picks the commit up and rebuilds the docs site.
+#
+# The fetcher (site/scripts/fetch-github.mjs) uses only Node built-ins —
+# no `pnpm install` step needed in CI. The auto-provided GITHUB_TOKEN
+# has the read access required for the private repo's API endpoints.
+
+name: Site — GitHub snapshot refresh
+
+on:
+  schedule:
+    # Every 6 hours at the top of the hour (UTC). 4 refreshes / day max.
+    - cron: "0 */6 * * *"
+  # Allow manual kick from the Actions tab.
+  workflow_dispatch:
+
+# Prevent overlapping runs if a previous cron is still in flight.
+concurrency:
+  group: site-github-snapshot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    name: Refresh snapshot.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repo (main branch)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # Persist the GITHUB_TOKEN credential so the later push works.
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Refresh GitHub snapshot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node site/scripts/fetch-github.mjs
+
+      - name: Commit + push if changed
+        run: |
+          set -euo pipefail
+          # Ignore the always-changing `fetchedAt` field when deciding whether
+          # to commit — otherwise we'd push every cron tick even with no real
+          # repo activity.
+          if git diff --quiet --ignore-matching-lines='"fetchedAt":' \
+            site/src/content/github/snapshot.json; then
+            echo "::notice::No meaningful changes in snapshot.json — skipping commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/src/content/github/snapshot.json
+          git commit -m "site: refresh github snapshot ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          git push origin main

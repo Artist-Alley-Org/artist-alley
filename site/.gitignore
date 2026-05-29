@@ -8,6 +8,7 @@ node_modules/
 # Build-time generated content (re-created by prebuild scripts)
 src/content/docs/adr/
 src/content/docs/reference/schema.mdx
+src/content/docs/roadmap.mdx
 public/openapi.yaml
 # NOTE: src/content/github/snapshot.json is intentionally TRACKED.
 # The scheduled GH Actions workflow (.github/workflows/site-github-snapshot.yml)

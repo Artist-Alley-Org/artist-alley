@@ -85,6 +85,7 @@ export default defineConfig({
       sidebar: [
         { label: "Overview", link: "/" },
         { label: "Roadmap", link: "/roadmap/", badge: { text: "WIP", variant: "tip" } },
+        { label: "Engineering", link: "/engineering/", badge: { text: "Live", variant: "success" } },
         {
           label: "Whitepaper",
           items: [

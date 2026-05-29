@@ -30,11 +30,51 @@
   --sl-line-height: 1.65;
   --sl-line-height-headings: 1.2;
 
-  /* Brand accents — used by VisualRoadmap and EngineeringDashboard. */
+  /* Slightly wider main content column than Starlight's default 45rem.
+     56rem keeps prose under ~85 chars/line but recovers ~11rem of dead
+     right-side space on common 14"+ displays. Data-heavy pages
+     (engineering dashboard, visual roadmap) widen further inline. */
+  --sl-content-width: 56rem;
+
+  /* Brand accents — used by VisualRoadmap and EngineeringDashboard. Same hue
+     on both themes; the surfaces around them switch. */
   --aa-shipped: #2ea043;
   --aa-inflight: #d29922;
   --aa-planned: #6e7681;
   --aa-feature: #7c3aed;
+
+  /* Theme-aware surfaces (default = dark Starlight theme). Component CSS
+     references these vars so flipping the theme reskins everything. */
+  --aa-hero-bg-a: #0d1117;
+  --aa-hero-bg-b: #14182a;
+  --aa-hero-dot-grid: rgba(124, 58, 237, 0.08);
+  --aa-hero-text-from: #ffffff;
+  --aa-hero-text-to: #c9d1d9;
+  --aa-stats-bg: rgba(13, 17, 23, 0.6);
+  --aa-stat-num-from: #ffffff;
+  --aa-stat-num-to: #c9d1d9;
+  --aa-card-bg: #161b22;
+  --aa-card-border: #30363d;
+  --aa-card-inner-bg: #0d1117;
+  --aa-glow-purple: rgba(124, 58, 237, 0.6);
+  --aa-glow-green: rgba(46, 160, 67, 0.5);
+}
+
+/* Light-mode overrides. Starlight toggles data-theme=light on :root. */
+:root[data-theme="light"] {
+  --aa-hero-bg-a: #f6f8fa;
+  --aa-hero-bg-b: #eaeef2;
+  --aa-hero-dot-grid: rgba(124, 58, 237, 0.10);
+  --aa-hero-text-from: #0d1117;
+  --aa-hero-text-to: #57606a;
+  --aa-stats-bg: rgba(255, 255, 255, 0.7);
+  --aa-stat-num-from: #0d1117;
+  --aa-stat-num-to: #57606a;
+  --aa-card-bg: #ffffff;
+  --aa-card-border: #d0d7de;
+  --aa-card-inner-bg: #f6f8fa;
+  --aa-glow-purple: rgba(124, 58, 237, 0.32);
+  --aa-glow-green: rgba(46, 160, 67, 0.28);
 }
 
 /* ----------------------------------------------------------------------------
