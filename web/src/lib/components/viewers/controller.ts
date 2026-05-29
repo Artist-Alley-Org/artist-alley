@@ -181,9 +181,19 @@ const AUDIO_EXTS = new Set([
   'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'opus',
 ]);
 const PDF_EXTS = new Set(['pdf']);
+// Kept in sync with app/internal/assets/handler.go::modelExts. Anything
+// the backend treats as a 3D upload should match here so the browse
+// card swaps to the 3D hover-scrub (6×6 turntable sprite) instead of
+// the video grid (10×10), and AssetViewer mounts ModelView instead of
+// the generic placeholder.
+//
+// mb / ma / max stay on the frontend list as a viewer placeholder hint
+// even though the backend pipeline can't render them yet.
 const MODEL_EXTS = new Set([
-  'glb', 'gltf', 'obj', 'fbx', 'usdz', 'usd', 'usda', 'usdc', 'blend',
-  'mb', 'ma', 'max', 'mview',
+  'glb', 'gltf', 'obj', 'fbx', 'blend', 'mview',
+  'dae', 'ply', 'stl', '3ds', 'x3d', 'wrl',
+  'usd', 'usda', 'usdc', 'usdz', 'abc',
+  'mb', 'ma', 'max',
 ]);
 
 export function kindForExtension(ext: string | null | undefined): ViewKind {
