@@ -1,0 +1,384 @@
+{
+  "$schema": "./_schema.json",
+  "version": "1",
+  "lastUpdated": "2026-05-28",
+  "intro": "A snapshot of what's shipped, what's in flight, and what's on the map. Subject to change as we learn what teams actually need.",
+  "canonicalOrderNote": "This roadmap is the canonical order — the labelled phase tags inside the admin menu (the muted 'Phase 1.X' pills on future tiles) reference these same numbers. When the order changes, this file moves first.",
+  "sections": [
+    {
+      "id": "shipped",
+      "title": "Shipped",
+      "kind": "items",
+      "summary": "The current release stream covers the foundations.",
+      "items": [
+        {
+          "id": "single-binary-deploy",
+          "title": "Single binary deploy",
+          "description": "Go server with the SvelteKit SPA embedded via `go:embed`. Multi-arch Docker images (amd64 + arm64), `.deb` + `.rpm` packages with systemd unit, static binaries for linux / macOS / Windows, Homebrew formula. Every image Sigstore-signed."
+        },
+        {
+          "id": "postgres-storage",
+          "title": "Postgres + storage",
+          "description": "Goose migrations run on boot. Storage backend is filesystem by default, or any S3-compatible bucket (AWS, R2, B2, MinIO)."
+        },
+        {
+          "id": "identity-auth",
+          "title": "Identity & auth",
+          "description": "Sessions, API tokens with scopes, roles & capabilities, password policy + SSO provider config UI (real enforcement of LDAP / SAML / OAuth lands with phase 1.18)."
+        },
+        {
+          "id": "upload-pipeline",
+          "title": "Upload pipeline",
+          "description": "Drag-anywhere → modal queue → background uploads with progress, per-row tags + per-asset metadata, three post-composition modes (one post / one-per-file / no-post), separate-cover-thumbnail support."
+        },
+        {
+          "id": "posts-assets-collections",
+          "title": "Posts + assets + collections",
+          "description": "Posts wrap one or many assets; collections wrap posts; tags + full-text search across all of it."
+        },
+        {
+          "id": "browse-feed",
+          "title": "Browse feed",
+          "description": "Grid / masonry / thumbnail / list views with the sortable spreadsheet for list mode (toggleable columns, per-row thumbnails). Floating footer with view + feed filter (team / trending / latest / following) + sort direction."
+        },
+        {
+          "id": "post-detail-modal",
+          "title": "Post detail modal",
+          "description": "Two-pane shell, multi-asset vertical scroller, sidebar with per-asset metadata, comments thread, likes, dedicated review canvas with zoom / pan / tile."
+        },
+        {
+          "id": "admin-shell",
+          "title": "Admin shell",
+          "description": "13-section admin menu with dynamic landing pages, capability-gated; Scalar-embedded API explorer; real config surfaces for site, SMTP, auth providers, AI providers, appearance (font slot picker — 14 fonts across 4 slots)."
+        },
+        {
+          "id": "account-shell",
+          "title": "Account shell",
+          "description": "Profile, theme + language preferences, API tokens management. Other surfaces (security, sessions, drafts, trash, activity, stats) stubbed with phase tags."
+        },
+        {
+          "id": "theme-system",
+          "title": "Theme system",
+          "description": "M3-shaped color tokens (3-tier surface ladder, semantic success/warning/danger, on-* pairs, focus ring), light + dark palettes with intentional cross-mode hue shift, admin-configurable font slots (brand / display / sans / mono)."
+        },
+        {
+          "id": "i18n",
+          "title": "i18n",
+          "description": "Per-user language preference, locale catalogue endpoint, hand-rolled flat-key dictionary store; English shipped, Spanish + French stubs for the picker."
+        }
+      ]
+    },
+    {
+      "id": "in-flight",
+      "title": "In flight",
+      "kind": "items",
+      "summary": "These have foundations in place; the rest of the surface area is the current focus.",
+      "items": [
+        {
+          "id": "first-tagged-release",
+          "title": "First tagged release",
+          "description": "`v0.1.0` against the channels above. Pre-1.0 means schemas can still break across minors.",
+          "status": "in-flight"
+        },
+        {
+          "id": "image-pipeline",
+          "title": "Image processing pipeline",
+          "phase": "1.18.A",
+          "status": "shipped",
+          "description": "Variant generation (col / preview / screen / hires), thumbhash placeholders, content-addressed cache headers, generic background-job queue with in-process workers + HTTP claim API for external farms / federated peers."
+        },
+        {
+          "id": "video-pipeline-arc",
+          "title": "Video pipeline + animator review player",
+          "phase": "1.18.B",
+          "status": "in-flight",
+          "description": "The load-bearing UX: a SyncSketch / Keyframe-Pro-2 replacement built into the post modal. See 'Review tool' arc below for the full feature plan."
+        },
+        {
+          "id": "ai-auto-tagging",
+          "title": "AI auto-tagging",
+          "phase": "1.14",
+          "status": "in-flight",
+          "description": "Use the configured AI providers for tag inference on upload + reverse-image search via embeddings."
+        }
+      ]
+    },
+    {
+      "id": "review-tool",
+      "title": "Review tool — the load-bearing UX arc",
+      "kind": "subphases",
+      "summary": "The post modal is becoming the animator's review tool. Phase 1.18.B ships in sub-phases so each piece can be tested against real review sessions before the next lands.",
+      "subphases": [
+        {
+          "id": "1.18.B-1",
+          "title": "Video pipeline",
+          "status": "shipped",
+          "bullets": [
+            "ffmpeg-based preview.video handler: probe → poster → HLS adaptive ladder (480p / 720p / 1080p) → 100-cell sprite sheet + WebVTT.",
+            "Encoder detection at boot: probes ffmpeg `-encoders` AND verifies each candidate with a 4-frame synthetic encode. Picks NVENC > QSV > VideoToolbox > libx264. Falls back gracefully on any failure.",
+            "Wildcard chi route for multi-segment HLS variant keys.",
+            "`<video>` element with HLS.js (native HLS on Safari). HUD with HH:MM:SS:FF timecode + frame counter via `requestVideoFrameCallback`. JKL transport, ±1 / ±10 frame step (arrows + comma/period + Shift), I/O loop region, 1-5 speed presets, sticky muted-autoplay + persistent volume via localStorage, sprite hover preview on the scrubber.",
+            "Mounted in the post carousel directly (no extra Review-mode click)."
+          ]
+        },
+        {
+          "id": "1.18.B-2",
+          "title": "Player polish + quality-of-life",
+          "status": "in-flight",
+          "bullets": [
+            "Click-to-pause on the video canvas; click-and-drag scrub on the HUD timecode.",
+            "Fullscreen button + `F` shortcut; always-on-top (PiP) when the browser allows.",
+            "Jump-to-frame input + jump-to-timecode parser.",
+            "Pan + zoom on the video frame (mouse wheel + drag) — pixel-perfect inspection without leaving playback.",
+            "Flip + rotate (H / V / 90°).",
+            "Ping-pong loop, hold-frame at IN/OUT, range bookmarks.",
+            "Frame bookmarks (single + range) with cycle hotkeys.",
+            "Audio scrub (variable-speed) while dragging the playhead.",
+            "Screen capture to clipboard / file."
+          ]
+        },
+        {
+          "id": "1.18.B-3",
+          "title": "Subtitles + multi-format captions",
+          "status": "planned",
+          "bullets": [
+            "Native WebVTT track support (`<track>` elements).",
+            "Worker-side conversion of SRT / SSA / ASS / SUB / IDX → WebVTT at preview time; tracks stored as `subs/{lang}.vtt` variants.",
+            "Burned-subtitle option for export.",
+            "Per-user subtitle preferences (default language, font size, position)."
+          ]
+        },
+        {
+          "id": "1.18.B-4",
+          "title": "Image sequences + RAM cache + always-on-top",
+          "status": "planned",
+          "bullets": [
+            "Treat an image-sequence asset (numbered PNG/EXR/JPEG run) as a first-class playable timeline.",
+            "Client-side RAM cache: pre-decoded frame buffer for instant scrub on short clips.",
+            "'Always on top' window mode (browser PiP / SPA detached window)."
+          ]
+        },
+        {
+          "id": "1.18.B-5",
+          "title": "Presentation rooms (global, real-time)",
+          "status": "planned",
+          "bullets": [
+            "Presentation is a global capability — image, video, 3D, PDF, any asset that can be shown. The player / viewer is a host; the 'presentation room' is a separate concern that wraps any host.",
+            "WebSocket presence room keyed on `(post_id or asset_id)`: live cursor, live scrub position, who's watching.",
+            "Synchronous mode: a presenter drives the playhead / camera / page. Observers follow. Offline = solo (default).",
+            "Shared chat + reactions alongside whatever's being shown.",
+            "Mobile + tablet observers via the same UI.",
+            "The protocol is asset-type-agnostic: a frame number, a 3D camera matrix, a PDF page index — all 'anchor' objects the host sends on each tick. Observers' viewers replay them."
+          ]
+        },
+        {
+          "id": "1.18.B-6",
+          "title": "Annotation system (global, frame/anchor-aware)",
+          "status": "planned",
+          "bullets": [
+            "Annotations are a global capability too — they live in their own package and any asset host (image, video, 3D, PDF) surfaces them.",
+            "Anchor model: an annotation binds to an asset_id PLUS an asset-type-specific anchor — a frame number for video, a camera+target for 3D, a page+x/y for PDF, a coord+zoom for images. The same `annotations` table stores them all; the host package owns rendering.",
+            "Brush engine: pen, highlighter, eraser, shapes, text, arrows.",
+            "Foreground + background layers; background transparency.",
+            "Laser pointer for live review (broadcasts via the presentation room when one is active).",
+            "Ghosting / onion-skin between adjacent anchors (video frames, 3D camera takes, PDF pages).",
+            "Annotation bookmarks; cycle hotkeys.",
+            "PDF summary export with comment thread + screenshots per anchor."
+          ]
+        },
+        {
+          "id": "1.18.B-7",
+          "title": "Timeline assembly",
+          "status": "planned",
+          "bullets": [
+            "Build a review timeline from multiple source files (different takes, different shots).",
+            "Per-source in / out points, ordering, audio override.",
+            "Seamless playback between sources.",
+            "Export the assembled timeline as a standalone media file (ffmpeg)."
+          ]
+        },
+        {
+          "id": "1.18.B-8",
+          "title": "A/B comparison",
+          "status": "planned",
+          "bullets": [
+            "Split viewer (horizontal / vertical / grid).",
+            "A/B wipe with draggable seam.",
+            "A/B transparency / overlay blend.",
+            "Pair any two assets — different versions, reference footage."
+          ]
+        },
+        {
+          "id": "1.18.B-9",
+          "title": "DCC integrations",
+          "status": "planned",
+          "bullets": [
+            "Python client API for external tools to drive the player (open, seek, annotate, snapshot).",
+            "Maya → review send-back script.",
+            "Blender / Houdini integrations (community-driven via the same API).",
+            "Webhook + presence broadcasts for studio production trackers."
+          ]
+        },
+        {
+          "id": "1.18.B-10",
+          "title": "3D viewer (native)",
+          "status": "planned",
+          "bullets": [
+            "`<model-viewer>` for glTF / GLB native — instant load, AR, animations.",
+            "three.js loader fallbacks for OBJ (+ .mtl + texture set) and FBX.",
+            "Marmoset Toolbag `.mview` native player (self-contained JS).",
+            "USDZ via Quick Look on Apple devices.",
+            "Camera presets, lighting picker, turntable poster generation, wireframe / UV inspect modes."
+          ]
+        },
+        {
+          "id": "1.18.B-11",
+          "title": "3D heavy converters (worker side)",
+          "status": "planned",
+          "bullets": [
+            "Blender headless → glTF for `.blend`.",
+            "FBX2glTF for cached glTF when the source format is heavy.",
+            "Maya `.mb` / `.ma` and 3ds Max `.max` — extract embedded preview where possible; full conversion gated on a licensed converter side-car. Native-viewer-first; convert only on miss.",
+            "Per-format converter run as a separate job type so a render farm can pick it up."
+          ]
+        },
+        {
+          "id": "1.18.B-12",
+          "title": "Audio / SVG / PDF / fonts",
+          "status": "planned",
+          "bullets": [
+            "Audio waveform PNG + scrub.",
+            "SVG → rasterized variant set.",
+            "PDF first-page raster + multi-page navigator.",
+            "Font specimen render."
+          ]
+        },
+        {
+          "id": "1.18.B-13",
+          "title": "Project / workspace",
+          "status": "planned",
+          "bullets": [
+            "'Review project' entity: a collection of assets curated for a review session, with timelines, annotations, chat history.",
+            "Save / share / fork projects.",
+            "Snapshot a project state for 'this is what we showed at the Tuesday review'."
+          ]
+        },
+        {
+          "id": "1.18.B-14",
+          "title": "Federation + share-with-anyone",
+          "status": "planned",
+          "bullets": [
+            "Public share link with permission scope (view / comment / annotate) and optional expiry.",
+            "Federated peer instances surface annotations + chat back to the origin instance. The job queue's existing `origin_server_id` + the HTTP claim API are the carrier.",
+            "Quick-generate PDF summary for offline clients."
+          ]
+        }
+      ],
+      "architectureNote": {
+        "title": "How the global systems connect",
+        "paragraphs": [
+          "The three layers stay separate so each evolves independently:",
+          "1. **Host viewers** — `ImageReview`, `VideoPlayer`, `ModelViewer`, `PDFViewer`, etc. Each owns its surface (pan/zoom, scrub, camera, page). All emit + accept a typed 'anchor' describing where we are.",
+          "2. **Annotation overlay** — a single Svelte component layered on top of any host. Reads + writes anchor-tagged annotations via the shared `/assets/{id}/annotations` API. Doesn't know about the host beyond the anchor schema.",
+          "3. **Presentation room** — a separate WebSocket-backed store that broadcasts the current anchor + cursor + chat. Any host can listen to it (slave its anchor to the presenter) and emit to it (when this user is the presenter).",
+          "Concretely: VideoPlayer emits `{type:\"video\", frame:N}` anchors; ModelViewer emits `{type:\"model\", camera:[...], target:[...]}`; PDFViewer emits `{type:\"pdf\", page:N, x, y, zoom}`. Annotations are indexed by `(asset_id, anchor_hash)`. Presentation rooms forward whatever anchor the presenter emits to everyone in the room."
+        ]
+      }
+    },
+    {
+      "id": "up-next",
+      "title": "Up next",
+      "kind": "items",
+      "summary": "The phases queued behind the current focus.",
+      "items": [
+        {
+          "id": "search-2",
+          "title": "Search 2.0",
+          "phase": "1.12",
+          "status": "planned",
+          "description": "Advanced search builder with field-level filters, saved searches, smart collections, synonyms + boosts, search analytics."
+        },
+        {
+          "id": "identity-teams",
+          "title": "Identity & teams",
+          "phase": "1.17",
+          "status": "planned",
+          "description": "Groups + team hierarchy, active session management, audit log, capability grants."
+        },
+        {
+          "id": "integrations",
+          "title": "Integrations",
+          "phase": "1.18",
+          "status": "planned",
+          "description": "Real LDAP / SAML / OAuth login flows, OAuth applications surface, outbound webhooks, notification rules + delivery channels (in-app + email)."
+        }
+      ]
+    },
+    {
+      "id": "on-map",
+      "title": "On the map",
+      "kind": "items",
+      "summary": "Larger arcs that will land but aren't the current focus.",
+      "items": [
+        {
+          "id": "storage-tooling",
+          "title": "Storage tooling",
+          "phase": "1.19",
+          "status": "planned",
+          "description": "Storage usage dashboard, orphan cleanup, checksum verification, dedupe UI, bulk re-import, backup + restore, database tools."
+        },
+        {
+          "id": "reports-analytics",
+          "title": "Reports & analytics",
+          "phase": "1.20",
+          "status": "planned",
+          "description": "Asset usage, user activity, storage trends, job performance, custom dashboards, scheduled reports, drafts, trash, activity log surfaces."
+        },
+        {
+          "id": "community-moderation",
+          "title": "Community & moderation",
+          "phase": "1.21",
+          "status": "planned",
+          "description": "Reports queue, comment moderation, banned users / IPs, anonymous browse policy, rate limits, bookmarks."
+        },
+        {
+          "id": "federation",
+          "title": "Federation",
+          "phase": "1.22",
+          "status": "planned",
+          "description": "Peer servers, inbound + outbound feeds, sync status, conflict resolution. The data model already carries `origin_server_id` so today's single-instance code is forward-compatible."
+        },
+        {
+          "id": "plugin-ecosystem",
+          "title": "Plugin ecosystem",
+          "phase": "1.23",
+          "status": "planned",
+          "description": "WASM extension model via Extism. In-tree Go packages until external authors arrive."
+        }
+      ]
+    },
+    {
+      "id": "not-building",
+      "title": "Things we deliberately aren't building",
+      "kind": "items",
+      "summary": "Scope boundaries, made explicit so we hold the line.",
+      "items": [
+        {
+          "id": "no-generic-dam",
+          "title": "A general-purpose DAM",
+          "description": "We're shaped specifically for studio art-review workflows."
+        },
+        {
+          "id": "no-pipeline-platform",
+          "title": "A pipeline integration platform",
+          "description": "We're a destination for finished and in-progress art, not a Perforce / Shotgrid replacement."
+        },
+        {
+          "id": "no-saas",
+          "title": "A SaaS product",
+          "description": "Self-hosted by design."
+        }
+      ]
+    }
+  ]
+}

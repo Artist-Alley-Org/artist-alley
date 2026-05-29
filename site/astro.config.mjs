@@ -27,6 +27,12 @@ export default defineConfig({
         baseUrl:
           "https://github.com/mscrnt/artist-alley/edit/main/site/",
       },
+      components: {
+        // Wraps Starlight's default Head and adds Astro view transitions,
+        // scroll-reveal IntersectionObserver, theme-color meta, and
+        // speculation-rules link prefetch. See src/components/SiteHead.astro.
+        Head: "./src/components/SiteHead.astro",
+      },
       lastUpdated: true,
       pagination: true,
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 },

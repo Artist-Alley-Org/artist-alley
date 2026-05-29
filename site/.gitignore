@@ -9,6 +9,10 @@ node_modules/
 src/content/docs/adr/
 src/content/docs/reference/schema.mdx
 public/openapi.yaml
+# NOTE: src/content/github/snapshot.json is intentionally TRACKED.
+# The scheduled GH Actions workflow (.github/workflows/site-github-snapshot.yml)
+# refreshes it on cron and commits the update; CF Pages picks it up.
+# Local dev: run `pnpm refresh-github` to update against your gh.exe token.
 
 # Editor / OS
 .DS_Store

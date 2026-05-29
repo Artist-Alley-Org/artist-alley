@@ -1,0 +1,24 @@
+{
+  "fetchedAt": "1970-01-01T00:00:00.000Z",
+  "repo": {
+    "full_name": "mscrnt/artist-alley",
+    "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
+    "html_url": "https://github.com/mscrnt/artist-alley",
+    "homepage": "https://artist-alley.org",
+    "default_branch": "main",
+    "visibility": "private",
+    "stargazers_count": 0,
+    "watchers_count": 0,
+    "forks_count": 0,
+    "open_issues_count": 0,
+    "topics": []
+  },
+  "languages": {},
+  "contributors": [],
+  "issues": { "open": [], "recentlyClosed": [] },
+  "pulls": { "open": [], "recentlyMerged": [] },
+  "commits": [],
+  "releases": [],
+  "commitActivity": [],
+  "_stub": "initial placeholder — replaced by scheduled GH Actions workflow (site-github-snapshot.yml). Run `pnpm refresh-github` locally with gh.exe to populate for dev."
+}

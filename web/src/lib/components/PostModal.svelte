@@ -29,7 +29,7 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import CommentsThread from './CommentsThread.svelte';
-  import VideoPlayer from './VideoPlayer.svelte';
+  import AssetViewer from './viewers/AssetViewer.svelte';
 
   interface Props {
     postId: string;
@@ -847,73 +847,39 @@
              In review mode the scroller is replaced with a single
              zoom/pan canvas for the current asset. -->
         <div class="relative flex flex-1 overflow-hidden bg-black">
-          {#if reviewMode && currentAssetId && !currentIsVideo}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              bind:this={canvasEl}
-              onwheel={handleWheel}
-              onmousedown={handleCanvasMouseDown}
-              class="relative h-full w-full overflow-hidden"
-              class:cursor-grab={!dragging && !tileMode && currentIsImage}
-              class:cursor-grabbing={dragging}
-            >
-              {#if tileMode && currentIsImage}
-                <div
-                  class="absolute inset-0"
-                  style="background-image: url('/api/v1/assets/{currentAssetId}/file'); background-repeat: repeat; background-size: {imgNaturalW || 'auto'}px {imgNaturalH || 'auto'}px; background-position: center center;"
-                ></div>
-                <img
-                  src={hiresVariantUrl(currentAssetId)}
-                  onerror={handleReviewImgError}
-                  alt=""
-                  onload={handleReviewImgLoad}
-                  class="pointer-events-none invisible absolute"
-                />
-              {:else}
-                <img
-                  src={hiresVariantUrl(currentAssetId)}
-                  onerror={handleReviewImgError}
-                  alt={currentMember?.asset?.title || post.title}
-                  onload={handleReviewImgLoad}
-                  draggable="false"
-                  class="pointer-events-none absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
-                  style="transform: translate(calc(-50% + {panX}px), calc(-50% + {panY}px)) scale({zoom}); transform-origin: center center;"
-                />
-              {/if}
-            </div>
-          {:else if hasMultipleMembers}
+          {#if hasMultipleMembers}
+            <!-- Multi-asset carousel: vertical-scroll, snap-on-slide.
+                 Each visible slide mounts an AssetViewer; non-visible
+                 slides get a lightweight poster image so heavy
+                 timelines aren't kept alive for everything in the
+                 post at once. -->
             <div
               bind:this={scrollerEl}
               class="post-modal-scroller h-full w-full snap-y snap-mandatory overflow-y-auto"
             >
               {#each post.members as member, i (member.asset_id)}
-                {@const slideIsVideo = isVideoExt(member.asset?.file_extension ?? null)}
                 <div
                   data-slide-idx={i}
+                  data-asset-id={member.asset_id}
                   class="flex h-full w-full shrink-0 snap-start items-center justify-center"
                 >
-                  {#if slideIsVideo}
-                    <!-- Animator review player — frame-accurate scrub,
-                         JKL transport, sprite preview. Only mount the
-                         currently visible slide so scrolling between
-                         heavy timelines doesn't thrash decoders.
-                         Video never goes through the brokenSlides
-                         img-error path; if HLS isn't ready the player
-                         itself falls back to /file. -->
-                    {#if i === selectedIdx}
-                      <div class="h-full w-full" data-asset-id={member.asset_id}>
-                        <VideoPlayer assetId={member.asset_id} />
-                      </div>
-                    {:else}
-                      <img
-                        src={`/api/v1/assets/${member.asset_id}/variants/poster`}
-                        alt={member.asset?.title || post.title}
-                        data-asset-id={member.asset_id}
-                        loading="lazy"
-                        class="h-full w-full object-contain"
-                      />
-                    {/if}
-                  {:else if brokenSlides.has(member.asset_id)}
+                  {#if i === selectedIdx && member.asset?.file_hash}
+                    <AssetViewer
+                      asset={{
+                        id: member.asset_id,
+                        title: member.asset?.title ?? '',
+                        file_extension: member.asset?.file_extension ?? null,
+                      }}
+                      active={true}
+                    />
+                  {:else if member.asset?.file_hash}
+                    <img
+                      src={`/api/v1/assets/${member.asset_id}/variants/col`}
+                      alt={member.asset?.title || post.title}
+                      loading="lazy"
+                      class="h-full w-full object-contain opacity-70"
+                    />
+                  {:else}
                     <div class="text-fg-muted">
                       <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -921,43 +887,19 @@
                         <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
                       </svg>
                     </div>
-                  {:else}
-                    <img
-                      src={hiresVariantUrl(member.asset_id)}
-                      alt={member.asset?.title || post.title}
-                      data-asset-id={member.asset_id}
-                      loading={i === selectedIdx ? 'eager' : 'lazy'}
-                      class="h-full w-full object-contain"
-                      onerror={handleSlideImgError}
-                    />
                   {/if}
                 </div>
               {/each}
             </div>
-          {:else if currentAssetId}
-            <div class="flex h-full w-full items-center justify-center">
-              {#if currentAssetId && brokenSlides.has(currentAssetId)}
-                <div class="text-fg-muted">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <circle cx="9" cy="9" r="2" />
-                    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                  </svg>
-                </div>
-              {:else if currentIsVideo}
-                <div class="h-full w-full">
-                  <VideoPlayer assetId={currentAssetId} />
-                </div>
-              {:else}
-                <img
-                  src={hiresVariantUrl(currentAssetId)}
-                  alt={currentMember?.asset?.title || post.title}
-                  data-asset-id={currentAssetId}
-                  class="h-full w-full object-contain"
-                  onerror={handleSlideImgError}
-                />
-              {/if}
-            </div>
+          {:else if currentAssetId && currentMember?.asset?.file_hash}
+            <AssetViewer
+              asset={{
+                id: currentAssetId,
+                title: currentMember?.asset?.title ?? '',
+                file_extension: currentMember?.asset?.file_extension ?? null,
+              }}
+              active={true}
+            />
           {:else}
             <div class="flex h-full w-full items-center justify-center text-fg-muted">
               <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">

@@ -1,0 +1,82 @@
+---
+// Starlight Head override.
+//
+// Wraps Starlight's default <Head> and adds:
+//   1. Astro view transitions (<ClientRouter />) — page-to-page navigation
+//      animates instead of full reload. Feels like an app.
+//   2. A tiny IntersectionObserver script that toggles `data-revealed` on
+//      elements marked `data-reveal`. Used by VisualRoadmap + dashboard for
+//      staggered scroll-in. Re-runs on `astro:page-load` so it survives
+//      client-side navigation.
+//   3. Per-page OG image meta tag — pairs with src/pages/og/[...slug].png.ts
+//      so Twitter / Slack / Discord previews look intentional.
+//   4. Theme-color meta for browser chrome on mobile.
+//   5. Speculation Rules — Chromium-family browsers prefetch likely-clicked
+//      links so navigation feels instant.
+
+import Default from "@astrojs/starlight/components/Head.astro";
+import { ClientRouter } from "astro:transitions";
+
+// Resolve the current page's OG image slug.
+//   - "/" -> "index"
+//   - "/roadmap/" -> "roadmap"
+//   - "/guides/install/" -> "guides/install"
+const path = Astro.url.pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+const ogSlug = path === "" ? "index" : path;
+const ogUrl = new URL(`/og/${ogSlug}.png`, Astro.site ?? Astro.url).href;
+---
+
+<Default><slot /></Default>
+
+<ClientRouter />
+
+{/* Per-page OG image. Generated at build time by src/pages/og/[...slug].png.ts.
+    These tags come AFTER Starlight's defaults so they win when meta parsers
+    use last-wins resolution. */}
+<meta property="og:image" content={ogUrl} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content={ogUrl} />
+
+{/* PWA-ish browser chrome color. Matches the dark Starlight palette. */}
+<meta name="theme-color" content="#0d1117" />
+
+{/* Speculation Rules — hover/intent prefetch in Chromium. */}
+<script type="speculationrules" is:inline set:html={JSON.stringify({
+  prerender: [
+    {
+      where: { href_matches: "/*" },
+      eagerness: "moderate",
+    },
+  ],
+})} />
+
+{/* Scroll-reveal: tiny, idempotent, respects reduced motion via CSS. */}
+<script is:inline>
+  (function () {
+    function setup() {
+      var els = document.querySelectorAll("[data-reveal]:not([data-revealed])");
+      if (!els.length || !("IntersectionObserver" in window)) {
+        // No-op fallback: reveal everything immediately.
+        els.forEach(function (el) { el.setAttribute("data-revealed", ""); });
+        return;
+      }
+      var io = new IntersectionObserver(
+        function (entries) {
+          for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            if (entry.isIntersecting) {
+              entry.target.setAttribute("data-revealed", "");
+              io.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.08, rootMargin: "0px 0px -40px 0px" },
+      );
+      els.forEach(function (el) { io.observe(el); });
+    }
+    setup();
+    document.addEventListener("astro:page-load", setup);
+  })();
+</script>

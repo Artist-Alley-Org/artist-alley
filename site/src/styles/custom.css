@@ -1,16 +1,181 @@
-/* artist-alley docs theme overrides. Keep light — Starlight defaults are good. */
+/* ============================================================================
+ * artist-alley docs theme — Starlight overrides + typography polish.
+ *
+ * Philosophy:
+ *   - Self-host Inter Variable (no Google Fonts request, no FOUT).
+ *   - Use ui-monospace stack for code (real ligatures on macOS / modern Linux).
+ *   - Lean on Starlight CSS variables so dark/light themes both inherit.
+ *   - Subtle, restrained motion. Modern text-wrap defaults.
+ * ============================================================================ */
+
+/* Inter Variable — self-hosted via @fontsource-variable/inter. Ships only the
+   variable-axis WOFF2, so it's ~30KB to enable the full weight range without
+   any network round-trip to Google Fonts. */
+@import "@fontsource-variable/inter";
 
 :root {
+  /* Sans stack — Inter Variable first (self-hosted), then OS fallbacks. */
   --sl-font-system:
-    "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
+    "Inter Variable", "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-feature-settings: "ss01" 1, "cv11" 1; /* Inter: open-4, single-story g */
+
+  /* Mono stack with ligature support. ui-monospace picks up SF Mono on macOS,
+     Cascadia Code on Windows 11, and JetBrains Mono if installed. */
+  --sl-font-mono:
+    "JetBrains Mono", "Fira Code", ui-monospace, "SF Mono", "Cascadia Code",
+    "Source Code Pro", Consolas, "Liberation Mono", Menlo, monospace;
+
+  /* Slightly tighter content rhythm than Starlight defaults. */
+  --sl-line-height: 1.65;
+  --sl-line-height-headings: 1.2;
+
+  /* Brand accents — used by VisualRoadmap and EngineeringDashboard. */
+  --aa-shipped: #2ea043;
+  --aa-inflight: #d29922;
+  --aa-planned: #6e7681;
+  --aa-feature: #7c3aed;
 }
 
-/* Slightly tighter table styling for schema reference. */
+/* ----------------------------------------------------------------------------
+ * Typography rhythm
+ * ----------------------------------------------------------------------------
+ * Modern text-wrap policies: balance for headings (no orphaned single words),
+ * pretty for body paragraphs (fewer awkward last-line widows). Falls back to
+ * `normal` in browsers that don't support these values, so safe to ship.
+ */
+:root .sl-markdown-content h1,
+:root .sl-markdown-content h2,
+:root .sl-markdown-content h3,
+:root .sl-markdown-content h4 {
+  text-wrap: balance;
+}
+:root .sl-markdown-content p,
+:root .sl-markdown-content li {
+  text-wrap: pretty;
+}
+
+/* Section headings get a subtle muted underline — feels like a print spec. */
+:root .sl-markdown-content h2 {
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--sl-color-hairline-shade, rgba(255,255,255,0.06));
+  margin-top: 2.5rem;
+}
+:root .sl-markdown-content h3 {
+  margin-top: 1.75rem;
+}
+
+/* Inline code: tighter padding, less visual noise. */
+:root .sl-markdown-content :not(pre) > code {
+  font-size: 0.88em;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  background: var(--sl-color-bg-inline-code, rgba(110, 118, 129, 0.16));
+  font-feature-settings: "calt" 1, "liga" 1;
+}
+
+/* Block code: enable ligatures + slightly looser line-height for legibility. */
+:root .sl-markdown-content pre {
+  font-feature-settings: "calt" 1, "liga" 1, "ss01" 1;
+  line-height: 1.55;
+}
+
+/* Tables: tighter for spec-density (schema reference, comparison tables). */
 :root .sl-markdown-content table {
   font-size: 0.9rem;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 :root .sl-markdown-content table th,
 :root .sl-markdown-content table td {
-  padding: 0.35rem 0.6rem;
+  padding: 0.45rem 0.7rem;
+}
+:root .sl-markdown-content table th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--sl-color-gray-3, #8b949e);
+  background: var(--sl-color-bg-nav, rgba(0,0,0,0.04));
+}
+:root .sl-markdown-content table tr:hover td {
+  background: var(--sl-color-bg-nav, rgba(255,255,255,0.02));
+}
+
+/* Blockquote: pull-quote treatment instead of generic indent. */
+:root .sl-markdown-content blockquote {
+  border-left: 3px solid var(--aa-feature);
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin: 1.25rem 0;
+  color: var(--sl-color-gray-2, #c9d1d9);
+  background: linear-gradient(
+    to right,
+    rgba(124, 58, 237, 0.06),
+    transparent 30%
+  );
+}
+
+/* Links: subtle underline that strengthens on hover. */
+:root .sl-markdown-content a:not(.not-content) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-thickness 80ms ease;
+}
+:root .sl-markdown-content a:not(.not-content):hover {
+  text-decoration-thickness: 2px;
+}
+
+/* Focus rings: visible without being garish. */
+:root :focus-visible {
+  outline: 2px solid var(--sl-color-accent, var(--aa-feature));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Smoother page transitions if Astro view-transitions are wired up. */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --sl-transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Image rendering: crisper SVG diagrams (Mermaid output) and pixel art previews. */
+:root .sl-markdown-content img[src$=".svg"] { image-rendering: auto; }
+:root .sl-markdown-content img[alt*="pixel"] { image-rendering: pixelated; }
+
+/* ----------------------------------------------------------------------------
+ * Scroll reveals
+ * ----------------------------------------------------------------------------
+ * Elements opt in with `data-reveal`. SiteHead's IntersectionObserver toggles
+ * `data-revealed` when each enters the viewport. Subtle vertical lift with a
+ * spring-feel easing. Reduced motion users get the final state immediately.
+ */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+[data-reveal][data-revealed] {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+ * View-transition polish — only kicks in when navigating between pages with
+ * matching `transition:name` directives. Subtle cross-fade for content body.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
