@@ -82,8 +82,8 @@ github.com/mfridman/interpolate v0.0.2 h1:pnuTK7MQIxxFz1Gr+rjSIx9u7qVjf5VOoM/u6B
 github.com/mfridman/interpolate v0.0.2/go.mod h1:p+7uk6oE07mpE/Ik1b8EckO0O4ZXiGAfshKBWLUM9Xg=
 github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 h1:RWengNIwukTxcDr9M+97sNutRR1RKhG96O6jWumTTnw=
 github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826/go.mod h1:TaXosZuwdSHYgviHp1DAtfrULt5eUgsSMsZf+YrPgl8=
-github.com/mscrnt/mviewer/go v0.0.0-20260529175032-ae77c863f86b h1:ryTsjhSNiT3oY8mtG53o1FJjqysFe6nWXXSNxQu7vhc=
-github.com/mscrnt/mviewer/go v0.0.0-20260529175032-ae77c863f86b/go.mod h1:rnZhF5Mnw0Fbj7sxVvdMJVfYJxEAEhD4n2hTSXjjhFM=
+github.com/mscrnt/mviewer/go v0.0.0-20260529193802-4b32acbc056f h1:DsX2sy1O53lA0sFMd24n0pbKi3Ai6ADOKCvhuM1+OvU=
+github.com/mscrnt/mviewer/go v0.0.0-20260529193802-4b32acbc056f/go.mod h1:rnZhF5Mnw0Fbj7sxVvdMJVfYJxEAEhD4n2hTSXjjhFM=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/oapi-codegen/nullable v1.1.0 h1:eAh8JVc5430VtYVnq00Hrbpag9PFRGWLjxR1/3KntMs=

@@ -175,7 +175,7 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	// the live view, and we just skip the heavy Blender frames.
 	if strings.EqualFold(strings.TrimPrefix(p.FileExtension, "."), "mview") {
 		h.extractMviewThumbBestEffort(jobCtx, p.FileHash, work.sourcePath)
-		glbPath, err := h.convertMviewToGLB(work.sourcePath)
+		glbPath, err := h.convertMviewToGLB(jobCtx, work.sourcePath)
 		if err != nil {
 			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.mview_convert_failed",
 				slog.String("asset_id", p.AssetID.String()),
@@ -340,7 +340,13 @@ func (h *ModelHandler) extractMviewThumbBestEffort(ctx context.Context, hash, mv
 // converter and writes the result next to the .mview source in the
 // workdir. Returns the path to the new .glb so the caller can swap
 // the Blender input over.
-func (h *ModelHandler) convertMviewToGLB(mviewPath string) (string, error) {
+//
+// Honours ctx so a worker timeout aborts the conversion cleanly, and
+// caps total decompressed payload at MaxSourceBytes (the same ceiling
+// we apply to the staged source file). Channel merging is on by
+// default — gives proper PBR base color + metallic-roughness in the
+// emitted GLB at ~50ms additional decode cost per material.
+func (h *ModelHandler) convertMviewToGLB(ctx context.Context, mviewPath string) (string, error) {
 	in, err := os.Open(mviewPath)
 	if err != nil {
 		return "", fmt.Errorf("open mview: %w", err)
@@ -351,7 +357,10 @@ func (h *ModelHandler) convertMviewToGLB(mviewPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create glb: %w", err)
 	}
-	if err := mview.ConvertToGLB(in, out); err != nil {
+	if err := mview.ConvertToGLBContext(ctx, in, out,
+		mview.WithMaxTotalSize(h.MaxSourceBytes),
+		mview.WithMaterialChannelMerge(true),
+	); err != nil {
 		_ = out.Close()
 		_ = os.Remove(glbPath)
 		return "", fmt.Errorf("convert: %w", err)
