@@ -378,9 +378,13 @@ def install_lights(target: Vector, dimensions: Vector) -> None:
         o.rotation_quaternion = direction.to_track_quat("-Z", "Y")
         bpy.context.scene.collection.objects.link(o)
 
-    add("key",  (1.0, 0.98, 0.94), 600, ( 2.5, -1.5,  2.0))
-    add("fill", (0.75, 0.85, 1.0), 200, (-2.5, -0.5,  0.5))
-    add("rim",  (1.0, 1.0, 1.0),   400, ( 0.0,  2.0,  2.5))
+    # Energies reduced ~45% from the original v1 levels — the previous
+    # numbers were tuned against AgX tone-mapping, but we render under
+    # the "Standard" linear view transform so highlights weren't being
+    # rolled off and the final col looked over-exposed.
+    add("key",  (1.0, 0.98, 0.94), 320, ( 2.5, -1.5,  2.0))
+    add("fill", (0.75, 0.85, 1.0), 110, (-2.5, -0.5,  0.5))
+    add("rim",  (1.0, 1.0, 1.0),   220, ( 0.0,  2.0,  2.5))
 
     world = bpy.context.scene.world or bpy.data.worlds.new("World")
     bpy.context.scene.world = world
@@ -388,7 +392,7 @@ def install_lights(target: Vector, dimensions: Vector) -> None:
     bg = world.node_tree.nodes.get("Background")
     if bg:
         bg.inputs[0].default_value = (0.05, 0.05, 0.06, 1.0)
-        bg.inputs[1].default_value = 1.0
+        bg.inputs[1].default_value = 0.6
 
 
 # ----------------------------------------------------------------------------
