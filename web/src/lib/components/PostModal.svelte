@@ -734,12 +734,12 @@
       <div class="pointer-events-none absolute left-0 right-0 top-0 z-30 flex items-start justify-between p-4">
         <div class="pointer-events-auto flex items-center gap-2">
           {#if !reviewMode}
-            {#if currentIsImage}
+            {#if currentMember?.asset?.file_hash}
               <button
                 type="button"
                 onclick={enterReview}
                 class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-                title="Open review (zoom, pan, tile)"
+                title="Open review (double-click the asset to do the same)"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="11" cy="11" r="8" />
@@ -858,9 +858,11 @@
               class="post-modal-scroller h-full w-full snap-y snap-mandatory overflow-y-auto"
             >
               {#each post.members as member, i (member.asset_id)}
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                 <div
                   data-slide-idx={i}
                   data-asset-id={member.asset_id}
+                  ondblclick={() => { if (i === selectedIdx) enterReview(); }}
                   class="flex h-full w-full shrink-0 snap-start items-center justify-center"
                 >
                   {#if i === selectedIdx && member.asset?.file_hash}
@@ -871,6 +873,7 @@
                         file_extension: member.asset?.file_extension ?? null,
                       }}
                       active={true}
+                      {reviewMode}
                     />
                   {:else if member.asset?.file_hash}
                     <img
@@ -892,14 +895,21 @@
               {/each}
             </div>
           {:else if currentAssetId && currentMember?.asset?.file_hash}
-            <AssetViewer
-              asset={{
-                id: currentAssetId,
-                title: currentMember?.asset?.title ?? '',
-                file_extension: currentMember?.asset?.file_extension ?? null,
-              }}
-              active={true}
-            />
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div
+              class="flex h-full w-full items-center justify-center"
+              ondblclick={enterReview}
+            >
+              <AssetViewer
+                asset={{
+                  id: currentAssetId,
+                  title: currentMember?.asset?.title ?? '',
+                  file_extension: currentMember?.asset?.file_extension ?? null,
+                }}
+                active={true}
+                {reviewMode}
+              />
+            </div>
           {:else}
             <div class="flex h-full w-full items-center justify-center text-fg-muted">
               <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">

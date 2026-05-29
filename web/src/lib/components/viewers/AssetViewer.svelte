@@ -34,9 +34,15 @@
         only fire for the focused viewer so two carousel slides don't
         fight for the keyboard. */
     active?: boolean;
+    /** True once the host (e.g. PostModal) has explicitly entered
+        review mode. Outside review mode the viewer is "display only":
+        wheel + drag bubble up to the parent (so the modal scroll-snap
+        still works), hotkeys are inert, and the 3D bodies don't grab
+        the pointer. The Review button or a double-click flips this on. */
+    reviewMode?: boolean;
   }
 
-  let { asset, active = true }: Props = $props();
+  let { asset, active = true, reviewMode = false }: Props = $props();
 
   const kind = $derived(kindForExtension(asset.file_extension));
   let controller = $state(defaultController());
@@ -51,6 +57,9 @@
   let dragging = $state(false);
 
   function onCanvasWheel(e: WheelEvent) {
+    // Outside review mode the viewer is display-only — let the wheel
+    // bubble so the modal scroll-snap (or page scroller) can take it.
+    if (!reviewMode) return;
     // Plain wheel = scrub a frame (when there's a timeline);
     // ctrl/⌘ + wheel = zoom.
     if (!e.ctrlKey && !e.metaKey) {
@@ -75,6 +84,10 @@
 
   function onCanvasMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
+    // Outside review mode: don't engage pan/drag, and skip the
+    // click-to-toggle-play affordance. Single-click is a no-op so
+    // we don't fight with double-click-to-enter-review.
+    if (!reviewMode) return;
     const startX = e.clientX;
     const startY = e.clientY;
     const initialPanX = panX;
@@ -235,6 +248,10 @@
 
   function handleKey(e: KeyboardEvent) {
     if (!active) return;
+    // Hotkeys are review-mode-only. Outside review the asset is just
+    // chrome and the host owns the keyboard (modal nav, sidebar
+    // toggle, ESC-to-close).
+    if (!reviewMode) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
@@ -290,6 +307,7 @@
   >
     <div
       class="absolute inset-0 flex items-center justify-center"
+      class:pointer-events-none={!reviewMode}
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
     >
       {#if kind === 'video'}
@@ -297,7 +315,7 @@
       {:else if kind === 'image'}
         <ImageView {asset} bind:controller />
       {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
-        <ModelView {asset} bind:controller />
+        <ModelView {asset} bind:controller {reviewMode} />
       {:else}
         <PlaceholderView {asset} bind:controller />
       {/if}

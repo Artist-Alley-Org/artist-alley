@@ -29,9 +29,13 @@
   interface Props {
     asset: Asset;
     controller: ViewController;
+    /** When false, camera interaction is disabled so the parent (e.g.
+        the PostModal scroll-snap) can take wheel + drag. Auto-rotate
+        on glb/gltf still runs — that's animation, not input. */
+    reviewMode?: boolean;
   }
 
-  let { asset, controller = $bindable() }: Props = $props();
+  let { asset, controller = $bindable(), reviewMode = false }: Props = $props();
 
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
   const ext = $derived((asset.file_extension || '').toLowerCase().replace(/^\./, ''));
@@ -42,6 +46,9 @@
 
   // Cleanup state (so onDestroy can dispose three.js resources).
   let cleanupFn: (() => void) | null = null;
+  // Refs the reviewMode reactive effect needs to find again after mount.
+  let mvEl: HTMLElement | null = null;
+  let threeControls: { enabled: boolean } | null = null;
 
   onMount(() => {
     controller.kind = '3d';
@@ -98,7 +105,7 @@
     if (!container) return;
     const mv = document.createElement('model-viewer');
     mv.setAttribute('src', fileUrl);
-    mv.setAttribute('camera-controls', '');
+    if (reviewMode) mv.setAttribute('camera-controls', '');
     mv.setAttribute('auto-rotate', '');
     mv.setAttribute('shadow-intensity', '1');
     mv.setAttribute('exposure', '1.0');
@@ -107,7 +114,11 @@
     mv.style.cssText = 'width:100%;height:100%;background:#0b0b0c;';
     mv.addEventListener('error', () => { loadError = 'model failed to load'; });
     container.appendChild(mv);
-    cleanupFn = () => { try { container?.removeChild(mv); } catch { /* ignore */ } };
+    mvEl = mv;
+    cleanupFn = () => {
+      mvEl = null;
+      try { container?.removeChild(mv); } catch { /* ignore */ }
+    };
   }
 
   // -----------------------------------------------------------------------
@@ -174,7 +185,9 @@
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
     controls.target.set(0, 0, 0);
+    controls.enabled = reviewMode;
     controls.update();
+    threeControls = controls;
 
     // Animation loop.
     let rafId = 0;
@@ -200,6 +213,7 @@
       cancelAnimationFrame(rafId);
       ro.disconnect();
       controls.dispose();
+      threeControls = null;
       renderer.dispose();
       try { container?.removeChild(renderer.domElement); } catch { /* ignore */ }
       scene.traverse((obj: any) => {
@@ -211,6 +225,16 @@
       });
     };
   }
+
+  // React to reviewMode flips after mount: toggle camera-controls on
+  // model-viewer (glb/gltf) and OrbitControls.enabled on three (fbx/obj).
+  $effect(() => {
+    if (mvEl) {
+      if (reviewMode) mvEl.setAttribute('camera-controls', '');
+      else mvEl.removeAttribute('camera-controls');
+    }
+    if (threeControls) threeControls.enabled = reviewMode;
+  });
 </script>
 
 <div bind:this={container} class="relative h-full w-full bg-zinc-950">
