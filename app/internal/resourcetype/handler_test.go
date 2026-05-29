@@ -192,6 +192,18 @@ func (rtOnly) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (
 func (rtOnly) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from resourcetype test shim")
 }
+func (rtOnly) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from resourcetype test shim")
+}
+func (rtOnly) AddAssetCompanion(context.Context, openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from resourcetype test shim")
+}
+func (rtOnly) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from resourcetype test shim")
+}
+func (rtOnly) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from resourcetype test shim")
+}
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from resourcetype test shim")
 }

@@ -57,7 +57,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
 		resourceType: resourcetype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
-		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc),
+		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
@@ -188,6 +188,19 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
+}
+
+func (s *apiServer) ListAssetCompanions(ctx context.Context, req openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	return s.assets.ListAssetCompanions(ctx, req)
+}
+func (s *apiServer) AddAssetCompanion(ctx context.Context, req openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	return s.assets.AddAssetCompanion(ctx, req)
+}
+func (s *apiServer) DownloadAssetCompanion(ctx context.Context, req openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	return s.assets.DownloadAssetCompanion(ctx, req)
+}
+func (s *apiServer) RemoveAssetCompanion(ctx context.Context, req openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	return s.assets.RemoveAssetCompanion(ctx, req)
 }
 
 // --- metadata --------------------------------------------------------------

@@ -542,6 +542,18 @@ func (collShim) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject)
 func (collShim) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from collections test shim")
 }
+func (collShim) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from collections test shim")
+}
+func (collShim) AddAssetCompanion(context.Context, openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from collections test shim")
+}
+func (collShim) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from collections test shim")
+}
+func (collShim) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from collections test shim")
+}
 func (collShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from collections test shim")
 }

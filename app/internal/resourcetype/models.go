@@ -66,6 +66,16 @@ type Asset struct {
 	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type AssetCompanion struct {
+	ID            pgtype.UUID        `json:"id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	CompanionPath string             `json:"companion_path"`
+	ObjectHash    string             `json:"object_hash"`
+	ContentType   string             `json:"content_type"`
+	SizeBytes     int64              `json:"size_bytes"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type AssetFieldValue struct {
 	AssetID      pgtype.UUID        `json:"asset_id"`
 	FieldID      pgtype.UUID        `json:"field_id"`

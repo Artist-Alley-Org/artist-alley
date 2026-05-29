@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addAssetCompanion = `-- name: AddAssetCompanion :one
+INSERT INTO asset_companions (
+    asset_id, companion_path, object_hash, content_type, size_bytes
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING id, asset_id, companion_path, object_hash,
+          content_type, size_bytes, created_at
+`
+
+type AddAssetCompanionParams struct {
+	AssetID       pgtype.UUID
+	CompanionPath string
+	ObjectHash    string
+	ContentType   string
+	SizeBytes     int64
+}
+
+// Attach a companion blob to an asset under a given relative path.
+// Companion bytes live in storage_objects (deduped by hash); this
+// row is metadata that maps "this asset, this path → that blob".
+// Unique (asset_id, companion_path) — re-uploading the same path
+// replaces the row at the handler level (delete + insert under one
+// transaction).
+func (q *Queries) AddAssetCompanion(ctx context.Context, arg AddAssetCompanionParams) (AssetCompanion, error) {
+	row := q.db.QueryRow(ctx, addAssetCompanion,
+		arg.AssetID,
+		arg.CompanionPath,
+		arg.ObjectHash,
+		arg.ContentType,
+		arg.SizeBytes,
+	)
+	var i AssetCompanion
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.CompanionPath,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const addAssetTag = `-- name: AddAssetTag :exec
 INSERT INTO asset_tag (asset_id, tag)
 VALUES ($1, $2)
@@ -115,6 +160,19 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	return i, err
 }
 
+const deleteAssetCompanion = `-- name: DeleteAssetCompanion :exec
+DELETE FROM asset_companions
+ WHERE id = $1
+`
+
+// Remove a companion by id. Caller is responsible for unpinning the
+// storage object so the GC can claim the bytes back when no other
+// pin remains.
+func (q *Queries) DeleteAssetCompanion(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAssetCompanion, id)
+	return err
+}
+
 const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, resource_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
@@ -165,6 +223,98 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getAssetCompanion = `-- name: GetAssetCompanion :one
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE id = $1
+`
+
+// Resolve a companion by its row id — used by the delete handler so
+// the asset id can be cross-checked against the URL and the pin can
+// be tied back to the companion id.
+func (q *Queries) GetAssetCompanion(ctx context.Context, id pgtype.UUID) (AssetCompanion, error) {
+	row := q.db.QueryRow(ctx, getAssetCompanion, id)
+	var i AssetCompanion
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.CompanionPath,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAssetCompanionByPath = `-- name: GetAssetCompanionByPath :one
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE asset_id = $1 AND companion_path = $2
+`
+
+type GetAssetCompanionByPathParams struct {
+	AssetID       pgtype.UUID
+	CompanionPath string
+}
+
+// Resolve one companion by its declared relative path. Used by the
+// GET /assets/{id}/companions/{path} download endpoint.
+func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompanionByPathParams) (AssetCompanion, error) {
+	row := q.db.QueryRow(ctx, getAssetCompanionByPath, arg.AssetID, arg.CompanionPath)
+	var i AssetCompanion
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.CompanionPath,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listAssetCompanions = `-- name: ListAssetCompanions :many
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE asset_id = $1
+ ORDER BY companion_path ASC
+`
+
+// All companions attached to one asset, ordered by path so the
+// viewer's LoadingManager can iterate deterministically.
+func (q *Queries) ListAssetCompanions(ctx context.Context, assetID pgtype.UUID) ([]AssetCompanion, error) {
+	rows, err := q.db.Query(ctx, listAssetCompanions, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssetCompanion
+	for rows.Next() {
+		var i AssetCompanion
+		if err := rows.Scan(
+			&i.ID,
+			&i.AssetID,
+			&i.CompanionPath,
+			&i.ObjectHash,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAssetTags = `-- name: ListAssetTags :many

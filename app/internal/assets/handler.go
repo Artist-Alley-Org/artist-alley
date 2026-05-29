@@ -37,6 +37,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -52,6 +53,12 @@ const PinSubjectTypeAsset = "asset"
 // line with its declared maximum (200).
 const maxListLimit = 200
 
+// CacheDomainAssetCompanions keys the per-asset companion-list cache.
+// Exposed so cross-package writers (e.g. a future bulk-edit endpoint
+// that mutates companions outside this handler) can broadcast the
+// invalidation through cache.Registry.Emit.
+const CacheDomainAssetCompanions = "asset.companions"
+
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
@@ -63,12 +70,25 @@ type Handler struct {
 	// after a successful asset create. Nil-safe — tests may pass nil
 	// to skip the enqueue.
 	Jobs *jobs.Service
+
+	// companions caches the per-asset list of sidecar files (the
+	// model viewer fetches this on every 3D mount; cache hit rate is
+	// high once a session settles on a working set of assets).
+	// nil-safe — tests can pass a nil registry.
+	companions *cache.Cache[[]openapi.AssetCompanion]
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
-func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service) *Handler {
-	return &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc}
+func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc}
+	if registry != nil {
+		// 5_000 keys × ~512 bytes/entry ≈ 2.5MB resident. Working set
+		// is "active assets being reviewed" which is well under that
+		// for a single host.
+		h.companions = cache.Register[[]openapi.AssetCompanion](registry, CacheDomainAssetCompanions, 5_000)
+	}
+	return h
 }
 
 // ---------------------------------------------------------------------------

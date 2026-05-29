@@ -836,6 +836,131 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/companions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetCompanions
+      summary: List sidecar files attached to a 3D model asset
+      description: |
+        Returns the set of companion files attached to this asset, in
+        path order. The viewer fetches this list before mounting a 3D
+        body and uses it to rewrite relative resource references
+        (textures, MTL, .bin) through a LoadingManager URL modifier.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of companions (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AssetCompanion" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addAssetCompanion
+      summary: Attach a sidecar file to a 3D model asset
+      description: |
+        Streams the file body content-addressed into storage, then
+        attaches it to the asset at the given relative path. If a
+        companion already exists at that path it is replaced (the old
+        pin is removed; the storage object lives on if other pins
+        reference it).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: X-Companion-Path
+          in: header
+          required: true
+          description: |
+            Relative path the model file references this companion at.
+            Slashes are allowed for subdirectory layouts
+            ('textures/foo.png'). Limited to 512 chars.
+          schema: { type: string, minLength: 1, maxLength: 512 }
+        - name: X-Content-Type
+          in: header
+          required: false
+          description: |
+            MIME type of the companion bytes. If absent we default to
+            application/octet-stream.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Companion attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetCompanion" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/companions/{companion_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: companion_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: downloadAssetCompanion
+      summary: Download a companion file's bytes
+      description: |
+        Returns the raw bytes for a single companion. The frontend
+        viewer calls this through a LoadingManager URL modifier when
+        the model loader asks for a resource at a known relative path.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Companion body
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeAssetCompanion
+      summary: Detach a companion file from an asset
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Companion removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/tags:
     parameters:
       - name: id
@@ -4325,6 +4450,39 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    AssetCompanion:
+      type: object
+      description: |
+        A sidecar file (texture, MTL, .bin, etc.) attached to a 3D
+        model asset under a relative path. The viewer's LoadingManager
+        rewrites the model's relative resource references through
+        these entries so external resources resolve to the right
+        content-addressed blob.
+      required: [id, asset_id, path, content_type, size_bytes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        asset_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+          description: |
+            Relative path the model file references this companion at
+            — e.g. 'character.mtl' for an OBJ's sibling .mtl, or
+            'textures/foo.png' for a glTF texture in a subdirectory.
+          example: textures/character-a.png
+        content_type:
+          type: string
+          example: image/png
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
 
     UploadResult:
       type: object

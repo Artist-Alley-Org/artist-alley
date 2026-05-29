@@ -169,3 +169,51 @@ UPDATE assets
        updated_at = NOW()
  WHERE id = $1
    AND thumbhash IS NULL;
+
+-- name: AddAssetCompanion :one
+-- Attach a companion blob to an asset under a given relative path.
+-- Companion bytes live in storage_objects (deduped by hash); this
+-- row is metadata that maps "this asset, this path → that blob".
+-- Unique (asset_id, companion_path) — re-uploading the same path
+-- replaces the row at the handler level (delete + insert under one
+-- transaction).
+INSERT INTO asset_companions (
+    asset_id, companion_path, object_hash, content_type, size_bytes
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING id, asset_id, companion_path, object_hash,
+          content_type, size_bytes, created_at;
+
+-- name: ListAssetCompanions :many
+-- All companions attached to one asset, ordered by path so the
+-- viewer's LoadingManager can iterate deterministically.
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE asset_id = $1
+ ORDER BY companion_path ASC;
+
+-- name: GetAssetCompanionByPath :one
+-- Resolve one companion by its declared relative path. Used by the
+-- GET /assets/{id}/companions/{path} download endpoint.
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE asset_id = $1 AND companion_path = $2;
+
+-- name: GetAssetCompanion :one
+-- Resolve a companion by its row id — used by the delete handler so
+-- the asset id can be cross-checked against the URL and the pin can
+-- be tied back to the companion id.
+SELECT id, asset_id, companion_path, object_hash,
+       content_type, size_bytes, created_at
+  FROM asset_companions
+ WHERE id = $1;
+
+-- name: DeleteAssetCompanion :exec
+-- Remove a companion by id. Caller is responsible for unpinning the
+-- storage object so the GC can claim the bytes back when no other
+-- pin remains.
+DELETE FROM asset_companions
+ WHERE id = $1;

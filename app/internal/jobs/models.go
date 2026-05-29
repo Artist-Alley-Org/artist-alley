@@ -66,6 +66,16 @@ type Asset struct {
 	DeletedAt            pgtype.Timestamptz
 }
 
+type AssetCompanion struct {
+	ID            pgtype.UUID
+	AssetID       pgtype.UUID
+	CompanionPath string
+	ObjectHash    string
+	ContentType   string
+	SizeBytes     int64
+	CreatedAt     pgtype.Timestamptz
+}
+
 type AssetFieldValue struct {
 	AssetID      pgtype.UUID
 	FieldID      pgtype.UUID

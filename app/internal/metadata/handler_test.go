@@ -550,6 +550,18 @@ func (metaShim) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject)
 func (metaShim) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from metadata test shim")
 }
+func (metaShim) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from metadata test shim")
+}
+func (metaShim) AddAssetCompanion(context.Context, openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from metadata test shim")
+}
+func (metaShim) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from metadata test shim")
+}
+func (metaShim) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from metadata test shim")
+}
 func (metaShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from metadata test shim")
 }

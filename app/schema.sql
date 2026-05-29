@@ -337,6 +337,18 @@ CREATE TABLE storage_pins (
     PRIMARY KEY (object_hash, pin_subject_type, pin_subject_id)
 );
 
+-- migrations/00026_asset_companions.sql — sidecar files for 3D assets.
+CREATE TABLE asset_companions (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id        UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    companion_path  TEXT         NOT NULL CHECK (length(companion_path) BETWEEN 1 AND 512),
+    object_hash     TEXT         NOT NULL REFERENCES storage_objects(hash),
+    content_type    TEXT         NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes      BIGINT       NOT NULL CHECK (size_bytes >= 0),
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (asset_id, companion_path)
+);
+
 -- migrations/00005_sessions.sql — first-class session table. One row per
 -- active login; replaces RS's single-session-per-user model while still
 -- maintaining user.session for PHP coexistence.
