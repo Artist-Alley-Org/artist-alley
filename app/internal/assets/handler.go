@@ -271,7 +271,8 @@ func (h *Handler) CreateAsset(
 
 // jobTypeForExt picks the preview-job type for a given file extension.
 // preview.raster handles still images; preview.video runs the HLS
-// pipeline. Other formats (audio/svg/pdf/font/3D) land in follow-ups.
+// pipeline; preview.3d runs the Blender turntable renderer. Other
+// formats (audio/svg/pdf/font) land in follow-ups.
 func jobTypeForExt(ext *string) jobs.JobType {
 	if ext == nil {
 		return jobs.TypePreviewRaster
@@ -279,6 +280,9 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
 	if _, ok := videoExts[e]; ok {
 		return jobs.TypePreviewVideo
+	}
+	if _, ok := modelExts[e]; ok {
+		return jobs.TypePreview3D
 	}
 	return jobs.TypePreviewRaster
 }
@@ -977,6 +981,14 @@ var videoExts = map[string]struct{}{
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
 }
 
+// modelExts: formats the Blender-headless turntable handler can ingest
+// (kept in sync with preview/model.go). Closed/proprietary formats
+// like .mb / .ma / .max stay on a placeholder until we wire a Maya/Max
+// worker tier.
+var modelExts = map[string]struct{}{
+	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {},
+}
+
 func needsProcessing(ext *string) bool {
 	if ext == nil {
 		return false
@@ -986,6 +998,9 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := videoExts[e]; ok {
+		return true
+	}
+	if _, ok := modelExts[e]; ok {
 		return true
 	}
 	return false

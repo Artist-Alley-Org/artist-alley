@@ -120,28 +120,33 @@
     imgError = true;
   }
 
-  // Hover scrub preview for video covers. Animates the sprite sheet
-  // already produced by preview.video — a single image download
-  // (well-cached, content-addressed) gives ~100 frames of scrub. No
-  // video decode, no extra network round-trips after first hover.
+  // Hover scrub preview. Video covers animate frames from preview.video's
+  // 10×10 sprite sheet (~100 frames over the timeline); 3D covers
+  // animate frames from preview.model's 6×6 turntable sheet (~36 frames
+  // around the model). Both share the same content-addressed sprites.jpg
+  // variant + the same `xywh=` indexing scheme, so the UI is identical.
   const coverAsset = $derived(post.members.find((m) => m.asset_id === coverAssetId)?.asset);
   const coverIsVideo = $derived(!!coverAsset && isVideoAsset(coverAsset));
   const coverIs3D = $derived(!!coverAsset && is3DAsset(coverAsset));
+  const coverHasSpriteScrub = $derived(coverIsVideo || coverIs3D);
   const spriteUrl = $derived(coverAssetId ? `/api/v1/assets/${coverAssetId}/variants/sprites.jpg` : '');
 
   let hovering = $state(false);
   let spriteFrame = $state(0);
   let spriteInterval: ReturnType<typeof setInterval> | null = null;
-  const SPRITE_COLS = 10;
-  const SPRITE_ROWS = 10;
-  const SPRITE_CELL = SPRITE_COLS * SPRITE_ROWS;
+  // Video sprite sheets are 10×10 (= 100 frames); 3D turntables are
+  // 6×6 (= 36 frames). Same indexing scheme, different grid — we pick
+  // the grid by what the cover is.
+  const spriteCols = $derived(coverIs3D ? 6 : 10);
+  const spriteRows = $derived(coverIs3D ? 6 : 10);
+  const spriteCells = $derived(spriteCols * spriteRows);
 
   function onHoverEnter() {
     hovering = true;
-    if (!coverIsVideo) return;
+    if (!coverHasSpriteScrub) return;
     if (spriteInterval) return;
     spriteInterval = setInterval(() => {
-      spriteFrame = (spriteFrame + 1) % SPRITE_CELL;
+      spriteFrame = (spriteFrame + 1) % spriteCells;
     }, 120); // ~8 fps — feels lively without being seizurish
   }
   function onHoverLeave() {
@@ -199,13 +204,13 @@
         onload={onLoad}
         onerror={onError}
       />
-      {#if coverIsVideo && hovering}
-        <!-- Sprite-sheet scrub preview. The sheet is 10×10 = 100
-             frames spanning the duration; we walk it at ~8 fps so
-             the user sees a quick "trailer" of the video. -->
+      {#if coverHasSpriteScrub && hovering}
+        <!-- Sprite-sheet scrub preview. Video covers walk a 10×10
+             timeline grid; 3D covers walk a 6×6 turntable grid. Same
+             code path either way — we just pick the divisor. -->
         <div
           class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-          style="background-image: url({spriteUrl}); background-size: 1000% 1000%; background-position: {(spriteFrame % SPRITE_COLS) * (100 / (SPRITE_COLS - 1))}% {Math.floor(spriteFrame / SPRITE_COLS) * (100 / (SPRITE_ROWS - 1))}%;"
+          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
         ></div>
       {/if}
       {#if coverIsVideo}

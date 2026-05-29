@@ -97,10 +97,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 
 	// Register preview handlers. preview.raster ships in 1.18.A;
 	// preview.video adds the HLS / poster / scrub-sprite pipeline
-	// in 1.18.B-1 (with GPU-encoder auto-detection at boot). Other
-	// handlers (svg / audio / pdf / font / 3D) plug in here.
+	// in 1.18.B-1 (with GPU-encoder auto-detection at boot);
+	// preview.model adds the Blender-headless turntable in 1.18.B-11.
+	// Other handlers (svg / audio / pdf / font) plug in here.
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
