@@ -102,13 +102,16 @@ func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
 // modelExts mirrors the dispatcher map in assets.handler.go.
 //
-// mview is the Marmoset Viewer format. Blender can't open it directly,
-// so we convert the archive to glTF binary in-process via the Go
-// mview/glb decoder before staging it for the turntable render. The
-// browser viewer also has a live marmoset.js path as a fallback for
-// formats this decoder doesn't yet cover (animated rigs, skinning).
+// Native Blender importers cover the bulk of the list. mview is the
+// odd one: Blender can't read it, so we convert the archive to glTF
+// binary in-process via the Go mview/glb decoder before staging it
+// for the turntable render. The browser viewer also has a live
+// marmoset.js path as a fallback for formats this decoder doesn't
+// yet cover (animated rigs, skinning).
 var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
+	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
+	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
 }
 
 func isModelExt(ext string) bool {

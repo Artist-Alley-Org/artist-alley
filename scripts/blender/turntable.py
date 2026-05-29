@@ -72,12 +72,30 @@ def reset_scene() -> None:
 
 def import_model(path: str) -> None:
     ext = os.path.splitext(path)[1].lower().lstrip(".")
+    # Blender 4.x ships native operators for every format below; older
+    # 3.x docker tags use the legacy import_mesh/import_scene names.
+    # If you bump the Blender image and an operator stops resolving,
+    # the fallback chain on each branch tries the older name.
     if ext in ("glb", "gltf"):
         bpy.ops.import_scene.gltf(filepath=path)
     elif ext == "fbx":
         bpy.ops.import_scene.fbx(filepath=path)
     elif ext == "obj":
-        bpy.ops.wm.obj_import(filepath=path)
+        _try_ops(("wm.obj_import", "import_scene.obj"), filepath=path)
+    elif ext == "dae":
+        bpy.ops.wm.collada_import(filepath=path)
+    elif ext == "ply":
+        _try_ops(("wm.ply_import", "import_mesh.ply"), filepath=path)
+    elif ext == "stl":
+        _try_ops(("wm.stl_import", "import_mesh.stl"), filepath=path)
+    elif ext == "3ds":
+        _try_ops(("import_scene.max3ds", "import_scene.autodesk_3ds"), filepath=path)
+    elif ext in ("x3d", "wrl"):
+        bpy.ops.import_scene.x3d(filepath=path)
+    elif ext in ("usd", "usda", "usdc", "usdz"):
+        bpy.ops.wm.usd_import(filepath=path)
+    elif ext == "abc":
+        bpy.ops.wm.alembic_import(filepath=path)
     elif ext == "blend":
         bpy.ops.wm.open_mainfile(filepath=path)
         for obj in list(bpy.data.objects):
@@ -85,6 +103,34 @@ def import_model(path: str) -> None:
                 bpy.data.objects.remove(obj, do_unlink=True)
     else:
         raise SystemExit(f"unsupported extension: {ext}")
+
+
+def _try_ops(op_names, **kwargs) -> None:
+    """Resolve and call the first operator name that exists.
+
+    Blender 4.x renamed several importers (`import_mesh.ply` →
+    `wm.ply_import`); the runtime errors out if you call a renamed
+    operator on an older build. This walks a fallback list so the same
+    script works against any Blender image we'd realistically ship.
+    """
+    last_err = None
+    for name in op_names:
+        ns, op = name.split(".", 1)
+        ops_ns = getattr(bpy.ops, ns, None)
+        if ops_ns is None:
+            continue
+        op_fn = getattr(ops_ns, op, None)
+        if op_fn is None:
+            continue
+        try:
+            op_fn(**kwargs)
+            return
+        except Exception as e:  # operator exists but failed at runtime
+            last_err = e
+            continue
+    raise SystemExit(
+        f"no usable Blender importer for {op_names}: {last_err}"
+    )
 
 
 def ensure_default_material() -> None:

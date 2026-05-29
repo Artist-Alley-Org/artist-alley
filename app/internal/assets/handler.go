@@ -167,6 +167,21 @@ func (h *Handler) CreateAsset(
 		processingStatus = "pending"
 	}
 
+	// Auto-promote resource_type when the file extension implies a
+	// stronger category than the caller chose. Frontends that send a
+	// generic Photo (1) for a .glb get bumped to 3D Object (5); a
+	// caller who explicitly picked Audio (4) for a model would stay
+	// as-is and live with their choice. The override rule is "promote
+	// only from the generic defaults (1, 2)" so explicit picks are
+	// always respected.
+	if in.FileExtension != nil {
+		if want := resourceTypeFor(*in.FileExtension); want > 0 {
+			if in.ResourceType == 1 || in.ResourceType == 2 {
+				in.ResourceType = want
+			}
+		}
+	}
+
 	// Thumbhash — synchronously computed for image extensions. ~1-3
 	// ms on a 4K image; we do it BEFORE the INSERT so the asset row
 	// is born with the placeholder. Failure here is soft: log + keep
@@ -1001,13 +1016,52 @@ var videoExts = map[string]struct{}{
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
 }
 
-// modelExts: formats the preview.3d handler can ingest. glb/gltf/fbx/
-// obj/blend go through Blender; mview goes through the Marmoset
-// archive parser to extract the embedded thumbnail. Closed/proprietary
-// formats like .mb / .ma / .max stay on a placeholder until we wire a
-// Maya/Max worker tier.
+// modelExts: formats the preview.3d handler can ingest.
+//
+// First tier are the natively-supported formats:
+//   - glb / gltf / fbx / obj / blend → Blender import_scene operators
+//   - dae                            → Collada (Blender import_scene)
+//   - ply / stl / 3ds / x3d / wrl    → Blender mesh/scene importers
+//   - usd / usda / usdc / usdz       → Universal Scene Description
+//   - abc                            → Alembic VFX cache
+//   - mview                          → in-process Go converter
+//     (github.com/mscrnt/mviewer/go) → glTF → Blender
+//
+// Closed/proprietary formats like .mb / .ma / .max stay on a
+// placeholder until we wire a Maya/Max worker tier.
 var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
+	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
+	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
+}
+
+// resourceTypeFor returns the canonical resource_type ref for a file
+// extension, used by createAsset to auto-promote uploads to the right
+// category. Returns 0 (unset) when we don't have a strong opinion —
+// the caller's explicit choice still wins.
+func resourceTypeFor(ext string) int64 {
+	if ext == "" {
+		return 0
+	}
+	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+	if _, ok := modelExts[e]; ok {
+		return 5 // 3D Object
+	}
+	if _, ok := videoExts[e]; ok {
+		return 3 // Video
+	}
+	if _, ok := imageExts[e]; ok {
+		return 1 // Photo
+	}
+	switch e {
+	case "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "txz":
+		return 6 // Archive
+	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma":
+		return 4 // Audio
+	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt":
+		return 2 // Document
+	}
+	return 0
 }
 
 func needsProcessing(ext *string) bool {
