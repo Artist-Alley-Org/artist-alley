@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/mscrnt/mviewer/go v0.0.0-20260529193802-4b32acbc056f
+	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/pressly/goose/v3 v3.27.1
 	go.n16f.net/thumbhash v1.1.0
