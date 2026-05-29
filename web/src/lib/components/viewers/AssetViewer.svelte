@@ -60,6 +60,10 @@
     // Outside review mode the viewer is display-only — let the wheel
     // bubble so the modal scroll-snap (or page scroller) can take it.
     if (!reviewMode) return;
+    // 3D bodies own all input (orbit controls + model-viewer's camera
+    // wheel-zoom). The outer pan/zoom layer doesn't make sense in a
+    // 3D world and would fight the orbit. Let the event reach the body.
+    if (kind === '3d') return;
     // Plain wheel = scrub a frame (when there's a timeline);
     // ctrl/⌘ + wheel = zoom.
     if (!e.ctrlKey && !e.metaKey) {
@@ -88,6 +92,8 @@
     // click-to-toggle-play affordance. Single-click is a no-op so
     // we don't fight with double-click-to-enter-review.
     if (!reviewMode) return;
+    // 3D bodies own all drag (orbit). Leave the outer transform alone.
+    if (kind === '3d') return;
     const startX = e.clientX;
     const startY = e.clientY;
     const initialPanX = panX;

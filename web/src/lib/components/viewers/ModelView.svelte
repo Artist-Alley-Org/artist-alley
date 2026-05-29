@@ -162,22 +162,31 @@
     camera.position.set(dist, dist * 0.6, dist);
     camera.lookAt(0, 0, 0);
 
-    // Studio lighting — a key + fill + soft hemisphere so the
-    // bear / barrel / fence comes out legible without ambient noise.
-    const key = new THREE.DirectionalLight(0xffffff, 1.0);
-    key.position.set(2, 4, 2).multiplyScalar(maxDim);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0xc0d8ff, 0.4);
-    fill.position.set(-3, 1, -2).multiplyScalar(maxDim);
-    scene.add(fill);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x202028, 0.5));
-
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(w, h);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
+
+    // Image-based lighting via RoomEnvironment — a procedural studio
+    // env generated on the fly. Without an envmap, PBR materials with
+    // any metalness look pitch-black (metals reflect the environment,
+    // and "no env" = "reflect nothing"); even dielectrics look dull.
+    // RoomEnvironment is the same primitive Sketchfab + the three.js
+    // editor use for the "general purpose viewer" default look.
+    const { RoomEnvironment } = await import('three/examples/jsm/environments/RoomEnvironment.js');
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    // Key directional on top of the IBL — adds a crisp shadow term so
+    // the model has form even when the env is flat ambient. Intensity
+    // is intentionally low; the env carries most of the lighting now.
+    const key = new THREE.DirectionalLight(0xffffff, 1.5);
+    key.position.set(maxDim * 2, maxDim * 4, maxDim * 2);
+    scene.add(key);
 
     // Orbit controls for camera-around-target interaction.
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
@@ -214,6 +223,8 @@
       ro.disconnect();
       controls.dispose();
       threeControls = null;
+      scene.environment?.dispose?.();
+      pmrem.dispose();
       renderer.dispose();
       try { container?.removeChild(renderer.domElement); } catch { /* ignore */ }
       scene.traverse((obj: any) => {
