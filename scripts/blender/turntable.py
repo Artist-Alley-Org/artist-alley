@@ -404,17 +404,52 @@ def main() -> None:
     configure_render(args.res, args.samples)
     scene = bpy.context.scene
 
-    # Radius from the bbox half-diagonal — same heuristic as B-12b-11.
-    # 2.6× radius gives a comfortable framing for most models without
-    # the iterative-fit complexity. The model is parented through a
-    # pivot at the bbox center so the geometry STAYS centered regardless
-    # of how complex the source's parent hierarchy is.
-    radius = max((maxs - mins).length / 2.0, 0.1)
-    distance = radius * 2.6
+    # Per-view distance via FOV math — replaces the old `radius * 2.6`
+    # heuristic, which over-zoomed wide/tall models because the bbox
+    # diagonal is the wrong "size" when the model isn't cubic. A tall
+    # thin character (Kenney) was getting 35% of the frame because the
+    # diagonal-based distance was 35% too far for its actual silhouette.
+    aspect = scene.render.resolution_x / scene.render.resolution_y
+    cam_data = cam.data
+    fov_h = 2 * math.atan(cam_data.sensor_width / (2 * cam_data.lens))
+    fov_v = fov_h / aspect
+    padding = 1.15  # leave ~15% margin so the bbox doesn't kiss the edges
+
+    def fit_distance(view: str, tilt_deg: float = 0.0) -> float:
+        """Distance from target that fits the bbox in the frame.
+
+        Different apparent extents per view type:
+          orbital — at azimuth 0, vertical = height*cos(t) + depth*sin(t),
+                    horizontal = width. Over a full spin the widest the
+                    horizontal extent ever gets is max(width, depth).
+          top     — XY footprint = max(width, depth). Distance must
+                    also clear the model's vertical extent or the
+                    camera ends up inside a tall model.
+          bottom  — symmetrical to top.
+        """
+        w, d, hgt = dimensions.x, dimensions.y, dimensions.z
+        if view in ("top", "bottom"):
+            v_ext = max(abs(w), abs(d))
+            h_ext = max(abs(w), abs(d))
+        else:
+            t = math.radians(tilt_deg)
+            v_ext = abs(hgt) * math.cos(t) + abs(d) * math.sin(t)
+            h_ext = max(abs(w), abs(d))
+        d_v = (v_ext * padding) / (2 * math.tan(fov_v / 2)) if v_ext > 0 else 0
+        d_h = (h_ext * padding) / (2 * math.tan(fov_h / 2)) if h_ext > 0 else 0
+        framing = max(d_v, d_h, 0.1)
+        if view in ("top", "bottom"):
+            # Camera lives on the Z axis at target.z ± framing; the
+            # model itself extends ±height/2 either side of target.z.
+            # If framing < height/2 the camera ends up inside the
+            # model. Add half-height as clearance.
+            framing += abs(hgt) / 2.0
+        return framing
 
     # ─── Turntable: N orbital frames around Z, 20° tilt ────────────────
     tilt_deg = 20
     tilt_rad = math.radians(tilt_deg)
+    distance = fit_distance("orbital", tilt_deg)
     cam.parent = pivot
     cam.location = (0, -distance, distance * math.tan(tilt_rad))
     cam.rotation_euler = (math.radians(90 - tilt_deg), 0, 0)
@@ -424,20 +459,17 @@ def main() -> None:
         render_to(os.path.join(turntable_dir, f"frame_{i:04d}.png"))
 
     # ─── Reference views: top + bottom ─────────────────────────────────
-    # Unparent the camera so we can position it independently of the
-    # pivot's turntable rotation; aim it directly at the bbox center.
     cam.parent = None
     views_dir = os.path.join(args.output, "views")
 
-    # Top: straight down, camera-up = world +Y so +Y of the model is
-    # the top of the rendered image.
-    cam.location = (target.x, target.y, target.z + distance)
+    top_distance = fit_distance("top")
+    cam.location = (target.x, target.y, target.z + top_distance)
     direction = target - Vector(cam.location)
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     render_to(os.path.join(views_dir, "top.png"))
 
-    # Bottom: looking up. Same up-axis convention as top.
-    cam.location = (target.x, target.y, target.z - distance)
+    bot_distance = fit_distance("bottom")
+    cam.location = (target.x, target.y, target.z - bot_distance)
     direction = target - Vector(cam.location)
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     render_to(os.path.join(views_dir, "bottom.png"))
