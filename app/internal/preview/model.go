@@ -138,6 +138,23 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	}
 	defer cleanup()
 
+	// Materialise companions next to the model file at their declared
+	// relative paths. Blender's importers resolve external resources
+	// (MTL files, .bin buffers, sibling textures) relative to the
+	// loaded file's directory — so as long as the user attached the
+	// right files via the companion API, the chain just works:
+	//   workdir/src.obj           ← original
+	//   workdir/character-a.mtl   ← companion at path 'character-a.mtl'
+	//   workdir/Textures/*.png    ← companion at path 'Textures/*'
+	// Soft-fail: a download error logs a warning + skips the missing
+	// file rather than aborting the whole render. The asset still gets
+	// untextured thumbnails, which beats no thumbnails at all.
+	if err := h.stageCompanions(jobCtx, p.AssetID, work.dir); err != nil {
+		h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.companions_stage_failed",
+			slog.String("asset_id", p.AssetID.String()),
+			slog.String("err", err.Error()))
+	}
+
 	result := ModelResult{FrameCount: h.Frames}
 
 	// Cheap re-queue path: if every output we'd produce is already on
@@ -252,6 +269,69 @@ func (h *ModelHandler) writeReferenceViews(ctx context.Context, hash, viewsDir s
 		if err := h.uploadFile(ctx, hash, key, path, "image/png"); err != nil {
 			return fmt.Errorf("upload %s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// stageCompanions writes every companion the asset has into the
+// Blender workdir at the relative path the user declared. Loaders
+// then resolve relative references (OBJ's mtllib, glTF's .bin uri,
+// MTL's map_Kd 'Textures/foo.png') naturally against the workdir.
+//
+// Per-companion soft-fail: a single bad blob (network blip, GC race)
+// shouldn't tank the whole render. The model will just render
+// untextured if its texture didn't make it, which is still useful.
+func (h *ModelHandler) stageCompanions(ctx context.Context, assetID uuid.UUID, workDir string) error {
+	companions, err := assets.New(h.Pool).ListAssetCompanions(
+		ctx, pgtype.UUID{Bytes: assetID, Valid: true},
+	)
+	if err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
+	for _, c := range companions {
+		// Defensive: refuse anything that escapes the workdir. The API
+		// already rejects '..' and leading '/' at upload, but pinning
+		// it again here means a future bypass at the upload layer
+		// doesn't immediately become a path-traversal worker exploit.
+		if strings.Contains(c.CompanionPath, "..") ||
+			strings.HasPrefix(c.CompanionPath, "/") ||
+			strings.HasPrefix(c.CompanionPath, "\\") {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.companion_path_rejected",
+				slog.String("path", c.CompanionPath))
+			continue
+		}
+		dst := filepath.Join(workDir, c.CompanionPath)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.companion_mkdir_failed",
+				slog.String("path", c.CompanionPath),
+				slog.String("err", err.Error()))
+			continue
+		}
+		rc, _, err := h.Storage.Download(ctx, c.ObjectHash, storage.VariantOriginal)
+		if err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.companion_download_failed",
+				slog.String("path", c.CompanionPath),
+				slog.String("err", err.Error()))
+			continue
+		}
+		f, err := os.Create(dst)
+		if err != nil {
+			_ = rc.Close()
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.companion_create_failed",
+				slog.String("path", dst),
+				slog.String("err", err.Error()))
+			continue
+		}
+		if _, err := io.Copy(f, rc); err != nil {
+			_ = f.Close()
+			_ = rc.Close()
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.companion_copy_failed",
+				slog.String("path", dst),
+				slog.String("err", err.Error()))
+			continue
+		}
+		_ = f.Close()
+		_ = rc.Close()
 	}
 	return nil
 }
