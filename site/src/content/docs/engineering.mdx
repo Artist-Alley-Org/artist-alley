@@ -8,12 +8,6 @@ lastUpdated: false
 
 import EngineeringDashboard from "../../components/EngineeringDashboard.astro";
 
-{/* This page is data-dense — widen the content column to take advantage of
-    the viewport instead of leaving a 30rem dead band on the right. */}
-<style is:global>{`
-  :root { --sl-content-width: min(96rem, calc(100% - 2rem)); }
-`}</style>
-
 A single view of what's been built, what's in flight, and what's moving on
 the repo right now. Combines the structured roadmap with live(-ish) GitHub
 snapshots.

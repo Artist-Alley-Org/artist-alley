@@ -30,11 +30,12 @@
   --sl-line-height: 1.65;
   --sl-line-height-headings: 1.2;
 
-  /* Slightly wider main content column than Starlight's default 45rem.
-     56rem keeps prose under ~85 chars/line but recovers ~11rem of dead
-     right-side space on common 14"+ displays. Data-heavy pages
-     (engineering dashboard, visual roadmap) widen further inline. */
-  --sl-content-width: 56rem;
+  /* Significantly wider main content column than Starlight's default 45rem.
+     72rem fills the dead right-side space on common 14"+ displays without
+     making prose lines too long for comfortable reading (~105 chars max).
+     Data-heavy pages disable the right TOC instead of widening further,
+     since the TOC column was the actual bottleneck. */
+  --sl-content-width: 72rem;
 
   /* Brand accents — used by VisualRoadmap and EngineeringDashboard. Same hue
      on both themes; the surfaces around them switch. */
