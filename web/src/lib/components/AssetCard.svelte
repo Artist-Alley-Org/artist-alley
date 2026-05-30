@@ -21,7 +21,7 @@
     title: string;
     file_hash?: string | null;
     file_extension?: string | null;
-    resource_type: number;
+    asset_type: number;
     created_at: string;
     thumbhash?: string | null;
   }

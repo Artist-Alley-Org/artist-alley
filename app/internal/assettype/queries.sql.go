@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: queries.sql
 
-package resourcetype
+package assettype
 
 import (
 	"context"
@@ -17,7 +17,7 @@ SELECT ref,
        icon,
        colour,
        tab
-FROM resource_type
+FROM asset_types
 WHERE ref = $1
 `
 
@@ -31,7 +31,7 @@ type GetRow struct {
 	Tab               *int64  `json:"tab"`
 }
 
-// Fetch a single resource type by primary key. Returns sql.ErrNoRows
+// Fetch a single asset type by primary key. Returns sql.ErrNoRows
 // when missing.
 func (q *Queries) Get(ctx context.Context, ref int64) (GetRow, error) {
 	row := q.db.QueryRow(ctx, get, ref)
@@ -56,7 +56,7 @@ SELECT ref,
        icon,
        colour,
        tab
-FROM resource_type
+FROM asset_types
 ORDER BY COALESCE(order_by, 0), ref
 `
 
@@ -70,8 +70,8 @@ type ListRow struct {
 	Tab               *int64  `json:"tab"`
 }
 
-// List every resource type, sorted by display order then by ID. Used
-// by GET /api/v1/resource_types and by anything that needs the lookup
+// List every asset type, sorted by display order then by ID. Used
+// by GET /api/v1/asset_types and by anything that needs the lookup
 // table in memory.
 func (q *Queries) List(ctx context.Context) ([]ListRow, error) {
 	rows, err := q.db.Query(ctx, list)

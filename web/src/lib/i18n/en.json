@@ -15,7 +15,7 @@
     "advanced_search": "Advanced search"
   },
   "search": {
-    "intro": "Build a precise query — filter by tag, resource type, field value, date range, and more.",
+    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
     "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search."
   },
   "blogs": {
@@ -94,7 +94,7 @@
     "roles": "Roles & capabilities",
     "workflow": "Workflow states",
     "fields": "Fields & metadata",
-    "resource_types": "Resource types",
+    "asset_types": "Asset types",
     "system": "System config",
     "system_log": "System log"
   },
@@ -234,9 +234,9 @@
       },
       "content": {
         "title": "Content & metadata",
-        "intro": "Resource types, fields, taxonomies, and the text that wraps them.",
+        "intro": "Asset types, fields, taxonomies, and the text that wraps them.",
         "tiles": {
-          "resource_types":  { "title": "Resource types",   "blurb": "Resource type registry and the fields each applies." },
+          "asset_types":  { "title": "Asset types",   "blurb": "Asset type registry and the fields each applies." },
           "fields":          { "title": "Field definitions","blurb": "Metadata schema across every domain." },
           "field_options":   { "title": "Field options",   "blurb": "Controlled vocabularies for select / multiselect fields." },
           "field_sets":      { "title": "Field sets",      "blurb": "Bundle related fields for reuse across types." },
@@ -400,7 +400,7 @@
       "roles": "View roles and the capabilities each one grants.",
       "workflow": "Review the seeded workflow state machines.",
       "fields": "Browse the metadata field schema.",
-      "resource_types": "Browse the resource type registry.",
+      "asset_types": "Browse the asset type registry.",
       "system": "Site, SMTP, authentication, AI providers, and logs."
     },
     "users": {
@@ -435,8 +435,8 @@
       "type": "Type",
       "applies_to": "Applies to"
     },
-    "resource_types": {
-      "title": "Resource types",
+    "asset_types": {
+      "title": "Asset types",
       "coming_soon": "Resource-type editing lands in a follow-up phase."
     },
     "system": {

@@ -222,7 +222,7 @@ func (h *Handler) CompleteSetup(
 	// usergroup 3 is the seeded "Super Admin" group from RS's
 	// dbstruct/data_usergroup.txt — it carries the `a` permission
 	// (and the full set of capability codes) RS-rendered pages check
-	// to expose the admin panel, browse bar, and per-resource-type
+	// to expose the admin panel, browse bar, and per-asset-type
 	// access. The Go side still uses roles+capabilities; this is the
 	// RS-coexistence twin.
 	superAdminGroup := int64(3)

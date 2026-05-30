@@ -1,13 +1,13 @@
-// Package resourcetype implements the artist-alley resource-type
+// Package assettype implements the artist-alley asset-type
 // catalog endpoints (formerly RS's hand-rolled
-// `pages/team/team_resource_types.php` and the relevant slices of
+// `pages/team/team_asset_types.php` and the relevant slices of
 // `include/resource_functions.php`).
 //
 // The HTTP contract is defined in `app/api/openapi.yaml`. The
 // `app/internal/openapi` package contains code generated from that
 // spec by `oapi-codegen`; the Handler below implements
 // `openapi.StrictServerInterface` (currently the single
-// ListResourceTypes operation).
+// ListAssetTypes operation).
 //
 // Layout:
 //
@@ -18,7 +18,7 @@
 //	handler_test.go        -- integration tests against live Postgres
 //
 // This is the template for every feature package that follows.
-package resourcetype
+package assettype
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-// Handler holds dependencies for the resource-type endpoints.
+// Handler holds dependencies for the asset-type endpoints.
 type Handler struct {
 	queries *Queries
 	logger  *slog.Logger
@@ -40,26 +40,26 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
 	return &Handler{queries: New(pool), logger: logger}
 }
 
-// ListResourceTypes implements openapi.StrictServerInterface.
-// GET /api/v1/resource_types
-func (h *Handler) ListResourceTypes(
+// ListAssetTypes implements openapi.StrictServerInterface.
+// GET /api/v1/asset_types
+func (h *Handler) ListAssetTypes(
 	ctx context.Context,
-	_ openapi.ListResourceTypesRequestObject,
-) (openapi.ListResourceTypesResponseObject, error) {
+	_ openapi.ListAssetTypesRequestObject,
+) (openapi.ListAssetTypesResponseObject, error) {
 	rows, err := h.queries.List(ctx)
 	if err != nil {
-		h.logger.LogAttrs(ctx, slog.LevelError, "resource_types.list.error",
+		h.logger.LogAttrs(ctx, slog.LevelError, "asset_types.list.error",
 			slog.String("err", err.Error()),
 		)
-		msg := "could not list resource types"
-		return openapi.ListResourceTypes500JSONResponse{
+		msg := "could not list asset types"
+		return openapi.ListAssetTypes500JSONResponse{
 			InternalErrorJSONResponse: openapi.InternalErrorJSONResponse{Error: msg},
 		}, nil
 	}
 
-	out := make(openapi.ListResourceTypes200JSONResponse, 0, len(rows))
+	out := make(openapi.ListAssetTypes200JSONResponse, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, openapi.ResourceType{
+		out = append(out, openapi.AssetType{
 			Ref:               r.Ref,
 			Name:              r.Name,
 			AllowedExtensions: r.AllowedExtensions,

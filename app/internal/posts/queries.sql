@@ -91,7 +91,7 @@ DELETE FROM post_assets WHERE post_id = $1 AND asset_id = $2;
 -- Members of a post, in display order, joined onto the asset row so
 -- the API can return the full member shape in one call (no N+1).
 SELECT pa.post_id, pa.asset_id, pa.sort_order, pa.added_at,
-       a.title, a.description, a.resource_type, a.owner_user_ref,
+       a.title, a.description, a.asset_type, a.owner_user_ref,
        a.status, a.file_hash, a.file_extension, a.file_size_bytes,
        a.metadata, a.created_at AS asset_created_at,
        a.updated_at AS asset_updated_at

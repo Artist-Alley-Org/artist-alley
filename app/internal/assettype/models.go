@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package resourcetype
+package assettype
 
 import (
 	"net/netip"
@@ -27,7 +27,7 @@ type Asset struct {
 	ID                   pgtype.UUID        `json:"id"`
 	Title                string             `json:"title"`
 	Description          string             `json:"description"`
-	ResourceType         int64              `json:"resource_type"`
+	AssetType            int64              `json:"asset_type"`
 	OwnerUserRef         *int64             `json:"owner_user_ref"`
 	Status               string             `json:"status"`
 	FileHash             *string            `json:"file_hash"`
@@ -104,6 +104,19 @@ type AssetTag struct {
 	AssetID pgtype.UUID        `json:"asset_id"`
 	Tag     string             `json:"tag"`
 	AddedAt pgtype.Timestamptz `json:"added_at"`
+}
+
+type AssetType struct {
+	Ref               int64   `json:"ref"`
+	Name              *string `json:"name"`
+	AllowedExtensions *string `json:"allowed_extensions"`
+	OrderBy           *int64  `json:"order_by"`
+	ConfigOptions     *string `json:"config_options"`
+	PushMetadata      *int64  `json:"push_metadata"`
+	Colour            *int64  `json:"colour"`
+	Icon              *string `json:"icon"`
+	Tab               *int64  `json:"tab"`
+	PullImages        *int64  `json:"pull_images"`
 }
 
 type AuditEvent struct {
@@ -278,19 +291,6 @@ type PostAsset struct {
 type PostTag struct {
 	PostID pgtype.UUID `json:"post_id"`
 	Tag    string      `json:"tag"`
-}
-
-type ResourceType struct {
-	Ref               int64   `json:"ref"`
-	Name              *string `json:"name"`
-	AllowedExtensions *string `json:"allowed_extensions"`
-	OrderBy           *int64  `json:"order_by"`
-	ConfigOptions     *string `json:"config_options"`
-	PushMetadata      *int64  `json:"push_metadata"`
-	Colour            *int64  `json:"colour"`
-	Icon              *string `json:"icon"`
-	Tab               *int64  `json:"tab"`
-	PullImages        *int64  `json:"pull_images"`
 }
 
 type Role struct {

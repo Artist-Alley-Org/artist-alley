@@ -47,7 +47,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'content',
     iconKey: 'content',
     tiles: [
-      { key: 'resource_types', status: 'live',   href: '/admin/resource-types' },
+      { key: 'asset_types', status: 'live',   href: '/admin/asset-types' },
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
       { key: 'field_options',  status: 'future', phase: '1.17' },
       { key: 'field_sets',     status: 'future', phase: '1.17' },

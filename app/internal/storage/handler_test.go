@@ -204,8 +204,8 @@ func (shimImpl) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from storage test shim")
 }
-func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from storage test shim")
+func (shimImpl) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from storage test shim")
 }
 func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from storage test shim")

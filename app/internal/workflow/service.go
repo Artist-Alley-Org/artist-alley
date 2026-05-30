@@ -5,7 +5,7 @@
 //
 // The state machine itself is data-driven: workflow_states + workflow_transitions
 // define what's allowed. Configurable per-domain via the migration /
-// admin endpoint, so different resource types (Photo vs Video vs Post)
+// admin endpoint, so different asset types (Photo vs Video vs Post)
 // can have completely different workflows.
 package workflow
 
@@ -39,7 +39,7 @@ const (
 const PostDomain = "post"
 
 // AssetDomain returns the workflow domain string for an asset of the
-// given RS resource_type. Format: "asset:<ref>". A future plugin asset
+// given RS asset_type. Format: "asset:<ref>". A future plugin asset
 // kind could extend this convention (e.g. "asset:plugin:custom").
 func AssetDomain(resourceTypeRef int64) string {
 	return "asset:" + strconv.FormatInt(resourceTypeRef, 10)

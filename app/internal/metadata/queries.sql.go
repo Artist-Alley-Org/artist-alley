@@ -459,7 +459,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, status *string) ([]F
 	return items, nil
 }
 
-const listFieldDefinitionsForResourceType = `-- name: ListFieldDefinitionsForResourceType :many
+const listFieldDefinitionsForAssetType = `-- name: ListFieldDefinitionsForAssetType :many
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
@@ -472,9 +472,9 @@ ORDER BY display_group, display_order, code
 `
 
 // Like ListFieldDefinitions but only fields whose applies_to is
-// empty (applies to all) OR contains the given resource_type ref.
-func (q *Queries) ListFieldDefinitionsForResourceType(ctx context.Context, rt int64) ([]FieldDefinition, error) {
-	rows, err := q.db.Query(ctx, listFieldDefinitionsForResourceType, rt)
+// empty (applies to all) OR contains the given asset_type ref.
+func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64) ([]FieldDefinition, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitionsForAssetType, rt)
 	if err != nil {
 		return nil, err
 	}

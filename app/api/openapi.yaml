@@ -35,7 +35,7 @@ tags:
       content-addressed: every blob is keyed by sha256(contents), so
       identical uploads dedup automatically and federated peers can
       verify transfers by hash. See ADR 0008.
-  - name: resource_types
+  - name: asset_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
   - name: posts
@@ -643,7 +643,7 @@ paths:
           required: false
           description: Filter to a single owner's assets.
           schema: { type: integer, format: int64 }
-        - name: resource_type
+        - name: asset_type
           in: query
           required: false
           schema: { type: integer, format: int64 }
@@ -1039,12 +1039,12 @@ paths:
           schema:
             type: string
             enum: [active, deprecated, archived]
-        - name: resource_type
+        - name: asset_type
           in: query
           required: false
           description: |
             When set, only fields whose `applies_to` is empty (=all)
-            or contains this resource_type ref are returned. Used by
+            or contains this asset_type ref are returned. Used by
             the asset edit form to figure out which fields to show.
           schema: { type: integer, format: int64 }
       responses:
@@ -2110,23 +2110,23 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /resource_types:
+  /asset_types:
     get:
-      operationId: listResourceTypes
-      summary: List all resource types
+      operationId: listAssetTypes
+      summary: List all asset types
       description: |
-        Returns every resource type configured in the system, ordered by
+        Returns every asset type configured in the system, ordered by
         display order (`order_by`) then by primary key. Anonymous access.
-      tags: [resource_types]
+      tags: [asset_types]
       responses:
         "200":
-          description: List of resource types
+          description: List of asset types
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ResourceType"
+                  $ref: "#/components/schemas/AssetType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -2971,7 +2971,7 @@ components:
         Personal Access Token, format `aa_pat_<32 chars>`. Issued via
         `POST /auth/tokens`. Send as `Authorization: Bearer aa_pat_...`.
   schemas:
-    ResourceType:
+    AssetType:
       type: object
       required: [ref]
       properties:
@@ -3678,7 +3678,7 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, resource_type, status]
+         title, asset_type, status]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id:      { type: string, format: uuid }
@@ -3690,7 +3690,7 @@ components:
           nullable: true
         added_at:      { type: string, format: date-time }
         title:         { type: string }
-        resource_type: { type: integer, format: int64 }
+        asset_type: { type: integer, format: int64 }
         status:        { type: string, enum: [draft, active, archived] }
         file_hash:
           type: string
@@ -3719,12 +3719,12 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, resource_type, status, processing_status, created_at, updated_at, tags]
+      required: [id, title, asset_type, status, processing_status, created_at, updated_at, tags]
       properties:
         id:             { type: string, format: uuid }
         title:          { type: string }
         description:    { type: string }
-        resource_type:  { type: integer, format: int64 }
+        asset_type:  { type: integer, format: int64 }
         owner_user_ref: { type: integer, format: int64, nullable: true }
         status:         { type: string, enum: [draft, active, archived] }
         file_hash:      { type: string, nullable: true, description: sha256 of the linked storage object }
@@ -3764,11 +3764,11 @@ components:
         updated_at:     { type: string, format: date-time }
     AssetCreate:
       type: object
-      required: [title, resource_type]
+      required: [title, asset_type]
       properties:
         title:          { type: string, minLength: 1, maxLength: 500 }
         description:    { type: string }
-        resource_type:  { type: integer, format: int64 }
+        asset_type:  { type: integer, format: int64 }
         status:
           type: string
           enum: [draft, active, archived]

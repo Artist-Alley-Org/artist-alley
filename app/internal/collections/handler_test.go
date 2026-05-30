@@ -372,7 +372,7 @@ func mustInsertAsset(t *testing.T, pool *pgxpool.Pool, userRef int64, title stri
 	t.Helper()
 	var id uuid.UUID
 	if err := pool.QueryRow(context.Background(),
-		`INSERT INTO assets (title, resource_type, owner_user_ref) VALUES ($1, 1, $2) RETURNING id`,
+		`INSERT INTO assets (title, asset_type, owner_user_ref) VALUES ($1, 1, $2) RETURNING id`,
 		title, userRef).Scan(&id); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -503,8 +503,8 @@ func (collShim) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (collShim) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from collections test shim")
 }
-func (collShim) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from collections test shim")
+func (collShim) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from collections test shim")
 }
 func (collShim) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("UploadStorageObject called from collections test shim")

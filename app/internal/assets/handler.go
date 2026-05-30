@@ -149,7 +149,7 @@ func (h *Handler) CreateAsset(
 
 	// Workflow state: caller-supplied UUID is taken verbatim; the DB
 	// FK guards against unknown values. We don't validate that the
-	// state belongs to the matching `asset:<resource_type>` domain
+	// state belongs to the matching `asset:<asset_type>` domain
 	// here — that check kicks in on Transition() later. Tradeoff:
 	// permits a typo in the upload modal that would only surface on
 	// the first transition attempt; not worth a domain-lookup
@@ -167,7 +167,7 @@ func (h *Handler) CreateAsset(
 		processingStatus = "pending"
 	}
 
-	// Auto-promote resource_type when the file extension implies a
+	// Auto-promote asset_type when the file extension implies a
 	// stronger category than the caller chose. Frontends that send a
 	// generic Photo (1) for a .glb get bumped to 3D Object (5); a
 	// caller who explicitly picked Audio (4) for a model would stay
@@ -175,9 +175,9 @@ func (h *Handler) CreateAsset(
 	// only from the generic defaults (1, 2)" so explicit picks are
 	// always respected.
 	if in.FileExtension != nil {
-		if want := resourceTypeFor(*in.FileExtension); want > 0 {
-			if in.ResourceType == 1 || in.ResourceType == 2 {
-				in.ResourceType = want
+		if want := assetTypeFor(*in.FileExtension); want > 0 {
+			if in.AssetType == 1 || in.AssetType == 2 {
+				in.AssetType = want
 			}
 		}
 	}
@@ -204,7 +204,7 @@ func (h *Handler) CreateAsset(
 	row, err := q.CreateAsset(ctx, CreateAssetParams{
 		Title:            title,
 		Description:      strDefault(in.Description, ""),
-		ResourceType:     in.ResourceType,
+		AssetType:     in.AssetType,
 		OwnerUserRef:     &id.UserRef,
 		Status:           status,
 		FileHash:         fileHashPtr,
@@ -609,8 +609,8 @@ func (h *Handler) ListAssets(
 		ownerRef = req.Params.OwnerRef
 	}
 	var resType *int64
-	if req.Params.ResourceType != nil {
-		resType = req.Params.ResourceType
+	if req.Params.AssetType != nil {
+		resType = req.Params.AssetType
 	}
 	var statusPtr *string
 	if req.Params.Status != nil {
@@ -642,7 +642,7 @@ func (h *Handler) ListAssets(
 		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
 			Tag:             *req.Params.Tag,
 			OwnerUserRef:    ownerRef,
-			ResourceType:    resType,
+			AssetType:    resType,
 			Status:          statusPtr,
 			CursorCreatedAt: cursorTs,
 			CursorID:        cursorID,
@@ -668,7 +668,7 @@ func (h *Handler) ListAssets(
 	} else {
 		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
 			OwnerUserRef:    ownerRef,
-			ResourceType:    resType,
+			AssetType:    resType,
 			Status:          statusPtr,
 			Q:               qText,
 			CursorCreatedAt: cursorTs,
@@ -922,7 +922,7 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
 		Title:            row.Title,
-		ResourceType:     row.ResourceType,
+		AssetType:     row.AssetType,
 		Status:           openapi.AssetStatus(row.Status),
 		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
 		CreatedAt:        row.CreatedAt.Time,
@@ -969,7 +969,7 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -990,7 +990,7 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1011,7 +1011,7 @@ func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1032,7 +1032,7 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1098,11 +1098,11 @@ var modelExts = map[string]struct{}{
 	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
 }
 
-// resourceTypeFor returns the canonical resource_type ref for a file
+// assetTypeFor returns the canonical asset_type ref for a file
 // extension, used by createAsset to auto-promote uploads to the right
 // category. Returns 0 (unset) when we don't have a strong opinion —
 // the caller's explicit choice still wins.
-func resourceTypeFor(ext string) int64 {
+func assetTypeFor(ext string) int64 {
 	if ext == "" {
 		return 0
 	}

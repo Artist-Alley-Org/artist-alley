@@ -375,7 +375,7 @@ func mustInsertAsset(t *testing.T, pool *pgxpool.Pool, userRef int64) string {
 	t.Helper()
 	var id uuid.UUID
 	if err := pool.QueryRow(context.Background(),
-		`INSERT INTO assets (title, resource_type, owner_user_ref) VALUES ('test asset', 1, $1) RETURNING id`,
+		`INSERT INTO assets (title, asset_type, owner_user_ref) VALUES ('test asset', 1, $1) RETURNING id`,
 		userRef).Scan(&id); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -511,8 +511,8 @@ func (metaShim) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (metaShim) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from metadata test shim")
 }
-func (metaShim) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from metadata test shim")
+func (metaShim) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from metadata test shim")
 }
 func (metaShim) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("UploadStorageObject called from metadata test shim")

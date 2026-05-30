@@ -12,10 +12,10 @@
   // user fill in field_values BEFORE the asset is created — they're
   // PUT to /assets/{id}/fields/{field_id} after the asset row
   // exists. Closed by default to keep the row compact; expanding
-  // lazy-loads the field defs for the resource_type.
+  // lazy-loads the field defs for the asset_type.
 
   import type { UploadRow, PendingFieldValue } from '$stores/upload.svelte';
-  import { upload, fieldsForResourceType } from '$stores/upload.svelte';
+  import { upload, fieldsForAssetType } from '$stores/upload.svelte';
   import { is3DExt } from '../viewers/controller';
 
   // True when the row's file is a 3D model — drives the companion
@@ -77,7 +77,7 @@
     if (metaOpen && metaFields === null) {
       metaLoading = true;
       try {
-        metaFields = await fieldsForResourceType(1); // Photo for MVP
+        metaFields = await fieldsForAssetType(1); // Photo for MVP
       } catch (e) {
         metaError = e instanceof Error ? e.message : 'Failed to load fields.';
       } finally {

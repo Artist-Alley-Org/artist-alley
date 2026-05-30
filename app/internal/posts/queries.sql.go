@@ -386,7 +386,7 @@ func (q *Queries) ListPostAcls(ctx context.Context, postID pgtype.UUID) ([]PostA
 
 const listPostAssets = `-- name: ListPostAssets :many
 SELECT pa.post_id, pa.asset_id, pa.sort_order, pa.added_at,
-       a.title, a.description, a.resource_type, a.owner_user_ref,
+       a.title, a.description, a.asset_type, a.owner_user_ref,
        a.status, a.file_hash, a.file_extension, a.file_size_bytes,
        a.metadata, a.created_at AS asset_created_at,
        a.updated_at AS asset_updated_at
@@ -403,7 +403,7 @@ type ListPostAssetsRow struct {
 	AddedAt        pgtype.Timestamptz
 	Title          string
 	Description    string
-	ResourceType   int64
+	AssetType      int64
 	OwnerUserRef   *int64
 	Status         string
 	FileHash       *string
@@ -432,7 +432,7 @@ func (q *Queries) ListPostAssets(ctx context.Context, postID pgtype.UUID) ([]Lis
 			&i.AddedAt,
 			&i.Title,
 			&i.Description,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.OwnerUserRef,
 			&i.Status,
 			&i.FileHash,

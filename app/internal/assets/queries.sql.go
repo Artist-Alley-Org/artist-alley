@@ -74,14 +74,14 @@ func (q *Queries) AddAssetTag(ctx context.Context, arg AddAssetTagParams) error 
 
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
-    title, description, resource_type, owner_user_ref, status,
+    title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
     state_id, processing_status, thumbhash
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13
 )
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at
@@ -90,7 +90,7 @@ RETURNING id, title, description, resource_type, owner_user_ref, status,
 type CreateAssetParams struct {
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -107,7 +107,7 @@ type CreateAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -126,7 +126,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	row := q.db.QueryRow(ctx, createAsset,
 		arg.Title,
 		arg.Description,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.OwnerUserRef,
 		arg.Status,
 		arg.FileHash,
@@ -143,7 +143,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,
@@ -174,7 +174,7 @@ func (q *Queries) DeleteAssetCompanion(ctx context.Context, id pgtype.UUID) erro
 }
 
 const getAsset = `-- name: GetAsset :one
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
@@ -186,7 +186,7 @@ type GetAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -208,7 +208,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,
@@ -342,7 +342,7 @@ func (q *Queries) ListAssetTags(ctx context.Context, assetID pgtype.UUID) ([]str
 }
 
 const listAssetsByTagPage = `-- name: ListAssetsByTagPage :many
-SELECT a.id, a.title, a.description, a.resource_type, a.owner_user_ref, a.status,
+SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
        a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
        a.created_at, a.updated_at
@@ -351,7 +351,7 @@ JOIN asset_tag t ON t.asset_id = a.id
 WHERE a.deleted_at IS NULL
   AND t.tag = $1::TEXT
   AND ($2::BIGINT IS NULL OR a.owner_user_ref = $2::BIGINT)
-  AND ($3::BIGINT  IS NULL OR a.resource_type  = $3::BIGINT)
+  AND ($3::BIGINT  IS NULL OR a.asset_type  = $3::BIGINT)
   AND ($4::TEXT           IS NULL OR a.status          = $4::TEXT)
   AND ($5::TIMESTAMPTZ IS NULL
        OR a.created_at < $5::TIMESTAMPTZ
@@ -364,7 +364,7 @@ LIMIT $7::INTEGER
 type ListAssetsByTagPageParams struct {
 	Tag             string
 	OwnerUserRef    *int64
-	ResourceType    *int64
+	AssetType       *int64
 	Status          *string
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
@@ -375,7 +375,7 @@ type ListAssetsByTagPageRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -396,7 +396,7 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 	rows, err := q.db.Query(ctx, listAssetsByTagPage,
 		arg.Tag,
 		arg.OwnerUserRef,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.Status,
 		arg.CursorCreatedAt,
 		arg.CursorID,
@@ -413,7 +413,7 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 			&i.ID,
 			&i.Title,
 			&i.Description,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.OwnerUserRef,
 			&i.Status,
 			&i.FileHash,
@@ -484,14 +484,14 @@ func (q *Queries) ListAssetsForBackfill(ctx context.Context, arg ListAssetsForBa
 }
 
 const listAssetsPage = `-- name: ListAssetsPage :many
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
 FROM assets
 WHERE deleted_at IS NULL
   AND ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
-  AND ($2::BIGINT  IS NULL OR resource_type  = $2::BIGINT)
+  AND ($2::BIGINT  IS NULL OR asset_type  = $2::BIGINT)
   AND ($3::TEXT           IS NULL OR status          = $3::TEXT)
   AND ($4::TEXT                IS NULL
        OR search_text @@ plainto_tsquery('english', $4::TEXT))
@@ -505,7 +505,7 @@ LIMIT $7::INTEGER
 
 type ListAssetsPageParams struct {
 	OwnerUserRef    *int64
-	ResourceType    *int64
+	AssetType       *int64
 	Status          *string
 	Q               *string
 	CursorCreatedAt pgtype.Timestamptz
@@ -517,7 +517,7 @@ type ListAssetsPageRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -545,7 +545,7 @@ type ListAssetsPageRow struct {
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
 		arg.OwnerUserRef,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.Status,
 		arg.Q,
 		arg.CursorCreatedAt,
@@ -563,7 +563,7 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.ID,
 			&i.Title,
 			&i.Description,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.OwnerUserRef,
 			&i.Status,
 			&i.FileHash,
@@ -741,7 +741,7 @@ UPDATE assets SET
     metadata    = COALESCE($4,    metadata),
     updated_at  = NOW()
 WHERE id = $5 AND deleted_at IS NULL
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at
@@ -759,7 +759,7 @@ type UpdateAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -789,7 +789,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,

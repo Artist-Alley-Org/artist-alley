@@ -4,12 +4,12 @@ version: "2"
 # at app root grows alongside.
 sql:
   - engine: postgresql
-    queries: internal/resourcetype/queries.sql
+    queries: internal/assettype/queries.sql
     schema: schema.sql
     gen:
       go:
-        package: resourcetype
-        out: internal/resourcetype
+        package: assettype
+        out: internal/assettype
         sql_package: pgx/v5
         emit_json_tags: true
         emit_pointers_for_null_types: true

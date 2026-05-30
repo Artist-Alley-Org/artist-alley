@@ -27,7 +27,7 @@ type Asset struct {
 	ID                   pgtype.UUID
 	Title                string
 	Description          string
-	ResourceType         int64
+	AssetType            int64
 	OwnerUserRef         *int64
 	Status               string
 	FileHash             *string
@@ -104,6 +104,19 @@ type AssetTag struct {
 	AssetID pgtype.UUID
 	Tag     string
 	AddedAt pgtype.Timestamptz
+}
+
+type AssetType struct {
+	Ref               int64
+	Name              *string
+	AllowedExtensions *string
+	OrderBy           *int64
+	ConfigOptions     *string
+	PushMetadata      *int64
+	Colour            *int64
+	Icon              *string
+	Tab               *int64
+	PullImages        *int64
 }
 
 type AuditEvent struct {
@@ -278,19 +291,6 @@ type PostAsset struct {
 type PostTag struct {
 	PostID pgtype.UUID
 	Tag    string
-}
-
-type ResourceType struct {
-	Ref               int64
-	Name              *string
-	AllowedExtensions *string
-	OrderBy           *int64
-	ConfigOptions     *string
-	PushMetadata      *int64
-	Colour            *int64
-	Icon              *string
-	Tab               *int64
-	PullImages        *int64
 }
 
 type Role struct {

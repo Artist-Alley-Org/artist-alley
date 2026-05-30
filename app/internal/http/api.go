@@ -16,7 +16,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
-	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
+	"github.com/mscrnt/artist-alley/app/internal/assettype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
@@ -36,7 +36,7 @@ import (
 // `Handler` type, and we prefer explicit dispatch over magic anyway.
 type apiServer struct {
 	auth         *auth.Handler
-	resourceType *resourcetype.Handler
+	resourceType *assettype.Handler
 	storage      *storage.Handler
 	assets       *assets.Handler
 	metadata     *metadata.Handler
@@ -55,7 +55,7 @@ type apiServer struct {
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
 	return &apiServer{
 		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
-		resourceType: resourcetype.NewHandler(pool, logger),
+		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
@@ -132,10 +132,10 @@ func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequ
 	return s.auth.SetUserRole(ctx, req)
 }
 
-// --- resource_types --------------------------------------------------------
+// --- asset_types --------------------------------------------------------
 
-func (s *apiServer) ListResourceTypes(ctx context.Context, req openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	return s.resourceType.ListResourceTypes(ctx, req)
+func (s *apiServer) ListAssetTypes(ctx context.Context, req openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	return s.resourceType.ListAssetTypes(ctx, req)
 }
 
 // --- storage (raw byte plane) ----------------------------------------------

@@ -126,7 +126,7 @@ class Seeder:
     def create_asset(self, title, file_hash, ext, tags=None):
         body = {
             "title": title,
-            "resource_type": 1,  # Photo
+            "asset_type": 1,  # Photo
             "status": "active",
             "file_hash": file_hash,
             "file_extension": ext,

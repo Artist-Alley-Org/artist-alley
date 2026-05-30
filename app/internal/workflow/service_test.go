@@ -48,7 +48,7 @@ func newFixture(t *testing.T) *fixture {
 		Username: "wf_test_user",
 	}
 
-	// Seed: team + asset (Photo type / resource_type = 1).
+	// Seed: team + asset (Photo type / asset_type = 1).
 	teamID := uuid.New()
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO teams (id, slug, name) VALUES ($1, $2, $3)`,
@@ -77,7 +77,7 @@ func newFixture(t *testing.T) *fixture {
 
 	assetID := uuid.New()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets (id, title, resource_type, owner_user_ref, state_id, team_id)
+		INSERT INTO assets (id, title, asset_type, owner_user_ref, state_id, team_id)
 		VALUES ($1, 'wf-test', 1, $2, $3, $4)
 	`, assetID, ownerRef, pgtype.UUID{Bytes: initState, Valid: true},
 		pgtype.UUID{Bytes: teamID, Valid: true},

@@ -133,8 +133,8 @@ func (h *Handler) ListFields(
 	}
 	q := New(h.Pool)
 
-	if req.Params.ResourceType != nil {
-		rows, err := q.ListFieldDefinitionsForResourceType(ctx, *req.Params.ResourceType)
+	if req.Params.AssetType != nil {
+		rows, err := q.ListFieldDefinitionsForAssetType(ctx, *req.Params.AssetType)
 		if err != nil {
 			return nil, fmt.Errorf("metadata: list by rt: %w", err)
 		}

@@ -444,8 +444,8 @@ func (a authOnlyImpl) GetMyCapabilities(ctx context.Context, req openapi.GetMyCa
 func (a authOnlyImpl) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	return a.h.SetUserRole(ctx, req)
 }
-func (a authOnlyImpl) ListResourceTypes(_ context.Context, _ openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from auth test shim")
+func (a authOnlyImpl) ListAssetTypes(_ context.Context, _ openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from auth test shim")
 }
 func (a authOnlyImpl) UploadStorageObject(_ context.Context, _ openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("UploadStorageObject called from auth test shim")

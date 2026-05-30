@@ -105,7 +105,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	createBody := map[string]any{
 		"title":         "Test Asset",
 		"description":   "Round-trip integration test",
-		"resource_type": int64(1),
+		"asset_type": int64(1),
 		"file_hash":     hashHex,
 		"tags":          []string{"smoke", "test"},
 		"metadata":      map[string]any{"width": 4096, "format": "png"},
@@ -254,7 +254,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	bareRouter := chi.NewRouter()
 	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), bareRouter)
 	anonRR := postJSON(t, bareRouter, "/assets", map[string]any{
-		"title": "Anon", "resource_type": int64(1),
+		"title": "Anon", "asset_type": int64(1),
 	})
 	if anonRR.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous create: status=%d want 401", anonRR.Code)
@@ -299,7 +299,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 
 	rr := postJSON(t, router, "/assets", map[string]any{
 		"title":         "Draft without file",
-		"resource_type": int64(1),
+		"asset_type": int64(1),
 		"status":        "draft",
 	})
 	if rr.Code != http.StatusCreated {
@@ -353,17 +353,17 @@ func TestCreateAssetInputValidation(t *testing.T) {
 	}{
 		{
 			name: "empty title",
-			body: map[string]any{"title": "  ", "resource_type": int64(1)},
+			body: map[string]any{"title": "  ", "asset_type": int64(1)},
 			want: "title",
 		},
 		{
 			name: "bad status",
-			body: map[string]any{"title": "x", "resource_type": int64(1), "status": "weird"},
+			body: map[string]any{"title": "x", "asset_type": int64(1), "status": "weird"},
 			want: "status",
 		},
 		{
 			name: "bad file_hash",
-			body: map[string]any{"title": "x", "resource_type": int64(1), "file_hash": "not-a-sha"},
+			body: map[string]any{"title": "x", "asset_type": int64(1), "file_hash": "not-a-sha"},
 			want: "file_hash",
 		},
 	}
@@ -510,8 +510,8 @@ func (shimImpl) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from assets test shim")
 }
-func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from assets test shim")
+func (shimImpl) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from assets test shim")
 }
 func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from assets test shim")
