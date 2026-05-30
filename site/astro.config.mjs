@@ -109,6 +109,7 @@ export default defineConfig({
           items: [
             { label: "Overview", link: "/reference/" },
             { label: "Database schema", link: "/reference/schema/" },
+            { label: "3D preview pipeline", link: "/reference/3d-preview-pipeline/" },
             // OpenAPI pages are appended automatically by starlight-openapi:
             ...openAPISidebarGroups,
           ],
