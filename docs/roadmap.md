@@ -750,6 +750,30 @@ Larger arcs that will land but aren't the current focus:
   Community + Pro; Enterprise adds the signed export, per-category
   retention overrides, and multi-instance audit-log federation. See
   ADR 0032.
+- **Capability add-ons — registry + installer** (Phase 1.42).
+  Out-of-band heavy components (CLIP / Whisper / Tesseract / Stable
+  Diffusion / ComfyUI / Flux / future ML runtimes) ship as
+  **first-party add-ons** pulled from a curated registry at
+  `add-ons.artist-alley.org` — NOT baked into the binary. Sits
+  between integrations (in-process Go) and future plugins (WASM):
+  add-ons are heavy artefacts (Docker containers + model weights),
+  optional, lifecycle-managed from a `/admin/capabilities` surface.
+  Capability-slot model formalises the existing provider
+  abstractions (image-embedding, transcription, OCR,
+  image-classification, image-generation, image-inpaint, NSFW
+  classification); multiple add-ons can satisfy a slot; operator
+  picks the active provider. **No GPU gating** — operator hardware
+  is operator hardware regardless of license tier; cloud-bridged
+  add-ons (we host the inference) are the only tier-gated mode.
+  YAML manifest borrowed from RS's `pluginname.yaml` pattern, plus
+  artifact / resource / hosting / config fields. Digest-verified
+  pulls; air-gapped operators mirror the registry. Resource
+  requirements are advisory, not enforcing. Audit hooks fire
+  `addon.*` into Phase 1.40; metrics expose under `addon_` prefix
+  in Phase 1.41. Phase 1.42 ships the registry + installer + first
+  three add-ons (CLIP for image embeddings, Whisper for
+  transcription, Tesseract for OCR) so the surface is meaningful at
+  v1. See ADR 0034.
 - **Observability & operator telemetry** (Phase 1.41). Production-
   readiness layer: `/metrics` Prometheus endpoint with HTTP / DB /
   job-queue / storage / cache / session / license / federation /

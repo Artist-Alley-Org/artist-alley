@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-30T08:30:40.011Z",
+  "fetchedAt": "2026-05-30T15:23:45.441Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -10,9 +10,9 @@
     "stargazers_count": 0,
     "watchers_count": 0,
     "forks_count": 0,
-    "open_issues_count": 49,
+    "open_issues_count": 50,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-30T08:28:37Z",
+    "pushed_at": "2026-05-30T14:43:01Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -52,6 +52,48 @@
   ],
   "issues": {
     "open": [
+      {
+        "number": 54,
+        "title": "Phase 1.42 — Capability add-ons — registry + installer (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/54",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:ai",
+            "color": "5319e7",
+            "description": "AI auto-tagging / embeddings"
+          },
+          {
+            "name": "area:add-ons",
+            "color": "5319e7",
+            "description": "Capability add-on registry + installer + first-party AI add-ons"
+          }
+        ],
+        "created_at": "2026-05-30T15:23:18Z",
+        "updated_at": "2026-05-30T15:23:20Z",
+        "closed_at": null,
+        "comments": 0
+      },
       {
         "number": 53,
         "title": "Phase 1.41 — Observability & operator telemetry (epic)",
@@ -349,7 +391,7 @@
           }
         ],
         "created_at": "2026-05-30T07:34:38Z",
-        "updated_at": "2026-05-30T07:34:40Z",
+        "updated_at": "2026-05-30T15:23:27Z",
         "closed_at": null,
         "comments": 0
       },
@@ -1325,7 +1367,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:38Z",
-        "updated_at": "2026-05-29T19:57:40Z",
+        "updated_at": "2026-05-30T15:23:24Z",
         "closed_at": null,
         "comments": 0
       },
@@ -1744,7 +1786,7 @@
           }
         ],
         "created_at": "2026-05-29T19:30:12Z",
-        "updated_at": "2026-05-29T19:58:12Z",
+        "updated_at": "2026-05-30T15:23:26Z",
         "closed_at": null,
         "comments": 0
       },
@@ -1922,6 +1964,14 @@
     "recentlyMerged": []
   },
   "commits": [
+    {
+      "sha": "a411b4ee9037a901e3ac779e60da42b12f302220",
+      "message": "site: dashboard commits now span dev + feat/* branches, not just main",
+      "author": "mscrnt",
+      "date": "2026-05-30T14:42:59Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/a411b4ee9037a901e3ac779e60da42b12f302220",
+      "branch": "feat/viewer-polish"
+    },
     {
       "sha": "806406273473aab19142fe6ab45367f7a74fa5b6",
       "message": "site: reference doc for the 3D preview pipeline + turntable.py",
@@ -2283,7 +2333,7 @@
     },
     {
       "name": "feat/viewer-polish",
-      "sha": "806406273473aab19142fe6ab45367f7a74fa5b6",
+      "sha": "a411b4ee9037a901e3ac779e60da42b12f302220",
       "protected": false,
       "recent_commits": 15,
       "is_default": false

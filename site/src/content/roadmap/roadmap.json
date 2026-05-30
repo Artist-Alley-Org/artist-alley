@@ -109,7 +109,7 @@
           "title": "AI auto-tagging",
           "phase": "1.14",
           "status": "in-flight",
-          "description": "Use the configured AI providers for tag inference on upload + reverse-image search via embeddings."
+          "description": "Use the configured AI providers for tag inference on upload + reverse-image search via embeddings. Provider list is open: cloud-API providers (OpenAI / Anthropic / Google) plus **locally-installed capability add-ons** (Phase 1.42) — CLIP for embeddings, custom classifiers for studio-specific taxonomies. Operator picks the active provider per slot; the runtime resolves through the precedence chain (local add-on → cloud-bridge add-on → external cloud)."
         }
       ]
     },
@@ -154,6 +154,7 @@
           "bullets": [
             "Native WebVTT track support (`<track>` elements).",
             "Worker-side conversion of SRT / SSA / ASS / SUB / IDX → WebVTT at preview time; tracks stored as `subs/{lang}.vtt` variants.",
+            "**Whisper transcription** via the capability add-on layer (Phase 1.42 / ADR 0034) — a `transcription` capability slot consumed by the subtitle pipeline. Operator installs the Whisper add-on (locally on their own GPU / CPU at any tier, or via cloud-bridge for Pro+) and any video with no embedded subtitles auto-transcribes on preview generation. Speaker diarisation + language detection follow the slot interface so newer transcribers drop in without rewiring the consumer.",
             "Burned-subtitle option for export.",
             "Per-user subtitle preferences (default language, font size, position)."
           ]
@@ -488,7 +489,7 @@
           "title": "AI creative editing",
           "phase": "1.34",
           "status": "planned",
-          "description": "Provider-abstracted in-paint, out-paint, variations, and remove-background tools in the asset viewer's Creative tools panel. Providers: OpenAI (DALL-E + GPT-Image), Stability AI, ComfyUI local (for studios who keep pixels on-network). Generated images are new assets that share a `creative_lineage` relationship with the source — the source is never overwritten. The new asset's metadata records provider, prompt, seed, and parameters for both licensing and audit. License tier governs which providers are available + monthly token budgets. Community: ComfyUI local only. Pro: + OpenAI + Stability with caps. Enterprise: unlimited + bring-your-own API keys. See ADR 0026."
+          "description": "Provider-abstracted in-paint, out-paint, variations, and remove-background tools in the asset viewer's Creative tools panel. Backed by the **capability add-on layer** from Phase 1.42 (ADR 0034) — the `image-inpaint` and `image-generation` capability slots resolve to whichever add-on the operator installed: locally-hosted **ComfyUI / Stable Diffusion / Flux add-ons** (open to every tier; operator brings the GPU) OR cloud-bridged **OpenAI / Stability AI add-ons** (Pro+ for the cloud bridge, with token budgets). Generated images are new assets that share a `creative_lineage` relationship with the source — the source is never overwritten. The new asset's metadata records add-on, version, prompt, seed, and parameters for both licensing and audit. Bring-your-own API keys at Enterprise; metered cloud-bridge at Pro. See ADR 0026 + ADR 0034."
         },
         {
           "id": "featured-collections",
@@ -531,6 +532,13 @@
           "phase": "1.40",
           "status": "planned",
           "description": "The central event log consolidating the audit-trail story currently scattered across Phases 1.17 / 1.20 / 1.21 / 1.24 / 1.26-1.28 / 1.32. Owns the event schema (actor + action + target + outcome + changeset before/after + metadata + correlation_id + license_kid), the dotted event taxonomy (`auth.*` / `user.*` / `asset.*` / `share.*` / `commerce.*` / `platform.*` / `system.*` / etc.), the capture API (`audit.Record(ctx, ...)` with buffered async writes — failure to record never fails the originating operation), the admin filter + search + detail + export surface at `/admin/audit`, retention policy (default 7 years, per-category overrides at Enterprise, enforced via the Phase 1.28 scheduled-action engine), and signed Enterprise export (Ed25519 over the JSONL payload, public key at `/.well-known/audit-signing-key` per ADR 0017). The `correlation_id` field links every event from a single request / job so cascade effects are reconstructable. Same features at Community + Pro; Enterprise adds the signed export, per-category retention overrides, and multi-instance audit-log federation. See ADR 0032."
+        },
+        {
+          "id": "capability-add-ons",
+          "title": "Capability add-ons — registry + installer",
+          "phase": "1.42",
+          "status": "planned",
+          "description": "Out-of-band heavy components (CLIP / Whisper / Tesseract / Stable Diffusion / ComfyUI / Flux / future ML runtimes) ship as first-party add-ons pulled from a curated registry at `add-ons.artist-alley.org` — NOT baked into the binary. Sits between integrations (in-process Go) and future plugins (WASM): add-ons are heavy artefacts (Docker containers + model weights), optional, lifecycle-managed from a `/admin/capabilities` surface. Capability-slot model formalises the existing provider abstractions (image-embedding, transcription, OCR, image-classification, image-generation, image-inpaint, NSFW classification); multiple add-ons can satisfy a slot; operator picks the active provider. **No GPU gating** — operator hardware is operator hardware regardless of license tier; cloud-bridged add-ons (we host the inference) are the only tier-gated mode. YAML manifest borrowed from RS's `pluginname.yaml` pattern. Digest-verified pulls; air-gapped operators mirror the registry. Resource requirements are advisory, not enforcing. Audit hooks fire `addon.*` into Phase 1.40; metrics expose under `addon_` prefix in Phase 1.41. Phase 1.42 ships the registry + installer + first three add-ons (CLIP for image embeddings, Whisper for transcription, Tesseract for OCR) so the surface is meaningful at v1. See ADR 0034."
         },
         {
           "id": "observability-telemetry",
