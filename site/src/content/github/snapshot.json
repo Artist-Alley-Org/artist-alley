@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-30T06:26:20.720Z",
+  "fetchedAt": "2026-05-30T07:35:39.893Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -10,9 +10,9 @@
     "stargazers_count": 0,
     "watchers_count": 0,
     "forks_count": 0,
-    "open_issues_count": 33,
+    "open_issues_count": 45,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-30T06:05:43Z",
+    "pushed_at": "2026-05-30T06:59:19Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -52,6 +52,455 @@
   ],
   "issues": {
     "open": [
+      {
+        "number": 49,
+        "title": "Phase 1.37 — Announcements home widget (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/49",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:announcements",
+            "color": "5319e7",
+            "description": "Announcements / news widgets"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:57Z",
+        "updated_at": "2026-05-30T07:34:59Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 48,
+        "title": "Phase 1.36 — PBR 3D viewer polish (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/48",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:review",
+            "color": "5319e7",
+            "description": "Review mode / sessions"
+          },
+          {
+            "name": "area:3d",
+            "color": "5319e7",
+            "description": "3D viewer / converters"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:51Z",
+        "updated_at": "2026-05-30T07:34:52Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 47,
+        "title": "Phase 1.35 — Featured collections & homepage curation (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/47",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:frontend",
+            "color": "5319e7",
+            "description": "SvelteKit frontend"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:44Z",
+        "updated_at": "2026-05-30T07:34:46Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 46,
+        "title": "Phase 1.34 — AI creative editing (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/46",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:ai",
+            "color": "5319e7",
+            "description": "AI auto-tagging / embeddings"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:38Z",
+        "updated_at": "2026-05-30T07:34:40Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 45,
+        "title": "Phase 1.33 — Brand workspace (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/45",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:brand",
+            "color": "5319e7",
+            "description": "Brand workspace / design tokens / guidelines portal"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:32Z",
+        "updated_at": "2026-05-30T07:34:33Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 44,
+        "title": "Phase 1.32 — Privacy & consent management (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/44",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:privacy",
+            "color": "5319e7",
+            "description": "Privacy / consent / DSAR / retention"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:26Z",
+        "updated_at": "2026-05-30T07:34:27Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 43,
+        "title": "Phase 1.31 — RSS / Atom feeds (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/43",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:feeds",
+            "color": "5319e7",
+            "description": "RSS / Atom feeds"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:20Z",
+        "updated_at": "2026-05-30T07:34:21Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 42,
+        "title": "Phase 1.30 — Chat platform integrations (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/42",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:chat",
+            "color": "5319e7",
+            "description": "Chat platform integrations (Slack, Teams, Discord)"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:12Z",
+        "updated_at": "2026-05-30T07:34:14Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 41,
+        "title": "Phase 1.29 — External platform integrations (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/41",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:platforms",
+            "color": "5319e7",
+            "description": "External platform integrations (Vimeo, YouTube, Adobe CC)"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:06Z",
+        "updated_at": "2026-05-30T07:34:08Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 40,
+        "title": "Phase 1.28 — Asset gating & NDA workflow (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/40",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:auth",
+            "color": "5319e7",
+            "description": "Auth / permissions / teams"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          }
+        ],
+        "created_at": "2026-05-30T07:34:00Z",
+        "updated_at": "2026-05-30T07:34:02Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 39,
+        "title": "Phase 1.27 — Bulk operations (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/39",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:bulk-ops",
+            "color": "5319e7",
+            "description": "Bulk operations on resources"
+          }
+        ],
+        "created_at": "2026-05-30T07:33:54Z",
+        "updated_at": "2026-05-30T07:33:56Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 38,
+        "title": "Phase 1.26 — Share links (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/38",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:share-links",
+            "color": "5319e7",
+            "description": "Share links / external collaboration"
+          }
+        ],
+        "created_at": "2026-05-30T07:33:48Z",
+        "updated_at": "2026-05-30T07:33:50Z",
+        "closed_at": null,
+        "comments": 0
+      },
       {
         "number": 37,
         "title": "1.18.B-10c — USDZ + Apple Quick Look (carve-out from #10)",
@@ -536,7 +985,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:44Z",
-        "updated_at": "2026-05-29T19:57:27Z",
+        "updated_at": "2026-05-30T07:35:10Z",
         "closed_at": null,
         "comments": 0
       },
@@ -568,7 +1017,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:43Z",
-        "updated_at": "2026-05-29T19:57:30Z",
+        "updated_at": "2026-05-30T07:35:09Z",
         "closed_at": null,
         "comments": 0
       },
@@ -600,7 +1049,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:42Z",
-        "updated_at": "2026-05-29T19:57:32Z",
+        "updated_at": "2026-05-30T07:35:07Z",
         "closed_at": null,
         "comments": 0
       },
@@ -632,7 +1081,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:41Z",
-        "updated_at": "2026-05-29T19:57:34Z",
+        "updated_at": "2026-05-30T07:35:06Z",
         "closed_at": null,
         "comments": 0
       },
@@ -659,7 +1108,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:40Z",
-        "updated_at": "2026-05-29T19:57:36Z",
+        "updated_at": "2026-05-30T07:35:04Z",
         "closed_at": null,
         "comments": 0
       },
@@ -691,7 +1140,7 @@
           }
         ],
         "created_at": "2026-05-29T19:31:39Z",
-        "updated_at": "2026-05-29T19:57:38Z",
+        "updated_at": "2026-05-30T07:35:02Z",
         "closed_at": null,
         "comments": 0
       },
@@ -1046,7 +1495,7 @@
           }
         ],
         "created_at": "2026-05-29T19:30:17Z",
-        "updated_at": "2026-05-29T19:58:05Z",
+        "updated_at": "2026-05-30T07:35:12Z",
         "closed_at": null,
         "comments": 0
       },

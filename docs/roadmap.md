@@ -152,6 +152,12 @@ asset that can be shown. The player / viewer is a host; the
 ### 1.18.B-6 — Annotation system (global, frame/anchor-aware)
 Annotations are a global capability too — they live in their own
 package and any asset host (image, video, 3D, PDF) surfaces them.
+Extends to **PDF page annotations** (the `annotate_pdf` RS pattern):
+anchored to `(asset_id, page, x, y, w, h)`; rendered against the PDF
+raster preview; exported in the PDF summary with comment thread +
+screenshots per anchor. Drawing tool UX patterns borrowed from
+`barts_annotations` (pen / highlighter / arrow / text / eraser)
+but built clean-room in Svelte.
 
 - Anchor model: an annotation binds to an asset_id PLUS an
   asset-type-specific anchor — a frame number for video, a
@@ -405,27 +411,65 @@ roughly in order of practical value to operators.
 The phases queued behind the current focus:
 
 - **Search 2.0** (Phase 1.12). Advanced search builder with
-  field-level filters, saved searches, smart collections,
-  synonyms + boosts, search analytics.
+  field-level filters, saved searches, smart collections, synonyms +
+  boosts, search analytics. Extended for RS feature parity:
+  **saved-search alerts** (notify when results change), **endless
+  scrolling** in result views as an alternative to pagination,
+  **categorical / faceted refinement** with suggested-keyword
+  refinements derived from the result set, **keyboard shortcuts**
+  for power-user tagging / review (customizable in account
+  settings).
 - **Identity & teams** (Phase 1.17). Groups + team hierarchy,
-  active session management, audit log, capability grants.
+  active session management, capability grants. Extended for RS
+  feature parity: **table-level change tracking** with before / after
+  diffs in the audit log (not just event-level), **user approval
+  states** (pending / approved / disabled) with admin approval flow,
+  **resource request workflow** (user asks for an asset →
+  capability-holder approves or denies → notification fires →
+  request lifecycle tracked, including auto-expiry).
 - **Integrations** (Phase 1.18). Real LDAP / SAML / OAuth login
   flows, OAuth applications surface, outbound webhooks, notification
-  rules + delivery channels (in-app + email).
+  rules + delivery channels. Extended for RS feature parity:
+  **email template engine + send queue** with operator-editable
+  templates, **timezone-aware delivery** (digest at 8 AM in the
+  recipient's TZ), **event-scoped notifications** that link to a
+  triggering record and auto-resolve when it resolves (e.g., a
+  pending-request notification disappears when the request is
+  approved), **conditional download terms** that show a per-resource
+  terms page based on metadata (NDA acknowledgement, watermark
+  warning, license summary). Chat platforms (Phase 1.30) plug in as
+  one of the delivery channels alongside email / in-app / webhook.
 
 ## On the map
 
 Larger arcs that will land but aren't the current focus:
 
-- **Storage tooling** (Phase 1.19). Storage usage dashboard,
-  orphan cleanup, checksum verification, dedupe UI, bulk re-import,
-  backup + restore, database tools.
+- **Storage tooling** (Phase 1.19). Storage usage dashboard, orphan
+  cleanup, checksum verification, dedupe UI, bulk re-import,
+  backup + restore, database tools. Extended for RS feature parity:
+  **scheduled integrity checks** with off-peak windows (verify the
+  bytes on disk match the recorded hash, batched against a
+  configurable nightly window), **tiered storage / offline archive**
+  (move cold assets to S3 Glacier / tape via a per-bucket policy,
+  fetch-on-demand surfaces), **per-download bandwidth tracking** so
+  storage cost can be attributed to teams / users.
 - **Reports & analytics** (Phase 1.20). Asset usage, user activity,
   storage trends, job performance, custom dashboards, scheduled
-  reports, drafts, trash, activity log surfaces.
+  reports, drafts, trash, activity log surfaces. Extended for RS
+  feature parity: **custom SQL report builder** with placeholder
+  variables (date range, team, user), **CSV / Excel / PDF export**
+  per report, **report thumbnails** rendered server-side for the
+  reports list, **per-collection download analytics**, **scheduled
+  email delivery** of any report on a cron expression.
 - **Community & moderation** (Phase 1.21). Reports queue, comment
   moderation, banned users / IPs, anonymous browse policy, rate
-  limits, bookmarks.
+  limits, bookmarks. Extended for RS feature parity: **comment
+  flagging with reason tracking** (spam, abuse, sensitive content,
+  off-topic — configurable list), **email escalation to admins** on
+  flagged content, **per-comment hide / restore** with audit trail,
+  **activity stream surfaced as a structured comments thread** on
+  the post-detail modal (system events become quoted-style entries
+  alongside human comments — the `barts_log_to_comments` pattern).
 - **Federation** (Phase 1.22). Peer servers, inbound + outbound
   feeds, sync status, conflict resolution. The data model already
   carries `origin_server_id` so today's single-instance code is
@@ -490,6 +534,147 @@ Larger arcs that will land but aren't the current focus:
   claim API on the job queue, etc. — so 1.25's engine is partly a
   warm-up for federation. Gated on Phase 1.16 (Resource types) and
   Phase 1.17 (Identity & teams) for clean mapping targets.
+- **Share links** (Phase 1.26). Signed, expiring resource + collection
+  + post share URLs for external collaborators (contractors,
+  publishers, agencies, festival juries) who do not have accounts.
+  URL is `GET /share/{token}` where the token is a 32-byte random
+  identifier and the share-link row is the source of truth — no
+  HMAC signing, so revocation is single-click. Each link binds a
+  target (asset / post / collection), a scope (`view` /
+  `comment` / `annotate` / `download`), optional `nbf` / `exp`,
+  optional Argon2id password, optional max-use ceiling. Per-fetch
+  audit trail records IP + user-agent + password result + scope
+  satisfied. Downloads stream via presigned URLs on S3-style
+  backends; the binary doesn't proxy gigabytes. See ADR 0018.
+- **Bulk operations** (Phase 1.27). Multi-select edit / tag / delete /
+  move-to-collection / state-transition across the browse feed and
+  search results. Floating action bar with persistent selection
+  across pagination + a "select all in filter" expansion mode.
+  Destructive actions show preview counts and require a typed-count
+  confirmation. CSV export of search results with operator-picked
+  columns. Contact-sheet PDF generation with configurable grid +
+  per-thumb metadata footer. All bulk actions submit as a single
+  job-queue job (cancellable, resumable, progress streamed) with
+  audit-log entries that preserve the selection IDs for batch undo
+  where reversible. See ADR 0019.
+- **Asset gating & NDA workflow** (Phase 1.28). Per-asset sensitivity
+  tier (`public` / `team` / `restricted` / `embargo`); restricted
+  and embargo assets are **server-baked blurred** in browse views —
+  the blur is a real preview variant so even a network-tap leak is
+  blurred. A "Reveal" button on the asset lifts the blur for the
+  session and logs the reveal. Pairs with a generic scheduled-
+  action engine (`change_sensitivity`, `restrict`, `delete`,
+  `change_state`, `notify` actions on assets / posts / collections /
+  users at a future timestamp), executed via the existing job queue.
+  Common recipes: NDA expiry on a contractor auto-restricts every
+  asset they uploaded; embargo → public flips at a marketing-
+  supplied timestamp; trash auto-purges at 30 days. See ADR 0020.
+- **External platform integrations** (Phase 1.29). Provider-
+  abstraction layer for outbound publishing and inbound asset
+  ingestion against Vimeo, YouTube, Adobe Creative Cloud Libraries,
+  and Falcon.io. Each provider is a Go package in
+  `app/internal/platforms/<name>/` implementing a common interface
+  (publish / pull / sync / embed / webhook). Linked-asset model
+  stores `platform_links[]` on the resource row so the post-detail
+  modal shows "Published to Vimeo (in sync)" and flags drift /
+  deletion. Pull-as-asset uses the same `origin_*` row flag that
+  federation does — the storage layer doesn't care whether content
+  came from a peer AA or an external platform. OAuth client secrets
+  in Cloudflare Worker Secrets; per-studio refresh tokens encrypted
+  at rest. License tier caps concurrent platform connections via the
+  tangled-derivation model. See ADR 0021.
+- **Chat platform integrations** (Phase 1.30). Slack first, then
+  Teams + Discord via the same provider abstraction. Outbound: rich
+  Block-Kit-style messages for every notifiable event with
+  deep-link buttons back into the post-detail modal. Inbound:
+  `/aa search <query>`, `/aa post <id>`, `/aa upload` slash
+  commands. Unfurl: Artist Alley URLs in chat get rich previews with
+  blur respect for sensitive content. DM notifications opt-in via
+  per-user Slack account connect. Admin surface defines per-event
+  channel routing rules (`event:upload.completed in team:Concept Art
+  → #concept-art-feed`). Chat is a delivery channel within the
+  existing notification-rule subsystem from Phase 1.18 — not a
+  separate engine. See ADR 0022.
+- **RSS / Atom feeds** (Phase 1.31). Standard syndication for
+  collections, saved searches, user uploads, and tags so studios can
+  wire Artist Alley into feed readers, Slack / Teams / Discord
+  RSS connectors, and Zapier / n8n / Make / IFTTT triggers with no
+  custom integration. URLs: `/feed/collection/{slug}.atom`,
+  `/feed/search/{id}.atom`, `/feed/user/{handle}/uploads.atom`,
+  `/feed/tag/{slug}.atom`. Atom primary, RSS 2.0 for compatibility.
+  Per-user feed token in the URL for non-public content; revocable
+  in account settings. Embargo + restricted items filter out of
+  feeds entirely. Server-side cache 5 min with ETag + If-Modified-
+  Since. See ADR 0023.
+- **Privacy & consent management** (Phase 1.32). Cookie / tracker
+  banner that renders ONLY when a non-essential category is in use
+  on the current instance (a bare studio install with no analytics
+  shows no banner at all). Categories: essential, functional,
+  analytics, third-party embeds. Data Subject Access Request (DSAR)
+  tooling: machine-readable JSON export of all personal data,
+  soft-then-hard deletion via the scheduled-action engine,
+  reassignment of authored content to a `deleted-user` tombstone so
+  collaborative content survives. Per-resource-type retention
+  policies executed via the same scheduled-action engine. Editable
+  `/legal/privacy` and `/legal/terms` markdown surfaces with a
+  usable starting template (not legal advice). Privacy is not a
+  paid differentiator — Community and Pro both get every feature;
+  Enterprise adds non-repudiation signing on the audit-log export.
+  See ADR 0024.
+- **Brand workspace** (Phase 1.33). Curated overlay on the
+  collection + theme model: a `brand_kit` binds a set of canonical
+  collections, an editable design-token export (CSS / Tailwind /
+  JSON / Figma tokens v3), a markdown guidelines doc with inline
+  asset blocks, per-asset usage rules (`internal-only` / `partner`
+  / `press` / `public`), and a publish state. Public portal at
+  `/brand/{slug}`. Token export at `/brand/{slug}/tokens.json` for
+  automated pipelines. Brand-steward role is Pro+; everyone can
+  read. Usage rules enforced through the Phase 1.18 conditional
+  download terms. See ADR 0025.
+- **AI creative editing** (Phase 1.34). Provider-abstracted in-paint,
+  out-paint, variations, and remove-background tools in the asset
+  viewer's Creative tools panel. Providers: OpenAI (DALL-E +
+  GPT-Image), Stability AI, ComfyUI local (for studios who keep
+  pixels on-network). Generated images are **new assets** that share
+  a `creative_lineage` relationship with the source — the source is
+  never overwritten. The new asset's metadata records provider,
+  prompt, seed, and parameters for both licensing and audit. License
+  tier governs which providers are available + monthly token budgets.
+  Community: ComfyUI local only. Pro: + OpenAI + Stability with
+  caps. Enterprise: unlimited + bring-your-own API keys. See
+  ADR 0026.
+- **Featured collections & homepage curation** (Phase 1.35). Tree
+  edges on the collection model (`collection_parent_id`, capped at
+  depth 5) + a `featured` boolean with `team` / `org` / `public`
+  scope. The same tree powers the team dashboard, the global signed-
+  in homepage, and the anonymous public landing — one model, three
+  audiences. Each featured node has an optional `hero_asset_id` (the
+  card cover) and a `featured_order` integer for sibling sort.
+  Cascade-publish flips a parent + children at once. Public featured
+  collections respect per-asset sensitivity from ADR 0020 — an
+  `embargo` asset shows only its title until embargo lifts. See
+  ADR 0027.
+- **PBR 3D viewer polish** (Phase 1.36). Right-side inspector in
+  `ModelView.svelte` review mode: per-material list with hide / solo
+  toggles, editable live PBR params (base color, metallic, roughness,
+  normal strength, emissive) with the source asset never written,
+  per-map texture preview that hand-offs to the texture inspector
+  (Phase 1.18.B-16), curated 8-pack of IBL HDR environments + a
+  project-HDR picker, A / B wipe between two materials on the same
+  mesh (reusing the 1.18.B-8 A/B compare primitives). Override sets
+  export as a structured `material_review.json` attached to the post
+  — engineers ingesting reviews don't have to parse prose. See ADR
+  0028.
+- **Announcements home widget** (Phase 1.37). Operator-authored
+  announcements with audience scoping (`org` / `team:{name}` /
+  `role:{name}`), severity tiers (info / notice / warning /
+  critical), optional schedule (`nbf` / `exp`), pinning, and per-user
+  read state. Homepage hero strip shows the top three active for the
+  user; account dashboard tile shows the full list with read state.
+  Auto-fed from system events — planned maintenance, license upgrade,
+  failed scheduled jobs, federation peer offline — become
+  announcements automatically. Chat platforms (Phase 1.30) mirror
+  new announcements to the configured Slack channel. See ADR 0029.
 
 ## Things we deliberately aren't building
 
