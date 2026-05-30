@@ -176,6 +176,31 @@
     panY = 0;
   }
 
+  // setZoom keeps the visual centre stable while changing scale —
+  // same arithmetic the wheel handler uses, factored out so the
+  // tools panel's zoom-preset buttons land consistently with the
+  // wheel gesture (no jump-to-corner surprises).
+  function setZoom(next: number) {
+    const clamped = Math.max(0.05, Math.min(20, next));
+    if (canvasEl) {
+      const factor = clamped / zoom;
+      panX = panX * factor;
+      panY = panY * factor;
+    }
+    zoom = clamped;
+  }
+
+  // Zoom presets the Tools panel renders for any 2D kind. Fit is just
+  // an alias for resetView (the canvas already centres + scales-to-fit
+  // its contents at zoom=1 via the absolute inset-0 wrapper).
+  const zoomPresets = [
+    { label: 'Fit', factor: null as number | null },
+    { label: '50%', factor: 0.5 },
+    { label: '100%', factor: 1 },
+    { label: '200%', factor: 2 },
+    { label: '400%', factor: 4 },
+  ];
+
   // Double-click on the canvas = enter / exit review mode. The
   // gesture is symmetrical with the toolbar's Review button and with
   // a future keyboard shortcut — same mental model regardless of how
@@ -542,14 +567,35 @@
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto">
           {#if reviewMode}
-            <!-- Kind-aware tools, read from controller.tools that the
-                 mounted view body populated. Each section renders only
-                 if the view body exposed that tool group — wireframe
-                 has no meaning for model-viewer glb, exposure works
-                 for both 3D paths, etc. -->
-            {#if controller.tools}
-              {@const tools = controller.tools}
-              <div class="space-y-1 p-3">
+            <!-- Kind-aware tools. The "View" section is shell-owned
+                 (every 2D kind shares the same zoom + pan transform
+                 the shell applies), so it renders without any per-
+                 kind body wiring. Below it, per-kind sections render
+                 only if the mounted view body exposed them via
+                 controller.tools — wireframe has no meaning for
+                 image/pdf, exposure works for both 3D paths, etc. -->
+            <div class="space-y-1 p-3">
+              {#if kind !== '3d'}
+                <section class="rounded-md border border-border bg-surface-elevated">
+                  <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">View</header>
+                  <div class="flex flex-wrap gap-1.5 p-3">
+                    {#each zoomPresets as p}
+                      <button
+                        type="button"
+                        onclick={() => (p.factor === null ? resetView() : setZoom(p.factor))}
+                        class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated"
+                        class:border-accent={p.factor !== null && Math.abs(zoom - p.factor) < 0.001}
+                        class:text-accent={p.factor !== null && Math.abs(zoom - p.factor) < 0.001}
+                      >
+                        {p.label}
+                      </button>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
+
+              {#if controller.tools}
+                {@const tools = controller.tools}
                 <!-- ── Camera section ───────────────────────────────── -->
                 {#if tools.frameAll || tools.resetCamera || tools.cameraPreset}
                   <section class="rounded-md border border-border bg-surface-elevated">
@@ -723,14 +769,18 @@
                     </div>
                   </section>
                 {/if}
-              </div>
-            {:else}
-              <!-- No tools registered (kind doesn't have any yet OR
-                   the view body hasn't mounted yet). -->
-              <div class="p-4 text-sm text-fg-muted">
-                <p>No review tools available for this asset kind yet.</p>
-              </div>
-            {/if}
+              {/if}
+
+              {#if kind === '3d' && !controller.tools}
+                <!-- 3D body hasn't mounted yet (or this kind has no
+                     per-kind tools yet — only 3D currently uses the
+                     controller.tools path; image / pdf / font / audio
+                     get the shell-owned "View" section above). -->
+                <div class="p-4 text-sm text-fg-muted">
+                  <p>Loading review tools…</p>
+                </div>
+              {/if}
+            </div>
           {:else if metadataSlot}
             {@render metadataSlot()}
           {/if}
