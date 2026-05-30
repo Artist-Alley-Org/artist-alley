@@ -46,11 +46,18 @@
         button affordance — back-arrow vs ×. */
     standalone?: boolean;
     /** Optional per-asset host hooks threaded into AssetViewer's
-        Edit menu. The host supplies these to wire actions that
-        target the *current* asset (the one the cursor is on) —
-        AddToCollection opens the host's CollectionPicker, etc. */
+        Edit / File menus. The host supplies these to wire actions
+        that target the *current* asset (the one the cursor is on).
+        When omitted the corresponding menu item stays disabled with
+        a "coming soon" tooltip — keeps the menu shape stable across
+        hosts that don't yet implement a given action. */
     onAddToCollection?: (assetId: string) => void;
     onRecreatePreviews?: (assetId: string) => void;
+    onEditTags?: (assetId: string) => void;
+    onEditMetadata?: (assetId: string) => void;
+    onDownloadVariant?: (assetId: string) => void;
+    onShareAsset?: (assetId: string) => void;
+    onDeleteAsset?: (assetId: string) => void;
   }
 
   let {
@@ -61,6 +68,11 @@
     standalone = false,
     onAddToCollection,
     onRecreatePreviews,
+    onEditTags,
+    onEditMetadata,
+    onDownloadVariant,
+    onShareAsset,
+    onDeleteAsset,
   }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
@@ -312,6 +324,21 @@
                 : undefined}
               onRecreatePreviews={onRecreatePreviews
                 ? () => onRecreatePreviews(currentItem.asset.id)
+                : undefined}
+              onEditTags={onEditTags
+                ? () => onEditTags(currentItem.asset.id)
+                : undefined}
+              onEditMetadata={onEditMetadata
+                ? () => onEditMetadata(currentItem.asset.id)
+                : undefined}
+              onDownloadVariant={onDownloadVariant
+                ? () => onDownloadVariant(currentItem.asset.id)
+                : undefined}
+              onShareAsset={onShareAsset
+                ? () => onShareAsset(currentItem.asset.id)
+                : undefined}
+              onDeleteAsset={onDeleteAsset
+                ? () => onDeleteAsset(currentItem.asset.id)
                 : undefined}
             />
           </div>

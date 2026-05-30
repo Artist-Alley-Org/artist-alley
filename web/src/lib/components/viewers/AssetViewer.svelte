@@ -61,15 +61,18 @@
         toolbar grows a "Close" entry. Hosts that own their own close
         affordance (the dialog × button) omit this. */
     onClose?: () => void;
-    /** Optional — Edit-menu "Add to collection…" callback. When the
-        host wires this the menu item enables; without it stays
-        stubbed. Host typically opens a CollectionPicker for the
-        current asset. */
+    /** Optional per-asset action hooks. Each enables the
+        corresponding ViewerMenuBar item; without a hook the item
+        stays disabled / hidden depending on the menu. Host typically
+        opens its own modal (CollectionPicker / TagsEditor / etc.)
+        for the assetId the cursor is on. */
     onAddToCollection?: () => void;
-    /** Optional — Edit-menu "Recreate previews" callback. Re-
-        enqueues the appropriate preview.<kind> job for the current
-        asset. */
     onRecreatePreviews?: () => void;
+    onEditTags?: () => void;
+    onEditMetadata?: () => void;
+    onDownloadVariant?: () => void;
+    onShareAsset?: () => void;
+    onDeleteAsset?: () => void;
   }
 
   let {
@@ -81,6 +84,11 @@
     onClose,
     onAddToCollection,
     onRecreatePreviews,
+    onEditTags,
+    onEditMetadata,
+    onDownloadVariant,
+    onShareAsset,
+    onDeleteAsset,
   }: Props = $props();
 
   // The right pane is shown when there's something to put in it:
@@ -422,6 +430,11 @@
     {onClose}
     {onAddToCollection}
     {onRecreatePreviews}
+    {onEditTags}
+    {onEditMetadata}
+    {onDownloadVariant}
+    {onShareAsset}
+    {onDeleteAsset}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the

@@ -41,6 +41,14 @@
         wired. Triggers the host's re-enqueue logic for the current
         asset's preview job. */
     onRecreatePreviews?: () => void;
+    /** Optional per-asset Edit/File menu hooks. Each enables its
+        menu item when the host wires it; without the hook the item
+        stays disabled with a "coming soon" tooltip. */
+    onEditTags?: () => void;
+    onEditMetadata?: () => void;
+    onDownloadVariant?: () => void;
+    onShareAsset?: () => void;
+    onDeleteAsset?: () => void;
   }
 
   let {
@@ -57,6 +65,11 @@
     onClose,
     onAddToCollection,
     onRecreatePreviews,
+    onEditTags,
+    onEditMetadata,
+    onDownloadVariant,
+    onShareAsset,
+    onDeleteAsset,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -111,6 +124,16 @@
     >
       {t('viewer_menu.download_original')}
     </button>
+    {#if onDownloadVariant}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onDownloadVariant}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.download_variant')}
+      </button>
+    {/if}
     <button
       type="button"
       role="menuitem"
@@ -127,6 +150,16 @@
     >
       {t('viewer_menu.open_in_new_tab')}
     </button>
+    {#if onShareAsset}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onShareAsset}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.share_asset')}
+      </button>
+    {/if}
     {#if onClose}
       <div class="my-1 h-px bg-border"></div>
       <button
@@ -146,24 +179,46 @@
     {#snippet trigger({ open })}
       <span class={triggerClass(open)}>{t('viewer_menu.edit')}</span>
     {/snippet}
-    <button
-      type="button"
-      role="menuitem"
-      disabled
-      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-      title={t('viewer_menu.coming_soon')}
-    >
-      {t('viewer_menu.edit_tags')}
-    </button>
-    <button
-      type="button"
-      role="menuitem"
-      disabled
-      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-      title={t('viewer_menu.coming_soon')}
-    >
-      {t('viewer_menu.edit_metadata')}
-    </button>
+    {#if onEditTags}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onEditTags}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.edit_tags')}
+      </button>
+    {:else}
+      <button
+        type="button"
+        role="menuitem"
+        disabled
+        class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+        title={t('viewer_menu.coming_soon')}
+      >
+        {t('viewer_menu.edit_tags')}
+      </button>
+    {/if}
+    {#if onEditMetadata}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onEditMetadata}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.edit_metadata')}
+      </button>
+    {:else}
+      <button
+        type="button"
+        role="menuitem"
+        disabled
+        class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+        title={t('viewer_menu.coming_soon')}
+      >
+        {t('viewer_menu.edit_metadata')}
+      </button>
+    {/if}
     {#if onAddToCollection}
       <button
         type="button"
@@ -193,6 +248,17 @@
         class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
       >
         {t('viewer_menu.recreate_previews')}
+      </button>
+    {/if}
+    {#if onDeleteAsset}
+      <div class="my-1 h-px bg-border"></div>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onDeleteAsset}
+        class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container"
+      >
+        {t('viewer_menu.delete_asset')}
       </button>
     {/if}
   </Menu>

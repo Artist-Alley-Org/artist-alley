@@ -634,7 +634,10 @@
     "fullscreen_exit": "Exit fullscreen (F)",
     "pane_show": "Show panel (I)",
     "pane_hide": "Hide panel (I)",
-    "recreate_previews": "Recreate previews"
+    "recreate_previews": "Recreate previews",
+    "download_variant": "Download variant…",
+    "share_asset": "Share…",
+    "delete_asset": "Delete asset…"
   },
   "collection_picker": {
     "title_single": "Add to collection",
@@ -650,6 +653,9 @@
     "add_failed_partial": "Added {added} of {total}; some failed."
   },
   "playlist_actions": {
-    "add_all_to_collection": "Add all to collection"
+    "add_all_to_collection": "Add all to collection",
+    "download_all_zip": "Download all as ZIP",
+    "bulk_tag": "Tag all",
+    "share_playlist": "Share playlist"
   }
 }

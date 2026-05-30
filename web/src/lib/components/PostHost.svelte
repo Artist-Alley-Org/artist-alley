@@ -258,13 +258,63 @@
   }
 
   // ── Recreate previews ─────────────────────────────────────────────
-  // Stubbed for now — the backend re-enqueue endpoint lands in the
-  // next commit. Wiring the callback here so the Edit-menu item
-  // surfaces enabled; the no-op + console-info is a temporary
-  // placeholder.
-  function recreatePreviews(assetId: string) {
-    // TODO: POST to /assets/{id}/recreate-previews (next commit).
-    console.info('recreatePreviews stub', assetId);
+  // Calls POST /assets/{id}/preview — worker re-enqueues the right
+  // preview.<kind> job at PriorityHigh. The worker's idempotency-
+  // skip usually short-circuits no-ops; explicit per-worker flags
+  // (isoDone in preview.3d, etc.) decide whether new bytes get
+  // written. We just kick the job off and trust the worker.
+  let recreating = $state<Record<string, boolean>>({});
+  async function recreatePreviews(assetId: string) {
+    if (recreating[assetId]) return;
+    recreating[assetId] = true;
+    const { error } = await api.POST('/assets/{id}/preview', {
+      params: { path: { id: assetId } },
+    });
+    recreating[assetId] = false;
+    if (error) {
+      // Loud-fail so the user knows the click didn't take effect.
+      // No toast utility yet; alert is the simplest visible feedback
+      // until a proper notifications system lands.
+      alert(
+        'Recreate previews failed: ' +
+          ((error as { error?: string }).error ?? 'unknown error'),
+      );
+    }
+    // Success is silent — the variant URLs will refresh on next
+    // browser load; the worker writes new bytes when it finishes.
+  }
+
+  // ── Stub actions ──────────────────────────────────────────────────
+  // Hook slots exist so AssetViewer's Edit/File menus surface every
+  // planned per-asset action. PostHost stubs each here with an alert
+  // until the real implementations land. When a real implementation
+  // arrives, swap the stub here — no component changes needed.
+  function stubAction(label: string) {
+    alert(`${label} — coming soon (stub).`);
+  }
+  function editTags(_assetId: string) {
+    stubAction('Edit tags');
+  }
+  function editMetadata(_assetId: string) {
+    stubAction('Edit metadata');
+  }
+  function downloadVariant(_assetId: string) {
+    stubAction('Download variant');
+  }
+  function shareAsset(_assetId: string) {
+    stubAction('Share asset');
+  }
+  function deleteAsset(_assetId: string) {
+    stubAction('Delete asset');
+  }
+  function bulkDownloadZip() {
+    stubAction('Download all as ZIP');
+  }
+  function bulkTag() {
+    stubAction('Tag all');
+  }
+  function sharePlaylist() {
+    stubAction('Share playlist');
   }
 </script>
 
@@ -276,6 +326,11 @@
   toolbarActions={postBulkActions}
   onAddToCollection={openPickerForCurrent}
   onRecreatePreviews={recreatePreviews}
+  onEditTags={editTags}
+  onEditMetadata={editMetadata}
+  onDownloadVariant={downloadVariant}
+  onShareAsset={shareAsset}
+  onDeleteAsset={deleteAsset}
 />
 
 {#if pickerOpen}
@@ -286,9 +341,10 @@
 {/if}
 
 <!-- Per-playlist bulk actions threaded into AssetPlaylist's top
-     toolbar via the toolbarActions snippet slot. Currently just
-     "Add all to collection"; downstream commits add Download-as-ZIP,
-     Bulk-tag, Save-as-review, etc. -->
+     toolbar via the toolbarActions snippet slot. "Add all to
+     collection" is real (opens the CollectionPicker in bulk mode);
+     the rest are stubbed with alert() until they land. The buttons
+     exist so the surface is testable + the UX shape is set. -->
 {#snippet postBulkActions()}
   {#if pl.source.items.length > 0}
     <button
@@ -303,6 +359,46 @@
         <line x1="12" y1="3" x2="12" y2="15" />
       </svg>
       {t('playlist_actions.add_all_to_collection')}
+    </button>
+    <button
+      type="button"
+      onclick={bulkDownloadZip}
+      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+      title={t('playlist_actions.download_all_zip')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      {t('playlist_actions.download_all_zip')}
+    </button>
+    <button
+      type="button"
+      onclick={bulkTag}
+      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+      title={t('playlist_actions.bulk_tag')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+        <line x1="7" y1="7" x2="7.01" y2="7" />
+      </svg>
+      {t('playlist_actions.bulk_tag')}
+    </button>
+    <button
+      type="button"
+      onclick={sharePlaylist}
+      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+      title={t('playlist_actions.share_playlist')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+      </svg>
+      {t('playlist_actions.share_playlist')}
     </button>
   {/if}
 {/snippet}
