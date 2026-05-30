@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-30T07:35:39.893Z",
+  "fetchedAt": "2026-05-30T07:51:25.165Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -10,9 +10,9 @@
     "stargazers_count": 0,
     "watchers_count": 0,
     "forks_count": 0,
-    "open_issues_count": 45,
+    "open_issues_count": 47,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-30T06:59:19Z",
+    "pushed_at": "2026-05-30T07:36:47Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -52,6 +52,43 @@
   ],
   "issues": {
     "open": [
+      {
+        "number": 50,
+        "title": "Phase 1.38 — Operator-configurable ad slots (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/50",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:ads",
+            "color": "5319e7",
+            "description": "Operator-configurable ad slots"
+          }
+        ],
+        "created_at": "2026-05-30T07:44:40Z",
+        "updated_at": "2026-05-30T07:44:42Z",
+        "closed_at": null,
+        "comments": 0
+      },
       {
         "number": 49,
         "title": "Phase 1.37 — Announcements home widget (epic)",

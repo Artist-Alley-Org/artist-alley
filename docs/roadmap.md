@@ -675,6 +675,47 @@ Larger arcs that will land but aren't the current focus:
   failed scheduled jobs, federation peer offline — become
   announcements automatically. Chat platforms (Phase 1.30) mirror
   new announcements to the configured Slack channel. See ADR 0029.
+- **Operator-configurable ad slots** (Phase 1.38). Opt-in surface for
+  operators running public-facing community instances (fan sites,
+  festival hubs, art-school portfolios) to monetize hosting via ads.
+  Defined zones across feed top / between-every-Nth feed item /
+  sidebar top + bottom / post-modal sidebar / footer; each zone is
+  toggled and provider-bound per instance. Providers ship for Google
+  AdSense, Meta Audience Network, Carbon Ads, EthicalAds, and a
+  custom-HTML option. Default off everywhere; AAA-internal studios
+  see zero ad markup. Operator allow-lists categories (block
+  gambling / adult / political / whatever) + sets frequency rules
+  (min N feed items between inline ads, max ads per page,
+  time-of-day windows). Privacy compliance: ad slots auto-enable the
+  third-party-embeds category in the cookie banner (ADR 0024) and
+  do NOT load until consent. Per-user opt-out in account settings;
+  Pro / Enterprise tiers may auto-suppress ads for paid users at the
+  operator's option. **No revenue share** — operator ad income is
+  theirs. **No anti-AdBlock measures** — blocked users get a clean
+  view, no fight. Ad slots are sandboxed iframes with reserved
+  dimensions to avoid CLS. All tiers — Community can monetize a
+  public instance the same as Pro / Enterprise. See ADR 0030.
+- **Commerce — Stripe + Shopify** (Phase 1.39). Operator-side commerce
+  for selling content directly: digital downloads (concept-art packs,
+  asset bundles, soundtracks), print-on-demand merchandise, physical
+  originals, subscription access to WIP / patron tiers. Provider-
+  abstracted with Stripe (direct, digital + physical + subscription),
+  Shopify (full storefront for physical + tax + shipping), and
+  Gumroad (lightweight digital + subscription) at launch. Listings
+  attach to assets, posts, collections, or brand-kit items with
+  pricing, delivery type, and a license-grant clause. Digital
+  fulfillment reuses Phase 1.26 share links — buyer gets a single-
+  use signed link with a 90-day expiry after payment. Subscription
+  access expires via Phase 1.28's scheduled-action engine. Tax,
+  refunds, disputes all defer to the payment processor. License-
+  tier caps active-listing count (Community 5, Pro 500, Enterprise
+  unlimited + organization-level Stripe / Shopify accounts).
+  Per-instance public storefront at `/shop/{slug}` aggregates all
+  active listings. **No revenue share** — operator's sales go to
+  operator's bank; AA's monetization is per-tier license fees, the
+  same stance as Phase 1.38 ads. Federated peers can surface remote
+  listings read-only with a "buy on origin" CTA; federated checkout
+  is out of scope. See ADR 0031.
 
 ## Things we deliberately aren't building
 
