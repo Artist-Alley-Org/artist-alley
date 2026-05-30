@@ -322,10 +322,7 @@ func (h *FontHandler) fanCardToLadder(ctx context.Context, hash string, src imag
 			continue
 		}
 		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.font.put_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
+			return fmt.Errorf("backend put font variant %s: %w", v.Key, err)
 		}
 		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,

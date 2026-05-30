@@ -333,10 +333,7 @@ func (h *PDFHandler) fanPosterToLadder(ctx context.Context, hash, posterPath str
 			continue
 		}
 		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.pdf.put_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
+			return fmt.Errorf("backend put pdf variant %s: %w", v.Key, err)
 		}
 		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,

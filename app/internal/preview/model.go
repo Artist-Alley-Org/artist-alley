@@ -500,10 +500,12 @@ func (h *ModelHandler) fanThumbBytes(ctx context.Context, hash string, jpegBytes
 			continue
 		}
 		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.mview_put_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
+			// Loud-fail (was silent continue) — see col-404 sidequest.
+			// A skipped variant leaves the asset with missing thumbnails
+			// even though the job reports success; the job system already
+			// retries up to max_attempts on a returned error so a
+			// transient blip self-heals.
+			return fmt.Errorf("backend put mview variant %s: %w", v.Key, err)
 		}
 		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,
@@ -803,10 +805,8 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath stri
 			continue
 		}
 		if _, err := h.Storage.Backend.Put(ctx, hash, v.Key, bytes.NewReader(buf.Bytes())); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.model.raster_put_failed",
-				slog.String("variant", v.Key),
-				slog.String("err", err.Error()))
-			continue
+			// Loud-fail (was silent continue) — see col-404 sidequest.
+			return fmt.Errorf("backend put raster variant %s: %w", v.Key, err)
 		}
 		_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
 			ObjectHash:  hash,
