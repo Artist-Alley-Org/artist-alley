@@ -328,12 +328,48 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	if _, ok := fontExtsHandler[e]; ok {
 		return jobs.TypePreviewFont
 	}
+	if _, ok := ebookExtsHandler[e]; ok {
+		return jobs.TypePreviewEbook
+	}
+	if _, ok := epsExtsHandler[e]; ok {
+		return jobs.TypePreviewEPS
+	}
+	if _, ok := psdExtsHandler[e]; ok {
+		return jobs.TypePreviewPSD
+	}
+	if _, ok := comicExtsHandler[e]; ok {
+		return jobs.TypePreviewComic
+	}
+	if _, ok := textExtsHandler[e]; ok {
+		return jobs.TypePreviewText
+	}
 	return jobs.TypePreviewRaster
 }
 
 var pdfExtsHandler = map[string]struct{}{"pdf": {}}
 var fontExtsHandler = map[string]struct{}{
 	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
+}
+// ebookExtsHandler mirrors preview.ebookExts. Duplicated to avoid
+// the assets→preview import cycle (same pattern as audioExtsHandler).
+var ebookExtsHandler = map[string]struct{}{
+	"epub": {},
+}
+// epsExtsHandler mirrors preview.epsExts.
+var epsExtsHandler = map[string]struct{}{
+	"eps": {}, "ps": {},
+}
+// psdExtsHandler mirrors preview.psdExts.
+var psdExtsHandler = map[string]struct{}{
+	"psd": {}, "psb": {},
+}
+// comicExtsHandler mirrors preview.comicExts.
+var comicExtsHandler = map[string]struct{}{
+	"cbz": {}, "cbr": {}, "cb7": {},
+}
+// textExtsHandler mirrors preview.textExts.
+var textExtsHandler = map[string]struct{}{
+	"txt": {},
 }
 
 // audioExtsHandler mirrors preview.audioExts. Duplicated here so the

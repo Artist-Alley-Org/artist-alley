@@ -61,6 +61,11 @@ const (
 	TypePreviewPDF    JobType = "preview.pdf"
 	TypePreviewFont   JobType = "preview.font"
 	TypePreview3D     JobType = "preview.3d"
+	TypePreviewEbook  JobType = "preview.ebook"
+	TypePreviewEPS    JobType = "preview.eps"
+	TypePreviewPSD    JobType = "preview.psd"
+	TypePreviewComic  JobType = "preview.comic"
+	TypePreviewText   JobType = "preview.text"
 )
 
 // Priority defaults. Lower numbers run sooner. Handlers can override.
