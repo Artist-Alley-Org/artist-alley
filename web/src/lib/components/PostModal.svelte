@@ -559,9 +559,6 @@
               {reviewMode}
               bind:paneCollapsed
               metadataSlot={postMetadataPane}
-              onWheelNavigate={hasMultipleMembers
-                ? (dir) => goToMember(selectedIdx + (dir === 'next' ? 1 : -1))
-                : undefined}
             />
           </div>
         {:else}

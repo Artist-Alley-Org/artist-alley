@@ -38,10 +38,13 @@
         fight for the keyboard. */
     active?: boolean;
     /** True once the host (e.g. PostModal) has explicitly entered
-        review mode. Outside review mode the viewer is "display only":
-        wheel + drag bubble up to the parent (so the modal scroll-snap
-        still works), hotkeys are inert, and the 3D bodies don't grab
-        the pointer. The Review button or a double-click flips this on. */
+        review mode. Review mode swaps the right pane from metadata
+        to the per-kind tools panel and turns on review-only
+        affordances (3D wireframe toggle, exposure sliders, etc).
+        Pan + zoom are *not* gated on this — they're always live the
+        moment an asset is on screen, so a user can inspect anything
+        without first hunting for a mode toggle. The Review button in
+        the toolbar or a double-click on the canvas flips this on. */
     reviewMode?: boolean;
     /** Host-provided content for the right pane when NOT in review
         mode. PostModal injects its post metadata snippet here; the
@@ -53,12 +56,6 @@
         user's preference in its own localStorage. Default open when
         there's something to show. */
     paneCollapsed?: boolean;
-    /** Optional callback the host wires up to cycle between sibling
-        assets via the wheel (when not in review mode). Defining this
-        flips on a debounced wheel handler that calls back with the
-        intended direction; undefined leaves wheel alone so the parent
-        page can scroll normally. */
-    onWheelNavigate?: (dir: 'prev' | 'next') => void;
   }
 
   let {
@@ -67,7 +64,6 @@
     reviewMode = false,
     metadataSlot,
     paneCollapsed = $bindable(false),
-    onWheelNavigate,
   }: Props = $props();
 
   // The right pane is shown when there's something to put in it:
@@ -93,43 +89,26 @@
   let panY = $state(0);
   let dragging = $state(false);
 
-  // Debounce wheel-navigate so a trackpad's continuous wheel events
-  // don't skip past N assets in one swipe. ~250ms feels right: fast
-  // enough to spam, slow enough that a single intentional flick
-  // doesn't double-fire.
-  let lastWheelNavAt = 0;
-
   function onCanvasWheel(e: WheelEvent) {
-    // Outside review mode: optionally cycle assets on wheel (host opts
-    // in via the onWheelNavigate prop — when there's only one sibling
-    // to scroll to, the host just doesn't pass the prop). Otherwise
-    // let the wheel bubble so the page can scroll normally.
-    if (!reviewMode) {
-      if (onWheelNavigate && Math.abs(e.deltaY) > 0) {
-        const now = Date.now();
-        if (now - lastWheelNavAt > 250) {
-          lastWheelNavAt = now;
-          e.preventDefault();
-          onWheelNavigate(e.deltaY > 0 ? 'next' : 'prev');
-        } else {
-          e.preventDefault();
-        }
-      }
-      return;
-    }
-    // 3D bodies own all input (orbit controls + model-viewer's camera
-    // wheel-zoom). The outer pan/zoom layer doesn't make sense in a
-    // 3D world and would fight the orbit. Let the event reach the body.
+    // 3D bodies own all input (orbit controls handle wheel-as-dolly
+    // natively — the camera moves toward the model rather than the
+    // viewport canvas scaling, which is the per-kind "pan/zoom on the
+    // object, not the viewer" semantics 3D needs). Skip our outer
+    // transform entirely.
     if (kind === '3d') return;
-    // Plain wheel = scrub a frame (when there's a timeline);
-    // ctrl/⌘ + wheel = zoom.
-    if (!e.ctrlKey && !e.metaKey) {
-      if (controller.hasTimeline) {
-        e.preventDefault();
-        controller.stepFrames(e.deltaY > 0 ? 1 : -1);
-      }
+    // Timeline kinds (video, audio, paged PDF later) treat plain wheel
+    // as one frame's worth of scrub — the muscle memory for review
+    // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
+    // single frame without losing the scrub gesture.
+    if (controller.hasTimeline && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      controller.stepFrames(e.deltaY > 0 ? 1 : -1);
       return;
     }
+    // Static kinds (image, font, PDF when we drop scroll-paged in a
+    // later commit): wheel always zooms. No modifier required, no
+    // "enter review mode first" gate — the user expects to inspect
+    // the asset the moment it loads.
     e.preventDefault();
     const next = Math.max(1, Math.min(20, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
     if (canvasEl) {
@@ -145,10 +124,6 @@
 
   function onCanvasMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
-    // Outside review mode: don't engage pan/drag, and skip the
-    // click-to-toggle-play affordance. Single-click is a no-op so
-    // we don't fight with double-click-to-enter-review.
-    if (!reviewMode) return;
     // 3D bodies own all drag (orbit). Leave the outer transform alone.
     if (kind === '3d') return;
     const startX = e.clientX;
@@ -169,7 +144,10 @@
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
       if (!dragging && controller.hasTimeline) {
-        // Treat a non-drag click as a play/pause toggle for media.
+        // Treat a non-drag click on timeline kinds as play/pause.
+        // Static kinds (image, pdf, font) have no play state, so a
+        // bare click does nothing — the double-click handler below
+        // owns the "fit to window" gesture without fighting this.
         controller.togglePlay();
       }
       setTimeout(() => { dragging = false; }, 0);
@@ -182,6 +160,17 @@
     zoom = 1;
     panX = 0;
     panY = 0;
+  }
+
+  // Double-click on the canvas = fit-to-window (reset zoom + pan).
+  // Cheap "I'm lost, get me back" gesture that mirrors Photoshop's
+  // double-click-the-hand-tool affordance. 3D bodies have their own
+  // frame-all on the tools panel; for 2D this is the only gesture.
+  function onCanvasDoubleClick(e: MouseEvent) {
+    if (kind === '3d') return;
+    if (controller.hasTimeline) return; // timeline kinds reserve dbl-click
+    e.preventDefault();
+    resetView();
   }
 
   // ---- fullscreen --------------------------------------------------------
@@ -367,10 +356,10 @@
     class:cursor-grab={!dragging && zoom > 1}
     onwheel={onCanvasWheel}
     onmousedown={onCanvasMouseDown}
+    ondblclick={onCanvasDoubleClick}
   >
     <div
       class="absolute inset-0 flex items-center justify-center"
-      class:pointer-events-none={!reviewMode}
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
     >
       <!-- {#key} forces a fresh view-body mount when the asset id
