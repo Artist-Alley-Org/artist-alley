@@ -32,6 +32,7 @@
     "@scalar/api-reference": "^1.57.5",
     "hls.js": "^1.6.16",
     "openapi-fetch": "latest",
+    "pdfjs-dist": "^5.7.284",
     "three": "^0.182.0",
     "thumbhash": "^0.1.1"
   }

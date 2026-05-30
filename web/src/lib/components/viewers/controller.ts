@@ -25,6 +25,7 @@ export type ViewKind =
   | 'pdf'
   | 'audio'
   | 'sequence'
+  | 'font'
   | '3d'
   | 'placeholder';
 
@@ -208,6 +209,8 @@ const AUDIO_EXTS = new Set([
   'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'opus',
 ]);
 const PDF_EXTS = new Set(['pdf']);
+// Kept in sync with app/internal/preview/font.go::fontExts.
+const FONT_EXTS = new Set(['ttf', 'otf', 'ttc', 'otc', 'woff', 'woff2']);
 // Kept in sync with app/internal/assets/handler.go::modelExts. Anything
 // the backend treats as a 3D upload should match here so the browse
 // card swaps to the 3D hover-scrub (6×6 turntable sprite) instead of
@@ -231,6 +234,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (VIDEO_EXTS.has(e)) return 'video';
   if (AUDIO_EXTS.has(e)) return 'audio';
   if (PDF_EXTS.has(e)) return 'pdf';
+  if (FONT_EXTS.has(e)) return 'font';
   if (MODEL_EXTS.has(e)) return '3d';
   return 'placeholder';
 }

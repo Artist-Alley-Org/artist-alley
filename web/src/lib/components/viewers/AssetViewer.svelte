@@ -16,6 +16,8 @@
   import VideoView from './VideoView.svelte';
   import ModelView from './ModelView.svelte';
   import AudioView from './AudioView.svelte';
+  import PDFView from './PDFView.svelte';
+  import FontView from './FontView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
 
   // Native + three-loader 3D paths we ship today. Other 3D
@@ -384,6 +386,10 @@
           <ImageView {asset} bind:controller />
         {:else if kind === 'audio'}
           <AudioView {asset} bind:controller />
+        {:else if kind === 'pdf'}
+          <PDFView {asset} bind:controller />
+        {:else if kind === 'font'}
+          <FontView {asset} bind:controller />
         {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
           <ModelView {asset} bind:controller {reviewMode} />
         {:else}
