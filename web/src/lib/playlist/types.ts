@@ -51,12 +51,18 @@ export interface PlaylistItem {
  *  source's underlying data fetches resolve.
  */
 export interface PlaylistSource {
-  /** Categorical kind. Drives toolbar labelling + URL state shape. */
+  /** Categorical kind. Set at construction; doesn't change. */
   readonly kind: SourceKind;
-  /** Unique id within the kind — usually the post/collection/etc id.
-      For 'single' this is the asset id. For 'search' it's a stable
-      hash of the query. */
-  readonly id: string;
+  /** Current target id within the kind — usually the post/collection
+      /etc id. For 'single' this is the asset id. For 'search' it's a
+      stable hash of the query.
+
+      MUTABLE — sources that support in-place re-target (host calls
+      `setPostId(next)` / `setQuery(q)` etc.) update this when the
+      target changes so consumers of `source.id` (URL state, telemetry,
+      cache keys) see the current target without recreating the
+      source instance. */
+  id: string;
   /** Human-readable label the shell shows in the toolbar — "Wall Paint
       Gate", "Project Echo collection", "Review session #1", etc. */
   title: string;

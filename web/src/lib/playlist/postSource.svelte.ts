@@ -81,23 +81,44 @@ export function createPostPlaylistSource(postId: string) {
     post: null,
   });
 
+  // Generation counter for stale-fetch protection. When the user
+  // navigates between posts faster than the network resolves (←/→
+  // hammered through the feed), each fetch tags itself with `gen`
+  // at the start and bails on commit if `gen !== generation` —
+  // prevents the older slower fetch from overwriting the newer one.
+  let generation = 0;
+
+  // Tracked separately from postId-the-parameter so callers can
+  // re-target without recreating the factory. setPostId() updates
+  // this and triggers a non-destructive fetch (old items stay on
+  // screen until the new data arrives — see load()'s atomic swap).
+  let currentPostId = postId;
+
   async function load() {
-    state.loading = true;
+    const gen = ++generation;
+    // Atomic swap pattern: don't wipe `items` / `aux.post` here.
+    // The shell keeps showing the previous post while the fetch
+    // resolves, so the AssetViewer + ViewerMenuBar stay mounted and
+    // there's no flicker. We only flip `loading` true on the very
+    // first load (when there's nothing to show); subsequent
+    // navigations between posts are silent from the viewer's POV.
+    if (state.items.length === 0) state.loading = true;
     state.error = null;
-    state.items = [];
-    state.cursor = 0;
-    aux.post = null;
     try {
       const { data, error: apiErr } = await api.GET('/posts/{id}', {
-        params: { path: { id: postId } },
+        params: { path: { id: currentPostId } },
       });
+      if (gen !== generation) return; // stale — newer fetch in flight
       if (apiErr || !data) {
         throw new Error(
           (apiErr as { error?: string } | undefined)?.error ?? 'Failed to load post',
         );
       }
       const post = data as PostForPlaylist;
+      // Commit phase — all-or-nothing swap so the shell never sees
+      // a half-loaded post.
       aux.post = post;
+      state.id = post.id;
       state.title = post.title || 'Untitled';
       state.items = (post.members ?? []).map(
         (m): PlaylistItem => ({
@@ -111,27 +132,39 @@ export function createPostPlaylistSource(postId: string) {
           },
         }),
       );
-      // Default cursor to the cover member if pinned, else 0. Same
-      // policy PostModal used.
+      // Reset cursor on post change — default to the cover member if
+      // pinned, else 0. Same policy PostModal used.
+      state.cursor = 0;
       if (post.cover_asset_id) {
         const idx = state.items.findIndex((it) => it.id === post.cover_asset_id);
         if (idx >= 0) state.cursor = idx;
       }
     } catch (e) {
+      if (gen !== generation) return;
       state.error = e instanceof Error ? e.message : 'Failed to load';
     } finally {
-      state.loading = false;
+      if (gen === generation) state.loading = false;
     }
   }
 
-  // Fire the fetch eagerly. Callers that need to refetch (postId
-  // changes — currently rare; could happen if a future "browse to
-  // next post" affordance lands) re-instantiate the factory.
+  /** Re-target the source at a different post. Triggers a fresh
+   *  fetch but keeps the previous post's items + sidebar data visible
+   *  until the new data arrives — the shell never tears down its
+   *  viewer, so menu bar / dialog chrome stay static. Used by hosts
+   *  that swap posts in-place (browse-feed sibling navigation). */
+  function setPostId(nextPostId: string) {
+    if (nextPostId === currentPostId && state.items.length > 0) return;
+    currentPostId = nextPostId;
+    void load();
+  }
+
+  // Fire the first fetch eagerly.
   void load();
 
   return {
     source: state,
     aux,
     reload: load,
+    setPostId,
   };
 }

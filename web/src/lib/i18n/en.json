@@ -637,7 +637,10 @@
     "recreate_previews": "Recreate previews",
     "download_variant": "Download variant…",
     "share_asset": "Share…",
-    "delete_asset": "Delete asset…"
+    "delete_asset": "Delete asset…",
+    "window_close": "Close (Esc)",
+    "window_maximize": "Maximize",
+    "window_restore": "Restore"
   },
   "collection_picker": {
     "title_single": "Add to collection",
@@ -657,5 +660,21 @@
     "download_all_zip": "Download all as ZIP",
     "bulk_tag": "Tag all",
     "share_playlist": "Share playlist"
+  },
+  "post_menu": {
+    "edit_post": "Edit post…",
+    "delete_post": "Delete post…"
+  },
+  "viewer_hotkeys": {
+    "title": "Shortcuts",
+    "prev_asset": "Prev asset",
+    "next_asset": "Next asset",
+    "prev_post": "Prev post",
+    "next_post": "Next post",
+    "toggle_panel": "Toggle panel",
+    "fullscreen": "Fullscreen",
+    "reset_view": "Reset view",
+    "review": "Toggle review",
+    "close": "Close"
   }
 }

@@ -53,13 +53,29 @@
         embedded viewer can pass anything. When reviewMode flips on
         the pane swaps to the kind-aware tools panel the viewer owns. */
     metadataSlot?: Snippet;
+    /** Centered title bar content. Threaded to ViewerMenuBar to
+        replace the default filename strip in the title bar (post
+        hosts use this for "title — by author"). */
+    titleSlot?: Snippet;
+    /** Bottom-of-right-pane hotkey legend. Rendered outside the
+        metadata scroll area so it stays pinned even when the host's
+        contextSlot is long. Shell-provided because the shell owns
+        the keys it lists (A/D within-playlist, ←/→ sibling-nav). */
+    hotkeyLegend?: Snippet;
+    /** Window-chrome state. When true the host's dialog covers the
+        whole viewport; when false it sits inside the host's chrome.
+        The shell owns the dialog mode — the viewer just renders the
+        restore / maximize icon and fires onToggleMaximize. */
+    maximized?: boolean;
+    onToggleMaximize?: () => void;
     /** Bindable pane open/closed state so the host can persist the
         user's preference in its own localStorage. Default open when
         there's something to show. */
     paneCollapsed?: boolean;
-    /** Optional close handler — when set, the File menu in the
-        toolbar grows a "Close" entry. Hosts that own their own close
-        affordance (the dialog × button) omit this. */
+    /** Optional close handler. When set, ViewerMenuBar shows a close
+        button in the window-controls zone *and* a "Close" entry in
+        the File menu. Hosts that own their own close affordance
+        (a fullscreen non-dialog page, e.g.) omit this. */
     onClose?: () => void;
     /** Optional per-asset action hooks. Each enables the
         corresponding ViewerMenuBar item; without a hook the item
@@ -80,6 +96,10 @@
     active = true,
     reviewMode = $bindable(false),
     metadataSlot,
+    titleSlot,
+    hotkeyLegend,
+    maximized = false,
+    onToggleMaximize,
     paneCollapsed = $bindable(false),
     onClose,
     onAddToCollection,
@@ -423,6 +443,9 @@
     {paneCollapsed}
     {paneEnabled}
     {isFullscreen}
+    {titleSlot}
+    {maximized}
+    {onToggleMaximize}
     onResetView={resetView}
     onToggleFullscreen={toggleFullscreen}
     onTogglePane={togglePane}
@@ -811,6 +834,13 @@
             {@render metadataSlot()}
           {/if}
         </div>
+        <!-- Hotkey legend — pinned footer of the right pane (outside
+             the scroll area) so it stays in view as the user scrolls
+             through metadata. Hidden in review mode where the kind-
+             aware tools have their own labelled hotkeys. -->
+        {#if hotkeyLegend && !reviewMode}
+          {@render hotkeyLegend()}
+        {/if}
       </aside>
     {/if}
   </div><!-- /canvas+pane row -->

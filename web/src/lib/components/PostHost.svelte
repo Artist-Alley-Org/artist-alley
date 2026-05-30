@@ -21,6 +21,7 @@
   import AssetPlaylist from './AssetPlaylist.svelte';
   import CollectionPicker from './CollectionPicker.svelte';
   import CommentsThread from './CommentsThread.svelte';
+  import Menu from './Menu.svelte';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
   import { t } from '$stores/lang.svelte';
 
@@ -28,22 +29,30 @@
     postId: string;
     onClose: () => void;
     standalone?: boolean;
+    /** Optional sibling-post navigator. Wired by the browse-feed
+        overlay (sibling = next/prev post in the current feed page);
+        the standalone /posts/{id} route omits it since there's no
+        sibling context. AssetPlaylist binds ← / → to this. */
+    onNavigateSibling?: (dir: 'prev' | 'next') => void;
   }
 
-  let { postId, onClose, standalone = false }: Props = $props();
+  let { postId, onClose, standalone = false, onNavigateSibling }: Props = $props();
 
   // ── Source ────────────────────────────────────────────────────────
   // The PostPlaylistSource owns the post fetch + member list. The
   // shell binds to `pl.source`; we read `pl.aux.post` to render the
   // social skin.
   //
-  // Re-create when postId changes — currently rare (nothing links
-  // to another post from inside the modal) but keeps the right
-  // semantics if a future "next post" affordance lands.
-  let pl = $state(createPostPlaylistSource(postId));
+  // We keep the same source instance for the host's whole lifetime
+  // and re-target it via setPostId() on postId change. That preserves
+  // the shell's mounted state (AssetViewer, ViewerMenuBar, dialog
+  // chrome) — old post stays on screen until the new data arrives,
+  // then swaps atomically. Browse-feed ←/→ navigation looks "static"
+  // to the user: only the asset / sidebar contents change, not the
+  // surrounding chrome.
+  const pl = createPostPlaylistSource(postId);
   $effect(() => {
-    const id = postId;
-    pl = createPostPlaylistSource(id);
+    pl.setPostId(postId);
   });
 
   // ── Post-specific side state ──────────────────────────────────────
@@ -86,6 +95,17 @@
   const post = $derived(pl.aux.post);
   const currentItem = $derived(pl.source.items[pl.source.cursor] ?? null);
   const currentAssetId = $derived(currentItem?.id ?? null);
+  // Title of the asset under the cursor, trimmed. Empty when there's
+  // no item or the asset has no title set. The title surfaces in both
+  // the top-bar title slot and the sidebar h1's subhead so the user
+  // sees feedback as they navigate ↑/↓ through a multi-asset post.
+  const currentAssetTitle = $derived((currentItem?.asset?.title ?? '').trim());
+  // Whether to surface the asset title as distinct from the post
+  // title — for single-asset posts they're often identical and
+  // duplicating the text just adds noise.
+  const showAssetSubtitle = $derived(
+    currentAssetTitle !== '' && currentAssetTitle !== (post?.title ?? '').trim(),
+  );
   const currentFields = $derived<AssetFieldValue[]>(
     currentAssetId ? (fieldsByAsset.get(currentAssetId) ?? []) : [],
   );
@@ -316,21 +336,28 @@
   function sharePlaylist() {
     stubAction('Share playlist');
   }
+  function editPost() {
+    stubAction('Edit post');
+  }
+  function deletePost() {
+    stubAction('Delete post');
+  }
 </script>
 
 <AssetPlaylist
   source={pl.source}
   {onClose}
   {standalone}
+  {onNavigateSibling}
   contextSlot={postSocialPane}
-  toolbarActions={postBulkActions}
+  titleSlot={postTitleSlot}
   onAddToCollection={openPickerForCurrent}
-  onRecreatePreviews={recreatePreviews}
-  onEditTags={editTags}
-  onEditMetadata={editMetadata}
+  onRecreatePreviews={isOwner ? recreatePreviews : undefined}
+  onEditTags={isOwner ? editTags : undefined}
+  onEditMetadata={isOwner ? editMetadata : undefined}
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
-  onDeleteAsset={deleteAsset}
+  onDeleteAsset={isOwner ? deleteAsset : undefined}
 />
 
 {#if pickerOpen}
@@ -340,68 +367,38 @@
   />
 {/if}
 
-<!-- Per-playlist bulk actions threaded into AssetPlaylist's top
-     toolbar via the toolbarActions snippet slot. "Add all to
-     collection" is real (opens the CollectionPicker in bulk mode);
-     the rest are stubbed with alert() until they land. The buttons
-     exist so the surface is testable + the UX shape is set. -->
-{#snippet postBulkActions()}
-  {#if pl.source.items.length > 0}
-    <button
-      type="button"
-      onclick={openPickerForAll}
-      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-      title={t('playlist_actions.add_all_to_collection')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="17 8 12 3 7 8" />
-        <line x1="12" y1="3" x2="12" y2="15" />
-      </svg>
-      {t('playlist_actions.add_all_to_collection')}
-    </button>
-    <button
-      type="button"
-      onclick={bulkDownloadZip}
-      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-      title={t('playlist_actions.download_all_zip')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="7 10 12 15 17 10" />
-        <line x1="12" y1="15" x2="12" y2="3" />
-      </svg>
-      {t('playlist_actions.download_all_zip')}
-    </button>
-    <button
-      type="button"
-      onclick={bulkTag}
-      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-      title={t('playlist_actions.bulk_tag')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-        <line x1="7" y1="7" x2="7.01" y2="7" />
-      </svg>
-      {t('playlist_actions.bulk_tag')}
-    </button>
-    <button
-      type="button"
-      onclick={sharePlaylist}
-      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-      title={t('playlist_actions.share_playlist')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="18" cy="5" r="3" />
-        <circle cx="6" cy="12" r="3" />
-        <circle cx="18" cy="19" r="3" />
-        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-      </svg>
-      {t('playlist_actions.share_playlist')}
-    </button>
+<!-- Centered title for the viewer's title bar — "<post title> — by
+     <author>". Both pieces truncate independently so a long title on
+     a narrow viewport still leaves room for the author. The author
+     link target follows the same /users/by-username/ route the
+     sidebar header uses. -->
+{#snippet postTitleSlot()}
+  {#if post}
+    <span class="truncate text-sm font-medium text-white/90" title={post.title || t('viewer_menu.untitled')}>
+      {post.title || t('viewer_menu.untitled')}
+    </span>
+    {#if showAssetSubtitle}
+      <!-- Current asset's title — changes as the cursor moves between
+           assets within the post (↑ / ↓). Slash separator instead of
+           middle-dot to read as "post / asset" hierarchy. -->
+      <span class="mx-1.5 text-white/30">/</span>
+      <span class="truncate text-xs text-white/70" title={currentAssetTitle}>
+        {currentAssetTitle}
+      </span>
+    {/if}
+    {#if author}
+      <span class="mx-1.5 text-white/40">·</span>
+      <a
+        href="/users/by-username/{author.username}"
+        class="truncate text-xs text-white/60 hover:text-white/90"
+        title={author.display_name}
+      >
+        {author.display_name}
+      </a>
+    {/if}
   {/if}
 {/snippet}
+
 
 <!-- Post-specific sidebar content. AssetPlaylist threads this through
      into AssetViewer's metadataSlot prop. Closure-captures post +
@@ -409,6 +406,14 @@
      through the playlist. -->
 {#snippet postSocialPane()}
   {#if post}
+    <!-- Sidebar header — avatar + author + 3-dot menu. The menu
+         carries PLAYLIST-LEVEL actions (operate on every asset in the
+         post, or on the post itself). Per-asset actions live in the
+         top toolbar's File/Edit menus where they belong; keeping the
+         two surfaces separated avoids accidentally bulk-editing
+         when the user meant to touch just one asset. Owner-gated
+         items render only when the viewer is the post owner — non-
+         owners see a shorter menu of read-only actions. -->
     <header class="flex items-start gap-3 border-b border-border p-4">
       <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/20 text-sm font-semibold text-accent">
         {#if author?.avatar_url}
@@ -431,13 +436,67 @@
           {#if author}@{author.username} · {author.post_count} post{author.post_count === 1 ? '' : 's'}{/if}
         </p>
       </div>
+      <Menu align="right" panelClass="min-w-[12rem]">
+        {#snippet trigger({ open })}
+          <span
+            class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
+            class:bg-surface-elevated={open}
+            aria-label="Post actions"
+            title="Post actions"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="5" r="1.5" />
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="12" cy="19" r="1.5" />
+            </svg>
+          </span>
+        {/snippet}
+        {#if pl.source.items.length > 0}
+          <button type="button" role="menuitem" onclick={openPickerForAll} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+            {t('playlist_actions.add_all_to_collection')}
+          </button>
+          <button type="button" role="menuitem" onclick={bulkDownloadZip} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+            {t('playlist_actions.download_all_zip')}
+          </button>
+          <button type="button" role="menuitem" onclick={sharePlaylist} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+            {t('playlist_actions.share_playlist')}
+          </button>
+          {#if isOwner}
+            <div class="my-1 h-px bg-border"></div>
+            <button type="button" role="menuitem" onclick={bulkTag} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('playlist_actions.bulk_tag')}
+            </button>
+            <button type="button" role="menuitem" onclick={editPost} class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated">
+              {t('post_menu.edit_post')}
+            </button>
+            <button type="button" role="menuitem" onclick={deletePost} class="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-container">
+              {t('post_menu.delete_post')}
+            </button>
+          {/if}
+        {/if}
+      </Menu>
     </header>
 
     <div class="p-4 text-sm">
       {#if post.title}
-        <h1 id="asset-playlist-title" class="mb-2 text-lg font-semibold text-fg">
+        <h1 id="asset-playlist-title" class="text-lg font-semibold text-fg">
           {post.title}
         </h1>
+      {/if}
+      {#if showAssetSubtitle}
+        <!-- Per-asset subhead — updates as ↑/↓ moves between assets
+             within the post. "Asset N of M" prefix makes the
+             playlist-position cue redundant with the bottom strip's
+             indicator but useful when the strip is collapsed. -->
+        <p class="mb-2 text-sm text-fg-muted" title={currentAssetTitle}>
+          {#if pl.source.items.length > 1}
+            <span class="font-mono text-xs text-fg-muted/70">{pl.source.cursor + 1}/{pl.source.items.length}</span>
+            <span class="mx-1.5 text-fg-muted/40">·</span>
+          {/if}
+          <span class="break-words">{currentAssetTitle}</span>
+        </p>
+      {:else if post.title}
+        <div class="mb-2"></div>
       {/if}
 
       <div class="mb-3 flex flex-wrap gap-1.5">
@@ -456,19 +515,36 @@
       {/if}
 
       {#if currentFields.length > 0}
-        <dl class="mb-4 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 border-t border-border pt-4 text-xs">
-          {#each currentFields as f (f.field_id)}
-            {@const val = formatFieldValue(f)}
-            {#if val}
-              <dt class="truncate text-fg-muted" title={f.field_label || f.field_code}>
-                {f.field_label || f.field_code}
-              </dt>
-              <dd class="min-w-0 break-words text-fg" class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}>
-                {val}
-              </dd>
-            {/if}
-          {/each}
-        </dl>
+        <!-- Per-asset metadata — collapsed by default so the sidebar
+             leads with the social context. Users who want the full
+             field dump click to expand; their open/closed choice
+             persists per-browser via <details>'s name attribute is
+             scoped by Svelte's reactivity, so the OS keeps it the
+             way they left it across reloads of the same key. -->
+        <details class="mb-4 border-t border-border pt-3 text-xs aa-collapse">
+          <summary class="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-fg-muted hover:text-fg">
+            <span class="inline-flex items-center gap-1">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              Metadata
+              <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f) !== '').length})</span>
+            </span>
+          </summary>
+          <dl class="mt-3 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
+            {#each currentFields as f (f.field_id)}
+              {@const val = formatFieldValue(f)}
+              {#if val}
+                <dt class="truncate text-fg-muted" title={f.field_label || f.field_code}>
+                  {f.field_label || f.field_code}
+                </dt>
+                <dd class="min-w-0 break-words text-fg" class:whitespace-pre-wrap={f.type === 'longtext' || f.type === 'rich_text'}>
+                  {val}
+                </dd>
+              {/if}
+            {/each}
+          </dl>
+        </details>
       {/if}
 
       {#if post.tags.length > 0}
@@ -512,30 +588,22 @@
         <span class="ml-auto text-xs text-fg-muted" title={postedAbsolute}>{postedRelative}</span>
       </div>
 
-      {#if isOwner}
-        <div class="mt-4 flex gap-2 border-t border-border pt-4">
-          <button
-            type="button"
-            class="rounded-md border border-border px-3 py-1.5 text-xs text-fg-muted transition-colors hover:border-fg-muted/60 hover:text-fg"
-            disabled
-            title="Editing lands in a later phase"
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            class="rounded-md border border-danger/40 px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger-container"
-            disabled
-            title="Deletion lands in a later phase"
-          >
-            Delete
-          </button>
-        </div>
-      {/if}
-
       <div class="mt-6">
         <CommentsThread postId={post.id} />
       </div>
     </div>
   {/if}
 {/snippet}
+
+<style>
+  /* Collapse-section chevron — points right when closed, rotates 90°
+     down when the parent <details> is open. Plain CSS rather than a
+     Tailwind arbitrary-variant because Tailwind v3 has no built-in
+     `open:` modifier for native <details>. */
+  details.aa-collapse[open] > summary .aa-chevron {
+    transform: rotate(90deg);
+  }
+  details.aa-collapse > summary::-webkit-details-marker {
+    display: none;
+  }
+</style>

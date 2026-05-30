@@ -13,6 +13,7 @@
   // panel toggle the user needs to find when an unfamiliar layout
   // has them confused.
 
+  import type { Snippet } from 'svelte';
   import Menu from '$components/Menu.svelte';
   import { t } from '$stores/lang.svelte';
   import type { ViewAsset, ViewController } from './controller';
@@ -24,13 +25,21 @@
     paneCollapsed: boolean;
     paneEnabled: boolean;
     isFullscreen: boolean;
+    /** Centered title. Overrides the default filename strip — post
+        hosts pass a snippet like "<post title> — by <author>". */
+    titleSlot?: Snippet;
+    /** Window-chrome state — drives the maximize / restore icon. The
+        shell owns the actual dialog mode; the bar just fires the
+        toggle callback. */
+    maximized?: boolean;
+    onToggleMaximize?: () => void;
     onResetView: () => void;
     onToggleFullscreen: () => void;
     onTogglePane: () => void;
     onToggleReview: () => void;
-    /** Optional — when in a modal host that owns its own close button
-        the host can omit this and the File menu drops the "Close"
-        entry. */
+    /** Optional — when set, ViewerMenuBar shows a close button in the
+        window-controls zone (right edge) AND a "Close" entry in the
+        File menu. Hosts that own their own close affordance omit this. */
     onClose?: () => void;
     /** Optional — Edit menu's "Add to collection…" item is enabled
         when the host wires this callback. The host opens its own
@@ -58,6 +67,9 @@
     paneCollapsed,
     paneEnabled,
     isFullscreen,
+    titleSlot,
+    maximized = false,
+    onToggleMaximize,
     onResetView,
     onToggleFullscreen,
     onTogglePane,
@@ -108,6 +120,19 @@
   }
 </script>
 
+<!--
+  Three-zone toolbar — the app-window aesthetic the design brief asks
+  for (macOS / VS Code / Photoshop title-bar shape).
+
+    [ ☰ menus · bulk actions ]   ───   [ title ]   ───   [ controls × ]
+        ↑ left zone                 centered             ↑ right zone
+
+  flex-1 spacers either side of the centered title keep the title
+  optically centred regardless of how much left/right content there is
+  (a long bulk-action row or a missing close button doesn't shift the
+  title off-axis). The center zone truncates with ellipsis so a long
+  post title can't push the right-side controls off-screen.
+-->
 <div
   class="relative z-30 flex h-9 shrink-0 items-center gap-0.5 border-b border-white/10 bg-black/85 px-1 text-xs text-white/90 backdrop-blur"
 >
@@ -300,18 +325,31 @@
     </div>
   </Menu>
 
-  <span class="mx-1 h-4 w-px bg-white/15"></span>
+  <!-- Spacer between left zone and centered title. The left zone is
+       reserved for the *current asset* — File/Edit/About menus that
+       act on whichever asset the cursor is on. Playlist-wide actions
+       (Add all, Download ZIP, etc.) live in the sidebar host menu so
+       the top bar stays single-asset focused. -->
+  <div class="min-w-2 flex-1"></div>
 
-  <!-- Asset info strip. Truncates with ellipsis on narrow viewports so
-       the right-side icons never get pushed off-screen. -->
-  <span class="truncate text-white/80" title={filename()}>{filename()}</span>
-  {#if dimensions}
-    <span class="hidden whitespace-nowrap text-white/50 sm:inline"
-      >· {dimensions}</span
-    >
-  {/if}
+  <!-- Centered title. Hosts pass a snippet (post title + author);
+       fallback is the filename + dimensions strip. Constrained to
+       half the bar so a giant title can't shove the controls. -->
+  <div class="flex min-w-0 max-w-[50%] items-center justify-center px-2 text-center">
+    {#if titleSlot}
+      {@render titleSlot()}
+    {:else}
+      <span class="truncate text-white/80" title={filename()}>{filename()}</span>
+      {#if dimensions}
+        <span class="ml-2 hidden whitespace-nowrap text-white/50 sm:inline"
+          >· {dimensions}</span
+        >
+      {/if}
+    {/if}
+  </div>
 
-  <div class="flex-1"></div>
+  <!-- Spacer between centered title and right zone. -->
+  <div class="min-w-2 flex-1"></div>
 
   <!-- Review-mode toggle. Highlighted background when active so the
        user always knows which mode the right pane is in. -->
@@ -413,6 +451,78 @@
       >
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <line x1="15" y1="3" x2="15" y2="21" />
+      </svg>
+    </button>
+  {/if}
+
+  <!-- Window controls — maximize / restore + close. Mirrors the
+       title-bar idiom of every modern desktop app: rightmost icons
+       are reserved for the window itself, not the document. The
+       maximize icon is two stacked squares when windowed (= "fill")
+       and a single inset square when maximized (= "restore"). -->
+  {#if onToggleMaximize}
+    <button
+      type="button"
+      onclick={onToggleMaximize}
+      class="rounded p-1.5 hover:bg-white/10"
+      title={maximized ? t('viewer_menu.window_restore') : t('viewer_menu.window_maximize')}
+      aria-label={maximized ? t('viewer_menu.window_restore') : t('viewer_menu.window_maximize')}
+    >
+      {#if maximized}
+        <!-- Restore: two overlapping squares (front + offset back). -->
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="8" y="3" width="13" height="13" rx="1" />
+          <path d="M3 8h2v13h13v-2" />
+        </svg>
+      {:else}
+        <!-- Maximize: single square. -->
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="1" />
+        </svg>
+      {/if}
+    </button>
+  {/if}
+  {#if onClose}
+    <button
+      type="button"
+      onclick={onClose}
+      class="rounded p-1.5 hover:bg-danger hover:text-white"
+      title={t('viewer_menu.window_close')}
+      aria-label={t('viewer_menu.window_close')}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
     </button>
   {/if}
