@@ -200,6 +200,7 @@ function noop() { /* default impl */ }
 const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'avif', 'heic', 'heif', 'svg',
+  'hdr', 'exr', 'pic',
 ]);
 const VIDEO_EXTS = new Set([
   'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',

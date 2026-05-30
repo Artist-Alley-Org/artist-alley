@@ -1020,6 +1020,9 @@ var imageExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "webp": {},
 	"bmp": {}, "tiff": {}, "tif": {}, "avif": {}, "heic": {}, "heif": {},
 	"svg": {},
+	// High-dynamic-range — routed through preview.raster's HDR
+	// branch (ffmpeg tonemap → PNG → standard variant ladder).
+	"hdr": {}, "exr": {}, "pic": {},
 }
 
 func isImageExt(ext *string) bool {

@@ -187,8 +187,17 @@ func (h *RasterHandler) loadSourceWithExt(ctx context.Context, hash, ext string)
 		return nil, fmt.Errorf("source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
 	}
 	r := io.LimitReader(rc, h.MaxSourceBytes+1)
-	if strings.EqualFold(strings.TrimPrefix(ext, "."), "svg") {
+	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+	switch e {
+	case "svg":
 		return decodeSVG(r)
+	case "hdr", "exr", "pic":
+		// HDR / EXR / Radiance .pic carry float-per-channel pixel
+		// data — image.Decode doesn't have a stdlib decoder, and
+		// even with one we'd need a tone-map to downscale to the
+		// 8-bit-per-channel range every other variant expects.
+		// ffmpeg handles both in one call: see decodeHDR.
+		return decodeHDR(r, e)
 	}
 	img, _, err := image.Decode(r)
 	if err != nil {
@@ -429,6 +438,7 @@ var rasterExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "bmp": {},
 	"tif": {}, "tiff": {}, "webp": {},
 	"svg": {},
+	"hdr": {}, "exr": {}, "pic": {},
 }
 
 func isRasterExt(ext string) bool {
