@@ -83,6 +83,28 @@ export interface UploadRow {
   fieldValues: Map<string, PendingFieldValue>;
   /** True after the per-asset field values have been written. */
   fieldsWritten: boolean;
+  /**
+   * Companion files (OBJ → MTL + textures, glTF → .bin + textures,
+   * etc.) the user attaches alongside a 3D model upload. Each
+   * companion gets POSTed to /assets/{assetId}/companions after
+   * the main asset row is created. Empty for non-3D uploads.
+   */
+  companions: PendingCompanion[];
+  /** True after all companions have been uploaded. */
+  companionsWritten: boolean;
+}
+
+export interface PendingCompanion {
+  /** Stable id for Svelte each blocks. */
+  readonly id: string;
+  /** The companion's bytes — required. */
+  readonly file: File;
+  /** Relative path the model file references this companion at.
+      Defaults to file.name; user can edit to add subdirectories
+      ('textures/foo.png'). */
+  path: string;
+  state: 'pending' | 'uploading' | 'done' | 'errored';
+  error: string | null;
 }
 
 export type PostMode = 'one-post' | 'one-per-file' | 'no-post';
@@ -231,6 +253,38 @@ class UploadState {
     this.kick();
   }
 
+  // ---- Per-row companion helpers ----------------------------------------
+
+  /** Append companion files to a row. Path defaults to the filename;
+      the user can rename it inline before the row uploads. */
+  addCompanions(rowId: string, files: FileList | File[]): void {
+    const row = this.rows.find((r) => r.id === rowId);
+    if (!row) return;
+    const incoming = Array.from(files);
+    for (const file of incoming) {
+      row.companions.push({
+        id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2),
+        file,
+        path: file.name,
+        state: 'pending',
+        error: null,
+      });
+    }
+  }
+
+  removeCompanion(rowId: string, companionId: string): void {
+    const row = this.rows.find((r) => r.id === rowId);
+    if (!row) return;
+    row.companions = row.companions.filter((c) => c.id !== companionId);
+  }
+
+  setCompanionPath(rowId: string, companionId: string, path: string): void {
+    const row = this.rows.find((r) => r.id === rowId);
+    if (!row) return;
+    const c = row.companions.find((c) => c.id === companionId);
+    if (c) c.path = path;
+  }
+
   // ---- Drag handling (window-level) -------------------------------------
 
   /**
@@ -376,6 +430,8 @@ class UploadState {
         error: null,
         fieldValues: new Map(),
         fieldsWritten: false,
+        companions: [],
+        companionsWritten: false,
       });
     }
     this.rows = [...this.rows, ...additions];
@@ -425,6 +481,15 @@ class UploadState {
         throw new Error(extractError(error) ?? 'Failed to create asset.');
       }
       row.assetId = data.id;
+      // Companions get uploaded immediately so the asset is ready
+      // to render (the preview worker queues on field-value-write
+      // time, and a 3D worker needs its textures staged before
+      // Blender runs). Per-companion failures are non-fatal — the
+      // asset still ends in `ready`; the user can re-add a missing
+      // companion later.
+      if (row.companions.length > 0) {
+        await this.uploadCompanions(row);
+      }
       // Per-asset metadata: the user may keep editing the field
       // values after the row is ready (the disclosure is collapsed
       // by default so most users open it AFTER the upload finishes).
@@ -504,6 +569,46 @@ class UploadState {
 
       xhr.send(row.file);
     });
+  }
+
+  /**
+   * Sequentially upload each pending companion to
+   * POST /assets/{assetId}/companions with the companion's bytes
+   * + X-Companion-Path + X-Content-Type headers. Each companion is
+   * attempted independently — one failure doesn't block the rest
+   * or fail the parent asset (the model just renders without that
+   * texture).
+   */
+  private async uploadCompanions(row: UploadRow): Promise<void> {
+    const aid = row.assetId;
+    if (!aid) return;
+    for (const c of row.companions) {
+      if (c.state === 'done') continue;
+      c.state = 'uploading';
+      c.error = null;
+      try {
+        const ct = c.file.type || 'application/octet-stream';
+        const res = await fetch(`/api/v1/assets/${aid}/companions`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Companion-Path': c.path,
+            'X-Content-Type': ct,
+          },
+          body: c.file,
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || `HTTP ${res.status}`);
+        }
+        c.state = 'done';
+      } catch (e) {
+        c.error = e instanceof Error ? e.message : 'Companion upload failed.';
+        c.state = 'errored';
+      }
+    }
+    row.companionsWritten = true;
   }
 
   /**

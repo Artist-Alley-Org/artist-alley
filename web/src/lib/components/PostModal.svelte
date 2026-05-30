@@ -49,6 +49,9 @@
     title?: string;
     file_hash?: string | null;
     file_extension?: string | null;
+    // Opaque per-asset JSONB. Per-kind view bodies read their own
+    // namespace (AudioView → metadata.audio, PDFView → metadata.pdf).
+    metadata?: Record<string, unknown> | null;
   }
   interface PostMember {
     asset_id: string;

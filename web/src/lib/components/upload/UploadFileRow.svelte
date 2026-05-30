@@ -16,6 +16,37 @@
 
   import type { UploadRow, PendingFieldValue } from '$stores/upload.svelte';
   import { upload, fieldsForResourceType } from '$stores/upload.svelte';
+  import { is3DExt } from '../viewers/controller';
+
+  // True when the row's file is a 3D model — drives the companion
+  // disclosure visibility. Audio / image / etc. don't need a
+  // companion picker.
+  function isModelRow(row: UploadRow): boolean {
+    const ext = row.file.name.split('.').pop() ?? '';
+    return is3DExt(ext);
+  }
+
+  // Companion picker — fires only for 3D rows. Click the (+) to
+  // open the OS file picker; selected files become pending
+  // companions with the bare filename as the default path. The
+  // user can tweak the path before upload to put a texture in a
+  // subdirectory ('textures/foo.png') if the model file references
+  // it that way.
+  let companionInput = $state<HTMLInputElement | null>(null);
+  function openCompanionPicker() { companionInput?.click(); }
+  function onCompanionPick(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      upload.addCompanions(row.id, input.files);
+      input.value = ''; // reset so picking the same file again re-fires
+    }
+  }
+  function onCompanionDrop(e: DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length) {
+      upload.addCompanions(row.id, e.dataTransfer.files);
+    }
+  }
 
   interface Props {
     row: UploadRow;
@@ -390,5 +421,74 @@
         </div>
       {/if}
     </details>
+
+    {#if isModelRow(row)}
+      <!-- Companion files (OBJ → MTL + textures, glTF → .bin +
+           textures, etc). Drag-drop or click-to-add; each pending
+           companion shows its filename + editable relative path
+           that the parent model file will reference at render
+           time. Uploads happen sequentially after the parent asset
+           is created — see uploadCompanions() in the store. -->
+      <details class="-mx-1 border-t border-border pt-2" open={row.companions.length > 0}>
+        <!-- svelte-ignore a11y_no_redundant_roles -->
+        <summary class="cursor-pointer select-none px-1 text-xs text-fg-muted hover:text-fg">
+          Companions{row.companions.length > 0 ? ` (${row.companions.length})` : ''}
+        </summary>
+
+        <div
+          class="mt-2 space-y-2 px-1"
+          ondragover={(e) => { e.preventDefault(); }}
+          ondrop={onCompanionDrop}
+        >
+          <input
+            bind:this={companionInput}
+            type="file"
+            multiple
+            class="hidden"
+            onchange={onCompanionPick}
+          />
+
+          <p class="text-[11px] leading-snug text-fg-muted">
+            Drop MTL, texture (.png / .jpg), glTF .bin, or any
+            sibling files the model references by relative path.
+            Edit each row's path to match what the model file
+            expects (e.g. <code class="font-mono">textures/wood.png</code>).
+          </p>
+
+          {#each row.companions as c (c.id)}
+            <div class="flex items-center gap-2 rounded bg-surface-elevated px-2 py-1.5">
+              <span class="truncate text-xs text-fg-muted" title={c.file.name}>{c.file.name}</span>
+              <input
+                type="text"
+                value={c.path}
+                oninput={(e) => upload.setCompanionPath(row.id, c.id, (e.currentTarget as HTMLInputElement).value)}
+                disabled={c.state === 'uploading' || c.state === 'done'}
+                class="ml-auto w-44 rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-xs focus:border-accent focus:outline-none disabled:opacity-60"
+              />
+              <span class="w-14 text-right text-[10px] uppercase tracking-wider"
+                class:text-fg-muted={c.state === 'pending'}
+                class:text-accent={c.state === 'uploading'}
+                class:text-success={c.state === 'done'}
+                class:text-danger={c.state === 'errored'}
+                title={c.error ?? ''}
+              >{c.state}</span>
+              <button
+                type="button"
+                onclick={() => upload.removeCompanion(row.id, c.id)}
+                disabled={c.state === 'uploading'}
+                class="text-fg-muted hover:text-danger disabled:opacity-40"
+                aria-label="Remove companion"
+              >×</button>
+            </div>
+          {/each}
+
+          <button
+            type="button"
+            onclick={openCompanionPicker}
+            class="text-xs text-accent hover:underline"
+          >+ Add companion files…</button>
+        </div>
+      </details>
+    {/if}
   </div>
 </div>
