@@ -71,7 +71,7 @@ CREATE TABLE assets (
     id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     title              TEXT         NOT NULL DEFAULT '',
     description        TEXT         NOT NULL DEFAULT '',
-    resource_type      BIGINT       NOT NULL REFERENCES resource_type(ref),
+    asset_type      BIGINT       NOT NULL REFERENCES asset_type(ref),
     owner_user_ref     BIGINT       NULL,                     -- nullable so system uploads can exist
     status             TEXT         NOT NULL DEFAULT 'active'
                                     CHECK (status IN ('draft','active','archived')),
@@ -106,7 +106,7 @@ CREATE TABLE assets (
 );
 
 CREATE INDEX assets_owner_idx       ON assets (owner_user_ref) WHERE deleted_at IS NULL;
-CREATE INDEX assets_type_idx        ON assets (resource_type)  WHERE deleted_at IS NULL;
+CREATE INDEX assets_type_idx        ON assets (asset_type)  WHERE deleted_at IS NULL;
 CREATE INDEX assets_status_idx      ON assets (status)         WHERE deleted_at IS NULL;
 CREATE INDEX assets_file_hash_idx   ON assets (file_hash)      WHERE file_hash IS NOT NULL;
 CREATE INDEX assets_created_at_idx  ON assets (created_at DESC) WHERE deleted_at IS NULL;
@@ -213,7 +213,7 @@ lands as a separate Phase later under `scripts/import-rs-resources.go`.
   after.
 - Resource_type as UUID-keyed entity (currently BIGINT FK). Phase
   1.8 keeps the BIGINT FK to avoid a coordinated change; if/when
-  resource_type ports to UUIDs, `assets.resource_type` swaps.
+  asset_type ports to UUIDs, `assets.asset_type` swaps.
 
 ## Open questions
 

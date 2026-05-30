@@ -84,7 +84,7 @@ Writes:
 |---|---|---|---|
 | `field_definition` (by id, by code) | 5000 | none | invalidate on field upsert |
 | `field_set` | 100 | none | invalidate on field_set upsert |
-| `resource_type` | 100 | none | invalidate on resource_type change |
+| `asset_type` | 100 | none | invalidate on asset_type change |
 | `role` (by id, by name) | 500 | none | invalidate on role / role_capabilities change |
 | `user_capabilities` (by user_ref) | 10000 | 5 min | TTL because grants/revokes happen ad-hoc |
 | `asset_by_id` | 50000 | 1 min | hot read; invalidates on asset update |

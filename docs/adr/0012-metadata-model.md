@@ -29,7 +29,7 @@ valve and a `asset_tag` join table. Neither is enough on its own:
   not enough for structured metadata.
 
 ResourceSpace solves this with a heavy three-table model
-(`resource_type_field` + `node` + `resource_node`) that supports
+(`asset_type_field` + `node` + `resource_node`) that supports
 admin-extensible fields, IPTC/EXIF auto-extraction, and full-text
 search — but at the cost of ~70 columns per field definition, every
 field value routing through a generic `node` row (even a 1-line
@@ -72,10 +72,10 @@ CREATE TABLE field_definition (
        --   tree         -> {"values":[{"value":"NA","label":"North America","children":[...]}]}
        --   number       -> {"min":0,"max":100,"step":1}
        --   text         -> {"max_length":255,"pattern":"^[a-z]+$"}
-       --   reference    -> {"asset_filter":{"resource_type":3}}
+       --   reference    -> {"asset_filter":{"asset_type":3}}
     required                    BOOLEAN      NOT NULL DEFAULT FALSE,
     searchable                  BOOLEAN      NOT NULL DEFAULT TRUE,
-    applies_to                  BIGINT[]     NOT NULL DEFAULT '{}',  -- resource_type refs; empty = all
+    applies_to                  BIGINT[]     NOT NULL DEFAULT '{}',  -- asset_type refs; empty = all
     field_set_id                UUID         NULL,                    -- for bundling (export/import)
 
     -- Permissions: capability codes from auth system.

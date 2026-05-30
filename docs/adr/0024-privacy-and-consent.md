@@ -85,7 +85,7 @@ for the actual obligations.
 
 ### Retention policies
 
-- Per-resource-type retention policies set in admin: "auto-archive
+- Per-asset-type retention policies set in admin: "auto-archive
   posts after 24 months of no activity," "delete trash items after
   90 days," etc.
 - Retention is executed by the scheduled-action engine (Phase 1.28).

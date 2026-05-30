@@ -218,14 +218,14 @@ a final-render pipeline runs `draft → qa → published → archived`.
 ```sql
 CREATE TABLE workflow_states (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    resource_type_id    UUID NOT NULL REFERENCES resource_types(id) ON DELETE CASCADE,
+    asset_type_id    UUID NOT NULL REFERENCES asset_types(id) ON DELETE CASCADE,
     code                TEXT NOT NULL,
     label               TEXT NOT NULL,
     sort_order          INTEGER NOT NULL DEFAULT 0,
     is_initial          BOOLEAN NOT NULL DEFAULT FALSE,
     is_terminal         BOOLEAN NOT NULL DEFAULT FALSE,
     visible_by_default  BOOLEAN NOT NULL DEFAULT TRUE,
-    UNIQUE (resource_type_id, code)
+    UNIQUE (asset_type_id, code)
 );
 
 CREATE TABLE workflow_transitions (
@@ -374,14 +374,14 @@ CREATE INDEX post_acls_principal_idx ON post_acls (principal_type, principal_id)
 
 CREATE TABLE workflow_states (
     id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    resource_type_id    UUID         NOT NULL REFERENCES resource_types(id) ON DELETE CASCADE,
+    asset_type_id    UUID         NOT NULL REFERENCES asset_types(id) ON DELETE CASCADE,
     code                TEXT         NOT NULL,
     label               TEXT         NOT NULL,
     sort_order          INTEGER      NOT NULL DEFAULT 0,
     is_initial          BOOLEAN      NOT NULL DEFAULT FALSE,
     is_terminal         BOOLEAN      NOT NULL DEFAULT FALSE,
     visible_by_default  BOOLEAN      NOT NULL DEFAULT TRUE,
-    UNIQUE (resource_type_id, code)
+    UNIQUE (asset_type_id, code)
 );
 
 CREATE TABLE workflow_transitions (
@@ -437,9 +437,9 @@ DELETE /posts/{id}/acls/{principal_type}/{principal_id}/{permission}
 
 GET    /collections/{id}/acls          — same shape
 
-GET    /resource-types/{id}/workflow   — list states + transitions for this type
-POST   /resource-types/{id}/workflow/states
-POST   /resource-types/{id}/workflow/transitions
+GET    /asset-types/{id}/workflow   — list states + transitions for this type
+POST   /asset-types/{id}/workflow/states
+POST   /asset-types/{id}/workflow/transitions
 POST   /posts/{id}/transitions         — { to_state_id, note? }   — fires workflow.Transition
 GET    /posts/{id}/transitions         — audit history
 ```
