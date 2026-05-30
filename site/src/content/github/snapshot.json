@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-29T20:07:57.841Z",
+  "fetchedAt": "2026-05-30T05:36:44.293Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -10,9 +10,9 @@
     "stargazers_count": 0,
     "watchers_count": 0,
     "forks_count": 0,
-    "open_issues_count": 24,
+    "open_issues_count": 34,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-29T19:43:31Z",
+    "pushed_at": "2026-05-30T05:35:29Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -52,6 +52,361 @@
   ],
   "issues": {
     "open": [
+      {
+        "number": 36,
+        "title": "Phase 1.25 — RS migration tool (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/36",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:migration",
+            "color": "5319e7",
+            "description": "Migration tooling (RS importer, future cross-instance migrations)"
+          }
+        ],
+        "created_at": "2026-05-30T05:36:32Z",
+        "updated_at": "2026-05-30T05:36:34Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 35,
+        "title": "1.25.D — Validation + cutover",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/35",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:migration",
+            "color": "5319e7",
+            "description": "Migration tooling (RS importer, future cross-instance migrations)"
+          }
+        ],
+        "created_at": "2026-05-30T05:36:27Z",
+        "updated_at": "2026-05-30T05:36:29Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 34,
+        "title": "1.25.C — Migration engine",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/34",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:backend",
+            "color": "5319e7",
+            "description": "Go backend"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:migration",
+            "color": "5319e7",
+            "description": "Migration tooling (RS importer, future cross-instance migrations)"
+          }
+        ],
+        "created_at": "2026-05-30T05:36:22Z",
+        "updated_at": "2026-05-30T05:36:24Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 33,
+        "title": "1.25.B — Migration wizard (admin UI)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/33",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:frontend",
+            "color": "5319e7",
+            "description": "SvelteKit frontend"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:migration",
+            "color": "5319e7",
+            "description": "Migration tooling (RS importer, future cross-instance migrations)"
+          }
+        ],
+        "created_at": "2026-05-30T05:36:17Z",
+        "updated_at": "2026-05-30T05:36:18Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 32,
+        "title": "1.25.A — RS companion plugin",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/32",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:migration",
+            "color": "5319e7",
+            "description": "Migration tooling (RS importer, future cross-instance migrations)"
+          }
+        ],
+        "created_at": "2026-05-30T05:36:11Z",
+        "updated_at": "2026-05-30T05:36:13Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 31,
+        "title": "1.18.B-18 — Bitmap / format inspector",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/31",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:storage",
+            "color": "5319e7",
+            "description": "Storage layer / file pipeline"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:review",
+            "color": "5319e7",
+            "description": "Review mode / sessions"
+          }
+        ],
+        "created_at": "2026-05-30T03:10:06Z",
+        "updated_at": "2026-05-30T03:10:07Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 30,
+        "title": "1.18.B-17 — Color & palette inspector",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/30",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:review",
+            "color": "5319e7",
+            "description": "Review mode / sessions"
+          }
+        ],
+        "created_at": "2026-05-30T03:10:00Z",
+        "updated_at": "2026-05-30T03:10:02Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 29,
+        "title": "1.18.B-16 — Texture inspector",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/29",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:review",
+            "color": "5319e7",
+            "description": "Review mode / sessions"
+          },
+          {
+            "name": "area:3d",
+            "color": "5319e7",
+            "description": "3D viewer / converters"
+          }
+        ],
+        "created_at": "2026-05-30T03:09:55Z",
+        "updated_at": "2026-05-30T03:09:57Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 28,
+        "title": "1.18.B-15 — Sprite-sheet viewer",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/28",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:review",
+            "color": "5319e7",
+            "description": "Review mode / sessions"
+          },
+          {
+            "name": "area:annotations",
+            "color": "5319e7",
+            "description": "Annotation system"
+          }
+        ],
+        "created_at": "2026-05-30T03:09:49Z",
+        "updated_at": "2026-05-30T03:09:51Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 27,
+        "title": "Licensing & monetization (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/27",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "area:auth",
+            "color": "5319e7",
+            "description": "Auth / permissions / teams"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          }
+        ],
+        "created_at": "2026-05-30T00:45:11Z",
+        "updated_at": "2026-05-30T01:19:16Z",
+        "closed_at": null,
+        "comments": 0
+      },
       {
         "number": 26,
         "title": "Plugin ecosystem",
@@ -400,7 +755,7 @@
           }
         ],
         "created_at": "2026-05-29T19:30:33Z",
-        "updated_at": "2026-05-29T19:57:45Z",
+        "updated_at": "2026-05-30T03:10:11Z",
         "closed_at": null,
         "comments": 0
       },

@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "version": "1",
-  "lastUpdated": "2026-05-28",
+  "lastUpdated": "2026-05-30",
   "intro": "A snapshot of what's shipped, what's in flight, and what's on the map. Subject to change as we learn what teams actually need.",
   "canonicalOrderNote": "This roadmap is the canonical order — the labelled phase tags inside the admin menu (the muted 'Phase 1.X' pills on future tiles) reference these same numbers. When the order changes, this file moves first.",
   "sections": [
@@ -272,6 +272,53 @@
             "Federated peer instances surface annotations + chat back to the origin instance. The job queue's existing `origin_server_id` + the HTTP claim API are the carrier.",
             "Quick-generate PDF summary for offline clients."
           ]
+        },
+        {
+          "id": "1.18.B-15",
+          "title": "Sprite-sheet viewer",
+          "status": "planned",
+          "bullets": [
+            "Auto-slice by uniform grid (rows × cols, configurable cell size) and by edge-detection (find tightest bounding box per visible region) — operator picks the strategy per asset.",
+            "Frame index panel with thumbnails; reorder, name, and group frames into named action sequences (idle / walk / attack).",
+            "Animation timeline + scrubber that plays the slices in order with configurable FPS, ping-pong, hold-frame, and onion-skin between adjacent frames. Reuses the existing video HUD primitives.",
+            "Per-frame metadata stored as anchor-tagged annotations: action name, duration, hitbox region, anchor point. Same anchor model as 1.18.B-6 so the annotation overlay works on sprite slices for free.",
+            "Export individual cels as PNG / WebP, or export the action set as a packed sprite sheet for engine import."
+          ]
+        },
+        {
+          "id": "1.18.B-16",
+          "title": "Texture inspector",
+          "status": "planned",
+          "bullets": [
+            "Channel splitter: view R / G / B / A as separate greyscale views, or as a packed-channel overlay (e.g., R = roughness, G = metallic, B = ambient occlusion — the convention surfaces in the inspector UI so reviewers don't have to guess).",
+            "Linear ↔ sRGB toggle for accurate color-managed review of source textures vs runtime appearance.",
+            "Normal map preview with light-source rotation; tangent-space validation (is this normal map decoded the way you think it is?).",
+            "Mip-chain preview: scroll through pre-computed mip levels at the size they'll appear in-engine. Catch mip-popping problems before ship.",
+            "Alpha channel mode: solid / checkerboard / outline overlay so reviewers can see transparency cleanly.",
+            "File-format awareness: BC1 / BC3 / BC5 / BC7 / ASTC / ETC2 decoders so the inspector shows what the engine actually sees, not just what Photoshop saved."
+          ]
+        },
+        {
+          "id": "1.18.B-17",
+          "title": "Color & palette inspector",
+          "status": "planned",
+          "bullets": [
+            "Eyedropper with hex / RGB / HSL / OKLCH readout; copy to clipboard in any format.",
+            "Dominant-color extraction: top-N palette of any image, with share-of-pixels percentages. Useful for 'does this character match our style palette?' reviews.",
+            "Palette comparison: drop two assets side by side, see their extracted palettes overlaid, with delta-E coverage of every swatch. Catches style drift between artists.",
+            "Save and name reference palettes per workflow / collection; validate any new upload against a reference palette and warn on drift beyond a configurable delta-E threshold."
+          ]
+        },
+        {
+          "id": "1.18.B-18",
+          "title": "Bitmap / format inspector",
+          "status": "planned",
+          "bullets": [
+            "Size diff between source and encoded variants: source PNG vs BC3 vs BC7 vs ASTC, byte-for-byte and as a percentage. Helps optimization reviewers spot regressions.",
+            "Side-by-side encoded preview against the source, with the same A/B wipe primitives from 1.18.B-8 so format compression artifacts surface visually.",
+            "Alpha-on-color delta view: highlight pixels whose alpha or color changed between source and encoded variant, in any user-selectable color. Surfaces premultiply / unpremultiply mistakes immediately.",
+            "Per-format metadata badges: compression type, block size, encoder used, expected runtime cost. Operators know exactly what they're looking at without reading file headers manually."
+          ]
         }
       ],
       "architectureNote": {
@@ -354,6 +401,20 @@
           "phase": "1.23",
           "status": "planned",
           "description": "WASM extension model via Extism. In-tree Go packages until external authors arrive."
+        },
+        {
+          "id": "licensing-monetization",
+          "title": "Licensing & monetization",
+          "phase": "1.24",
+          "status": "planned",
+          "description": "Ed25519-signed `.lic` files with three tiers: Community (15 active seats / 50k assets, free, full features), Pro (50 / 500k, paid, full features), Enterprise (unlimited + SAML/OIDC SSO + audit log export + multi-tenant + federation + HA + priority support). Active-seats counted as `last_active_at` in the trailing 30 days. Enforcement uses tangled value derivation across consumers (search quota, upload concurrency, cache sizing, plugin gating, federation gating) — no single `if valid` gate to strip. Cloudflare Workers for signing (private key in Worker Secrets), customer portal on Cloudflare Pages. Gated on Phase 1.17 (Identity & teams). See ADR 0016 + ADR 0017."
+        },
+        {
+          "id": "rs-migration-tool",
+          "title": "RS migration tool",
+          "phase": "1.25",
+          "status": "planned",
+          "description": "Turnkey path from an existing ResourceSpace install to artist-alley — the largest natural conversion audience. Two halves: a BSD-3-licensed companion PHP plugin installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo) that exposes a read-only HTTP API surfacing RS's schema (resource types, metadata fields, workflow states), the resource catalog with metadata + collections + relationships, the resource_log audit history, the user/group/permission graph, and streams original binaries + preview variants; and an admin-side wizard in artist-alley that connects to it, analyses the source server, offers field-level mapping with auto-suggestion (RS field → AA field by name + type heuristics), and drives the transfer as resumable job-queue work with content-addressed dedup. Sub-phases: 1.25.A RS companion plugin (PHP, distributable via RS plugin manager, bearer-scoped read-only endpoints, per-resource fingerprint for resumability), 1.25.B migration wizard (admin UI for connect / analyze / map / plan preview, plan saved as JSON for review and replay), 1.25.C migration engine (job-queue-backed transfer, license-bounded concurrency consistent with 1.24, dedup against content-addressed storage), 1.25.D validation + cutover (count match, sample hash check, missing-asset report, optional RS read-only lock, URL-rewrite mapping doc for the operator's reverse proxy). Shares the resource-pull plumbing (`origin_server_id`, HTTP claim API) with Phase 1.22 Federation. Gated on Phase 1.16 (Resource types) and Phase 1.17 (Identity & teams)."
         }
       ]
     },
@@ -374,9 +435,9 @@
           "description": "We're a destination for finished and in-progress art, not a Perforce / Shotgrid replacement."
         },
         {
-          "id": "no-saas",
-          "title": "A SaaS product",
-          "description": "Self-hosted by design."
+          "id": "no-hosted-only",
+          "title": "A hosted-only SaaS product",
+          "description": "Self-hostable by design. A managed hosted Pro offering is on the table for indie studios without IT capacity, but the product remains fully self-hostable, and Enterprise customers always self-host."
         }
       ]
     }

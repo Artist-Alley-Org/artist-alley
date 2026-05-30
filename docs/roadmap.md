@@ -228,6 +228,67 @@ whatever anchor the presenter emits to everyone in the room.
   the HTTP claim API are the carrier.
 - Quick-generate PDF summary for offline clients.
 
+### 1.18.B-15 — Sprite-sheet viewer
+- Auto-slice by uniform grid (rows × cols, configurable cell size)
+  and by edge-detection (find tightest bounding box per visible
+  region) — operator picks the strategy per asset.
+- Frame index panel with thumbnails; reorder, name, and group
+  frames into named action sequences (idle / walk / attack).
+- Animation timeline + scrubber that plays the slices in order with
+  configurable FPS, ping-pong, hold-frame, and onion-skin between
+  adjacent frames. Reuses the existing video HUD primitives.
+- Per-frame metadata stored as anchor-tagged annotations: action
+  name, duration, hitbox region, anchor point. Same anchor model
+  as 1.18.B-6 so the annotation overlay works on sprite slices for
+  free.
+- Export individual cels as PNG / WebP, or export the action set
+  as a packed sprite sheet for engine import.
+
+### 1.18.B-16 — Texture inspector
+- Channel splitter: view R / G / B / A as separate greyscale views,
+  or as a packed-channel overlay (e.g., R = roughness, G = metallic,
+  B = ambient occlusion — the convention surfaces in the inspector
+  UI so reviewers don't have to guess).
+- Linear ↔ sRGB toggle for accurate color-managed review of
+  source textures vs runtime appearance.
+- Normal map preview with light-source rotation; tangent-space
+  validation (is this normal map decoded the way you think it is?).
+- Mip-chain preview: scroll through pre-computed mip levels at the
+  size they'll appear in-engine. Catch mip-popping problems before
+  ship.
+- Alpha channel mode: solid / checkerboard / outline overlay so
+  reviewers can see transparency cleanly.
+- File-format awareness: BC1 / BC3 / BC5 / BC7 / ASTC / ETC2
+  decoders so the inspector shows what the engine actually
+  sees, not just what Photoshop saved.
+
+### 1.18.B-17 — Color & palette inspector
+- Eyedropper with hex / RGB / HSL / OKLCH readout; copy to
+  clipboard in any format.
+- Dominant-color extraction: top-N palette of any image, with
+  share-of-pixels percentages. Useful for "does this character
+  match our style palette?" reviews.
+- Palette comparison: drop two assets side by side, see their
+  extracted palettes overlaid, with delta-E coverage of every
+  swatch. Catches style drift between artists.
+- Save and name reference palettes per workflow / collection;
+  validate any new upload against a reference palette and warn on
+  drift beyond a configurable delta-E threshold.
+
+### 1.18.B-18 — Bitmap / format inspector
+- Size diff between source and encoded variants: source PNG vs
+  BC3 vs BC7 vs ASTC, byte-for-byte and as a percentage. Helps
+  optimization reviewers spot regressions.
+- Side-by-side encoded preview against the source, with the same
+  A/B wipe primitives from 1.18.B-8 so format compression artifacts
+  surface visually.
+- Alpha-on-color delta view: highlight pixels whose alpha or color
+  changed between source and encoded variant, in any user-selectable
+  color. Surfaces premultiply / unpremultiply mistakes immediately.
+- Per-format metadata badges: compression type, block size, encoder
+  used, expected runtime cost. Operators know exactly what they're
+  looking at without reading file headers manually.
+
 ## Admin settings — fleshing out every placeholder
 
 The admin shell currently has 13 sections; most have a real surface
@@ -351,6 +412,64 @@ Larger arcs that will land but aren't the current focus:
   forward-compatible.
 - **Plugin ecosystem** (Phase 1.23). WASM extension model via
   Extism. In-tree Go packages until external authors arrive.
+- **Licensing & monetization** (Phase 1.24). Ed25519-signed `.lic`
+  files, three tiers (Community 15 active seats / 50k assets, Pro 50
+  / 500k, Enterprise unlimited + SSO + audit + multi-tenant + HA +
+  priority support). Active-seats defined as `last_active_at` in
+  trailing 30 days. Enforcement via tangled value derivation across
+  consumers (search quota, upload concurrency, cache sizing, plugin
+  gating, federation gating) rather than a single `if valid` gate —
+  resilient to casual stripping without obfuscation or binary blobs.
+  Cloudflare Workers for signing (private key in Worker Secrets);
+  customer portal on Cloudflare Pages. Gated on Phase 1.17 (Identity
+  & teams) because seat counting needs `last_active_at`. See ADR 0016
+  + ADR 0017.
+- **RS migration tool** (Phase 1.25). Turnkey path from an existing
+  ResourceSpace install to artist-alley — the largest natural
+  conversion audience, especially with Pro / Enterprise scale tiers
+  on the table. Two halves: a BSD-3-licensed companion PHP plugin
+  installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo)
+  that exposes a read-only HTTP API, and an admin-side wizard in
+  artist-alley that connects to it, analyses the source server, and
+  drives the transfer. The plugin surfaces RS's schema (resource
+  types, metadata fields, field definitions, workflow states), the
+  resource catalog with metadata + relationships + collections, the
+  resource_log audit history, the user / group / permission graph,
+  and streams original binaries + preview variants on demand. The AA
+  wizard offers field-level mapping with auto-suggestion (RS field →
+  AA field, with name + type heuristics), resource-type and
+  user-group mapping, and a reviewable plan before execution.
+  Sub-phases:
+    - **1.25.A — RS companion plugin.** Single-package PHP plugin
+      distributed via the standard RS plugin manager. Read-only
+      endpoints. Plugin-issued bearer tokens scoped to the
+      migrator's read-paths only. Resumable / incremental — the
+      plugin exposes a per-resource fingerprint (mtime + size +
+      partial hash) so the AA side can skip already-transferred
+      content and resume on failure.
+    - **1.25.B — Migration wizard.** Admin UI in AA: connect-to-RS
+      form, schema analysis, field-mapping table, type / user / group
+      mapping, plan preview with expected counts and total transfer
+      size. Plan is saved as JSON so it can be reviewed, edited,
+      versioned, and replayed.
+    - **1.25.C — Migration engine.** Job queue jobs (reusing 1.18.A
+      infrastructure) for resource transfer, with worker concurrency
+      bounded by license-derived value (consistent with 1.24's
+      tangled enforcement). Resumable per-resource. Progress
+      surfaced live in the wizard. Dedup against AA's
+      content-addressed storage so re-running over the same source
+      is cheap.
+    - **1.25.D — Validation + cutover.** Post-migration verification
+      (counts match, sample hash checks, missing-asset report). Plugin
+      can optionally lock the source RS into read-only mode during
+      the final cutover window. Generated mapping doc for the
+      operator so the URL-rewrite step on their reverse proxy is
+      paint-by-number.
+  Federation (Phase 1.22) and this share most of the resource-pull
+  plumbing — `origin_server_id` on the resource table, the HTTP
+  claim API on the job queue, etc. — so 1.25's engine is partly a
+  warm-up for federation. Gated on Phase 1.16 (Resource types) and
+  Phase 1.17 (Identity & teams) for clean mapping targets.
 
 ## Things we deliberately aren't building
 
@@ -358,7 +477,11 @@ Larger arcs that will land but aren't the current focus:
   art-review workflows.
 - A pipeline integration platform. We're a destination for finished
   and in-progress art, not a Perforce / Shotgrid replacement.
-- A SaaS product. Self-hosted by design.
+- A hosted-only SaaS product. We're self-hosted by design — a
+  managed hosted Pro offering is on the table for indie studios who
+  don't want to run their own infra, but the product remains
+  fully self-hostable, and Enterprise customers self-host
+  exclusively.
 
 ---
 
