@@ -19,8 +19,10 @@
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import AssetPlaylist from './AssetPlaylist.svelte';
+  import CollectionPicker from './CollectionPicker.svelte';
   import CommentsThread from './CommentsThread.svelte';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
+  import { t } from '$stores/lang.svelte';
 
   interface Props {
     postId: string;
@@ -234,6 +236,36 @@
   // to do here at the moment).
   onMount(() => {});
   onDestroy(() => {});
+
+  // ── Collection-picker state ───────────────────────────────────────
+  // pickerAssetIds is the working set the picker operates on. For
+  // single-asset (Edit menu) we set it to [currentAssetId]; for the
+  // bulk action we set it to every item id. Driving both flows from
+  // one state field keeps the modal rendered at most once.
+  let pickerAssetIds = $state<string[]>([]);
+  let pickerOpen = $state(false);
+
+  function openPickerForCurrent(assetId: string) {
+    pickerAssetIds = [assetId];
+    pickerOpen = true;
+  }
+  function openPickerForAll() {
+    pickerAssetIds = pl.source.items.map((it) => it.id);
+    pickerOpen = true;
+  }
+  function closePicker() {
+    pickerOpen = false;
+  }
+
+  // ── Recreate previews ─────────────────────────────────────────────
+  // Stubbed for now — the backend re-enqueue endpoint lands in the
+  // next commit. Wiring the callback here so the Edit-menu item
+  // surfaces enabled; the no-op + console-info is a temporary
+  // placeholder.
+  function recreatePreviews(assetId: string) {
+    // TODO: POST to /assets/{id}/recreate-previews (next commit).
+    console.info('recreatePreviews stub', assetId);
+  }
 </script>
 
 <AssetPlaylist
@@ -241,7 +273,39 @@
   {onClose}
   {standalone}
   contextSlot={postSocialPane}
+  toolbarActions={postBulkActions}
+  onAddToCollection={openPickerForCurrent}
+  onRecreatePreviews={recreatePreviews}
 />
+
+{#if pickerOpen}
+  <CollectionPicker
+    assetIds={pickerAssetIds}
+    onClose={closePicker}
+  />
+{/if}
+
+<!-- Per-playlist bulk actions threaded into AssetPlaylist's top
+     toolbar via the toolbarActions snippet slot. Currently just
+     "Add all to collection"; downstream commits add Download-as-ZIP,
+     Bulk-tag, Save-as-review, etc. -->
+{#snippet postBulkActions()}
+  {#if pl.source.items.length > 0}
+    <button
+      type="button"
+      onclick={openPickerForAll}
+      class="inline-flex items-center gap-1.5 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+      title={t('playlist_actions.add_all_to_collection')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+      {t('playlist_actions.add_all_to_collection')}
+    </button>
+  {/if}
+{/snippet}
 
 <!-- Post-specific sidebar content. AssetPlaylist threads this through
      into AssetViewer's metadataSlot prop. Closure-captures post +

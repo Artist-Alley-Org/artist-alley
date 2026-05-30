@@ -45,9 +45,23 @@
         rather than an overlay over the browse feed. Drives the close
         button affordance — back-arrow vs ×. */
     standalone?: boolean;
+    /** Optional per-asset host hooks threaded into AssetViewer's
+        Edit menu. The host supplies these to wire actions that
+        target the *current* asset (the one the cursor is on) —
+        AddToCollection opens the host's CollectionPicker, etc. */
+    onAddToCollection?: (assetId: string) => void;
+    onRecreatePreviews?: (assetId: string) => void;
   }
 
-  let { source, contextSlot, toolbarActions, onClose, standalone = false }: Props = $props();
+  let {
+    source,
+    contextSlot,
+    toolbarActions,
+    onClose,
+    standalone = false,
+    onAddToCollection,
+    onRecreatePreviews,
+  }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
 
@@ -293,6 +307,12 @@
               bind:reviewMode
               bind:paneCollapsed
               metadataSlot={contextSlot}
+              onAddToCollection={onAddToCollection
+                ? () => onAddToCollection(currentItem.asset.id)
+                : undefined}
+              onRecreatePreviews={onRecreatePreviews
+                ? () => onRecreatePreviews(currentItem.asset.id)
+                : undefined}
             />
           </div>
         {:else}

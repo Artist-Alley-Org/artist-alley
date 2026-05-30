@@ -633,6 +633,23 @@
     "fullscreen_enter": "Fullscreen (F)",
     "fullscreen_exit": "Exit fullscreen (F)",
     "pane_show": "Show panel (I)",
-    "pane_hide": "Hide panel (I)"
+    "pane_hide": "Hide panel (I)",
+    "recreate_previews": "Recreate previews"
+  },
+  "collection_picker": {
+    "title_single": "Add to collection",
+    "title_bulk": "Add {n} assets to collection",
+    "search_placeholder": "Search your collections…",
+    "loading": "Loading collections…",
+    "empty": "You don't have any collections yet. Create one below.",
+    "no_match": "No collections match.",
+    "new_placeholder": "New collection name…",
+    "create_and_add": "Create + add",
+    "creating": "Creating…",
+    "add_failed_all": "Couldn't add to that collection.",
+    "add_failed_partial": "Added {added} of {total}; some failed."
+  },
+  "playlist_actions": {
+    "add_all_to_collection": "Add all to collection"
   }
 }

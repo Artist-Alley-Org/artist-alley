@@ -32,6 +32,15 @@
         the host can omit this and the File menu drops the "Close"
         entry. */
     onClose?: () => void;
+    /** Optional — Edit menu's "Add to collection…" item is enabled
+        when the host wires this callback. The host opens its own
+        CollectionPicker so a single picker component drives both
+        per-asset and per-playlist add flows. */
+    onAddToCollection?: () => void;
+    /** Optional — Edit menu's "Recreate previews" item appears when
+        wired. Triggers the host's re-enqueue logic for the current
+        asset's preview job. */
+    onRecreatePreviews?: () => void;
   }
 
   let {
@@ -46,6 +55,8 @@
     onTogglePane,
     onToggleReview,
     onClose,
+    onAddToCollection,
+    onRecreatePreviews,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -153,15 +164,37 @@
     >
       {t('viewer_menu.edit_metadata')}
     </button>
-    <button
-      type="button"
-      role="menuitem"
-      disabled
-      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-      title={t('viewer_menu.coming_soon')}
-    >
-      {t('viewer_menu.add_to_collection')}
-    </button>
+    {#if onAddToCollection}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onAddToCollection}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.add_to_collection')}
+      </button>
+    {:else}
+      <button
+        type="button"
+        role="menuitem"
+        disabled
+        class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+        title={t('viewer_menu.coming_soon')}
+      >
+        {t('viewer_menu.add_to_collection')}
+      </button>
+    {/if}
+    {#if onRecreatePreviews}
+      <div class="my-1 h-px bg-border"></div>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onRecreatePreviews}
+        class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        {t('viewer_menu.recreate_previews')}
+      </button>
+    {/if}
   </Menu>
 
   <!-- About menu — opens an inline file-info panel inside the dropdown.

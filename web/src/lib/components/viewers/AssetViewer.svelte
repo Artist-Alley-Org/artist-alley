@@ -61,6 +61,15 @@
         toolbar grows a "Close" entry. Hosts that own their own close
         affordance (the dialog × button) omit this. */
     onClose?: () => void;
+    /** Optional — Edit-menu "Add to collection…" callback. When the
+        host wires this the menu item enables; without it stays
+        stubbed. Host typically opens a CollectionPicker for the
+        current asset. */
+    onAddToCollection?: () => void;
+    /** Optional — Edit-menu "Recreate previews" callback. Re-
+        enqueues the appropriate preview.<kind> job for the current
+        asset. */
+    onRecreatePreviews?: () => void;
   }
 
   let {
@@ -70,6 +79,8 @@
     metadataSlot,
     paneCollapsed = $bindable(false),
     onClose,
+    onAddToCollection,
+    onRecreatePreviews,
   }: Props = $props();
 
   // The right pane is shown when there's something to put in it:
@@ -409,6 +420,8 @@
     onTogglePane={togglePane}
     onToggleReview={() => (reviewMode = !reviewMode)}
     {onClose}
+    {onAddToCollection}
+    {onRecreatePreviews}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
