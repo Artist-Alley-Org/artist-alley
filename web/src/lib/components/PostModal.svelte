@@ -542,11 +542,10 @@
     {:else if post}
       <div class="relative flex flex-1 overflow-hidden bg-black">
         {#if currentAssetId && currentMember?.asset?.file_hash}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div
-            class="flex h-full w-full items-center justify-center"
-            ondblclick={enterReview}
-          >
+          <!-- AssetViewer owns the canvas double-click gesture (toggles
+               reviewMode). Wrapping it in another dblclick handler
+               here would fight the toggle by always re-entering. -->
+          <div class="flex h-full w-full items-center justify-center">
             <AssetViewer
               asset={{
                 id: currentAssetId,
@@ -556,7 +555,7 @@
                 metadata: currentMember?.asset?.metadata ?? null,
               }}
               active={true}
-              {reviewMode}
+              bind:reviewMode
               bind:paneCollapsed
               metadataSlot={postMetadataPane}
             />

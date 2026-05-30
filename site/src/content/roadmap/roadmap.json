@@ -222,7 +222,7 @@
         {
           "id": "1.18.B-10",
           "title": "3D viewer (native)",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "`<model-viewer>` for glTF / GLB native — instant load, AR, animations.",
             "three.js loader fallbacks for OBJ (+ .mtl + texture set) and FBX.",
@@ -234,7 +234,7 @@
         {
           "id": "1.18.B-11",
           "title": "3D heavy converters (worker side)",
-          "status": "planned",
+          "status": "in-flight",
           "bullets": [
             "Blender headless → glTF for `.blend`.",
             "FBX2glTF for cached glTF when the source format is heavy.",
@@ -245,7 +245,7 @@
         {
           "id": "1.18.B-12",
           "title": "Audio / SVG / PDF / fonts",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "Audio waveform PNG + scrub.",
             "SVG → rasterized variant set.",

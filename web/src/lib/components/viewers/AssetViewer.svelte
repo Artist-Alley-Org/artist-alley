@@ -128,6 +128,12 @@
     zoom = next;
   }
 
+  // Pending single-click toggle. We delay timeline-kind togglePlay()
+  // by ~220ms so a quick second click resolves as a dblclick (review-
+  // mode toggle) without also flipping play state. 220ms is the
+  // browser-default dblclick interval on most platforms.
+  let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
+
   function onCanvasMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
     // 3D bodies own all drag (orbit). Leave the outer transform alone.
@@ -150,11 +156,13 @@
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
       if (!dragging && controller.hasTimeline) {
-        // Treat a non-drag click on timeline kinds as play/pause.
-        // Static kinds (image, pdf, font) have no play state, so a
-        // bare click does nothing — the double-click handler below
-        // owns the "fit to window" gesture without fighting this.
-        controller.togglePlay();
+        // Defer togglePlay so a follow-up dblclick (review-toggle)
+        // can cancel it. Without this, a double-click on video would
+        // play → pause → review-toggle, flickering the playback.
+        pendingClickTimer = setTimeout(() => {
+          controller.togglePlay();
+          pendingClickTimer = undefined;
+        }, 220);
       }
       setTimeout(() => { dragging = false; }, 0);
     };
@@ -168,15 +176,22 @@
     panY = 0;
   }
 
-  // Double-click on the canvas = fit-to-window (reset zoom + pan).
-  // Cheap "I'm lost, get me back" gesture that mirrors Photoshop's
-  // double-click-the-hand-tool affordance. 3D bodies have their own
-  // frame-all on the tools panel; for 2D this is the only gesture.
+  // Double-click on the canvas = enter / exit review mode. The
+  // gesture is symmetrical with the toolbar's Review button and with
+  // a future keyboard shortcut — same mental model regardless of how
+  // the user triggers it. 3D has its own orbit gesture on
+  // double-click (recenter / dolly-to-fit per OrbitControls), so we
+  // don't fight it.
   function onCanvasDoubleClick(e: MouseEvent) {
     if (kind === '3d') return;
-    if (controller.hasTimeline) return; // timeline kinds reserve dbl-click
+    // Cancel any pending single-click play/pause on timeline kinds
+    // so we don't flip play state right before flipping review mode.
+    if (pendingClickTimer !== undefined) {
+      clearTimeout(pendingClickTimer);
+      pendingClickTimer = undefined;
+    }
     e.preventDefault();
-    resetView();
+    reviewMode = !reviewMode;
   }
 
   // ---- fullscreen --------------------------------------------------------
