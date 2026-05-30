@@ -437,8 +437,14 @@ The phases queued behind the current focus:
   pending-request notification disappears when the request is
   approved), **conditional download terms** that show a per-resource
   terms page based on metadata (NDA acknowledgement, watermark
-  warning, license summary). Chat platforms (Phase 1.30) plug in as
-  one of the delivery channels alongside email / in-app / webhook.
+  warning, license summary), and a **dedicated webhook delivery
+  worker** — outbound webhooks are queued through the existing job
+  system with exponential-backoff retries, per-endpoint signing
+  secrets, delivery-log admin surface for inspection + manual
+  re-send, dead-letter handling after N failures, and a `webhook.*`
+  audit category (Phase 1.40) for every fire / retry / drop. Chat
+  platforms (Phase 1.30) plug in as one of the delivery channels
+  alongside email / in-app / webhook.
 
 ## On the map
 
@@ -469,7 +475,16 @@ Larger arcs that will land but aren't the current focus:
   flagged content, **per-comment hide / restore** with audit trail,
   **activity stream surfaced as a structured comments thread** on
   the post-detail modal (system events become quoted-style entries
-  alongside human comments — the `barts_log_to_comments` pattern).
+  alongside human comments — the `barts_log_to_comments` pattern),
+  **structured support intake** — `/contact` form with
+  categorization (bug / feature / abuse / account help / other) feeds
+  into the same moderation queue with assignment, status tracking,
+  and SLA timers; replaces the loose "email the admin" pattern with
+  a queryable surface, and a **personal activity feed** on the user
+  dashboard surfacing followed posts, recently viewed assets,
+  bookmarks, pending notifications, and the user's own recent
+  uploads + comments — pulled from the audit log (Phase 1.40)
+  filtered to the user's visibility scope.
 - **Federation** (Phase 1.22). Peer servers, inbound + outbound
   feeds, sync status, conflict resolution. The data model already
   carries `origin_server_id` so today's single-instance code is

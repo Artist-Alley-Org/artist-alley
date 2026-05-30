@@ -368,7 +368,7 @@
           "title": "Integrations",
           "phase": "1.18",
           "status": "planned",
-          "description": "Real LDAP / SAML / OAuth login flows, OAuth applications surface, outbound webhooks, notification rules + delivery channels. Extended for RS feature parity: email template engine + send queue with operator-editable templates, timezone-aware delivery (digest at 8 AM in the recipient's TZ), event-scoped notifications that link to a triggering record and auto-resolve when it resolves, conditional download terms (per-resource terms page based on metadata). Chat platforms (Phase 1.30) plug in as one of the delivery channels."
+          "description": "Real LDAP / SAML / OAuth login flows, OAuth applications surface, outbound webhooks, notification rules + delivery channels. Extended for RS feature parity: email template engine + send queue with operator-editable templates, timezone-aware delivery (digest at 8 AM in the recipient's TZ), event-scoped notifications that link to a triggering record and auto-resolve when it resolves, conditional download terms (per-resource terms page based on metadata), and a dedicated webhook delivery worker — outbound webhooks are queued through the existing job system with exponential-backoff retries, per-endpoint signing secrets, delivery-log admin surface for inspection + manual re-send, dead-letter handling after N failures, and a `webhook.*` audit category (Phase 1.40). Chat platforms (Phase 1.30) plug in as one of the delivery channels."
         }
       ]
     },
@@ -397,7 +397,7 @@
           "title": "Community & moderation",
           "phase": "1.21",
           "status": "planned",
-          "description": "Reports queue, comment moderation, banned users / IPs, anonymous browse policy, rate limits, bookmarks. Extended for RS feature parity: comment flagging with reason tracking, email escalation to admins on flagged content, per-comment hide / restore with audit trail, activity stream surfaced as a structured comments thread (`barts_log_to_comments` pattern)."
+          "description": "Reports queue, comment moderation, banned users / IPs, anonymous browse policy, rate limits, bookmarks. Extended for RS feature parity: comment flagging with reason tracking, email escalation to admins on flagged content, per-comment hide / restore with audit trail, activity stream surfaced as a structured comments thread (`barts_log_to_comments` pattern), structured support intake — `/contact` form with categorization (bug / feature / abuse / account help / other) feeds into the same moderation queue with assignment, status tracking, and SLA timers; replaces the loose `email the admin` pattern with a queryable surface, and a personal activity feed on the user dashboard surfacing followed posts, recently viewed assets, bookmarks, pending notifications, and the user's own recent uploads + comments — pulled from the audit log (Phase 1.40) filtered to the user's visibility scope."
         },
         {
           "id": "federation",
