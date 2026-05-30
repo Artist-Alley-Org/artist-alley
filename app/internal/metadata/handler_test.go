@@ -547,6 +547,9 @@ func (metaShim) DownloadAssetVariant(context.Context, openapi.DownloadAssetVaria
 func (metaShim) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from metadata test shim")
 }
+func (metaShim) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from metadata test shim")
+}
 func (metaShim) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from metadata test shim")
 }

@@ -186,6 +186,10 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 	return s.assets.AddAssetTags(ctx, req)
 }
 
+func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	return s.assets.RecreateAssetPreview(ctx, req)
+}
+
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
 }

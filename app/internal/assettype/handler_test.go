@@ -189,6 +189,9 @@ func (rtOnly) DownloadAssetVariant(context.Context, openapi.DownloadAssetVariant
 func (rtOnly) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from assettype test shim")
 }
+func (rtOnly) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from assettype test shim")
+}
 func (rtOnly) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from assettype test shim")
 }

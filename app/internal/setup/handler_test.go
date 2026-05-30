@@ -417,6 +417,9 @@ func (shimImpl) DownloadAssetVariant(context.Context, openapi.DownloadAssetVaria
 func (shimImpl) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from setup test shim")
 }
+func (shimImpl) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from setup test shim")
+}
 func (shimImpl) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from setup test shim")
 }

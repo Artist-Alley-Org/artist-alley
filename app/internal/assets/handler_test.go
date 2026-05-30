@@ -464,6 +464,9 @@ func (s shimImpl) DownloadAssetVariant(ctx context.Context, req openapi.Download
 func (s shimImpl) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	return s.assets.AddAssetTags(ctx, req)
 }
+func (s shimImpl) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from assets test shim")
+}
 func (s shimImpl) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
 }

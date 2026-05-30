@@ -480,6 +480,9 @@ func (a authOnlyImpl) DownloadAssetVariant(_ context.Context, _ openapi.Download
 func (a authOnlyImpl) AddAssetTags(_ context.Context, _ openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from auth test shim")
 }
+func (a authOnlyImpl) RecreateAssetPreview(_ context.Context, _ openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from auth test shim")
+}
 func (a authOnlyImpl) RemoveAssetTag(_ context.Context, _ openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from auth test shim")
 }

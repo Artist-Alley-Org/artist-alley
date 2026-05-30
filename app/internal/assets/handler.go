@@ -779,6 +779,64 @@ func (h *Handler) DownloadAssetVariant(
 // Tag management
 // ---------------------------------------------------------------------------
 
+// RecreateAssetPreview re-enqueues this asset's preview job at
+// PriorityHigh. Used by the AssetViewer's Edit-menu "Recreate
+// previews" item, and by the preview-pipeline ops surface when a
+// worker bug-fix lands and the user wants existing renders
+// regenerated against the new code.
+//
+// The worker's idempotency-skip logic (variant exists → skip)
+// usually short-circuits a no-op re-enqueue; explicit per-worker
+// flags (isoDone in preview.3d, etc.) decide whether the
+// re-render actually writes new bytes. Failure to enqueue is loud:
+// the caller gets a 500 rather than a silent no-op.
+func (h *Handler) RecreateAssetPreview(
+	ctx context.Context,
+	req openapi.RecreateAssetPreviewRequestObject,
+) (openapi.RecreateAssetPreviewResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.RecreateAssetPreview401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if h.Jobs == nil {
+		// Test contexts that don't wire a Jobs service get a clean
+		// 500 rather than a nil-deref panic.
+		return nil, fmt.Errorf("assets: jobs service not configured")
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := New(h.Pool).GetAsset(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RecreateAssetPreview404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: get for recreate: %w", err)
+	}
+	if row.FileHash == nil || *row.FileHash == "" {
+		return openapi.RecreateAssetPreview400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "asset has no file_hash; nothing to preview"},
+		}, nil
+	}
+
+	jobType := jobTypeForExt(row.FileExtension)
+	payload := map[string]string{
+		"asset_id":       req.Id.String(),
+		"file_hash":      *row.FileHash,
+		"file_extension": strDefault(row.FileExtension, ""),
+	}
+	priority := jobs.PriorityHigh
+	jobID, err := h.Jobs.Enqueue(ctx, jobType, payload, jobs.EnqueueOpts{Priority: &priority})
+	if err != nil {
+		return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+	}
+	return openapi.RecreateAssetPreview202JSONResponse{
+		JobId:   openapi_types.UUID(jobID),
+		JobType: string(jobType),
+	}, nil
+}
+
 func (h *Handler) AddAssetTags(
 	ctx context.Context,
 	req openapi.AddAssetTagsRequestObject,

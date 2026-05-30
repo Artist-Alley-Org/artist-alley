@@ -995,6 +995,55 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: recreateAssetPreview
+      summary: Re-enqueue this asset's preview job
+      description: |
+        Inserts a fresh job of the preview kind that matches the
+        asset's file extension (preview.raster / preview.video /
+        preview.3d / preview.audio / preview.pdf / preview.font /
+        preview.ebook / preview.eps / preview.psd / preview.comic /
+        preview.text) at PriorityHigh. The worker picks it up within
+        a tick and overwrites the existing variants when its
+        idempotency-skip logic doesn't bail.
+
+        Useful after attaching new companions (so a 3D model can
+        re-render with its textures) or after a worker bug-fix
+        landed and the user wants the existing rendered output
+        regenerated against the new code.
+
+        Returns the freshly-enqueued job id so callers can poll
+        /jobs/{id}/status if they want a progress UI.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "202":
+          description: Job enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, job_type]
+                properties:
+                  job_id:   { type: string, format: uuid }
+                  job_type: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/tags/{tag}:
     parameters:
       - name: id

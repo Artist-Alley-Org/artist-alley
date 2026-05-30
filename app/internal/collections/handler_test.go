@@ -539,6 +539,9 @@ func (collShim) DownloadAssetVariant(context.Context, openapi.DownloadAssetVaria
 func (collShim) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from collections test shim")
 }
+func (collShim) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from collections test shim")
+}
 func (collShim) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from collections test shim")
 }
