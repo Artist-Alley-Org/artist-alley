@@ -1,8 +1,26 @@
-# ADR 0021: External platform integrations — Vimeo, YouTube, Adobe CC, bidirectional
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0021"
+title: External platform integrations — Vimeo, YouTube, Adobe CC, bidirectional
+status: accepted
+date: 2026-05-30
+area: extensibility
+phases: 
+  - "1.22"
+  - "1.29"
+  - "1.30"
+supersedes: []
+related: 
+  - "0017"
+  - "0022"
+tags:
+  - extensibility
+  - ai
+  - infrastructure
+  - auth
+  - 3d
+excerpt: >-
+  Earlier framing dismissed platform integrations as "platform lock-in" and proposed federation as the substitute. That framing was wrong for the actual use case. Studios need to:
+---
 ## Context
 
 Earlier framing dismissed platform integrations as "platform lock-in"

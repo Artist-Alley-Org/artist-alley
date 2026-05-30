@@ -1,8 +1,30 @@
-# ADR 0032: Audit log & change tracking — unified event log
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0032"
+title: Audit log & change tracking — unified event log
+status: accepted
+date: 2026-05-30
+area: security
+phases: 
+  - "1.17"
+  - "1.21"
+  - "1.28"
+  - "1.40"
+  - "1.41"
+supersedes: []
+related: 
+  - "0017"
+  - "0020"
+  - "0024"
+  - "0033"
+tags:
+  - security
+  - ai
+  - infrastructure
+  - commerce
+  - 3d
+excerpt: >-
+  The audit-trail story has accreted across the roadmap. Phases 1.17, 1.20, 1.21, 1.24, 1.26, 1.27, 1.28, and 1.32 each carry an audit hook — table-level diffs, share-link fetches, sensitivity reveals, license events, bulk-op selection IDs, retention tombstones. There is even an…
+---
 ## Context
 
 The audit-trail story has accreted across the roadmap. Phases 1.17,

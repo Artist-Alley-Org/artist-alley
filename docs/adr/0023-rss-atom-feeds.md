@@ -1,8 +1,22 @@
-# ADR 0023: RSS / Atom feeds — pull-style content syndication
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0023"
+title: RSS / Atom feeds — pull-style content syndication
+status: accepted
+date: 2026-05-30
+area: architecture
+phases: 
+  - "1.12"
+  - "1.18"
+  - "1.31"
+supersedes: []
+related: []
+tags:
+  - architecture
+  - ai
+  - 3d
+excerpt: >-
+  A reviewer / coordinator wants to know when new content matching a saved search lands. Push notifications (email, Slack, in-app) cover *now-active* notifications, but RSS/Atom is the format that lets people:
+---
 ## Context
 
 A reviewer / coordinator wants to know when new content matching a

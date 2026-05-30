@@ -69,9 +69,10 @@ it; the script's `argparse` only sees what follows.
 
 ### Camera framing
 
-The script borrows the iterative-NDC-fit pattern from the
-`thumbnails_renderer` codebase rather than the naive
-`distance = maxDim * 2.2` heuristic:
+The script uses an iterative-NDC fit rather than the naive
+`distance = maxDim * 2.2` heuristic. The latter is wrong for any
+non-cube model; the iterative approach handles tiny, huge, and
+lop-sided geometry consistently:
 
 1. Compute world-space bounding box across every mesh in the scene.
 2. Derive an **initial distance** from the camera's actual FOV
@@ -89,8 +90,8 @@ manual tuning per asset.
 
 Orbital frames use a **pivot pattern** — the camera is parented to an
 empty at the bbox center; rotating the pivot's Z swings the camera
-through the turntable arc. This avoids a subtle Euler-rotation bug
-that left the FOV-math first pass with empty frames.
+through the turntable arc. This avoids a class of Euler-rotation
+edge cases that direct FOV math hits with extreme aspect ratios.
 
 Top + bottom views unparent the camera transiently so it can sit
 directly above / below the model along world Z.

@@ -1,8 +1,24 @@
-# ADR 0019: Bulk operations — multi-select, batch edit, exports, contact sheets
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0019"
+title: Bulk operations — multi-select, batch edit, exports, contact sheets
+status: accepted
+date: 2026-05-30
+area: ux
+phases: 
+  - "1.12"
+  - "1.18.A"
+  - "1.26"
+  - "1.27"
+supersedes: []
+related: 
+  - "0017"
+tags:
+  - ux
+  - ai
+  - 3d
+excerpt: >-
+  Game studios manage 10k–500k+ assets. The current Artist Alley post detail flow assumes you act on one post or one asset at a time. RS ships deep bulk-operation surfaces: multi-select edit, batch tag, batch delete, multi-row metadata import via CSV, configurable CSV export of…
+---
 ## Context
 
 Game studios manage 10k–500k+ assets. The current Artist Alley post

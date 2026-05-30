@@ -1,8 +1,22 @@
-# ADR 0012: Metadata model — admin-extensible fields, audit history, federation-ready
-
-- Date: 2026-05-26
-- Status: Accepted
-
+---
+id: "0012"
+title: Metadata model — admin-extensible fields, audit history, federation-ready
+status: accepted
+date: 2026-05-26
+area: architecture
+phases: 
+  - "1.9"
+supersedes: []
+related: 
+  - "0011"
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  ADR 0011 ships assets.metadata jsonb as an extensibility safety valve and a asset_tag join table. Neither is enough on its own:
+---
 ## Context
 
 ADR 0011 ships `assets.metadata jsonb` as an extensibility safety
@@ -297,7 +311,7 @@ GET    /assets/{id}/fields/{field_id}/history  — audit trail
 
 ## Open questions
 
-- Whether asset edit endpoints (PATCH /assets/{id}) should also
+- Whether asset edit endpoints (`PATCH /assets/{id}`) should also
   accept inline `field_values` in the body, or always require the
   explicit `/assets/{id}/fields/{field_id}` PUT. Convenience vs.
   consistency; default to convenient + delegate to the field PUT

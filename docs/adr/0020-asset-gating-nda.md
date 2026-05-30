@@ -1,8 +1,23 @@
-# ADR 0020: Asset gating & NDA workflow — pre-release blur, scheduled actions
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0020"
+title: Asset gating & NDA workflow — pre-release blur, scheduled actions
+status: accepted
+date: 2026-05-30
+area: security
+phases: 
+  - "1.17"
+  - "1.18.A"
+  - "1.27"
+  - "1.28"
+supersedes: []
+related: []
+tags:
+  - security
+  - ai
+  - infrastructure
+excerpt: >-
+  Game studios constantly handle pre-announcement material that must NOT be visible outside a small approved audience until a marketing date. The patterns are universal:
+---
 ## Context
 
 Game studios constantly handle pre-announcement material that must NOT

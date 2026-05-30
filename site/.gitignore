@@ -6,9 +6,14 @@ dist/
 node_modules/
 
 # Build-time generated content (re-created by prebuild scripts)
-src/content/docs/adr/
+# Only the auto-generated NNNN-*.mdx ADRs are ignored; the hand-authored
+# index.mdx (catalogue landing) and ADR data JSONs are tracked.
+src/content/docs/adr/[0-9]*.mdx
+src/content/docs/adr/[0-9]*.md
 src/content/docs/reference/schema.mdx
 src/content/docs/roadmap.mdx
+src/data/adrs.json
+src/data/phases.json
 public/openapi.yaml
 # NOTE: src/content/github/snapshot.json is intentionally TRACKED.
 # The scheduled GH Actions workflow (.github/workflows/site-github-snapshot.yml)

@@ -1,8 +1,27 @@
-# ADR 0030: Operator-configurable ad slots — feed, sidebar, footer
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0030"
+title: Operator-configurable ad slots — feed, sidebar, footer
+status: accepted
+date: 2026-05-30
+area: monetization
+phases: 
+  - "1.23"
+  - "1.32"
+  - "1.38"
+supersedes: []
+related: 
+  - "0017"
+  - "0024"
+tags:
+  - monetization
+  - ai
+  - infrastructure
+  - auth
+  - commerce
+  - 3d
+excerpt: >-
+  Some operators will host Artist Alley as a public-facing community surface (fan sites, festival hubs, indie collectives, art-school portfolios) where ad-supported hosting is a sensible cost model. Other operators (AAA studios) will never run ads internally. Both should be serv…
+---
 ## Context
 
 Some operators will host Artist Alley as a public-facing community

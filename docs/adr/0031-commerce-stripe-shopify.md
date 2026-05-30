@@ -1,8 +1,33 @@
-# ADR 0031: Commerce — sell assets via Stripe + Shopify
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0031"
+title: Commerce — sell assets via Stripe + Shopify
+status: accepted
+date: 2026-05-30
+area: monetization
+phases: 
+  - "1.22"
+  - "1.26"
+  - "1.28"
+  - "1.32"
+  - "1.38"
+  - "1.39"
+supersedes: []
+related: 
+  - "0017"
+  - "0018"
+  - "0020"
+  - "0024"
+  - "0030"
+tags:
+  - monetization
+  - ai
+  - infrastructure
+  - auth
+  - commerce
+  - 3d
+excerpt: >-
+  Operators running public-facing or semi-public Artist Alley instances want to sell their own content: digital downloads (concept-art packs, asset bundles, print-resolution files, retired game assets, soundtrack stems), print-on-demand merchandise, physical originals from archi…
+---
 ## Context
 
 Operators running public-facing or semi-public Artist Alley instances

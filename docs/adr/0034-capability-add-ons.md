@@ -1,8 +1,31 @@
-# ADR 0034: Capability add-ons — out-of-band heavy components
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0034"
+title: Capability add-ons — out-of-band heavy components
+status: accepted
+date: 2026-05-30
+area: extensibility
+phases: 
+  - "1.18.A"
+  - "1.40"
+  - "1.41"
+  - "1.42"
+supersedes: []
+related: 
+  - "0016"
+  - "0017"
+  - "0021"
+  - "0026"
+  - "0033"
+tags:
+  - extensibility
+  - ai
+  - infrastructure
+  - auth
+  - commerce
+  - 3d
+excerpt: >-
+  The Go binary should stay small and audit-able in an afternoon. The moment we bake CLIP weights (300 MB), Whisper models (200 MB → 3 GB depending on flavour), Stable Diffusion / Flux / ComfyUI runtimes (multi-GB), or Tesseract trained data (200 MB / language) into the single-b…
+---
 ## Context
 
 The Go binary should stay **small and audit-able in an afternoon**. The
@@ -14,11 +37,10 @@ every studio install with hardware demands their workflow doesn't ask
 for. AAA studios picking the binary up for review-only use shouldn't
 have to download 5 GB of ML weights they won't run.
 
-ResourceSpace ships every feature as either in-tree or as a PHP plugin
-under `plugins/`. The plugin pattern (`pluginname.yaml` manifest +
-activate / deactivate / purge lifecycle, `include/plugin_functions.php`
-:17) is the right shape for *behaviour*. It is the wrong shape for
-*weights / containers / runtimes* — those are artefacts, not source.
+The classic CMS plugin pattern (YAML manifest + activate / deactivate
+/ purge lifecycle for in-process code) is the right shape for
+*behaviour*. It is the wrong shape for *weights / containers /
+runtimes* — those are artefacts, not source.
 
 Artist Alley already has the seed of the answer: the Blender worker
 runs as a separate Docker container behind an opt-in compose profile
@@ -65,8 +87,9 @@ first-party integrations (in-process Go) and third-party plugins
 
 ### Manifest format
 
-A YAML manifest per add-on. Borrows from RS's `pluginname.yaml`
-(`include/plugin_functions.php:108`) plus add-on-specific fields:
+A YAML manifest per add-on. The shape captures identity, the artifact
+to download, the capability slot it satisfies, declared resource
+requirements, the hosting mode, and a typed configuration schema:
 
 ```yaml
 # add-on: ai-clip
@@ -306,5 +329,3 @@ We log a warning and proceed.
 - ADR 0021 / 0022 / 0026 / 0030 / 0031 — existing provider
   abstractions that become formal capability slots.
 - ADR 0033 — observability metrics surface under `addon_` prefix.
-- RS `include/plugin_functions.php` — manifest + lifecycle
-  reference pattern (in-process plugins, not heavy artefacts).

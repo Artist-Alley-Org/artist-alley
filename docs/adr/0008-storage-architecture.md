@@ -1,8 +1,22 @@
-# ADR 0008: Storage architecture — content-addressed, pluggable backends
-
-- Date: 2026-05-24
-- Status: Accepted
-
+---
+id: "0008"
+title: Storage architecture — content-addressed, pluggable backends
+status: accepted
+date: 2026-05-24
+area: infrastructure
+phases: 
+  - "1.4"
+  - "1.4.E"
+supersedes: []
+related: 
+  - "0007"
+tags:
+  - infrastructure
+  - ai
+  - 3d
+excerpt: >-
+  artist-alley needs to store and serve game-art binaries: still images, multi-gigabyte videos, 3D models, audio, document previews, and any derived renditions (thumbnails, HLS segments, decimated 3D LODs). The Phase 1.4 work depends on getting this layer right; every later feat…
+---
 ## Context
 
 artist-alley needs to store and serve game-art binaries: still images,

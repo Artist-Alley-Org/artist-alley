@@ -1,8 +1,22 @@
-# ADR 0027: Featured collections — nested curation, access-scoped homepage
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0027"
+title: Featured collections — nested curation, access-scoped homepage
+status: accepted
+date: 2026-05-30
+area: ux
+phases: 
+  - "1.21"
+  - "1.35"
+supersedes: []
+related: 
+  - "0020"
+tags:
+  - ux
+  - ai
+  - 3d
+excerpt: >-
+  The current homepage and account dashboards show "recent uploads" / "unreviewed" / "team feed" as flat lists. RS supports nested featured collection trees as the front-page curation primitive — "Concept Art > Characters > 2026 Pitches > Hero Shots" — with each node having its…
+---
 ## Context
 
 The current homepage and account dashboards show "recent uploads" /

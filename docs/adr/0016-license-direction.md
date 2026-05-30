@@ -1,8 +1,25 @@
-# ADR 0016: License direction — toward AGPL + commercial dual-license
-
-- Date: 2026-05-29
-- Status: Accepted — **supersedes ADR 0002**
-
+---
+id: "0016"
+title: License direction — toward AGPL + commercial dual-license
+status: accepted
+date: 2026-05-29
+area: licensing
+phases: 
+  - "1.23"
+supersedes: 
+  - "0002"
+related: 
+  - "0002"
+  - "0011"
+  - "0017"
+  - "0018"
+tags:
+  - licensing
+  - ai
+  - 3d
+excerpt: >-
+  ADR 0002 placed the project under BSD-3-Clause on the explicit premise that "we have no monetization intent for artist-alley itself." That premise no longer holds.
+---
 ## Context
 
 ADR 0002 placed the project under BSD-3-Clause on the explicit premise that

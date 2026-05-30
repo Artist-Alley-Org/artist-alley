@@ -1,8 +1,22 @@
-# ADR 0014: Frontend stack — SvelteKit, Tailwind, embedded in the Go binary
-
-- Date: 2026-05-25
-- Status: Accepted
-
+---
+id: "0014"
+title: Frontend stack — SvelteKit, Tailwind, embedded in the Go binary
+status: accepted
+date: 2026-05-25
+area: ux
+phases: 
+  - "1.11"
+supersedes: []
+related: 
+  - "0003"
+  - "0015"
+tags:
+  - ux
+  - ai
+  - 3d
+excerpt: >-
+  Phases 1.1–1.11 built the Go backend with RS PHP as the temporary frontend (strangler-fig per ADR 0003). The plan was that RS would render against our Postgres + Go API until each feature got its own native UI.
+---
 ## Context
 
 Phases 1.1–1.11 built the Go backend with RS PHP as the temporary

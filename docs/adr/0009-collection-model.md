@@ -1,8 +1,24 @@
-# ADR 0009: Collection model — three-axis primitives, query-or-manual membership, per-row TTL
-
-- Date: 2026-05-25
-- Status: Accepted
-
+---
+id: "0009"
+title: Collection model — three-axis primitives, query-or-manual membership, per-row TTL
+status: accepted
+date: 2026-05-25
+area: architecture
+phases: 
+  - "1.8"
+supersedes: []
+related: 
+  - "0007"
+  - "0010"
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - commerce
+  - 3d
+excerpt: >-
+  ResourceSpace ships a collection system that has accreted features over fifteen years and now presents users with at least six visible "types" — Personal, Public, Featured, Smart, Request, Upload — plus a parallel structure for "featured categories" (a curator-maintained tree)…
+---
 ## Context
 
 ResourceSpace ships a collection system that has accreted features

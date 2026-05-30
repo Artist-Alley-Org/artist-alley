@@ -1,8 +1,24 @@
-# ADR 0010: Permissions, teams, and workflow states
-
-- Date: 2026-05-26
-- Status: Proposed
-
+---
+id: "0010"
+title: Permissions, teams, and workflow states
+status: proposed
+date: 2026-05-26
+area: architecture
+phases: 
+  - "1.3"
+  - "1.7.B"
+  - "1.13.D-2b"
+  - "1.13.D-3"
+supersedes: []
+related: []
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  The authorization model laid down in migration 00002_capabilities_roles.sql (Phase 1.3) gave us three of the seven layers a real production permissions system needs:
+---
 ## Context
 
 The authorization model laid down in migration `00002_capabilities_roles.sql`

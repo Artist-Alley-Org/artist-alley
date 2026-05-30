@@ -1,10 +1,28 @@
-# ADR 0005: Postgres-only, no MySQL
-
-- Date: 2026-05-23
-- Status: Accepted
-- Supersedes the dual-database stance in ADR 0003 and the "adjunct"
-  framing in ADR 0004 (which is now retired as Superseded).
-
+---
+id: "0005"
+title: Postgres-only, no MySQL
+status: superseded
+date: 2026-05-23
+area: infrastructure
+phases: 
+  - "0.5.A"
+  - "0.5.B"
+  - "0.5.C"
+  - "0.5.D"
+  - "0.5.E"
+supersedes: []
+related: 
+  - "0001"
+  - "0003"
+  - "0004"
+tags:
+  - infrastructure
+  - ai
+  - auth
+  - 3d
+excerpt: >-
+  Phase 0 brought up two databases: MySQL (for forked ResourceSpace) and Postgres + pgvector (for new-feature data). The original rationale was that RS is mysqli-only and migrating to Postgres would be a "3-6 month multi-thousand-call-site rewrite."
+---
 ## Context
 
 Phase 0 brought up two databases: MySQL (for forked ResourceSpace) and

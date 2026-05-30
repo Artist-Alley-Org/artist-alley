@@ -1,8 +1,23 @@
-# ADR 0029: Announcements home widget — operator-authored news + system events
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0029"
+title: Announcements home widget — operator-authored news + system events
+status: accepted
+date: 2026-05-30
+area: ux
+phases: 
+  - "1.30"
+  - "1.37"
+supersedes: []
+related: 
+  - "0022"
+tags:
+  - ux
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  RS ships a news plugin that puts an operator-authored news strip on the homepage. The audit (2026-05-30) initially marked this as low- priority. User locked it in 2026-05-30.
+---
 ## Context
 
 RS ships a `news` plugin that puts an operator-authored news strip on

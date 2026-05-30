@@ -1,8 +1,27 @@
-# ADR 0011: Asset entity — UUID-keyed, fork-not-port from RS's resource
-
-- Date: 2026-05-25
-- Status: Accepted
-
+---
+id: "0011"
+title: Asset entity — UUID-keyed, fork-not-port from RS's resource
+status: accepted
+date: 2026-05-25
+area: architecture
+phases: 
+  - "1.4"
+  - "1.4.D"
+  - "1.8"
+supersedes: []
+related: 
+  - "0007"
+  - "0008"
+  - "0009"
+  - "0010"
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  artist-alley's storage layer (ADR 0008, implemented in Phase 1.4) sits below the user-facing entity. storage_objects deduplicates byte streams by sha256; storage_variants records renditions; storage_pins reference-counts ownership. None of these are the *thing a user uploads,…
+---
 ## Context
 
 artist-alley's storage layer (ADR 0008, implemented in Phase 1.4)

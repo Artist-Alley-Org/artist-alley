@@ -1,8 +1,27 @@
-# ADR 0024: Privacy & consent management — cookie banner, DSAR, retention
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0024"
+title: Privacy & consent management — cookie banner, DSAR, retention
+status: accepted
+date: 2026-05-30
+area: security
+phases: 
+  - "1.17"
+  - "1.21"
+  - "1.26"
+  - "1.28"
+  - "1.32"
+supersedes: []
+related: 
+  - "0017"
+  - "0020"
+tags:
+  - security
+  - ai
+  - auth
+  - 3d
+excerpt: >-
+  A studio running Artist Alley as a self-hosted internal tool has minimal end-user-facing privacy obligations — the operating-system account map covers most. But the moment any of these is true, real GDPR / CCPA / LGPD considerations land:
+---
 ## Context
 
 A studio running Artist Alley as a self-hosted internal tool has

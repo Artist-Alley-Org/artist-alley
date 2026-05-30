@@ -1,8 +1,24 @@
-# ADR 0028: PBR 3D viewer polish — IBL controls, material inspector
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0028"
+title: PBR 3D viewer polish — IBL controls, material inspector
+status: accepted
+date: 2026-05-30
+area: ux
+phases: 
+  - "1.18.B-10"
+  - "1.18.B-16"
+  - "1.18.B-8"
+  - "1.36"
+supersedes: []
+related: 
+  - "0017"
+tags:
+  - ux
+  - ai
+  - 3d
+excerpt: >-
+  Phase 1.18.B-10 shipped the native 3D viewer (glTF / GLB / OBJ / FBX / Marmoset .mview, camera presets, IBL lighting, turntable poster, wireframe / UV inspect). The barts_marmoset_viewer reference and internal studio review processes both want a deeper PBR inspection layer: re…
+---
 ## Context
 
 Phase 1.18.B-10 shipped the native 3D viewer (glTF / GLB / OBJ / FBX /

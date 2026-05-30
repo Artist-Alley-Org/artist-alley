@@ -1,8 +1,25 @@
-# ADR 0026: AI creative editing — in-paint, out-paint, variations
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0026"
+title: AI creative editing — in-paint, out-paint, variations
+status: accepted
+date: 2026-05-30
+area: extensibility
+phases: 
+  - "1.20"
+  - "1.22"
+  - "1.23"
+  - "1.34"
+supersedes: []
+related: 
+  - "0017"
+tags:
+  - extensibility
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  The openai_image_edit RS plugin demonstrates the DALL-E erase + regenerate pattern. Game studios use this for marketing asset prep (remove background, regenerate a logo placement, generate variations for A / B testing), concept-art ideation (mask part of a sketch and regenerat…
+---
 ## Context
 
 The `openai_image_edit` RS plugin demonstrates the DALL-E erase +

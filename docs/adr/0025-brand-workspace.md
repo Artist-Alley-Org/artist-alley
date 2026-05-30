@@ -1,8 +1,22 @@
-# ADR 0025: Brand workspace — design tokens + brand kits + guidelines portal
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0025"
+title: Brand workspace — design tokens + brand kits + guidelines portal
+status: accepted
+date: 2026-05-30
+area: architecture
+phases: 
+  - "1.18"
+  - "1.33"
+supersedes: []
+related: 
+  - "0024"
+tags:
+  - architecture
+  - ai
+  - 3d
+excerpt: >-
+  Game studios with a marketing / brand org maintain brand guidelines — logos, color tokens, font stacks, voice rules, do / don't examples, usage permissions, license states. Today, this lives in PDFs / Figma / Confluence and goes stale within a sprint. ResourceSpace's brand_gui…
+---
 ## Context
 
 Game studios with a marketing / brand org maintain brand guidelines —

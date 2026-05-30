@@ -1,8 +1,25 @@
-# ADR 0022: Chat platform integrations — Slack first, abstracted
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0022"
+title: Chat platform integrations — Slack first, abstracted
+status: accepted
+date: 2026-05-30
+area: extensibility
+phases: 
+  - "1.18"
+  - "1.30"
+supersedes: []
+related: 
+  - "0017"
+  - "0021"
+tags:
+  - extensibility
+  - ai
+  - infrastructure
+  - auth
+  - 3d
+excerpt: >-
+  Studios live in Slack (most), Microsoft Teams (some), and Discord (indies + community-facing studios). Notifications from Artist Alley need to flow into those channels — review-request announcements, upload notifications, approval state changes, sensitivity-tier transitions, s…
+---
 ## Context
 
 Studios live in Slack (most), Microsoft Teams (some), and Discord

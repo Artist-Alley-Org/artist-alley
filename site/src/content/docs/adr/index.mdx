@@ -1,0 +1,51 @@
+---
+title: Architecture Decisions
+description: >-
+  The Artist Alley ADR catalogue — every decision, its status, the roadmap
+  phases it informs, and how it connects to the rest of the project.
+slug: adr
+template: doc
+tableOfContents: false
+sidebar:
+  order: 0
+  label: All ADRs (catalogue)
+---
+
+import AdrIndex from "../../../components/AdrIndex.astro";
+
+Architecture Decision Records (ADRs) capture **why** Artist Alley is shaped
+the way it is. Each entry is a short document with a status, a date, the area
+it touches, the roadmap phases it informs, and the other ADRs it interacts
+with. The full convention lives in
+[ADR 0035](/adr/0035-adr-conventions/).
+
+## How to read this catalogue
+
+- **Status** tells you whether a decision is in effect (`accepted`), still in
+  discussion (`proposed`), retired (`superseded` / `deprecated`), or drafted
+  but not adopted (`rejected`). Superseded ADRs stay listed as historical
+  record — open them to see what the current replacement is.
+- **Area** groups decisions by where they bite — architecture, security,
+  licensing, monetization, process, ux, ops, infrastructure, extensibility.
+- **Phases** are the roadmap phases the decision informs. Clicking a phase
+  chip jumps to the matching section on the [roadmap](/roadmap/).
+- The **search box** matches IDs, titles, excerpts, and tags. Facets stack
+  intersectively — picking _Status: accepted_ + _Area: ux_ shows only
+  accepted UX decisions.
+
+<AdrIndex />
+
+## Contributing a new ADR
+
+1. Copy an existing ADR file in `docs/adr/` as a template and claim the next
+   four-digit number.
+2. Fill in the [frontmatter schema](/adr/0035-adr-conventions/#frontmatter-schema)
+   — `id`, `title`, `status`, `date`, `area`, and `excerpt` are required.
+3. Follow the [section structure](/adr/0035-adr-conventions/#section-structure):
+   Context → Decision → Consequences → Alternatives considered, plus
+   optional Implementation and References.
+4. Reference roadmap phases by their exact ID (e.g. `1.42`, `1.18.B-3`) and
+   related ADRs by their four-digit ID. The site build validates every
+   cross-reference and fails on a typo.
+5. The docs site picks up the new ADR automatically on next build via
+   `site/scripts/sync-adrs.mjs`.

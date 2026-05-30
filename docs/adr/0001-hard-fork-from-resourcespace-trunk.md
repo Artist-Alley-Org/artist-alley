@@ -1,8 +1,20 @@
-# ADR 0001: Hard fork from ResourceSpace trunk @ r28830
-
-- Date: 2026-05-23
-- Status: Accepted
-
+---
+id: "0001"
+title: Hard fork from ResourceSpace trunk @ r28830
+status: accepted
+date: 2026-05-23
+area: process
+phases: []
+supersedes: []
+related: 
+  - "0003"
+tags:
+  - process
+  - ai
+  - 3d
+excerpt: >-
+  artist-alley is a self-hosted art review and archival tool for game studios. ResourceSpace (RS) is a 20-year-old open-source DAM that already solves most of the asset-management substrate we need: permissions, resource types, metadata fields, preview pipelines, plugin architec…
+---
 ## Context
 
 artist-alley is a self-hosted art review and archival tool for game studios.

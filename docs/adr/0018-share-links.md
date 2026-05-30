@@ -1,8 +1,23 @@
-# ADR 0018: Share links — signed, expiring resource + collection URLs
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0018"
+title: Share links — signed, expiring resource + collection URLs
+status: accepted
+date: 2026-05-30
+area: architecture
+phases: 
+  - "1.18.B-14"
+  - "1.26"
+supersedes: []
+related: 
+  - "0017"
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  Game studios collaborate with people who do not have accounts on their Artist Alley instance: contractors, freelancers, publishers, IP owners, QA partners, agencies, festival juries, press embargoes. The post-detail permission model (capability + team membership) does not solv…
+---
 ## Context
 
 Game studios collaborate with people who do not have accounts on their

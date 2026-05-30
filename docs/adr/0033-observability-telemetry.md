@@ -1,8 +1,26 @@
-# ADR 0033: Observability & operator telemetry — metrics, traces, log shipping
-
-- Date: 2026-05-30
-- Status: Accepted
-
+---
+id: "0033"
+title: Observability & operator telemetry — metrics, traces, log shipping
+status: accepted
+date: 2026-05-30
+area: ops
+phases: 
+  - "1.21"
+  - "1.23"
+  - "1.40"
+  - "1.41"
+supersedes: []
+related: 
+  - "0017"
+  - "0032"
+tags:
+  - ops
+  - ai
+  - infrastructure
+  - 3d
+excerpt: >-
+  Self-hosted ops teams cannot run a production service blind. The current Artist Alley setup ships /healthz and /readyz, structured JSON logs to stdout, and not much else. Operators need to:
+---
 ## Context
 
 Self-hosted ops teams cannot run a production service blind. The
