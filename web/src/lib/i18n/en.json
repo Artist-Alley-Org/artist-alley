@@ -607,5 +607,32 @@
   },
   "errors": {
     "save_failed": "Couldn't save changes."
+  },
+  "viewer_menu": {
+    "file": "File",
+    "edit": "Edit",
+    "about": "About",
+    "download_original": "Download original",
+    "copy_link": "Copy link",
+    "open_in_new_tab": "Open in new tab",
+    "close": "Close",
+    "edit_tags": "Edit tags…",
+    "edit_metadata": "Edit metadata…",
+    "add_to_collection": "Add to collection…",
+    "coming_soon": "Coming soon",
+    "about_type": "Type",
+    "about_dimensions": "Dimensions",
+    "about_frames": "Frames",
+    "about_fps": "FPS",
+    "about_sha256": "SHA256",
+    "untitled": "Untitled",
+    "review": "Review",
+    "review_enter": "Enter review mode (or double-click asset)",
+    "review_exit": "Exit review mode (or double-click asset)",
+    "reset_view": "Reset view (R)",
+    "fullscreen_enter": "Fullscreen (F)",
+    "fullscreen_exit": "Exit fullscreen (F)",
+    "pane_show": "Show panel (I)",
+    "pane_hide": "Hide panel (I)"
   }
 }

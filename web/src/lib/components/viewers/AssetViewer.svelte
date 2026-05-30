@@ -19,6 +19,7 @@
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
+  import ViewerMenuBar from './ViewerMenuBar.svelte';
 
   // Native + three-loader 3D paths we ship today. Other 3D
   // extensions (mview, blend, mb, ma, max, usd*) fall through to
@@ -56,14 +57,19 @@
         user's preference in its own localStorage. Default open when
         there's something to show. */
     paneCollapsed?: boolean;
+    /** Optional close handler — when set, the File menu in the
+        toolbar grows a "Close" entry. Hosts that own their own close
+        affordance (the dialog × button) omit this. */
+    onClose?: () => void;
   }
 
   let {
     asset,
     active = true,
-    reviewMode = false,
+    reviewMode = $bindable(false),
     metadataSlot,
     paneCollapsed = $bindable(false),
+    onClose,
   }: Props = $props();
 
   // The right pane is shown when there's something to put in it:
@@ -347,11 +353,36 @@
 </script>
 
 <div bind:this={containerEl} class="flex h-full w-full flex-col bg-black text-white">
+  <!-- Top toolbar — File / Edit / About menus + asset info strip +
+       Review toggle + reset/fullscreen/pane quick-actions. Replaces
+       the old floating top-right button column (which overlaid the
+       asset and had no home for non-icon actions). -->
+  <ViewerMenuBar
+    {asset}
+    {controller}
+    {reviewMode}
+    {paneCollapsed}
+    {paneEnabled}
+    {isFullscreen}
+    onResetView={resetView}
+    onToggleFullscreen={toggleFullscreen}
+    onTogglePane={togglePane}
+    onToggleReview={() => (reviewMode = !reviewMode)}
+    {onClose}
+  />
+
+  <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
+       canvas's width rather than overlaying part of it — otherwise the
+       asset visually drifts off-center every time the user opens the
+       pane. Width-animated slide-in keeps the smooth transition the
+       overlay version had. -->
+  <div class="flex min-h-0 flex-1">
+
   <!-- Canvas (pan + zoom transform wraps the view body) -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     bind:this={canvasEl}
-    class="relative flex-1 overflow-hidden bg-black"
+    class="relative min-w-0 flex-1 overflow-hidden bg-black"
     class:cursor-grabbing={dragging}
     class:cursor-grab={!dragging && zoom > 1}
     onwheel={onCanvasWheel}
@@ -387,47 +418,41 @@
       {/key}
     </div>
 
-    <!-- HUD: anchor display + extra metadata. Shifts left when the
-         right pane is open so the pane doesn't cover it. -->
-    <div
-      class="pointer-events-none absolute top-3 rounded bg-black/70 px-2 py-1 font-mono text-xs transition-[right] duration-200"
-      class:right-3={!paneOpen}
-      class:right-[25rem]={paneOpen}
-    >
-      {#if controller.hasTimeline}
-        {controller.formatAnchor(controller.currentFrame)} · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
-      {/if}
-      {#if controller.hudExtra}
-        {controller.hasTimeline ? ' · ' : ''}{controller.hudExtra}
-      {/if}
-      {#if zoom !== 1}
-        {(controller.hasTimeline || controller.hudExtra) ? ' · ' : ''}{Math.round(zoom * 100)}%
-      {/if}
-    </div>
-
-    <!-- Top-right buttons. Same shift as the HUD so the pane doesn't
-         cover them when open. -->
-    <div
-      class="absolute top-12 flex flex-col gap-2 transition-[right] duration-200"
-      class:right-3={!paneOpen}
-      class:right-[25rem]={paneOpen}
-    >
-      {#if controller.hasTimeline}
-        <button type="button" onclick={() => (goToOpen = !goToOpen)} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" title="Jump to frame (G)" aria-label="Jump to frame">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
-        </button>
-      {/if}
-      <button type="button" onclick={resetView} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" class:opacity-40={zoom === 1 && panX === 0 && panY === 0} title="Reset view (R)" aria-label="Reset view">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
-      </button>
-      <button type="button" onclick={toggleFullscreen} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Fullscreen">
-        {#if isFullscreen}
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
-        {:else}
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V3h4" /><path d="M21 7V3h-4" /><path d="M3 17v4h4" /><path d="M21 17v4h-4" /></svg>
+    <!-- HUD: live frame counter / zoom %. The static asset info
+         (filename, dimensions, codec) is in the toolbar above; the
+         HUD here only shows values that change as the user
+         interacts — frame position on timeline kinds, zoom % when
+         it's not 100%. Bottom-left so it doesn't fight the toolbar
+         or the pane. -->
+    {#if controller.hasTimeline || zoom !== 1}
+      <div
+        class="pointer-events-none absolute bottom-3 left-3 rounded bg-black/70 px-2 py-1 font-mono text-xs"
+      >
+        {#if controller.hasTimeline}
+          {controller.formatAnchor(controller.currentFrame)} · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
         {/if}
+        {#if zoom !== 1}
+          {controller.hasTimeline ? ' · ' : ''}{Math.round(zoom * 100)}%
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Jump-to-frame quick-action — only visible on timeline kinds.
+         Floated top-right of the canvas (under the toolbar). Reset
+         and fullscreen used to live here too; they moved into the
+         toolbar's quick-action group. -->
+    {#if controller.hasTimeline}
+      <button
+        type="button"
+        onclick={() => (goToOpen = !goToOpen)}
+        class="absolute top-3 right-3 rounded bg-black/70 p-1.5 text-xs hover:bg-black/90"
+        class:right-[25rem]={paneOpen}
+        title="Jump to frame (G)"
+        aria-label="Jump to frame"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
       </button>
-    </div>
+    {/if}
 
     <!-- Jump-to-frame input -->
     {#if goToOpen}
@@ -453,16 +478,35 @@
          annotations land on content, not letterboxing. -->
     <div class="pointer-events-none absolute inset-0 z-20" data-role="annotation-layer"></div>
 
-    <!-- Right pane: overlay (not a flex sibling) so the asset
-         underneath cycles independently when the host swaps assets,
-         while the pane stays put. Content swaps on reviewMode: tools
-         in review, host's metadataSlot otherwise. Slide in/out via
-         translate-x — keeps the asset full-width visually when closed
-         and gives a nice transition either way. -->
+    {#if paneEnabled && paneCollapsed}
+      <!-- Re-open tab on the right edge so the user can recover the
+           pane after collapsing it. Lives inside the canvas (not the
+           aside) because the aside collapses to width=0. -->
+      <button
+        type="button"
+        onclick={togglePane}
+        class="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-md bg-black/60 px-2 py-3 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+        aria-label="Show panel"
+        title="Show panel (i)"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+    {/if}
+  </div><!-- /canvas -->
+
+    <!-- Right pane: flex sibling of the canvas so opening it shrinks
+         the canvas (asset stays centred in the visible region rather
+         than drifting behind an overlay). Width-animates between
+         w-96 (open) and w-0 (collapsed) for the same smooth slide the
+         old translate-based overlay gave us. -->
     {#if paneEnabled}
       <aside
-        class="absolute right-0 top-0 bottom-0 z-30 flex w-96 max-w-[40vw] flex-col border-l border-border bg-surface text-fg shadow-2xl transition-transform duration-200 ease-out"
-        class:translate-x-full={paneCollapsed}
+        class="flex max-w-[40vw] shrink-0 flex-col overflow-hidden border-l border-border bg-surface text-fg shadow-2xl transition-[width] duration-200 ease-out"
+        class:w-96={!paneCollapsed}
+        class:w-0={paneCollapsed}
+        class:border-l-0={paneCollapsed}
         aria-label={reviewMode ? 'Review tools' : 'Asset details'}
       >
         <header class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
@@ -677,24 +721,8 @@
           {/if}
         </div>
       </aside>
-
-      {#if paneCollapsed}
-        <!-- Re-open tab on the right edge so the user can recover the
-             pane after collapsing it. -->
-        <button
-          type="button"
-          onclick={togglePane}
-          class="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-md bg-black/60 px-2 py-3 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-          aria-label="Show panel"
-          title="Show panel (i)"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m15 18-6-6 6-6" />
-          </svg>
-        </button>
-      {/if}
     {/if}
-  </div>
+  </div><!-- /canvas+pane row -->
 
   <!-- Transport rail (only when the body has a timeline) -->
   {#if controller.hasTimeline}
