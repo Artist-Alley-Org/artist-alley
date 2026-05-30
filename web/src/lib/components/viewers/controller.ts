@@ -223,7 +223,7 @@ const MODEL_EXTS = new Set([
   'glb', 'gltf', 'obj', 'fbx', 'blend', 'mview',
   'dae', 'ply', 'stl', '3ds', 'x3d', 'wrl',
   'usd', 'usda', 'usdc', 'usdz', 'abc',
-  'md2', 'md3', 'mdl',
+  'md2', 'md3', 'mdl', 'ms3d',
   'mb', 'ma', 'max',
 ]);
 

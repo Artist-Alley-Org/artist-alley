@@ -113,7 +113,7 @@ var modelExts = map[string]struct{}{
 	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
 	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
 	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
-	"md2": {}, "md3": {}, "mdl": {},
+	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
 }
 
 // format3dExts is the set of formats served by the in-tree
@@ -122,9 +122,10 @@ var modelExts = map[string]struct{}{
 // dance .mview already does. Keep in sync with the per-format
 // Decode* funcs in the format3d package.
 var format3dExts = map[string]format3dDecoder{
-	"md2": format3d.DecodeMD2,
-	"md3": format3d.DecodeMD3,
-	"mdl": format3d.DecodeMDL,
+	"md2":  format3d.DecodeMD2,
+	"md3":  format3d.DecodeMD3,
+	"mdl":  format3d.DecodeMDL,
+	"ms3d": format3d.DecodeMS3D,
 }
 
 type format3dDecoder func(io.Reader) (*format3d.Model, error)
