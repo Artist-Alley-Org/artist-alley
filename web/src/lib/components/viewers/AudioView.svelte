@@ -20,13 +20,8 @@
     tags?: Record<string, string>;
   }
 
-  interface Asset {
-    id: string;
-    title: string;
-    file_hash?: string | null;
-    file_extension?: string | null;
-    metadata?: { audio?: AudioMetadata } | null;
-  }
+  // Shared with AssetViewer + every other ViewBody via controller.ts.
+  type Asset = import('./controller').ViewAsset;
 
   let { asset, controller = $bindable<ViewController>() }: {
     asset: Asset;
@@ -35,13 +30,15 @@
 
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
   const waveUrl = $derived(`/api/v1/assets/${asset.id}/variants/screen`);
-  const meta = $derived<AudioMetadata>(asset.metadata?.audio ?? {});
+  const meta = $derived<AudioMetadata>(
+    ((asset.metadata as Record<string, unknown> | null | undefined)?.audio as AudioMetadata | undefined) ?? {},
+  );
 
   // Per-track display strings, picked from the common tag keys both
   // ID3 (uppercase ARTIST/TITLE) and Vorbis (lowercase artist/title)
   // funnel into via probeMetadata().
   const tags = $derived(meta.tags ?? {});
-  const displayTitle = $derived(tags.title ?? asset.title);
+  const displayTitle = $derived(tags.title ?? asset.title ?? '(untitled)');
   const displayArtist = $derived(tags.artist ?? tags.album_artist ?? '');
   const displayAlbum = $derived(tags.album ?? '');
   const displayYear = $derived(tags.date ?? tags.year ?? '');

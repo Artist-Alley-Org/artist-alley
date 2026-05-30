@@ -13,11 +13,7 @@
   import type { ViewController, ViewKind } from './controller';
   import { kindForExtension } from './controller';
 
-  interface Asset {
-    id: string;
-    title?: string | null;
-    file_extension?: string | null;
-  }
+  type Asset = import('./controller').ViewAsset;
 
   interface Props {
     asset: Asset;

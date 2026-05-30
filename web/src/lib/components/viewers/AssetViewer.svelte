@@ -25,15 +25,9 @@
   // instead of the three.js stack.
   const SUPPORTED_3D = new Set(['glb', 'gltf', 'fbx', 'obj', 'mview']);
 
-  interface Asset {
-    id: string;
-    title?: string | null;
-    file_extension?: string | null;
-    file_hash?: string | null;
-    // Opaque per-asset JSONB. Per-kind view bodies dig into their
-    // own namespace (e.g. AudioView reads metadata.audio).
-    metadata?: Record<string, unknown> | null;
-  }
+  // Shared shape lives in controller.ts so every view body sees
+  // the exact same Asset and TS can prop-bind without drift.
+  type Asset = import('./controller').ViewAsset;
 
   interface Props {
     asset: Asset;

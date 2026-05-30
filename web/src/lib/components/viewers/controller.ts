@@ -28,6 +28,29 @@ export type ViewKind =
   | '3d'
   | 'placeholder';
 
+// ViewAsset is the trimmed asset shape every view body accepts as
+// its `asset` prop. Hoisted here so AssetViewer + each per-kind
+// body reference one canonical type — historically each viewer
+// declared its own local `Asset` interface, which made TypeScript
+// reject the prop binding with "Type 'Asset' is not assignable to
+// type 'Asset'. Two different types with this name exist" whenever
+// one of them drifted (the host adding `metadata`, an AudioView
+// adding narrower tag types, etc).
+//
+// Keep this shape loose — view bodies that need richer per-kind
+// metadata read it out of `metadata` (a JSONB blob the backend
+// stamps via preview workers) under their own namespace, e.g.
+// AudioView reads asset.metadata?.audio.
+export interface ViewAsset {
+  id: string;
+  title?: string | null;
+  file_extension?: string | null;
+  file_hash?: string | null;
+  /** Asset-level JSONB. Per-kind view bodies read their own
+      namespaced keys (audio, pdf, font, video, etc). */
+  metadata?: Record<string, unknown> | null;
+}
+
 // Per-kind review tools the shell renders in its right pane. Each
 // group is optional — view bodies populate only what they support
 // (ModelView fills the 3D set, ImageView could later fill a

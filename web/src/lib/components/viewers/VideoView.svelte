@@ -13,11 +13,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { ViewController } from './controller';
 
-  interface Asset {
-    id: string;
-    title?: string | null;
-    file_extension?: string | null;
-  }
+  type Asset = import('./controller').ViewAsset;
 
   interface Props {
     asset: Asset;
