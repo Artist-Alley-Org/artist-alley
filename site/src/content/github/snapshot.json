@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-30T08:17:39.352Z",
+  "fetchedAt": "2026-05-30T08:30:40.011Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -12,7 +12,7 @@
     "forks_count": 0,
     "open_issues_count": 49,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-30T08:09:25Z",
+    "pushed_at": "2026-05-30T08:28:37Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -1923,18 +1923,370 @@
   },
   "commits": [
     {
+      "sha": "806406273473aab19142fe6ab45367f7a74fa5b6",
+      "message": "site: reference doc for the 3D preview pipeline + turntable.py",
+      "author": "mscrnt",
+      "date": "2026-05-30T08:28:36Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/806406273473aab19142fe6ab45367f7a74fa5b6",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "128761d9804368f22239cd1baf45b2cdeb284d7f",
+      "message": "docs+site: Tier-2 follow-up — webhook delivery worker + structured support + user activity feed",
+      "author": "mscrnt",
+      "date": "2026-05-30T08:18:53Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/128761d9804368f22239cd1baf45b2cdeb284d7f",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "7a08bc0ae62749c0ed9b8e4d509d18171c6ffd20",
+      "message": "docs+site: Phase 1.40 audit log + Phase 1.41 observability",
+      "author": "mscrnt",
+      "date": "2026-05-30T08:09:25Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/7a08bc0ae62749c0ed9b8e4d509d18171c6ffd20",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "f32f501e31e3d1e6382782b1786fbdbd65a83051",
+      "message": "docs+site: Phase 1.38 ad slots + Phase 1.39 commerce (Stripe + Shopify)",
+      "author": "mscrnt",
+      "date": "2026-05-30T07:52:09Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f32f501e31e3d1e6382782b1786fbdbd65a83051",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "c509b6073900c300125511944040533639d0529b",
+      "message": "docs+site: 12 new phases (1.26–1.37) + Tier-2 RS-parity extensions",
+      "author": "mscrnt",
+      "date": "2026-05-30T07:36:46Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/c509b6073900c300125511944040533639d0529b",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "f48e85483b195292e50b03f569c9fe58d64ae412",
+      "message": "docs+site: rebrand \"artist-alley\" → \"Artist Alley\" + Limelight wordmark + shipped catch-up",
+      "author": "mscrnt",
+      "date": "2026-05-30T06:59:18Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f48e85483b195292e50b03f569c9fe58d64ae412",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "dd1f45535d9afd15e8ab367e6ce147952c54afd2",
+      "message": "Phase 1.18.E-8: shell-owned View section in Tools panel for 2D kinds",
+      "author": "mscrnt",
+      "date": "2026-05-30T06:36:39Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/dd1f45535d9afd15e8ab367e6ce147952c54afd2",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "11bd7bac768921fe617309df909690ae05719d33",
+      "message": "site: audit knock-off — 1.18.B-10 + B-12 shipped, B-11 in-flight",
+      "author": "mscrnt",
+      "date": "2026-05-30T06:28:15Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/11bd7bac768921fe617309df909690ae05719d33",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "6940249ad67c2a148a63b75c654ed5cb90d40bc6",
+      "message": "Phase 1.18.E-7: top toolbar + non-overlapping right pane",
+      "author": "mscrnt",
+      "date": "2026-05-30T06:23:33Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/6940249ad67c2a148a63b75c654ed5cb90d40bc6",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "3e28dc4df5f0b27d5ccdfcb8438f6fa1e042ad07",
+      "message": "Phase 1.18.E-6: universal pan/zoom — drop reviewMode gate + kill wheel-navigate",
+      "author": "mscrnt",
+      "date": "2026-05-30T06:03:28Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/3e28dc4df5f0b27d5ccdfcb8438f6fa1e042ad07",
+      "branch": "feat/viewer-polish"
+    },
+    {
+      "sha": "52a4b3c46db3080638ed699bc37ca8cb4f2dabe0",
+      "message": "Merge Phase 1.18.B-12 + 1.18.C + 1.18.D + 1.18.E: preview pipeline (feat/preview-pipeline)",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:48:53Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/52a4b3c46db3080638ed699bc37ca8cb4f2dabe0",
+      "branch": "dev"
+    },
+    {
+      "sha": "0a548273248ecc98c814761fd67535e1d3f781e6",
+      "message": "docs+site: monetization+license ADRs, Phase 1.24, 1.25, 1.18.B-15..18",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:39:59Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/0a548273248ecc98c814761fd67535e1d3f781e6",
+      "branch": "dev"
+    },
+    {
+      "sha": "2fb6110db197bfdb316fbfe2bf6ee7dd70c97b6b",
+      "message": "Phase 1.18.E-5: pure-Go RGBE decoder for .hdr / .pic",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:33:18Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/2fb6110db197bfdb316fbfe2bf6ee7dd70c97b6b",
+      "branch": "dev"
+    },
+    {
+      "sha": "4e03e2293e9f92523b31c34e60138891d43a63f7",
+      "message": "Phase 1.18.E-4: HDR / EXR / Radiance .pic via ffmpeg tonemap",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:16:14Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/4e03e2293e9f92523b31c34e60138891d43a63f7",
+      "branch": "dev"
+    },
+    {
+      "sha": "f7f10f37b11638d2e31bcae161dd12d5fb36eebe",
+      "message": "format3d: native Go importer for MS3D (Milkshape 3D)",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:08:30Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f7f10f37b11638d2e31bcae161dd12d5fb36eebe",
+      "branch": "dev"
+    },
+    {
+      "sha": "426e22f1e8f8ab0372103b94d0c1df2b074c87d1",
+      "message": "Phase 1.18.E-3: PDFView + FontView + AudioView click-to-seek",
+      "author": "mscrnt",
+      "date": "2026-05-30T05:03:11Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/426e22f1e8f8ab0372103b94d0c1df2b074c87d1",
+      "branch": "dev"
+    },
+    {
+      "sha": "2c9b4dd1c6c89a117d5d6be76135342c5aa3033a",
+      "message": "fix(preview): convert silent put-skip to loud-fail across all workers",
+      "author": "mscrnt",
+      "date": "2026-05-30T04:55:17Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/2c9b4dd1c6c89a117d5d6be76135342c5aa3033a",
+      "branch": "dev"
+    },
+    {
+      "sha": "844198e2fc6b5a793ecab74ccd512d4a025def84",
+      "message": "fix(prod-image): switch root Dockerfile to bookworm + cgo + libwebp",
+      "author": "mscrnt",
+      "date": "2026-05-30T04:35:39Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/844198e2fc6b5a793ecab74ccd512d4a025def84",
+      "branch": "dev"
+    },
+    {
+      "sha": "9942d8ebd0f59a0de9710af5be350b6185c6c69a",
+      "message": "fix(viewers): hoist one shared ViewAsset type to controller.ts",
+      "author": "mscrnt",
+      "date": "2026-05-30T04:24:33Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/9942d8ebd0f59a0de9710af5be350b6185c6c69a",
+      "branch": "dev"
+    },
+    {
+      "sha": "0d9c390ba617da24971bbfbb776520236eb53be8",
+      "message": "Phase 1.18.E-2: companion upload UI in the file row",
+      "author": "mscrnt",
+      "date": "2026-05-30T04:11:14Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/0d9c390ba617da24971bbfbb776520236eb53be8",
+      "branch": "dev"
+    },
+    {
+      "sha": "d282ffe7e10916edd28f21a02e4733130e4ef712",
+      "message": "Phase 1.18.E-1: WebP encoder + preview.pdf + preview.font workers",
+      "author": "mscrnt",
+      "date": "2026-05-30T03:56:45Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/d282ffe7e10916edd28f21a02e4733130e4ef712",
+      "branch": "dev"
+    },
+    {
+      "sha": "6e7eeaeaaed7e3d5299e2e0ec8f16cb825af4016",
+      "message": "Phase 1.18.D-1: preview.audio worker + AudioView player",
+      "author": "mscrnt",
+      "date": "2026-05-30T03:06:30Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/6e7eeaeaaed7e3d5299e2e0ec8f16cb825af4016",
+      "branch": "dev"
+    },
+    {
+      "sha": "4ee1153e9d41810078719600deb998f114aeefa0",
+      "message": "Phase 1.18.B-12j: turntable advances animation playhead per camera angle",
+      "author": "mscrnt",
+      "date": "2026-05-30T02:16:15Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/4ee1153e9d41810078719600deb998f114aeefa0",
+      "branch": "dev"
+    },
+    {
+      "sha": "f244c015b8126bd5b08484f4a36efd3c7892d153",
+      "message": "Phase 1.18.C-3: format3d writers + procedural sample generator",
+      "author": "mscrnt",
+      "date": "2026-05-30T00:45:11Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f244c015b8126bd5b08484f4a36efd3c7892d153",
+      "branch": "dev"
+    },
+    {
+      "sha": "c9cb76496639a921e01bddd523c632a2f2edc70d",
+      "message": "Phase 1.18.C-2: native Go importer skeleton + MD2 / MD3 / MDL",
+      "author": "mscrnt",
+      "date": "2026-05-29T23:20:41Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/c9cb76496639a921e01bddd523c632a2f2edc70d",
+      "branch": "dev"
+    },
+    {
+      "sha": "f6797d51126433dd79398b01a4a2c889beac521c",
+      "message": "ADR 0010: permissions, teams, workflow",
+      "author": "mscrnt",
+      "date": "2026-05-26T16:32:05Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f6797d51126433dd79398b01a4a2c889beac521c",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "64a30ad58a0862b9266990b9a19f64937f68c249",
+      "message": "Phase 1.13.D-2a: Posts entity + grid feed + cache",
+      "author": "mscrnt",
+      "date": "2026-05-26T15:13:37Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/64a30ad58a0862b9266990b9a19f64937f68c249",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "e3b81248f87a356bb29f9e7d0004a85af21805e5",
+      "message": "Merge Phase 1.13.D (browse page + q= search + seed script)",
+      "author": "mscrnt",
+      "date": "2026-05-26T06:54:34Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/e3b81248f87a356bb29f9e7d0004a85af21805e5",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "f6fe765954493c4b5bd3ffa5db195f5efccbfcff",
+      "message": "Phase 1.13.D: browse page (grid view, search, infinite scroll) + seed script",
+      "author": "mscrnt",
+      "date": "2026-05-26T06:50:35Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f6fe765954493c4b5bd3ffa5db195f5efccbfcff",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "5209070b3f76713eb103a83591881d5cf94fbab7",
+      "message": "Merge Phase 1.13.C (login + setup forms + auth-aware layout)",
+      "author": "mscrnt",
+      "date": "2026-05-26T05:44:58Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/5209070b3f76713eb103a83591881d5cf94fbab7",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "64ba585f85fcd36c471a40b500646a2fb46dc067",
+      "message": "Phase 1.13.C: login + setup forms + auth-aware layout",
+      "author": "mscrnt",
+      "date": "2026-05-26T05:44:29Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/64ba585f85fcd36c471a40b500646a2fb46dc067",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "f11132079fa85401c4434cbb9b5fb2b3f0329a53",
+      "message": "Merge Phase 1.13.B (legacy PHP backend proxy + ADR 0015)",
+      "author": "mscrnt",
+      "date": "2026-05-26T05:28:45Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/f11132079fa85401c4434cbb9b5fb2b3f0329a53",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "c9dafadbeda3a4eb922626bbfe24b974a1266c90",
+      "message": "Phase 1.13.B: legacy PHP backend proxy via /api/v1/legacy/* + ADR 0015",
+      "author": "mscrnt",
+      "date": "2026-05-26T05:27:57Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/c9dafadbeda3a4eb922626bbfe24b974a1266c90",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "108d270cd31a54d0a6d849eb10ff123b6643e4cb",
+      "message": "Merge Phase 1.13.A (frontend scaffold + ADR 0014)",
+      "author": "mscrnt",
+      "date": "2026-05-26T04:50:24Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/108d270cd31a54d0a6d849eb10ff123b6643e4cb",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "5a23078f496dcc3fbdf3cc6f0c185f788b69b047",
+      "message": "Phase 1.13.A: SvelteKit + Tailwind scaffold, theme infra, Go static-embed",
+      "author": "mscrnt",
+      "date": "2026-05-26T04:44:52Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/5a23078f496dcc3fbdf3cc6f0c185f788b69b047",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "5d25a1a254c1097863c1946480bff2836fdf3ab6",
+      "message": "Merge Phase 1.11.A (collections + RS frontend coexistence)",
+      "author": "mscrnt",
+      "date": "2026-05-26T02:10:56Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/5d25a1a254c1097863c1946480bff2836fdf3ab6",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "4e3475c1dcef4e8a97a9ffbd8e6928fbc44ae044",
+      "message": "Phase 1.11.A: collections (manual membership + cache) + RS frontend coexistence",
+      "author": "mscrnt",
+      "date": "2026-05-26T02:07:26Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/4e3475c1dcef4e8a97a9ffbd8e6928fbc44ae044",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "4f228ecefb1d612ee09f018fea9d24bad4d0aeb9",
+      "message": "Merge Phase 1.10 (in-process cache + Postgres LISTEN/NOTIFY)",
+      "author": "mscrnt",
+      "date": "2026-05-25T15:54:28Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/4f228ecefb1d612ee09f018fea9d24bad4d0aeb9",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "bb7f2356070d72f2294409341e2176901384893a",
+      "message": "Phase 1.10: in-process LRU cache + Postgres LISTEN/NOTIFY plumbing",
+      "author": "mscrnt",
+      "date": "2026-05-25T15:48:37Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/bb7f2356070d72f2294409341e2176901384893a",
+      "branch": "feat/posts"
+    },
+    {
+      "sha": "257245b30d261cfb9262930ac5a86adc6cd9c1e2",
+      "message": "Merge Phase 1.9 (admin-extensible metadata + ADRs 0012/0013)",
+      "author": "mscrnt",
+      "date": "2026-05-25T14:52:42Z",
+      "url": "https://github.com/mscrnt/artist-alley/commit/257245b30d261cfb9262930ac5a86adc6cd9c1e2",
+      "branch": "feat/posts"
+    },
+    {
       "sha": "1535cbdd93452f4218baedc09fb5397f13a6e410",
       "message": "Fork ResourceSpace trunk @ r28830 with Phase 0 scaffolding",
       "author": "mscrnt",
       "date": "2026-05-23T19:38:42Z",
-      "url": "https://github.com/mscrnt/artist-alley/commit/1535cbdd93452f4218baedc09fb5397f13a6e410"
+      "url": "https://github.com/mscrnt/artist-alley/commit/1535cbdd93452f4218baedc09fb5397f13a6e410",
+      "branch": "main"
     },
     {
       "sha": "1cafd5c46308f1f6f9ba9215353ff0746551c361",
       "message": "Initial commit",
       "author": "Kenneth",
       "date": "2026-05-23T14:31:18Z",
-      "url": "https://github.com/mscrnt/artist-alley/commit/1cafd5c46308f1f6f9ba9215353ff0746551c361"
+      "url": "https://github.com/mscrnt/artist-alley/commit/1cafd5c46308f1f6f9ba9215353ff0746551c361",
+      "branch": "main"
+    }
+  ],
+  "branches": [
+    {
+      "name": "main",
+      "sha": "1535cbdd93452f4218baedc09fb5397f13a6e410",
+      "protected": false,
+      "recent_commits": 2,
+      "is_default": true
+    },
+    {
+      "name": "dev",
+      "sha": "52a4b3c46db3080638ed699bc37ca8cb4f2dabe0",
+      "protected": false,
+      "recent_commits": 15,
+      "is_default": false
+    },
+    {
+      "name": "feat/posts",
+      "sha": "f6797d51126433dd79398b01a4a2c889beac521c",
+      "protected": false,
+      "recent_commits": 15,
+      "is_default": false
+    },
+    {
+      "name": "feat/viewer-polish",
+      "sha": "806406273473aab19142fe6ab45367f7a74fa5b6",
+      "protected": false,
+      "recent_commits": 15,
+      "is_default": false
     }
   ],
   "releases": [],

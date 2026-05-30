@@ -100,6 +100,19 @@ const ghCommit = z.object({
   author: z.string().nullable().optional(),
   date: z.string(),
   url: z.string().url(),
+  // Branch the commit was discovered on. Default-branch commits carry
+  // the repo's default branch name; feat/* etc. carry their own. Added
+  // 2026-05-30 to surface the real activity on the engineering dashboard
+  // (the default /commits endpoint only sees main).
+  branch: z.string().optional(),
+});
+
+const ghBranch = z.object({
+  name: z.string(),
+  sha: z.string().nullable().optional(),
+  protected: z.boolean().optional(),
+  recent_commits: z.number().default(0),
+  is_default: z.boolean().default(false),
 });
 
 const ghRelease = z.object({
@@ -153,6 +166,7 @@ const github = defineCollection({
       recentlyMerged: z.array(ghIssueOrPR).default([]),
     }),
     commits: z.array(ghCommit).default([]),
+    branches: z.array(ghBranch).default([]),
     releases: z.array(ghRelease).default([]),
     commitActivity: z.array(z.object({
       week: z.number(),

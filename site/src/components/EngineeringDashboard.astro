@@ -181,7 +181,7 @@ const languages = Object.entries(github.languages ?? {})
   <!-- ===================== Recent activity ============================= -->
   <div class="aa-section aa-row aa-row--2" data-reveal>
     <div class="aa-card">
-      <h3>Latest commits ({github.commits.length})</h3>
+      <h3>Latest commits ({github.commits.length}) — across {github.branches.length} branches</h3>
       {github.commits.length === 0 ? (
         <p class="aa-muted">No commits in snapshot.</p>
       ) : (
@@ -190,6 +190,11 @@ const languages = Object.entries(github.languages ?? {})
             <li>
               <a href={c.url}><code>{c.sha.slice(0, 7)}</code></a>
               <span class="aa-list-title">{c.message}</span>
+              {c.branch && (
+                <span class={`aa-branch-badge ${c.branch === github.repo.default_branch ? "aa-branch-badge--main" : c.branch === "dev" ? "aa-branch-badge--dev" : "aa-branch-badge--feat"}`}>
+                  {c.branch === github.repo.default_branch ? "main" : c.branch.replace(/^feat\//, "feat:")}
+                </span>
+              )}
               <span class="aa-muted">
                 {c.author ?? "—"} · {fmtRelative(c.date)}
               </span>
@@ -494,6 +499,36 @@ const languages = Object.entries(github.languages ?? {})
     border-radius: 999px;
     background: var(--aa-card-border);
     color: var(--sl-color-gray-2, #c9d1d9);
+  }
+
+  /* Branch badges on commit rows. Three states: main (stable, green-tinted),
+     dev (integration, orange-tinted), feat/* (current work, purple-tinted).
+     Sized to fit inline with the commit message + author meta without
+     blowing out the row. */
+  .aa-branch-badge {
+    font-size: 0.65rem;
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .aa-branch-badge--main {
+    color: var(--aa-shipped);
+    background: rgba(46, 160, 67, 0.12);
+    border-color: rgba(46, 160, 67, 0.4);
+  }
+  .aa-branch-badge--dev {
+    color: var(--aa-inflight);
+    background: rgba(210, 153, 34, 0.12);
+    border-color: rgba(210, 153, 34, 0.4);
+  }
+  .aa-branch-badge--feat {
+    color: var(--aa-feature);
+    background: rgba(124, 58, 237, 0.12);
+    border-color: rgba(124, 58, 237, 0.4);
   }
 
   .aa-langs, .aa-contribs {
