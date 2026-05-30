@@ -14,7 +14,16 @@ ARG UID=1000
 ARG GID=1000
 
 # ---- build stage ----------------------------------------------------------
-FROM golang:${GO_VERSION}-alpine AS build
+# Debian-bookworm Go image instead of alpine so cgo links against the
+# same glibc + libwebp7 the runtime uses. chai2010/webp (variant
+# encoder) needs libwebp at build time; nothing else cgo here today.
+FROM golang:${GO_VERSION}-bookworm AS build
+
+# libwebp-dev for the chai2010/webp encoder, gcc/pkg-config for
+# the C toolchain cgo invokes during the build.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev pkg-config libwebp-dev \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/app
 
@@ -25,7 +34,7 @@ RUN go mod download
 COPY app/ ./
 
 ARG BUILD_VERSION
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -trimpath \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION}" \
     -o /out/aa \
@@ -67,7 +76,7 @@ ARG BLENDER_SHA256=dfbc127a7d28f9c2175b23bf9d6701b2855f31eedfb391f9a6e60adb24572
 # curl are only needed for the extraction step.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl xz-utils ffmpeg \
-        librsvg2-bin \
+        librsvg2-bin libwebp7 poppler-utils \
         libgl1 libegl1 libxrender1 libxi6 libxxf86vm1 libxfixes3 \
         libxkbcommon0 libxext6 libsm6 libice6 \
  && rm -rf /var/lib/apt/lists/* \

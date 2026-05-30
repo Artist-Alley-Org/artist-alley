@@ -105,6 +105,8 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewAudioHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewPDFHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewFontHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package

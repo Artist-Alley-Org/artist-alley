@@ -57,9 +57,22 @@ type PreviewConfig struct {
 	Variants []PreviewVariant `json:"variants"`
 }
 
-// DefaultPreviewConfig is the variant set we ship with. JPEG-only for
-// 1.18.A (pure-Go stdlib encoder — no system dep). The WebP encoder
-// arrives in 1.18.E; admins can flip the Format field once it ships.
+// DefaultPreviewConfig is the variant set we ship with. WebP for the
+// whole ladder (1.18.E): pure-Go encoder via HugoSmits86/nativewebp
+// — no cgo, no libwebp-dev. Compared to the JPEG defaults we shipped
+// in 1.18.A:
+//
+//   - ~25-35% smaller bytes at perceptually equivalent quality
+//   - lossless mode handles transparent sources (SVG, alpha PNG,
+//     waveform thumbnails) so we don't need to switch to PNG just
+//     to preserve alpha
+//   - browser support is universal (Safari ≥ 14, every other
+//     evergreen since 2010s)
+//
+// Lossy / lossless choice happens at encode time in
+// preview.encodeImage() — when the source carries actual
+// transparency the encoder switches to lossless WebP to avoid the
+// alpha-channel quantisation lossy mode shows on hard edges.
 //
 // Tuned so the grid feels instant (small col), the post modal looks
 // gorgeous (nearly lossless hires), and the in-between sizes serve
@@ -68,14 +81,14 @@ func DefaultPreviewConfig() PreviewConfig {
 	return PreviewConfig{
 		Variants: []PreviewVariant{
 			// 320² square — collection-card / grid cover.
-			{Key: "col", Fit: PreviewFitCover, MaxDim: 320, Format: PreviewFormatJPEG, Quality: 82, SkipUpscale: true},
+			{Key: "col", Fit: PreviewFitCover, MaxDim: 320, Format: PreviewFormatWebP, Quality: 82, SkipUpscale: true},
 			// 1024 longest — mobile + intermediate breakpoints.
-			{Key: "preview", Fit: PreviewFitContain, MaxDim: 1024, Format: PreviewFormatJPEG, Quality: 86, SkipUpscale: true},
+			{Key: "preview", Fit: PreviewFitContain, MaxDim: 1024, Format: PreviewFormatWebP, Quality: 86, SkipUpscale: true},
 			// 1920 longest — desktop default.
-			{Key: "screen", Fit: PreviewFitContain, MaxDim: 1920, Format: PreviewFormatJPEG, Quality: 90, SkipUpscale: true},
+			{Key: "screen", Fit: PreviewFitContain, MaxDim: 1920, Format: PreviewFormatWebP, Quality: 90, SkipUpscale: true},
 			// 4096 longest @ q95 — "nearly lossless". The post modal's
 			// main image; also what zoom-in views serve.
-			{Key: "hires", Fit: PreviewFitContain, MaxDim: 4096, Format: PreviewFormatJPEG, Quality: 95, SkipUpscale: true},
+			{Key: "hires", Fit: PreviewFitContain, MaxDim: 4096, Format: PreviewFormatWebP, Quality: 95, SkipUpscale: true},
 		},
 	}
 }

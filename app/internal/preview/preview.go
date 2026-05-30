@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chai2010/webp"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,6 +50,7 @@ import (
 	// Decoder registrations for image.Decode.
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -309,13 +311,25 @@ func encodeImage(w io.Writer, img image.Image, v sysconfig.PreviewVariant) (stri
 			return "", err
 		}
 		return "image/png", nil
+	case sysconfig.PreviewFormatWebP:
+		// Lossless mode automatically when the source has actual
+		// transparency — VP8 lossy bands the alpha channel on hard
+		// edges (SVG strokes, transparent PNG icons). Lossy is the
+		// size win for opaque photos / waveforms.
+		opts := &webp.Options{
+			Lossless: hasAlpha(img),
+			Quality:  float32(v.Quality),
+		}
+		if err := webp.Encode(w, img, opts); err != nil {
+			return "", err
+		}
+		return "image/webp", nil
 	default:
-		// JPEG (also the fallback for WebP until 1.18.E ships the
-		// encoder). JPEG can't carry alpha. If the source actually
-		// uses transparency we promote the variant to PNG so it
-		// renders correctly against any backdrop instead of getting
-		// silently flattened over white. Opaque sources stay on JPEG
-		// for the size win.
+		// JPEG. Can't carry alpha. If the source actually uses
+		// transparency we promote the variant to PNG so it renders
+		// correctly against any backdrop instead of getting silently
+		// flattened over white. Opaque sources stay on JPEG for the
+		// size win.
 		if hasAlpha(img) {
 			if err := png.Encode(w, img); err != nil {
 				return "", err

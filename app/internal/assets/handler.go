@@ -322,7 +322,18 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	if _, ok := audioExtsHandler[e]; ok {
 		return jobs.TypePreviewAudio
 	}
+	if _, ok := pdfExtsHandler[e]; ok {
+		return jobs.TypePreviewPDF
+	}
+	if _, ok := fontExtsHandler[e]; ok {
+		return jobs.TypePreviewFont
+	}
 	return jobs.TypePreviewRaster
+}
+
+var pdfExtsHandler = map[string]struct{}{"pdf": {}}
+var fontExtsHandler = map[string]struct{}{
+	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
 }
 
 // audioExtsHandler mirrors preview.audioExts. Duplicated here so the
@@ -1071,8 +1082,8 @@ func resourceTypeFor(ext string) int64 {
 		return 6 // Archive
 	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma":
 		return 4 // Audio
-	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt":
-		return 2 // Document
+	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt", "ttf", "otf", "ttc", "otc", "woff", "woff2":
+		return 2 // Document (fonts → Document for now; no dedicated Font type yet)
 	}
 	return 0
 }
@@ -1092,6 +1103,12 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := audioExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := pdfExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := fontExtsHandler[e]; ok {
 		return true
 	}
 	return false
