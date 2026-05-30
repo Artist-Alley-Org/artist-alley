@@ -524,6 +524,20 @@
           "phase": "1.39",
           "status": "planned",
           "description": "Operator-side commerce for selling content directly: digital downloads (concept-art packs, asset bundles, soundtracks), print-on-demand merchandise, physical originals, subscription access to WIP / patron tiers. Provider-abstracted with Stripe (digital + physical + subscription), Shopify (full storefront for physical + tax + shipping), Gumroad (lightweight digital + subscription) at launch. Listings attach to assets / posts / collections / brand-kit items with pricing, delivery type, license-grant clause. Digital fulfillment reuses Phase 1.26 share links — buyer gets a single-use signed link with 90-day expiry after payment. Subscription access expires via the Phase 1.28 scheduled-action engine. Tax + refunds + disputes defer to the payment processor. License-tier caps active-listing count (Community 5, Pro 500, Enterprise unlimited + organization-level Stripe / Shopify accounts). Per-instance public storefront at `/shop/{slug}`. No revenue share — operator's sales go to operator's bank. Federated peers can surface remote listings read-only with a `buy on origin` CTA. See ADR 0031."
+        },
+        {
+          "id": "audit-log-change-tracking",
+          "title": "Audit log & change tracking",
+          "phase": "1.40",
+          "status": "planned",
+          "description": "The central event log consolidating the audit-trail story currently scattered across Phases 1.17 / 1.20 / 1.21 / 1.24 / 1.26-1.28 / 1.32. Owns the event schema (actor + action + target + outcome + changeset before/after + metadata + correlation_id + license_kid), the dotted event taxonomy (`auth.*` / `user.*` / `asset.*` / `share.*` / `commerce.*` / `platform.*` / `system.*` / etc.), the capture API (`audit.Record(ctx, ...)` with buffered async writes — failure to record never fails the originating operation), the admin filter + search + detail + export surface at `/admin/audit`, retention policy (default 7 years, per-category overrides at Enterprise, enforced via the Phase 1.28 scheduled-action engine), and signed Enterprise export (Ed25519 over the JSONL payload, public key at `/.well-known/audit-signing-key` per ADR 0017). The `correlation_id` field links every event from a single request / job so cascade effects are reconstructable. Same features at Community + Pro; Enterprise adds the signed export, per-category retention overrides, and multi-instance audit-log federation. See ADR 0032."
+        },
+        {
+          "id": "observability-telemetry",
+          "title": "Observability & operator telemetry",
+          "phase": "1.41",
+          "status": "planned",
+          "description": "Production-readiness layer: `/metrics` Prometheus endpoint with HTTP / DB / job-queue / storage / cache / session / license / federation / audit families; OpenTelemetry tracing via OTLP with auto-instrumented HTTP / DB / job / external-API spans (10% sampling default, errors 100%, W3C Trace Context propagation); structured-log shipping via opt-in forwarder providers (Loki / Datadog / Cloudwatch / Vector / Promtail / syslog); per-subsystem log levels hot-reloaded from admin + a `?log_level=debug` per-request escape hatch; admin live-tail log viewer at `/admin/logs/tail` via WebSocket; pre-baked Grafana dashboards in `infra/grafana/dashboards/` for HTTP / job queue / storage / federation / license / audit. Health endpoints stay at `/healthz` + `/readyz` with detailed per-subsystem status at `/admin/system/health`. Same features at Community + Pro; Enterprise adds priority ops support, vendor-specific OTLP exporter configs (New Relic / Honeycomb / etc.), and an SLA on production incident resolution. See ADR 0033."
         }
       ]
     },

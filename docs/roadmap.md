@@ -716,6 +716,43 @@ Larger arcs that will land but aren't the current focus:
   same stance as Phase 1.38 ads. Federated peers can surface remote
   listings read-only with a "buy on origin" CTA; federated checkout
   is out of scope. See ADR 0031.
+- **Audit log & change tracking** (Phase 1.40). The central event log
+  consolidating the audit-trail story currently scattered across
+  Phases 1.17 / 1.20 / 1.21 / 1.24 / 1.26–1.28 / 1.32. Owns the event
+  schema (actor + action + target + outcome + changeset before / after
+  + metadata + correlation_id + license_kid), the dotted event
+  taxonomy (`auth.*` / `user.*` / `asset.*` / `share.*` / `commerce.*`
+  / `platform.*` / `system.*` / etc.), the capture API
+  (`audit.Record(ctx, ...)` with buffered async writes — failure to
+  record never fails the originating operation), the admin filter +
+  search + detail + export surface at `/admin/audit`, retention
+  policy (default 7 years, per-category overrides at Enterprise,
+  enforced via the Phase 1.28 scheduled-action engine), and signed
+  Enterprise export (Ed25519 over the JSONL payload, public key at
+  `/.well-known/audit-signing-key` per ADR 0017). The
+  `correlation_id` field links every event from a single request /
+  job so cascade effects are reconstructable. Same features at
+  Community + Pro; Enterprise adds the signed export, per-category
+  retention overrides, and multi-instance audit-log federation. See
+  ADR 0032.
+- **Observability & operator telemetry** (Phase 1.41). Production-
+  readiness layer: `/metrics` Prometheus endpoint with HTTP / DB /
+  job-queue / storage / cache / session / license / federation /
+  audit families; OpenTelemetry tracing via OTLP with auto-instrumented
+  HTTP / DB / job / external-API spans (10 % sampling default,
+  errors 100 %, W3C Trace Context propagation); structured-log
+  shipping via opt-in forwarder providers (Loki / Datadog /
+  Cloudwatch / Vector / Promtail / syslog); per-subsystem log
+  levels hot-reloaded from admin + a `?log_level=debug` per-request
+  escape hatch; admin live-tail log viewer at `/admin/logs/tail`
+  via WebSocket; pre-baked Grafana dashboards in
+  `infra/grafana/dashboards/` for HTTP / job queue / storage /
+  federation / license / audit. Health endpoints stay at
+  `/healthz` + `/readyz` with detailed per-subsystem status at
+  `/admin/system/health`. Same features at Community + Pro; Enterprise
+  adds priority ops support, vendor-specific OTLP exporter configs
+  (New Relic / Honeycomb / etc.), and an SLA on production incident
+  resolution. See ADR 0033.
 
 ## Things we deliberately aren't building
 

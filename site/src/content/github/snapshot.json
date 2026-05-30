@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-05-30T07:51:25.165Z",
+  "fetchedAt": "2026-05-30T08:08:22.938Z",
   "repo": {
     "full_name": "mscrnt/artist-alley",
     "description": "Self-hosted art review and archive for game studios — artist-first, BSD-3, Go + Postgres + SvelteKit.",
@@ -10,9 +10,9 @@
     "stargazers_count": 0,
     "watchers_count": 0,
     "forks_count": 0,
-    "open_issues_count": 47,
+    "open_issues_count": 49,
     "subscribers_count": 0,
-    "pushed_at": "2026-05-30T07:36:47Z",
+    "pushed_at": "2026-05-30T07:52:10Z",
     "created_at": "2026-05-23T14:31:18Z",
     "license": {
       "spdx_id": "NOASSERTION"
@@ -52,6 +52,117 @@
   ],
   "issues": {
     "open": [
+      {
+        "number": 53,
+        "title": "Phase 1.41 — Observability & operator telemetry (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/53",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:observability",
+            "color": "5319e7",
+            "description": "Metrics + tracing + log shipping + admin live tail"
+          }
+        ],
+        "created_at": "2026-05-30T08:08:10Z",
+        "updated_at": "2026-05-30T08:08:12Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 52,
+        "title": "Phase 1.40 — Audit log & change tracking (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/52",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:audit",
+            "color": "5319e7",
+            "description": "Audit log + change tracking"
+          }
+        ],
+        "created_at": "2026-05-30T08:08:04Z",
+        "updated_at": "2026-05-30T08:08:06Z",
+        "closed_at": null,
+        "comments": 0
+      },
+      {
+        "number": 51,
+        "title": "Phase 1.39 — Commerce — Stripe + Shopify (epic)",
+        "state": "open",
+        "html_url": "https://github.com/mscrnt/artist-alley/issues/51",
+        "user": {
+          "login": "mscrnt",
+          "avatar_url": "https://avatars.githubusercontent.com/u/33361957?v=4",
+          "html_url": "https://github.com/mscrnt"
+        },
+        "labels": [
+          {
+            "name": "enhancement",
+            "color": "a2eeef",
+            "description": "New feature or request"
+          },
+          {
+            "name": "type:epic",
+            "color": "6f42c1",
+            "description": "Umbrella issue with a checklist of child issues"
+          },
+          {
+            "name": "status:planned",
+            "color": "6e7681",
+            "description": "Scoped, queued behind current focus"
+          },
+          {
+            "name": "area:commerce",
+            "color": "5319e7",
+            "description": "Commerce (Stripe / Shopify / digital + physical sales)"
+          }
+        ],
+        "created_at": "2026-05-30T07:51:13Z",
+        "updated_at": "2026-05-30T07:51:15Z",
+        "closed_at": null,
+        "comments": 0
+      },
       {
         "number": 50,
         "title": "Phase 1.38 — Operator-configurable ad slots (epic)",
