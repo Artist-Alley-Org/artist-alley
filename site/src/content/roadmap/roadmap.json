@@ -65,6 +65,16 @@
           "id": "i18n",
           "title": "i18n",
           "description": "Per-user language preference, locale catalogue endpoint, hand-rolled flat-key dictionary store; English shipped, Spanish + French stubs for the picker."
+        },
+        {
+          "id": "universal-asset-viewer",
+          "title": "Universal asset viewer",
+          "description": "A single Svelte shell hosts per-kind view bodies (image, video, audio, PDF, font, 3D) with a shared anchor model — frame for video, page for PDF, camera + time-on-track for 3D — so future annotation overlays and presentation rooms wire to the shell once and every kind inherits them. Universal pan + zoom (⌘-wheel zoom-toward-cursor), click-to-pause, fullscreen + `F`, jump-to-frame (`G`), and per-kind transport bars all sit on the shell. Phase 1.18.B-2 + 1.18.E-6."
+        },
+        {
+          "id": "format-coverage",
+          "title": "Format coverage",
+          "description": "Images: PNG, JPEG, WebP, plus HDR / EXR / Radiance `.pic` via ffmpeg tonemap and a pure-Go RGBE decoder. Video: HLS adaptive ladder with frame-accurate scrubbing. Audio: waveform PNG + click-to-seek scrub. PDF: multi-page navigator + raster. Fonts: specimen render. 3D: native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`, Blender-rendered turntable thumbnails for heavy formats, pure-Go importers for legacy game formats (MD2 / MD3 / MDL / MS3D). Asset companion files (textures, `.mtl`, `.bin`) resolved per-asset. Phase 1.18.A / 1.18.B-1 / 1.18.B-10 / 1.18.B-12 / 1.18.C / 1.18.D / 1.18.E."
         }
       ]
     },

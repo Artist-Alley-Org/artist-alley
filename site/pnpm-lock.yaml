@@ -23,6 +23,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.2.8
         version: 5.2.8
+      '@fontsource/limelight':
+        specifier: ^5.2.7
+        version: 5.2.7
       astro:
         specifier: ^5.16.0
         version: 5.18.2(@types/node@24.12.4)(rollup@4.60.4)(typescript@5.9.3)(yaml@2.9.0)
@@ -498,6 +501,9 @@ packages:
 
   '@fontsource-variable/inter@5.2.8':
     resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
+
+  '@fontsource/limelight@5.2.7':
+    resolution: {integrity: sha512-zQuBYnG35zmnOCRNJ+eBuKbQH/6/UBLCRilXN2BNSmtDsO2pPJjzhVJdc4P1otQHSY1fOEIv/8l+yKNvpN0+SA==}
 
   '@humanwhocodes/momoa@2.0.4':
     resolution: {integrity: sha512-RE815I4arJFtt+FVeU1Tgp9/Xvecacji8w/V6XtXsWWH/wz/eNkNbhb+ny/+PlVZjV0rxQpRSQKNKE3lcktHEA==}
@@ -3147,6 +3153,8 @@ snapshots:
       '@expressive-code/core': 0.41.7
 
   '@fontsource-variable/inter@5.2.8': {}
+
+  '@fontsource/limelight@5.2.7': {}
 
   '@humanwhocodes/momoa@2.0.4': {}
 

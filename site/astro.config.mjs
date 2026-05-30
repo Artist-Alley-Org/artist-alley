@@ -43,7 +43,7 @@ export default defineConfig({
       },
     }),
     starlight({
-      title: "artist-alley",
+      title: "Artist Alley",
       description:
         "Self-hosted art review and archival tool for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.",
       logo: { src: "./src/assets/logo.svg", replacesTitle: false },

@@ -45,6 +45,26 @@ The current release stream covers the foundations:
 - **i18n.** Per-user language preference, locale catalogue endpoint,
   hand-rolled flat-key dictionary store; English shipped, Spanish +
   French stubs for the picker.
+- **Universal asset viewer** (Phase 1.18.B-2 + 1.18.E-6). A single
+  Svelte shell hosts per-kind view bodies (image, video, audio, PDF,
+  font, 3D) with a shared anchor model — a frame number for video,
+  a page for PDF, a camera + time-on-track for 3D — so future
+  annotation overlays and presentation rooms wire to the shell once
+  and every kind inherits them. Universal pan + zoom (⌘-wheel zoom-
+  toward-cursor), click-to-pause, fullscreen + `F`, jump-to-frame
+  (`G`), and per-kind transport bars all sit on the shell.
+- **Format coverage** (Phase 1.18.A / 1.18.B-1 / 1.18.B-10–12 /
+  1.18.C / 1.18.D / 1.18.E). Images: PNG, JPEG, WebP, plus HDR /
+  EXR / Radiance `.pic` via ffmpeg tonemap (1.18.E-4) and a pure-Go
+  RGBE decoder (1.18.E-5). Video: HLS adaptive ladder with frame-
+  accurate scrubbing. Audio: waveform PNG + click-to-seek scrub.
+  PDF: multi-page navigator + raster. Fonts: specimen render. 3D:
+  native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`,
+  Blender-rendered turntable thumbnails for heavy formats (`.blend`,
+  others coming under 1.18.B-11), pure-Go importers for legacy game
+  formats (MD2 / MD3 / MDL / MS3D — 1.18.C-2 / C-3). Asset companion
+  files (textures, `.mtl`, `.bin`) resolved per-asset so 3D loaders
+  can pull their sidecars.
 
 ## In flight
 
@@ -425,7 +445,7 @@ Larger arcs that will land but aren't the current focus:
   & teams) because seat counting needs `last_active_at`. See ADR 0016
   + ADR 0017.
 - **RS migration tool** (Phase 1.25). Turnkey path from an existing
-  ResourceSpace install to artist-alley — the largest natural
+  ResourceSpace install to Artist Alley — the largest natural
   conversion audience, especially with Pro / Enterprise scale tiers
   on the table. Two halves: a BSD-3-licensed companion PHP plugin
   installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo)
