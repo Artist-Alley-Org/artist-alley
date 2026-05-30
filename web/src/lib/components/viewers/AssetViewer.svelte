@@ -15,6 +15,7 @@
   import ImageView from './ImageView.svelte';
   import VideoView from './VideoView.svelte';
   import ModelView from './ModelView.svelte';
+  import AudioView from './AudioView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
 
   // Native + three-loader 3D paths we ship today. Other 3D
@@ -28,6 +29,10 @@
     id: string;
     title?: string | null;
     file_extension?: string | null;
+    file_hash?: string | null;
+    // Opaque per-asset JSONB. Per-kind view bodies dig into their
+    // own namespace (e.g. AudioView reads metadata.audio).
+    metadata?: Record<string, unknown> | null;
   }
 
   interface Props {
@@ -383,6 +388,8 @@
           <VideoView {asset} bind:controller />
         {:else if kind === 'image'}
           <ImageView {asset} bind:controller />
+        {:else if kind === 'audio'}
+          <AudioView {asset} bind:controller />
         {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
           <ModelView {asset} bind:controller {reviewMode} />
         {:else}

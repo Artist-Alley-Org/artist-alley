@@ -645,6 +645,27 @@ func (q *Queries) MarkAssetReady(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const mergeAssetMetadata = `-- name: MergeAssetMetadata :exec
+UPDATE assets
+SET metadata   = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+    updated_at = NOW()
+WHERE id = $2 AND deleted_at IS NULL
+`
+
+type MergeAssetMetadataParams struct {
+	Metadata []byte
+	ID       pgtype.UUID
+}
+
+// Shallow-merge an incoming JSONB blob into the existing metadata
+// column. Preview workers (audio / video / 3D) use this to stamp
+// their own namespace ({"audio": {...}}, {"video": {...}}) without
+// stomping previously-written keys.
+func (q *Queries) MergeAssetMetadata(ctx context.Context, arg MergeAssetMetadataParams) error {
+	_, err := q.db.Exec(ctx, mergeAssetMetadata, arg.Metadata, arg.ID)
+	return err
+}
+
 const removeAssetTag = `-- name: RemoveAssetTag :exec
 DELETE FROM asset_tag WHERE asset_id = $1 AND tag = $2
 `

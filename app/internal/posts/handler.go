@@ -28,6 +28,7 @@ package posts
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -954,6 +955,15 @@ func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 	}
 	if m.OwnerUserRef != nil {
 		a.OwnerUserRef = m.OwnerUserRef
+	}
+	// Forward the asset-level metadata JSONB so per-kind view bodies
+	// (AudioView, future PDFView, etc.) can read their namespaced
+	// blocks without a second round-trip.
+	if len(m.Metadata) > 0 && string(m.Metadata) != "{}" {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(m.Metadata, &meta); err == nil {
+			a.Metadata = &meta
+		}
 	}
 	return a
 }

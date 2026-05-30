@@ -35,6 +35,16 @@ RETURNING id, title, description, resource_type, owner_user_ref, status,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at;
 
+-- name: MergeAssetMetadata :exec
+-- Shallow-merge an incoming JSONB blob into the existing metadata
+-- column. Preview workers (audio / video / 3D) use this to stamp
+-- their own namespace ({"audio": {...}}, {"video": {...}}) without
+-- stomping previously-written keys.
+UPDATE assets
+SET metadata   = COALESCE(metadata, '{}'::jsonb) || sqlc.arg('metadata')::jsonb,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
+
 -- name: SoftDeleteAsset :exec
 UPDATE assets
 SET deleted_at = NOW(), updated_at = NOW()

@@ -549,6 +549,8 @@
                 id: currentAssetId,
                 title: currentMember?.asset?.title ?? '',
                 file_extension: currentMember?.asset?.file_extension ?? null,
+                file_hash: currentMember?.asset?.file_hash ?? null,
+                metadata: currentMember?.asset?.metadata ?? null,
               }}
               active={true}
               {reviewMode}

@@ -319,7 +319,18 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	if _, ok := modelExts[e]; ok {
 		return jobs.TypePreview3D
 	}
+	if _, ok := audioExtsHandler[e]; ok {
+		return jobs.TypePreviewAudio
+	}
 	return jobs.TypePreviewRaster
+}
+
+// audioExtsHandler mirrors preview.audioExts. Duplicated here so the
+// assets package's dispatch doesn't need to import the preview
+// package (which itself depends on assets for the metadata queries).
+var audioExtsHandler = map[string]struct{}{
+	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
+	"m4a": {}, "aac": {}, "opus": {},
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,6 +1089,9 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := modelExts[e]; ok {
+		return true
+	}
+	if _, ok := audioExtsHandler[e]; ok {
 		return true
 	}
 	return false

@@ -94,12 +94,12 @@ func makeCube() *format3d.Model {
 		{Position: [3]float32{-0.5, 0.5, 0.5}, Normal: [3]float32{0, 0, 1}, TexCoord: [2]float32{0, 1}},
 	}
 	t := []format3d.Triangle{
-		{0, 2, 1}, {0, 3, 2}, // -Z
-		{4, 5, 6}, {4, 6, 7}, // +Z
-		{0, 1, 5}, {0, 5, 4}, // -Y
-		{2, 3, 7}, {2, 7, 6}, // +Y
-		{0, 4, 7}, {0, 7, 3}, // -X
-		{1, 2, 6}, {1, 6, 5}, // +X
+		{A: 0, B: 2, C: 1}, {A: 0, B: 3, C: 2}, // -Z
+		{A: 4, B: 5, C: 6}, {A: 4, B: 6, C: 7}, // +Z
+		{A: 0, B: 1, C: 5}, {A: 0, B: 5, C: 4}, // -Y
+		{A: 2, B: 3, C: 7}, {A: 2, B: 7, C: 6}, // +Y
+		{A: 0, B: 4, C: 7}, {A: 0, B: 7, C: 3}, // -X
+		{A: 1, B: 2, C: 6}, {A: 1, B: 6, C: 5}, // +X
 	}
 	return &format3d.Model{Vertices: v, Triangles: t}
 }
@@ -112,7 +112,7 @@ func makeTetrahedron() *format3d.Model {
 		{Position: [3]float32{0, -0.5, -1}, Normal: [3]float32{0, -0.3, -1}, TexCoord: [2]float32{0.5, 0.5}},
 	}
 	t := []format3d.Triangle{
-		{0, 2, 1}, {0, 3, 2}, {0, 1, 3}, {1, 2, 3},
+		{A: 0, B: 2, C: 1}, {A: 0, B: 3, C: 2}, {A: 0, B: 1, C: 3}, {A: 1, B: 2, C: 3},
 	}
 	return &format3d.Model{Vertices: v, Triangles: t}
 }
@@ -127,8 +127,8 @@ func makeOctahedron() *format3d.Model {
 		{Position: [3]float32{0, 0, -1}, Normal: [3]float32{0, 0, -1}, TexCoord: [2]float32{0.25, 0.5}},
 	}
 	t := []format3d.Triangle{
-		{0, 4, 2}, {0, 2, 5}, {0, 5, 3}, {0, 3, 4},
-		{1, 2, 4}, {1, 5, 2}, {1, 3, 5}, {1, 4, 3},
+		{A: 0, B: 4, C: 2}, {A: 0, B: 2, C: 5}, {A: 0, B: 5, C: 3}, {A: 0, B: 3, C: 4},
+		{A: 1, B: 2, C: 4}, {A: 1, B: 5, C: 2}, {A: 1, B: 3, C: 5}, {A: 1, B: 4, C: 3},
 	}
 	return &format3d.Model{Vertices: v, Triangles: t}
 }
@@ -279,8 +279,8 @@ func makeSpinningPyramid() *format3d.Model {
 		{Position: [3]float32{-1, -0.5, 1}, Normal: [3]float32{-0.6, -0.3, 0.6}, TexCoord: [2]float32{0, 1}},
 	}
 	tris := []format3d.Triangle{
-		{0, 2, 1}, {0, 3, 2}, {0, 4, 3}, {0, 1, 4},
-		{1, 2, 3}, {1, 3, 4},
+		{A: 0, B: 2, C: 1}, {A: 0, B: 3, C: 2}, {A: 0, B: 4, C: 3}, {A: 0, B: 1, C: 4},
+		{A: 1, B: 2, C: 3}, {A: 1, B: 3, C: 4},
 	}
 	frames := make([]format3d.AnimationFrame, 0, 16)
 	for fi := 0; fi < 16; fi++ {
