@@ -484,6 +484,51 @@ def render_to(path: str) -> None:
     bpy.ops.render.render(write_still=True)
 
 
+def detect_animation_range(scene) -> tuple[int, int] | None:
+    """Find the longest action in the scene + return (start, end) in
+    integer Blender frames. Returns None when nothing is animated.
+
+    Covers all three places Blender keeps timed motion that turntable
+    renders can show:
+
+      - object-level actions (rigid transforms, armature pose data)
+      - mesh shape-key actions (morph targets from glTF / FBX)
+      - armature object actions (skeletal animation drivers)
+
+    We deliberately don't read scene.frame_end because the glTF
+    importer doesn't always bump it — it leaves the scene at the
+    factory default (1..250) and stashes the real range in each
+    action's frame_range.
+    """
+    max_end = float(scene.frame_start)
+    min_start = float(scene.frame_start)
+    found = False
+
+    def consider(action):
+        nonlocal max_end, min_start, found
+        if action is None:
+            return
+        rng = action.frame_range
+        if rng[1] > rng[0]:
+            found = True
+            if rng[0] < min_start:
+                min_start = rng[0]
+            if rng[1] > max_end:
+                max_end = rng[1]
+
+    for obj in scene.objects:
+        if obj.animation_data:
+            consider(obj.animation_data.action)
+        if obj.type == 'MESH' and obj.data and obj.data.shape_keys:
+            sk = obj.data.shape_keys
+            if sk.animation_data:
+                consider(sk.animation_data.action)
+
+    if not found:
+        return None
+    return (int(round(min_start)), int(round(max_end)))
+
+
 # ----------------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------------
@@ -595,11 +640,34 @@ def main() -> None:
     cam.location = (0, -distance, distance * math.tan(tilt_rad))
     cam.rotation_euler = (math.radians(90 - tilt_deg), 0, 0)
     turntable_dir = os.path.join(args.output, "turntable")
+
+    # Animation-aware playhead: when the imported scene carries a
+    # morph / armature / object-level animation, distribute the full
+    # clip evenly across the camera orbit so the model actually
+    # animates while the camera circles it. With no animation, every
+    # turntable frame stays at frame 1 (rest pose).
+    anim_range = detect_animation_range(scene)
+    if anim_range is not None:
+        anim_start, anim_end = anim_range
+    else:
+        anim_start = anim_end = scene.frame_start
+
     for i in range(args.frames):
         pivot.rotation_euler = (0, 0, math.radians(-90 + i * 360.0 / args.frames))
+        if anim_end > anim_start:
+            # i in [0, frames-1] → t in [0, 1].
+            t = i / max(1, args.frames - 1)
+            frame = int(round(anim_start + t * (anim_end - anim_start)))
+            scene.frame_set(frame)
+        else:
+            scene.frame_set(scene.frame_start)
         render_to(os.path.join(turntable_dir, f"frame_{i:04d}.png"))
 
     # ─── Reference views: top + bottom ─────────────────────────────────
+    # Pin to the rest pose. The reference views are about giving the
+    # post-detail page a clean "top-down" and "looking-up" inset —
+    # not a moment from the animation.
+    scene.frame_set(scene.frame_start)
     cam.parent = None
     views_dir = os.path.join(args.output, "views")
 
