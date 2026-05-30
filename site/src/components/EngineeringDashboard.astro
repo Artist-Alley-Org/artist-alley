@@ -1,0 +1,543 @@
+---
+// Engineering dashboard — one-shop view of roadmap + GitHub state.
+// Pure SSR, no client JS.
+//
+// Loads its own data from content collections so MDX consumers can just
+// drop in <EngineeringDashboard /> without juggling getEntry calls.
+
+import { getEntry } from "astro:content";
+import CommitHeatmap from "./CommitHeatmap.astro";
+
+const roadmapEntry = await getEntry("roadmap", "roadmap");
+const githubEntry = await getEntry("github", "snapshot");
+
+if (!roadmapEntry) {
+  throw new Error(
+    "EngineeringDashboard: missing roadmap entry (src/content/roadmap/roadmap.json)",
+  );
+}
+if (!githubEntry) {
+  throw new Error(
+    "EngineeringDashboard: missing github snapshot entry " +
+      "(src/content/github/snapshot.json) — run `pnpm refresh-github` or wait " +
+      "for the scheduled workflow to commit one.",
+  );
+}
+
+const roadmap = roadmapEntry.data;
+const github = githubEntry.data;
+
+const isStub = (github as any)._stub != null;
+
+const fmtDate = (s: string | null | undefined) =>
+  s
+    ? new Date(s).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "—";
+
+const fmtRelative = (s: string | null | undefined) => {
+  if (!s) return "—";
+  const then = new Date(s).getTime();
+  const diff = Date.now() - then;
+  const d = Math.floor(diff / 86400000);
+  if (d === 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 30) return `${d}d ago`;
+  if (d < 365) return `${Math.floor(d / 30)}mo ago`;
+  return `${Math.floor(d / 365)}y ago`;
+};
+
+// Roadmap counters — discriminated-union narrowing via the `kind` field.
+type Subphase = { id: string; title: string; status: "shipped" | "in-flight" | "planned"; bullets: string[] };
+
+const allSubphases: Subphase[] = roadmap.sections.flatMap((s) =>
+  s.kind === "subphases" ? s.subphases : [],
+);
+const subphaseShipped = allSubphases.filter((s) => s.status === "shipped").length;
+const subphaseInflight = allSubphases.filter((s) => s.status === "in-flight").length;
+const subphasePlanned = allSubphases.filter((s) => s.status === "planned").length;
+const totalSubphasesCount = allSubphases.length || 1; // avoid /0 in width calc
+
+const shippedSection = roadmap.sections.find((s) => s.id === "shipped");
+const shippedCount =
+  shippedSection && shippedSection.kind === "items" ? shippedSection.items.length : 0;
+
+// Languages → percentages
+const langTotal = Object.values(github.languages ?? {}).reduce((a, b) => a + b, 0);
+const languages = Object.entries(github.languages ?? {})
+  .map(([name, bytes]) => ({
+    name,
+    bytes,
+    pct: langTotal > 0 ? (bytes / langTotal) * 100 : 0,
+  }))
+  .sort((a, b) => b.bytes - a.bytes);
+---
+
+<section class="aa-dashboard">
+  {isStub && (
+    <div class="aa-stub-warning">
+      <strong>GitHub data is stubbed.</strong> The scheduled workflow hasn't
+      committed a snapshot yet. Run <code>pnpm refresh-github</code> locally
+      (with <code>gh.exe</code> authed) or enable the action.
+    </div>
+  )}
+
+  <!-- ===================== Top row: repo at a glance =================== -->
+  <div class="aa-row" data-reveal>
+    <div class="aa-card aa-card--accent aa-card--repo">
+      <div class="aa-card-eyebrow">Repository</div>
+      <div class="aa-repo-name">
+        <a href={github.repo.html_url}>{github.repo.full_name}</a>
+      </div>
+      {github.repo.description && <p class="aa-muted">{github.repo.description}</p>}
+      <div class="aa-meta">
+        <span>visibility · <strong>{github.repo.visibility}</strong></span>
+        <span>license · <strong>{github.repo.license?.spdx_id ?? "—"}</strong></span>
+        <span>pushed · <strong>{fmtRelative(github.repo.pushed_at)}</strong></span>
+      </div>
+    </div>
+
+    <div class="aa-card aa-card--stat">
+      <div class="aa-card-eyebrow">Stars</div>
+      <div class="aa-stat">{github.repo.stargazers_count}</div>
+    </div>
+    <div class="aa-card aa-card--stat">
+      <div class="aa-card-eyebrow">Forks</div>
+      <div class="aa-stat">{github.repo.forks_count}</div>
+    </div>
+    <div class="aa-card aa-card--stat">
+      <div class="aa-card-eyebrow">Watchers</div>
+      <div class="aa-stat">{github.repo.watchers_count}</div>
+    </div>
+    <div class="aa-card aa-card--stat aa-card--issues">
+      <div class="aa-card-eyebrow">Open issues</div>
+      <div class="aa-stat">{github.issues.open.length}</div>
+    </div>
+    <div class="aa-card aa-card--stat aa-card--prs">
+      <div class="aa-card-eyebrow">Open PRs</div>
+      <div class="aa-stat">{github.pulls.open.length}</div>
+    </div>
+  </div>
+
+  <!-- ===================== Roadmap progress ============================ -->
+  <div class="aa-section" data-reveal>
+    <h2>Roadmap progress</h2>
+    <p class="aa-muted">
+      Last updated {roadmap.lastUpdated}. See the full
+      <a href="/roadmap/">roadmap page</a> for prose detail.
+    </p>
+
+    <div class="aa-row aa-row--3">
+      <div class="aa-card aa-card--shipped">
+        <h3>Foundations shipped</h3>
+        <div class="aa-stat">{shippedCount}</div>
+        <p class="aa-muted">items in the “Shipped” section</p>
+      </div>
+      <div class="aa-card aa-card--inflight">
+        <h3>Review tool sub-phases — shipped</h3>
+        <div class="aa-stat">{subphaseShipped} <span class="aa-stat-sub">/ {totalSubphasesCount}</span></div>
+      </div>
+      <div class="aa-card aa-card--planned">
+        <h3>Review tool sub-phases — planned</h3>
+        <div class="aa-stat">{subphasePlanned}</div>
+      </div>
+    </div>
+
+    <!-- Bar of sub-phase progress -->
+    <div class="aa-bar">
+      <div
+        class="aa-bar-seg aa-bar-seg--shipped"
+        style={`width:${(subphaseShipped / totalSubphasesCount) * 100}%`}
+        title={`Shipped: ${subphaseShipped}`}
+      ></div>
+      <div
+        class="aa-bar-seg aa-bar-seg--inflight"
+        style={`width:${(subphaseInflight / totalSubphasesCount) * 100}%`}
+        title={`In flight: ${subphaseInflight}`}
+      ></div>
+      <div
+        class="aa-bar-seg aa-bar-seg--planned"
+        style={`width:${(subphasePlanned / totalSubphasesCount) * 100}%`}
+        title={`Planned: ${subphasePlanned}`}
+      ></div>
+    </div>
+    <p class="aa-bar-legend">
+      <span class="aa-dot aa-dot--shipped"></span> shipped
+      <span class="aa-dot aa-dot--inflight"></span> in flight
+      <span class="aa-dot aa-dot--planned"></span> planned
+    </p>
+  </div>
+
+  <!-- ===================== Commit cadence =============================== -->
+  <div class="aa-section" data-reveal>
+    <h2>Commit cadence</h2>
+    <div class="aa-card aa-card--accent">
+      <CommitHeatmap />
+    </div>
+  </div>
+
+  <!-- ===================== Recent activity ============================= -->
+  <div class="aa-section aa-row aa-row--2" data-reveal>
+    <div class="aa-card">
+      <h3>Latest commits ({github.commits.length})</h3>
+      {github.commits.length === 0 ? (
+        <p class="aa-muted">No commits in snapshot.</p>
+      ) : (
+        <ul class="aa-list">
+          {github.commits.slice(0, 12).map((c) => (
+            <li>
+              <a href={c.url}><code>{c.sha.slice(0, 7)}</code></a>
+              <span class="aa-list-title">{c.message}</span>
+              <span class="aa-muted">
+                {c.author ?? "—"} · {fmtRelative(c.date)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+
+    <div class="aa-card">
+      <h3>Releases ({github.releases.length})</h3>
+      {github.releases.length === 0 ? (
+        <p class="aa-muted">No tagged releases yet.</p>
+      ) : (
+        <ul class="aa-list">
+          {github.releases.slice(0, 10).map((r) => (
+            <li>
+              <a href={r.html_url}><strong>{r.tag_name}</strong></a>
+              {r.name && <span class="aa-list-title">{r.name}</span>}
+              <span class="aa-muted">{fmtRelative(r.published_at)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </div>
+
+  <!-- ===================== Issues + PRs ================================ -->
+  <div class="aa-section aa-row aa-row--2" data-reveal>
+    <div class="aa-card">
+      <h3>Open issues ({github.issues.open.length})</h3>
+      {github.issues.open.length === 0 ? (
+        <p class="aa-muted">No open issues.</p>
+      ) : (
+        <ul class="aa-list">
+          {github.issues.open.slice(0, 10).map((i) => (
+            <li>
+              <a href={i.html_url}>#{i.number}</a>
+              <span class="aa-list-title">{i.title}</span>
+              {i.labels.length > 0 && (
+                <span class="aa-labels">
+                  {i.labels.slice(0, 3).map((l) => (
+                    <span class="aa-label">{l.name}</span>
+                  ))}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+
+    <div class="aa-card">
+      <h3>Open PRs ({github.pulls.open.length})</h3>
+      {github.pulls.open.length === 0 ? (
+        <p class="aa-muted">No open PRs.</p>
+      ) : (
+        <ul class="aa-list">
+          {github.pulls.open.slice(0, 10).map((p) => (
+            <li>
+              <a href={p.html_url}>#{p.number}</a>
+              <span class="aa-list-title">{p.title}</span>
+              <span class="aa-muted">{p.user?.login ?? "—"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </div>
+
+  <!-- ===================== Languages + contributors ==================== -->
+  <div class="aa-section aa-row aa-row--2" data-reveal>
+    <div class="aa-card">
+      <h3>Languages</h3>
+      {languages.length === 0 ? (
+        <p class="aa-muted">No language data yet.</p>
+      ) : (
+        <ul class="aa-langs">
+          {languages.map((l) => (
+            <li>
+              <span class="aa-lang-name">{l.name}</span>
+              <span class="aa-lang-bar">
+                <span class="aa-lang-bar-fill" style={`width:${l.pct}%`}></span>
+              </span>
+              <span class="aa-lang-pct">{l.pct.toFixed(1)}%</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+
+    <div class="aa-card">
+      <h3>Contributors ({github.contributors.length})</h3>
+      {github.contributors.length === 0 ? (
+        <p class="aa-muted">No contributor data yet.</p>
+      ) : (
+        <ul class="aa-contribs">
+          {github.contributors.slice(0, 12).map((c) => (
+            <li>
+              <a href={c.html_url}>
+                {c.avatar_url && <img src={c.avatar_url} alt="" loading="lazy" />}
+                <strong>{c.login}</strong>
+              </a>
+              <span class="aa-muted">{c.contributions} commits</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </div>
+
+  <p class="aa-footer-meta aa-muted">
+    GitHub snapshot fetched {fmtDate(github.fetchedAt)}.
+    {github.repo.topics.length > 0 && (
+      <>
+        {" Topics: "}
+        {github.repo.topics.map((t) => (
+          <span class="aa-label">{t}</span>
+        ))}
+      </>
+    )}
+  </p>
+</section>
+
+<style>
+  .aa-dashboard {
+    --aa-shipped: #2ea043;
+    --aa-inflight: #d29922;
+    --aa-planned: #6e7681;
+    --aa-card-bg: var(--sl-color-bg-nav, #161b22);
+    --aa-card-border: var(--sl-color-hairline, #30363d);
+
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 1.5rem;
+  }
+
+  .aa-stub-warning {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: rgba(210, 153, 34, 0.1);
+    border: 1px solid rgba(210, 153, 34, 0.4);
+    font-size: 0.9rem;
+  }
+
+  .aa-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .aa-section > h2 {
+    margin-bottom: 0;
+  }
+
+  .aa-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+  }
+  .aa-row--2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .aa-row--3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  .aa-card {
+    position: relative;
+    padding: 1.1rem 1.2rem;
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 60%),
+      var(--aa-card-bg);
+    border: 1px solid var(--aa-card-border);
+    transition:
+      border-color 160ms ease,
+      transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 160ms ease;
+    overflow: hidden;
+  }
+  .aa-card::after {
+    /* Subtle accent flare in the top-right corner — feels like a Stripe tile. */
+    content: "";
+    position: absolute;
+    top: -30%;
+    right: -30%;
+    width: 60%;
+    height: 60%;
+    background: radial-gradient(
+      circle,
+      var(--aa-card-accent-color, rgba(124,58,237,0.18)) 0%,
+      transparent 65%
+    );
+    pointer-events: none;
+    opacity: 0.6;
+    transition: opacity 160ms ease;
+  }
+  .aa-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--sl-color-gray-4, #484f58);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  }
+  .aa-card:hover::after { opacity: 1; }
+
+  .aa-card h3,
+  .aa-card-eyebrow {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+
+  .aa-card--accent { grid-column: 1 / -1; }
+  .aa-card--repo { --aa-card-accent-color: rgba(124, 58, 237, 0.22); }
+  .aa-card--stat { display: flex; flex-direction: column; }
+  .aa-card--issues { --aa-card-accent-color: rgba(210, 153, 34, 0.22); }
+  .aa-card--prs { --aa-card-accent-color: rgba(46, 160, 67, 0.22); }
+  .aa-card--shipped { border-left: 3px solid var(--aa-shipped); --aa-card-accent-color: rgba(46, 160, 67, 0.22); }
+  .aa-card--inflight { border-left: 3px solid var(--aa-inflight); --aa-card-accent-color: rgba(210, 153, 34, 0.22); }
+  .aa-card--planned { border-left: 3px solid var(--aa-planned); --aa-card-accent-color: rgba(110, 118, 129, 0.22); }
+
+  .aa-stat {
+    font-size: 2.4rem;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    font-feature-settings: "tnum" 1, "lnum" 1; /* Tabular figures for alignment. */
+    background: linear-gradient(180deg, var(--aa-stat-num-from) 0%, var(--aa-stat-num-to) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .aa-stat-sub {
+    font-size: 1rem;
+    font-weight: 400;
+    color: var(--sl-color-gray-3);
+  }
+
+  .aa-repo-name { font-size: 1.1rem; font-weight: 600; }
+
+  .aa-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .aa-muted { color: var(--sl-color-gray-3, #8b949e); font-size: 0.9rem; }
+
+  .aa-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .aa-list li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+  }
+  .aa-list-title { flex: 1; min-width: 0; }
+
+  .aa-bar {
+    display: flex;
+    height: 14px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--aa-card-border);
+  }
+  .aa-bar-seg--shipped { background: var(--aa-shipped); }
+  .aa-bar-seg--inflight { background: var(--aa-inflight); }
+  .aa-bar-seg--planned { background: var(--aa-planned); }
+
+  .aa-bar-legend {
+    display: flex;
+    gap: 1rem;
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3);
+  }
+  .aa-dot {
+    display: inline-block;
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    margin-right: 0.25rem;
+    vertical-align: middle;
+  }
+  .aa-dot--shipped { background: var(--aa-shipped); }
+  .aa-dot--inflight { background: var(--aa-inflight); }
+  .aa-dot--planned { background: var(--aa-planned); }
+
+  .aa-labels { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+  .aa-label {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--aa-card-border);
+    color: var(--sl-color-gray-2, #c9d1d9);
+  }
+
+  .aa-langs, .aa-contribs {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .aa-langs li {
+    display: grid;
+    grid-template-columns: 8em 1fr 4em;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.85rem;
+  }
+  .aa-lang-bar {
+    height: 8px;
+    background: var(--aa-card-border);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .aa-lang-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--aa-shipped);
+  }
+
+  .aa-contribs li {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.9rem;
+  }
+  .aa-contribs img {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+  }
+
+  .aa-footer-meta {
+    font-size: 0.8rem;
+    border-top: 1px dashed var(--aa-card-border);
+    padding-top: 0.75rem;
+  }
+</style>

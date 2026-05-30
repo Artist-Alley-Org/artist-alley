@@ -95,16 +95,14 @@ artist-alley/
 
 ## Roadmap
 
-| Phase | Focus | Status |
-|---|---|---|
-| 0 | Fork + containerize | done |
-| 1 | Backend foundation: auth, assets, metadata, permissions, search, posts | **in progress** |
-| 2 | Artist MVP: upload UX, browse, feed, basic comments | next |
-| 3 | Review mode: annotations, timecode comments, live presenter sessions | planned |
-| 4 | AI + 3D: provider-agnostic AI gateway, semantic search, glTF viewer | planned |
-| 5 | Enterprise: OIDC/SAML SSO, audit logs, Perforce / Git LFS integration | planned |
+The full roadmap lives in [`docs/roadmap.md`](docs/roadmap.md) — what's shipped, what's in flight, what's next, and what we're deliberately not building. The headline arc:
 
-Each phase ends with a working, shippable application.
+- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth, upload pipeline, posts + collections, browse feed, post detail modal, admin shell, theming, i18n.
+- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging.
+- **Load-bearing arc — review tool (Phase 1.18.B):** the post modal becomes a SyncSketch / Keyframe-Pro replacement. Shipping in sub-phases: video player → polish → subtitles → image sequences → **presentation rooms** → **annotation system** → timeline assembly → A/B compare → DCC integrations → native 3D viewer → heavy converters → audio/SVG/PDF → review projects → federation.
+- **On the map:** advanced search, teams + audit, real LDAP/SAML/OAuth, storage tooling, reports, moderation, federation, plugin ecosystem.
+
+See [`docs/roadmap.md`](docs/roadmap.md) for the canonical ordering and detail.
 
 ---
 

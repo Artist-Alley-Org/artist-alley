@@ -243,6 +243,18 @@ func (shimImpl) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject)
 func (shimImpl) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from storage test shim")
 }
+func (shimImpl) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from storage test shim")
+}
+func (shimImpl) AddAssetCompanion(context.Context, openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from storage test shim")
+}
+func (shimImpl) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from storage test shim")
+}
+func (shimImpl) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from storage test shim")
+}
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from storage test shim")
 }
@@ -461,4 +473,21 @@ func (shimImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearance
 }
 func (shimImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("GetPublicAppearance called from storage test shim")
+}
+
+// --- jobs stubs (Phase 1.18.A) -------------------------------------------
+func (shimImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	panic("ClaimJobs called from test shim")
+}
+func (shimImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	panic("GetJob called from test shim")
+}
+func (shimImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	panic("HeartbeatJob called from test shim")
+}
+func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	panic("CompleteJob called from test shim")
+}
+func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	panic("FailJob called from test shim")
 }

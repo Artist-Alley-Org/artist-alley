@@ -101,12 +101,18 @@ CREATE TABLE assets (
     state_id           UUID         NULL, -- workflow_states; added by 00018
     team_id            UUID         NULL, -- teams; added by 00018
     -- processing_status / thumbhash added by 00022_upload_seam.sql.
-    processing_status  TEXT         NOT NULL DEFAULT 'ready'
-        CHECK (processing_status IN ('pending', 'ready', 'failed')),
-    thumbhash          BYTEA        NULL,
-    created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at         TIMESTAMPTZ  NULL
+    -- 'processing' added by 00024 (preview worker holds the row).
+    processing_status      TEXT         NOT NULL DEFAULT 'ready'
+        CHECK (processing_status IN ('pending', 'processing', 'ready', 'failed')),
+    thumbhash              BYTEA        NULL,
+    -- processing_* bookkeeping columns added by 00024.
+    processing_attempts    INTEGER      NOT NULL DEFAULT 0,
+    processing_error       TEXT         NULL,
+    processing_started_at  TIMESTAMPTZ  NULL,
+    processing_finished_at TIMESTAMPTZ  NULL,
+    created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at             TIMESTAMPTZ  NULL
 );
 
 CREATE TABLE asset_tag (
@@ -331,6 +337,18 @@ CREATE TABLE storage_pins (
     PRIMARY KEY (object_hash, pin_subject_type, pin_subject_id)
 );
 
+-- migrations/00026_asset_companions.sql — sidecar files for 3D assets.
+CREATE TABLE asset_companions (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id        UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    companion_path  TEXT         NOT NULL CHECK (length(companion_path) BETWEEN 1 AND 512),
+    object_hash     TEXT         NOT NULL REFERENCES storage_objects(hash),
+    content_type    TEXT         NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes      BIGINT       NOT NULL CHECK (size_bytes >= 0),
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (asset_id, companion_path)
+);
+
 -- migrations/00005_sessions.sql — first-class session table. One row per
 -- active login; replaces RS's single-session-per-user model while still
 -- maintaining user.session for PHP coexistence.
@@ -534,4 +552,28 @@ CREATE TABLE user_profiles (
     origin_server_id UUID         NULL,
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- migrations/00024_preview_queue.sql — generic background-job queue
+-- + preview-pipeline bookkeeping on assets. Workers claim rows via
+-- FOR UPDATE SKIP LOCKED; handlers dispatch on `type`.
+CREATE TABLE jobs (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    type                TEXT         NOT NULL,
+    payload             JSONB        NOT NULL DEFAULT '{}',
+    status              TEXT         NOT NULL DEFAULT 'pending'
+                                     CHECK (status IN ('pending','running','done','failed','cancelled')),
+    priority            INTEGER      NOT NULL DEFAULT 100,
+    attempts            INTEGER      NOT NULL DEFAULT 0,
+    max_attempts        INTEGER      NOT NULL DEFAULT 3,
+    claimed_by          TEXT         NULL,
+    claimed_at          TIMESTAMPTZ  NULL,
+    lease_expires_at    TIMESTAMPTZ  NULL,
+    last_error          TEXT         NULL,
+    result              JSONB        NULL,
+    origin_server_id    UUID         NULL,
+    scheduled_for       TIMESTAMPTZ  NULL,
+    enqueued_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    started_at          TIMESTAMPTZ  NULL,
+    finished_at         TIMESTAMPTZ  NULL
 );

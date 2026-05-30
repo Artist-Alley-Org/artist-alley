@@ -49,15 +49,24 @@ RUN npm run build
 
 # ---- go-build -------------------------------------------------------------
 #
-# Cross-compile in pure Go (CGO_ENABLED=0). Go's standard library does
-# cross-compilation without external toolchains, so we stay on the
-# host platform and emit a static binary for the target.
+# Debian-bookworm base instead of alpine: the WebP variant encoder
+# (chai2010/webp) is cgo'd against libwebp, and matching glibc on
+# both build and runtime keeps the binary portable. We still build
+# on $BUILDPLATFORM and emit for $TARGETPLATFORM; cross-arch builds
+# need the appropriate libwebp-dev:arch — buildx pulls it via
+# Debian's multiarch when TARGETARCH != $(dpkg --print-architecture).
 
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS go-build
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS go-build
 
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=dev
+
+# Build-time C toolchain + libwebp headers for chai2010/webp.
+# pkg-config is what the wrapper uses to find the lib at link time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev pkg-config libwebp-dev \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/app
 
@@ -75,7 +84,7 @@ COPY --from=web-build /web/build/ ./internal/http/static_assets/
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -trimpath \
       -tags embed_web \
       -ldflags "-s -w -X main.Version=${BUILD_VERSION}" \
@@ -84,19 +93,24 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # ---- runtime --------------------------------------------------------------
 #
-# Final image: Alpine with ca-certs + tzdata, a non-root `app` user,
-# and the binary. ~25 MB compressed. Storage volume mounted under
-# /var/lib/aa-storage.
+# Debian-slim instead of Alpine: the binary is cgo'd against libwebp
+# so it dynamically links libwebp.so.7 at runtime. Final image lands
+# around ~80 MB — bigger than the prior pure-Go Alpine cut (~25 MB)
+# but gains lossy + lossless WebP encoding for the variant ladder
+# (~25-35% smaller variants than JPEG at perceptually equivalent
+# quality). Curl stays for the HEALTHCHECK below.
 
-FROM alpine:3.20 AS runtime
+FROM debian:bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="artist-alley"
 LABEL org.opencontainers.image.description="Self-hosted art review and archival platform — a modern reimagining of ResourceSpace."
 LABEL org.opencontainers.image.licenses="BSD-3-Clause"
 LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 
-RUN apk add --no-cache ca-certificates tzdata curl \
- && addgroup -S app && adduser -S -G app app \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tzdata curl libwebp7 \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system app && useradd --system --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \
  && chown app:app /var/lib/aa-storage
 

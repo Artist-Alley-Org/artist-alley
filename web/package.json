@@ -19,6 +19,7 @@
     "@sveltejs/vite-plugin-svelte": "latest",
     "@tailwindcss/vite": "latest",
     "@types/node": "latest",
+    "@types/three": "^0.184.1",
     "openapi-typescript": "latest",
     "svelte": "latest",
     "svelte-check": "latest",
@@ -27,7 +28,12 @@
     "vite": "latest"
   },
   "dependencies": {
+    "@google/model-viewer": "^4.2.0",
     "@scalar/api-reference": "^1.57.5",
-    "openapi-fetch": "latest"
+    "hls.js": "^1.6.16",
+    "openapi-fetch": "latest",
+    "pdfjs-dist": "^5.7.284",
+    "three": "^0.182.0",
+    "thumbhash": "^0.1.1"
   }
 }

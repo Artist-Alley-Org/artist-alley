@@ -1,0 +1,746 @@
+---
+// Visual roadmap — Linear-style narrative of the roadmap JSON.
+// Three zones: Foundations (shipped strip) → In flight → Review tool timeline → Queue.
+// Pure SSR. No client JS. Tooltips via native title + CSS focus.
+
+import { getEntry } from "astro:content";
+
+const roadmapEntry = await getEntry("roadmap", "roadmap");
+if (!roadmapEntry) {
+  throw new Error(
+    "VisualRoadmap: missing src/content/roadmap/roadmap.json entry",
+  );
+}
+const roadmap = roadmapEntry.data;
+
+type ItemsSection = Extract<typeof roadmap.sections[number], { kind: "items" }>;
+type SubphasesSection = Extract<typeof roadmap.sections[number], { kind: "subphases" }>;
+
+function findItems(id: string): ItemsSection | undefined {
+  const s = roadmap.sections.find((sec) => sec.id === id);
+  return s && s.kind === "items" ? s : undefined;
+}
+function findSubphases(id: string): SubphasesSection | undefined {
+  const s = roadmap.sections.find((sec) => sec.id === id);
+  return s && s.kind === "subphases" ? s : undefined;
+}
+
+const shipped = findItems("shipped");
+const inFlight = findItems("in-flight");
+const reviewTool = findSubphases("review-tool");
+const upNext = findItems("up-next");
+const onMap = findItems("on-map");
+const notBuilding = findItems("not-building");
+
+const shippedItems = shipped?.items ?? [];
+const inFlightItems = inFlight?.items ?? [];
+const subphases = reviewTool?.subphases ?? [];
+const upNextItems = upNext?.items ?? [];
+const onMapItems = onMap?.items ?? [];
+const notBuildingItems = notBuilding?.items ?? [];
+
+const subphaseShipped = subphases.filter((s) => s.status === "shipped").length;
+const subphaseInflight = subphases.filter((s) => s.status === "in-flight").length;
+const subphasePlanned = subphases.filter((s) => s.status === "planned").length;
+
+const labelFor = (status?: string) => {
+  switch (status) {
+    case "shipped":
+      return "shipped";
+    case "in-flight":
+      return "in flight";
+    case "planned":
+    default:
+      return "planned";
+  }
+};
+---
+
+<section class="vr">
+  <header class="vr-header">
+    <span class="vr-eyebrow">last updated {roadmap.lastUpdated}</span>
+    <h2 class="vr-title">Where we are</h2>
+    <p class="vr-lede">{roadmap.intro}</p>
+  </header>
+
+  <!-- ============================================================ -->
+  <!-- 1. Foundations shipped — pulse strip + chip cloud             -->
+  <!-- ============================================================ -->
+  <article class="vr-zone vr-zone--shipped" data-reveal>
+    <header class="vr-zone-head">
+      <div class="vr-zone-eyebrow">
+        <span class="vr-dot vr-dot--shipped" aria-hidden="true"></span>
+        Foundations
+      </div>
+      <h3>Shipped</h3>
+      <p>{shipped?.summary ?? "What the current release covers."}</p>
+      <span class="vr-count">{shippedItems.length} items</span>
+    </header>
+    <div
+      class="vr-strip"
+      role="list"
+      aria-label="Foundations shipped"
+      style={`--cell-count:${Math.max(shippedItems.length, 1)}`}
+    >
+      {shippedItems.map((item) => (
+        <span
+          class="vr-strip-cell"
+          role="listitem"
+          tabindex="0"
+          aria-label={item.title}
+        >
+          <span class="vr-strip-tooltip">
+            <strong>{item.title}</strong>
+            {item.description && <span>{item.description}</span>}
+          </span>
+        </span>
+      ))}
+    </div>
+    <ul class="vr-chips">
+      {shippedItems.map((item) => (
+        <li class="vr-chip" title={item.description ?? item.title}>{item.title}</li>
+      ))}
+    </ul>
+  </article>
+
+  <!-- ============================================================ -->
+  <!-- 2. In flight — cards with phase + status                      -->
+  <!-- ============================================================ -->
+  {inFlightItems.length > 0 && (
+    <article class="vr-zone vr-zone--inflight" data-reveal>
+      <header class="vr-zone-head">
+        <div class="vr-zone-eyebrow">
+          <span class="vr-dot vr-dot--inflight" aria-hidden="true"></span>
+          Current focus
+        </div>
+        <h3>In flight</h3>
+        <p>{inFlight?.summary}</p>
+      </header>
+      <div class="vr-grid">
+        {inFlightItems.map((item) => (
+          <article class={`vr-card vr-card--${item.status ?? "in-flight"}`}>
+            <div class="vr-card-head">
+              {item.phase && <span class="vr-phase">{item.phase}</span>}
+              <span class={`vr-pill vr-pill--${item.status ?? "in-flight"}`}>
+                {labelFor(item.status ?? "in-flight")}
+              </span>
+            </div>
+            <h4>{item.title}</h4>
+            {item.description && <p>{item.description}</p>}
+          </article>
+        ))}
+      </div>
+    </article>
+  )}
+
+  <!-- ============================================================ -->
+  <!-- 3. Review tool sub-phase timeline                             -->
+  <!-- ============================================================ -->
+  {reviewTool && subphases.length > 0 && (
+    <article class="vr-zone vr-zone--feature" data-reveal>
+      <header class="vr-zone-head">
+        <div class="vr-zone-eyebrow">
+          <span class="vr-dot vr-dot--feature" aria-hidden="true"></span>
+          Load-bearing arc — Phase 1.18.B
+        </div>
+        <h3>{reviewTool.title.replace(/^Review tool — /, "Review tool —\u00A0")}</h3>
+        <p>{reviewTool.summary}</p>
+        <div class="vr-legend">
+          <span><span class="vr-dot vr-dot--shipped" aria-hidden="true"></span>{subphaseShipped} shipped</span>
+          <span><span class="vr-dot vr-dot--inflight" aria-hidden="true"></span>{subphaseInflight} in flight</span>
+          <span><span class="vr-dot vr-dot--planned" aria-hidden="true"></span>{subphasePlanned} planned</span>
+        </div>
+      </header>
+
+      <div class="vr-timeline-wrap">
+        <ol
+          class="vr-timeline"
+          aria-label="Review tool sub-phases"
+          style={`--node-count:${Math.max(subphases.length, 1)}`}
+        >
+          {subphases.map((sub) => {
+            const num = sub.id.replace(/^1\.18\.B-/, "");
+            return (
+              <li class={`vr-node vr-node--${sub.status}`}>
+                <span class="vr-node-marker" aria-hidden="true">
+                  <span class="vr-node-num">{num}</span>
+                </span>
+                <div class="vr-node-card">
+                  <div class="vr-node-card-head">
+                    <span class="vr-phase">{sub.id}</span>
+                    <span class={`vr-pill vr-pill--${sub.status}`}>
+                      {labelFor(sub.status)}
+                    </span>
+                  </div>
+                  <h4>{sub.title}</h4>
+                  {sub.bullets.length > 0 && (
+                    <ul>
+                      {sub.bullets.slice(0, 3).map((b) => (
+                        <li set:html={b.replace(/`([^`]+)`/g, "<code>$1</code>")} />
+                      ))}
+                      {sub.bullets.length > 3 && (
+                        <li class="vr-muted">+ {sub.bullets.length - 3} more</li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+
+      {reviewTool.architectureNote && (
+        <aside class="vr-note">
+          <h4>{reviewTool.architectureNote.title}</h4>
+          {reviewTool.architectureNote.paragraphs.map((p) => (
+            <p set:html={p
+              .replace(/`([^`]+)`/g, "<code>$1</code>")
+              .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")} />
+          ))}
+        </aside>
+      )}
+    </article>
+  )}
+
+  <!-- ============================================================ -->
+  <!-- 4. Queue — Up next + On the map                               -->
+  <!-- ============================================================ -->
+  {(upNextItems.length > 0 || onMapItems.length > 0) && (
+    <article class="vr-zone vr-zone--queue" data-reveal>
+      <header class="vr-zone-head">
+        <div class="vr-zone-eyebrow">
+          <span class="vr-dot vr-dot--planned" aria-hidden="true"></span>
+          Queue
+        </div>
+        <h3>What's next</h3>
+        <p>Planned arcs — sequenced behind the current focus.</p>
+      </header>
+
+      {upNextItems.length > 0 && (
+        <div class="vr-subzone">
+          <h4 class="vr-subzone-title">Up next</h4>
+          <div class="vr-grid vr-grid--tight">
+            {upNextItems.map((item) => (
+              <article class="vr-card vr-card--planned">
+                <div class="vr-card-head">
+                  {item.phase && <span class="vr-phase">{item.phase}</span>}
+                  <span class="vr-pill vr-pill--planned">{labelFor(item.status)}</span>
+                </div>
+                <h4>{item.title}</h4>
+                {item.description && <p>{item.description}</p>}
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {onMapItems.length > 0 && (
+        <div class="vr-subzone">
+          <h4 class="vr-subzone-title">On the map</h4>
+          <div class="vr-grid vr-grid--tight">
+            {onMapItems.map((item) => (
+              <article class="vr-card vr-card--planned vr-card--map">
+                <div class="vr-card-head">
+                  {item.phase && <span class="vr-phase">{item.phase}</span>}
+                  <span class="vr-pill vr-pill--planned">{labelFor(item.status)}</span>
+                </div>
+                <h4>{item.title}</h4>
+                {item.description && <p>{item.description}</p>}
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+    </article>
+  )}
+
+  <!-- ============================================================ -->
+  <!-- 5. Not building — scope boundary, set expectations            -->
+  <!-- ============================================================ -->
+  {notBuildingItems.length > 0 && (
+    <article class="vr-zone vr-zone--anti" data-reveal>
+      <header class="vr-zone-head">
+        <div class="vr-zone-eyebrow vr-zone-eyebrow--anti">
+          <span class="vr-dot vr-dot--anti" aria-hidden="true"></span>
+          Scope
+        </div>
+        <h3>{notBuilding?.title}</h3>
+        <p>{notBuilding?.summary}</p>
+      </header>
+      <ul class="vr-anti-list">
+        {notBuildingItems.map((item) => (
+          <li>
+            <strong>{item.title}.</strong>{" "}
+            {item.description && <span>{item.description}</span>}
+          </li>
+        ))}
+      </ul>
+    </article>
+  )}
+</section>
+
+<style is:global>
+  /* Visual roadmap — scoped via .vr root class. is:global so MDX content
+     under the component can include the same classes if needed. */
+
+  .vr {
+    --vr-shipped: #2ea043;
+    --vr-shipped-soft: rgba(46, 160, 67, 0.16);
+    --vr-inflight: #d29922;
+    --vr-inflight-soft: rgba(210, 153, 34, 0.16);
+    --vr-planned: #6e7681;
+    --vr-planned-soft: rgba(110, 118, 129, 0.16);
+    --vr-feature: #7c3aed;
+    --vr-feature-soft: rgba(124, 58, 237, 0.16);
+    --vr-anti: #8b8d8f;
+
+    --vr-card-bg: var(--sl-color-bg-nav, #161b22);
+    --vr-card-border: var(--sl-color-hairline, #30363d);
+    --vr-text-muted: var(--sl-color-gray-3, #8b949e);
+
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+    margin: 2rem 0 3rem;
+  }
+
+  .vr-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--vr-card-border);
+  }
+  .vr-eyebrow {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--vr-text-muted);
+  }
+  .vr-title {
+    margin: 0;
+    font-size: clamp(1.5rem, 2.2vw, 2.1rem);
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  .vr-lede {
+    margin: 0;
+    color: var(--vr-text-muted);
+    max-width: 60ch;
+    text-wrap: pretty;
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Zones                                                          */
+  /* ------------------------------------------------------------- */
+  .vr-zone {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding: 1.5rem;
+    border-radius: 14px;
+    border: 1px solid var(--vr-card-border);
+    background:
+      radial-gradient(120% 100% at 0% 0%, var(--vr-zone-tint, transparent) 0%, transparent 60%),
+      var(--vr-card-bg);
+  }
+  .vr-zone--shipped  { --vr-zone-tint: var(--vr-shipped-soft); }
+  .vr-zone--inflight { --vr-zone-tint: var(--vr-inflight-soft); }
+  .vr-zone--feature  { --vr-zone-tint: var(--vr-feature-soft); }
+  .vr-zone--queue    { --vr-zone-tint: var(--vr-planned-soft); }
+  .vr-zone--anti     { --vr-zone-tint: transparent; opacity: 0.85; }
+
+  .vr-zone-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .vr-zone-head h3 {
+    margin: 0;
+    font-size: 1.35rem;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  .vr-zone-head p {
+    margin: 0;
+    color: var(--vr-text-muted);
+    max-width: 70ch;
+  }
+  .vr-zone-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--vr-text-muted);
+  }
+  .vr-zone-eyebrow--anti { color: var(--vr-anti); }
+
+  .vr-count {
+    font-size: 0.8rem;
+    color: var(--vr-text-muted);
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Dots, pills, phases                                            */
+  /* ------------------------------------------------------------- */
+  .vr-dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .vr-dot--shipped  { background: var(--vr-shipped); }
+  .vr-dot--inflight { background: var(--vr-inflight); }
+  .vr-dot--planned  { background: var(--vr-planned); }
+  .vr-dot--feature  { background: var(--vr-feature); }
+  .vr-dot--anti     { background: var(--vr-anti); }
+
+  .vr-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .vr-pill--shipped  { color: var(--vr-shipped);  background: var(--vr-shipped-soft); }
+  .vr-pill--inflight,
+  .vr-pill--in-flight { color: var(--vr-inflight); background: var(--vr-inflight-soft); }
+  .vr-pill--planned  { color: var(--vr-planned);  background: var(--vr-planned-soft); }
+
+  .vr-phase {
+    font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--vr-text-muted);
+    padding: 0.05rem 0.4rem;
+    background: var(--vr-card-border);
+    border-radius: 4px;
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Shipped strip                                                  */
+  /* ------------------------------------------------------------- */
+  .vr-strip {
+    display: grid;
+    grid-template-columns: repeat(var(--cell-count, 11), 1fr);
+    gap: 4px;
+    height: 18px;
+  }
+  .vr-strip-cell {
+    position: relative;
+    background: var(--vr-shipped);
+    border-radius: 4px;
+    opacity: 0.85;
+    transition: opacity 120ms ease, transform 120ms ease;
+    cursor: default;
+  }
+  .vr-strip-cell:hover,
+  .vr-strip-cell:focus-visible {
+    opacity: 1;
+    transform: translateY(-1px);
+    outline: none;
+  }
+  .vr-strip-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 200px;
+    max-width: 280px;
+    padding: 0.55rem 0.7rem;
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--vr-card-border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+    z-index: 10;
+    font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: left;
+  }
+  .vr-strip-tooltip strong { font-size: 0.85rem; }
+  .vr-strip-cell:hover .vr-strip-tooltip,
+  .vr-strip-cell:focus-visible .vr-strip-tooltip {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .vr-chips {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .vr-chip {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.6rem;
+    background: var(--vr-shipped-soft);
+    color: var(--sl-color-white, #e6edf3);
+    border-radius: 999px;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  .vr-chip:hover { border-color: var(--vr-shipped); }
+
+  /* ------------------------------------------------------------- */
+  /* Card grids                                                     */
+  /* ------------------------------------------------------------- */
+  .vr-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.85rem;
+  }
+  .vr-grid--tight { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+
+  .vr-card {
+    padding: 0.9rem 1rem;
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--vr-card-border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+  .vr-card:hover { transform: translateY(-1px); }
+  .vr-card--shipped  { border-left: 3px solid var(--vr-shipped); }
+  .vr-card--in-flight,
+  .vr-card--inflight { border-left: 3px solid var(--vr-inflight); }
+  .vr-card--planned  { border-left: 3px solid var(--vr-planned); }
+  .vr-card--map      { opacity: 0.85; }
+  .vr-card h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.25;
+    text-wrap: balance;
+  }
+  .vr-card p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--vr-text-muted);
+    text-wrap: pretty;
+  }
+  .vr-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Review-tool timeline                                           */
+  /* ------------------------------------------------------------- */
+  .vr-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--vr-text-muted);
+    margin-top: 0.25rem;
+  }
+  .vr-legend > span { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+  .vr-timeline-wrap {
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 0.5rem 0 0.25rem;
+    margin: 0 -0.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .vr-timeline {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(var(--node-count, 14), minmax(190px, 1fr));
+    gap: 0;
+    position: relative;
+  }
+  .vr-timeline::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 22px;
+    height: 2px;
+    background: var(--vr-card-border);
+    z-index: 0;
+  }
+
+  .vr-node {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0 0.4rem;
+  }
+  .vr-node-marker {
+    position: relative;
+    z-index: 1;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--sl-color-bg, #0d1117);
+    border: 3px solid var(--vr-planned);
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+    color: var(--vr-planned);
+    transition: transform 120ms ease;
+  }
+  .vr-node--shipped  .vr-node-marker { border-color: var(--vr-shipped);  color: var(--vr-shipped); }
+  .vr-node--in-flight .vr-node-marker { border-color: var(--vr-inflight); color: var(--vr-inflight); animation: vr-pulse 1.6s ease-in-out infinite; }
+  .vr-node-card {
+    width: 100%;
+    padding: 0.7rem 0.8rem;
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--vr-card-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-height: 100%;
+  }
+  .vr-node--shipped .vr-node-card  { border-top: 2px solid var(--vr-shipped); }
+  .vr-node--in-flight .vr-node-card { border-top: 2px solid var(--vr-inflight); }
+  .vr-node--planned .vr-node-card  { border-top: 2px solid var(--vr-planned); opacity: 0.92; }
+  .vr-node-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .vr-node-card h4 {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.25;
+    text-wrap: balance;
+  }
+  .vr-node-card ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.78rem;
+    color: var(--vr-text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .vr-node-card code {
+    font-size: 0.72rem;
+    padding: 0.05rem 0.25rem;
+    background: var(--vr-card-border);
+    border-radius: 3px;
+  }
+
+  @keyframes vr-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--vr-inflight-soft); }
+    50%      { transform: scale(1.07); box-shadow: 0 0 0 8px transparent; }
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Architecture note inside review-tool zone                      */
+  /* ------------------------------------------------------------- */
+  .vr-note {
+    padding: 1rem 1.1rem;
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--vr-card-border);
+    border-radius: 10px;
+    border-left: 3px solid var(--vr-feature);
+  }
+  .vr-note h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: var(--vr-feature);
+    text-wrap: balance;
+  }
+  .vr-note p {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .vr-note code {
+    font-size: 0.78rem;
+    padding: 0.05rem 0.3rem;
+    background: var(--vr-card-border);
+    border-radius: 4px;
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Sub-zones (Up next / On the map split)                         */
+  /* ------------------------------------------------------------- */
+  .vr-subzone {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .vr-subzone-title {
+    margin: 0;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--vr-text-muted);
+  }
+
+  /* ------------------------------------------------------------- */
+  /* Not-building list                                              */
+  /* ------------------------------------------------------------- */
+  .vr-anti-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .vr-anti-list li {
+    padding-left: 1rem;
+    position: relative;
+  }
+  .vr-anti-list li::before {
+    content: "—";
+    position: absolute;
+    left: 0;
+    color: var(--vr-anti);
+  }
+  .vr-anti-list strong { color: var(--vr-anti); }
+
+  /* ------------------------------------------------------------- */
+  /* Utility                                                        */
+  /* ------------------------------------------------------------- */
+  .vr-muted { color: var(--vr-text-muted); font-size: 0.85rem; }
+
+  /* ------------------------------------------------------------- */
+  /* Responsive                                                     */
+  /* ------------------------------------------------------------- */
+  @media (max-width: 768px) {
+    .vr-zone { padding: 1.2rem; }
+    .vr-strip { height: 14px; }
+    .vr-timeline { grid-template-columns: repeat(var(--node-count, 14), minmax(150px, 1fr)); }
+    .vr-strip-tooltip { min-width: 180px; }
+  }
+</style>

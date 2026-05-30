@@ -24,42 +24,56 @@ type ApiToken struct {
 }
 
 type Asset struct {
-	ID               pgtype.UUID        `json:"id"`
-	Title            string             `json:"title"`
-	Description      string             `json:"description"`
-	ResourceType     int64              `json:"resource_type"`
-	OwnerUserRef     *int64             `json:"owner_user_ref"`
-	Status           string             `json:"status"`
-	FileHash         *string            `json:"file_hash"`
-	FileExtension    *string            `json:"file_extension"`
-	FileSizeBytes    *int64             `json:"file_size_bytes"`
-	Rating           *int32             `json:"rating"`
-	UserRating       *float32           `json:"user_rating"`
-	HitCount         int64              `json:"hit_count"`
-	NewHitCount      int64              `json:"new_hit_count"`
-	RequestCount     int64              `json:"request_count"`
-	ArchiveState     int32              `json:"archive_state"`
-	Access           int32              `json:"access"`
-	ThumbWidth       *int32             `json:"thumb_width"`
-	ThumbHeight      *int32             `json:"thumb_height"`
-	ImageRed         *int16             `json:"image_red"`
-	ImageGreen       *int16             `json:"image_green"`
-	ImageBlue        *int16             `json:"image_blue"`
-	ColourKey        *string            `json:"colour_key"`
-	GeoLat           *float64           `json:"geo_lat"`
-	GeoLong          *float64           `json:"geo_long"`
-	Country          *string            `json:"country"`
-	HasImage         bool               `json:"has_image"`
-	IsTranscoding    bool               `json:"is_transcoding"`
-	Metadata         []byte             `json:"metadata"`
-	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
-	StateID          pgtype.UUID        `json:"state_id"`
-	TeamID           pgtype.UUID        `json:"team_id"`
-	ProcessingStatus string             `json:"processing_status"`
-	Thumbhash        []byte             `json:"thumbhash"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	Title                string             `json:"title"`
+	Description          string             `json:"description"`
+	ResourceType         int64              `json:"resource_type"`
+	OwnerUserRef         *int64             `json:"owner_user_ref"`
+	Status               string             `json:"status"`
+	FileHash             *string            `json:"file_hash"`
+	FileExtension        *string            `json:"file_extension"`
+	FileSizeBytes        *int64             `json:"file_size_bytes"`
+	Rating               *int32             `json:"rating"`
+	UserRating           *float32           `json:"user_rating"`
+	HitCount             int64              `json:"hit_count"`
+	NewHitCount          int64              `json:"new_hit_count"`
+	RequestCount         int64              `json:"request_count"`
+	ArchiveState         int32              `json:"archive_state"`
+	Access               int32              `json:"access"`
+	ThumbWidth           *int32             `json:"thumb_width"`
+	ThumbHeight          *int32             `json:"thumb_height"`
+	ImageRed             *int16             `json:"image_red"`
+	ImageGreen           *int16             `json:"image_green"`
+	ImageBlue            *int16             `json:"image_blue"`
+	ColourKey            *string            `json:"colour_key"`
+	GeoLat               *float64           `json:"geo_lat"`
+	GeoLong              *float64           `json:"geo_long"`
+	Country              *string            `json:"country"`
+	HasImage             bool               `json:"has_image"`
+	IsTranscoding        bool               `json:"is_transcoding"`
+	Metadata             []byte             `json:"metadata"`
+	OriginServerID       pgtype.UUID        `json:"origin_server_id"`
+	StateID              pgtype.UUID        `json:"state_id"`
+	TeamID               pgtype.UUID        `json:"team_id"`
+	ProcessingStatus     string             `json:"processing_status"`
+	Thumbhash            []byte             `json:"thumbhash"`
+	ProcessingAttempts   int32              `json:"processing_attempts"`
+	ProcessingError      *string            `json:"processing_error"`
+	ProcessingStartedAt  pgtype.Timestamptz `json:"processing_started_at"`
+	ProcessingFinishedAt pgtype.Timestamptz `json:"processing_finished_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type AssetCompanion struct {
+	ID            pgtype.UUID        `json:"id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	CompanionPath string             `json:"companion_path"`
+	ObjectHash    string             `json:"object_hash"`
+	ContentType   string             `json:"content_type"`
+	SizeBytes     int64              `json:"size_bytes"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type AssetFieldValue struct {
@@ -195,6 +209,26 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
 	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
+}
+
+type Job struct {
+	ID             pgtype.UUID        `json:"id"`
+	Type           string             `json:"type"`
+	Payload        []byte             `json:"payload"`
+	Status         string             `json:"status"`
+	Priority       int32              `json:"priority"`
+	Attempts       int32              `json:"attempts"`
+	MaxAttempts    int32              `json:"max_attempts"`
+	ClaimedBy      *string            `json:"claimed_by"`
+	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      *string            `json:"last_error"`
+	Result         []byte             `json:"result"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	ScheduledFor   pgtype.Timestamptz `json:"scheduled_for"`
+	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
 }
 
 type Like struct {

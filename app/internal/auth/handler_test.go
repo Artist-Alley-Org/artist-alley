@@ -483,6 +483,18 @@ func (a authOnlyImpl) AddAssetTags(_ context.Context, _ openapi.AddAssetTagsRequ
 func (a authOnlyImpl) RemoveAssetTag(_ context.Context, _ openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from auth test shim")
 }
+func (a authOnlyImpl) ListAssetCompanions(_ context.Context, _ openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from auth test shim")
+}
+func (a authOnlyImpl) AddAssetCompanion(_ context.Context, _ openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetCompanion(_ context.Context, _ openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from auth test shim")
+}
+func (a authOnlyImpl) RemoveAssetCompanion(_ context.Context, _ openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from auth test shim")
+}
 func (a authOnlyImpl) GetSetupStatus(_ context.Context, _ openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from auth test shim")
 }
@@ -798,4 +810,21 @@ func (authOnlyImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppear
 }
 func (authOnlyImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("GetPublicAppearance called from auth test shim")
+}
+
+// --- jobs stubs (Phase 1.18.A) -------------------------------------------
+func (authOnlyImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	panic("ClaimJobs called from test shim")
+}
+func (authOnlyImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	panic("GetJob called from test shim")
+}
+func (authOnlyImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	panic("HeartbeatJob called from test shim")
+}
+func (authOnlyImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	panic("CompleteJob called from test shim")
+}
+func (authOnlyImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	panic("FailJob called from test shim")
 }

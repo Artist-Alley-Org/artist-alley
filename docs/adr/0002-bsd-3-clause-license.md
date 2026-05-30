@@ -1,7 +1,10 @@
 # ADR 0002: BSD-3-Clause license, mirroring ResourceSpace
 
 - Date: 2026-05-23
-- Status: Accepted
+- Status: **Superseded by ADR 0016** (2026-05-29). The "no monetization
+  intent" premise no longer holds; the project is moving to AGPL-3.0 +
+  commercial dual-license after an RS-derived-code audit. This ADR
+  remains as the historical record of the BSD-3 starting state.
 
 ## Context
 

@@ -37,6 +37,8 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
@@ -51,18 +53,42 @@ const PinSubjectTypeAsset = "asset"
 // line with its declared maximum (200).
 const maxListLimit = 200
 
+// CacheDomainAssetCompanions keys the per-asset companion-list cache.
+// Exposed so cross-package writers (e.g. a future bulk-edit endpoint
+// that mutates companions outside this handler) can broadcast the
+// invalidation through cache.Registry.Emit.
+const CacheDomainAssetCompanions = "asset.companions"
+
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
 	Pool    *pgxpool.Pool
 	Storage *storage.Service
 	Logger  *slog.Logger
+	// Jobs is the background-job service. Used to enqueue
+	// preview-generation jobs (and, later, EXIF + AI + checksum work)
+	// after a successful asset create. Nil-safe — tests may pass nil
+	// to skip the enqueue.
+	Jobs *jobs.Service
+
+	// companions caches the per-asset list of sidecar files (the
+	// model viewer fetches this on every 3D mount; cache hit rate is
+	// high once a session settles on a working set of assets).
+	// nil-safe — tests can pass a nil registry.
+	companions *cache.Cache[[]openapi.AssetCompanion]
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
-func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Storage: storageSvc, Logger: logger}
+func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc}
+	if registry != nil {
+		// 5_000 keys × ~512 bytes/entry ≈ 2.5MB resident. Working set
+		// is "active assets being reviewed" which is well under that
+		// for a single host.
+		h.companions = cache.Register[[]openapi.AssetCompanion](registry, CacheDomainAssetCompanions, 5_000)
+	}
+	return h
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +165,21 @@ func (h *Handler) CreateAsset(
 	processingStatus := "ready"
 	if needsProcessing(in.FileExtension) {
 		processingStatus = "pending"
+	}
+
+	// Auto-promote resource_type when the file extension implies a
+	// stronger category than the caller chose. Frontends that send a
+	// generic Photo (1) for a .glb get bumped to 3D Object (5); a
+	// caller who explicitly picked Audio (4) for a model would stay
+	// as-is and live with their choice. The override rule is "promote
+	// only from the generic defaults (1, 2)" so explicit picks are
+	// always respected.
+	if in.FileExtension != nil {
+		if want := resourceTypeFor(*in.FileExtension); want > 0 {
+			if in.ResourceType == 1 || in.ResourceType == 2 {
+				in.ResourceType = want
+			}
+		}
 	}
 
 	// Thumbhash — synchronously computed for image extensions. ~1-3
@@ -232,7 +273,75 @@ func (h *Handler) CreateAsset(
 		}
 	}
 
+	// Enqueue async variant generation. Worker picks this up within
+	// seconds and writes col/preview/screen/hires under the asset's
+	// hash. The frontend renders the thumbhash placeholder until the
+	// first variant lands and then polls with backoff. Failure to
+	// enqueue here is a soft error — the row is still 'pending' so a
+	// future backfill catches it; we don't want a queue blip to fail
+	// uploads.
+	if h.Jobs != nil && fileHashPtr != nil && processingStatus == "pending" {
+		// Photos / typical mixed uploads run at PriorityHigh so the
+		// queue is FIFO-by-arrival for the user-facing path. Big
+		// files can demote themselves once we have size at create
+		// time (the create body doesn't carry it today).
+		priority := jobs.PriorityHigh
+		payload := map[string]string{
+			"asset_id":       newID.String(),
+			"file_hash":      *fileHashPtr,
+			"file_extension": strDefault(in.FileExtension, ""),
+		}
+		if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
+			Priority: &priority,
+		}); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+				slog.String("asset_id", newID.String()),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+
 	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
+}
+
+// jobTypeForExt picks the preview-job type for a given file extension.
+// preview.raster handles still images; preview.video runs the HLS
+// pipeline; preview.3d runs the Blender turntable renderer. Other
+// formats (audio/svg/pdf/font) land in follow-ups.
+func jobTypeForExt(ext *string) jobs.JobType {
+	if ext == nil {
+		return jobs.TypePreviewRaster
+	}
+	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
+	if _, ok := videoExts[e]; ok {
+		return jobs.TypePreviewVideo
+	}
+	if _, ok := modelExts[e]; ok {
+		return jobs.TypePreview3D
+	}
+	if _, ok := audioExtsHandler[e]; ok {
+		return jobs.TypePreviewAudio
+	}
+	if _, ok := pdfExtsHandler[e]; ok {
+		return jobs.TypePreviewPDF
+	}
+	if _, ok := fontExtsHandler[e]; ok {
+		return jobs.TypePreviewFont
+	}
+	return jobs.TypePreviewRaster
+}
+
+var pdfExtsHandler = map[string]struct{}{"pdf": {}}
+var fontExtsHandler = map[string]struct{}{
+	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
+}
+
+// audioExtsHandler mirrors preview.audioExts. Duplicated here so the
+// assets package's dispatch doesn't need to import the preview
+// package (which itself depends on assets for the metadata queries).
+var audioExtsHandler = map[string]struct{}{
+	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
+	"m4a": {}, "aac": {}, "opus": {},
 }
 
 // ---------------------------------------------------------------------------
@@ -910,6 +1019,10 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 var imageExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "webp": {},
 	"bmp": {}, "tiff": {}, "tif": {}, "avif": {}, "heic": {}, "heif": {},
+	"svg": {},
+	// High-dynamic-range — routed through preview.raster's HDR
+	// branch (ffmpeg tonemap → PNG → standard variant ladder).
+	"hdr": {}, "exr": {}, "pic": {},
 }
 
 func isImageExt(ext *string) bool {
@@ -929,6 +1042,55 @@ var videoExts = map[string]struct{}{
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
 }
 
+// modelExts: formats the preview.3d handler can ingest.
+//
+// First tier are the natively-supported formats:
+//   - glb / gltf / fbx / obj / blend → Blender import_scene operators
+//   - dae                            → Collada (Blender import_scene)
+//   - ply / stl / 3ds / x3d / wrl    → Blender mesh/scene importers
+//   - usd / usda / usdc / usdz       → Universal Scene Description
+//   - abc                            → Alembic VFX cache
+//   - mview                          → in-process Go converter
+//     (github.com/mscrnt/mviewer/go) → glTF → Blender
+//
+// Closed/proprietary formats like .mb / .ma / .max stay on a
+// placeholder until we wire a Maya/Max worker tier.
+var modelExts = map[string]struct{}{
+	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
+	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
+	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
+	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
+}
+
+// resourceTypeFor returns the canonical resource_type ref for a file
+// extension, used by createAsset to auto-promote uploads to the right
+// category. Returns 0 (unset) when we don't have a strong opinion —
+// the caller's explicit choice still wins.
+func resourceTypeFor(ext string) int64 {
+	if ext == "" {
+		return 0
+	}
+	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+	if _, ok := modelExts[e]; ok {
+		return 5 // 3D Object
+	}
+	if _, ok := videoExts[e]; ok {
+		return 3 // Video
+	}
+	if _, ok := imageExts[e]; ok {
+		return 1 // Photo
+	}
+	switch e {
+	case "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "txz":
+		return 6 // Archive
+	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma":
+		return 4 // Audio
+	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt", "ttf", "otf", "ttc", "otc", "woff", "woff2":
+		return 2 // Document (fonts → Document for now; no dedicated Font type yet)
+	}
+	return 0
+}
+
 func needsProcessing(ext *string) bool {
 	if ext == nil {
 		return false
@@ -938,6 +1100,18 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := videoExts[e]; ok {
+		return true
+	}
+	if _, ok := modelExts[e]; ok {
+		return true
+	}
+	if _, ok := audioExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := pdfExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := fontExtsHandler[e]; ok {
 		return true
 	}
 	return false

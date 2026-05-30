@@ -192,6 +192,18 @@ func (rtOnly) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (
 func (rtOnly) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from resourcetype test shim")
 }
+func (rtOnly) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
+	panic("ListAssetCompanions called from resourcetype test shim")
+}
+func (rtOnly) AddAssetCompanion(context.Context, openapi.AddAssetCompanionRequestObject) (openapi.AddAssetCompanionResponseObject, error) {
+	panic("AddAssetCompanion called from resourcetype test shim")
+}
+func (rtOnly) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
+	panic("DownloadAssetCompanion called from resourcetype test shim")
+}
+func (rtOnly) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
+	panic("RemoveAssetCompanion called from resourcetype test shim")
+}
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from resourcetype test shim")
 }
@@ -442,4 +454,21 @@ func (rtOnly) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceCo
 }
 func (rtOnly) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("GetPublicAppearance called from resourcetype test shim")
+}
+
+// --- jobs stubs (Phase 1.18.A) -------------------------------------------
+func (rtOnly) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
+	panic("ClaimJobs called from test shim")
+}
+func (rtOnly) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
+	panic("GetJob called from test shim")
+}
+func (rtOnly) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
+	panic("HeartbeatJob called from test shim")
+}
+func (rtOnly) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
+	panic("CompleteJob called from test shim")
+}
+func (rtOnly) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
+	panic("FailJob called from test shim")
 }
