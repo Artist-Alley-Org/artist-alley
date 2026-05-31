@@ -92,25 +92,50 @@
     { id: 'lasso', label: 'Lasso (Q)', icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
   ];
 
-  // Image-transform tools. Crop ships; flip / rotate / resize /
-  // skew / invert / remove-bg are placeholders for C-1.14.
+  // Image-transform tools. Crop is a mode (drag a rect to commit);
+  // the rest are one-shot operations triggered by the IMAGE_OPS
+  // buttons below. Keeping crop as a Tool entry (not an op button)
+  // because its UX is drag-rectangle, not click-once.
   const TOOLS_IMAGE: ToolEntry[] = [
     { id: 'crop', label: 'Crop (C)', icon: 'M6 2v14h14 M2 6h14v14' },
   ];
+
+  // One-shot image operations — clicking the button mutates the
+  // doc immediately (no drag mode required). Render as
+  // click-action buttons rather than tool toggles.
+  interface ImageOp { id: string; label: string; icon: string; run: () => void; }
+  const IMAGE_OPS: ImageOp[] = [
+    { id: 'flip-h',   label: 'Flip horizontal',  icon: 'M3 6h7v12H3z M14 9h4v6h-4z M21 12l-3-3v6z', run: () => session.flipHorizontal() },
+    { id: 'flip-v',   label: 'Flip vertical',    icon: 'M6 3v7h12V3z M9 14v4h6v-4z M12 21l3-3H9z', run: () => session.flipVertical() },
+    { id: 'rotate-l', label: 'Rotate left 90°',  icon: 'M3 12a9 9 0 1 0 3-7 M3 3v6h6', run: () => session.rotateCounterClockwise() },
+    { id: 'rotate-r', label: 'Rotate right 90°', icon: 'M21 12a9 9 0 1 1 -3-7 M21 3v6h-6', run: () => session.rotateClockwise() },
+    { id: 'invert',   label: 'Invert colors',    icon: 'M12 4a8 8 0 0 0 0 16zM12 4v16a8 8 0 0 0 0-16z', run: () => session.invertColors() },
+  ];
+
+  // Resize canvas — opens a small inline dialog because it needs
+  // two numeric inputs the user has to fill.
+  let showResize = $state(false);
+  let resizeW = $state(0);
+  let resizeH = $state(0);
+  function openResize() {
+    resizeW = session.doc.source_w;
+    resizeH = session.doc.source_h;
+    showResize = true;
+  }
+  function commitResize() {
+    if (resizeW > 0 && resizeH > 0) session.resizeCanvas(resizeW, resizeH);
+    showResize = false;
+  }
 
   // Image / Selection placeholder buttons — disabled until C-1.14 /
   // C-1.15 wire the actual mutators. They appear in their sections
   // so the user sees what's coming.
   interface PlaceholderEntry { id: string; label: string; icon: string; phase: string; }
+  // Image-section placeholders still pending — skew + remove-bg.
+  // Resize gets its own inline dialog (not a placeholder).
   const IMAGE_PLACEHOLDERS: PlaceholderEntry[] = [
-    { id: 'flip-h',    label: 'Flip horizontal',  phase: 'C-1.14', icon: 'M3 6h7v12H3z M14 9h4v6h-4z M21 12l-3-3v6z' },
-    { id: 'flip-v',    label: 'Flip vertical',    phase: 'C-1.14', icon: 'M6 3v7h12V3z M9 14v4h6v-4z M12 21l3-3H9z' },
-    { id: 'rotate-l',  label: 'Rotate left 90°',  phase: 'C-1.14', icon: 'M3 12a9 9 0 1 0 3-7 M3 3v6h6' },
-    { id: 'rotate-r',  label: 'Rotate right 90°', phase: 'C-1.14', icon: 'M21 12a9 9 0 1 1 -3-7 M21 3v6h-6' },
-    { id: 'resize',    label: 'Resize canvas',    phase: 'C-1.14', icon: 'M4 4h16v16H4z M9 9h6v6H9z' },
-    { id: 'skew',      label: 'Skew',             phase: 'C-1.14', icon: 'M3 20l4-16h14L17 20z' },
-    { id: 'invert',    label: 'Invert colors',    phase: 'C-1.14', icon: 'M12 4a8 8 0 0 0 0 16zM12 4v16a8 8 0 0 0 0-16z' },
-    { id: 'remove-bg', label: 'Remove background', phase: 'C-1.14 (needs ML)', icon: 'M4 4h16v16H4z M2 2l20 20' },
+    { id: 'skew',      label: 'Skew',              phase: 'C-1.14b', icon: 'M3 20l4-16h14L17 20z' },
+    { id: 'remove-bg', label: 'Remove background', phase: 'C-1.14b (needs ML)', icon: 'M4 4h16v16H4z M2 2l20 20' },
   ];
   const SELECT_PLACEHOLDERS: PlaceholderEntry[] = [
     { id: 'rect-select',  label: 'Rectangle select',   phase: 'C-1.15', icon: 'M4 4h16v16H4z M4 4l2 2 M20 4l-2 2 M4 20l2-2 M20 20l-2-2' },
@@ -304,8 +329,64 @@
       <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Image</div>
       <div class="grid grid-cols-5 gap-1">
         {#each TOOLS_IMAGE as t (t.id)}{@render toolBtn(t)}{/each}
+        {#each IMAGE_OPS as op (op.id)}
+          <button
+            type="button"
+            onclick={op.run}
+            class="inline-flex aspect-square items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+            title={op.label}
+            aria-label={op.label}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d={op.icon} />
+            </svg>
+          </button>
+        {/each}
+        <!-- Resize opens an inline two-input dialog (not a one-shot). -->
+        <button
+          type="button"
+          onclick={openResize}
+          class="inline-flex aspect-square items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+          title="Resize canvas…"
+          aria-label="Resize canvas"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16v16H4z M9 9h6v6H9z" />
+          </svg>
+        </button>
         {#each IMAGE_PLACEHOLDERS as p (p.id)}{@render placeholderBtn(p)}{/each}
       </div>
+      {#if showResize}
+        <div class="mt-2 rounded border border-border bg-surface p-2 text-xs">
+          <div class="mb-2 font-medium text-fg">Resize canvas</div>
+          <div class="mb-2 grid grid-cols-2 gap-2">
+            <label class="block">
+              <span class="block text-[10px] text-fg-muted">Width</span>
+              <input
+                type="number"
+                min="32" max="8192" step="1"
+                value={resizeW}
+                oninput={(e) => (resizeW = +(e.currentTarget as HTMLInputElement).value)}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-0.5 font-mono text-xs"
+              />
+            </label>
+            <label class="block">
+              <span class="block text-[10px] text-fg-muted">Height</span>
+              <input
+                type="number"
+                min="32" max="8192" step="1"
+                value={resizeH}
+                oninput={(e) => (resizeH = +(e.currentTarget as HTMLInputElement).value)}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-0.5 font-mono text-xs"
+              />
+            </label>
+          </div>
+          <div class="flex justify-end gap-1">
+            <button type="button" onclick={() => (showResize = false)} class="rounded border border-border px-2 py-0.5 text-[11px] text-fg">Cancel</button>
+            <button type="button" onclick={commitResize} class="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-on-accent">Resize</button>
+          </div>
+        </div>
+      {/if}
     </section>
 
     <!-- ── Color ────────────────────────────────────────────────── -->

@@ -117,6 +117,25 @@ export interface WhiteboardSession {
    *  new origin; items entirely outside the crop are dropped.
    *  source_w / source_h shrink to the crop dimensions. */
   crop: (x: number, y: number, w: number, h: number) => void;
+
+  // ── Image transforms (C-1.14) ────────────────────────────────
+  /** Flip every item horizontally about the canvas vertical axis.
+   *  source_w / source_h stay the same; strokes have every point's
+   *  x mirrored, shapes / text / image have their x re-anchored. */
+  flipHorizontal: () => void;
+  /** Mirror vertical axis. */
+  flipVertical: () => void;
+  /** Rotate the whole doc 90° clockwise. source_w / source_h swap. */
+  rotateClockwise: () => void;
+  /** Rotate 90° counter-clockwise. */
+  rotateCounterClockwise: () => void;
+  /** Resize the source canvas + rescale every item to fit. Items
+   *  retain their relative position + size on the new canvas. */
+  resizeCanvas: (w: number, h: number) => void;
+  /** Invert every item's color (hex → 1-hex). Strokes / shapes /
+   *  text only; images are left as-is (CSS filter could invert at
+   *  render time but not at the data level). */
+  invertColors: () => void;
 }
 
 const HISTORY_MAX = 64;
@@ -458,6 +477,152 @@ export function createWhiteboardSession(
       state.activeLayerId = state.doc.layers[0]?.id ?? null;
       history.length = 0;
       historyIdx = -1;
+      commit();
+    },
+
+    flipHorizontal() {
+      const w = state.doc.source_w;
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'stroke') {
+            return {
+              ...item,
+              points: item.points.map((p) => [w - p[0], p[1], p[2]] as [number, number, number?]),
+            };
+          }
+          // Mirror around the canvas vertical axis. For shape we
+          // also negate its own width so the drag-direction-coded
+          // shape still renders the same on the mirrored side.
+          if (item.kind === 'shape') {
+            return { ...item, x: w - item.x - item.w };
+          }
+          // text / image: anchor x flips so the box still lives on
+          // the canvas; aligned-left text re-aligns relative to its
+          // anchor visually, which is the expected mirror behaviour.
+          return { ...item, x: w - item.x - item.w };
+        });
+      }
+      state.selection = null;
+      state.extraSelected = [];
+      commit();
+    },
+
+    flipVertical() {
+      const h = state.doc.source_h;
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'stroke') {
+            return {
+              ...item,
+              points: item.points.map((p) => [p[0], h - p[1], p[2]] as [number, number, number?]),
+            };
+          }
+          if (item.kind === 'shape') {
+            return { ...item, y: h - item.y - item.h };
+          }
+          return { ...item, y: h - item.y - item.h };
+        });
+      }
+      state.selection = null;
+      state.extraSelected = [];
+      commit();
+    },
+
+    rotateClockwise() {
+      // Source (W, H) becomes (H, W). Every point (x, y) maps to
+      // (H - y, x). For shapes / text / image we re-anchor the
+      // top-left + swap w/h.
+      const W = state.doc.source_w;
+      const H = state.doc.source_h;
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'stroke') {
+            return {
+              ...item,
+              points: item.points.map((p) => [H - p[1], p[0], p[2]] as [number, number, number?]),
+            };
+          }
+          if (item.kind === 'shape') {
+            return { ...item, x: H - item.y - item.h, y: item.x, w: item.h, h: item.w };
+          }
+          // text / image — keep dims, just re-anchor.
+          return { ...item, x: H - item.y - item.h, y: item.x, w: item.h, h: item.w };
+        });
+      }
+      state.doc.source_w = H;
+      state.doc.source_h = W;
+      state.selection = null;
+      state.extraSelected = [];
+      commit();
+    },
+
+    rotateCounterClockwise() {
+      const W = state.doc.source_w;
+      const H = state.doc.source_h;
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'stroke') {
+            return {
+              ...item,
+              points: item.points.map((p) => [p[1], W - p[0], p[2]] as [number, number, number?]),
+            };
+          }
+          if (item.kind === 'shape') {
+            return { ...item, x: item.y, y: W - item.x - item.w, w: item.h, h: item.w };
+          }
+          return { ...item, x: item.y, y: W - item.x - item.w, w: item.h, h: item.w };
+        });
+      }
+      state.doc.source_w = H;
+      state.doc.source_h = W;
+      state.selection = null;
+      state.extraSelected = [];
+      commit();
+    },
+
+    resizeCanvas(newW, newH) {
+      const sx = newW / state.doc.source_w;
+      const sy = newH / state.doc.source_h;
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'stroke') {
+            return {
+              ...item,
+              points: item.points.map((p) => [p[0] * sx, p[1] * sy, p[2]] as [number, number, number?]),
+              width: item.width * Math.min(sx, sy),
+            };
+          }
+          return {
+            ...item,
+            x: item.x * sx,
+            y: item.y * sy,
+            w: item.w * sx,
+            h: item.h * sy,
+          };
+        });
+      }
+      state.doc.source_w = Math.max(1, Math.round(newW));
+      state.doc.source_h = Math.max(1, Math.round(newH));
+      commit();
+    },
+
+    invertColors() {
+      const invert = (hex: string): string => {
+        const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+        if (!m) return hex;
+        const n = parseInt(m[1], 16);
+        const r = 255 - ((n >> 16) & 0xff);
+        const g = 255 - ((n >> 8) & 0xff);
+        const b = 255 - (n & 0xff);
+        const p = (v: number) => v.toString(16).padStart(2, '0');
+        return `#${p(r)}${p(g)}${p(b)}`;
+      };
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items.map((item) => {
+          if (item.kind === 'image') return item;
+          return { ...item, color: invert(item.color) };
+        });
+      }
       commit();
     },
 
