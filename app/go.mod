@@ -13,6 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/oapi-codegen/runtime v1.4.1
 	github.com/pressly/goose/v3 v3.27.1
@@ -22,6 +23,7 @@ require (
 	go.n16f.net/thumbhash v1.1.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.32.0
+	golang.org/x/text v0.37.0
 )
 
 require (
@@ -58,6 +60,5 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
