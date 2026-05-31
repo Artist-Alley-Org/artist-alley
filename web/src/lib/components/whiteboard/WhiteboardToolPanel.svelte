@@ -18,11 +18,16 @@
 
   import type { Tool } from '$lib/whiteboard/types';
   import {
+    FONT_SIZE_MAX,
+    FONT_SIZE_MIN,
+    FONT_SIZE_PRESETS,
+    GOOGLE_FONTS,
     PALETTE,
     SIZES,
     isBrushTool,
     isShapeTool,
   } from '$lib/whiteboard/types';
+  import { loadFont } from '$lib/whiteboard/fonts.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 
   interface Props {
@@ -78,6 +83,29 @@
     session.selectItem(targetLayerId, newIdx);
   }
   let showMoveMenu = $state(false);
+
+  // Typography surface — visible when the text tool is active, OR
+  // when a text item is the current selection. Switching the family
+  // triggers a Google Fonts lazy-load so the canvas re-renders with
+  // the real face as soon as the woff2 lands.
+  const selectedTextItem = $derived(() => {
+    const sel = session.selection;
+    if (!sel) return null;
+    const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+    const item = layer?.items[sel.index];
+    return item && item.kind === 'text' ? item : null;
+  });
+  const showTypography = $derived(session.tool === 'text' || !!selectedTextItem());
+
+  function pickFont(family: string) {
+    session.fontFamily = family;
+    void loadFont(family);
+  }
+  // Preload the default font + the currently-picked one so the
+  // first text item renders in the right face immediately.
+  $effect(() => {
+    void loadFont(session.fontFamily);
+  });
 
   function startRename(id: string, current: string) {
     editingLayerId = id;
@@ -215,6 +243,114 @@
         </label>
       {/if}
     </section>
+
+    <!-- ── Typography ───────────────────────────────────────────
+         Visible whenever the text tool is active OR a text item is
+         selected. Writes through to the selected text item so users
+         can restyle existing labels without re-typing them. -->
+    {#if showTypography}
+      <section class="space-y-3 border-b border-border p-3">
+        <div class="text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Typography</div>
+        <!-- Font family -->
+        <label class="block">
+          <span class="mb-1 block text-[10px] text-fg-muted">Font</span>
+          <select
+            value={session.fontFamily}
+            onchange={(e) => pickFont((e.currentTarget as HTMLSelectElement).value)}
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-xs"
+          >
+            {#each GOOGLE_FONTS as f (f.family)}
+              <option value={f.family} style:font-family={`"${f.family}", system-ui`}>
+                {f.label}
+              </option>
+            {/each}
+          </select>
+        </label>
+        <!-- Live preview of the picked font at the current size +
+             weight + style. Renders the font name so users see the
+             face apply before they create a text item. -->
+        <div
+          class="overflow-hidden rounded border border-border bg-white px-2 py-1 text-black"
+          style:font-family={`"${session.fontFamily}", system-ui, sans-serif`}
+          style:font-weight={session.bold ? 700 : 400}
+          style:font-style={session.italic ? 'italic' : 'normal'}
+          style:font-size={`${Math.min(28, session.fontSize)}px`}
+        >
+          {session.fontFamily}
+        </div>
+        <!-- Size slider 8-96 with preset chips. -->
+        <div>
+          <div class="mb-1 flex items-center justify-between text-[10px] text-fg-muted">
+            <span>Size</span>
+            <span class="font-mono text-fg">{session.fontSize}px</span>
+          </div>
+          <input
+            type="range"
+            min={FONT_SIZE_MIN}
+            max={FONT_SIZE_MAX}
+            step={1}
+            value={session.fontSize}
+            oninput={(e) => (session.fontSize = +(e.currentTarget as HTMLInputElement).value)}
+            class="w-full accent-accent"
+          />
+          <div class="mt-1 flex flex-wrap gap-1">
+            {#each FONT_SIZE_PRESETS as s (s)}
+              <button
+                type="button"
+                onclick={() => (session.fontSize = s)}
+                class="rounded border border-border px-1.5 py-0.5 text-[10px] hover:border-fg-muted/60"
+                class:border-accent={session.fontSize === s}
+                class:text-accent={session.fontSize === s}
+              >{s}</button>
+            {/each}
+          </div>
+        </div>
+        <!-- Weight / style / align toggles. Native buttons; bold +
+             italic write through to the selection. Align is
+             three-state pill. -->
+        <div class="flex flex-wrap items-center gap-1">
+          <button
+            type="button"
+            onclick={() => (session.bold = !session.bold)}
+            class="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs"
+            class:border-accent={session.bold}
+            class:bg-accent={session.bold}
+            class:text-on-accent={session.bold}
+            title="Bold"
+            aria-pressed={session.bold}
+          ><span class="font-bold">B</span></button>
+          <button
+            type="button"
+            onclick={() => (session.italic = !session.italic)}
+            class="inline-flex h-7 w-7 items-center justify-center rounded border border-border text-xs"
+            class:border-accent={session.italic}
+            class:bg-accent={session.italic}
+            class:text-on-accent={session.italic}
+            title="Italic"
+            aria-pressed={session.italic}
+          ><span class="italic">I</span></button>
+          <span class="mx-1 h-5 w-px bg-border"></span>
+          {#each [
+            { id: 'left' as const,   path: 'M3 5h18 M3 12h12 M3 19h18' },
+            { id: 'center' as const, path: 'M3 5h18 M6 12h12 M3 19h18' },
+            { id: 'right' as const,  path: 'M3 5h18 M9 12h12 M3 19h18' },
+          ] as a (a.id)}
+            <button
+              type="button"
+              onclick={() => (session.textAlign = a.id)}
+              class="inline-flex h-7 w-7 items-center justify-center rounded border border-border"
+              class:border-accent={session.textAlign === a.id}
+              class:bg-accent={session.textAlign === a.id}
+              class:text-on-accent={session.textAlign === a.id}
+              title={`Align ${a.id}`}
+              aria-pressed={session.textAlign === a.id}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d={a.path} /></svg>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <!-- ── Selection actions ────────────────────────────────────
          Only meaningful when an item is picked (select tool + click).

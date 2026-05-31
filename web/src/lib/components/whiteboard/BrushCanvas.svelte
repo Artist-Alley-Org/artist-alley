@@ -587,10 +587,8 @@
     const body = textEditBody.trim();
     const layerId = session.activeLayerId;
     if (body && layerId) {
-      // Measure to size the saved bounding box (so re-render matches
-      // what the user saw). Naive single-line width measurement; the
-      // canvas renderer wraps on \n explicitly anyway.
-      const fontSize = Math.max(14, session.width * 2.5);
+      // Use the typography state from the tool panel so the new
+      // item inherits the user's current font / size / weight.
       const item: TextItem = {
         kind: 'text',
         x: textEdit.x,
@@ -598,9 +596,12 @@
         w: textEdit.w,
         h: textEdit.h,
         body,
-        fontSize,
+        fontSize: session.fontSize,
+        fontFamily: session.fontFamily,
         color: session.color,
-        align: 'left',
+        align: session.textAlign,
+        bold: session.bold,
+        italic: session.italic,
       };
       session.addItem(layerId, item);
     }

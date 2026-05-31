@@ -18,9 +18,11 @@ import type {
   Item,
   Layer,
   ShapeTool,
+  TextItem,
   Tool,
 } from './types';
 import {
+  DEFAULT_FONT_FAMILY,
   PALETTE,
   SIZES,
   defaultOpacityFor,
@@ -81,6 +83,15 @@ export interface WhiteboardSession {
   setLayerLocked: (layerId: string, locked: boolean) => void;
   moveLayer: (layerId: string, dir: 'up' | 'down') => void;
 
+  // Typography (drives new TextItems + writes through to a selected
+  // text item, if any). All four fields are reactive so the
+  // TypographyPanel binds straight to them.
+  fontFamily: string;
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  textAlign: 'left' | 'center' | 'right';
+
   // Whole-doc operations
   clearAll: () => void;
   /** Load a saved doc (e.g. user opened a previous whiteboard for
@@ -105,6 +116,14 @@ export function createWhiteboardSession(
     opacity: number;
     fillShapes: boolean;
     selection: { layerId: string; index: number } | null;
+    // Typography state — used by the text tool for new items and
+    // (when a text item is selected) reflected back from / written
+    // through to that item.
+    fontFamily: string;
+    fontSize: number;
+    bold: boolean;
+    italic: boolean;
+    textAlign: 'left' | 'center' | 'right';
   }
   const state = $state<ReactiveState>({
     doc: initialDoc,
@@ -115,6 +134,11 @@ export function createWhiteboardSession(
     opacity: defaultOpacityFor('pen'),
     fillShapes: false,
     selection: null,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSize: 24,
+    bold: false,
+    italic: false,
+    textAlign: 'left',
   });
 
   // Undo / redo. Snapshot-based — every mutating method commits the
@@ -227,8 +251,86 @@ export function createWhiteboardSession(
     set selection(v) { state.selection = v; },
     selectItem(layerId, index) {
       state.selection = { layerId, index };
+      // When a text item is picked, pull its typography state into
+      // the session so the TypographyPanel reflects its current
+      // values (font, size, weight, italic, align).
+      const layer = state.doc.layers.find((l) => l.id === layerId);
+      const item = layer?.items[index];
+      if (item && item.kind === 'text') {
+        state.fontFamily = item.fontFamily ?? DEFAULT_FONT_FAMILY;
+        state.fontSize = item.fontSize;
+        state.bold = item.bold ?? false;
+        state.italic = item.italic ?? false;
+        state.textAlign = item.align ?? 'left';
+      }
     },
     deselect() { state.selection = null; },
+
+    // ── Typography — write through to a selected text item ────────
+    // Setters mutate the selected text item too (if one exists) so
+    // tweaking the font on the panel updates the canvas immediately.
+    // Each write commits a history snapshot so undo rewinds the text
+    // change as a discrete step.
+    get fontFamily() { return state.fontFamily; },
+    set fontFamily(v) {
+      state.fontFamily = v;
+      const sel = state.selection;
+      if (!sel) return;
+      const layer = state.doc.layers.find((l) => l.id === sel.layerId);
+      const item = layer?.items[sel.index];
+      if (item && item.kind === 'text' && !layer!.locked) {
+        layer!.items[sel.index] = { ...item, fontFamily: v };
+        commit();
+      }
+    },
+    get fontSize() { return state.fontSize; },
+    set fontSize(v) {
+      state.fontSize = Math.max(8, Math.min(256, Math.round(v)));
+      const sel = state.selection;
+      if (!sel) return;
+      const layer = state.doc.layers.find((l) => l.id === sel.layerId);
+      const item = layer?.items[sel.index];
+      if (item && item.kind === 'text' && !layer!.locked) {
+        layer!.items[sel.index] = { ...item, fontSize: state.fontSize };
+        commit();
+      }
+    },
+    get bold() { return state.bold; },
+    set bold(v) {
+      state.bold = v;
+      const sel = state.selection;
+      if (!sel) return;
+      const layer = state.doc.layers.find((l) => l.id === sel.layerId);
+      const item = layer?.items[sel.index];
+      if (item && item.kind === 'text' && !layer!.locked) {
+        layer!.items[sel.index] = { ...item, bold: v };
+        commit();
+      }
+    },
+    get italic() { return state.italic; },
+    set italic(v) {
+      state.italic = v;
+      const sel = state.selection;
+      if (!sel) return;
+      const layer = state.doc.layers.find((l) => l.id === sel.layerId);
+      const item = layer?.items[sel.index];
+      if (item && item.kind === 'text' && !layer!.locked) {
+        layer!.items[sel.index] = { ...item, italic: v };
+        commit();
+      }
+    },
+    get textAlign() { return state.textAlign; },
+    set textAlign(v) {
+      state.textAlign = v;
+      const sel = state.selection;
+      if (!sel) return;
+      const layer = state.doc.layers.find((l) => l.id === sel.layerId);
+      const item = layer?.items[sel.index];
+      if (item && item.kind === 'text' && !layer!.locked) {
+        layer!.items[sel.index] = { ...item, align: v };
+        commit();
+      }
+    },
 
     addLayer() {
       const layer = newLayer(`Layer ${state.doc.layers.length + 1}`);
