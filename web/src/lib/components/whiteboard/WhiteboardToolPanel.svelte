@@ -41,29 +41,72 @@
 
   let { session, saving = false, saveError = null, onSave, onClose }: Props = $props();
 
-  const TOOLS: Array<{ id: Tool; label: string; icon: string }> = [
-    // Selection (cursor) — clicks pick items, drags transform.
-    { id: 'select',      label: 'Select (V)',      icon: 'M3 3l8 19 2-8 8-2z' },
-    // Brushes
+  // Tool catalogue — split per-section so the sidebar maps each
+  // tool to its right pane (matches Paint's Tools / Brushes /
+  // Shapes / Image / Selection layout). Each section renders its
+  // own grid; subsequent commits add more entries to each.
+  interface ToolEntry { id: Tool; label: string; icon: string; }
+
+  // Always-on utility tools. Drag selection + text input + recolor.
+  const TOOLS_MAIN: ToolEntry[] = [
+    { id: 'select',     label: 'Select (V)',      icon: 'M3 3l8 19 2-8 8-2z' },
+    { id: 'eraser',     label: 'Eraser (E)',      icon: 'M3 19h18 M18 13L10 5l-7 7 6 6h8z' },
+    { id: 'text',       label: 'Text (T)',        icon: 'M5 5h14 M12 5v14' },
+    { id: 'bucket',     label: 'Fill bucket (B)', icon: 'M19 11l-7-7-8 8 7 7z M5 19h16 M16 4l3 7' },
+    { id: 'eyedropper', label: 'Eyedropper (I)',  icon: 'M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z' },
+  ];
+
+  // Brushes — same Tool ids today; C-1.13 will add a brush-style
+  // sub-picker that mutates StrokeItem's per-stroke parameters
+  // rather than adding more top-level tool ids.
+  const TOOLS_BRUSHES: ToolEntry[] = [
     { id: 'pen',         label: 'Pen (P)',         icon: 'M14 4l6 6-10 10H4v-6z' },
     { id: 'marker',      label: 'Marker (M)',      icon: 'M16 2l6 6-12 12-4-4z' },
     { id: 'highlighter', label: 'Highlighter (H)', icon: 'M9 11l-6 6v4h4l6-6 M14 4l6 6-7 7-6-6z' },
-    { id: 'eraser',      label: 'Eraser (E)',      icon: 'M3 19h18 M18 13L10 5l-7 7 6 6h8z' },
-    // Shapes
-    { id: 'line',    label: 'Line (L)',    icon: 'M5 19L19 5' },
-    { id: 'arrow',   label: 'Arrow (A)',   icon: 'M5 19L19 5 M19 5h-6 M19 5v6' },
+  ];
+
+  // Shapes — geometric primitives. C-1.12 expands this with
+  // polygon / star / heart / rounded-rect / pentagon / hexagon /
+  // right-triangle / diamond / callouts.
+  const TOOLS_SHAPES: ToolEntry[] = [
+    { id: 'line',    label: 'Line (L)',      icon: 'M5 19L19 5' },
+    { id: 'arrow',   label: 'Arrow (A)',     icon: 'M5 19L19 5 M19 5h-6 M19 5v6' },
     { id: 'rect',    label: 'Rectangle (R)', icon: 'M4 6h16v12H4z' },
-    { id: 'ellipse', label: 'Ellipse (O)', icon: 'M12 6c5 0 8 2.5 8 6s-3 6-8 6-8-2.5-8-6 3-6 8-6z' },
+    { id: 'ellipse', label: 'Ellipse (O)',   icon: 'M12 6c5 0 8 2.5 8 6s-3 6-8 6-8-2.5-8-6 3-6 8-6z' },
     { id: 'triangle', label: 'Triangle (G)', icon: 'M12 4l9 16H3z' },
-    // Recolor + utility
-    { id: 'bucket',     label: 'Fill bucket (B)', icon: 'M19 11l-7-7-8 8 7 7z M5 19h16 M16 4l3 7' },
-    { id: 'eyedropper', label: 'Eyedropper (I)',  icon: 'M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z' },
-    // Text
-    { id: 'text',    label: 'Text (T)',    icon: 'M5 5h14 M12 5v14' },
-    // Lasso = freehand polygon multi-select
-    { id: 'lasso',   label: 'Lasso (Q)',   icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
-    // Crop = drag a rect → trim source dimensions
-    { id: 'crop',    label: 'Crop (C)',    icon: 'M6 2v14h14 M2 6h14v14' },
+  ];
+
+  // Selection-mode tools. Lasso ships; rectangle-drag + select-all
+  // + invert + transparent land in C-1.15.
+  const TOOLS_SELECT: ToolEntry[] = [
+    { id: 'lasso', label: 'Lasso (Q)', icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
+  ];
+
+  // Image-transform tools. Crop ships; flip / rotate / resize /
+  // skew / invert / remove-bg are placeholders for C-1.14.
+  const TOOLS_IMAGE: ToolEntry[] = [
+    { id: 'crop', label: 'Crop (C)', icon: 'M6 2v14h14 M2 6h14v14' },
+  ];
+
+  // Image / Selection placeholder buttons — disabled until C-1.14 /
+  // C-1.15 wire the actual mutators. They appear in their sections
+  // so the user sees what's coming.
+  interface PlaceholderEntry { id: string; label: string; icon: string; phase: string; }
+  const IMAGE_PLACEHOLDERS: PlaceholderEntry[] = [
+    { id: 'flip-h',    label: 'Flip horizontal',  phase: 'C-1.14', icon: 'M3 6h7v12H3z M14 9h4v6h-4z M21 12l-3-3v6z' },
+    { id: 'flip-v',    label: 'Flip vertical',    phase: 'C-1.14', icon: 'M6 3v7h12V3z M9 14v4h6v-4z M12 21l3-3H9z' },
+    { id: 'rotate-l',  label: 'Rotate left 90°',  phase: 'C-1.14', icon: 'M3 12a9 9 0 1 0 3-7 M3 3v6h6' },
+    { id: 'rotate-r',  label: 'Rotate right 90°', phase: 'C-1.14', icon: 'M21 12a9 9 0 1 1 -3-7 M21 3v6h-6' },
+    { id: 'resize',    label: 'Resize canvas',    phase: 'C-1.14', icon: 'M4 4h16v16H4z M9 9h6v6H9z' },
+    { id: 'skew',      label: 'Skew',             phase: 'C-1.14', icon: 'M3 20l4-16h14L17 20z' },
+    { id: 'invert',    label: 'Invert colors',    phase: 'C-1.14', icon: 'M12 4a8 8 0 0 0 0 16zM12 4v16a8 8 0 0 0 0-16z' },
+    { id: 'remove-bg', label: 'Remove background', phase: 'C-1.14 (needs ML)', icon: 'M4 4h16v16H4z M2 2l20 20' },
+  ];
+  const SELECT_PLACEHOLDERS: PlaceholderEntry[] = [
+    { id: 'rect-select',  label: 'Rectangle select',   phase: 'C-1.15', icon: 'M4 4h16v16H4z M4 4l2 2 M20 4l-2 2 M4 20l2-2 M20 20l-2-2' },
+    { id: 'select-all',   label: 'Select all',          phase: 'C-1.15', icon: 'M3 3h18v18H3z M7 7h10v10H7z' },
+    { id: 'invert-sel',   label: 'Invert selection',    phase: 'C-1.15', icon: 'M3 3h12v12H3z M9 9h12v12H9z' },
+    { id: 'transparent',  label: 'Transparent selection', phase: 'C-1.15', icon: 'M4 4h16v16H4z M4 4l16 16 M20 4L4 20' },
   ];
 
   // Currently editing the name of which layer? Keyed by layer id.
@@ -159,28 +202,77 @@
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto">
-    <!-- ── Tools ─────────────────────────────────────────────────── -->
+    <!-- ── Tools (utility / always-on) ─────────────────────────── -->
+    {#snippet toolBtn(t: ToolEntry)}
+      <button
+        type="button"
+        onclick={() => (session.tool = t.id)}
+        class="inline-flex aspect-square items-center justify-center rounded transition-colors"
+        class:bg-accent={session.tool === t.id}
+        class:text-on-accent={session.tool === t.id}
+        class:text-fg-muted={session.tool !== t.id}
+        class:hover:bg-state-hover={session.tool !== t.id}
+        title={t.label}
+        aria-label={t.label}
+        aria-pressed={session.tool === t.id}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d={t.icon} />
+        </svg>
+      </button>
+    {/snippet}
+    {#snippet placeholderBtn(p: PlaceholderEntry)}
+      <button
+        type="button"
+        disabled
+        class="inline-flex aspect-square items-center justify-center rounded text-fg-muted/40 opacity-60"
+        title={`${p.label} — coming in ${p.phase}`}
+        aria-label={`${p.label} (coming in ${p.phase})`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d={p.icon} />
+        </svg>
+      </button>
+    {/snippet}
+
     <section class="border-b border-border p-3">
       <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Tools</div>
       <div class="grid grid-cols-5 gap-1">
-        {#each TOOLS as t (t.id)}
-          <button
-            type="button"
-            onclick={() => (session.tool = t.id)}
-            class="inline-flex aspect-square items-center justify-center rounded transition-colors"
-            class:bg-accent={session.tool === t.id}
-            class:text-on-accent={session.tool === t.id}
-            class:text-fg-muted={session.tool !== t.id}
-            class:hover:bg-state-hover={session.tool !== t.id}
-            title={t.label}
-            aria-label={t.label}
-            aria-pressed={session.tool === t.id}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d={t.icon} />
-            </svg>
-          </button>
-        {/each}
+        {#each TOOLS_MAIN as t (t.id)}{@render toolBtn(t)}{/each}
+      </div>
+    </section>
+
+    <!-- ── Brushes ─────────────────────────────────────────────── -->
+    <section class="border-b border-border p-3">
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Brushes</div>
+      <div class="grid grid-cols-5 gap-1">
+        {#each TOOLS_BRUSHES as t (t.id)}{@render toolBtn(t)}{/each}
+      </div>
+    </section>
+
+    <!-- ── Shapes ──────────────────────────────────────────────── -->
+    <section class="border-b border-border p-3">
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Shapes</div>
+      <div class="grid grid-cols-5 gap-1">
+        {#each TOOLS_SHAPES as t (t.id)}{@render toolBtn(t)}{/each}
+      </div>
+    </section>
+
+    <!-- ── Selection ───────────────────────────────────────────── -->
+    <section class="border-b border-border p-3">
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selection</div>
+      <div class="grid grid-cols-5 gap-1">
+        {#each TOOLS_SELECT as t (t.id)}{@render toolBtn(t)}{/each}
+        {#each SELECT_PLACEHOLDERS as p (p.id)}{@render placeholderBtn(p)}{/each}
+      </div>
+    </section>
+
+    <!-- ── Image ───────────────────────────────────────────────── -->
+    <section class="border-b border-border p-3">
+      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Image</div>
+      <div class="grid grid-cols-5 gap-1">
+        {#each TOOLS_IMAGE as t (t.id)}{@render toolBtn(t)}{/each}
+        {#each IMAGE_PLACEHOLDERS as p (p.id)}{@render placeholderBtn(p)}{/each}
       </div>
     </section>
 
@@ -393,7 +485,7 @@
          find the tool. -->
     {#if session.selection}
       <section class="border-b border-border p-3">
-        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selection</div>
+        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selected item</div>
         <div class="mb-2 text-[10px] text-fg-muted">
           One item selected. Drag = move · handles = resize / rotate · Delete · Ctrl/⌘ C / X / V.
         </div>
