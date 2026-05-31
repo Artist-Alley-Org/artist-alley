@@ -49,7 +49,8 @@
     const map: Record<string, typeof session.tool> = {
       v: 'select',
       p: 'pen', m: 'marker', h: 'highlighter', e: 'eraser',
-      l: 'line', a: 'arrow', r: 'rect', o: 'ellipse',
+      l: 'line', a: 'arrow', r: 'rect', o: 'ellipse', g: 'triangle',
+      b: 'bucket', i: 'eyedropper',
       t: 'text',
       q: 'lasso', c: 'crop',
     };

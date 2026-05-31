@@ -295,6 +295,23 @@
         ctx.globalAlpha = prevAlpha;
       }
       ctx.stroke();
+    } else if (s.tool === 'triangle') {
+      // Isoceles triangle: apex at top-center, base across bottom.
+      // Drag-direction preserved by using the normalized (x, y, w, h)
+      // bbox so flipping w or h gives an inverted/mirrored triangle.
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.closePath();
+      if (s.fill && s.fill > 0) {
+        ctx.fillStyle = s.color;
+        const prevAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = prevAlpha * s.fill;
+        ctx.fill();
+        ctx.globalAlpha = prevAlpha;
+      }
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -455,6 +472,48 @@
     canvasEl.setPointerCapture(e.pointerId);
     const p = eventToSource(e);
 
+    // Eyedropper — click an item to pull its color into session.color.
+    // Works on Stroke / Shape / Text; Image is skipped (no single
+    // representative color). After picking we drop back to the
+    // previous brush tool so the user can paint with the picked
+    // color immediately — same UX as Paint / Photoshop.
+    if (session.tool === 'eyedropper') {
+      const p3 = eventToSource(e);
+      const hit = pickItem(p3.x, p3.y);
+      if (hit) {
+        const layer = session.doc.layers.find((l) => l.id === hit.layerId);
+        const item = layer?.items[hit.index];
+        if (item && (item.kind === 'stroke' || item.kind === 'shape' || item.kind === 'text')) {
+          session.color = item.color;
+          session.tool = 'pen';
+        }
+      }
+      e.preventDefault();
+      return;
+    }
+    // Bucket — click a shape to recolor + fill it with the current
+    // color at full opacity. Click on a stroke / text / image just
+    // recolors (no fill semantics on those kinds). Click on empty
+    // canvas → no-op (we're vector-first, no flood-fill of pixels).
+    if (session.tool === 'bucket') {
+      const p2 = eventToSource(e);
+      const hit = pickItem(p2.x, p2.y);
+      if (hit) {
+        const layer = session.doc.layers.find((l) => l.id === hit.layerId);
+        const item = layer?.items[hit.index];
+        if (item && layer && !layer.locked) {
+          let next: Item = item;
+          if (item.kind === 'shape') {
+            next = { ...item, color: session.color, fill: Math.max(session.fillShapes ? 0.5 : 1, item.fill ?? 1) };
+          } else if (item.kind === 'stroke' || item.kind === 'text') {
+            next = { ...item, color: session.color };
+          }
+          if (next !== item) session.replaceItem(hit.layerId, hit.index, next);
+        }
+      }
+      e.preventDefault();
+      return;
+    }
     // Lasso — start a freehand polygon. Points captured each
     // mousemove, closed on mouseup. The pointer drag itself never
     // alters the doc; the commit happens in onPointerUp by

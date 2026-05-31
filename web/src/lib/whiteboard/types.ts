@@ -25,10 +25,10 @@ export type Point = [number, number, number?];
 export type BrushTool = 'pen' | 'marker' | 'highlighter' | 'eraser';
 
 /** Shape tools (click-drag-release rectangles defining the shape). */
-export type ShapeTool = 'line' | 'arrow' | 'rect' | 'ellipse';
+export type ShapeTool = 'line' | 'arrow' | 'rect' | 'ellipse' | 'triangle';
 
 /** Other tools that aren't items themselves but mode-pickers. */
-export type OtherTool = 'text' | 'select' | 'lasso' | 'crop' | 'clone';
+export type OtherTool = 'text' | 'select' | 'lasso' | 'crop' | 'clone' | 'bucket' | 'eyedropper';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;

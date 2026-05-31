@@ -29,14 +29,22 @@
 
   let { value, oninput, onclose }: Props = $props();
 
-  // ── HSV state — single source of truth for the pickers ──────────
+  // ── HSV state — initialised synchronously from `value` so the
+  // picker opens at the user's actual current color (not a default).
+  // Previously this lived in onMount and the $effect emitted "red"
+  // before the mount ran, clobbering the prop.
+  function hsvFromValue(hex: string) {
+    const rgb = hexToRgb(hex) ?? { r: 255, g: 0, b: 0 };
+    return rgbToHsv(rgb.r, rgb.g, rgb.b);
+  }
 
-  let h = $state(0);   // 0..360
-  let s = $state(1);   // 0..1
-  let v = $state(1);   // 0..1
+  const _init = hsvFromValue(value);
+  let h = $state(_init.h);
+  let s = $state(_init.s);
+  let v = $state(_init.v);
   // RGB inputs are derived from HSV but the user can type into them
   // to drive HSV the other way. Same with the hex box.
-  let hexInput = $state('');
+  let hexInput = $state(value);
   let suppressNextHex = false; // avoid re-parsing our own write-back
 
   // Recent colors (max 12 entries, newest first).
@@ -102,15 +110,9 @@
     oninput(hex);
   });
 
-  // ── Initial state from `value` ─────────────────────────────────
+  // ── Recent colors hydrate on mount ─────────────────────────────
 
   onMount(() => {
-    const rgb = hexToRgb(value);
-    if (rgb) {
-      const { h: hh, s: ss, v: vv } = rgbToHsv(rgb.r, rgb.g, rgb.b);
-      h = hh; s = ss; v = vv;
-    }
-    hexInput = value;
     try {
       const raw = localStorage.getItem(RECENT_KEY);
       if (raw) {

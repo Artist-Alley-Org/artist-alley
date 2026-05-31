@@ -54,6 +54,10 @@
     { id: 'arrow',   label: 'Arrow (A)',   icon: 'M5 19L19 5 M19 5h-6 M19 5v6' },
     { id: 'rect',    label: 'Rectangle (R)', icon: 'M4 6h16v12H4z' },
     { id: 'ellipse', label: 'Ellipse (O)', icon: 'M12 6c5 0 8 2.5 8 6s-3 6-8 6-8-2.5-8-6 3-6 8-6z' },
+    { id: 'triangle', label: 'Triangle (G)', icon: 'M12 4l9 16H3z' },
+    // Recolor + utility
+    { id: 'bucket',     label: 'Fill bucket (B)', icon: 'M19 11l-7-7-8 8 7 7z M5 19h16 M16 4l3 7' },
+    { id: 'eyedropper', label: 'Eyedropper (I)',  icon: 'M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z' },
     // Text
     { id: 'text',    label: 'Text (T)',    icon: 'M5 5h14 M12 5v14' },
     // Lasso = freehand polygon multi-select
@@ -89,6 +93,22 @@
   }
   let showMoveMenu = $state(false);
   let showColorPicker = $state(false);
+  // Viewport-relative coords for the color picker. Recomputed on
+  // open so the dropdown sits below the swatch even when the sidebar
+  // scrolls. fixed-positioned so it stacks above the canvas overlay
+  // (which lives in a separate stacking context inside AssetViewer).
+  let pickerLeft = $state(0);
+  let pickerTop = $state(0);
+  function openColorPicker(e: MouseEvent) {
+    const btn = e.currentTarget as HTMLElement;
+    const r = btn.getBoundingClientRect();
+    // Anchor right-edge to the swatch's right edge, just below it.
+    // 22rem = picker width; clamp left so it never spills off-screen.
+    const pickerWidth = 22 * 16;
+    pickerLeft = Math.max(8, Math.min(window.innerWidth - pickerWidth - 8, r.right - pickerWidth));
+    pickerTop = Math.min(window.innerHeight - 360, r.bottom + 6);
+    showColorPicker = true;
+  }
 
   // Typography surface — visible when the text tool is active, OR
   // when a text item is the current selection. Switching the family
@@ -184,39 +204,23 @@
         {/each}
         <!-- Custom color picker — clicking the swatch opens a
              dropdown with HSV field + hue slider + RGB/Hex inputs
-             + EyeDropper API + recent-colors strip. -->
-        <div class="relative">
-          <button
-            type="button"
-            onclick={() => (showColorPicker = !showColorPicker)}
-            class="inline-flex h-6 w-6 items-center justify-center rounded border border-border ring-1 ring-fg-muted/30 hover:ring-accent"
-            style:background-color={session.color}
-            title="Custom color picker"
-            aria-label="Open custom color picker"
-            aria-expanded={showColorPicker}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={session.color === '#ffffff' || session.color === '#0f172a' ? 'currentColor' : 'white'} stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {#if showColorPicker}
-            <!-- Anchored bottom-left of the swatch. z-50 keeps us
-                 above the rest of the sidebar; outside-click
-                 closes via the backdrop button. -->
-            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div
-              class="fixed inset-0 z-40"
-              onclick={() => (showColorPicker = false)}
-            ></div>
-            <div class="absolute right-0 top-full z-50 mt-1">
-              <ColorPicker
-                value={session.color}
-                oninput={(hex) => (session.color = hex)}
-                onclose={() => (showColorPicker = false)}
-              />
-            </div>
-          {/if}
-        </div>
+             + EyeDropper API + recent-colors strip. Positioned
+             with position:fixed so the picker stacks above the
+             whiteboard canvas overlay (which sits in its own
+             stacking context inside AssetViewer). -->
+        <button
+          type="button"
+          onclick={openColorPicker}
+          class="inline-flex h-6 w-6 items-center justify-center rounded border border-border ring-1 ring-fg-muted/30 hover:ring-accent"
+          style:background-color={session.color}
+          title="Custom color picker"
+          aria-label="Open custom color picker"
+          aria-expanded={showColorPicker}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={session.color === '#ffffff' || session.color === '#0f172a' ? 'currentColor' : 'white'} stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
       </div>
     </section>
 
@@ -609,6 +613,31 @@
       </ul>
     </section>
   </div>
+
+  <!-- Color picker — rendered as a top-level fixed-positioned
+       overlay so its stacking context isn't trapped by the
+       sidebar's scroll container. Backdrop catches outside-clicks
+       to close; both layers use very high z-index so the picker
+       sits above the whiteboard canvas overlay (z-25) and the
+       Tools dropdown menu portal. -->
+  {#if showColorPicker}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-[1000]"
+      onclick={() => (showColorPicker = false)}
+    ></div>
+    <div
+      class="fixed z-[1001]"
+      style:left={`${pickerLeft}px`}
+      style:top={`${pickerTop}px`}
+    >
+      <ColorPicker
+        value={session.color}
+        oninput={(hex) => (session.color = hex)}
+        onclose={() => (showColorPicker = false)}
+      />
+    </div>
+  {/if}
 
   <!-- ── Save / cancel — sticky footer ───────────────────────── -->
   <footer class="flex shrink-0 items-center gap-2 border-t border-border bg-surface-elevated px-3 py-2">
