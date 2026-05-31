@@ -57,7 +57,9 @@ export type ShapeTool =
   | 'callout-rect' | 'callout-oval';
 
 /** Other tools that aren't items themselves but mode-pickers. */
-export type OtherTool = 'text' | 'select' | 'lasso' | 'crop' | 'clone' | 'bucket' | 'eyedropper';
+export type OtherTool =
+  | 'text' | 'select' | 'lasso' | 'rect-select'
+  | 'crop' | 'clone' | 'bucket' | 'eyedropper';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;

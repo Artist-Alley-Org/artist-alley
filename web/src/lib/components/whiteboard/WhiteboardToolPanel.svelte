@@ -86,10 +86,19 @@
     { id: 'callout-oval', label: 'Callout (oval)', icon: 'M12 4c5 0 8 3 8 6s-3 6-8 6c-1 0-2 0-3-.3l-4 2.3v-4C2.5 12.7 2 11.3 2 10c0-3 3-6 8-6z' },
   ];
 
-  // Selection-mode tools. Lasso ships; rectangle-drag + select-all
-  // + invert + transparent land in C-1.15.
+  // Selection-mode tools. Both lasso (freehand polygon) + rect-
+  // select (rectangle drag) ship; Select All / Invert are
+  // one-shot ops rendered below.
   const TOOLS_SELECT: ToolEntry[] = [
-    { id: 'lasso', label: 'Lasso (Q)', icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
+    { id: 'rect-select', label: 'Rectangle select', icon: 'M4 4h16v16H4z M4 4l2 2 M20 4l-2 2 M4 20l2-2 M20 20l-2-2' },
+    { id: 'lasso',       label: 'Lasso (Q)',         icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
+  ];
+
+  interface SelectOp { id: string; label: string; icon: string; run: () => void; }
+  const SELECT_OPS: SelectOp[] = [
+    { id: 'select-all',  label: 'Select all (Ctrl/⌘+A)', icon: 'M3 3h18v18H3z M7 7h10v10H7z', run: () => session.selectAll() },
+    { id: 'invert-sel',  label: 'Invert selection',       icon: 'M3 3h12v12H3z M9 9h12v12H9z', run: () => session.invertSelection() },
+    { id: 'deselect',    label: 'Deselect',               icon: 'M4 4h16v16H4z M2 2l20 20',     run: () => session.deselect() },
   ];
 
   // Image-transform tools. Crop is a mode (drag a rect to commit);
@@ -137,12 +146,11 @@
     { id: 'skew',      label: 'Skew',              phase: 'C-1.14b', icon: 'M3 20l4-16h14L17 20z' },
     { id: 'remove-bg', label: 'Remove background', phase: 'C-1.14b (needs ML)', icon: 'M4 4h16v16H4z M2 2l20 20' },
   ];
-  const SELECT_PLACEHOLDERS: PlaceholderEntry[] = [
-    { id: 'rect-select',  label: 'Rectangle select',   phase: 'C-1.15', icon: 'M4 4h16v16H4z M4 4l2 2 M20 4l-2 2 M4 20l2-2 M20 20l-2-2' },
-    { id: 'select-all',   label: 'Select all',          phase: 'C-1.15', icon: 'M3 3h18v18H3z M7 7h10v10H7z' },
-    { id: 'invert-sel',   label: 'Invert selection',    phase: 'C-1.15', icon: 'M3 3h12v12H3z M9 9h12v12H9z' },
-    { id: 'transparent',  label: 'Transparent selection', phase: 'C-1.15', icon: 'M4 4h16v16H4z M4 4l16 16 M20 4L4 20' },
-  ];
+  // All previous placeholders here either shipped (rect-select /
+  // select-all / invert) or were retired (transparent selection
+  // was Paint-specific lingo — we always render with a transparent
+  // bbox already, so the toggle would be a no-op).
+  const SELECT_PLACEHOLDERS: PlaceholderEntry[] = [];
 
   // Currently editing the name of which layer? Keyed by layer id.
   let editingLayerId = $state<string | null>(null);
@@ -320,7 +328,19 @@
       <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selection</div>
       <div class="grid grid-cols-5 gap-1">
         {#each TOOLS_SELECT as t (t.id)}{@render toolBtn(t)}{/each}
-        {#each SELECT_PLACEHOLDERS as p (p.id)}{@render placeholderBtn(p)}{/each}
+        {#each SELECT_OPS as op (op.id)}
+          <button
+            type="button"
+            onclick={op.run}
+            class="inline-flex aspect-square items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+            title={op.label}
+            aria-label={op.label}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d={op.icon} />
+            </svg>
+          </button>
+        {/each}
       </div>
     </section>
 

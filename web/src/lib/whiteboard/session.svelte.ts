@@ -84,6 +84,10 @@ export interface WhiteboardSession {
    *  tool on release. */
   setMultiSelection: (items: Array<{ layerId: string; index: number }>) => void;
   deselect: () => void;
+  /** Pick every item on every visible layer. */
+  selectAll: () => void;
+  /** Pick every item that isn't currently selected. */
+  invertSelection: () => void;
 
   // Layer mutations
   addLayer: () => string;
@@ -335,6 +339,44 @@ export function createWhiteboardSession(
     deselect() {
       state.selection = null;
       state.extraSelected = [];
+    },
+
+    selectAll() {
+      const picks: Array<{ layerId: string; index: number }> = [];
+      for (const layer of state.doc.layers) {
+        if (!layer.visible) continue;
+        for (let i = 0; i < layer.items.length; i++) {
+          picks.push({ layerId: layer.id, index: i });
+        }
+      }
+      if (picks.length === 0) return;
+      state.selection = picks[0];
+      state.extraSelected = picks.slice(1);
+    },
+
+    invertSelection() {
+      // "Invert" = every currently-NOT-selected item across visible
+      // layers becomes selected; previously-selected items become
+      // unselected.
+      const selectedSet = new Set<string>();
+      if (state.selection) selectedSet.add(`${state.selection.layerId}:${state.selection.index}`);
+      for (const s of state.extraSelected) selectedSet.add(`${s.layerId}:${s.index}`);
+      const picks: Array<{ layerId: string; index: number }> = [];
+      for (const layer of state.doc.layers) {
+        if (!layer.visible) continue;
+        for (let i = 0; i < layer.items.length; i++) {
+          if (!selectedSet.has(`${layer.id}:${i}`)) {
+            picks.push({ layerId: layer.id, index: i });
+          }
+        }
+      }
+      if (picks.length === 0) {
+        state.selection = null;
+        state.extraSelected = [];
+      } else {
+        state.selection = picks[0];
+        state.extraSelected = picks.slice(1);
+      }
     },
 
     // ── Typography — write through to a selected text item ────────

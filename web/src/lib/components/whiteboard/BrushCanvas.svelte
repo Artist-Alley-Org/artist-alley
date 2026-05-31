@@ -78,6 +78,9 @@
   // Crop rectangle being dragged out this frame. (x, y, w, h) in
   // source coords, signed.
   let liveCrop: { x: number; y: number; w: number; h: number } | null = $state(null);
+  // Rectangle-select drag — same shape as crop but commits to a
+  // multi-selection instead of trimming the canvas.
+  let liveRectSelect: { x: number; y: number; w: number; h: number } | null = $state(null);
   // Text being typed (overlay div positioned over the canvas).
   let textEdit: { x: number; y: number; w: number; h: number } | null = $state(null);
   let textEditBody = $state('');
@@ -173,6 +176,23 @@
     if (liveShape) drawItem(liveShape);
     if (liveLasso && liveLasso.length >= 2) drawLassoPreview(liveLasso);
     if (liveCrop) drawCropPreview(liveCrop);
+    if (liveRectSelect) drawRectSelectPreview(liveRectSelect);
+  }
+
+  function drawRectSelectPreview(r: { x: number; y: number; w: number; h: number }) {
+    if (!ctx) return;
+    const x = Math.min(r.x, r.x + r.w);
+    const y = Math.min(r.y, r.y + r.h);
+    const w = Math.abs(r.w);
+    const h = Math.abs(r.h);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
   }
 
   function drawLassoPreview(poly: number[][]) {
@@ -739,6 +759,17 @@
       e.preventDefault();
       return;
     }
+    // Rectangle select — drag a rect; commit picks every item
+    // whose bbox intersects. Auto-switches to select on release
+    // so handles + Delete work right after.
+    if (session.tool === 'rect-select') {
+      canvasEl.setPointerCapture(e.pointerId);
+      liveRectSelect = { x: p.x, y: p.y, w: 0, h: 0 };
+      dragStart = { x: p.x, y: p.y };
+      render();
+      e.preventDefault();
+      return;
+    }
     // Crop — drag out a rectangle that becomes the new source
     // bounds on release. Live preview is a dashed white rectangle
     // overlaid on the canvas with the outside dimmed so the user
@@ -879,6 +910,17 @@
       render();
       return;
     }
+    // Rect-select live-resize.
+    if (liveRectSelect && dragStart) {
+      liveRectSelect = {
+        x: dragStart.x,
+        y: dragStart.y,
+        w: p.x - dragStart.x,
+        h: p.y - dragStart.y,
+      };
+      render();
+      return;
+    }
     if (liveStroke) {
       liveStroke = {
         ...liveStroke,
@@ -924,6 +966,35 @@
           if (!layer.visible) continue;
           layer.items.forEach((item, idx) => {
             if (itemInPolygon(item, poly)) picks.push({ layerId: layer.id, index: idx });
+          });
+        }
+        session.setMultiSelection(picks);
+        if (picks.length > 0) session.tool = 'select';
+      }
+      render();
+      return;
+    }
+    // Rect-select commit — every item whose bbox intersects the
+    // drag-rect gets multi-selected.
+    if (liveRectSelect) {
+      const r = liveRectSelect;
+      liveRectSelect = null;
+      dragStart = null;
+      const x = Math.min(r.x, r.x + r.w);
+      const y = Math.min(r.y, r.y + r.h);
+      const w = Math.abs(r.w);
+      const h = Math.abs(r.h);
+      if (w >= 4 && h >= 4) {
+        const picks: Array<{ layerId: string; index: number }> = [];
+        for (const layer of session.doc.layers) {
+          if (!layer.visible) continue;
+          layer.items.forEach((item, idx) => {
+            const bb = itemBBox(item);
+            // Intersection test on axis-aligned bboxes.
+            if (bb.x + bb.w >= x && bb.x <= x + w &&
+                bb.y + bb.h >= y && bb.y <= y + h) {
+              picks.push({ layerId: layer.id, index: idx });
+            }
           });
         }
         session.setMultiSelection(picks);
@@ -1250,6 +1321,14 @@
       pasteFromClipboard();
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      session.selectAll();
+      // Switch to the select tool so handles render immediately on
+      // the picked items — matches Paint / Photoshop.
+      if (session.tool !== 'select') session.tool = 'select';
+      return;
+    }
   }
 
   // ── Public helper for the host: rasterized PNG snapshot ───────────
@@ -1338,11 +1417,7 @@
         ? 'default'
         : session.tool === 'text'
           ? 'text'
-          : session.tool === 'crop'
-            ? 'crosshair'
-            : session.tool === 'lasso'
-              ? 'crosshair'
-              : 'crosshair'}
+          : 'crosshair'}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
