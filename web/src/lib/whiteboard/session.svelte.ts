@@ -89,6 +89,13 @@ export interface WhiteboardSession {
   /** Pick every item that isn't currently selected. */
   invertSelection: () => void;
 
+  // Secondary color (Paint's "Color 2"). Right-click paints with
+  // this; X swaps primary ↔ secondary. Set via setter to keep the
+  // interface symmetric with `color`.
+  color2: string;
+  /** Swap primary ↔ secondary colors. Bound to the X key. */
+  swapColors: () => void;
+
   // Layer mutations
   addLayer: () => string;
   removeLayer: (layerId: string) => void;
@@ -160,6 +167,9 @@ export function createWhiteboardSession(
     fillShapes: boolean;
     selection: { layerId: string; index: number } | null;
     extraSelected: Array<{ layerId: string; index: number }>;
+    // Secondary color — Paint's "Color 2". Right-click on the
+    // canvas paints with this; X key swaps primary ↔ secondary.
+    color2: string;
     // Typography state — used by the text tool for new items and
     // (when a text item is selected) reflected back from / written
     // through to that item.
@@ -183,6 +193,7 @@ export function createWhiteboardSession(
     fillShapes: false,
     selection: null,
     extraSelected: [],
+    color2: '#ffffff',
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: 24,
     bold: false,
@@ -249,6 +260,13 @@ export function createWhiteboardSession(
     },
     get color() { return state.color; },
     set color(v) { state.color = v; },
+    get color2() { return state.color2; },
+    set color2(v) { state.color2 = v; },
+    swapColors() {
+      const tmp = state.color;
+      state.color = state.color2;
+      state.color2 = tmp;
+    },
     get width() { return state.width; },
     set width(v) { state.width = v; },
     get opacity() { return state.opacity; },

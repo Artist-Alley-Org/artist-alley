@@ -58,6 +58,13 @@
     if (next) {
       e.preventDefault();
       session.tool = next;
+      return;
+    }
+    // X swaps primary ↔ secondary color (Paint's idiom). Not in the
+    // tool map because it's a one-shot action, not a mode-switch.
+    if (e.key === 'x' || e.key === 'X') {
+      e.preventDefault();
+      session.swapColors();
     }
   }
 </script>

@@ -179,6 +179,15 @@
   }
   let showMoveMenu = $state(false);
   let showColorPicker = $state(false);
+  // Which color slot a palette / picker click writes into. false =
+  // primary (Color 1), true = secondary (Color 2). User flips by
+  // clicking the slot's swatch in the Colors section.
+  let color2Target = $state(false);
+  const activeColor = $derived(color2Target ? session.color2 : session.color);
+  function setActiveColor(hex: string) {
+    if (color2Target) session.color2 = hex;
+    else session.color = hex;
+  }
   // Viewport-relative coords for the color picker. Recomputed on
   // open so the dropdown sits below the swatch even when the sidebar
   // scrolls. fixed-positioned so it stacks above the canvas overlay
@@ -411,20 +420,63 @@
 
     <!-- ── Color ────────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Color</div>
+      <div class="mb-2 flex items-center justify-between">
+        <span class="text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Color</span>
+        <span class="text-[10px] text-fg-muted">Right-click paints with #2 · X swaps</span>
+      </div>
+      <!-- Color 1 / Color 2 swatches + swap arrow. Click the
+           swatch to make it the "target" — clicking any palette
+           color or the custom picker writes into the targeted slot. -->
+      <div class="mb-2 flex items-center gap-2">
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            onclick={() => (color2Target = false)}
+            class="h-9 w-9 rounded border-2"
+            class:border-accent={!color2Target}
+            class:border-border={color2Target}
+            style:background-color={session.color}
+            title={`Color 1 (primary) — ${session.color}`}
+            aria-label="Select primary color slot"
+            aria-pressed={!color2Target}
+          ></button>
+          <button
+            type="button"
+            onclick={() => (color2Target = true)}
+            class="h-9 w-9 rounded border-2"
+            class:border-accent={color2Target}
+            class:border-border={!color2Target}
+            style:background-color={session.color2}
+            title={`Color 2 (secondary) — ${session.color2}`}
+            aria-label="Select secondary color slot"
+            aria-pressed={color2Target}
+          ></button>
+          <button
+            type="button"
+            onclick={() => session.swapColors()}
+            class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+            title="Swap colors (X)"
+            aria-label="Swap primary and secondary colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 3l4 4-4 4 M20 7H8 M8 21l-4-4 4-4 M4 17h12" />
+            </svg>
+          </button>
+        </div>
+      </div>
       <div class="flex flex-wrap items-center gap-1.5">
         {#each PALETTE as c (c)}
           <button
             type="button"
-            onclick={() => (session.color = c)}
+            onclick={() => setActiveColor(c)}
             class="h-6 w-6 rounded-full ring-1 ring-border transition-transform hover:scale-110"
-            class:ring-2={session.color === c}
-            class:ring-accent={session.color === c}
-            class:scale-110={session.color === c}
+            class:ring-2={activeColor === c}
+            class:ring-accent={activeColor === c}
+            class:scale-110={activeColor === c}
             style:background-color={c}
             title={c}
             aria-label={`Color ${c}`}
-            aria-pressed={session.color === c}
+            aria-pressed={activeColor === c}
           ></button>
         {/each}
         <!-- Custom color picker — clicking the swatch opens a
@@ -437,8 +489,8 @@
           type="button"
           onclick={openColorPicker}
           class="inline-flex h-6 w-6 items-center justify-center rounded border border-border ring-1 ring-fg-muted/30 hover:ring-accent"
-          style:background-color={session.color}
-          title="Custom color picker"
+          style:background-color={activeColor}
+          title={`Custom color picker (writes to ${color2Target ? 'Color 2' : 'Color 1'})`}
           aria-label="Open custom color picker"
           aria-expanded={showColorPicker}
         >
@@ -857,8 +909,8 @@
       style:top={`${pickerTop}px`}
     >
       <ColorPicker
-        value={session.color}
-        oninput={(hex) => (session.color = hex)}
+        value={activeColor}
+        oninput={(hex) => setActiveColor(hex)}
         onclose={() => (showColorPicker = false)}
       />
     </div>

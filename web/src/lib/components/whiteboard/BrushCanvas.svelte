@@ -668,8 +668,16 @@
 
   function onPointerDown(e: PointerEvent) {
     if (readOnly) return;
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    // Mouse buttons: 0 = left = paint with primary color; 2 = right
+    // = paint with secondary (Paint's "Color 2"). Anything else is
+    // ignored (middle / back / forward) so existing pan etc on
+    // those mice don't bleed into the drawing surface.
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 2) return;
     if (!canvasEl) return;
+    const usingColor2 = e.button === 2;
+    // Effective color for this gesture. Held in a local so subsequent
+    // tool branches don't have to know about the right-click toggle.
+    const gestureColor = usingColor2 ? session.color2 : session.color;
 
     // Select tool — hit-test and either pick or deselect. Drag-to-
     // move happens in onPointerMove if the user drags after picking.
@@ -786,11 +794,8 @@
       liveStroke = {
         kind: 'stroke',
         tool: session.tool,
-        // Only the pen tool varies by brushStyle. Marker / highlighter
-        // / eraser ignore it; we stamp 'default' so the saved item
-        // is still well-formed.
         brushStyle: session.tool === 'pen' ? session.brushStyle : 'default',
-        color: session.color,
+        color: gestureColor,
         width: session.width,
         opacity: session.opacity,
         points: [[p.x, p.y, p.p ?? 0.5]],
@@ -803,7 +808,7 @@
         kind: 'shape',
         tool: session.tool,
         x: p.x, y: p.y, w: 0, h: 0,
-        color: session.color,
+        color: gestureColor,
         width: session.width,
         fill: session.fillShapes ? 0.25 : 0,
         opacity: session.opacity,
@@ -1422,6 +1427,7 @@
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
     ondblclick={onCanvasDblClick}
+    oncontextmenu={(e) => e.preventDefault()}
   ></canvas>
 
   {#if selectionBBox() && session.tool === 'select'}
