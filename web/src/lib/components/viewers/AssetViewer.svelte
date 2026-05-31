@@ -61,6 +61,14 @@
         contextSlot is long. Shell-provided because the shell owns
         the keys it lists (A/D within-playlist, ←/→ sibling-nav). */
     hotkeyLegend?: Snippet;
+    /** Overlay rendered ABOVE the asset canvas (between the asset
+        and the annotation layer) so tool surfaces — whiteboard,
+        annotations — can paint over the asset without hiding the
+        sidebar or top toolbar. The host gets a positioned canvas
+        area to fill. Rendered inside the same container the asset
+        sits in; absolute-position it to `inset-0` to take the
+        whole canvas region. */
+    canvasOverlay?: Snippet;
     /** Window-chrome state. When true the host's dialog covers the
         whole viewport; when false it sits inside the host's chrome.
         The shell owns the dialog mode — the viewer just renders the
@@ -101,6 +109,7 @@
     metadataSlot,
     titleSlot,
     hotkeyLegend,
+    canvasOverlay,
     maximized = false,
     onToggleMaximize,
     paneCollapsed = $bindable(false),
@@ -644,6 +653,17 @@
          asset's rendered rect (image bounds, video frame, etc.) so
          annotations land on content, not letterboxing. -->
     <div class="pointer-events-none absolute inset-0 z-20" data-role="annotation-layer"></div>
+
+    <!-- Host-provided canvas overlay (whiteboard, annotations).
+         Renders OVER the asset but BELOW the pane-re-open tab, so
+         the sidebar's tool panel stays reachable. The host is
+         responsible for the overlay's own positioning + pointer-
+         event handling. -->
+    {#if canvasOverlay}
+      <div class="absolute inset-0 z-25">
+        {@render canvasOverlay()}
+      </div>
+    {/if}
 
     {#if paneEnabled && paneCollapsed}
       <!-- Re-open tab on the right edge so the user can recover the

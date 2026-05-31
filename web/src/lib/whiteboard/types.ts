@@ -1,9 +1,7 @@
 // Whiteboard / annotation data model — vector source of truth.
 //
 // Mirrors the WhiteboardContent / WhiteboardCreate schemas in
-// app/api/openapi.yaml (we don't import the generated openapi types
-// here because those use `unknown` for the JSONB payload — these
-// types let the frontend reason about the structure typecheck-first).
+// app/api/openapi.yaml.
 //
 // The same shape powers both:
 //   - Whiteboards (target = post, no frame anchor)
@@ -11,31 +9,36 @@
 //
 // Coordinates are stored in source-canvas pixel space (source_w ×
 // source_h captured at save time). Rendering scales to viewport.
+//
+// Items are polymorphic — a layer carries `items[]` rather than just
+// `strokes[]` so the same renderer + undo stack + storage carries
+// brush strokes, geometric shapes, text labels, and pasted images.
+// This is the "Photoshop-lite" extension; the OpenAPI WhiteboardItem
+// schema is a discriminated union keyed on `kind`.
 
 /** Single pointer sample. [x, y, pressure?] — pressure 0..1 when the
  *  device reports it (stylus); the engine simulates from velocity
  *  otherwise. perfect-freehand consumes this directly. */
 export type Point = [number, number, number?];
 
-/** Every tool the BrushCanvas understands. The schema enum is the
- *  source of truth; this mirrors it. Phase C-1 ships pen / marker /
- *  highlighter / eraser. The rest (line / arrow / rect / ellipse /
- *  text) are reserved enum values so saving a whiteboard today and
- *  re-opening it in a future build stays forward-compatible. */
-export type Tool =
-  | 'pen'
-  | 'marker'
-  | 'highlighter'
-  | 'eraser'
-  | 'line'
-  | 'arrow'
-  | 'rect'
-  | 'ellipse'
-  | 'text';
+/** Brush tools (free-form pointer input). */
+export type BrushTool = 'pen' | 'marker' | 'highlighter' | 'eraser';
 
-/** One stroke = one continuous pointer-down through pointer-up. */
-export interface Stroke {
-  tool: Tool;
+/** Shape tools (click-drag-release rectangles defining the shape). */
+export type ShapeTool = 'line' | 'arrow' | 'rect' | 'ellipse';
+
+/** Other tools that aren't items themselves but mode-pickers. */
+export type OtherTool = 'text' | 'select';
+
+/** Every tool the WhiteboardToolPanel surfaces. */
+export type Tool = BrushTool | ShapeTool | OtherTool;
+
+// ── Items (the polymorphic layer payload) ───────────────────────────
+
+/** One brush stroke = one continuous pointer-down through pointer-up. */
+export interface StrokeItem {
+  kind: 'stroke';
+  tool: BrushTool;
   /** Hex color string (e.g. "#ff6b00") or "currentColor" to author-
    *  tint at render time. */
   color: string;
@@ -44,19 +47,90 @@ export interface Stroke {
   width: number;
   /** 0..1, defaults to 1. Highlighter usually 0.4–0.6. */
   opacity?: number;
-  /** Only for tool='text' — the label content. */
-  text?: string;
   /** Pointer samples — perfect-freehand input. */
   points: Point[];
 }
+
+/** Geometric shape — defined by a rectangle (x, y, w, h) the user
+ *  dragged out. Line + arrow use the rect's diagonal; rect + ellipse
+ *  fit inside. Negative w/h are allowed (right-to-left drag). */
+export interface ShapeItem {
+  kind: 'shape';
+  tool: ShapeTool;
+  /** Top-left of the bounding box in source coords. */
+  x: number;
+  y: number;
+  /** Signed dimensions — negatives indicate drag direction. */
+  w: number;
+  h: number;
+  color: string;
+  /** Stroke width in source-canvas px. */
+  width: number;
+  /** When set, the shape is filled with the same color at this
+   *  opacity (0..1). Rect + ellipse only. */
+  fill?: number;
+  opacity?: number;
+}
+
+/** Text label placed at a point and editable inline. */
+export interface TextItem {
+  kind: 'text';
+  /** Top-left anchor in source coords. */
+  x: number;
+  y: number;
+  /** Width / height of the text box. Auto-grows on edit; saved
+   *  with the value at commit time so re-renders match. */
+  w: number;
+  h: number;
+  body: string;
+  fontSize: number;
+  color: string;
+  /** 'left' | 'center' | 'right' — basic text alignment. */
+  align?: 'left' | 'center' | 'right';
+  /** Bold / italic toggles. Italic skipped in C-1.5 toolbar; field
+   *  reserved so a future toolbar gets to it without schema change. */
+  bold?: boolean;
+  italic?: boolean;
+}
+
+/** Pasted (or dropped) image. The bytes are stored as a base64
+ *  data: URL inside the JSON document for C-1.5 — simple, no extra
+ *  upload pipeline, lives entirely in annotation_data JSONB. A
+ *  later commit can swap to content-addressed storage + image_hash
+ *  for large pastes (when we add `imageHash` here, the renderer
+ *  prefers it over the data URL). 5 MB cap enforced client-side. */
+export interface ImageItem {
+  kind: 'image';
+  /** Top-left in source coords. */
+  x: number;
+  y: number;
+  /** Display dimensions (may differ from the source image's natural
+   *  size when the user resized the item). */
+  w: number;
+  h: number;
+  /** Base64 data: URL OR a remote URL (CORS willing). */
+  src: string;
+  /** Optional rotation in degrees — reserved for the selection /
+   *  transform tool in C-1.6. */
+  rotation?: number;
+}
+
+/** Polymorphic discriminated union over every kind of layer item. */
+export type Item = StrokeItem | ShapeItem | TextItem | ImageItem;
 
 /** Stacked bottom-to-top. */
 export interface Layer {
   id: string;
   name?: string;
   visible: boolean;
+  /** 0..1, multiplies every item's own opacity. */
   opacity: number;
-  strokes: Stroke[];
+  /** When true, the layer is read-only — items can't be added,
+   *  edited, or removed. Visibility stays toggleable. */
+  locked?: boolean;
+  /** Polymorphic item list. Previously `strokes[]`; renamed to
+   *  `items[]` in C-1.5 when shapes / text / images arrived. */
+  items: Item[];
 }
 
 /** The full vector document. Stored verbatim in comments.annotation_
@@ -81,9 +155,42 @@ export function emptyDoc(w: number, h: number): BrushContent {
         name: 'Layer 1',
         visible: true,
         opacity: 1,
-        strokes: [],
+        items: [],
       },
     ],
+  };
+}
+
+/** Make a fresh empty layer (used by the "+" button in the layer
+ *  panel). Names auto-increment from the existing count. */
+export function newLayer(name?: string): Layer {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    visible: true,
+    opacity: 1,
+    items: [],
+  };
+}
+
+/** Backward-compat normalizer — older saves (pre-C-1.5) carried
+ *  `strokes[]` on each layer instead of polymorphic `items[]`. Read
+ *  path runs every loaded doc through this so old whiteboards keep
+ *  rendering after the schema bumped. New saves emit `items[]` only. */
+export function normalizeDoc(doc: BrushContent): BrushContent {
+  return {
+    ...doc,
+    layers: doc.layers.map((l) => {
+      const raw = l as Layer & { strokes?: Array<Omit<StrokeItem, 'kind'>> };
+      if (Array.isArray(raw.items)) return l;
+      if (Array.isArray(raw.strokes)) {
+        return {
+          ...l,
+          items: raw.strokes.map((s) => ({ kind: 'stroke', ...s }) as StrokeItem),
+        };
+      }
+      return { ...l, items: [] };
+    }),
   };
 }
 
@@ -118,19 +225,23 @@ export function defaultOpacityFor(tool: Tool): number {
   return tool === 'highlighter' ? 0.45 : 1;
 }
 
+/** True when the tool produces a Stroke item (free-form brush). */
+export function isBrushTool(tool: Tool): tool is BrushTool {
+  return tool === 'pen' || tool === 'marker' || tool === 'highlighter' || tool === 'eraser';
+}
+
+/** True when the tool produces a Shape item (click-drag-release). */
+export function isShapeTool(tool: Tool): tool is ShapeTool {
+  return tool === 'line' || tool === 'arrow' || tool === 'rect' || tool === 'ellipse';
+}
+
 /** Per-tool perfect-freehand parameters. The library exposes a
- *  StrokeOptions bag — these defaults shape each tool's feel:
- *    pen        → tight, pressure-responsive
- *    marker     → thicker, less pressure variance
- *    highlighter→ flat, wide, no taper
- *    eraser     → uses destination-out composite at render time;
- *                 same stroke shape, color is irrelevant
- */
-export function strokeOptionsFor(tool: Tool) {
+ *  StrokeOptions bag — these defaults shape each tool's feel. */
+export function strokeOptionsFor(tool: BrushTool) {
   switch (tool) {
     case 'highlighter':
       return {
-        size: 1, // size is applied externally via width; this is just the multiplier
+        size: 1,
         thinning: 0,
         smoothing: 0.6,
         streamline: 0.6,
@@ -171,3 +282,8 @@ export function strokeOptionsFor(tool: Tool) {
       };
   }
 }
+
+/** Max bytes for a pasted/dropped image before we reject it. 5 MB —
+ *  generous for screenshots, blocks accidentally pasting in a
+ *  high-res photo that would balloon the JSON document. */
+export const MAX_PASTED_IMAGE_BYTES = 5 * 1024 * 1024;

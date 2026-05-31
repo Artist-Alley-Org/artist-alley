@@ -4551,48 +4551,70 @@ components:
           maxItems: 32
           description: |
             Ordered bottom-to-top. Each layer carries its own visible
-            / opacity / strokes payload — same shape Photoshop /
+            / opacity / lock / items payload — same shape Photoshop /
             Procreate use. Capped at 32 to keep payloads bounded.
           items:
             type: object
-            required: [id, strokes]
+            required: [id, items]
             properties:
               id: { type: string, description: "Stable per-layer identifier (UUIDv4 from the client)." }
               name: { type: string }
               visible: { type: boolean, default: true }
               opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
-              strokes:
+              locked:
+                type: boolean
+                default: false
+                description: "When true the layer is read-only; visibility stays toggleable."
+              items:
                 type: array
                 description: |
-                  Each stroke = a tool, color, base width, and the
-                  raw pointer-event sample sequence the perfect-
-                  freehand renderer turns into a smooth polygon.
+                  Polymorphic items on this layer. `kind` is the
+                  discriminator: stroke (free-form brush), shape
+                  (line / arrow / rect / ellipse), text (inline
+                  label), or image (pasted/dropped bitmap, stored
+                  inline as a base64 data: URL for now).
                 items:
                   type: object
-                  required: [tool, color, width, points]
+                  required: [kind]
                   properties:
+                    kind:
+                      type: string
+                      enum: [stroke, shape, text, image]
+                    # Stroke fields
                     tool:
                       type: string
-                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, ellipse, text]
-                    color: { type: string, description: "Hex like '#ff6b00' or 'currentColor' for author-tint." }
+                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, ellipse]
+                    color: { type: string }
                     width: { type: number, minimum: 0.5, maximum: 200 }
                     opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
-                    text:
-                      type: string
-                      nullable: true
-                      description: "Only for tool='text'. The label content."
                     points:
                       type: array
-                      description: |
-                        Pointer samples — perfect-freehand input.
-                        Each entry: [x, y, pressure?]. Pressure 0–1
-                        from stylus when available; the engine
-                        simulates from velocity otherwise.
                       items:
                         type: array
                         minItems: 2
                         maxItems: 3
                         items: { type: number }
+                    # Shape / Text / Image bbox
+                    x: { type: number }
+                    y: { type: number }
+                    w: { type: number }
+                    h: { type: number }
+                    fill: { type: number, minimum: 0, maximum: 1 }
+                    # Text fields
+                    body: { type: string, maxLength: 10000 }
+                    fontSize: { type: number, minimum: 8, maximum: 256 }
+                    align: { type: string, enum: [left, center, right], default: left }
+                    bold: { type: boolean, default: false }
+                    italic: { type: boolean, default: false }
+                    # Image fields
+                    src:
+                      type: string
+                      description: |
+                        Base64 data: URL OR remote URL. Pasted images
+                        are embedded as data URLs (5 MB cap enforced
+                        client-side); content-addressed `image_hash`
+                        reference lands in a later phase.
+                    rotation: { type: number, default: 0 }
 
     WhiteboardCreate:
       type: object

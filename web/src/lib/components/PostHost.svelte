@@ -22,10 +22,12 @@
   import CollectionPicker from './CollectionPicker.svelte';
   import CommentsThread from './CommentsThread.svelte';
   import Menu from './Menu.svelte';
-  import Whiteboard from './whiteboard/Whiteboard.svelte';
+  import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
+  import WhiteboardToolPanel from './whiteboard/WhiteboardToolPanel.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
-  import type { BrushContent } from '$lib/whiteboard/types';
+  import { createWhiteboardSession } from '$lib/whiteboard/session.svelte';
+  import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
@@ -113,10 +115,91 @@
   let whiteboards = $state<WhiteboardRow[]>([]);
   let whiteboardLoading = $state(false);
   let previewedWhiteboard = $state<WhiteboardRow | null>(null);
+  // The session is the single source of truth for the whiteboard
+  // canvas + tool panel. Created lazily so we don't allocate one
+  // unless the user opens the surface; recreated on close so the
+  // next session starts fresh (drafts aren't preserved across
+  // close/reopen — that lands with the autosave phase).
+  const WB_SOURCE_W = 1920;
+  const WB_SOURCE_H = 1080;
+  let whiteboardSession = $state<ReturnType<typeof createWhiteboardSession> | null>(null);
+  let whiteboardSaving = $state(false);
+  let whiteboardSaveError = $state<string | null>(null);
+
+  // Read-only session for the sidebar-click preview overlay. Lazily
+  // built from the previewed whiteboard's annotation_data; null when
+  // no whiteboard is being previewed.
+  let previewSession = $state<ReturnType<typeof createWhiteboardSession> | null>(null);
+  $effect(() => {
+    const wb = previewedWhiteboard;
+    if (wb?.annotation_data) {
+      const normalized = normalizeDoc(wb.annotation_data);
+      const s = createWhiteboardSession(normalized.source_w || 1920, normalized.source_h || 1080);
+      s.load(normalized);
+      previewSession = s;
+    } else {
+      previewSession = null;
+    }
+  });
 
   function toggleWhiteboard() {
     if (previewedWhiteboard) previewedWhiteboard = null;
-    whiteboardOpen = !whiteboardOpen;
+    if (whiteboardOpen) {
+      // Closing — let the session die.
+      whiteboardOpen = false;
+      whiteboardSession = null;
+      whiteboardSaveError = null;
+    } else {
+      // Opening — fresh session.
+      whiteboardSession = createWhiteboardSession(WB_SOURCE_W, WB_SOURCE_H);
+      whiteboardSaveError = null;
+      whiteboardOpen = true;
+    }
+  }
+
+  async function saveWhiteboard() {
+    if (!whiteboardSession || !post || whiteboardSaving) return;
+    const doc = whiteboardSession.doc;
+    const empty = doc.layers.every((l) => l.items.length === 0);
+    if (empty) {
+      whiteboardSaveError = 'Draw something first.';
+      return;
+    }
+    whiteboardSaving = true;
+    whiteboardSaveError = null;
+    try {
+      const { error } = await api.POST('/posts/{id}/whiteboards', {
+        params: { path: { id: post.id } },
+        body: {
+          content: {
+            source_w: doc.source_w,
+            source_h: doc.source_h,
+            layers: doc.layers.map((l) => ({
+              id: l.id,
+              name: l.name,
+              visible: l.visible,
+              opacity: l.opacity,
+              locked: l.locked ?? false,
+              items: l.items.map((it) => ({ ...it })),
+            })),
+          },
+        } as unknown as never,
+      });
+      if (error) {
+        whiteboardSaveError = (error as { error?: string } | undefined)?.error ?? 'Save failed.';
+        return;
+      }
+      // Refresh the sidebar list, then close the whiteboard back to
+      // the regular sidebar — the user explicitly saved so they're
+      // done with this sketch. They can open a fresh one anytime.
+      onWhiteboardSaved();
+      whiteboardOpen = false;
+      whiteboardSession = null;
+    } catch (e) {
+      whiteboardSaveError = e instanceof Error ? e.message : 'Save failed.';
+    } finally {
+      whiteboardSaving = false;
+    }
   }
 
   async function loadWhiteboards(id: string) {
@@ -415,7 +498,8 @@
   {onClose}
   {standalone}
   {onNavigateSibling}
-  contextSlot={postSocialPane}
+  contextSlot={whiteboardOpen && whiteboardSession ? whiteboardToolsPane : postSocialPane}
+  canvasOverlay={whiteboardOpen && whiteboardSession ? whiteboardCanvasSlot : undefined}
   titleSlot={postTitleSlot}
   onAddToCollection={openPickerForCurrent}
   onRecreatePreviews={isOwner ? recreatePreviews : undefined}
@@ -428,18 +512,36 @@
   {whiteboardOpen}
 />
 
-{#if whiteboardOpen && post}
-  <!-- Mount the whiteboard overlay. Self-contained — toolbar +
-       canvas + save flow. Uses <dialog showModal()> so the browser
-       top-layer stacks us above the AssetPlaylist dialog beneath. -->
-  <Whiteboard
-    postId={post.id}
-    onClose={() => (whiteboardOpen = false)}
-    onSaved={onWhiteboardSaved}
-  />
-{/if}
+<!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
+     area via the canvasOverlay slot. Covers only the asset, leaves
+     the sidebar + top toolbar reachable. The tool panel lives in
+     the playlist's right pane via metadataSlot swap (the
+     whiteboardToolsPane snippet below). -->
+{#snippet whiteboardCanvasSlot()}
+  {#if whiteboardSession}
+    <WhiteboardCanvas
+      session={whiteboardSession}
+      onClose={toggleWhiteboard}
+    />
+  {/if}
+{/snippet}
 
-{#if previewedWhiteboard && previewedWhiteboard.annotation_data}
+<!-- Sidebar content swap: when whiteboard mode is on, the right
+     pane shows the tool panel instead of post details. The
+     metadataSlot prop above flips to whiteboardToolsPane and back. -->
+{#snippet whiteboardToolsPane()}
+  {#if whiteboardSession}
+    <WhiteboardToolPanel
+      session={whiteboardSession}
+      saving={whiteboardSaving}
+      saveError={whiteboardSaveError}
+      onSave={saveWhiteboard}
+      onClose={toggleWhiteboard}
+    />
+  {/if}
+{/snippet}
+
+{#if previewedWhiteboard && previewedWhiteboard.annotation_data && previewSession}
   <!-- Read-only preview of a saved whiteboard. Lightweight modal
        wrapping a non-interactive BrushCanvas — no toolbar, just the
        sketch + a Close button. Clicking the backdrop closes. -->
@@ -469,7 +571,7 @@
         style:height="calc(80vw * {previewedWhiteboard.annotation_data.source_h / previewedWhiteboard.annotation_data.source_w})"
         style:max-height="80vh"
       >
-        <BrushCanvas value={previewedWhiteboard.annotation_data} readOnly />
+        <BrushCanvas session={previewSession} readOnly />
       </div>
     </div>
   </div>

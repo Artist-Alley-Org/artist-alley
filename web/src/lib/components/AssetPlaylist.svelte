@@ -43,6 +43,10 @@
         pass a snippet rendering "<post title> — by <author>"; other
         hosts can omit and fall back to the filename. */
     titleSlot?: Snippet;
+    /** Pass-through to AssetViewer's canvasOverlay slot — host
+        renders a brush/annotation surface over the asset canvas
+        without losing the sidebar or top toolbar. */
+    canvasOverlay?: Snippet;
     /** Called when the user closes the playlist (× / ESC / backdrop). */
     onClose: () => void;
     /** True when the playlist is a full-page route (e.g. /posts/[id])
@@ -81,6 +85,7 @@
     source,
     contextSlot,
     titleSlot,
+    canvasOverlay,
     onClose,
     standalone = false,
     onNavigateSibling,
@@ -436,6 +441,7 @@
               bind:paneCollapsed
               metadataSlot={contextSlot}
               {titleSlot}
+              {canvasOverlay}
               hotkeyLegend={playlistHotkeys}
               {maximized}
               onToggleMaximize={toggleMaximize}

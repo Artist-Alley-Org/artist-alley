@@ -1,0 +1,307 @@
+// Whiteboard session — shared reactive state between the canvas
+// overlay and the tool panel.
+//
+// Before C-1.5 the Whiteboard.svelte component owned everything in
+// one file (its own tools/colors/sizes state + the canvas + the
+// toolbar). With the toolbar moving to the side panel — a sibling
+// component, not a child — we need a single mutable source of truth
+// both sides can bind to without prop-drilling every field.
+//
+// Svelte 5 $state inside a factory function does this perfectly: the
+// returned object is a reactive proxy; mutating fields on it triggers
+// every component that reads them. Lives in a .svelte.ts file because
+// $state can't be used in plain .ts modules.
+
+import type {
+  BrushContent,
+  BrushTool,
+  Item,
+  Layer,
+  ShapeTool,
+  Tool,
+} from './types';
+import {
+  PALETTE,
+  SIZES,
+  defaultOpacityFor,
+  emptyDoc,
+  newLayer,
+} from './types';
+
+/** Snapshot of the whole session — used by undo/redo. */
+interface SessionSnapshot {
+  doc: BrushContent;
+  activeLayerId: string | null;
+}
+
+/** Owner-visible session API. The canvas component binds to `doc`
+ *  + `activeLayerId` + tool/color/size; the tool panel mutates them.
+ *  Methods are the only way to commit history snapshots so the undo
+ *  stack stays accurate. */
+export interface WhiteboardSession {
+  // Document state
+  doc: BrushContent;
+  activeLayerId: string | null;
+
+  // Tool state (driven by the tool panel)
+  tool: Tool;
+  color: string;
+  width: number;
+  opacity: number;
+  fillShapes: boolean;
+
+  // History
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
+
+  // Item / layer mutations — each one pushes a history snapshot so
+  // undo rewinds to the previous state cleanly.
+  addItem: (layerId: string, item: Item) => void;
+  /** Replace an item in a layer (used by the text editor on commit
+   *  and the future selection/transform tool). */
+  replaceItem: (layerId: string, index: number, item: Item) => void;
+  /** Remove items by index from a layer. */
+  removeItems: (layerId: string, indexes: number[]) => void;
+
+  // Selection — single-item for C-1.5; multi-select lands in C-1.6.
+  // `selection` is null when nothing's picked. When set, the
+  // BrushCanvas overlays bbox + handles for that item.
+  selection: { layerId: string; index: number } | null;
+  selectItem: (layerId: string, index: number) => void;
+  deselect: () => void;
+
+  // Layer mutations
+  addLayer: () => string;
+  removeLayer: (layerId: string) => void;
+  renameLayer: (layerId: string, name: string) => void;
+  setLayerVisible: (layerId: string, visible: boolean) => void;
+  setLayerOpacity: (layerId: string, opacity: number) => void;
+  setLayerLocked: (layerId: string, locked: boolean) => void;
+  moveLayer: (layerId: string, dir: 'up' | 'down') => void;
+
+  // Whole-doc operations
+  clearAll: () => void;
+  /** Load a saved doc (e.g. user opened a previous whiteboard for
+   *  edit). Resets history. */
+  load: (doc: BrushContent) => void;
+}
+
+const HISTORY_MAX = 64;
+
+export function createWhiteboardSession(
+  sourceW: number,
+  sourceH: number,
+): WhiteboardSession {
+  // Single reactive root the canvas + tool panel both bind to.
+  const initialDoc = emptyDoc(sourceW, sourceH);
+  interface ReactiveState {
+    doc: BrushContent;
+    activeLayerId: string | null;
+    tool: Tool;
+    color: string;
+    width: number;
+    opacity: number;
+    fillShapes: boolean;
+    selection: { layerId: string; index: number } | null;
+  }
+  const state = $state<ReactiveState>({
+    doc: initialDoc,
+    activeLayerId: initialDoc.layers[0]?.id ?? null,
+    tool: 'pen',
+    color: PALETTE[7],
+    width: SIZES[1].width,
+    opacity: defaultOpacityFor('pen'),
+    fillShapes: false,
+    selection: null,
+  });
+
+  // Undo / redo. Snapshot-based — every mutating method commits the
+  // post-mutation state. Simpler than a per-action log when the
+  // mutation set is small + the document is bounded.
+  const history: SessionSnapshot[] = $state([]);
+  let historyIdx = $state(-1);
+
+  function deepCopy<T>(v: T): T {
+    return JSON.parse(JSON.stringify($state.snapshot(v))) as T;
+  }
+
+  function snapshot(): SessionSnapshot {
+    return {
+      doc: deepCopy(state.doc),
+      activeLayerId: state.activeLayerId,
+    };
+  }
+
+  function commit() {
+    // Drop redo tail when branching off an undone state.
+    history.splice(historyIdx + 1, history.length - (historyIdx + 1));
+    history.push(snapshot());
+    if (history.length > HISTORY_MAX) history.shift();
+    historyIdx = history.length - 1;
+  }
+
+  // Seed history with the initial empty doc so undo can reach it.
+  commit();
+
+  function restore(snap: SessionSnapshot) {
+    state.doc = deepCopy(snap.doc);
+    state.activeLayerId = snap.activeLayerId;
+  }
+
+  function findLayer(id: string): Layer | undefined {
+    return state.doc.layers.find((l) => l.id === id);
+  }
+
+  return {
+    // Reactive proxies — these reads / writes are reactive because
+    // state.* is a $state proxy. Getters because Svelte 5 forwards
+    // get/set through proxies cleanly.
+    get doc() { return state.doc; },
+    set doc(v) { state.doc = v; },
+    get activeLayerId() { return state.activeLayerId; },
+    set activeLayerId(v) { state.activeLayerId = v; },
+    get tool() { return state.tool; },
+    set tool(v) {
+      state.tool = v;
+      // Auto-tune opacity to the tool's natural default — saves the
+      // user from manually re-bumping the slider every tool switch.
+      state.opacity = defaultOpacityFor(v);
+      // Switching away from select clears any pending selection so
+      // handles don't linger over the canvas after the user picks
+      // a different tool.
+      if (v !== 'select') state.selection = null;
+    },
+    get color() { return state.color; },
+    set color(v) { state.color = v; },
+    get width() { return state.width; },
+    set width(v) { state.width = v; },
+    get opacity() { return state.opacity; },
+    set opacity(v) { state.opacity = v; },
+    get fillShapes() { return state.fillShapes; },
+    set fillShapes(v) { state.fillShapes = v; },
+
+    get canUndo() { return historyIdx > 0; },
+    get canRedo() { return historyIdx < history.length - 1; },
+
+    undo() {
+      if (historyIdx <= 0) return;
+      historyIdx -= 1;
+      restore(history[historyIdx]);
+    },
+    redo() {
+      if (historyIdx >= history.length - 1) return;
+      historyIdx += 1;
+      restore(history[historyIdx]);
+    },
+
+    addItem(layerId, item) {
+      const layer = findLayer(layerId);
+      if (!layer || layer.locked) return;
+      layer.items.push(item);
+      commit();
+    },
+
+    replaceItem(layerId, index, item) {
+      const layer = findLayer(layerId);
+      if (!layer || layer.locked) return;
+      if (index < 0 || index >= layer.items.length) return;
+      layer.items[index] = item;
+      commit();
+    },
+
+    removeItems(layerId, indexes) {
+      const layer = findLayer(layerId);
+      if (!layer || layer.locked) return;
+      const set = new Set(indexes);
+      layer.items = layer.items.filter((_, i) => !set.has(i));
+      // Clear selection if the removed item was selected.
+      if (state.selection && state.selection.layerId === layerId && set.has(state.selection.index)) {
+        state.selection = null;
+      }
+      commit();
+    },
+
+    get selection() { return state.selection; },
+    set selection(v) { state.selection = v; },
+    selectItem(layerId, index) {
+      state.selection = { layerId, index };
+    },
+    deselect() { state.selection = null; },
+
+    addLayer() {
+      const layer = newLayer(`Layer ${state.doc.layers.length + 1}`);
+      state.doc.layers.push(layer);
+      state.activeLayerId = layer.id;
+      commit();
+      return layer.id;
+    },
+
+    removeLayer(layerId) {
+      if (state.doc.layers.length <= 1) return; // never zero
+      const idx = state.doc.layers.findIndex((l) => l.id === layerId);
+      if (idx === -1) return;
+      state.doc.layers.splice(idx, 1);
+      if (state.activeLayerId === layerId) {
+        state.activeLayerId =
+          state.doc.layers[Math.min(idx, state.doc.layers.length - 1)]?.id ?? null;
+      }
+      commit();
+    },
+
+    renameLayer(layerId, name) {
+      const layer = findLayer(layerId);
+      if (!layer) return;
+      layer.name = name;
+      commit();
+    },
+
+    setLayerVisible(layerId, visible) {
+      const layer = findLayer(layerId);
+      if (!layer) return;
+      layer.visible = visible;
+      commit();
+    },
+
+    setLayerOpacity(layerId, opacity) {
+      const layer = findLayer(layerId);
+      if (!layer) return;
+      layer.opacity = Math.max(0, Math.min(1, opacity));
+      commit();
+    },
+
+    setLayerLocked(layerId, locked) {
+      const layer = findLayer(layerId);
+      if (!layer) return;
+      layer.locked = locked;
+      commit();
+    },
+
+    moveLayer(layerId, dir) {
+      const idx = state.doc.layers.findIndex((l) => l.id === layerId);
+      if (idx === -1) return;
+      const swap = dir === 'up' ? idx + 1 : idx - 1;
+      if (swap < 0 || swap >= state.doc.layers.length) return;
+      const [layer] = state.doc.layers.splice(idx, 1);
+      state.doc.layers.splice(swap, 0, layer);
+      commit();
+    },
+
+    clearAll() {
+      state.doc = {
+        ...state.doc,
+        layers: state.doc.layers.map((l) => ({ ...l, items: [] })),
+      };
+      commit();
+    },
+
+    load(doc) {
+      state.doc = deepCopy(doc);
+      state.activeLayerId = state.doc.layers[0]?.id ?? null;
+      history.length = 0;
+      historyIdx = -1;
+      commit();
+    },
+  };
+}
