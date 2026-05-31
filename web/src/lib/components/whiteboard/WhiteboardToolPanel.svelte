@@ -72,8 +72,17 @@
     { id: 'line',    label: 'Line (L)',      icon: 'M5 19L19 5' },
     { id: 'arrow',   label: 'Arrow (A)',     icon: 'M5 19L19 5 M19 5h-6 M19 5v6' },
     { id: 'rect',    label: 'Rectangle (R)', icon: 'M4 6h16v12H4z' },
+    { id: 'rounded-rect', label: 'Rounded rectangle', icon: 'M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2H6a2 2 0 0 1 -2 -2V6a2 2 0 0 1 2 -2z' },
     { id: 'ellipse', label: 'Ellipse (O)',   icon: 'M12 6c5 0 8 2.5 8 6s-3 6-8 6-8-2.5-8-6 3-6 8-6z' },
     { id: 'triangle', label: 'Triangle (G)', icon: 'M12 4l9 16H3z' },
+    { id: 'right-triangle', label: 'Right triangle', icon: 'M4 4v16h16z' },
+    { id: 'diamond', label: 'Diamond', icon: 'M12 3l9 9-9 9-9-9z' },
+    { id: 'pentagon', label: 'Pentagon', icon: 'M12 3l9 6.5-3.5 10.5h-11L3 9.5z' },
+    { id: 'hexagon',  label: 'Hexagon',  icon: 'M7 3h10l5 9-5 9H7l-5-9z' },
+    { id: 'star',     label: 'Star',     icon: 'M12 3l2.6 6h6.4l-5.2 4 2 7-5.8-4-5.8 4 2-7-5.2-4h6.4z' },
+    { id: 'heart',    label: 'Heart',    icon: 'M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z' },
+    { id: 'callout-rect', label: 'Callout (rectangle)', icon: 'M4 4h16v12H8l-3 4v-4H4z' },
+    { id: 'callout-oval', label: 'Callout (oval)', icon: 'M12 4c5 0 8 3 8 6s-3 6-8 6c-1 0-2 0-3-.3l-4 2.3v-4C2.5 12.7 2 11.3 2 10c0-3 3-6 8-6z' },
   ];
 
   // Selection-mode tools. Lasso ships; rectangle-drag + select-all

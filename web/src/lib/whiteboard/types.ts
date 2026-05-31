@@ -24,8 +24,16 @@ export type Point = [number, number, number?];
 /** Brush tools (free-form pointer input). */
 export type BrushTool = 'pen' | 'marker' | 'highlighter' | 'eraser';
 
-/** Shape tools (click-drag-release rectangles defining the shape). */
-export type ShapeTool = 'line' | 'arrow' | 'rect' | 'ellipse' | 'triangle';
+/** Shape tools (click-drag-release rectangles defining the shape).
+ *  Most are parametric off the (x, y, w, h) bbox; star + polygon
+ *  carry a `points` count saved per-item so re-render matches what
+ *  the user picked. */
+export type ShapeTool =
+  | 'line' | 'arrow' | 'rect' | 'ellipse' | 'triangle'
+  | 'rounded-rect' | 'right-triangle' | 'diamond'
+  | 'pentagon' | 'hexagon'
+  | 'star' | 'heart'
+  | 'callout-rect' | 'callout-oval';
 
 /** Other tools that aren't items themselves but mode-pickers. */
 export type OtherTool = 'text' | 'select' | 'lasso' | 'crop' | 'clone' | 'bucket' | 'eyedropper';

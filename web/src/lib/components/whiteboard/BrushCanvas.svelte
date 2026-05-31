@@ -297,23 +297,145 @@
       ctx.stroke();
     } else if (s.tool === 'triangle') {
       // Isoceles triangle: apex at top-center, base across bottom.
-      // Drag-direction preserved by using the normalized (x, y, w, h)
-      // bbox so flipping w or h gives an inverted/mirrored triangle.
       ctx.beginPath();
       ctx.moveTo(x + w / 2, y);
       ctx.lineTo(x + w, y + h);
       ctx.lineTo(x, y + h);
       ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'right-triangle') {
+      // Right angle at bottom-left.
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x, y + h);
+      ctx.lineTo(x + w, y + h);
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'rounded-rect') {
+      const r = Math.min(w, h) * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y,     x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x,     y + h, r);
+      ctx.arcTo(x,     y + h, x,     y,     r);
+      ctx.arcTo(x,     y,     x + w, y,     r);
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'diamond') {
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w / 2, y + h);
+      ctx.lineTo(x, y + h / 2);
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'pentagon' || s.tool === 'hexagon') {
+      // Regular n-gon centered in the bbox, oriented apex-up.
+      const n = s.tool === 'pentagon' ? 5 : 6;
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const rx = w / 2;
+      const ry = h / 2;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+        const px = cx + Math.cos(a) * rx;
+        const py = cy + Math.sin(a) * ry;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'star') {
+      // 5-point star. Inner radius is the standard 0.382 × outer
+      // (golden-ratio derived; matches what PowerPoint / Paint draw).
+      const points = 5;
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const rxOut = w / 2;
+      const ryOut = h / 2;
+      const inn = 0.382;
+      ctx.beginPath();
+      for (let i = 0; i < points * 2; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / points;
+        const r = i % 2 === 0 ? 1 : inn;
+        const px = cx + Math.cos(a) * rxOut * r;
+        const py = cy + Math.sin(a) * ryOut * r;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'heart') {
+      // Classic two-arc + V-tip heart. Math: two semicircles at
+      // the top, lines converging to the bottom point. Looks right
+      // at any aspect ratio because we scale the control points.
+      const cx = x + w / 2;
+      const top = y;
+      const bottom = y + h;
+      const r = w * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(cx, bottom);
+      ctx.bezierCurveTo(cx + w * 0.5, y + h * 0.7, x + w, y + h * 0.25, cx, top + h * 0.25);
+      ctx.bezierCurveTo(x, y + h * 0.25, cx - w * 0.5, y + h * 0.7, cx, bottom);
+      ctx.closePath();
+      fillStrokeShape(s);
+    } else if (s.tool === 'callout-rect' || s.tool === 'callout-oval') {
+      // Speech bubble — main body + a triangular tail at the bottom-
+      // left pointing down-and-left. Tail size scales with the body
+      // so it reads as a callout at any drag size.
+      const tailW = Math.min(w * 0.15, 40);
+      const tailH = Math.min(h * 0.2, 40);
+      const tailBaseX = x + w * 0.25;
+      const tipX = tailBaseX - tailW;
+      const tipY = y + h + tailH;
+      // Body
+      ctx.beginPath();
+      if (s.tool === 'callout-rect') {
+        const r = Math.min(w, h) * 0.12;
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y,     x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x,     y + h, r);
+        ctx.arcTo(x,     y + h, x,     y,     r);
+        ctx.arcTo(x,     y,     x + w, y,     r);
+        ctx.closePath();
+      } else {
+        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      }
+      // Tail — drawn as a separate triangle on top of the body so
+      // the stroke around the body still reads cleanly behind it.
+      // Fill-first ordering keeps the join clean.
+      const tailPath = new Path2D();
+      tailPath.moveTo(tailBaseX, y + h - 1);
+      tailPath.lineTo(tipX, tipY);
+      tailPath.lineTo(tailBaseX + tailW, y + h - 1);
+      tailPath.closePath();
+      // First fill body + tail together, then stroke both.
       if (s.fill && s.fill > 0) {
         ctx.fillStyle = s.color;
         const prevAlpha = ctx.globalAlpha;
         ctx.globalAlpha = prevAlpha * s.fill;
         ctx.fill();
+        ctx.fill(tailPath);
         ctx.globalAlpha = prevAlpha;
       }
       ctx.stroke();
+      ctx.stroke(tailPath);
     }
     ctx.restore();
+  }
+
+  /** Shared fill+stroke for the simple-path shapes above. Pull-out
+   *  helper because every new shape branch was repeating the same
+   *  six lines. */
+  function fillStrokeShape(s: ShapeItem) {
+    if (!ctx) return;
+    if (s.fill && s.fill > 0) {
+      ctx.fillStyle = s.color;
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = prevAlpha * s.fill;
+      ctx.fill();
+      ctx.globalAlpha = prevAlpha;
+    }
+    ctx.stroke();
   }
 
   function drawArrow(x1: number, y1: number, x2: number, y2: number, w: number) {
