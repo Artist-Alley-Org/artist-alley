@@ -193,69 +193,83 @@
 <svelte:window onkeydown={onKey} />
 
 <div
-  class="w-64 rounded-md border border-border bg-surface-elevated p-3 text-xs text-fg shadow-xl"
+  class="w-[22rem] rounded-md border border-border bg-surface-elevated p-3 text-xs text-fg shadow-xl"
   role="dialog"
   aria-label="Color picker"
 >
-  <!-- ── S/V 2D field ────────────────────────────────────────── -->
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div
-    bind:this={svFieldEl}
-    class="relative h-40 w-full cursor-crosshair touch-none rounded"
-    style:background={`linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))`}
-    onpointerdown={onSvPointer}
-    onpointermove={onSvPointer}
-  >
-    <div
-      class="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
-      style:left={`${s * 100}%`}
-      style:top={`${(1 - v) * 100}%`}
-    ></div>
-  </div>
-
-  <!-- ── Hue slider ─────────────────────────────────────────── -->
-  <div class="mt-2">
-    <input
-      type="range"
-      min={0}
-      max={360}
-      step={1}
-      value={h}
-      oninput={(e) => (h = +(e.currentTarget as HTMLInputElement).value)}
-      class="w-full"
-      style:background="linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)"
-      style:appearance="none"
-      style:height="12px"
-      style:border-radius="6px"
-      aria-label="Hue"
-    />
-  </div>
-
-  <!-- ── Hex + RGB inputs ───────────────────────────────────── -->
-  <div class="mt-2 grid grid-cols-[1fr_repeat(3,_3.5rem)] gap-1">
-    <label class="block">
-      <span class="block text-[10px] text-fg-muted">HEX</span>
+  <!-- Two-column layout: left = S/V field + hue slider (square-
+       ish color space); right = stacked HEX + R/G/B inputs. Keeps
+       the dropdown compact horizontally while the inputs stay
+       readable, and avoids the previous-layout overflow when the
+       sidebar is narrow. -->
+  <div class="grid grid-cols-[1fr_5rem] gap-3">
+    <!-- LEFT column: S/V field + hue slider -->
+    <div>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        bind:this={svFieldEl}
+        class="relative h-40 w-full cursor-crosshair touch-none rounded"
+        style:background={`linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))`}
+        onpointerdown={onSvPointer}
+        onpointermove={onSvPointer}
+      >
+        <div
+          class="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+          style:left={`${s * 100}%`}
+          style:top={`${(1 - v) * 100}%`}
+        ></div>
+      </div>
       <input
-        type="text"
-        value={hexInput}
-        oninput={(e) => onHexChange((e.currentTarget as HTMLInputElement).value)}
-        class="w-full rounded border border-border bg-surface px-1 py-0.5 font-mono text-xs"
-        maxlength={7}
+        type="range"
+        min={0}
+        max={360}
+        step={1}
+        value={h}
+        oninput={(e) => (h = +(e.currentTarget as HTMLInputElement).value)}
+        class="mt-2 w-full"
+        style:background="linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)"
+        style:appearance="none"
+        style:height="12px"
+        style:border-radius="6px"
+        aria-label="Hue"
       />
-    </label>
-    {#each ['r','g','b'] as ch (ch)}
-      {@const cur = ch === 'r' ? currentRgb.r : ch === 'g' ? currentRgb.g : currentRgb.b}
+    </div>
+
+    <!-- RIGHT column: HEX + RGB inputs stacked. Each input is
+         full-column width so digits never clip. -->
+    <div class="flex flex-col gap-2">
+      <!-- Live color preview swatch — bigger feedback than the
+           tiny indicator dot inside the S/V field. -->
+      <div
+        class="h-10 w-full rounded border border-border"
+        style:background-color={currentHex}
+        title={currentHex}
+        aria-label="Current color preview"
+      ></div>
       <label class="block">
-        <span class="block text-[10px] text-fg-muted uppercase">{ch}</span>
+        <span class="block text-[10px] text-fg-muted">HEX</span>
         <input
-          type="number"
-          min={0} max={255} step={1}
-          value={Math.round(cur)}
-          oninput={(e) => onRgbChange(ch as 'r'|'g'|'b', +(e.currentTarget as HTMLInputElement).value)}
+          type="text"
+          value={hexInput}
+          oninput={(e) => onHexChange((e.currentTarget as HTMLInputElement).value)}
           class="w-full rounded border border-border bg-surface px-1 py-0.5 font-mono text-xs"
+          maxlength={7}
         />
       </label>
-    {/each}
+      {#each ['r','g','b'] as ch (ch)}
+        {@const cur = ch === 'r' ? currentRgb.r : ch === 'g' ? currentRgb.g : currentRgb.b}
+        <label class="block">
+          <span class="block text-[10px] text-fg-muted uppercase">{ch}</span>
+          <input
+            type="number"
+            min={0} max={255} step={1}
+            value={Math.round(cur)}
+            oninput={(e) => onRgbChange(ch as 'r'|'g'|'b', +(e.currentTarget as HTMLInputElement).value)}
+            class="w-full rounded border border-border bg-surface px-1 py-0.5 font-mono text-xs"
+          />
+        </label>
+      {/each}
+    </div>
   </div>
 
   <!-- ── EyeDropper + commit-to-recent + close ──────────────── -->

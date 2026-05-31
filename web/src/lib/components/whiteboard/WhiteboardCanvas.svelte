@@ -51,6 +51,7 @@
       p: 'pen', m: 'marker', h: 'highlighter', e: 'eraser',
       l: 'line', a: 'arrow', r: 'rect', o: 'ellipse',
       t: 'text',
+      q: 'lasso', c: 'crop',
     };
     const next = map[e.key.toLowerCase()];
     if (next) {

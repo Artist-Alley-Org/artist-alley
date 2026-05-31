@@ -56,6 +56,10 @@
     { id: 'ellipse', label: 'Ellipse (O)', icon: 'M12 6c5 0 8 2.5 8 6s-3 6-8 6-8-2.5-8-6 3-6 8-6z' },
     // Text
     { id: 'text',    label: 'Text (T)',    icon: 'M5 5h14 M12 5v14' },
+    // Lasso = freehand polygon multi-select
+    { id: 'lasso',   label: 'Lasso (Q)',   icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
+    // Crop = drag a rect → trim source dimensions
+    { id: 'crop',    label: 'Crop (C)',    icon: 'M6 2v14h14 M2 6h14v14' },
   ];
 
   // Currently editing the name of which layer? Keyed by layer id.

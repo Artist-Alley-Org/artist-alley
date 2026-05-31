@@ -36,6 +36,7 @@
     DEFAULT_FONT_FAMILY,
     isBrushTool, isShapeTool, strokeOptionsFor,
     itemBBox, pointInItem, translateItem, resizeItemToBBox,
+    itemInPolygon,
   } from '$lib/whiteboard/types';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 
@@ -71,6 +72,12 @@
   // Shape being dragged out this frame.
   let liveShape: ShapeItem | null = $state(null);
   let dragStart: { x: number; y: number } | null = null;
+  // Lasso polygon being drawn this frame. List of [x, y] vertices
+  // in source coords; closed on mouseup.
+  let liveLasso: number[][] | null = $state(null);
+  // Crop rectangle being dragged out this frame. (x, y, w, h) in
+  // source coords, signed.
+  let liveCrop: { x: number; y: number; w: number; h: number } | null = $state(null);
   // Text being typed (overlay div positioned over the canvas).
   let textEdit: { x: number; y: number; w: number; h: number } | null = $state(null);
   let textEditBody = $state('');
@@ -164,6 +171,45 @@
     // Live previews on top
     if (liveStroke) drawItem(liveStroke);
     if (liveShape) drawItem(liveShape);
+    if (liveLasso && liveLasso.length >= 2) drawLassoPreview(liveLasso);
+    if (liveCrop) drawCropPreview(liveCrop);
+  }
+
+  function drawLassoPreview(poly: number[][]) {
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';  // accent blue
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.10)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(poly[0][0], poly[0][1]);
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawCropPreview(c: { x: number; y: number; w: number; h: number }) {
+    if (!ctx) return;
+    const x = Math.min(c.x, c.x + c.w);
+    const y = Math.min(c.y, c.y + c.h);
+    const w = Math.abs(c.w);
+    const h = Math.abs(c.h);
+    ctx.save();
+    // Dim everything outside the crop rect — four bars around it.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(0, 0, session.doc.source_w, y);
+    ctx.fillRect(0, y, x, h);
+    ctx.fillRect(x + w, y, session.doc.source_w - (x + w), h);
+    ctx.fillRect(0, y + h, session.doc.source_w, session.doc.source_h - (y + h));
+    // Dashed outline of the crop itself.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
   }
 
   function drawItem(item: Item) {
@@ -409,6 +455,30 @@
     canvasEl.setPointerCapture(e.pointerId);
     const p = eventToSource(e);
 
+    // Lasso — start a freehand polygon. Points captured each
+    // mousemove, closed on mouseup. The pointer drag itself never
+    // alters the doc; the commit happens in onPointerUp by
+    // running every item through pointInPolygon and replacing
+    // session.selection + extraSelected.
+    if (session.tool === 'lasso') {
+      canvasEl.setPointerCapture(e.pointerId);
+      liveLasso = [[p.x, p.y]];
+      render();
+      e.preventDefault();
+      return;
+    }
+    // Crop — drag out a rectangle that becomes the new source
+    // bounds on release. Live preview is a dashed white rectangle
+    // overlaid on the canvas with the outside dimmed so the user
+    // sees what gets discarded.
+    if (session.tool === 'crop') {
+      canvasEl.setPointerCapture(e.pointerId);
+      liveCrop = { x: p.x, y: p.y, w: 0, h: 0 };
+      dragStart = { x: p.x, y: p.y };
+      render();
+      e.preventDefault();
+      return;
+    }
     if (isBrushTool(session.tool)) {
       liveStroke = {
         kind: 'stroke',
@@ -511,6 +581,28 @@
       render();
       return;
     }
+    // Lasso live-add to polygon. Drop near-duplicate points to
+    // keep the array bounded; the renderer handles the rest.
+    if (liveLasso) {
+      const last = liveLasso[liveLasso.length - 1];
+      const dx = p.x - last[0], dy = p.y - last[1];
+      if (Math.hypot(dx, dy) > 2) {
+        liveLasso = [...liveLasso, [p.x, p.y]];
+        render();
+      }
+      return;
+    }
+    // Crop live-resize.
+    if (liveCrop && dragStart) {
+      liveCrop = {
+        x: dragStart.x,
+        y: dragStart.y,
+        w: p.x - dragStart.x,
+        h: p.y - dragStart.y,
+      };
+      render();
+      return;
+    }
     if (liveStroke) {
       liveStroke = {
         ...liveStroke,
@@ -542,6 +634,43 @@
   function onPointerUp(e: PointerEvent) {
     if (canvasEl?.hasPointerCapture(e.pointerId)) {
       canvasEl.releasePointerCapture(e.pointerId);
+    }
+    // Lasso commit — pick every item whose bbox falls in the
+    // polygon and set the multi-selection. Auto-switch to the
+    // select tool so handles + delete + move-to-layer immediately
+    // operate on the picked items.
+    if (liveLasso) {
+      const poly = liveLasso;
+      liveLasso = null;
+      if (poly.length >= 3) {
+        const picks: Array<{ layerId: string; index: number }> = [];
+        for (const layer of session.doc.layers) {
+          if (!layer.visible) continue;
+          layer.items.forEach((item, idx) => {
+            if (itemInPolygon(item, poly)) picks.push({ layerId: layer.id, index: idx });
+          });
+        }
+        session.setMultiSelection(picks);
+        if (picks.length > 0) session.tool = 'select';
+      }
+      render();
+      return;
+    }
+    // Crop commit — apply if the rect is non-tiny.
+    if (liveCrop) {
+      const c = liveCrop;
+      liveCrop = null;
+      dragStart = null;
+      const x = Math.min(c.x, c.x + c.w);
+      const y = Math.min(c.y, c.y + c.h);
+      const w = Math.abs(c.w);
+      const h = Math.abs(c.h);
+      if (w >= 16 && h >= 16) {
+        session.crop(x, y, w, h);
+        session.tool = 'select';
+      }
+      render();
+      return;
     }
     // Selection gesture commit — push one history snapshot for the
     // whole drag so undo rewinds to pre-drag in one step.
@@ -812,11 +941,22 @@
     if (readOnly) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    // Delete / Backspace = remove selected item.
+    // Delete / Backspace = remove every selected item (primary +
+    // any lasso-multi-picked extras). Group indexes per-layer so
+    // one removeItems call per layer is enough.
     if ((e.key === 'Delete' || e.key === 'Backspace') && session.selection) {
       e.preventDefault();
-      const sel = session.selection;
-      session.removeItems(sel.layerId, [sel.index]);
+      const all = [session.selection, ...session.extraSelected];
+      const byLayer = new Map<string, number[]>();
+      for (const s of all) {
+        const arr = byLayer.get(s.layerId) ?? [];
+        arr.push(s.index);
+        byLayer.set(s.layerId, arr);
+      }
+      for (const [layerId, indexes] of byLayer) {
+        session.removeItems(layerId, indexes);
+      }
+      session.deselect();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
@@ -922,7 +1062,11 @@
         ? 'default'
         : session.tool === 'text'
           ? 'text'
-          : 'crosshair'}
+          : session.tool === 'crop'
+            ? 'crosshair'
+            : session.tool === 'lasso'
+              ? 'crosshair'
+              : 'crosshair'}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

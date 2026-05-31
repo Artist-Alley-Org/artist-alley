@@ -28,7 +28,7 @@ export type BrushTool = 'pen' | 'marker' | 'highlighter' | 'eraser';
 export type ShapeTool = 'line' | 'arrow' | 'rect' | 'ellipse';
 
 /** Other tools that aren't items themselves but mode-pickers. */
-export type OtherTool = 'text' | 'select';
+export type OtherTool = 'text' | 'select' | 'lasso' | 'crop' | 'clone';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;
@@ -347,6 +347,35 @@ export function pointInItem(px: number, py: number, item: Item): boolean {
     ly = cy + dx * Math.sin(ang) + dy * Math.cos(ang);
   }
   return lx >= bb.x && lx <= bb.x + bb.w && ly >= bb.y && ly <= bb.y + bb.h;
+}
+
+/** Standard ray-casting point-in-polygon test for the lasso tool.
+ *  poly is an array of [x, y] vertices in source-canvas coords. */
+export function pointInPolygon(px: number, py: number, poly: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    const intersect = ((yi > py) !== (yj > py)) &&
+      (px < ((xj - xi) * (py - yi)) / ((yj - yi) || 1e-9) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** True if any of an item's bbox corners falls inside the polygon —
+ *  good-enough lasso hit-test. Catches strokes / shapes / text /
+ *  images alike without per-kind logic. */
+export function itemInPolygon(item: Item, poly: number[][]): boolean {
+  const bb = itemBBox(item);
+  const corners = [
+    [bb.x, bb.y],
+    [bb.x + bb.w, bb.y],
+    [bb.x, bb.y + bb.h],
+    [bb.x + bb.w, bb.y + bb.h],
+    [bb.x + bb.w / 2, bb.y + bb.h / 2], // center
+  ];
+  return corners.some((c) => pointInPolygon(c[0], c[1], poly));
 }
 
 // ── Item mutation helpers (selection / move / resize) ─────────────

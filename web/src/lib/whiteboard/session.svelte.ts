@@ -67,11 +67,21 @@ export interface WhiteboardSession {
   /** Remove items by index from a layer. */
   removeItems: (layerId: string, indexes: number[]) => void;
 
-  // Selection — single-item for C-1.5; multi-select lands in C-1.6.
-  // `selection` is null when nothing's picked. When set, the
-  // BrushCanvas overlays bbox + handles for that item.
+  // Selection — single primary item via `selection`; the lasso
+  // tool (C-1.9) populates `extraSelected` with additional items
+  // when the user multi-picks via Shift+click or lasso. Move /
+  // delete / copy operate on the union (primary ∪ extra).
   selection: { layerId: string; index: number } | null;
+  /** Additional selected items (same shape as primary). Empty in
+   *  the single-select common case. */
+  extraSelected: Array<{ layerId: string; index: number }>;
   selectItem: (layerId: string, index: number) => void;
+  /** Add to or remove from the extra-selected set (Shift+click /
+   *  lasso). When `add` is false, removes if present. */
+  toggleExtraSelected: (layerId: string, index: number) => void;
+  /** Replace extra-selected with the given set. Used by the lasso
+   *  tool on release. */
+  setMultiSelection: (items: Array<{ layerId: string; index: number }>) => void;
   deselect: () => void;
 
   // Layer mutations
@@ -97,6 +107,12 @@ export interface WhiteboardSession {
   /** Load a saved doc (e.g. user opened a previous whiteboard for
    *  edit). Resets history. */
   load: (doc: BrushContent) => void;
+
+  /** Crop the doc to a sub-rectangle (in source-canvas coords).
+   *  Every item is translated so the crop's top-left becomes the
+   *  new origin; items entirely outside the crop are dropped.
+   *  source_w / source_h shrink to the crop dimensions. */
+  crop: (x: number, y: number, w: number, h: number) => void;
 }
 
 const HISTORY_MAX = 64;
@@ -116,6 +132,7 @@ export function createWhiteboardSession(
     opacity: number;
     fillShapes: boolean;
     selection: { layerId: string; index: number } | null;
+    extraSelected: Array<{ layerId: string; index: number }>;
     // Typography state — used by the text tool for new items and
     // (when a text item is selected) reflected back from / written
     // through to that item.
@@ -134,6 +151,7 @@ export function createWhiteboardSession(
     opacity: defaultOpacityFor('pen'),
     fillShapes: false,
     selection: null,
+    extraSelected: [],
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: 24,
     bold: false,
@@ -249,8 +267,30 @@ export function createWhiteboardSession(
 
     get selection() { return state.selection; },
     set selection(v) { state.selection = v; },
+    get extraSelected() { return state.extraSelected; },
+    toggleExtraSelected(layerId, index) {
+      const existing = state.extraSelected.findIndex(
+        (s) => s.layerId === layerId && s.index === index,
+      );
+      if (existing >= 0) {
+        state.extraSelected.splice(existing, 1);
+      } else {
+        state.extraSelected.push({ layerId, index });
+      }
+    },
+    setMultiSelection(items) {
+      // First item becomes primary; the rest go into extraSelected.
+      if (items.length === 0) {
+        state.selection = null;
+        state.extraSelected = [];
+        return;
+      }
+      state.selection = { layerId: items[0].layerId, index: items[0].index };
+      state.extraSelected = items.slice(1);
+    },
     selectItem(layerId, index) {
       state.selection = { layerId, index };
+      state.extraSelected = [];
       // When a text item is picked, pull its typography state into
       // the session so the TypographyPanel reflects its current
       // values (font, size, weight, italic, align).
@@ -264,7 +304,10 @@ export function createWhiteboardSession(
         state.textAlign = item.align ?? 'left';
       }
     },
-    deselect() { state.selection = null; },
+    deselect() {
+      state.selection = null;
+      state.extraSelected = [];
+    },
 
     // ── Typography — write through to a selected text item ────────
     // Setters mutate the selected text item too (if one exists) so
@@ -403,6 +446,42 @@ export function createWhiteboardSession(
       state.activeLayerId = state.doc.layers[0]?.id ?? null;
       history.length = 0;
       historyIdx = -1;
+      commit();
+    },
+
+    crop(x, y, w, h) {
+      // Drop items entirely outside the crop bbox; translate every
+      // surviving item so the crop's top-left becomes the new
+      // origin. Stroke points get shifted individually.
+      const x2 = x + w;
+      const y2 = y + h;
+      state.doc.source_w = Math.max(1, Math.round(w));
+      state.doc.source_h = Math.max(1, Math.round(h));
+      for (const layer of state.doc.layers) {
+        layer.items = layer.items
+          .filter((item) => {
+            // Cheap aabb test using itemBBox-like math inline.
+            if (item.kind === 'stroke') {
+              return item.points.some((p) => p[0] >= x && p[0] <= x2 && p[1] >= y && p[1] <= y2);
+            }
+            const ix = item.kind === 'shape' && item.w < 0 ? item.x + item.w : item.x;
+            const iy = item.kind === 'shape' && item.h < 0 ? item.y + item.h : item.y;
+            const iw = item.kind === 'shape' ? Math.abs(item.w) : item.w;
+            const ih = item.kind === 'shape' ? Math.abs(item.h) : item.h;
+            return ix + iw >= x && ix <= x2 && iy + ih >= y && iy <= y2;
+          })
+          .map((item) => {
+            if (item.kind === 'stroke') {
+              return {
+                ...item,
+                points: item.points.map((p) => [p[0] - x, p[1] - y, p[2]] as [number, number, number?]),
+              };
+            }
+            return { ...item, x: item.x - x, y: item.y - y };
+          });
+      }
+      state.selection = null;
+      state.extraSelected = [];
       commit();
     },
   };
