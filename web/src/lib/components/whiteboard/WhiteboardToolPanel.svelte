@@ -29,6 +29,7 @@
     isShapeTool,
   } from '$lib/whiteboard/types';
   import { loadFont } from '$lib/whiteboard/fonts.svelte';
+  import { ITEM_SOFT_CAP, ITEM_HARD_CAP } from '$lib/whiteboard/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import ColorPicker from './ColorPicker.svelte';
 
@@ -121,20 +122,10 @@
     { id: 'invert',   label: 'Invert colors',    icon: 'M12 4a8 8 0 0 0 0 16zM12 4v16a8 8 0 0 0 0-16z', run: () => session.invertColors() },
   ];
 
-  // Resize canvas — opens a small inline dialog because it needs
-  // two numeric inputs the user has to fill.
-  let showResize = $state(false);
-  let resizeW = $state(0);
-  let resizeH = $state(0);
-  function openResize() {
-    resizeW = session.doc.source_w;
-    resizeH = session.doc.source_h;
-    showResize = true;
-  }
-  function commitResize() {
-    if (resizeW > 0 && resizeH > 0) session.resizeCanvas(resizeW, resizeH);
-    showResize = false;
-  }
+  // Canvas resize dropped in C-1.19 — the canvas is now infinite
+  // (pan + zoom), so the "set source dims to N×M" affordance no
+  // longer matches the mental model. source_w/h becomes a
+  // rasterization frame hint only.
 
   // Image / Selection placeholder buttons — disabled until C-1.14 /
   // C-1.15 wire the actual mutators. They appear in their sections
@@ -383,6 +374,24 @@
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto">
+    <!-- Soft-cap warning banner — surfaces when the doc passes
+         5k items so users see the perf wall coming before it
+         becomes a problem. Sticky at the top of the scroll area
+         so a busy doc can't bury it. Once they hit the hard cap
+         (20k), addItem refuses + logs to console; this banner is
+         what tells them why. -->
+    {#if session.totalItems >= ITEM_SOFT_CAP}
+      <div
+        class="sticky top-0 z-10 border-b border-warning/40 bg-warning/15 px-3 py-2 text-[11px] text-fg"
+        role="status"
+      >
+        {#if session.totalItems >= ITEM_HARD_CAP}
+          <span class="font-medium text-danger">Item cap reached</span> — new items won't be added until you delete some ({session.totalItems.toLocaleString()} / {ITEM_HARD_CAP.toLocaleString()}).
+        {:else}
+          <span class="font-medium">{session.totalItems.toLocaleString()} items</span> — performance may degrade past {ITEM_SOFT_CAP.toLocaleString()}; consider splitting or trimming.
+        {/if}
+      </div>
+    {/if}
     <!-- ── Tools (utility / always-on) ─────────────────────────── -->
     {#snippet toolBtn(t: ToolEntry)}
       <button
@@ -592,51 +601,8 @@
             </svg>
           </button>
         {/each}
-        <!-- Resize opens an inline two-input dialog (not a one-shot). -->
-        <button
-          type="button"
-          onclick={openResize}
-          class="inline-flex aspect-square items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
-          title="Resize canvas…"
-          aria-label="Resize canvas"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 4h16v16H4z M9 9h6v6H9z" />
-          </svg>
-        </button>
         {#each IMAGE_PLACEHOLDERS as p (p.id)}{@render placeholderBtn(p)}{/each}
       </div>
-      {#if showResize}
-        <div class="mt-2 rounded border border-border bg-surface p-2 text-xs">
-          <div class="mb-2 font-medium text-fg">Resize canvas</div>
-          <div class="mb-2 grid grid-cols-2 gap-2">
-            <label class="block">
-              <span class="block text-[10px] text-fg-muted">Width</span>
-              <input
-                type="number"
-                min="32" max="8192" step="1"
-                value={resizeW}
-                oninput={(e) => (resizeW = +(e.currentTarget as HTMLInputElement).value)}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-0.5 font-mono text-xs"
-              />
-            </label>
-            <label class="block">
-              <span class="block text-[10px] text-fg-muted">Height</span>
-              <input
-                type="number"
-                min="32" max="8192" step="1"
-                value={resizeH}
-                oninput={(e) => (resizeH = +(e.currentTarget as HTMLInputElement).value)}
-                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-0.5 font-mono text-xs"
-              />
-            </label>
-          </div>
-          <div class="flex justify-end gap-1">
-            <button type="button" onclick={() => (showResize = false)} class="rounded border border-border px-2 py-0.5 text-[11px] text-fg">Cancel</button>
-            <button type="button" onclick={commitResize} class="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-on-accent">Resize</button>
-          </div>
-        </div>
-      {/if}
       {/if}
     </section>
 

@@ -153,9 +153,53 @@ export interface WhiteboardSession {
    *  panel binds straight to it. Every write commits a history
    *  snapshot so undo rewinds the color change as a discrete step. */
   canvasColor: string;
+
+  // ── Viewport (C-1.19, infinite-canvas mode) ─────────────────────
+  // Per-user pan + zoom state. Lives on the session (not the doc)
+  // because it's a view preference, not part of the saved sketch.
+  // World coords = source-canvas coords; CSS coords = viewport
+  // pixels in the canvas wrapper. The view transform maps world
+  // to CSS via: cssX = worldX * zoom + viewX (analogous Y).
+  /** Pan offset in CSS pixels — added after the zoom multiply. */
+  viewX: number;
+  viewY: number;
+  /** Zoom factor. 1 = source pixel = CSS pixel; 0.1 = zoomed way
+   *  out (Miro / Figma typical floor); 8 = max zoom in. Clamped on
+   *  every setter so callers can't push beyond the useful range. */
+  viewZoom: number;
+  /** Zoom by `factor` around the viewport-space anchor (cssX, cssY)
+   *  so the world point under the cursor stays under the cursor —
+   *  Miro / Figma wheel-zoom behaviour. */
+  zoomBy: (factor: number, anchorCssX: number, anchorCssY: number) => void;
+  /** Pan in CSS pixels (positive dx → world moves right under the
+   *  viewport). */
+  panBy: (dx: number, dy: number) => void;
+  /** Re-center on the source-canvas rect at zoom 1. */
+  resetView: (viewportW: number, viewportH: number) => void;
+  /** Fit the source-canvas rect inside the viewport with margin. */
+  fitView: (viewportW: number, viewportH: number, margin?: number) => void;
+
+  /** Total item count across every layer. Live; the panel renders a
+   *  soft-cap warning banner when this passes ITEM_SOFT_CAP. */
+  totalItems: number;
 }
 
 const HISTORY_MAX = 64;
+// C-1.19 — item caps. Soft cap surfaces a banner so users see the
+// warning before it becomes a problem; hard cap refuses new items
+// to keep the JSONB blob + render loop from blowing past sane
+// browser limits. Numbers picked from manual perf testing on a
+// mid-range laptop (60 fps holds well under 5k items, starts to
+// noticeably drop past ~15k even with viewport culling).
+export const ITEM_SOFT_CAP = 5000;
+export const ITEM_HARD_CAP = 20000;
+/** Total item count across every layer. Hoisted so the banner UI
+ *  + the cap check share one implementation. */
+export function totalItemCount(doc: BrushContent): number {
+  let n = 0;
+  for (const l of doc.layers) n += l.items.length;
+  return n;
+}
 
 export function createWhiteboardSession(
   sourceW: number,
@@ -188,6 +232,13 @@ export function createWhiteboardSession(
      *  selected. The brushes sub-picker mutates this; new
      *  StrokeItems pick it up on commit. */
     brushStyle: BrushStyle;
+    // ── View transform (C-1.19, infinite canvas) ────────────────
+    // The map is: cssX = worldX * viewZoom + viewX. Pan + zoom are
+    // applied at render time via ctx.setTransform; pointer events
+    // run the inverse to recover world coords.
+    viewX: number;
+    viewY: number;
+    viewZoom: number;
   }
   const state = $state<ReactiveState>({
     doc: initialDoc,
@@ -206,7 +257,18 @@ export function createWhiteboardSession(
     italic: false,
     textAlign: 'left',
     brushStyle: 'default',
+    viewX: 0,
+    viewY: 0,
+    viewZoom: 1,
   });
+
+  // Zoom bounds. 0.05 = 5% (fits a huge sketch in a postcard
+  // viewport — Miro's floor); 16 = 1600% (pixel-grid pixel-poking).
+  const ZOOM_MIN = 0.05;
+  const ZOOM_MAX = 16;
+  function clampZoom(z: number): number {
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  }
 
   // Undo / redo. Snapshot-based — every mutating method commits the
   // post-mutation state. Simpler than a per-action log when the
@@ -307,6 +369,16 @@ export function createWhiteboardSession(
     addItem(layerId, item) {
       const layer = findLayer(layerId);
       if (!layer || layer.locked) return;
+      // Hard cap — refuse to push past the cap so neither the JSONB
+      // blob nor the render loop blows up. The soft-cap banner in
+      // WhiteboardToolPanel warns the user well before they hit
+      // this limit so this branch firing is the "abuse / runaway
+      // bug" failsafe, not the daily ceiling.
+      if (totalItemCount(state.doc) >= ITEM_HARD_CAP) {
+        // eslint-disable-next-line no-console
+        console.warn(`[whiteboard] hard item cap reached (${ITEM_HARD_CAP}); refusing addItem`);
+        return;
+      }
       layer.items.push(item);
       commit();
     },
@@ -747,6 +819,59 @@ export function createWhiteboardSession(
       state.selection = null;
       state.extraSelected = [];
       commit();
+    },
+
+    // ── Viewport (C-1.19) ─────────────────────────────────────────
+    // View state is per-user / per-session, not persisted to the
+    // saved doc. The host opt-in flag on BrushCanvas decides
+    // whether the canvas reads view.* at render time (whiteboard
+    // mode) or ignores it (annotation mode = always fit-to-source).
+    get viewX() { return state.viewX; },
+    set viewX(v) { state.viewX = v; },
+    get viewY() { return state.viewY; },
+    set viewY(v) { state.viewY = v; },
+    get viewZoom() { return state.viewZoom; },
+    set viewZoom(v) { state.viewZoom = clampZoom(v); },
+
+    zoomBy(factor, anchorCssX, anchorCssY) {
+      const z0 = state.viewZoom;
+      const z1 = clampZoom(z0 * factor);
+      if (z1 === z0) return;
+      // Keep the world point under the anchor stationary in CSS
+      // space. World point at the anchor pre-zoom:
+      //   wx = (anchorCssX - viewX) / z0
+      // Post-zoom, we want anchorCssX to still map to wx, so:
+      //   anchorCssX = wx * z1 + viewX'
+      //   viewX' = anchorCssX - wx * z1
+      //          = anchorCssX - ((anchorCssX - viewX) / z0) * z1
+      //          = anchorCssX - (anchorCssX - viewX) * (z1 / z0)
+      const k = z1 / z0;
+      state.viewX = anchorCssX - (anchorCssX - state.viewX) * k;
+      state.viewY = anchorCssY - (anchorCssY - state.viewY) * k;
+      state.viewZoom = z1;
+    },
+
+    panBy(dx, dy) {
+      state.viewX += dx;
+      state.viewY += dy;
+    },
+
+    resetView(viewportW, viewportH) {
+      // Center the (0..source_w, 0..source_h) rect at zoom 1.
+      state.viewZoom = 1;
+      state.viewX = (viewportW - state.doc.source_w) / 2;
+      state.viewY = (viewportH - state.doc.source_h) / 2;
+    },
+
+    get totalItems() { return totalItemCount(state.doc); },
+
+    fitView(viewportW, viewportH, margin = 32) {
+      const aw = Math.max(1, viewportW - margin * 2);
+      const ah = Math.max(1, viewportH - margin * 2);
+      const z = clampZoom(Math.min(aw / state.doc.source_w, ah / state.doc.source_h));
+      state.viewZoom = z;
+      state.viewX = (viewportW - state.doc.source_w * z) / 2;
+      state.viewY = (viewportH - state.doc.source_h * z) / 2;
     },
   };
 }

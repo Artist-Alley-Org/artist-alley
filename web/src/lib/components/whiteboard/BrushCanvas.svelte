@@ -98,9 +98,17 @@
     /** Optional asset reference image — when present, drawn beneath
         the items (annotation use case). Whiteboards don't pass this. */
     backgroundUrl?: string;
+    /** Infinite-canvas mode (C-1.19). When true, the canvas matches
+        the wrapper dimensions and applies session.viewX / viewY /
+        viewZoom at render time so the user can pan + zoom Miro-style.
+        When false (default — annotation use case), the canvas matches
+        source dimensions and renders fixed-fit. The whiteboard host
+        opts in; the annotation host doesn't, so the two surfaces
+        keep their separate UX. */
+    infinite?: boolean;
   }
 
-  let { session, readOnly = false, backgroundUrl }: Props = $props();
+  let { session, readOnly = false, backgroundUrl, infinite = false }: Props = $props();
 
   // ── DOM refs ──────────────────────────────────────────────────────
 
@@ -148,6 +156,16 @@
   }
 
   // ── Canvas sizing (DPR-aware) ─────────────────────────────────────
+  //
+  // Two modes (C-1.19):
+  //   - infinite=false: canvas matches the source-doc dimensions in
+  //     CSS px, stretched to wrapper via `width:100%`. Identity
+  //     transform; world coords == source coords == CSS coords.
+  //     Same shape as before C-1.19. Used by the annotation host.
+  //   - infinite=true:  canvas matches the wrapper dimensions in
+  //     CSS px (Miro-style). Render-time setTransform applies
+  //     session.view{X,Y,Zoom} so the user can pan + zoom freely.
+  //     Source-doc dims become a "rasterization frame" hint only.
 
   function fitToWrapper() {
     if (!canvasEl || !wrapperEl || !ctx) return;
@@ -156,25 +174,55 @@
     const wH = wrapperEl.clientHeight;
     canvasEl.style.width = `${wW}px`;
     canvasEl.style.height = `${wH}px`;
-    canvasEl.width = Math.round(session.doc.source_w * dpr);
-    canvasEl.height = Math.round(session.doc.source_h * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (infinite) {
+      // Backing store matches viewport in CSS px (× DPR for sharp
+      // lines on hidpi). Items aren't clipped by source bounds
+      // anymore; the pan + zoom transform decides what's on-screen.
+      canvasEl.width = Math.round(wW * dpr);
+      canvasEl.height = Math.round(wH * dpr);
+      // Auto-fit on first mount so the source-doc rect lands
+      // centered + visible — same as opening a fresh sketch in Miro.
+      if (session.viewZoom === 1 && session.viewX === 0 && session.viewY === 0) {
+        session.fitView(wW, wH);
+      }
+    } else {
+      canvasEl.width = Math.round(session.doc.source_w * dpr);
+      canvasEl.height = Math.round(session.doc.source_h * dpr);
+    }
     render();
   }
 
-  // ── Source-canvas coord conversion ────────────────────────────────
+  // ── World-coord conversion ────────────────────────────────────────
+  //
+  // "world" = source-canvas coords (same as before C-1.19; we kept
+  // the name for storage compat). "css" = viewport CSS pixels in
+  // the canvas wrapper. In infinite mode the mapping is
+  //   cssX = worldX * zoom + viewX
+  // so eventToSource runs the inverse + sourceToCss runs the
+  // forward map. In fixed mode it's a simple proportional fit.
 
   function eventToSource(e: PointerEvent | MouseEvent): { x: number; y: number; p?: number } {
     if (!canvasEl) return { x: 0, y: 0 };
     const rect = canvasEl.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * session.doc.source_w;
-    const y = ((e.clientY - rect.top) / rect.height) * session.doc.source_h;
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    let x: number, y: number;
+    if (infinite) {
+      x = (cssX - session.viewX) / session.viewZoom;
+      y = (cssY - session.viewY) / session.viewZoom;
+    } else {
+      x = (cssX / rect.width) * session.doc.source_w;
+      y = (cssY / rect.height) * session.doc.source_h;
+    }
     const p = (e as PointerEvent).pressure;
     return { x, y, p: p > 0 && p !== 0.5 ? p : undefined };
   }
 
   function sourceToCss(x: number, y: number): { left: number; top: number } {
     if (!canvasEl) return { left: 0, top: 0 };
+    if (infinite) {
+      return { left: x * session.viewZoom + session.viewX, top: y * session.viewZoom + session.viewY };
+    }
     const rect = canvasEl.getBoundingClientRect();
     return {
       left: (x / session.doc.source_w) * rect.width,
@@ -186,14 +234,51 @@
 
   function render() {
     if (!ctx || !canvasEl) return;
-    ctx.clearRect(0, 0, session.doc.source_w, session.doc.source_h);
+    const dpr = window.devicePixelRatio || 1;
+    // ── Transform setup ─────────────────────────────────────────
+    // Two paths: infinite mode applies pan + zoom; fixed mode
+    // keeps the C-1.0 identity transform. Reset → identity →
+    // clear viewport → re-apply the per-frame transform so the
+    // clearRect call uses backing-store coords (not world coords
+    // multiplied by zoom which would underflow).
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    if (infinite) {
+      // CSS coords scaled to backing store (DPR) then pan/zoom.
+      // Order of multiplication: backing = view * dpr.
+      ctx.setTransform(
+        dpr * session.viewZoom, 0,
+        0, dpr * session.viewZoom,
+        dpr * session.viewX, dpr * session.viewY,
+      );
+    } else {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
 
-    // Canvas background color (C-1.18). Painted first so strokes /
-    // shapes / text read against a consistent surface even when the
-    // host's outer backdrop is a different color (annotation use
-    // case where backgroundUrl is below). Defaults to white.
-    const bg = session.doc.canvas_color;
-    if (bg && bg !== 'transparent') {
+    // Infinite-mode backdrop: paint a giant world-space rect so
+    // the canvas color fills the viewport at any zoom. World-space
+    // viewport bounds = inverse map of (0, 0) → (cssW, cssH).
+    const bg = session.doc.canvas_color ?? '#ffffff';
+    if (infinite) {
+      const rect = canvasEl.getBoundingClientRect();
+      const w0 = -session.viewX / session.viewZoom;
+      const h0 = -session.viewY / session.viewZoom;
+      const w1 = (rect.width - session.viewX) / session.viewZoom;
+      const h1 = (rect.height - session.viewY) / session.viewZoom;
+      if (bg && bg !== 'transparent') {
+        ctx.fillStyle = bg;
+        ctx.fillRect(w0, h0, w1 - w0, h1 - h0);
+      }
+      // Faint frame around the source-doc rect — a subtle Miro-
+      // style "page" boundary so users know where the export
+      // / snapshot region sits without it feeling like a wall.
+      ctx.save();
+      ctx.lineWidth = 1 / session.viewZoom;
+      ctx.strokeStyle = 'rgba(100, 116, 139, 0.35)';
+      ctx.setLineDash([8 / session.viewZoom, 6 / session.viewZoom]);
+      ctx.strokeRect(0, 0, session.doc.source_w, session.doc.source_h);
+      ctx.restore();
+    } else if (bg && bg !== 'transparent') {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, session.doc.source_w, session.doc.source_h);
     }
@@ -215,12 +300,37 @@
       }
     }
 
+    // Viewport-culling bbox in world coords. In infinite mode this
+    // is the inverse map of the canvas's CSS viewport — items whose
+    // bbox is entirely outside this box can be skipped per-frame.
+    // Pads by 64 world px so off-screen-by-a-hair items still render
+    // (matters for strokes whose stroke width pokes into the view).
+    // In fixed mode the cull box is the whole source-doc rect, so
+    // the gate effectively no-ops.
+    let cullX0 = -Infinity, cullY0 = -Infinity, cullX1 = Infinity, cullY1 = Infinity;
+    if (infinite && canvasEl) {
+      const rect = canvasEl.getBoundingClientRect();
+      const pad = 64;
+      cullX0 = -session.viewX / session.viewZoom - pad;
+      cullY0 = -session.viewY / session.viewZoom - pad;
+      cullX1 = (rect.width - session.viewX) / session.viewZoom + pad;
+      cullY1 = (rect.height - session.viewY) / session.viewZoom + pad;
+    }
+    function visible(item: Item): boolean {
+      if (!infinite) return true;
+      const bb = itemBBox(item);
+      return bb.x + bb.w >= cullX0 && bb.x <= cullX1 && bb.y + bb.h >= cullY0 && bb.y <= cullY1;
+    }
+
     // Layers bottom-to-top
     for (const layer of session.doc.layers) {
       if (!layer.visible) continue;
       ctx.save();
       ctx.globalAlpha = layer.opacity;
-      for (const item of layer.items) drawItem(item);
+      for (const item of layer.items) {
+        if (!visible(item)) continue;
+        drawItem(item);
+      }
       ctx.restore();
     }
 
@@ -689,6 +799,86 @@
     ctx.restore();
   }
 
+  // ── Pan + zoom (infinite mode) ────────────────────────────────────
+  //
+  // Three pan gestures, mirroring Figma / Miro conventions:
+  //   - Middle-mouse drag — always pans regardless of active tool
+  //   - Space + left-drag — Photoshop's hand-tool toggle
+  //   - Two-finger trackpad drag without ctrl — handled via wheel
+  //     deltaX/deltaY when ctrlKey is false (browser convention)
+  //
+  // Wheel zoom-at-cursor: ctrl/cmd + wheel OR pinch-zoom (which
+  // browsers report as wheel + ctrlKey). Anchor the zoom on the
+  // cursor's CSS position so the world point under it stays put —
+  // Miro / Figma behaviour.
+  //
+  // The gesture state lives outside selectGesture so it doesn't
+  // tangle with item-resize / rotate transforms.
+  let panGesture: { startCssX: number; startCssY: number; startViewX: number; startViewY: number } | null = null;
+  let spaceHeld = $state(false);
+
+  function onWheel(e: WheelEvent) {
+    if (!infinite || readOnly) return;
+    if (!canvasEl) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const ax = e.clientX - rect.left;
+    const ay = e.clientY - rect.top;
+    if (e.ctrlKey || e.metaKey) {
+      // Zoom. deltaY > 0 → zoom out. Step is tuned so a single
+      // detent on a typical mouse wheel = ~1.15× change (gentle but
+      // visible); trackpad pinch arrives as many small deltas so it
+      // still feels smooth.
+      e.preventDefault();
+      const factor = Math.pow(1.0015, -e.deltaY);
+      session.zoomBy(factor, ax, ay);
+      return;
+    }
+    // Plain wheel = pan. Two-finger trackpad scroll fires the
+    // same shape with both deltaX and deltaY; mouse wheel only
+    // fires deltaY (vertical), shift+wheel fires deltaX. We honor
+    // both axes either way.
+    e.preventDefault();
+    session.panBy(-e.deltaX, -e.deltaY);
+  }
+
+  function onPanPointerDown(e: PointerEvent): boolean {
+    // Returns true if the pan handler claimed the event so the
+    // tool's normal pointerdown branch should skip.
+    if (!infinite || readOnly || !canvasEl) return false;
+    const wantPan = e.button === 1 || (e.button === 0 && spaceHeld);
+    if (!wantPan) return false;
+    e.preventDefault();
+    canvasEl.setPointerCapture(e.pointerId);
+    panGesture = {
+      startCssX: e.clientX,
+      startCssY: e.clientY,
+      startViewX: session.viewX,
+      startViewY: session.viewY,
+    };
+    return true;
+  }
+  function onPanPointerMove(e: PointerEvent): boolean {
+    if (!panGesture) return false;
+    session.viewX = panGesture.startViewX + (e.clientX - panGesture.startCssX);
+    session.viewY = panGesture.startViewY + (e.clientY - panGesture.startCssY);
+    return true;
+  }
+  function onPanPointerUp(_e: PointerEvent): boolean {
+    if (!panGesture) return false;
+    panGesture = null;
+    return true;
+  }
+
+  function onSpaceKeyDown(e: KeyboardEvent) {
+    if (!infinite) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.code === 'Space' && !spaceHeld) { spaceHeld = true; e.preventDefault(); }
+  }
+  function onSpaceKeyUp(e: KeyboardEvent) {
+    if (e.code === 'Space') spaceHeld = false;
+  }
+
   // ── Pointer handlers ──────────────────────────────────────────────
 
   // ── Selection drag state ─────────────────────────────────────────
@@ -729,6 +919,10 @@
 
   function onPointerDown(e: PointerEvent) {
     if (readOnly) return;
+    // Pan first (middle-click or Space+drag in infinite mode) — must
+    // run before the brush/shape branches so those don't start
+    // gestures of their own with the wrong button.
+    if (onPanPointerDown(e)) return;
     // Mouse buttons: 0 = left = paint with primary color; 2 = right
     // = paint with secondary (Paint's "Color 2"). Anything else is
     // ignored (middle / back / forward) so existing pan etc on
@@ -905,6 +1099,9 @@
   }
 
   function onPointerMove(e: PointerEvent) {
+    // Pan claims the pointer before any tool gesture so the brush /
+    // shape branches don't see middle-click / space-drag deltas.
+    if (onPanPointerMove(e)) return;
     const p = eventToSource(e);
     // Selection-gesture transforms — mutate the selected item in
     // place without committing to history (we commit on mouseup so
@@ -1035,6 +1232,9 @@
     if (canvasEl?.hasPointerCapture(e.pointerId)) {
       canvasEl.releasePointerCapture(e.pointerId);
     }
+    // Pan release runs first + short-circuits so the tool branches
+    // don't commit a 0-distance brush stroke / 0-px shape.
+    if (onPanPointerUp(e)) return;
     // Lasso commit — pick every item whose bbox falls in the
     // polygon and set the multi-selection. Auto-switch to the
     // select tool so handles + delete + move-to-layer immediately
@@ -1258,10 +1458,23 @@
   });
 
   // Convert source-canvas bbox to CSS-pixel rect for handle layout.
+  // sourceToCss handles both infinite (zoom + pan) and fixed mode, so
+  // computing from two opposing corners gives the correct on-screen
+  // rect at any zoom.
   function bboxToCss(bb: BBox): { left: number; top: number; width: number; height: number } {
     const a = sourceToCss(bb.x, bb.y);
     const b = sourceToCss(bb.x + bb.w, bb.y + bb.h);
     return { left: a.left, top: a.top, width: b.left - a.left, height: b.top - a.top };
+  }
+
+  // CSS-px font size for the text-edit overlay. In infinite mode
+  // the size scales with zoom so what you type matches what gets
+  // drawn at the current view; in fixed mode it scales with the
+  // wrapper width like before.
+  function textCssFontSize(worldFontSize: number): number {
+    if (infinite) return worldFontSize * session.viewZoom;
+    if (!wrapperEl) return worldFontSize;
+    return worldFontSize * (wrapperEl.clientWidth / session.doc.source_w);
   }
 
   function startHandleDrag(e: PointerEvent, handle: HandleId) {
@@ -1457,6 +1670,15 @@
     render();
   });
 
+  // Re-render on view (pan / zoom) changes too — infinite mode only.
+  $effect(() => {
+    if (!infinite) return;
+    void session.viewX;
+    void session.viewY;
+    void session.viewZoom;
+    render();
+  });
+
   // Re-fit on source dimension change.
   $effect(() => {
     void session.doc.source_w;
@@ -1482,7 +1704,12 @@
   }
 </script>
 
-<svelte:window onpointerup={handleWindowPointerUp} onpointercancel={handleWindowPointerUp} />
+<svelte:window
+  onpointerup={handleWindowPointerUp}
+  onpointercancel={handleWindowPointerUp}
+  onkeydown={onSpaceKeyDown}
+  onkeyup={onSpaceKeyUp}
+/>
 
 <div
   bind:this={wrapperEl}
@@ -1498,6 +1725,7 @@
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
     ondblclick={onCanvasDblClick}
+    onwheel={onWheel}
     oncontextmenu={(e) => e.preventDefault()}
   ></canvas>
 
@@ -1568,7 +1796,7 @@
         class="absolute z-10 min-h-[1.5em] cursor-text rounded border border-accent bg-white/95 px-1 text-black outline-none focus:ring-2 focus:ring-accent"
         style:left={`${css.left}px`}
         style:top={`${css.top}px`}
-        style:font-size={`${item.fontSize * (wrapperEl ? (wrapperEl.clientWidth / session.doc.source_w) : 1)}px`}
+        style:font-size={`${textCssFontSize(item.fontSize)}px`}
         style:font-family={item.fontFamily ?? 'system-ui'}
         style:color={item.color}
         oninput={(e) => textEditBody = (e.currentTarget as HTMLDivElement).innerText}
@@ -1586,7 +1814,7 @@
       class="absolute z-10 min-h-[1.5em] min-w-[120px] cursor-text rounded border border-accent bg-white/95 px-1 text-black outline-none focus:ring-2 focus:ring-accent"
       style:left={`${css.left}px`}
       style:top={`${css.top}px`}
-      style:font-size={`${Math.max(14, session.width * 2.5) * (wrapperEl ? (wrapperEl.clientWidth / session.doc.source_w) : 1)}px`}
+      style:font-size={`${textCssFontSize(Math.max(14, session.width * 2.5))}px`}
       style:color={session.color}
       oninput={onTextInput}
       onkeydown={onTextEditKey}

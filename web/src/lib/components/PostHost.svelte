@@ -560,6 +560,17 @@
       <dt class="font-mono text-fg">X</dt><dd>Swap Color 1 ↔ Color 2</dd>
       <dt class="font-mono text-fg">Esc</dt><dd>Exit whiteboard</dd>
     </dl>
+    <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">View · pan / zoom</div>
+    <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+      <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt><dd>Zoom in / out at cursor</dd>
+      <dt class="font-mono text-fg">Wheel · ⇧ + wheel</dt><dd>Pan vertically · horizontally</dd>
+      <dt class="font-mono text-fg">Middle-drag</dt><dd>Pan</dd>
+      <dt class="font-mono text-fg">Space + drag</dt><dd>Pan (hand tool)</dd>
+      <dt class="font-mono text-fg">+ · −</dt><dd>Zoom in · out (viewport center)</dd>
+      <dt class="font-mono text-fg">F</dt><dd>Fit to content</dd>
+      <dt class="font-mono text-fg">0</dt><dd>Reset zoom + recenter</dd>
+      <dt class="font-mono text-fg">Minimap</dt><dd>Click / drag to recenter</dd>
+    </dl>
     {#if tool === 'select'}
       <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Select tool</div>
       <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
