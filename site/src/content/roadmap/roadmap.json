@@ -149,14 +149,14 @@
         },
         {
           "id": "1.18.B-3",
-          "title": "Subtitles + multi-format captions",
+          "title": "Subtitle viewer integration",
           "status": "planned",
           "bullets": [
-            "Native WebVTT track support (`<track>` elements).",
-            "Worker-side conversion of SRT / SSA / ASS / SUB / IDX → WebVTT at preview time; tracks stored as `subs/{lang}.vtt` variants.",
-            "**Whisper transcription** via the capability add-on layer (Phase 1.42 / ADR 0034) — a `transcription` capability slot consumed by the subtitle pipeline. Operator installs the Whisper add-on (locally on their own GPU / CPU at any tier, or via cloud-bridge for Pro+) and any video with no embedded subtitles auto-transcribes on preview generation. Speaker diarisation + language detection follow the slot interface so newer transcribers drop in without rewiring the consumer.",
-            "Burned-subtitle option for export.",
-            "Per-user subtitle preferences (default language, font size, position)."
+            "Native WebVTT `<track>` element attachment for every `final` caption track on the asset (one per language).",
+            "Track picker in the player chrome — language label + kind badge (`captions` / `subtitles` / `descriptions`).",
+            "Per-user subtitle preferences (default language, font size, position, background opacity); persisted on the account row.",
+            "Auto-attach also on the share-link viewer (ADR 0018) and the public-portal embed.",
+            "Caption track production, editing, translation, and download bundling — including the Whisper auto-transcribe loop — live in Phase 1.44 (ADR 0037). This subphase is the viewer-side consumer only."
           ]
         },
         {
@@ -546,6 +546,13 @@
           "phase": "1.39",
           "status": "planned",
           "description": "Operator-side commerce for selling content directly: digital downloads (concept-art packs, asset bundles, soundtracks), print-on-demand merchandise, physical originals, subscription access to WIP / patron tiers. Provider-abstracted with Stripe (digital + physical + subscription), Shopify (full storefront for physical + tax + shipping), Gumroad (lightweight digital + subscription) at launch. Listings attach to assets / posts / collections / brand-kit items with pricing, delivery type, license-grant clause. Digital fulfillment reuses Phase 1.26 share links — buyer gets a single-use signed link with 90-day expiry after payment. Subscription access expires via the Phase 1.28 scheduled-action engine. Tax + refunds + disputes defer to the payment processor. License-tier caps active-listing count (Community 5, Pro 500, Enterprise unlimited + organization-level Stripe / Shopify accounts). Per-instance public storefront at `/shop/{slug}`. No revenue share — operator's sales go to operator's bank. Federated peers can surface remote listings read-only with a `buy on origin` CTA. See ADR 0031."
+        },
+        {
+          "id": "caption-subtitle-artifacts",
+          "title": "Caption & subtitle artifacts",
+          "phase": "1.44",
+          "status": "planned",
+          "description": "Caption and subtitle tracks as first-class artifacts on audio / video assets — produced by the Whisper transcription add-on (Phase 1.42 / ADR 0034), edited by humans through a timeline + cue-list UI, stored as canonical WebVTT, served on-the-fly as VTT / SRT / TTML / IMSC, and auto-attached to every distribution channel (viewer, share link, download bundle, commerce delivery, federation peer, RSS enclosure). Three-state lifecycle (raw → draft → final → archived) and explicit producer attribution (`ai-whisper` / `ai-translation` / `manual` / `imported` / `derived`) protect users from shipping unreviewed AI output to viewers. Multi-language native — one track per language per asset, no schema gymnastics. Translation is a second AI hop via a new `text-translation` capability slot (satisfied by future add-ons — OpenAI / Anthropic / DeepL / Argos local), always landing as `raw` for human review. Editor lives in the asset viewer right-rail with waveform + cue list + cue editor + Aegisub-shaped keyboard shortcuts (Enter = next, Ctrl-K = split, Ctrl-M = merge). External imports (ADR 0036) recognise sidecar `.srt` / `.vtt` / `.ass` files and attach them as caption tracks instead of orphan text assets. Phase 1.18.B-3 is the viewer-side consumer; this phase owns production + editing + serving + reuse. Sub-phases: 1.44.A data model + auto-caption pipeline + serving + viewer attachment (raw → served, no editor); 1.44.B editor (timeline + cue list + draft/final lifecycle + version history); 1.44.C translation slot + dispatcher + bilingual cue editor view; 1.44.D reuse hooks + extra formats (download bundles, share links, commerce bundles, TTML/IMSC, import-connector sidecar attachment); 1.44.E (deferred) burn-in subtitle variants for delivery. See ADR 0037."
         },
         {
           "id": "external-imports",
