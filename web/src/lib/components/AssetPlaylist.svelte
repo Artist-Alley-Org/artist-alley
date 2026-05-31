@@ -79,6 +79,15 @@
         omit this and the item stays disabled in the menu. */
     onToggleWhiteboard?: () => void;
     whiteboardOpen?: boolean;
+    /** Extra rows to append to the hotkey legend at the bottom of
+        the right pane. Hosts that own a mode-specific tool surface
+        (whiteboard, annotation, future review modes) pass a snippet
+        that renders its own `<dt>/<dd>` rows plus an uppercase
+        section header so the legend stays one consolidated
+        reference. Rendered inside the existing `<details>`
+        accordion so users see all viewer + mode hotkeys in one
+        place. */
+    extraHotkeySection?: Snippet;
   }
 
   let {
@@ -98,6 +107,7 @@
     onDeleteAsset,
     onToggleWhiteboard,
     whiteboardOpen = false,
+    extraHotkeySection,
   }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
@@ -628,7 +638,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        {t('viewer_hotkeys.title')}
+        {extraHotkeySection ? t('viewer_hotkeys.title_tips') : t('viewer_hotkeys.title')}
       </span>
     </summary>
     <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
@@ -691,6 +701,13 @@
         <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt>
         <dd>{t('viewer_hotkeys.wave_zoom')}</dd>
       </dl>
+    {/if}
+    {#if extraHotkeySection}
+      <!-- Host-owned extra section (whiteboard tips, annotation
+           hotkeys, etc). Renders below the viewer hotkeys so the
+           legend stays one consolidated reference instead of two
+           competing panels. -->
+      {@render extraHotkeySection()}
     {/if}
   </details>
 {/snippet}

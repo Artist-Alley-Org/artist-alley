@@ -671,6 +671,7 @@
   },
   "viewer_hotkeys": {
     "title": "Shortcuts",
+    "title_tips": "Tips",
     "prev_asset": "Prev asset",
     "next_asset": "Next asset",
     "prev_post": "Prev post",

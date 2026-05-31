@@ -510,6 +510,7 @@
   onDeleteAsset={isOwner ? deleteAsset : undefined}
   onToggleWhiteboard={toggleWhiteboard}
   {whiteboardOpen}
+  extraHotkeySection={whiteboardOpen && whiteboardSession ? whiteboardHotkeys : undefined}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -538,6 +539,114 @@
       onSave={saveWhiteboard}
       onClose={toggleWhiteboard}
     />
+  {/if}
+{/snippet}
+
+<!-- Whiteboard tips legend — appended to AssetPlaylist's hotkeys
+     `<details>` (via the extraHotkeySection prop). Contents change
+     with the active tool so the user always sees the relevant
+     gestures + keyboard shortcuts for whatever they're doing right
+     now, rather than one giant always-on list. Common shortcuts
+     (undo / redo / paste / color swap) always render at the top so
+     they don't get lost behind tool-specific noise. -->
+{#snippet whiteboardHotkeys()}
+  {#if whiteboardSession}
+    {@const tool = whiteboardSession.tool}
+    <div class="mb-1 mt-2 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Whiteboard</div>
+    <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+      <dt class="font-mono text-fg">Ctrl/⌘ + Z</dt><dd>Undo</dd>
+      <dt class="font-mono text-fg">Ctrl/⌘ + ⇧ + Z</dt><dd>Redo</dd>
+      <dt class="font-mono text-fg">Ctrl/⌘ + V</dt><dd>Paste image / text</dd>
+      <dt class="font-mono text-fg">X</dt><dd>Swap Color 1 ↔ Color 2</dd>
+      <dt class="font-mono text-fg">Esc</dt><dd>Exit whiteboard</dd>
+    </dl>
+    {#if tool === 'select'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Select tool</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Click</dt><dd>Pick item</dd>
+        <dt class="font-mono text-fg">Drag</dt><dd>Move</dd>
+        <dt class="font-mono text-fg">Handles</dt><dd>Resize (Shift = uniform)</dd>
+        <dt class="font-mono text-fg">Top handle</dt><dd>Rotate (Shift = snap 15°)</dd>
+        <dt class="font-mono text-fg">Dbl-click text</dt><dd>Re-edit</dd>
+        <dt class="font-mono text-fg">Ctrl/⌘ + C / X / V</dt><dd>Copy · cut · paste (offset 20 px)</dd>
+        <dt class="font-mono text-fg">Ctrl/⌘ + A</dt><dd>Select all</dd>
+        <dt class="font-mono text-fg">Delete · ⌫</dt><dd>Remove selection</dd>
+      </dl>
+    {:else if tool === 'pen' || tool === 'marker' || tool === 'highlighter'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Brush ({tool})</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Left-drag</dt><dd>Paint with Color 1</dd>
+        <dt class="font-mono text-fg">Right-drag</dt><dd>Paint with Color 2</dd>
+        {#if tool === 'pen'}
+          <dt class="font-mono text-fg">Brush style</dt><dd>Switch sub-style in the Brushes section</dd>
+        {/if}
+        <dt class="font-mono text-fg">p · m · h</dt><dd>Pen · Marker · Highlighter</dd>
+        <dt class="font-mono text-fg">e</dt><dd>Eraser</dd>
+      </dl>
+    {:else if tool === 'eraser'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Eraser</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Drag</dt><dd>Erase on the active layer</dd>
+        <dt class="font-mono text-fg">p / m / h</dt><dd>Back to brush</dd>
+      </dl>
+    {:else if tool === 'text'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Text tool</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Click</dt><dd>Start typing at point</dd>
+        <dt class="font-mono text-fg">Enter</dt><dd>Commit · ⇧+Enter = newline</dd>
+        <dt class="font-mono text-fg">Esc</dt><dd>Cancel</dd>
+        <dt class="font-mono text-fg">Dbl-click text</dt><dd>Re-edit (with V selected)</dd>
+      </dl>
+    {:else if tool === 'bucket'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Fill bucket</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Click shape</dt><dd>Refill with Color 1 (outline stays)</dd>
+        <dt class="font-mono text-fg">Click stroke / text</dt><dd>Recolor</dd>
+      </dl>
+    {:else if tool === 'eyedropper'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Eyedropper</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Click item</dt><dd>Pick its color into Color 1</dd>
+        <dt class="font-mono text-fg">After pick</dt><dd>Auto-switches to Pen</dd>
+      </dl>
+    {:else if tool === 'lasso'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Lasso</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Drag</dt><dd>Sketch a polygon</dd>
+        <dt class="font-mono text-fg">Release</dt><dd>Select every item inside · switches to Select</dd>
+      </dl>
+    {:else if tool === 'rect-select'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Rectangle select</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Drag</dt><dd>Marquee selection</dd>
+        <dt class="font-mono text-fg">Release</dt><dd>Picks intersecting items · switches to Select</dd>
+      </dl>
+    {:else if tool === 'crop'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Crop</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Drag rect</dt><dd>Define new canvas bounds</dd>
+        <dt class="font-mono text-fg">Release</dt><dd>Commit (items outside are dropped)</dd>
+      </dl>
+    {:else if tool === 'clone'}
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Clone / stamp</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Coming in C-1.19</dt><dd>—</dd>
+      </dl>
+    {:else}
+      <!-- Shape tools share one block since the gestures are
+           identical (drag a bbox; modifier keys constrain). -->
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Shape ({tool})</div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Drag</dt><dd>Draw — outline Color 1, fill Color 2</dd>
+        <dt class="font-mono text-fg">Right-drag</dt><dd>Swap outline ↔ fill colors</dd>
+        {#if tool === 'line' || tool === 'arrow'}
+          <dt class="font-mono text-fg">Shift</dt><dd>Snap to 45° increments</dd>
+        {:else}
+          <dt class="font-mono text-fg">Shift</dt><dd>Square / 1:1 aspect</dd>
+        {/if}
+        <dt class="font-mono text-fg">Filled</dt><dd>Toggle in Shape style section</dd>
+      </dl>
+    {/if}
   {/if}
 {/snippet}
 

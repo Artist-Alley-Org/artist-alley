@@ -46,6 +46,49 @@
   // when the user copies from one sketch and pastes into another.
   let sessionClipboard: Item | null = null;
 
+  // CSS cursor per active tool. Uses inline SVG data URLs for the
+  // tools whose action a stock cursor doesn't describe well
+  // (eraser / eyedropper / bucket / clone) so users always see
+  // "what's in my hand" — matches Paint / Photoshop's affordance.
+  // The hotspot anchor in `<svg> H Hy auto` (the 'H Hy auto' suffix)
+  // tells the browser the click point + fallback. Tools with a clear
+  // native equivalent stay on the native cursor so the OS theme +
+  // accessibility scaling apply.
+  function svgCursor(svg: string, hotX: number, hotY: number): string {
+    const url = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}") ${hotX} ${hotY}, crosshair`;
+    return url;
+  }
+  function cursorFor(tool: typeof session.tool, ro: boolean): string {
+    if (ro) return 'default';
+    switch (tool) {
+      case 'select':       return 'default';
+      case 'text':         return 'text';
+      case 'crop':         return 'crosshair';
+      case 'rect-select':  return 'crosshair';
+      case 'lasso':        return 'crosshair';
+      case 'eraser':       return svgCursor(
+        '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"white\" stroke=\"black\" stroke-width=\"1.5\" stroke-linejoin=\"round\"><path d=\"M3 19h18 M18 13l-7-7-7 7 6 6h8z\" stroke-linecap=\"round\" fill=\"white\"/></svg>',
+        4, 18,
+      );
+      case 'eyedropper':   return svgCursor(
+        '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"white\" stroke=\"black\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z\"/></svg>',
+        2, 20,
+      );
+      case 'bucket':       return svgCursor(
+        '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"white\" stroke=\"black\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 11l-7-7-8 8 7 7z M16 4l3 7\"/><circle cx=\"21\" cy=\"15\" r=\"2\" fill=\"white\"/></svg>',
+        4, 18,
+      );
+      case 'clone':        return svgCursor(
+        '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"white\" stroke=\"black\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"10\" height=\"10\" fill=\"white\"/><rect x=\"11\" y=\"11\" width=\"10\" height=\"10\" fill=\"white\"/></svg>',
+        11, 11,
+      );
+      // Brush + shape tools → crosshair as a neutral default; the
+      // panel button is the source-of-truth indicator for which one
+      // is active.
+      default:             return 'crosshair';
+    }
+  }
+
   interface Props {
     /** Shared reactive session. Owns doc, active layer, tools. */
     session: WhiteboardSession;
@@ -144,6 +187,16 @@
   function render() {
     if (!ctx || !canvasEl) return;
     ctx.clearRect(0, 0, session.doc.source_w, session.doc.source_h);
+
+    // Canvas background color (C-1.18). Painted first so strokes /
+    // shapes / text read against a consistent surface even when the
+    // host's outer backdrop is a different color (annotation use
+    // case where backgroundUrl is below). Defaults to white.
+    const bg = session.doc.canvas_color;
+    if (bg && bg !== 'transparent') {
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, session.doc.source_w, session.doc.source_h);
+    }
 
     // Background image (annotation surface)
     if (backgroundImg) {
@@ -1440,13 +1493,7 @@
   <canvas
     bind:this={canvasEl}
     class="absolute inset-0 h-full w-full touch-none"
-    style:cursor={readOnly
-      ? 'default'
-      : session.tool === 'select'
-        ? 'default'
-        : session.tool === 'text'
-          ? 'text'
-          : 'crosshair'}
+    style:cursor={cursorFor(session.tool, readOnly)}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

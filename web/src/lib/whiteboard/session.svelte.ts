@@ -147,6 +147,12 @@ export interface WhiteboardSession {
    *  text only; images are left as-is (CSS filter could invert at
    *  render time but not at the data level). */
   invertColors: () => void;
+
+  /** Canvas background color (C-1.18). Defaults to '#ffffff'.
+   *  Surfaced as a getter/setter so the Canvas section in the tool
+   *  panel binds straight to it. Every write commits a history
+   *  snapshot so undo rewinds the color change as a discrete step. */
+  canvasColor: string;
 }
 
 const HISTORY_MAX = 64;
@@ -273,6 +279,16 @@ export function createWhiteboardSession(
     set opacity(v) { state.opacity = v; },
     get fillShapes() { return state.fillShapes; },
     set fillShapes(v) { state.fillShapes = v; },
+
+    // Canvas background color. Live on the doc itself (not on the
+    // session) so it round-trips through save/load like any other
+    // doc property. Defaults to '#ffffff' when missing for back-
+    // compat with C-1.0..C-1.17 saves that don't carry the field.
+    get canvasColor() { return state.doc.canvas_color ?? '#ffffff'; },
+    set canvasColor(v) {
+      state.doc = { ...state.doc, canvas_color: v };
+      commit();
+    },
 
     get canUndo() { return historyIdx > 0; },
     get canRedo() { return historyIdx < history.length - 1; },

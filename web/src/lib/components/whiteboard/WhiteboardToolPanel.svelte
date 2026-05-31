@@ -187,8 +187,20 @@
   // User flips by clicking the slot's swatch in the Colors / Shape
   // style sections. The outline/fill targets only matter when a
   // shape is selected; otherwise we treat them as primary/secondary.
-  type ColorTarget = 'primary' | 'secondary' | 'outline' | 'fill';
+  type ColorTarget = 'primary' | 'secondary' | 'outline' | 'fill' | 'canvas';
   let colorTarget = $state<ColorTarget>('primary');
+  // Canvas background quick-presets — common surfaces users reach
+  // for. Custom picker handles anything else; this is just the
+  // one-click row. Order matches Paint / Procreate's defaults.
+  const CANVAS_PRESETS: ReadonlyArray<{ color: string; label: string }> = [
+    { color: '#ffffff', label: 'White' },
+    { color: '#f5f5f4', label: 'Off-white' },
+    { color: '#fef9c3', label: 'Cream' },
+    { color: '#1f2937', label: 'Slate' },
+    { color: '#000000', label: 'Black' },
+    { color: '#0c4a6e', label: 'Blueprint' },
+    { color: '#052e16', label: 'Chalkboard' },
+  ];
   // C-1.17 — currently-selected shape item, exposed for the Shape
   // style section (outline / fill swatches + fill toggle). null
   // when nothing's selected OR the selected item isn't a shape.
@@ -209,6 +221,7 @@
       const s = selectedShapeItem();
       return s ? (s.item.fillColor ?? s.item.color) : session.color2;
     }
+    if (colorTarget === 'canvas') return session.canvasColor;
     return session.color;
   });
   function setActiveColor(hex: string) {
@@ -238,7 +251,14 @@
       }
       return;
     }
+    if (colorTarget === 'canvas') { session.canvasColor = hex; return; }
     session.color = hex;
+  }
+  // Open the color picker pre-targeted at the canvas slot so the
+  // user's pick lands in session.canvasColor, not Color 1/2.
+  function openCanvasColorPicker(e: MouseEvent) {
+    colorTarget = 'canvas';
+    openColorPicker(e);
   }
   // Outline / fill colors as currently displayed in the Shape style
   // section — pull from the selected shape when one's picked,
@@ -265,6 +285,38 @@
     }
   }
   const showShapeStyle = $derived(isShapeTool(session.tool) || !!selectedShapeItem());
+
+  // ── Collapsible sections (persisted) ─────────────────────────
+  // Per-section open/closed state, keyed by the section id used in
+  // the header. Persisted to localStorage so the user's panel
+  // arrangement survives reloads (and HMR).
+  type SectionId =
+    | 'tools' | 'brushes' | 'shapes' | 'selection' | 'image'
+    | 'canvas' | 'color' | 'shape_style' | 'size' | 'typography'
+    | 'selected' | 'layers' | 'history';
+  const SECTION_STORAGE_KEY = 'aa.whiteboard.panel.sections';
+  function loadSectionState(): Record<string, boolean> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(SECTION_STORAGE_KEY);
+      return raw ? JSON.parse(raw) as Record<string, boolean> : {};
+    } catch {
+      return {};
+    }
+  }
+  // Default = open. Stored map only carries entries the user has
+  // explicitly toggled, so adding a new section doesn't surprise
+  // users by being closed.
+  let sectionCollapsed = $state<Record<string, boolean>>(loadSectionState());
+  function isCollapsed(id: SectionId): boolean {
+    return sectionCollapsed[id] === true;
+  }
+  function toggleSection(id: SectionId) {
+    sectionCollapsed = { ...sectionCollapsed, [id]: !sectionCollapsed[id] };
+    try {
+      localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(sectionCollapsed));
+    } catch { /* localStorage full / disabled — degrade silently */ }
+  }
   // Viewport-relative coords for the color picker. Recomputed on
   // open so the dropdown sits below the swatch even when the sidebar
   // scrolls. fixed-positioned so it stacks above the canvas overlay
@@ -363,56 +415,146 @@
         </svg>
       </button>
     {/snippet}
+    {#snippet brushStyleIcon(id: typeof BRUSH_STYLES[number]['id'])}
+      <!-- Tiny iconography per brush — each is a different stroke
+           hint so the picker reads visually instead of "8 identical
+           pens". Single-color SVG paths; the active highlight is
+           applied via currentColor on stroke. -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        {#if id === 'default'}
+          <!-- Smooth pen: tapered line -->
+          <path d="M5 19c4-2 8-4 14-14" stroke-width="2" />
+        {:else if id === 'calligraphy'}
+          <!-- Wedge stroke -->
+          <path d="M5 19l14-14" stroke-width="4" />
+          <path d="M5 19l14-14" stroke-width="1" stroke-opacity="0.4" />
+        {:else if id === 'pen-tip'}
+          <!-- Thin steady line + pen-tip triangle -->
+          <path d="M4 20l12-12" stroke-width="1" />
+          <path d="M16 8l4-4-2 6z" stroke-width="1.5" fill="currentColor" fill-opacity="0.6" />
+        {:else if id === 'pencil'}
+          <!-- Pencil: line + sharpened tip -->
+          <path d="M4 20l12-12" stroke-width="1.2" />
+          <path d="M16 8l3-3-1-1-3 3" stroke-width="1.5" />
+          <path d="M3 21l1-1" stroke-width="1.5" />
+        {:else if id === 'airbrush'}
+          <!-- Spray dots -->
+          <circle cx="6" cy="18" r="0.8" fill="currentColor" />
+          <circle cx="9" cy="15" r="1.2" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+          <circle cx="15" cy="9"  r="1.2" fill="currentColor" />
+          <circle cx="18" cy="6"  r="0.8" fill="currentColor" />
+          <circle cx="4" cy="20" r="0.5" fill="currentColor" />
+          <circle cx="20" cy="4" r="0.5" fill="currentColor" />
+        {:else if id === 'oil'}
+          <!-- Wide heavy stroke -->
+          <path d="M5 19l14-14" stroke-width="5" stroke-linecap="butt" />
+        {:else if id === 'crayon'}
+          <!-- Broken-edge crayon stroke -->
+          <path d="M5 19l14-14" stroke-width="2.5" />
+          <path d="M5 19l14-14" stroke-width="3.5" stroke-dasharray="2 2" stroke-opacity="0.5" />
+        {:else if id === 'watercolor'}
+          <!-- Soft transparent wash -->
+          <path d="M5 19l14-14" stroke-width="5" stroke-opacity="0.35" />
+          <path d="M5 19l14-14" stroke-width="2" stroke-opacity="0.6" />
+        {/if}
+      </svg>
+    {/snippet}
+    {#snippet sectionHeader(id: SectionId, label: string, badge?: string)}
+      <!-- Click-to-collapse header. Chevron rotates 0° when open,
+           -90° when closed (consistent with the rest of the app's
+           details accordions). Wrapped in <button> so keyboard +
+           screen-reader access work out of the box. -->
+      <button
+        type="button"
+        onclick={() => toggleSection(id)}
+        class="mb-2 flex w-full items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80 hover:text-fg"
+        aria-expanded={!isCollapsed(id)}
+        aria-controls={`wb-section-${id}`}
+      >
+        <span class="inline-flex items-center gap-1.5">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="10" height="10" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="transition-transform"
+            style:transform={isCollapsed(id) ? 'rotate(-90deg)' : 'rotate(0deg)'}
+          >
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          <span>{label}</span>
+        </span>
+        {#if badge}
+          <span class="normal-case tracking-normal text-[10px] text-fg-muted">{badge}</span>
+        {/if}
+      </button>
+    {/snippet}
 
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Tools</div>
-      <div class="grid grid-cols-5 gap-1">
-        {#each TOOLS_MAIN as t (t.id)}{@render toolBtn(t)}{/each}
-      </div>
+      {@render sectionHeader('tools', 'Tools')}
+      {#if !isCollapsed('tools')}
+        <div id="wb-section-tools" class="grid grid-cols-5 gap-1">
+          {#each TOOLS_MAIN as t (t.id)}{@render toolBtn(t)}{/each}
+        </div>
+      {/if}
     </section>
 
-    <!-- ── Brushes ─────────────────────────────────────────────── -->
+    <!-- ── Brushes ───────────────────────────────────────────────
+         Until C-1.18 brush *styles* lived behind a dropdown that
+         only enabled for the pen tool — most users never saw the
+         visual differences between calligraphy / airbrush / oil /
+         crayon / pencil / watercolor / etc. Now each brush style
+         gets its own visible button alongside marker + highlighter
+         so the BRUSHES grid mirrors Procreate / Photoshop's brush
+         picker. Clicking a style auto-switches tool to `pen` and
+         sets the brushStyle in one step. -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Brushes</div>
-      <div class="grid grid-cols-5 gap-1">
-        {#each TOOLS_BRUSHES as t (t.id)}{@render toolBtn(t)}{/each}
-      </div>
-      <!-- Brush sub-style — only meaningful for the pen tool today
-           (marker / highlighter / eraser ignore the field). We
-           still surface the picker whenever any brush tool is
-           active so users discover it; switching styles while on
-           marker is harmless — new pens will carry the picked
-           style as soon as the user switches back. -->
-      {#if isBrushTool(session.tool)}
-        <label class="mt-2 block">
-          <span class="block text-[10px] text-fg-muted">Brush style</span>
-          <select
-            value={session.brushStyle}
-            onchange={(e) => (session.brushStyle = (e.currentTarget as HTMLSelectElement).value as typeof session.brushStyle)}
-            class="w-full rounded border border-border bg-surface px-2 py-1 text-xs"
-            disabled={session.tool !== 'pen'}
-            title={session.tool === 'pen' ? 'Brush sub-style' : 'Only the pen tool varies by style (today)'}
-          >
-            {#each BRUSH_STYLES as b (b.id)}
-              <option value={b.id}>{b.label}</option>
-            {/each}
-          </select>
-        </label>
+      {@render sectionHeader('brushes', 'Brushes')}
+      {#if !isCollapsed('brushes')}
+        <div id="wb-section-brushes" class="grid grid-cols-5 gap-1">
+          <!-- Marker + Highlighter — distinct top-level tools (own
+               stroke math, ignore brushStyle). Render first so the
+               row reads "marker, highlighter, then a bunch of pens". -->
+          {#each TOOLS_BRUSHES.filter(t => t.id !== 'pen') as t (t.id)}{@render toolBtn(t)}{/each}
+          <!-- Each brush style → tool=pen + brushStyle=<id>. Active
+               highlight matches when BOTH conditions hold so users
+               see exactly which sub-style is live. -->
+          {#each BRUSH_STYLES as b (b.id)}
+            {@const active = session.tool === 'pen' && session.brushStyle === b.id}
+            <button
+              type="button"
+              onclick={() => { session.tool = 'pen'; session.brushStyle = b.id; }}
+              class="inline-flex aspect-square items-center justify-center rounded transition-colors"
+              class:bg-accent={active}
+              class:text-on-accent={active}
+              class:text-fg-muted={!active}
+              class:hover:bg-state-hover={!active}
+              title={b.label}
+              aria-label={b.label}
+              aria-pressed={active}
+            >
+              {@render brushStyleIcon(b.id)}
+            </button>
+          {/each}
+        </div>
       {/if}
     </section>
 
     <!-- ── Shapes ──────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Shapes</div>
-      <div class="grid grid-cols-5 gap-1">
-        {#each TOOLS_SHAPES as t (t.id)}{@render toolBtn(t)}{/each}
-      </div>
+      {@render sectionHeader('shapes', 'Shapes')}
+      {#if !isCollapsed('shapes')}
+        <div id="wb-section-shapes" class="grid grid-cols-5 gap-1">
+          {#each TOOLS_SHAPES as t (t.id)}{@render toolBtn(t)}{/each}
+        </div>
+      {/if}
     </section>
 
     <!-- ── Selection ───────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selection</div>
-      <div class="grid grid-cols-5 gap-1">
+      {@render sectionHeader('selection', 'Selection')}
+      {#if !isCollapsed('selection')}
+      <div id="wb-section-selection" class="grid grid-cols-5 gap-1">
         {#each TOOLS_SELECT as t (t.id)}{@render toolBtn(t)}{/each}
         {#each SELECT_OPS as op (op.id)}
           <button
@@ -428,12 +570,14 @@
           </button>
         {/each}
       </div>
+      {/if}
     </section>
 
     <!-- ── Image ───────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Image</div>
-      <div class="grid grid-cols-5 gap-1">
+      {@render sectionHeader('image', 'Image')}
+      {#if !isCollapsed('image')}
+      <div id="wb-section-image" class="grid grid-cols-5 gap-1">
         {#each TOOLS_IMAGE as t (t.id)}{@render toolBtn(t)}{/each}
         {#each IMAGE_OPS as op (op.id)}
           <button
@@ -493,14 +637,45 @@
           </div>
         </div>
       {/if}
+      {/if}
+    </section>
+
+    <!-- ── Canvas ──────────────────────────────────────────────── -->
+    <section class="border-b border-border p-3">
+      {@render sectionHeader('canvas', 'Canvas')}
+      {#if !isCollapsed('canvas')}
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            onclick={openCanvasColorPicker}
+            class="h-9 w-9 rounded border-2 border-border hover:border-accent"
+            style:background-color={session.canvasColor}
+            title={`Canvas color — ${session.canvasColor}`}
+            aria-label="Pick canvas background color"
+          ></button>
+          <div class="flex flex-wrap gap-1">
+            {#each CANVAS_PRESETS as p (p.color)}
+              {@const active = session.canvasColor.toLowerCase() === p.color.toLowerCase()}
+              <button
+                type="button"
+                onclick={() => (session.canvasColor = p.color)}
+                class="h-6 w-6 rounded ring-1 ring-border hover:ring-accent"
+                class:ring-2={active}
+                class:ring-accent={active}
+                style:background-color={p.color}
+                title={p.label}
+                aria-label={p.label}
+              ></button>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </section>
 
     <!-- ── Color ────────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 flex items-center justify-between">
-        <span class="text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Color</span>
-        <span class="text-[10px] text-fg-muted">Right-click paints with #2 · X swaps</span>
-      </div>
+      {@render sectionHeader('color', 'Color', 'Right-click = #2 · X swaps')}
+      {#if !isCollapsed('color')}
       <!-- Color 1 / Color 2 swatches + swap arrow. Click the
            swatch to make it the "target" — clicking any palette
            color or the custom picker writes into the targeted slot. -->
@@ -576,6 +751,7 @@
           </svg>
         </button>
       </div>
+      {/if}
     </section>
 
     <!-- ── Shape style ───────────────────────────────────────────
@@ -589,14 +765,8 @@
          for the palette + custom color picker. -->
     {#if showShapeStyle}
       <section class="space-y-2 border-b border-border p-3">
-        <div class="flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">
-          <span>Shape style</span>
-          {#if selectedShapeItem()}
-            <span class="normal-case tracking-normal text-[10px] text-fg-muted">editing selection</span>
-          {:else}
-            <span class="normal-case tracking-normal text-[10px] text-fg-muted">defaults for new shapes</span>
-          {/if}
-        </div>
+        {@render sectionHeader('shape_style', 'Shape style', selectedShapeItem() ? 'editing selection' : 'defaults for new shapes')}
+        {#if !isCollapsed('shape_style')}
         <div class="flex items-center gap-3">
           <!-- Outline swatch -->
           <button
@@ -654,14 +824,17 @@
             Drag = outline Color 1, fill Color 2. Right-drag swaps.
           </p>
         {/if}
+        {/if}
       </section>
     {/if}
 
     <!-- ── Size + Opacity ──────────────────────────────────────── -->
     <section class="space-y-3 border-b border-border p-3">
+      {@render sectionHeader('size', 'Size & opacity')}
+      {#if !isCollapsed('size')}
       <div>
-        <div class="mb-1 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">
-          <span>Size</span>
+        <div class="mb-1 flex items-center justify-between text-[10px] text-fg-muted">
+          <span>Brush size</span>
           <span class="font-mono text-fg">{session.width}px</span>
         </div>
         <input
@@ -686,7 +859,7 @@
         </div>
       </div>
       <div>
-        <div class="mb-1 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">
+        <div class="mb-1 flex items-center justify-between text-[10px] text-fg-muted">
           <span>Opacity</span>
           <span class="font-mono text-fg">{Math.round(session.opacity * 100)}%</span>
         </div>
@@ -699,6 +872,7 @@
           aria-label="Opacity"
         />
       </div>
+      {/if}
     </section>
 
     <!-- ── Typography ───────────────────────────────────────────
@@ -707,7 +881,8 @@
          can restyle existing labels without re-typing them. -->
     {#if showTypography}
       <section class="space-y-3 border-b border-border p-3">
-        <div class="text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Typography</div>
+        {@render sectionHeader('typography', 'Typography')}
+        {#if !isCollapsed('typography')}
         <!-- Font family -->
         <label class="block">
           <span class="mb-1 block text-[10px] text-fg-muted">Font</span>
@@ -806,6 +981,7 @@
             </button>
           {/each}
         </div>
+        {/if}
       </section>
     {/if}
 
@@ -815,9 +991,10 @@
          find the tool. -->
     {#if session.selection}
       <section class="border-b border-border p-3">
-        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selected item</div>
+        {@render sectionHeader('selected', 'Selected item')}
+        {#if !isCollapsed('selected')}
         <div class="mb-2 text-[10px] text-fg-muted">
-          One item selected. Drag = move · handles = resize / rotate · Delete · Ctrl/⌘ C / X / V.
+          Drag = move · handles = resize / rotate · Delete · Ctrl/⌘ C / X / V.
         </div>
         <div class="flex flex-wrap gap-1">
           <button
@@ -853,23 +1030,25 @@
             {/if}
           </div>
         </div>
+        {/if}
       </section>
     {/if}
 
     <!-- ── Layers ──────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
-      <div class="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">
-        <span>Layers</span>
+      <div class="mb-2 flex items-center justify-between">
+        {@render sectionHeader('layers', 'Layers')}
         <button
           type="button"
           onclick={() => session.addLayer()}
-          class="inline-flex h-5 w-5 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+          class="-mt-2 inline-flex h-5 w-5 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
           title="Add layer"
           aria-label="Add layer"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
       </div>
+      {#if !isCollapsed('layers')}
       <!-- Render newest-on-top to match Photoshop / Procreate's
            layer panel orientation (rendering order is reversed). -->
       <ul class="space-y-1">
@@ -984,6 +1163,7 @@
           </li>
         {/each}
       </ul>
+      {/if}
     </section>
 
     <!-- ── History + Clear ─────────────────────────────────────── -->
@@ -1020,20 +1200,10 @@
       </button>
     </section>
 
-    <!-- ── Hints ────────────────────────────────────────────────── -->
-    <section class="p-3 text-[10px] text-fg-muted">
-      <div class="mb-1 font-medium uppercase tracking-wide text-fg-muted/80">Tips</div>
-      <ul class="space-y-0.5">
-        <li>V = select · click to pick · drag handles to resize · rotate handle to rotate</li>
-        <li>Double-click text to re-edit</li>
-        <li>Delete / Backspace removes selected</li>
-        <li>Paste images / text directly (Ctrl/⌘+V)</li>
-        <li>Ctrl/⌘ C / X / V — copy / cut / paste (offsets paste by 20 px)</li>
-        <li>Shift while dragging a shape / handle constrains it</li>
-        <li>p / m / h / e / l / a / r / o / t — tool quick-keys</li>
-        <li>Ctrl/⌘+Z undo · +Shift redo</li>
-      </ul>
-    </section>
+    <!-- Tips moved out of the panel in C-1.18 — they now live in
+         the AssetPlaylist's bottom hotkeys accordion ("Tips" when
+         a host extends it) and switch contents based on the active
+         tool, so the panel itself stays focused on controls. -->
   </div>
 
   <!-- Color picker — rendered as a top-level fixed-positioned

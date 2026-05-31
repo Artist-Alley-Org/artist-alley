@@ -71,11 +71,12 @@
 
 <svelte:window onkeydown={handleKey} />
 
-<!-- White backdrop covers the asset surface so brush strokes read
+<!-- Backdrop covers the asset surface so brush strokes read
      against a consistent canvas. The asset behind us still loads
      (so closing the whiteboard reveals it instantly) but is hidden
-     while we're up. -->
-<div class="absolute inset-0 bg-white">
+     while we're up. Color defaults to white; the Canvas section in
+     the tool panel lets the user pick another (C-1.18). -->
+<div class="absolute inset-0" style:background-color={session.canvasColor}>
   <BrushCanvas {session} />
 
   <!-- Floating exit pill — top-right of the canvas, mirrors the

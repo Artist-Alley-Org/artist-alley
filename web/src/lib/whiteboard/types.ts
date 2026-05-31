@@ -200,6 +200,11 @@ export interface BrushContent {
   /** Optional content-addressed hash of a rasterized PNG snapshot in
    *  object storage. Convenience output for OCR / AI / PDF later. */
   image_hash?: string | null;
+  /** Canvas background color (C-1.18). Hex string; defaults to
+   *  '#ffffff' when missing so old saves render the same. Painted
+   *  behind every layer in BrushCanvas.render. Surfaced to the
+   *  user via the Canvas section in the tool panel. */
+  canvas_color?: string;
   layers: Layer[];
 }
 
@@ -289,9 +294,25 @@ export function isBrushTool(tool: Tool): tool is BrushTool {
   return tool === 'pen' || tool === 'marker' || tool === 'highlighter' || tool === 'eraser';
 }
 
-/** True when the tool produces a Shape item (click-drag-release). */
+/** Every ShapeTool id, exposed both for runtime predicates and for
+ *  iteration (the WhiteboardToolPanel renders one button per id).
+ *  Order matters here — it controls the Shapes section layout. */
+export const SHAPE_TOOLS: readonly ShapeTool[] = [
+  'line', 'arrow', 'rect', 'rounded-rect', 'ellipse',
+  'triangle', 'right-triangle', 'diamond',
+  'pentagon', 'hexagon', 'star', 'heart',
+  'callout-rect', 'callout-oval',
+] as const;
+const SHAPE_TOOL_SET = new Set<string>(SHAPE_TOOLS);
+
+/** True when the tool produces a Shape item (click-drag-release).
+ *  Exhaustive over `ShapeTool` — prior to C-1.18 the predicate only
+ *  matched the original 4 shapes (line/arrow/rect/ellipse) and the
+ *  new ones (triangle/diamond/star/heart/callouts/etc) couldn't
+ *  start a drag gesture in BrushCanvas because the branch never
+ *  fired. */
 export function isShapeTool(tool: Tool): tool is ShapeTool {
-  return tool === 'line' || tool === 'arrow' || tool === 'rect' || tool === 'ellipse';
+  return SHAPE_TOOL_SET.has(tool);
 }
 
 /** Per-tool perfect-freehand parameters. For pen we further switch

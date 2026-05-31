@@ -4545,6 +4545,13 @@ components:
             snapshot in object storage. Convenience output for OCR /
             AI / PDF export later. Null on save means strokes are
             authoritative and the snapshot will be lazily rendered.
+        canvas_color:
+          type: string
+          description: |
+            Canvas background color (C-1.18). Hex string painted
+            behind every layer before items render. Defaults to
+            '#ffffff' when missing so saves from C-1.0..C-1.17
+            render identically.
         layers:
           type: array
           minItems: 1
