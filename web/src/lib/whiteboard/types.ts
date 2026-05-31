@@ -24,6 +24,27 @@ export type Point = [number, number, number?];
 /** Brush tools (free-form pointer input). */
 export type BrushTool = 'pen' | 'marker' | 'highlighter' | 'eraser';
 
+/** Sub-style for brush strokes. Pen ships variations within the same
+ *  tool (`pen` + brushStyle='calligraphy' etc.) rather than adding
+ *  more top-level Tool enum entries — keeps the tool count bounded
+ *  while letting the user pick from a Photoshop / Paint -style brush
+ *  picker. Each style maps to a perfect-freehand parameter preset
+ *  (see `strokeOptionsFor`) + optional render-time effects
+ *  (airbrush scatter dots, crayon noise overlay, etc).
+ *
+ *  Eraser + highlighter ignore brushStyle — their stroke math is
+ *  fixed (destination-out / flat low-flow).
+ */
+export type BrushStyle =
+  | 'default'      // Pen as it draws today — pressure-responsive smooth
+  | 'calligraphy'  // Velocity-modulated thick taper, oblique-feel
+  | 'pen-tip'      // Thin steady-width fountain pen
+  | 'pencil'       // Fine, low-pressure, high-contrast edges
+  | 'airbrush'     // Soft-edge spray; scatter dots on top of the stroke
+  | 'oil'          // Heavy paint with smooth taper
+  | 'crayon'       // Textured stroke via noise overlay
+  | 'watercolor';  // Soft, semi-transparent buildup
+
 /** Shape tools (click-drag-release rectangles defining the shape).
  *  Most are parametric off the (x, y, w, h) bbox; star + polygon
  *  carry a `points` count saved per-item so re-render matches what
@@ -47,6 +68,12 @@ export type Tool = BrushTool | ShapeTool | OtherTool;
 export interface StrokeItem {
   kind: 'stroke';
   tool: BrushTool;
+  /** Sub-style for the brush tool (calligraphy / airbrush / oil /
+   *  etc). Only meaningful when tool='pen'; eraser + marker +
+   *  highlighter ignore this. Optional + defaults to 'default' for
+   *  back-compat with C-1.0 → C-1.12 saves that didn't carry the
+   *  field. */
+  brushStyle?: BrushStyle;
   /** Hex color string (e.g. "#ff6b00") or "currentColor" to author-
    *  tint at render time. */
   color: string;
@@ -250,53 +277,72 @@ export function isShapeTool(tool: Tool): tool is ShapeTool {
   return tool === 'line' || tool === 'arrow' || tool === 'rect' || tool === 'ellipse';
 }
 
-/** Per-tool perfect-freehand parameters. The library exposes a
- *  StrokeOptions bag — these defaults shape each tool's feel. */
-export function strokeOptionsFor(tool: BrushTool) {
-  switch (tool) {
-    case 'highlighter':
-      return {
-        size: 1,
-        thinning: 0,
-        smoothing: 0.6,
-        streamline: 0.6,
-        easing: (t: number) => t,
-        simulatePressure: false,
-        last: true,
-      };
-    case 'marker':
-      return {
-        size: 1,
-        thinning: 0.15,
-        smoothing: 0.5,
-        streamline: 0.5,
-        easing: (t: number) => t,
-        simulatePressure: true,
-        last: true,
-      };
-    case 'eraser':
-      return {
-        size: 1,
-        thinning: 0.2,
-        smoothing: 0.5,
-        streamline: 0.5,
-        easing: (t: number) => t,
-        simulatePressure: true,
-        last: true,
-      };
-    case 'pen':
+/** Per-tool perfect-freehand parameters. For pen we further switch
+ *  on `brushStyle` so the user's brush picker maps to a real change
+ *  in the stroke math. */
+export function strokeOptionsFor(tool: BrushTool, style: BrushStyle = 'default') {
+  if (tool === 'highlighter') {
+    return { size: 1, thinning: 0, smoothing: 0.6, streamline: 0.6, easing: (t: number) => t, simulatePressure: false, last: true };
+  }
+  if (tool === 'marker') {
+    return { size: 1, thinning: 0.15, smoothing: 0.5, streamline: 0.5, easing: (t: number) => t, simulatePressure: true, last: true };
+  }
+  if (tool === 'eraser') {
+    return { size: 1, thinning: 0.2, smoothing: 0.5, streamline: 0.5, easing: (t: number) => t, simulatePressure: true, last: true };
+  }
+  // Pen — branch on brush style.
+  switch (style) {
+    case 'calligraphy':
+      // Velocity-modulated thick taper. High thinning + delayed
+      // easing = the swooping width changes that read as calligraphy.
+      return { size: 1, thinning: 0.8, smoothing: 0.4, streamline: 0.4, easing: (t: number) => t * t * t, simulatePressure: true, last: true };
+    case 'pen-tip':
+      // Thin steady fountain-pen. Almost no thinning so the line
+      // reads as a constant ink trail.
+      return { size: 1, thinning: 0.05, smoothing: 0.5, streamline: 0.3, easing: (t: number) => t, simulatePressure: false, last: true };
+    case 'pencil':
+      // Sharp, low-flow, slightly broken edges. Low smoothing so
+      // we keep the wobble; the noise overlay (drawStroke effects)
+      // adds the texture.
+      return { size: 1, thinning: 0.5, smoothing: 0.25, streamline: 0.2, easing: (t: number) => t, simulatePressure: true, last: true };
+    case 'airbrush':
+      // Soft fat stroke; scatter dots layered in drawStroke add
+      // the "spray" texture.
+      return { size: 1, thinning: 0.1, smoothing: 0.7, streamline: 0.7, easing: (t: number) => t, simulatePressure: false, last: true };
+    case 'oil':
+      // Heavy paint feel — wide, low thinning, very smooth.
+      return { size: 1, thinning: 0.25, smoothing: 0.7, streamline: 0.6, easing: (t: number) => t, simulatePressure: true, last: true };
+    case 'crayon':
+      // Same baseline as pen but the noise overlay in drawStroke
+      // gives the wax-on-paper roughness.
+      return { size: 1, thinning: 0.4, smoothing: 0.4, streamline: 0.3, easing: (t: number) => t, simulatePressure: true, last: true };
+    case 'watercolor':
+      // Wide, soft, semi-transparent — the layer-opacity halving
+      // in drawStroke gives the buildup look.
+      return { size: 1, thinning: 0.15, smoothing: 0.7, streamline: 0.8, easing: (t: number) => t, simulatePressure: false, last: true };
+    case 'default':
     default:
-      return {
-        size: 1,
-        thinning: 0.55,
-        smoothing: 0.5,
-        streamline: 0.35,
-        easing: (t: number) => t * t,
-        simulatePressure: true,
-        last: true,
-      };
+      return { size: 1, thinning: 0.55, smoothing: 0.5, streamline: 0.35, easing: (t: number) => t * t, simulatePressure: true, last: true };
   }
 }
+
+/** UI catalogue of brush styles for the BRUSHES section's sub-picker.
+ *  Order matches how a user typically thinks about brushes (Paint /
+ *  Procreate ordering). */
+export interface BrushStyleEntry {
+  id: BrushStyle;
+  label: string;
+}
+export const BRUSH_STYLES: readonly BrushStyleEntry[] = [
+  { id: 'default',     label: 'Brush' },
+  { id: 'calligraphy', label: 'Calligraphy brush' },
+  { id: 'pen-tip',     label: 'Calligraphy pen' },
+  { id: 'pencil',      label: 'Natural pencil' },
+  { id: 'airbrush',    label: 'Airbrush' },
+  { id: 'oil',         label: 'Oil brush' },
+  { id: 'crayon',      label: 'Crayon' },
+  { id: 'watercolor',  label: 'Watercolor brush' },
+] as const;
 
 /** Max bytes for a pasted/dropped image before we reject it. 5 MB —
  *  generous for screenshots, blocks accidentally pasting in a

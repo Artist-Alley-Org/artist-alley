@@ -14,6 +14,7 @@
 
 import type {
   BrushContent,
+  BrushStyle,
   BrushTool,
   Item,
   Layer,
@@ -102,6 +103,9 @@ export interface WhiteboardSession {
   italic: boolean;
   textAlign: 'left' | 'center' | 'right';
 
+  // Brush style — sub-picker for the pen tool.
+  brushStyle: BrushStyle;
+
   // Whole-doc operations
   clearAll: () => void;
   /** Load a saved doc (e.g. user opened a previous whiteboard for
@@ -141,6 +145,10 @@ export function createWhiteboardSession(
     bold: boolean;
     italic: boolean;
     textAlign: 'left' | 'center' | 'right';
+    /** Active brush style — only meaningful when the pen tool is
+     *  selected. The brushes sub-picker mutates this; new
+     *  StrokeItems pick it up on commit. */
+    brushStyle: BrushStyle;
   }
   const state = $state<ReactiveState>({
     doc: initialDoc,
@@ -157,6 +165,7 @@ export function createWhiteboardSession(
     bold: false,
     italic: false,
     textAlign: 'left',
+    brushStyle: 'default',
   });
 
   // Undo / redo. Snapshot-based — every mutating method commits the
@@ -362,6 +371,9 @@ export function createWhiteboardSession(
         commit();
       }
     },
+    get brushStyle() { return state.brushStyle; },
+    set brushStyle(v) { state.brushStyle = v; },
+
     get textAlign() { return state.textAlign; },
     set textAlign(v) {
       state.textAlign = v;

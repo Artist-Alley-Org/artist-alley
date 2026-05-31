@@ -225,7 +225,8 @@
   function drawStroke(stroke: StrokeItem) {
     if (!ctx) return;
     if (stroke.points.length === 0) return;
-    const opts = strokeOptionsFor(stroke.tool);
+    const style = stroke.brushStyle ?? 'default';
+    const opts = strokeOptionsFor(stroke.tool, style);
     const outline = getStroke(
       stroke.points.map((p) => [p[0], p[1], p[2] ?? 0.5]) as number[][],
       { ...opts, size: stroke.width },
@@ -238,13 +239,103 @@
     } else {
       ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = stroke.color;
-      ctx.globalAlpha = (ctx.globalAlpha ?? 1) * (stroke.opacity ?? 1);
+      const baseAlpha = (stroke.opacity ?? 1);
+      // Watercolor builds up via low per-stroke alpha — overlapping
+      // strokes accumulate without going opaque immediately.
+      const effectiveAlpha = stroke.tool === 'pen' && style === 'watercolor' ? baseAlpha * 0.35 : baseAlpha;
+      ctx.globalAlpha = (ctx.globalAlpha ?? 1) * effectiveAlpha;
     }
     const path = new Path2D();
     path.moveTo(outline[0][0], outline[0][1]);
     for (let i = 1; i < outline.length; i++) path.lineTo(outline[i][0], outline[i][1]);
     path.closePath();
     ctx.fill(path);
+
+    // ── Per-style overlay effects ──────────────────────────────
+    if (stroke.tool === 'pen' && stroke.points.length > 1) {
+      if (style === 'airbrush') drawAirbrushScatter(stroke);
+      else if (style === 'crayon') drawCrayonNoise(stroke);
+      else if (style === 'pencil') drawPencilGrain(stroke);
+    }
+    ctx.restore();
+  }
+
+  /** Airbrush — scatter soft circles along the stroke. Sparser at
+   *  the center of the stroke than the edge so the "spray" reads
+   *  outward. Density scales with width so big brushes look puffier. */
+  function drawAirbrushScatter(stroke: StrokeItem) {
+    if (!ctx) return;
+    ctx.save();
+    ctx.fillStyle = stroke.color;
+    ctx.globalAlpha = (stroke.opacity ?? 1) * 0.18;
+    const r = stroke.width * 0.8;
+    const dotR = Math.max(1, stroke.width * 0.08);
+    // Deterministic-ish PRNG seeded by point coords so re-renders
+    // produce the same scatter pattern.
+    function rng(seed: number) { let x = Math.sin(seed) * 10000; return x - Math.floor(x); }
+    for (let i = 1; i < stroke.points.length; i++) {
+      const [px, py] = stroke.points[i];
+      const dotCount = Math.max(3, Math.round(stroke.width / 4));
+      for (let d = 0; d < dotCount; d++) {
+        const a = rng(px * 13 + py * 17 + d) * Math.PI * 2;
+        const dist = rng(px * 7 + py * 23 + d * 3) * r;
+        ctx.beginPath();
+        ctx.arc(px + Math.cos(a) * dist, py + Math.sin(a) * dist, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Crayon — broken edge texture: scatter low-alpha dots perpendicular
+   *  to the stroke direction, denser near the edges. Reads as wax-on-
+   *  paper rough texture. */
+  function drawCrayonNoise(stroke: StrokeItem) {
+    if (!ctx) return;
+    ctx.save();
+    ctx.fillStyle = stroke.color;
+    ctx.globalAlpha = (stroke.opacity ?? 1) * 0.45;
+    const dotR = Math.max(0.6, stroke.width * 0.06);
+    function rng(seed: number) { let x = Math.sin(seed) * 10000; return x - Math.floor(x); }
+    for (let i = 1; i < stroke.points.length; i++) {
+      const [px, py] = stroke.points[i];
+      const [ppx, ppy] = stroke.points[i - 1];
+      const dx = px - ppx, dy = py - ppy;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      for (let d = 0; d < 4; d++) {
+        const t = rng(px * 11 + py * 19 + d * 5) * 2 - 1;
+        const off = t * stroke.width * 0.45;
+        ctx.beginPath();
+        ctx.arc(px + nx * off, py + ny * off, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Pencil — thin streaks along the stroke at varied opacity to
+   *  fake graphite grain. Lighter than crayon. */
+  function drawPencilGrain(stroke: StrokeItem) {
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = Math.max(0.3, stroke.width * 0.12);
+    ctx.lineCap = 'round';
+    function rng(seed: number) { let x = Math.sin(seed) * 10000; return x - Math.floor(x); }
+    for (let i = 1; i < stroke.points.length; i++) {
+      const [px, py] = stroke.points[i];
+      const [ppx, ppy] = stroke.points[i - 1];
+      const dx = px - ppx, dy = py - ppy;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      ctx.globalAlpha = (stroke.opacity ?? 1) * (0.2 + rng(px * 7 + py * 13) * 0.4);
+      const off = (rng(px * 5 + py * 31) - 0.5) * stroke.width * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(ppx + nx * off, ppy + ny * off);
+      ctx.lineTo(px + nx * off, py + ny * off);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -664,6 +755,10 @@
       liveStroke = {
         kind: 'stroke',
         tool: session.tool,
+        // Only the pen tool varies by brushStyle. Marker / highlighter
+        // / eraser ignore it; we stamp 'default' so the saved item
+        // is still well-formed.
+        brushStyle: session.tool === 'pen' ? session.brushStyle : 'default',
         color: session.color,
         width: session.width,
         opacity: session.opacity,

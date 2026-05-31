@@ -18,6 +18,7 @@
 
   import type { Tool } from '$lib/whiteboard/types';
   import {
+    BRUSH_STYLES,
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
     FONT_SIZE_PRESETS,
@@ -257,6 +258,28 @@
       <div class="grid grid-cols-5 gap-1">
         {#each TOOLS_BRUSHES as t (t.id)}{@render toolBtn(t)}{/each}
       </div>
+      <!-- Brush sub-style — only meaningful for the pen tool today
+           (marker / highlighter / eraser ignore the field). We
+           still surface the picker whenever any brush tool is
+           active so users discover it; switching styles while on
+           marker is harmless — new pens will carry the picked
+           style as soon as the user switches back. -->
+      {#if isBrushTool(session.tool)}
+        <label class="mt-2 block">
+          <span class="block text-[10px] text-fg-muted">Brush style</span>
+          <select
+            value={session.brushStyle}
+            onchange={(e) => (session.brushStyle = (e.currentTarget as HTMLSelectElement).value as typeof session.brushStyle)}
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-xs"
+            disabled={session.tool !== 'pen'}
+            title={session.tool === 'pen' ? 'Brush sub-style' : 'Only the pen tool varies by style (today)'}
+          >
+            {#each BRUSH_STYLES as b (b.id)}
+              <option value={b.id}>{b.label}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
     </section>
 
     <!-- ── Shapes ──────────────────────────────────────────────── -->
