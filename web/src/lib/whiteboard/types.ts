@@ -59,7 +59,8 @@ export type ShapeTool =
 /** Other tools that aren't items themselves but mode-pickers. */
 export type OtherTool =
   | 'text' | 'select' | 'lasso' | 'rect-select'
-  | 'crop' | 'clone' | 'bucket' | 'eyedropper';
+  | 'crop' | 'clone' | 'bucket' | 'eyedropper'
+  | 'connector';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;
@@ -229,8 +230,54 @@ export interface ImageItem {
   rotation?: number;
 }
 
+/** A connector endpoint — either pinned to a free world point OR
+ *  attached to another item's anchor. The AFFiNE pattern: store
+ *  the anchor as a fraction (u, v) of the target's bbox so the
+ *  endpoint follows when the target moves/resizes, without any
+ *  listener wiring. resolveEndpoint() recomputes the absolute
+ *  point at render time. */
+export interface ConnectorEndpoint {
+  /** When set, the endpoint follows this item's bbox. */
+  attached?: { layerId: string; itemIndex: number };
+  /** Anchor as a fraction of the attached item's bbox (0..1).
+   *  {u: 0, v: 0.5} = left middle, {u: 1, v: 0.5} = right middle,
+   *  {u: 0.5, v: 0} = top middle, etc. Ignored when not attached. */
+  u?: number;
+  v?: number;
+  /** Free world coords. Only used when `attached` is unset. */
+  x?: number;
+  y?: number;
+}
+
+/** Connector — line linking two endpoints. Either / both endpoints
+ *  may be attached to another item (the AFFiNE blueprint feature
+ *  for Phase 1.22). The line auto-reroutes when the attached item
+ *  moves because the endpoint is stored relative; the existing
+ *  render-on-doc-change loop picks up the new position for free. */
+export interface ConnectorItem {
+  kind: 'connector';
+  start: ConnectorEndpoint;
+  end: ConnectorEndpoint;
+  /** Routing strategy: straight = M-L line; orthogonal = one-elbow
+   *  axis-aligned path; curve = cubic bezier with end-tangents
+   *  inferred from the anchor side (for attached endpoints) or
+   *  from the connector direction (for free endpoints). */
+  mode: 'straight' | 'orthogonal' | 'curve';
+  color: string;
+  /** Stroke width in source-canvas px. */
+  width: number;
+  opacity?: number;
+  /** Arrow heads. 'arrow' = filled triangle pointing outward;
+   *  'dot' = small filled disc; 'none' = nothing. Defaults to
+   *  endArrow='arrow', startArrow='none' on new connectors so the
+   *  natural "draw from source to target" gesture produces a
+   *  pointing arrow. */
+  startArrow?: 'none' | 'arrow' | 'dot';
+  endArrow?: 'none' | 'arrow' | 'dot';
+}
+
 /** Polymorphic discriminated union over every kind of layer item. */
-export type Item = StrokeItem | ShapeItem | TextItem | ImageItem;
+export type Item = StrokeItem | ShapeItem | TextItem | ImageItem | ConnectorItem;
 
 /** Stacked bottom-to-top. */
 export interface Layer {
@@ -451,7 +498,7 @@ export interface BBox { x: number; y: number; w: number; h: number; rotation: nu
  *  (after normalizing negative shape sizes). The rotation field is
  *  the item's own rotation around the bbox center; the bbox values
  *  themselves are still axis-aligned. */
-export function itemBBox(item: Item): BBox {
+export function itemBBox(item: Item, doc?: BrushContent): BBox {
   switch (item.kind) {
     case 'stroke': {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -474,7 +521,66 @@ export function itemBBox(item: Item): BBox {
       return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
     case 'image':
       return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+    case 'connector': {
+      // The bbox spans the two resolved endpoints. doc is needed
+      // to resolve attached endpoints — without it we fall back to
+      // the free coords (which is what older docs without a doc
+      // argument get; safe because connectors weren't picked by
+      // selection/lasso before this phase).
+      const s = resolveConnectorEndpoint(item.start, doc);
+      const e = resolveConnectorEndpoint(item.end, doc);
+      const pad = (item.width ?? 2) * 0.6;
+      return {
+        x: Math.min(s.x, e.x) - pad,
+        y: Math.min(s.y, e.y) - pad,
+        w: Math.abs(e.x - s.x) + pad * 2,
+        h: Math.abs(e.y - s.y) + pad * 2,
+        rotation: 0,
+      };
+    }
   }
+}
+
+/** Resolve an endpoint to absolute (x, y) world coords. When the
+ *  endpoint is `attached`, looks up the target item in the doc and
+ *  multiplies the (u, v) anchor fractions through its bbox. When
+ *  the target is missing (deleted while connector remained), falls
+ *  back to the free coords so the connector doesn't visually
+ *  collapse into the origin. */
+export function resolveConnectorEndpoint(ep: ConnectorEndpoint, doc?: BrushContent): { x: number; y: number } {
+  if (ep.attached && doc) {
+    const layer = doc.layers.find((l) => l.id === ep.attached!.layerId);
+    const target = layer?.items[ep.attached.itemIndex];
+    if (target && target.kind !== 'connector') {
+      // No connector→connector attachments: prevents cycles in
+      // resolveConnectorEndpoint and keeps the bbox stable.
+      const bb = itemBBox(target);
+      const u = ep.u ?? 0.5;
+      const v = ep.v ?? 0.5;
+      return { x: bb.x + u * bb.w, y: bb.y + v * bb.h };
+    }
+  }
+  return { x: ep.x ?? 0, y: ep.y ?? 0 };
+}
+
+/** Five canonical anchor points on an item's bbox — the four edge
+ *  midpoints + the center. Used by the connector tool to (a) snap
+ *  the user's click to the nearest anchor, (b) hint hover targets
+ *  when the connector tool is active. Returns absolute world coords
+ *  alongside the (u, v) fractions for storing in the endpoint. */
+export interface AnchorPoint { u: number; v: number; x: number; y: number; }
+export function anchorsForItem(item: Item, doc?: BrushContent): AnchorPoint[] {
+  const bb = itemBBox(item, doc);
+  if (bb.w === 0 || bb.h === 0) return [];
+  // Order matters cosmetically: top, right, bottom, left, center.
+  // Matches the order users expect when tabbing through anchors.
+  return [
+    { u: 0.5, v: 0,   x: bb.x + bb.w / 2, y: bb.y },
+    { u: 1,   v: 0.5, x: bb.x + bb.w,     y: bb.y + bb.h / 2 },
+    { u: 0.5, v: 1,   x: bb.x + bb.w / 2, y: bb.y + bb.h },
+    { u: 0,   v: 0.5, x: bb.x,            y: bb.y + bb.h / 2 },
+    { u: 0.5, v: 0.5, x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 },
+  ];
 }
 
 /** Test whether a point is inside an item's bbox (rotation-aware:
@@ -528,10 +634,19 @@ export function itemInPolygon(item: Item, poly: number[][]): boolean {
 // ── Item mutation helpers (selection / move / resize) ─────────────
 
 /** Translate an item by (dx, dy) in source coords. Strokes shift
- *  every point; the others bump x/y. */
+ *  every point; connectors shift only the *free* endpoint coords
+ *  (attached endpoints stay anchored to their target); the others
+ *  bump x/y. */
 export function translateItem(item: Item, dx: number, dy: number): Item {
   if (item.kind === 'stroke') {
     return { ...item, points: item.points.map((p) => [p[0] + dx, p[1] + dy, p[2]]) };
+  }
+  if (item.kind === 'connector') {
+    const shift = (ep: ConnectorEndpoint): ConnectorEndpoint => {
+      if (ep.attached) return ep; // anchor stays glued to target
+      return { ...ep, x: (ep.x ?? 0) + dx, y: (ep.y ?? 0) + dy };
+    };
+    return { ...item, start: shift(item.start), end: shift(item.end) };
   }
   return { ...item, x: item.x + dx, y: item.y + dy };
 }
@@ -560,6 +675,13 @@ export function resizeItemToBBox(item: Item, x: number, y: number, w: number, h:
   if (item.kind === 'text') {
     const scaleY = old.h > 0 ? h / old.h : 1;
     return { ...item, x, y, w, h, fontSize: Math.max(8, Math.min(256, item.fontSize * scaleY)) };
+  }
+  if (item.kind === 'connector') {
+    // Connectors don't resize via the bbox tool — they're defined
+    // by their endpoints, not a w/h rect. Drop-through: just
+    // return the item unchanged. The user moves endpoints via a
+    // future endpoint-handle gesture (Phase 1.22 follow-up).
+    return item;
   }
   // image
   return { ...item, x, y, w, h };

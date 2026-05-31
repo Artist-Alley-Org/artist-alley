@@ -150,6 +150,9 @@
     { id: 'text',       label: 'Text (T)',        icon: 'M5 5h14 M12 5v14' },
     { id: 'bucket',     label: 'Fill bucket (B)', icon: 'M19 11l-7-7-8 8 7 7z M5 19h16 M16 4l3 7' },
     { id: 'eyedropper', label: 'Eyedropper (I)',  icon: 'M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z' },
+    // Phase 1.22 — connector: click anchor → click anchor to link
+    // shapes with a line. End sticks when the shape moves.
+    { id: 'connector',  label: 'Connector', icon: 'M6 18a4 4 0 0 0 4-4 M14 10a4 4 0 0 0 4-4 M10 14L14 10' },
   ];
 
   // Brushes — same Tool ids today; C-1.13 will add a brush-style
@@ -599,6 +602,38 @@
         <div id="wb-section-tools" class="grid grid-cols-5 gap-1">
           {#each TOOLS_MAIN as t (t.id)}{@render toolBtn(t)}{/each}
         </div>
+        <!-- Connector routing-mode picker (Phase 1.22) — shown
+             only when the connector tool is active. Three buttons:
+             straight, orthogonal (one-elbow), curve (bezier with
+             edge-tangent inference). New connectors pick this up
+             at commit. -->
+        {#if session.tool === 'connector'}
+          <div class="mt-2 flex items-center gap-1">
+            <span class="text-[10px] uppercase tracking-wide text-fg-muted/80">Route</span>
+            {#each [
+              { id: 'straight' as const,   label: 'Straight',   path: 'M4 12h16' },
+              { id: 'orthogonal' as const, label: 'Orthogonal', path: 'M4 18v-6h8V6h8' },
+              { id: 'curve' as const,      label: 'Curve',      path: 'M4 18c4-12 12-12 16 0' },
+            ] as m (m.id)}
+              {@const active = session.connectorMode === m.id}
+              <button
+                type="button"
+                onclick={() => (session.connectorMode = m.id)}
+                class="inline-flex h-6 w-8 items-center justify-center rounded border border-border"
+                class:bg-accent={active}
+                class:text-on-accent={active}
+                class:text-fg-muted={!active}
+                title={m.label}
+                aria-label={`Connector routing: ${m.label}`}
+                aria-pressed={active}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d={m.path} />
+                </svg>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/if}
     </section>
 

@@ -29,7 +29,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   import type {
-    BBox, BrushContent, BrushStamp, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
+    BBox, BrushContent, BrushStamp, ConnectorEndpoint, ConnectorItem, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
   } from '$lib/whiteboard/types';
   import {
     MAX_PASTED_IMAGE_BYTES,
@@ -37,6 +37,7 @@
     isBrushTool, isShapeTool, strokeOptionsFor,
     itemBBox, pointInItem, translateItem, resizeItemToBBox,
     itemInPolygon,
+    anchorsForItem, resolveConnectorEndpoint,
   } from '$lib/whiteboard/types';
   import { getStamp, getTintedStamp } from '$lib/whiteboard/brushes';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
@@ -133,6 +134,17 @@
   // Rectangle-select drag — same shape as crop but commits to a
   // multi-selection instead of trimming the canvas.
   let liveRectSelect: { x: number; y: number; w: number; h: number } | null = $state(null);
+  // Connector tool state (Phase 1.22) — two-click gesture: first
+  // click pins the start endpoint, mouse-move tracks the cursor as
+  // the live end, second click commits. Carries the full draft
+  // connector minus the end attachment (which is resolved on
+  // commit), so the render path can `drawConnector(liveConnector
+  // as ConnectorItem)` directly for the preview.
+  let liveConnector: Omit<ConnectorItem, 'kind'> | null = $state(null);
+  // Currently-hovered anchor (under the cursor when connector tool
+  // is active). Drives the visual snap hint that draws a small ring
+  // around the anchor point.
+  let hoverAnchor: { layerId: string; index: number; anchor: { u: number; v: number; x: number; y: number } } | null = $state(null);
   // Text being typed (overlay div positioned over the canvas).
   let textEdit: { x: number; y: number; w: number; h: number } | null = $state(null);
   let textEditBody = $state('');
@@ -338,9 +350,26 @@
     // Live previews on top
     if (liveStroke) drawItem(liveStroke);
     if (liveShape) drawItem(liveShape);
+    if (liveConnector) drawConnector({ kind: 'connector', ...liveConnector });
     if (liveLasso && liveLasso.length >= 2) drawLassoPreview(liveLasso);
     if (liveCrop) drawCropPreview(liveCrop);
     if (liveRectSelect) drawRectSelectPreview(liveRectSelect);
+    // Snap hint — render a small ring at the hover anchor when
+    // connector tool is active. Helps the user understand where
+    // their next click will attach.
+    if (hoverAnchor && session.tool === 'connector') {
+      const z = infinite ? session.viewZoom : 1;
+      const r = 6 / z;
+      ctx.save();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.fillStyle = 'rgba(59,130,246,0.25)';
+      ctx.lineWidth = 2 / z;
+      ctx.beginPath();
+      ctx.arc(hoverAnchor.anchor.x, hoverAnchor.anchor.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   function drawRectSelectPreview(r: { x: number; y: number; w: number; h: number }) {
@@ -403,6 +432,7 @@
       case 'shape': return drawShape(item);
       case 'text': return drawText(item);
       case 'image': return drawImageItem(item);
+      case 'connector': return drawConnector(item);
     }
   }
 
@@ -869,6 +899,133 @@
     ctx.fill();
   }
 
+  /** Phase 1.22 — render a connector. Resolves both endpoints to
+   *  absolute world coords (handles attached-anchor follow), then
+   *  paints the path according to `mode`. End-tangent for curve
+   *  mode is the perpendicular-to-edge of the attached shape side
+   *  the anchor sits on (top/right/bottom/left) so the curve enters
+   *  the shape cleanly rather than parallel to its edge. */
+  function drawConnector(c: ConnectorItem) {
+    if (!ctx) return;
+    const s = resolveConnectorEndpoint(c.start, session.doc);
+    const e = resolveConnectorEndpoint(c.end, session.doc);
+    if (Math.hypot(e.x - s.x, e.y - s.y) < 0.5) return;
+    ctx.save();
+    ctx.strokeStyle = c.color;
+    ctx.fillStyle = c.color;
+    ctx.lineWidth = c.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = (ctx.globalAlpha ?? 1) * (c.opacity ?? 1);
+    // Pick the path geometry per mode.
+    ctx.beginPath();
+    if (c.mode === 'straight') {
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(e.x, e.y);
+    } else if (c.mode === 'orthogonal') {
+      // Single-elbow heuristic: bend the corner along whichever
+      // axis is longer. Two-elbow A* pathfinding around obstacles
+      // is a future polish — single-elbow already covers most
+      // real diagram cases (boxes to boxes, no overlapping items).
+      ctx.moveTo(s.x, s.y);
+      const dx = e.x - s.x;
+      const dy = e.y - s.y;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // Horizontal-first: out to half-way x, then drop to e.y,
+        // then over to e.x. Reads like a step staircase.
+        const midX = s.x + dx / 2;
+        ctx.lineTo(midX, s.y);
+        ctx.lineTo(midX, e.y);
+        ctx.lineTo(e.x, e.y);
+      } else {
+        const midY = s.y + dy / 2;
+        ctx.lineTo(s.x, midY);
+        ctx.lineTo(e.x, midY);
+        ctx.lineTo(e.x, e.y);
+      }
+    } else {
+      // Curve: cubic bezier with tangents derived from end-of-edge
+      // when attached, or 1/3-of-distance when free. Tangent length
+      // scales with endpoint separation so short connectors stay
+      // tight + long ones flow.
+      const len = Math.hypot(e.x - s.x, e.y - s.y);
+      const t = Math.min(160, len * 0.4);
+      const sT = endpointTangent(c.start, s, e, t);
+      const eT = endpointTangent(c.end, e, s, t);
+      ctx.moveTo(s.x, s.y);
+      ctx.bezierCurveTo(s.x + sT.x, s.y + sT.y, e.x + eT.x, e.y + eT.y, e.x, e.y);
+    }
+    ctx.stroke();
+    // Arrow heads.
+    const startArrow = c.startArrow ?? 'none';
+    const endArrow = c.endArrow ?? 'arrow';
+    if (startArrow !== 'none') drawConnectorHead(s, e, c.width, startArrow);
+    if (endArrow !== 'none') drawConnectorHead(e, s, c.width, endArrow);
+    ctx.restore();
+  }
+
+  /** Endpoint tangent for curve mode. When the endpoint is attached
+   *  to a shape, the tangent points away from the shape (out of the
+   *  edge the anchor sits on); when free, it points toward the
+   *  other endpoint. `len` is the desired tangent magnitude. */
+  function endpointTangent(ep: ConnectorEndpoint, me: { x: number; y: number }, other: { x: number; y: number }, len: number): { x: number; y: number } {
+    if (ep.attached) {
+      const u = ep.u ?? 0.5;
+      const v = ep.v ?? 0.5;
+      // Determine which edge of the bbox the anchor sits on by the
+      // (u, v) values: 0 / 1 = on an edge; 0.5 / 0.5 = center.
+      // Point the tangent outward through that edge.
+      let nx = 0, ny = 0;
+      if (u <= 0.01) nx = -1;
+      else if (u >= 0.99) nx = 1;
+      if (v <= 0.01) ny = -1;
+      else if (v >= 0.99) ny = 1;
+      if (nx === 0 && ny === 0) {
+        // Center anchor — fall back to "toward other endpoint".
+        const dx = other.x - me.x;
+        const dy = other.y - me.y;
+        const d = Math.hypot(dx, dy) || 1;
+        return { x: (dx / d) * len, y: (dy / d) * len };
+      }
+      const m = Math.hypot(nx, ny) || 1;
+      return { x: (nx / m) * len, y: (ny / m) * len };
+    }
+    const dx = other.x - me.x;
+    const dy = other.y - me.y;
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: (dx / d) * len, y: (dy / d) * len };
+  }
+
+  /** Filled arrow / dot at one end. `from` is the head position,
+   *  `toward` is the other endpoint (defines the arrow's angle). */
+  function drawConnectorHead(from: { x: number; y: number }, toward: { x: number; y: number }, w: number, kind: 'arrow' | 'dot') {
+    if (!ctx) return;
+    if (kind === 'dot') {
+      const r = Math.max(2.5, w * 1.6);
+      ctx.beginPath();
+      ctx.arc(from.x, from.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    // Arrow head: triangle pointing from `toward` to `from`.
+    const dx = from.x - toward.x;
+    const dy = from.y - toward.y;
+    const ang = Math.atan2(dy, dx);
+    const head = Math.max(10, w * 4);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(
+      from.x - Math.cos(ang - Math.PI / 6) * head,
+      from.y - Math.sin(ang - Math.PI / 6) * head,
+    );
+    ctx.lineTo(
+      from.x - Math.cos(ang + Math.PI / 6) * head,
+      from.y - Math.sin(ang + Math.PI / 6) * head,
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
   function drawText(t: TextItem) {
     if (!ctx) return;
     if (!t.body) return;
@@ -1033,6 +1190,37 @@
     return null;
   }
 
+  /** Phase 1.22 — find the closest anchor point within snap range
+   *  of (px, py). Iterates every non-connector item on every
+   *  visible layer (connectors don't have anchors themselves —
+   *  prevents cycle in resolveConnectorEndpoint). Returns the
+   *  hit's layer + item index + the anchor's (u, v, x, y) so the
+   *  caller can store the attachment without re-deriving. Snap
+   *  range scales with viewport zoom so it stays reachable at any
+   *  zoom level. */
+  function snapToAnchor(px: number, py: number) {
+    const z = infinite ? session.viewZoom : 1;
+    const snapRange = 12 / z; // 12 CSS px in world coords
+    let best: { layerId: string; index: number; anchor: { u: number; v: number; x: number; y: number } } | null = null;
+    let bestD = snapRange;
+    for (let li = session.doc.layers.length - 1; li >= 0; li--) {
+      const layer = session.doc.layers[li];
+      if (!layer.visible) continue;
+      for (let i = 0; i < layer.items.length; i++) {
+        const it = layer.items[i];
+        if (it.kind === 'connector') continue;
+        for (const a of anchorsForItem(it, session.doc)) {
+          const d = Math.hypot(px - a.x, py - a.y);
+          if (d < bestD) {
+            bestD = d;
+            best = { layerId: layer.id, index: i, anchor: a };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
   function onPointerDown(e: PointerEvent) {
     if (readOnly) return;
     // Pan first (middle-click or Space+drag in infinite mode) — must
@@ -1099,6 +1287,51 @@
           session.color = item.color;
           session.tool = 'pen';
         }
+      }
+      e.preventDefault();
+      return;
+    }
+    // Connector — two-click gesture (click anchor → click anchor).
+    // First click: snap to the nearest anchor in pick range and
+    // pin the start; mouse-move shows a live preview line. Second
+    // click: snap end to nearest anchor (or place free at click
+    // position) and commit the ConnectorItem.
+    if (session.tool === 'connector') {
+      const p4 = eventToSource(e);
+      const snapped = snapToAnchor(p4.x, p4.y);
+      if (!liveConnector) {
+        // First click — pin the start.
+        const startEp: ConnectorEndpoint = snapped
+          ? { attached: { layerId: snapped.layerId, itemIndex: snapped.index }, u: snapped.anchor.u, v: snapped.anchor.v }
+          : { x: p4.x, y: p4.y };
+        liveConnector = {
+          start: startEp,
+          end: { x: p4.x, y: p4.y },
+          mode: session.connectorMode,
+          color: gestureColor,
+          width: session.width,
+          opacity: session.opacity,
+          endArrow: 'arrow',
+        };
+        render();
+      } else {
+        // Second click — commit.
+        const endEp: ConnectorEndpoint = snapped
+          ? { attached: { layerId: snapped.layerId, itemIndex: snapped.index }, u: snapped.anchor.u, v: snapped.anchor.v }
+          : { x: p4.x, y: p4.y };
+        const item: ConnectorItem = {
+          kind: 'connector',
+          start: liveConnector.start,
+          end: endEp,
+          mode: liveConnector.mode,
+          color: liveConnector.color,
+          width: liveConnector.width,
+          opacity: liveConnector.opacity,
+          endArrow: liveConnector.endArrow,
+        };
+        session.addItem(layer.id, item);
+        liveConnector = null;
+        render();
       }
       e.preventDefault();
       return;
@@ -1224,6 +1457,33 @@
     // shape branches don't see middle-click / space-drag deltas.
     if (onPanPointerMove(e)) return;
     const p = eventToSource(e);
+    // Connector tool — track hover anchor + drive the live preview
+    // end when the gesture is mid-flight. Snap end to anchors so
+    // the user sees "this end will attach here" before clicking.
+    if (!readOnly && session.tool === 'connector') {
+      const snap = snapToAnchor(p.x, p.y);
+      const newHover = snap;
+      if ((hoverAnchor?.layerId !== newHover?.layerId) || (hoverAnchor?.index !== newHover?.index)
+          || (hoverAnchor?.anchor.u !== newHover?.anchor.u) || (hoverAnchor?.anchor.v !== newHover?.anchor.v)) {
+        hoverAnchor = newHover;
+      }
+      if (liveConnector) {
+        if (snap) {
+          liveConnector = {
+            ...liveConnector,
+            end: { attached: { layerId: snap.layerId, itemIndex: snap.index }, u: snap.anchor.u, v: snap.anchor.v },
+          };
+        } else {
+          liveConnector = { ...liveConnector, end: { x: p.x, y: p.y } };
+        }
+        render();
+      } else if (snap || hoverAnchor) {
+        // Hover state changed but no gesture in flight; still need
+        // a redraw to show / hide the snap ring.
+        render();
+      }
+      return;
+    }
     // Selection-gesture transforms — mutate the selected item in
     // place without committing to history (we commit on mouseup so
     // a single drag becomes one undo step).
@@ -1628,7 +1888,10 @@
       kind: 'rotate',
       cx, cy,
       startAngle: (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI,
-      originalRotation: sel.item.kind !== 'stroke' ? (sel.item.rotation ?? 0) : 0,
+      // Connectors + strokes don't carry rotation; rotation handle
+      // on them rotates the points / endpoints instead. We start
+      // from 0 in those cases.
+      originalRotation: (sel.item.kind === 'stroke' || sel.item.kind === 'connector') ? 0 : (sel.item.rotation ?? 0),
       original: JSON.parse(JSON.stringify(sel.item)),
     };
     if (canvasEl) canvasEl.setPointerCapture(e.pointerId);

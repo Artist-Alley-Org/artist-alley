@@ -29,6 +29,7 @@ import {
   defaultOpacityFor,
   emptyDoc,
   newLayer,
+  resolveConnectorEndpoint,
 } from './types';
 
 /** Snapshot of the whole session — used by undo/redo. */
@@ -116,6 +117,11 @@ export interface WhiteboardSession {
 
   // Brush style — sub-picker for the pen tool.
   brushStyle: BrushStyle;
+
+  /** Phase 1.22 — default routing mode for new connectors. Bound
+   *  to the routing-mode picker in the panel when connector tool
+   *  is active. New ConnectorItems pick this up at commit. */
+  connectorMode: 'straight' | 'orthogonal' | 'curve';
 
   /** Phase 1.21 — active stamp-brush id, or null when the user is
    *  drawing with a procedural brush style. When set, new pen
@@ -244,6 +250,8 @@ export function createWhiteboardSession(
     /** Phase 1.21 — active stamp brush id, or null when the user is
      *  drawing with a procedural style. */
     stampId: string | null;
+    /** Phase 1.22 — default routing mode for new connectors. */
+    connectorMode: 'straight' | 'orthogonal' | 'curve';
     // ── View transform (C-1.19, infinite canvas) ────────────────
     // The map is: cssX = worldX * viewZoom + viewX. Pan + zoom are
     // applied at render time via ctx.setTransform; pointer events
@@ -270,6 +278,7 @@ export function createWhiteboardSession(
     textAlign: 'left',
     brushStyle: 'default',
     stampId: null,
+    connectorMode: 'straight',
     viewX: 0,
     viewY: 0,
     viewZoom: 1,
@@ -565,6 +574,8 @@ export function createWhiteboardSession(
       // ignore stamps) — auto-switch so the user can paint right away.
       if (v && state.tool !== 'pen') state.tool = 'pen';
     },
+    get connectorMode() { return state.connectorMode; },
+    set connectorMode(v) { state.connectorMode = v; },
 
     get textAlign() { return state.textAlign; },
     set textAlign(v) {
@@ -669,6 +680,17 @@ export function createWhiteboardSession(
           if (item.kind === 'shape') {
             return { ...item, x: w - item.x - item.w };
           }
+          if (item.kind === 'connector') {
+            // Attached endpoints: target's bbox flips with it, so
+            // (u, v) reads correctly on the flipped target — but
+            // we mirror u so left ↔ right edge anchors swap to
+            // match the visual mirror.
+            const flip = (ep: typeof item.start) => {
+              if (ep.attached) return { ...ep, u: 1 - (ep.u ?? 0.5) };
+              return { ...ep, x: w - (ep.x ?? 0) };
+            };
+            return { ...item, start: flip(item.start), end: flip(item.end) };
+          }
           // text / image: anchor x flips so the box still lives on
           // the canvas; aligned-left text re-aligns relative to its
           // anchor visually, which is the expected mirror behaviour.
@@ -692,6 +714,13 @@ export function createWhiteboardSession(
           }
           if (item.kind === 'shape') {
             return { ...item, y: h - item.y - item.h };
+          }
+          if (item.kind === 'connector') {
+            const flip = (ep: typeof item.start) => {
+              if (ep.attached) return { ...ep, v: 1 - (ep.v ?? 0.5) };
+              return { ...ep, y: h - (ep.y ?? 0) };
+            };
+            return { ...item, start: flip(item.start), end: flip(item.end) };
           }
           return { ...item, y: h - item.y - item.h };
         });
@@ -718,6 +747,15 @@ export function createWhiteboardSession(
           if (item.kind === 'shape') {
             return { ...item, x: H - item.y - item.h, y: item.x, w: item.h, h: item.w };
           }
+          if (item.kind === 'connector') {
+            // 90° CW on (u, v) within a bbox: (u, v) → (1-v, u).
+            // Free coords map (x, y) → (H - y, x) same as strokes.
+            const rot = (ep: typeof item.start) => {
+              if (ep.attached) return { ...ep, u: 1 - (ep.v ?? 0.5), v: ep.u ?? 0.5 };
+              return { ...ep, x: H - (ep.y ?? 0), y: ep.x ?? 0 };
+            };
+            return { ...item, start: rot(item.start), end: rot(item.end) };
+          }
           // text / image — keep dims, just re-anchor.
           return { ...item, x: H - item.y - item.h, y: item.x, w: item.h, h: item.w };
         });
@@ -743,6 +781,14 @@ export function createWhiteboardSession(
           if (item.kind === 'shape') {
             return { ...item, x: item.y, y: W - item.x - item.w, w: item.h, h: item.w };
           }
+          if (item.kind === 'connector') {
+            // 90° CCW on (u, v): (u, v) → (v, 1-u). Inverse of CW.
+            const rot = (ep: typeof item.start) => {
+              if (ep.attached) return { ...ep, u: ep.v ?? 0.5, v: 1 - (ep.u ?? 0.5) };
+              return { ...ep, x: ep.y ?? 0, y: W - (ep.x ?? 0) };
+            };
+            return { ...item, start: rot(item.start), end: rot(item.end) };
+          }
           return { ...item, x: item.y, y: W - item.x - item.w, w: item.h, h: item.w };
         });
       }
@@ -764,6 +810,15 @@ export function createWhiteboardSession(
               points: item.points.map((p) => [p[0] * sx, p[1] * sy, p[2]] as [number, number, number?]),
               width: item.width * Math.min(sx, sy),
             };
+          }
+          if (item.kind === 'connector') {
+            // Attached endpoints follow their target's scaled bbox
+            // for free; only free endpoint coords need scaling.
+            const scale = (ep: typeof item.start) => {
+              if (ep.attached) return ep;
+              return { ...ep, x: (ep.x ?? 0) * sx, y: (ep.y ?? 0) * sy };
+            };
+            return { ...item, start: scale(item.start), end: scale(item.end) };
           }
           return {
             ...item,
@@ -825,6 +880,16 @@ export function createWhiteboardSession(
             if (item.kind === 'stroke') {
               return item.points.some((p) => p[0] >= x && p[0] <= x2 && p[1] >= y && p[1] <= y2);
             }
+            if (item.kind === 'connector') {
+              // Cheap: check both resolved endpoints + keep if
+              // either is inside the crop. Misses connectors that
+              // only have their middle segment inside the crop;
+              // good-enough for v1.
+              const s = resolveConnectorEndpoint(item.start, state.doc);
+              const e = resolveConnectorEndpoint(item.end, state.doc);
+              return (s.x >= x && s.x <= x2 && s.y >= y && s.y <= y2)
+                  || (e.x >= x && e.x <= x2 && e.y >= y && e.y <= y2);
+            }
             const ix = item.kind === 'shape' && item.w < 0 ? item.x + item.w : item.x;
             const iy = item.kind === 'shape' && item.h < 0 ? item.y + item.h : item.y;
             const iw = item.kind === 'shape' ? Math.abs(item.w) : item.w;
@@ -837,6 +902,16 @@ export function createWhiteboardSession(
                 ...item,
                 points: item.points.map((p) => [p[0] - x, p[1] - y, p[2]] as [number, number, number?]),
               };
+            }
+            if (item.kind === 'connector') {
+              // Translate free endpoints by the crop offset;
+              // attached endpoints follow their target (which the
+              // outer crop loop also translates) for free.
+              const shift = (ep: typeof item.start) => {
+                if (ep.attached) return ep;
+                return { ...ep, x: (ep.x ?? 0) - x, y: (ep.y ?? 0) - y };
+              };
+              return { ...item, start: shift(item.start), end: shift(item.end) };
             }
             return { ...item, x: item.x - x, y: item.y - y };
           });

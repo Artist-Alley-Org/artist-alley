@@ -17,6 +17,7 @@
 
   import BrushCanvas from './BrushCanvas.svelte';
   import WhiteboardMinimap from './WhiteboardMinimap.svelte';
+  import { itemBBox } from '$lib/whiteboard/types';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 
   interface Props {
@@ -44,23 +45,18 @@
     // Compute bbox over every item; fall back to source-doc rect.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     let any = false;
+    // Delegate per-item bbox math to `itemBBox` so this loop handles
+    // every kind uniformly — including connectors (Phase 1.22)
+    // whose bbox spans resolved endpoint positions.
     for (const layer of session.doc.layers) {
       if (!layer.visible) continue;
       for (const it of layer.items) {
         any = true;
-        if (it.kind === 'stroke') {
-          for (const p of it.points) {
-            if (p[0] < minX) minX = p[0]; if (p[1] < minY) minY = p[1];
-            if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1];
-          }
-        } else {
-          const x = it.kind === 'shape' && it.w < 0 ? it.x + it.w : it.x;
-          const y = it.kind === 'shape' && it.h < 0 ? it.y + it.h : it.y;
-          const w = it.kind === 'shape' ? Math.abs(it.w) : it.w;
-          const h = it.kind === 'shape' ? Math.abs(it.h) : it.h;
-          if (x < minX) minX = x; if (y < minY) minY = y;
-          if (x + w > maxX) maxX = x + w; if (y + h > maxY) maxY = y + h;
-        }
+        const bb = itemBBox(it, session.doc);
+        if (bb.x < minX) minX = bb.x;
+        if (bb.y < minY) minY = bb.y;
+        if (bb.x + bb.w > maxX) maxX = bb.x + bb.w;
+        if (bb.y + bb.h > maxY) maxY = bb.y + bb.h;
       }
     }
     if (!any) { session.fitView(r.width, r.height); return; }
