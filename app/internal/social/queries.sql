@@ -153,3 +153,24 @@ WHERE target_kind = 'asset'
   AND annotation_type IS NOT NULL
   AND deleted_at IS NULL
 ORDER BY created_at ASC;
+
+-- name: ListWhiteboardsForPost :many
+-- Sidebar "Whiteboards" surface — every whiteboard sketch on a post,
+-- newest first. Whiteboards are top-level comments
+-- (parent_id IS NULL) with annotation_type='whiteboard'; reply
+-- comments to a whiteboard show up via the existing thread query, not
+-- here. The comments_whiteboards_idx partial index (migration 00029)
+-- covers this exactly: (target_kind, target_id, created_at DESC)
+-- WHERE annotation_type='whiteboard' AND deleted_at IS NULL.
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'post'
+  AND target_id = $1
+  AND annotation_type = 'whiteboard'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC;

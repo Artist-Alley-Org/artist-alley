@@ -293,6 +293,12 @@ func (s *apiServer) CreatePostComment(ctx context.Context, req openapi.CreatePos
 func (s *apiServer) DeleteComment(ctx context.Context, req openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	return s.social.DeleteComment(ctx, req)
 }
+func (s *apiServer) ListPostWhiteboards(ctx context.Context, req openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	return s.social.ListPostWhiteboards(ctx, req)
+}
+func (s *apiServer) CreatePostWhiteboard(ctx context.Context, req openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	return s.social.CreatePostWhiteboard(ctx, req)
+}
 
 // --- posts -----------------------------------------------------------------
 

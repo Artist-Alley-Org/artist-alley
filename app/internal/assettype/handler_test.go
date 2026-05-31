@@ -475,3 +475,11 @@ func (rtOnly) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (op
 func (rtOnly) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
 }
+
+func (rtOnly) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from assettype test shim")
+}
+
+func (rtOnly) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from assettype test shim")
+}

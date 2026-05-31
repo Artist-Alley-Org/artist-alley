@@ -409,6 +409,66 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 	return items, nil
 }
 
+const listWhiteboardsForPost = `-- name: ListWhiteboardsForPost :many
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'post'
+  AND target_id = $1
+  AND annotation_type = 'whiteboard'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+`
+
+// Sidebar "Whiteboards" surface — every whiteboard sketch on a post,
+// newest first. Whiteboards are top-level comments
+// (parent_id IS NULL) with annotation_type='whiteboard'; reply
+// comments to a whiteboard show up via the existing thread query, not
+// here. The comments_whiteboards_idx partial index (migration 00029)
+// covers this exactly: (target_kind, target_id, created_at DESC)
+// WHERE annotation_type='whiteboard' AND deleted_at IS NULL.
+func (q *Queries) ListWhiteboardsForPost(ctx context.Context, targetID pgtype.UUID) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listWhiteboardsForPost, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Comment
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.ParentID,
+			&i.RootID,
+			&i.Depth,
+			&i.AuthorUserRef,
+			&i.Body,
+			&i.BodyHtml,
+			&i.AnnotationType,
+			&i.AnnotationData,
+			&i.LikeCount,
+			&i.EditedAt,
+			&i.DeletedAt,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteComment = `-- name: SoftDeleteComment :execrows
 UPDATE comments
    SET deleted_at = NOW(),

@@ -750,3 +750,11 @@ func (collShim) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (
 func (collShim) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
 }
+
+func (collShim) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from collections_test test shim")
+}
+
+func (collShim) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from collections_test test shim")
+}

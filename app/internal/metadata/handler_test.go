@@ -755,3 +755,11 @@ func (metaShim) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (
 func (metaShim) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
 }
+
+func (metaShim) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from metadata_test test shim")
+}
+
+func (metaShim) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from metadata_test test shim")
+}

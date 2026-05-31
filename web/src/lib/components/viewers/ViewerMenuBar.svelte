@@ -58,6 +58,13 @@
     onDownloadVariant?: () => void;
     onShareAsset?: () => void;
     onDeleteAsset?: () => void;
+    /** Optional — when wired, the Tools dropdown's Whiteboard item
+        becomes active. Currently host-provided by PostHost (post-level
+        whiteboards); future hosts can ignore it. */
+    onToggleWhiteboard?: () => void;
+    /** Currently-on state for the Whiteboard toggle (drives the
+        Tools-menu checkmark). */
+    whiteboardOpen?: boolean;
   }
 
   let {
@@ -82,6 +89,8 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
+    onToggleWhiteboard,
+    whiteboardOpen = false,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -98,6 +107,11 @@
   // sample rate for audio, page count for PDF, etc) the view body
   // writes into the controller on mount.
   const dimensions = $derived(controller.hudExtra ?? '');
+
+  // Tools-dropdown "any tool currently active" indicator — drives a
+  // subtle tint on the dropdown trigger so the user can see "something
+  // is on" from a closed bar.
+  const toolsActive = $derived(reviewMode || whiteboardOpen);
 
   // ── Actions ───────────────────────────────────────────────────────
   function downloadOriginal() {
@@ -351,18 +365,117 @@
   <!-- Spacer between centered title and right zone. -->
   <div class="min-w-2 flex-1"></div>
 
-  <!-- Review-mode toggle. Highlighted background when active so the
-       user always knows which mode the right pane is in. -->
-  <button
-    type="button"
-    onclick={onToggleReview}
-    class="rounded px-2.5 py-1 text-xs hover:bg-white/10"
-    class:bg-accent={reviewMode}
-    class:text-on-accent={reviewMode}
-    title={reviewMode ? t('viewer_menu.review_exit') : t('viewer_menu.review_enter')}
-  >
-    {t('viewer_menu.review')}
-  </button>
+  <!-- Tools dropdown — replaces the standalone Review button. Single
+       toolbox glyph opens a small menu with Review · Whiteboard ·
+       (future: Annotate · Compare). The dropdown highlights when any
+       tool inside is active so the user can see "something's on"
+       from the bar itself. -->
+  <Menu align="right" panelClass="min-w-[12rem]">
+    {#snippet trigger({ open })}
+      <!-- bg-white/10 in the hover state can't go through class:
+           directive (Tailwind slash-syntax fights Svelte's parser);
+           build the class string in JS the same way triggerClass()
+           does for the File/Edit/About menus above. -->
+      {@const cls = (() => {
+        const base = 'inline-flex h-7 items-center gap-1 rounded px-2 hover:bg-white/10';
+        if (open) return `${base} bg-white/10`;
+        if (toolsActive) return `${base} bg-accent text-on-accent`;
+        return base;
+      })()}
+      <span
+        class={cls}
+        title={t('viewer_menu.tools')}
+        aria-label={t('viewer_menu.tools')}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- Toolbox -->
+          <path d="M3 9h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
+          <path d="M8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" />
+        </svg>
+        <span class="hidden text-xs md:inline">{t('viewer_menu.tools')}</span>
+      </span>
+    {/snippet}
+    <!-- Review mode item -->
+    <button
+      type="button"
+      role="menuitem"
+      onclick={onToggleReview}
+      class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+    >
+      <span class="inline-flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+        {t('viewer_menu.review')}
+      </span>
+      {#if reviewMode}
+        <span class="text-accent">●</span>
+      {/if}
+    </button>
+    <!-- Whiteboard item — disabled when the host hasn't wired one
+         (e.g. the standalone /assets/[id] route has no post to bind
+         a whiteboard to). -->
+    {#if onToggleWhiteboard}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onToggleWhiteboard}
+        class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      >
+        <span class="inline-flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <!-- Presentation board -->
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          {t('viewer_menu.whiteboard')}
+        </span>
+        {#if whiteboardOpen}
+          <span class="text-accent">●</span>
+        {/if}
+      </button>
+    {:else}
+      <button
+        type="button"
+        role="menuitem"
+        disabled
+        class="flex w-full cursor-not-allowed items-center justify-between px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+        title={t('viewer_menu.coming_soon')}
+      >
+        <span class="inline-flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          {t('viewer_menu.whiteboard')}
+        </span>
+      </button>
+    {/if}
+    <!-- Reserved slots for the next phases — disabled placeholders so
+         the menu shape is set and the user sees what's coming. -->
+    <div class="my-1 h-px bg-border"></div>
+    <button
+      type="button"
+      role="menuitem"
+      disabled
+      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+      title={t('viewer_menu.coming_soon')}
+    >
+      {t('viewer_menu.annotate')}
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      disabled
+      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
+      title={t('viewer_menu.coming_soon')}
+    >
+      {t('viewer_menu.compare')}
+    </button>
+  </Menu>
 
   <!-- Quick-action icon row -->
   <button

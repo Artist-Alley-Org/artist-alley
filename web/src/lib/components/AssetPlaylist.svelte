@@ -71,6 +71,10 @@
     onDownloadVariant?: (assetId: string) => void;
     onShareAsset?: (assetId: string) => void;
     onDeleteAsset?: (assetId: string) => void;
+    /** Tools-menu Whiteboard item. Hosts that aren't post-anchored
+        omit this and the item stays disabled in the menu. */
+    onToggleWhiteboard?: () => void;
+    whiteboardOpen?: boolean;
   }
 
   let {
@@ -87,6 +91,8 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
+    onToggleWhiteboard,
+    whiteboardOpen = false,
   }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
@@ -455,6 +461,8 @@
               onDeleteAsset={onDeleteAsset
                 ? () => onDeleteAsset(currentItem.asset.id)
                 : undefined}
+              {onToggleWhiteboard}
+              {whiteboardOpen}
             />
           </div>
         {:else}

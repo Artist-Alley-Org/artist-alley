@@ -22,7 +22,10 @@
   import CollectionPicker from './CollectionPicker.svelte';
   import CommentsThread from './CommentsThread.svelte';
   import Menu from './Menu.svelte';
+  import Whiteboard from './whiteboard/Whiteboard.svelte';
+  import BrushCanvas from './whiteboard/BrushCanvas.svelte';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
+  import type { BrushContent } from '$lib/whiteboard/types';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
@@ -91,6 +94,69 @@
   // previously-viewed member serves from cache. Refetched as the
   // cursor moves to a not-yet-loaded asset.
   let fieldsByAsset = $state<Map<string, AssetFieldValue[]>>(new Map());
+
+  // ── Whiteboard state ──────────────────────────────────────────────
+  // Whiteboards are per-post brush sketches. The Tools dropdown's
+  // Whiteboard item flips `whiteboardOpen`; the overlay component
+  // owns the drawing surface and POSTs on Save, then onSaved fires
+  // back here to refresh the sidebar list. We treat the API response
+  // as a generic Comment row (annotation_type='whiteboard',
+  // annotation_data carries the BrushContent JSON) and unpack here.
+  interface WhiteboardRow {
+    id: string;
+    author_user_ref: number;
+    body: string; // title (empty if untitled)
+    created_at: string;
+    annotation_data?: BrushContent | null;
+  }
+  let whiteboardOpen = $state(false);
+  let whiteboards = $state<WhiteboardRow[]>([]);
+  let whiteboardLoading = $state(false);
+  let previewedWhiteboard = $state<WhiteboardRow | null>(null);
+
+  function toggleWhiteboard() {
+    if (previewedWhiteboard) previewedWhiteboard = null;
+    whiteboardOpen = !whiteboardOpen;
+  }
+
+  async function loadWhiteboards(id: string) {
+    whiteboardLoading = true;
+    try {
+      const { data } = await api.GET('/posts/{id}/whiteboards', {
+        params: { path: { id } },
+      });
+      if (data) {
+        whiteboards = (data as unknown as WhiteboardRow[]).map((c) => ({
+          id: c.id,
+          author_user_ref: c.author_user_ref,
+          body: c.body ?? '',
+          created_at: c.created_at,
+          annotation_data: c.annotation_data ?? null,
+        }));
+      }
+    } catch {
+      whiteboards = [];
+    } finally {
+      whiteboardLoading = false;
+    }
+  }
+
+  // Refetch when the post id changes.
+  $effect(() => {
+    if (!post) return;
+    void loadWhiteboards(post.id);
+  });
+
+  function onWhiteboardSaved() {
+    if (post) void loadWhiteboards(post.id);
+  }
+
+  async function deleteWhiteboard(id: string) {
+    if (!confirm('Delete this whiteboard?')) return;
+    await api.DELETE('/comments/{id}', { params: { path: { id } } });
+    if (post) void loadWhiteboards(post.id);
+    if (previewedWhiteboard?.id === id) previewedWhiteboard = null;
+  }
 
   const post = $derived(pl.aux.post);
   const currentItem = $derived(pl.source.items[pl.source.cursor] ?? null);
@@ -358,7 +424,56 @@
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
   onDeleteAsset={isOwner ? deleteAsset : undefined}
+  onToggleWhiteboard={toggleWhiteboard}
+  {whiteboardOpen}
 />
+
+{#if whiteboardOpen && post}
+  <!-- Mount the whiteboard overlay. Self-contained — toolbar +
+       canvas + save flow. Uses <dialog showModal()> so the browser
+       top-layer stacks us above the AssetPlaylist dialog beneath. -->
+  <Whiteboard
+    postId={post.id}
+    onClose={() => (whiteboardOpen = false)}
+    onSaved={onWhiteboardSaved}
+  />
+{/if}
+
+{#if previewedWhiteboard && previewedWhiteboard.annotation_data}
+  <!-- Read-only preview of a saved whiteboard. Lightweight modal
+       wrapping a non-interactive BrushCanvas — no toolbar, just the
+       sketch + a Close button. Clicking the backdrop closes. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+    onclick={(e) => { if (e.target === e.currentTarget) previewedWhiteboard = null; }}
+    role="dialog"
+    aria-label="Whiteboard preview"
+  >
+    <div class="relative max-h-[90vh] max-w-[90vw] rounded-lg border border-border bg-surface shadow-2xl">
+      <header class="flex items-center justify-between border-b border-border px-3 py-2 text-xs">
+        <span class="truncate text-fg">{previewedWhiteboard.body || 'Untitled sketch'}</span>
+        <button
+          type="button"
+          onclick={() => (previewedWhiteboard = null)}
+          class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-danger hover:text-white"
+          title="Close (Esc)"
+          aria-label="Close preview"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+      <div
+        class="relative bg-white"
+        style:width="80vw"
+        style:height="calc(80vw * {previewedWhiteboard.annotation_data.source_h / previewedWhiteboard.annotation_data.source_w})"
+        style:max-height="80vh"
+      >
+        <BrushCanvas value={previewedWhiteboard.annotation_data} readOnly />
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if pickerOpen}
   <CollectionPicker
@@ -512,6 +627,72 @@
 
       {#if post.description}
         <p class="mb-4 whitespace-pre-wrap text-fg-muted">{post.description}</p>
+      {/if}
+
+      {#if whiteboards.length > 0 || whiteboardLoading}
+        <!-- Whiteboards section — list of saved brush sketches on
+             this post. Collapsed by default so the sidebar leads
+             with the social context. Click a row → mounts the
+             read-only preview overlay. Owners get a small delete
+             icon next to each row. -->
+        <details class="mb-4 border-t border-border pt-3 text-xs aa-collapse">
+          <summary class="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-fg-muted hover:text-fg">
+            <span class="inline-flex items-center gap-1">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              Whiteboards
+              <span class="text-fg-muted/60">({whiteboards.length})</span>
+            </span>
+          </summary>
+          <ul class="mt-3 space-y-1.5">
+            {#each whiteboards as wb (wb.id)}
+              <li class="group flex items-center gap-2 rounded p-1.5 hover:bg-surface-elevated">
+                <button
+                  type="button"
+                  onclick={() => (previewedWhiteboard = previewedWhiteboard?.id === wb.id ? null : wb)}
+                  class="flex flex-1 items-center gap-2 text-left"
+                  title="Preview whiteboard"
+                >
+                  <div class="flex h-10 w-14 shrink-0 items-center justify-center rounded border border-border bg-surface text-fg-muted">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <line x1="8" y1="21" x2="16" y2="21" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                    </svg>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-xs font-medium text-fg">
+                      {wb.body || 'Untitled sketch'}
+                    </div>
+                    <div class="text-[10px] text-fg-muted">
+                      {relativeTime(wb.created_at)}
+                    </div>
+                  </div>
+                </button>
+                {#if auth.user?.ref === wb.author_user_ref || isOwner}
+                  <button
+                    type="button"
+                    onclick={() => deleteWhiteboard(wb.id)}
+                    class="opacity-0 group-hover:opacity-100 hover:text-danger"
+                    title="Delete whiteboard"
+                    aria-label="Delete whiteboard"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    </svg>
+                  </button>
+                {/if}
+              </li>
+            {/each}
+            {#if whiteboards.length === 0 && !whiteboardLoading}
+              <li class="px-1 py-1 text-[11px] italic text-fg-muted">
+                No whiteboards yet — click Tools → Whiteboard to sketch.
+              </li>
+            {/if}
+          </ul>
+        </details>
       {/if}
 
       {#if currentFields.length > 0}

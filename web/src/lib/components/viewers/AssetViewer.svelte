@@ -88,6 +88,10 @@
     onDownloadVariant?: () => void;
     onShareAsset?: () => void;
     onDeleteAsset?: () => void;
+    /** Tools-menu Whiteboard item. Host wires this when a whiteboard
+        surface is mountable (post-anchored). */
+    onToggleWhiteboard?: () => void;
+    whiteboardOpen?: boolean;
   }
 
   let {
@@ -108,6 +112,8 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
+    onToggleWhiteboard,
+    whiteboardOpen = false,
   }: Props = $props();
 
   // The right pane is shown when there's something to put in it:
@@ -523,6 +529,8 @@
     {onDownloadVariant}
     {onShareAsset}
     {onDeleteAsset}
+    {onToggleWhiteboard}
+    {whiteboardOpen}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the

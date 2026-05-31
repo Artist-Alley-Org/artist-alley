@@ -831,3 +831,11 @@ func (authOnlyImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObjec
 func (authOnlyImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
 }
+
+func (authOnlyImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from auth test shim")
+}
+
+func (authOnlyImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from auth test shim")
+}

@@ -640,7 +640,11 @@
     "delete_asset": "Delete asset…",
     "window_close": "Close (Esc)",
     "window_maximize": "Maximize",
-    "window_restore": "Restore"
+    "window_restore": "Restore",
+    "tools": "Tools",
+    "whiteboard": "Whiteboard…",
+    "annotate": "Annotate… (soon)",
+    "compare": "Compare versions… (soon)"
   },
   "collection_picker": {
     "title_single": "Add to collection",

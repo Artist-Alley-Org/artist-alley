@@ -697,3 +697,11 @@ func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (
 func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
 }
+
+func (shimImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from setup_test test shim")
+}
+
+func (shimImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from setup_test test shim")
+}

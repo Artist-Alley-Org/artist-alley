@@ -24,6 +24,7 @@ package social
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -387,6 +388,128 @@ func (h *Handler) DeleteComment(
 }
 
 // ---------------------------------------------------------------------------
+// Whiteboards — top-level comments with annotation_type='whiteboard'
+// ---------------------------------------------------------------------------
+//
+// Whiteboards are stored as comments so they inherit threading (reply
+// to a sketch), likes, soft-delete, federation, and audit for free.
+// Migration 00029 extended the comments.annotation_type CHECK to
+// include 'whiteboard'; this is the HTTP surface that drives it.
+//
+// Capability: posts.comment (same gate as a regular comment).
+// Whiteboards ARE comments at the storage layer — if we ever want to
+// gate them separately a future migration can split the capability
+// without restructuring the data.
+
+func (h *Handler) ListPostWhiteboards(
+	ctx context.Context,
+	req openapi.ListPostWhiteboardsRequestObject,
+) (openapi.ListPostWhiteboardsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListPostWhiteboards401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if exists, err := h.postExists(ctx, pgPostID); err != nil {
+		return nil, fmt.Errorf("social: post check: %w", err)
+	} else if !exists {
+		return openapi.ListPostWhiteboards404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+		}, nil
+	}
+	rows, err := New(h.Pool).ListWhiteboardsForPost(ctx, pgPostID)
+	if err != nil {
+		return nil, fmt.Errorf("social: list whiteboards: %w", err)
+	}
+	out := make(openapi.ListPostWhiteboards200JSONResponse, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, commentRowToAPI(r))
+	}
+	return out, nil
+}
+
+func (h *Handler) CreatePostWhiteboard(
+	ctx context.Context,
+	req openapi.CreatePostWhiteboardRequestObject,
+) (openapi.CreatePostWhiteboardResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.CreatePostWhiteboard401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can(CapPostsComment) && !caller.Can(CapSystemAdmin) {
+		return openapi.CreatePostWhiteboard403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "posts.comment capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.CreatePostWhiteboard400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	// Marshal the content payload back to JSON for storage. The
+	// generated type is the validated WhiteboardContent struct; re-
+	// marshalling preserves the schema-validated shape without us
+	// re-walking each field.
+	contentBytes, err := json.Marshal(req.Body.Content)
+	if err != nil {
+		return openapi.CreatePostWhiteboard400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid content payload"},
+		}, nil
+	}
+	// Light client-side-validation backstop — we trust openapi-codegen's
+	// validation for shape, but defend against an empty layers array
+	// slipping through (the schema requires minItems=1 but a malicious
+	// client could still send raw bytes via a different path later).
+	if len(contentBytes) < 2 {
+		return openapi.CreatePostWhiteboard400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "content is required"},
+		}, nil
+	}
+
+	pgPostID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if exists, err := h.postExists(ctx, pgPostID); err != nil {
+		return nil, fmt.Errorf("social: post check: %w", err)
+	} else if !exists {
+		return openapi.CreatePostWhiteboard404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
+		}, nil
+	}
+
+	title := ""
+	if req.Body.Title != nil {
+		title = strings.TrimSpace(*req.Body.Title)
+	}
+
+	// Whiteboards are top-level by definition — we don't reply to a
+	// whiteboard with another whiteboard. Replies are normal comments
+	// threaded under it via parent_id (handled by the regular
+	// CreatePostComment handler).
+	newID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	annotationType := "whiteboard"
+	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
+		ID:             newID,
+		TargetKind:     "post",
+		TargetID:       pgPostID,
+		ParentID:       pgtype.UUID{},
+		RootID:         newID,
+		Depth:          0,
+		AuthorUserRef:  caller.UserRef,
+		Body:           title, // title lives in body for whiteboards
+		BodyHtml:       "",
+		AnnotationType: &annotationType,
+		AnnotationData: contentBytes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("social: create whiteboard: %w", err)
+	}
+	return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -423,6 +546,15 @@ func commentRowToAPI(r Comment) openapi.Comment {
 		v := openapi.CommentAnnotationType(*r.AnnotationType)
 		out.AnnotationType = &v
 	}
+	if len(r.AnnotationData) > 0 {
+		// JSONB → generic map. The schema is per-annotation_type and
+		// validated client-side; we don't want to bake every variant
+		// into the Go type system.
+		var data map[string]interface{}
+		if err := json.Unmarshal(r.AnnotationData, &data); err == nil && data != nil {
+			out.AnnotationData = &data
+		}
+	}
 	if r.EditedAt.Valid {
 		t := r.EditedAt.Time
 		out.EditedAt = &t
@@ -453,4 +585,6 @@ var _ interface {
 	ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error)
 	CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error)
 	DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error)
+	ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error)
+	CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error)
 } = (*Handler)(nil)

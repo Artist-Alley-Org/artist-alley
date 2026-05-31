@@ -1713,6 +1713,83 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /posts/{id}/whiteboards:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostWhiteboards
+      summary: List whiteboard sketches on a post
+      description: |
+        Whiteboards are free-form brush sketches anchored to a post —
+        brainstorm sessions, sketch passes, off-asset notes.
+        Storage-wise they're top-level `comments` rows with
+        `annotation_type='whiteboard'`; the partial index
+        `comments_whiteboards_idx` makes this query cheap.
+
+        Replies to a whiteboard are normal comments threaded under it
+        and surface via the regular comment thread query, not this
+        list.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Whiteboards for the post (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createPostWhiteboard
+      summary: Save a whiteboard sketch on a post
+      description: |
+        Persists a brush-sketch as a top-level comment with
+        `annotation_type='whiteboard'`. The `content` payload carries
+        the strokes (vector source of truth — perfect-freehand input
+        points + per-layer arrangement) plus the source canvas
+        dimensions so the viewer can re-render proportionally
+        regardless of viewport size.
+
+        Requires `posts.comment` capability (Base default) — same
+        gate as posting a regular comment, since whiteboards ARE
+        comments at the storage layer. Future phases can split the
+        capability if finer governance is needed.
+
+        `title` is optional. If omitted the sidebar list shows
+        "Untitled sketch" with the author + timestamp.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhiteboardCreate" }
+      responses:
+        "201":
+          description: Whiteboard saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /comments/{id}:
     parameters:
       - name: id
@@ -4440,6 +4517,93 @@ components:
             When set, the new comment is a reply to this parent.
             Depth and root_id are computed server-side from the
             parent row.
+
+    WhiteboardContent:
+      type: object
+      required: [layers, source_w, source_h]
+      description: |
+        Vector source of truth for a whiteboard / annotation sketch.
+        The frontend renders from this; OCR / AI ingestion later can
+        consume it directly without going through the raster snapshot.
+      properties:
+        source_w:
+          type: integer
+          minimum: 1
+          description: |
+            Width of the source canvas in CSS pixels at save time.
+            Used to scale the drawing proportionally when re-rendered
+            in a different viewport size — strokes are stored in
+            source-canvas coordinates, not viewport pixels.
+        source_h:
+          type: integer
+          minimum: 1
+        image_hash:
+          type: string
+          nullable: true
+          description: |
+            Optional content-addressed hash of a rasterized PNG
+            snapshot in object storage. Convenience output for OCR /
+            AI / PDF export later. Null on save means strokes are
+            authoritative and the snapshot will be lazily rendered.
+        layers:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: |
+            Ordered bottom-to-top. Each layer carries its own visible
+            / opacity / strokes payload — same shape Photoshop /
+            Procreate use. Capped at 32 to keep payloads bounded.
+          items:
+            type: object
+            required: [id, strokes]
+            properties:
+              id: { type: string, description: "Stable per-layer identifier (UUIDv4 from the client)." }
+              name: { type: string }
+              visible: { type: boolean, default: true }
+              opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
+              strokes:
+                type: array
+                description: |
+                  Each stroke = a tool, color, base width, and the
+                  raw pointer-event sample sequence the perfect-
+                  freehand renderer turns into a smooth polygon.
+                items:
+                  type: object
+                  required: [tool, color, width, points]
+                  properties:
+                    tool:
+                      type: string
+                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, ellipse, text]
+                    color: { type: string, description: "Hex like '#ff6b00' or 'currentColor' for author-tint." }
+                    width: { type: number, minimum: 0.5, maximum: 200 }
+                    opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
+                    text:
+                      type: string
+                      nullable: true
+                      description: "Only for tool='text'. The label content."
+                    points:
+                      type: array
+                      description: |
+                        Pointer samples — perfect-freehand input.
+                        Each entry: [x, y, pressure?]. Pressure 0–1
+                        from stylus when available; the engine
+                        simulates from velocity otherwise.
+                      items:
+                        type: array
+                        minItems: 2
+                        maxItems: 3
+                        items: { type: number }
+
+    WhiteboardCreate:
+      type: object
+      required: [content]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          description: Optional title for the sidebar list.
+        content:
+          $ref: "#/components/schemas/WhiteboardContent"
 
     AclEntry:
       type: object
