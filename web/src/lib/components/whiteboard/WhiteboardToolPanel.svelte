@@ -31,7 +31,14 @@
   import { loadFont } from '$lib/whiteboard/fonts.svelte';
   import { ITEM_SOFT_CAP, ITEM_HARD_CAP } from '$lib/whiteboard/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
-  import { listBrushPacks } from '$lib/whiteboard/brushes';
+  import {
+    listBrushPacks,
+    registerPackFromAPI,
+    unregisterPack,
+    subscribeBrushPacks,
+    type APIPack,
+  } from '$lib/whiteboard/brushes';
+  import { onMount } from 'svelte';
   import ColorPicker from './ColorPicker.svelte';
 
   interface Props {
@@ -43,6 +50,92 @@
   }
 
   let { session, saving = false, saveError = null, onSave, onClose }: Props = $props();
+
+  // ── Brush-pack management (Phase 1.21d) ──────────────────────
+  //
+  // The panel renders `listBrushPacks()` directly, but the registry
+  // is module-scope (not reactive). Subscribe to its change events
+  // so a new import / delete re-renders the BRUSHES section without
+  // requiring users to re-open the whiteboard.
+  let packsBumper = $state(0); // bumped on subscribe-notify; reads force re-render
+  onMount(() => {
+    const unsub = subscribeBrushPacks(() => { packsBumper++; });
+    void fetchInstalledPacks();
+    return unsub;
+  });
+  const installedPacks = $derived.by(() => {
+    void packsBumper; // create dependency
+    return listBrushPacks();
+  });
+
+  // Load the user's previously-imported packs from the backend at
+  // panel mount. Built-in pack is always present (registered at
+  // module load); these append.
+  async function fetchInstalledPacks() {
+    try {
+      const r = await fetch('/api/v1/brush-packs', { credentials: 'include' });
+      if (!r.ok) return; // 401 on unauth is fine; built-ins still work
+      const j = await r.json() as { packs: APIPack[] };
+      for (const p of j.packs) registerPackFromAPI(p);
+    } catch {
+      // Network down → built-ins keep working; reload to retry.
+    }
+  }
+
+  // Import-pack file picker. Triggered by the Import button in the
+  // BRUSHES section; on file pick → POST multipart → register the
+  // new pack from the server's response.
+  let importInput: HTMLInputElement | undefined = $state();
+  let importBusy = $state(false);
+  let importError = $state<string | null>(null);
+  async function onImportFiles(e: Event) {
+    const t = e.currentTarget as HTMLInputElement;
+    const file = t.files?.[0];
+    t.value = ''; // reset so picking the same file twice works
+    if (!file) return;
+    importBusy = true;
+    importError = null;
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('name', file.name.replace(/\.abr$/i, '') || 'Imported pack');
+      const r = await fetch('/api/v1/brush-packs', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+        importError = err.error || 'Import failed';
+        return;
+      }
+      const pack = await r.json() as APIPack;
+      registerPackFromAPI(pack);
+    } catch (e) {
+      importError = (e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      importBusy = false;
+    }
+  }
+
+  async function deletePack(packId: string) {
+    // Built-in pack is in-memory only; deletion just unregisters it
+    // locally. User-imported packs round-trip through the backend.
+    if (packId === 'builtin') {
+      unregisterPack(packId);
+      return;
+    }
+    if (!confirm('Delete this brush pack? This removes it from your account.')) return;
+    try {
+      const r = await fetch(`/api/v1/brush-packs/${packId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (r.ok || r.status === 404) unregisterPack(packId);
+    } catch {
+      // Leave the registry alone on failure so the user can retry.
+    }
+  }
 
   // Tool catalogue — split per-section so the sidebar maps each
   // tool to its right pane (matches Paint's Tools / Brushes /
@@ -547,17 +640,49 @@
             </button>
           {/each}
         </div>
-        <!-- ── Stamp brushes (Phase 1.21b) ──────────────────────
-             Surfaces every stamp from every loaded brush pack as
-             a button alongside the procedural styles. Clicking
-             sets session.stampId + auto-switches tool=pen so
-             drawing immediately uses the stamp renderer.
-             Built-in pack is registered at module load; future
-             user-imported ABR packs (Phase 1.21d) will register
-             themselves on import + show up here automatically. -->
-        {#each listBrushPacks() as pack (pack.id)}
-          <div class="mt-2 text-[10px] uppercase tracking-wide text-fg-muted/70">
-            {pack.name} stamps
+        <!-- ── Stamp brushes (Phase 1.21b/d) ─────────────────────
+             Each registered brush pack renders as a header strip
+             with its name, a delete button (when removable), and
+             a grid of stamp buttons. Clicking a stamp sets
+             session.stampId + auto-switches tool=pen. The Import
+             button opens a file picker for .abr packs which upload
+             through /api/v1/brush-packs and re-register on success.
+             -->
+        <div class="mt-3 flex items-center justify-between">
+          <span class="text-[10px] uppercase tracking-wide text-fg-muted/70">Stamp brushes</span>
+          <button
+            type="button"
+            onclick={() => importInput?.click()}
+            disabled={importBusy}
+            class="inline-flex h-6 items-center rounded border border-border px-2 text-[10px] text-fg hover:border-fg-muted disabled:opacity-50"
+            title="Import a Photoshop .abr brush pack"
+          >
+            {importBusy ? 'Importing\u2026' : 'Import .abr\u2026'}
+          </button>
+          <input
+            bind:this={importInput}
+            type="file"
+            accept=".abr,application/octet-stream"
+            class="hidden"
+            onchange={onImportFiles}
+          />
+        </div>
+        {#if importError}
+          <div class="mt-1 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
+            {importError}
+          </div>
+        {/if}
+        {#each installedPacks as pack (pack.id)}
+          <div class="mt-2 flex items-center justify-between">
+            <span class="text-[10px] uppercase tracking-wide text-fg-muted/70">
+              {pack.name}
+            </span>
+            <button
+              type="button"
+              onclick={() => deletePack(pack.id)}
+              class="text-[10px] text-fg-muted hover:text-danger"
+              title={pack.id === 'builtin' ? 'Hide built-in stamps for this session' : 'Delete brush pack'}
+            >\u00d7</button>
           </div>
           <div class="mt-1 grid grid-cols-5 gap-1">
             {#each pack.stamps as stamp (stamp.id)}
@@ -574,17 +699,26 @@
                 aria-label={stamp.label}
                 aria-pressed={active}
               >
-                <!-- Preview: render the stamp source as a tiny img
-                     inside the button. Browsers handle the async
-                     decode (the procedural ones resolve instantly
-                     since they're data: URLs). -->
                 {#if typeof stamp.source !== 'string'}
-                  <img
-                    src={stamp.source.src}
-                    alt={stamp.label}
-                    class="h-6 w-6 object-contain"
-                    style:filter="invert(1)"
-                  />
+                  <!-- Preview the alpha-mask stamp as-is on a
+                       white sub-tile inside the dark button so it
+                       reads regardless of theme. Procedurally
+                       generated stamps are white-alpha-on-
+                       transparent, so they pop on white. -->
+                  <span class="inline-flex h-6 w-6 items-center justify-center rounded-sm bg-white">
+                    <img
+                      src={stamp.source.src}
+                      alt={stamp.label}
+                      class="h-5 w-5 object-contain"
+                      style:filter="invert(1)"
+                    />
+                  </span>
+                {:else}
+                  <!-- URL-sourced: source becomes an Image after the
+                       preloader fires (registerPackFromAPI). Until
+                       then, show a tiny placeholder so the layout
+                       doesn't jump. -->
+                  <span class="text-[9px] text-fg-muted">\u2026</span>
                 {/if}
               </button>
             {/each}

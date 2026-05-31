@@ -62,6 +62,194 @@ function makeHardRoundStamp(size = 256): HTMLImageElement {
   return img;
 }
 
+// ── Procedural built-ins, original work (Phase 1.21e) ─────────────
+//
+// Four more stamps, all hand-authored canvas drawing. No PNG files,
+// no third-party bitmaps — pure pixel math. Each one mimics a known
+// brush *category* (charcoal / pencil / spray / calligraphy) using
+// the universal stamp-along-path engine; the texture comes from the
+// per-stamp alpha-mask shape, not from a sourced bitmap.
+//
+// Determinism: we use a tiny seeded PRNG (mulberry32) instead of
+// Math.random so re-generating the same stamp on a different machine
+// produces identical pixels. The LRU tint cache assumes stable
+// bitmaps; a flaky generator would invalidate caches every reload.
+
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Charcoal — rough-edged cluster of overlapping low-alpha dabs.
+ *  Reads as "I rubbed a charcoal stick on paper": dense in the
+ *  center, broken at the edges, with internal grain from the dab
+ *  overlaps. Use ~10% spacing along the stroke and the overlaps
+ *  paint a textured ribbon, not a smooth line. */
+function makeCharcoalStamp(size = 256): HTMLImageElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2;
+  const rand = mulberry32(0xC0A11C0A);
+  // Two passes for the "rubbed charcoal" look:
+  //   1. A handful of LARGE low-alpha base dabs to fill the core
+  //      with dense but uneven darkness — the "rub" base.
+  //   2. Many SMALL crisp specks scattered out to a wider radius
+  //      (some past r * 1.1 so the rim is broken, not circular)
+  //      — the "flecks coming off the stick" texture.
+  // Together they read like a real charcoal stamp: solid-ish
+  // centre, ragged edges, internal variation.
+  for (let i = 0; i < 30; i++) {
+    const tr = Math.pow(rand(), 0.55) * r * 0.75;
+    const ta = rand() * Math.PI * 2;
+    const dx = cx + Math.cos(ta) * tr;
+    const dy = cy + Math.sin(ta) * tr;
+    const dabR = 20 + rand() * 35;
+    const a = 0.14 + rand() * 0.18;
+    const g = ctx.createRadialGradient(dx, dy, 0, dx, dy, dabR);
+    g.addColorStop(0, `rgba(255,255,255,${a})`);
+    g.addColorStop(0.7, `rgba(255,255,255,${a * 0.4})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(dx - dabR, dy - dabR, dabR * 2, dabR * 2);
+  }
+  // Texture flecks — random 1-3 px specks. Density biases toward
+  // the rim so the centre stays smoother than the edges (like
+  // real charcoal where the loose particles fly outward).
+  for (let i = 0; i < 800; i++) {
+    const tr = Math.pow(rand(), 0.35) * r * 1.08;
+    const ta = rand() * Math.PI * 2;
+    const dx = cx + Math.cos(ta) * tr;
+    const dy = cy + Math.sin(ta) * tr;
+    if (dx < 0 || dy < 0 || dx >= size || dy >= size) continue;
+    const sR = rand() < 0.7 ? 1 : 1 + rand() * 2;
+    const a = 0.25 + rand() * 0.6;
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fillRect(Math.floor(dx), Math.floor(dy), sR, sR);
+  }
+  const img = new Image();
+  img.src = canvas.toDataURL('image/png');
+  return img;
+}
+
+/** Pencil — narrow scatter of crisp tiny dots in a soft envelope.
+ *  When stamped densely along a path, the overlapping scatter reads
+ *  as graphite grain. Smaller than the other stamps (96 px) so the
+ *  per-dab pixels stay crisp at typical brush widths. */
+function makePencilStamp(size = 96): HTMLImageElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2;
+  const rand = mulberry32(0xDEAD1CE);
+  // ~400 tiny crisp dots, density falls off toward the edges. The
+  // crisp 1-px dots (not soft gradients) is what gives pencil its
+  // "grain" feel vs charcoal's "rubbed" feel.
+  for (let i = 0; i < 400; i++) {
+    const tr = Math.pow(rand(), 0.7) * r;
+    const ta = rand() * Math.PI * 2;
+    const dx = cx + Math.cos(ta) * tr;
+    const dy = cy + Math.sin(ta) * tr;
+    const a = 0.4 + rand() * 0.5;
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fillRect(Math.floor(dx), Math.floor(dy), 1, 1);
+  }
+  const img = new Image();
+  img.src = canvas.toDataURL('image/png');
+  return img;
+}
+
+/** Spray — airbrush-style atomized dots. Bright dense centre,
+ *  sparse outer scatter, falloff via density (not opacity) which
+ *  reads more like real spray than a radial gradient does. The
+ *  dots are tiny + crisp; their density is what creates the soft
+ *  edge feel. */
+function makeSprayStamp(size = 256): HTMLImageElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2;
+  const rand = mulberry32(0x5C4144ED);
+  // Strong density gradient: many more dots near centre than rim.
+  // Sample uniformly in the disc, then accept-reject based on
+  // distance-from-center → quadratic falloff.
+  let placed = 0;
+  while (placed < 1500) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const dx = x - cx;
+    const dy = y - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > r) continue;
+    const density = 1 - d / r; // 1 at centre, 0 at rim
+    if (rand() > density * density) continue;
+    const a = 0.5 + rand() * 0.5;
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+    placed++;
+  }
+  const img = new Image();
+  img.src = canvas.toDataURL('image/png');
+  return img;
+}
+
+/** Calligraphy wedge — angled rectangle. Paints with a thick-thin
+ *  modulation that depends on stroke direction: parallel to the
+ *  wedge axis = thin line; perpendicular = thick line. Combine
+ *  with alignToPath=false so the wedge keeps its angle, and the
+ *  stroke direction relative to the wedge does the thick/thin
+ *  modulation automatically. */
+function makeCalligraphyStamp(size = 256): HTMLImageElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+  // Steep nib at 55° (closer to vertical) + tall+narrow wedge so
+  // the thick-thin modulation is dramatic. Stroke direction
+  // controls which dimension contributes — horizontal strokes
+  // paint a thin line, vertical strokes paint a thick one,
+  // diagonals interpolate. That's the signature calligraphy feel.
+  ctx.translate(cx, cy);
+  ctx.rotate((55 * Math.PI) / 180);
+  const w = size * 0.86;
+  const h = size * 0.10;
+  const r = h * 0.45;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  // Rounded rectangle, centred at origin.
+  ctx.moveTo(-w / 2 + r, -h / 2);
+  ctx.lineTo(w / 2 - r, -h / 2);
+  ctx.arcTo(w / 2, -h / 2, w / 2, -h / 2 + r, r);
+  ctx.lineTo(w / 2, h / 2 - r);
+  ctx.arcTo(w / 2, h / 2, w / 2 - r, h / 2, r);
+  ctx.lineTo(-w / 2 + r, h / 2);
+  ctx.arcTo(-w / 2, h / 2, -w / 2, h / 2 - r, r);
+  ctx.lineTo(-w / 2, -h / 2 + r);
+  ctx.arcTo(-w / 2, -h / 2, -w / 2 + r, -h / 2, r);
+  ctx.closePath();
+  ctx.fill();
+  const img = new Image();
+  img.src = canvas.toDataURL('image/png');
+  return img;
+}
+
 const builtinPack: BrushPack = {
   id: 'builtin',
   name: 'Built-in',
@@ -80,6 +268,59 @@ const builtinPack: BrushPack = {
       label: 'Hard round',
       source: makeHardRoundStamp(256),
       spacing: 0.1,
+      alignToPath: false,
+    },
+    {
+      id: 'builtin:charcoal',
+      label: 'Charcoal',
+      source: makeCharcoalStamp(256),
+      // ~25% spacing so the textured cluster reads as overlapping
+      // dabs, not a solid smear. Random per-stamp rotation kills
+      // the Moiré tile-pattern that would otherwise show up when
+      // the same noise stamp lays down at fixed intervals.
+      spacing: 0.25,
+      alignToPath: false,
+      angleJitter: 180,
+      sizeJitter: 0.15,
+      opacityJitter: 0.15,
+    },
+    {
+      id: 'builtin:pencil',
+      label: 'Pencil',
+      source: makePencilStamp(96),
+      // Pencil is *tight* + crisp — many small dots overlapping
+      // densely produce the continuous graphite-grain look. Small
+      // angle jitter (45°) to defeat tiling without making the
+      // stroke look messy. Slight opacity jitter sells the
+      // "pressure modulating darkness" feel.
+      spacing: 0.06,
+      alignToPath: false,
+      angleJitter: 45,
+      opacityJitter: 0.25,
+    },
+    {
+      id: 'builtin:spray',
+      label: 'Spray',
+      source: makeSprayStamp(256),
+      // Medium spacing for atomized look; tighter and the random
+      // dots merge into noise, looser and the stroke becomes
+      // a dotted-line. Full angle jitter breaks the dot-pattern
+      // repetition completely.
+      spacing: 0.15,
+      alignToPath: false,
+      angleJitter: 360,
+      opacityJitter: 0.2,
+    },
+    {
+      id: 'builtin:calligraphy',
+      label: 'Calligraphy',
+      source: makeCalligraphyStamp(256),
+      // Wider spacing so the wedge stamps don't fully merge — the
+      // angled edges show as the characteristic "thick-thin
+      // modulation depending on stroke direction" calligraphy
+      // signature. Too dense and you get a solid line; too sparse
+      // and you get visible slashes.
+      spacing: 0.18,
       alignToPath: false,
     },
   ],
@@ -108,6 +349,117 @@ export function getStamp(id: string): BrushStamp | undefined {
 export function registerPack(pack: BrushPack) {
   packs.set(pack.id, pack);
   for (const s of pack.stamps) stampsById.set(s.id, s);
+  notifyChange();
+}
+
+/** Drop a pack + its stamps. Doesn't touch the tint cache — entries
+ *  for the removed stamps just sit until LRU evicts them; that's
+ *  cheap (a few hundred KB) and avoids a per-key scan on delete. */
+export function unregisterPack(packId: string) {
+  const pack = packs.get(packId);
+  if (!pack) return;
+  for (const s of pack.stamps) stampsById.delete(s.id);
+  packs.delete(packId);
+  notifyChange();
+}
+
+// ── Change-notify (let UI re-render when packs come / go) ────────
+// The panel renders `listBrushPacks()` directly; without an external
+// signal it can't tell the list changed when an import lands. Tiny
+// subscribe API — no full reactive runtime needed, just a pub-sub.
+
+type Listener = () => void;
+const listeners = new Set<Listener>();
+
+export function subscribeBrushPacks(l: Listener): () => void {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+function notifyChange() {
+  for (const l of listeners) l();
+}
+
+// ── API-shaped pack helper (Phase 1.21d) ─────────────────────────
+//
+// Convert a `{packId, stamps[]}` JSON blob from /brush-packs into a
+// `BrushPack` whose stamps' `source` is a URL string pointing at the
+// stamp-fetch endpoint. First `getTintedStamp` call kicks off the
+// HTTPS GET; on load the source is replaced with the resolved Image
+// and the canvas re-renders via the change-notify hook.
+
+/** Schema-aligned shape — what the API returns (subset). Avoids a
+ *  full import of the generated `schema.d.ts` (the generated types
+ *  use `number` for ints but mark some fields nullable; this trims
+ *  to just what we need at the registry layer). */
+export interface APIStamp {
+  id: string;
+  label?: string | null;
+  width: number;
+  height: number;
+  spacing: number;
+  align_to_path: boolean;
+  size_jitter?: number | null;
+  opacity_jitter?: number | null;
+  angle_jitter?: number | null;
+}
+export interface APIPack {
+  id: string;
+  name: string;
+  source_file?: string | null;
+  stamps: APIStamp[];
+}
+
+/** Where the frontend fetches stamp bytes from. Matches the OpenAPI
+ *  `getBrushPackStamp` operation route. */
+function stampURL(stampId: string): string {
+  return `/api/v1/brush-packs/stamps/${stampId}`;
+}
+
+export function registerPackFromAPI(api: APIPack) {
+  const pack: BrushPack = {
+    id: api.id,
+    name: api.name,
+    stamps: api.stamps.map((s) => ({
+      id: s.id,
+      label: s.label ?? 'Stamp',
+      // String source — getTintedStamp returns null on first call,
+      // triggering the preload below to swap in a real Image.
+      source: stampURL(s.id),
+      spacing: s.spacing,
+      alignToPath: s.align_to_path,
+      sizeJitter: s.size_jitter ?? undefined,
+      opacityJitter: s.opacity_jitter ?? undefined,
+      angleJitter: s.angle_jitter ?? undefined,
+    })),
+  };
+  registerPack(pack);
+  // Eagerly preload each stamp so the first draw doesn't blink.
+  for (const s of pack.stamps) preloadStamp(s);
+}
+
+/** Trigger an Image load for a URL-sourced stamp. Idempotent — if
+ *  the stamp's source is already an HTMLImageElement, no-op. On
+ *  load, replace the source + notify so any in-progress render
+ *  picks up the bitmap on the next frame. */
+function preloadStamp(stamp: BrushStamp) {
+  if (typeof stamp.source !== 'string') return;
+  const url = stamp.source;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    stamp.source = img;
+    // Drop any cached tints that were rendered against the (null)
+    // pre-load state. Keys are `${stampId}|${color}` — scan once.
+    for (const k of Array.from(tintCache.keys())) {
+      if (k.startsWith(stamp.id + '|')) tintCache.delete(k);
+    }
+    notifyChange();
+  };
+  img.onerror = () => {
+    // eslint-disable-next-line no-console
+    console.warn(`[whiteboard] stamp preload failed: ${url}`);
+  };
+  img.src = url;
 }
 
 // ── Tinted-stamp cache ───────────────────────────────────────────
