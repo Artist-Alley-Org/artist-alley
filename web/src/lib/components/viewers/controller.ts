@@ -143,6 +143,16 @@ export interface ViewController {
   spritesUrl: string | null;
   spritesVttUrl: string | null;
 
+  // Loop region in `currentFrame` units. Both null = no loop. Set
+  // via the shell's I/O hotkeys, the transport bar's Loop in/out
+  // buttons, or — for audio — a shift-drag on the waveform. The
+  // shell's loop enforcer reads them every frame and seeks back to
+  // loopIn when currentFrame passes loopOut. View bodies (MediaView)
+  // can also write them so per-kind UIs stay in sync with the shell
+  // (e.g. the audio waveform's drag-to-set-region gesture).
+  loopIn: number | null;
+  loopOut: number | null;
+
   // Transport — view bodies install real implementations on mount.
   play: () => void;
   pause: () => void;
@@ -174,6 +184,8 @@ export function defaultController(): ViewController {
     rate: 1,
     spritesUrl: null,
     spritesVttUrl: null,
+    loopIn: null,
+    loopOut: null,
     play: noop,
     pause: noop,
     togglePlay: noop,

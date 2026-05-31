@@ -13,9 +13,8 @@
   import type { ViewController } from './controller';
   import { defaultController, kindForExtension } from './controller';
   import ImageView from './ImageView.svelte';
-  import VideoView from './VideoView.svelte';
+  import MediaView from './MediaView.svelte';
   import ModelView from './ModelView.svelte';
-  import AudioView from './AudioView.svelte';
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
@@ -177,6 +176,21 @@
     if (e.button !== 0) return;
     // 3D bodies own all drag (orbit). Leave the outer transform alone.
     if (kind === '3d') return;
+    // Timeline kinds (video, audio) don't need pan/zoom — the wheel
+    // already specialises to scrub frames, and the canvas surface is
+    // a video frame or a waveform-with-cover, neither of which is a
+    // scrollable / panable image. Dragging would slide the cover art
+    // around like it's a static image, which reads as broken UX. We
+    // still need the click-to-toggle-play gesture, so do that here
+    // directly (no need to track movement when there's no pan to
+    // arm); the 220 ms defer keeps double-click-to-review working.
+    if (controller.hasTimeline) {
+      pendingClickTimer = setTimeout(() => {
+        controller.togglePlay();
+        pendingClickTimer = undefined;
+      }, 220);
+      return;
+    }
     const startX = e.clientX;
     const startY = e.clientY;
     const initialPanX = panX;
@@ -194,15 +208,6 @@
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
-      if (!dragging && controller.hasTimeline) {
-        // Defer togglePlay so a follow-up dblclick (review-toggle)
-        // can cancel it. Without this, a double-click on video would
-        // play → pause → review-toggle, flickering the playback.
-        pendingClickTimer = setTimeout(() => {
-          controller.togglePlay();
-          pendingClickTimer = undefined;
-        }, 220);
-      }
       setTimeout(() => { dragging = false; }, 0);
     };
     window.addEventListener('mousemove', move);
@@ -341,13 +346,73 @@
 
   // ---- loop region ------------------------------------------------------
 
-  let loopIn = $state<number | null>(null);
-  let loopOut = $state<number | null>(null);
+  // Loop state lives on the controller now so view bodies (MediaView's
+  // waveform with shift-drag region) can read + write the same range
+  // the shell's transport bar shows. Local aliases keep the existing
+  // template + hotkey + button bindings concise.
+  const loopIn = $derived(controller.loopIn);
+  const loopOut = $derived(controller.loopOut);
+
+  // Scrubber zoom — same idiom as MediaView's waveform zoom, but on
+  // the shell's narrow timeline bar so video gets the zoom-into-a-
+  // section affordance too. Ctrl/Cmd + wheel on the scrubber zooms;
+  // bare wheel falls through to the canvas wheel handler (which
+  // step-scrubs one frame for timeline kinds). Container becomes
+  // overflow-x-auto when zoomed > 1×; an auto-scroll keeps the
+  // playhead in the visible band.
+  let scrubberScrollEl: HTMLDivElement | undefined = $state();
+  let scrubberZoom = $state(1);
+  const SCRUBBER_ZOOM_MIN = 1;
+  const SCRUBBER_ZOOM_MAX = 16;
+
+  function onScrubberWheel(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!scrubberScrollEl) return;
+    const inner = e.currentTarget as HTMLElement;
+    const innerRect = inner.getBoundingClientRect();
+    const pointerRatio = Math.max(0, Math.min(1,
+      (e.clientX - innerRect.left) / innerRect.width));
+    const prev = scrubberZoom;
+    const next = Math.max(SCRUBBER_ZOOM_MIN,
+      Math.min(SCRUBBER_ZOOM_MAX,
+        scrubberZoom * (e.deltaY > 0 ? 0.8 : 1.25)));
+    scrubberZoom = next;
+    if (prev === next) return;
+    requestAnimationFrame(() => {
+      if (!scrubberScrollEl) return;
+      const containerW = scrubberScrollEl.clientWidth;
+      const newInnerW = containerW * next;
+      const pointerLocal = e.clientX - scrubberScrollEl.getBoundingClientRect().left;
+      scrubberScrollEl.scrollLeft = (pointerRatio * newInnerW) - pointerLocal;
+    });
+  }
+
+  $effect(() => {
+    if (!scrubberScrollEl || scrubberZoom <= 1) return;
+    const viewportW = scrubberScrollEl.clientWidth;
+    const innerW = viewportW * scrubberZoom;
+    const playheadX = (playheadPct / 100) * innerW;
+    const left = scrubberScrollEl.scrollLeft;
+    const right = left + viewportW;
+    const margin = viewportW * 0.15;
+    if (playheadX < left + margin) {
+      scrubberScrollEl.scrollLeft = Math.max(0, playheadX - margin);
+    } else if (playheadX > right - margin) {
+      scrubberScrollEl.scrollLeft = Math.min(innerW - viewportW, playheadX - viewportW + margin);
+    }
+  });
+
+  function resetScrubberZoom() {
+    scrubberZoom = 1;
+    if (scrubberScrollEl) scrubberScrollEl.scrollLeft = 0;
+  }
 
   function enforceLoop() {
     if (!controller.hasTimeline) return;
-    if (loopIn === null || loopOut === null || loopOut <= loopIn) return;
-    if (controller.currentFrame > loopOut) controller.seekToFrame(loopIn);
+    if (controller.loopIn === null || controller.loopOut === null || controller.loopOut <= controller.loopIn) return;
+    if (controller.currentFrame > controller.loopOut) controller.seekToFrame(controller.loopIn);
   }
   $effect(enforceLoop);
 
@@ -401,9 +466,9 @@
       case 'arrowleft': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? -10 : -1); } break;
       case '.':
       case 'arrowright': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? 10 : 1); } break;
-      case 'i': if (controller.hasTimeline) { e.preventDefault(); loopIn = controller.currentFrame; } break;
-      case 'o': if (controller.hasTimeline) { e.preventDefault(); loopOut = controller.currentFrame; } break;
-      case 'backspace': e.preventDefault(); loopIn = null; loopOut = null; break;
+      case 'i': if (controller.hasTimeline) { e.preventDefault(); controller.loopIn = controller.currentFrame; } break;
+      case 'o': if (controller.hasTimeline) { e.preventDefault(); controller.loopOut = controller.currentFrame; } break;
+      case 'backspace': e.preventDefault(); controller.loopIn = null; controller.loopOut = null; break;
       case '1': if (controller.hasTimeline) controller.setRate(0.25); break;
       case '2': if (controller.hasTimeline) controller.setRate(0.5); break;
       case '3': if (controller.hasTimeline) controller.setRate(1); break;
@@ -489,12 +554,10 @@
            Side-effect: pan/zoom resets per asset, which is what users
            expect when navigating to a new image anyway. -->
       {#key asset.id}
-        {#if kind === 'video'}
-          <VideoView {asset} bind:controller />
+        {#if kind === 'video' || kind === 'audio'}
+          <MediaView {asset} bind:controller />
         {:else if kind === 'image'}
           <ImageView {asset} bind:controller />
-        {:else if kind === 'audio'}
-          <AudioView {asset} bind:controller />
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
         {:else if kind === 'font'}
@@ -845,16 +908,35 @@
     {/if}
   </div><!-- /canvas+pane row -->
 
-  <!-- Transport rail (only when the body has a timeline) -->
+  <!-- Transport rail (only when the body has a timeline). Wrapped in
+       a horizontally-scrollable container so Ctrl/Cmd + wheel can
+       zoom the scrubber into a section of the timeline — same idiom
+       MediaView uses on its waveform. The reset chip appears only
+       when zoomed > 1×. -->
   {#if controller.hasTimeline}
-    <div class="relative h-3 bg-zinc-900">
+    <div
+      bind:this={scrubberScrollEl}
+      class="relative h-3 overflow-x-auto overflow-y-hidden bg-zinc-900"
+    >
+      {#if scrubberZoom > 1}
+        <button
+          type="button"
+          onclick={resetScrubberZoom}
+          class="sticky left-2 top-0 z-30 -mt-0.5 inline-flex h-3 items-center gap-1 rounded-b bg-black/80 px-1.5 text-[10px] font-mono leading-none text-white/90 hover:bg-black"
+          title="Reset scrubber zoom (Ctrl/Cmd + Wheel to zoom)"
+        >
+          {scrubberZoom.toFixed(1)}× — reset
+        </button>
+      {/if}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         bind:this={scrubberEl}
-        class="absolute inset-0 cursor-crosshair"
+        class="relative h-full cursor-crosshair"
+        style:width={`${100 * scrubberZoom}%`}
         onmouseenter={() => (scrubberHovering = true)}
         onmousemove={onScrubberMove}
         onmouseleave={onScrubberLeave}
+        onwheel={onScrubberWheel}
         onclick={onScrubberClick}
         role="slider"
         aria-valuenow={controller.currentFrame}
@@ -889,14 +971,14 @@
         <button type="button" onclick={() => controller.setRate(r)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" class:bg-zinc-800={controller.rate === r} title="Speed {r}×">{r}×</button>
       {/each}
       <span class="mx-2 h-4 w-px bg-zinc-800"></span>
-      <button type="button" onclick={() => (loopIn = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop in (I)">
+      <button type="button" onclick={() => (controller.loopIn = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop in (I)">
         Loop in {loopIn !== null ? `(f${loopIn})` : ''}
       </button>
-      <button type="button" onclick={() => (loopOut = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop out (O)">
+      <button type="button" onclick={() => (controller.loopOut = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop out (O)">
         Loop out {loopOut !== null ? `(f${loopOut})` : ''}
       </button>
       {#if loopIn !== null || loopOut !== null}
-        <button type="button" onclick={() => { loopIn = null; loopOut = null; }} class="px-1.5 py-0.5 text-xs text-zinc-400 hover:text-white" title="Clear loop (⌫)">clear</button>
+        <button type="button" onclick={() => { controller.loopIn = null; controller.loopOut = null; }} class="px-1.5 py-0.5 text-xs text-zinc-400 hover:text-white" title="Clear loop (⌫)">clear</button>
       {/if}
       <span class="ml-auto font-mono text-xs text-zinc-400">
         JKL · ⇧← → · I/O loop · 1-5 speed · G goto · F fullscreen · ⌘wheel zoom

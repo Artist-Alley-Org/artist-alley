@@ -29,6 +29,7 @@
 
   import { onDestroy, onMount, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
+  import { kindForExtension } from './viewers/controller';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
 
@@ -142,6 +143,14 @@
 
   const currentItem = $derived(source.items[source.cursor] ?? null);
   const hasMultipleItems = $derived(source.items.length > 1);
+  // Current asset's kind drives the contextual hotkey legend below —
+  // we surface different shortcut sections for video/audio (timeline
+  // playback + loop) vs static kinds. Falls back to 'placeholder'
+  // when no item is mounted yet.
+  const currentKind = $derived(
+    currentItem ? kindForExtension(currentItem.asset.file_extension) : 'placeholder',
+  );
+  const isTimelineKind = $derived(currentKind === 'video' || currentKind === 'audio');
 
   // ---- Lifecycle -----------------------------------------------------------
 
@@ -626,6 +635,49 @@
       <dt class="font-mono text-fg">Esc</dt>
       <dd>{t('viewer_hotkeys.close')}</dd>
     </dl>
+    {#if isTimelineKind}
+      <!-- Timeline / playback (video + audio). Owned by the shell's
+           per-kind hotkey handler; only meaningful when a body with
+           a timeline is mounted, so we hide for image / pdf / etc. -->
+      <div class="mb-1 mt-2 px-3 font-medium uppercase tracking-wide text-fg-muted/80">
+        {t('viewer_hotkeys.section_playback')}
+      </div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Space · K</dt>
+        <dd>{t('viewer_hotkeys.play_pause')}</dd>
+        <dt class="font-mono text-fg">J · L</dt>
+        <dd>{t('viewer_hotkeys.rewind_forward')}</dd>
+        <dt class="font-mono text-fg">, · .</dt>
+        <dd>{t('viewer_hotkeys.step_back_forward')}</dd>
+        <dt class="font-mono text-fg">⇧ + , · .</dt>
+        <dd>{t('viewer_hotkeys.step_back_forward_10')}</dd>
+        <dt class="font-mono text-fg">1 – 5</dt>
+        <dd>{t('viewer_hotkeys.speed_range')}</dd>
+        <dt class="font-mono text-fg">G</dt>
+        <dd>{t('viewer_hotkeys.goto_frame')}</dd>
+        <dt class="font-mono text-fg">I · O</dt>
+        <dd>{t('viewer_hotkeys.loop_in_out')}</dd>
+        <dt class="font-mono text-fg">⌫</dt>
+        <dd>{t('viewer_hotkeys.loop_clear')}</dd>
+        <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt>
+        <dd>{t('viewer_hotkeys.zoom_scrubber')}</dd>
+      </dl>
+    {/if}
+    {#if currentKind === 'audio'}
+      <!-- Audio waveform pointer gestures — only render for audio
+           since the waveform surface only exists there. -->
+      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">
+        {t('viewer_hotkeys.section_waveform')}
+      </div>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
+        <dt class="font-mono text-fg">Click</dt>
+        <dd>{t('viewer_hotkeys.wave_seek')}</dd>
+        <dt class="font-mono text-fg">⇧ + drag</dt>
+        <dd>{t('viewer_hotkeys.wave_select_loop')}</dd>
+        <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt>
+        <dd>{t('viewer_hotkeys.wave_zoom')}</dd>
+      </dl>
+    {/if}
   </details>
 {/snippet}
 

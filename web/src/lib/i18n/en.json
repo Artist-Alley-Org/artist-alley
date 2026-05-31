@@ -675,6 +675,20 @@
     "fullscreen": "Fullscreen",
     "reset_view": "Reset view",
     "review": "Toggle review",
-    "close": "Close"
+    "close": "Close",
+    "section_playback": "Playback",
+    "play_pause": "Play / Pause",
+    "rewind_forward": "Rewind · Forward",
+    "step_back_forward": "Step ±1 frame",
+    "step_back_forward_10": "Step ±10 frames",
+    "speed_range": "Playback speed (0.25× – 4×)",
+    "goto_frame": "Jump to frame / time",
+    "loop_in_out": "Mark loop in / out",
+    "loop_clear": "Clear loop",
+    "zoom_scrubber": "Zoom scrubber",
+    "section_waveform": "Waveform",
+    "wave_seek": "Seek to position",
+    "wave_select_loop": "Set loop region",
+    "wave_zoom": "Zoom waveform"
   }
 }

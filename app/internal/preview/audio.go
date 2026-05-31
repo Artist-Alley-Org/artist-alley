@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,44 @@ type AudioMetadata struct {
 	SampleRateHz int               `json:"sample_rate_hz,omitempty"`
 	Channels     int               `json:"channels,omitempty"`
 	Tags         map[string]string `json:"tags,omitempty"`
+
+	// HasCover signals that the audio file ships an embedded album
+	// picture (APIC frame for ID3, METADATA_BLOCK_PICTURE for Vorbis,
+	// covr atom for MP4). When true, the worker has extracted it to
+	// the "cover" variant and the frontend can fetch
+	// /assets/{id}/variants/cover. False (omitted) means no embedded
+	// art — the frontend falls back to the waveform-only display.
+	HasCover bool `json:"has_cover,omitempty"`
+
+	// SubtitleTracks is a list of subtitle / caption tracks the file
+	// ships (rare in audio, common in video — but we surface it on
+	// both since the field is shared via the metadata JSONB). Currently
+	// populated only from EMBEDDED tracks the container carries; the
+	// upcoming Whisper STT phase will write generated tracks into the
+	// same slot keyed by their own VTT variant ("sub.<lang>.vtt").
+	// The frontend renders one <track kind="subtitles"> per entry.
+	SubtitleTracks []SubtitleTrack `json:"subtitle_tracks,omitempty"`
+}
+
+// SubtitleTrack describes one subtitle / caption stream available
+// for a media asset. Format is the source codec name ("subrip" /
+// "webvtt" / "ass" / "mov_text" — the upcoming Whisper pipeline
+// will always emit "webvtt"). VariantKey, when set, points at the
+// storage backend key where the track's VTT bytes live (the worker
+// extracts container-embedded subs out to standalone VTT variants
+// the frontend can <track src> directly); when empty it signals
+// "embedded but not yet extracted" — the asset detail can hint at
+// it but the frontend can't render it without a fetch.
+type SubtitleTrack struct {
+	Index      int    `json:"index"`
+	Lang       string `json:"lang,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Format     string `json:"format,omitempty"`
+	VariantKey string `json:"variant_key,omitempty"`
+	// Source distinguishes container-embedded tracks from generated
+	// ones (e.g. Whisper STT). Drives a small "AI"/"CC" pill in the
+	// player UI without baking provider names into the frontend.
+	Source string `json:"source,omitempty"` // "embedded" | "whisper" | "manual"
 }
 
 // AudioHandler renders a waveform poster + fans it through the
@@ -185,6 +224,25 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		}
 	}
 
+	// Extract embedded album art (cover) when ffprobe flagged one.
+	// Soft-fail: the asset is still usable without the cover, and
+	// the waveform display alone is acceptable (SoundCloud-style).
+	// Skip when the variant already exists (re-queue idempotency
+	// matches the raster ladder above).
+	if meta.HasCover && !h.variantExists(jobCtx, p.FileHash, "cover") {
+		if err := h.extractCover(jobCtx, src, p.FileHash); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.audio.cover_failed",
+				slog.String("asset_id", p.AssetID.String()),
+				slog.String("err", err.Error()))
+			// Demote HasCover so the metadata doesn't promise a
+			// variant the frontend can't actually fetch.
+			meta.HasCover = false
+			result.Metadata = meta
+		} else {
+			result.Variants = append(result.Variants, "cover")
+		}
+	}
+
 	// Persist metadata onto the asset so the post detail page can
 	// show duration / artist / title without re-probing.
 	if err := h.persistMetadata(jobCtx, p.AssetID, meta); err != nil {
@@ -262,16 +320,20 @@ func (h *AudioHandler) probeMetadata(ctx context.Context, src string) (AudioMeta
 
 	var raw struct {
 		Format struct {
-			Duration   string            `json:"duration"`
-			BitRate    string            `json:"bit_rate"`
-			Tags       map[string]string `json:"tags"`
+			Duration string            `json:"duration"`
+			BitRate  string            `json:"bit_rate"`
+			Tags     map[string]string `json:"tags"`
 		} `json:"format"`
 		Streams []struct {
-			CodecType  string            `json:"codec_type"`
-			CodecName  string            `json:"codec_name"`
-			SampleRate string            `json:"sample_rate"`
-			Channels   int               `json:"channels"`
-			Tags       map[string]string `json:"tags"`
+			Index       int               `json:"index"`
+			CodecType   string            `json:"codec_type"`
+			CodecName   string            `json:"codec_name"`
+			SampleRate  string            `json:"sample_rate"`
+			Channels    int               `json:"channels"`
+			Tags        map[string]string `json:"tags"`
+			Disposition struct {
+				AttachedPic int `json:"attached_pic"`
+			} `json:"disposition"`
 		} `json:"streams"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
@@ -291,24 +353,44 @@ func (h *AudioHandler) probeMetadata(ctx context.Context, src string) (AudioMeta
 	// Format-level tags are the canonical place for ID3/Vorbis
 	// fields (TITLE, ARTIST, ALBUM, etc); stream-level tags
 	// usually duplicate them. Merge with format winning on conflict.
+	// Walks every stream once: audio streams fold into codec /
+	// sample-rate / channels; attached_pic dispositions flip
+	// HasCover; subtitle streams populate SubtitleTracks (extracted
+	// from container — Whisper-generated tracks land via a different
+	// path in a later phase). One pass keeps it cheap.
 	tags := map[string]string{}
 	for _, s := range raw.Streams {
-		if s.CodecType != "audio" {
-			continue
-		}
-		if meta.Codec == "" {
-			meta.Codec = s.CodecName
-		}
-		if meta.SampleRateHz == 0 && s.SampleRate != "" {
-			meta.SampleRateHz, _ = strconv.Atoi(s.SampleRate)
-		}
-		if meta.Channels == 0 {
-			meta.Channels = s.Channels
-		}
-		for k, v := range s.Tags {
-			if v != "" {
-				tags[strings.ToLower(k)] = v
+		switch s.CodecType {
+		case "audio":
+			if meta.Codec == "" {
+				meta.Codec = s.CodecName
 			}
+			if meta.SampleRateHz == 0 && s.SampleRate != "" {
+				meta.SampleRateHz, _ = strconv.Atoi(s.SampleRate)
+			}
+			if meta.Channels == 0 {
+				meta.Channels = s.Channels
+			}
+			for k, v := range s.Tags {
+				if v != "" {
+					tags[strings.ToLower(k)] = v
+				}
+			}
+		case "video":
+			// In audio containers a video stream is almost always the
+			// attached album picture (APIC/METADATA_BLOCK_PICTURE/covr).
+			// Disposition.attached_pic is ffprobe's canonical signal.
+			if s.Disposition.AttachedPic == 1 {
+				meta.HasCover = true
+			}
+		case "subtitle":
+			meta.SubtitleTracks = append(meta.SubtitleTracks, SubtitleTrack{
+				Index:  s.Index,
+				Lang:   s.Tags["language"],
+				Title:  s.Tags["title"],
+				Format: s.CodecName,
+				Source: "embedded",
+			})
 		}
 	}
 	for k, v := range raw.Format.Tags {
@@ -356,6 +438,75 @@ func (h *AudioHandler) renderWaveform(ctx context.Context, src, outPath string) 
 		}
 		return fmt.Errorf("ffmpeg wave: %w: %s", err, tail)
 	}
+	return nil
+}
+
+// extractCover pulls the embedded album picture out of an audio
+// file (APIC for ID3, METADATA_BLOCK_PICTURE for Vorbis/FLAC,
+// covr atom for MP4/M4A) and writes it to the "cover" variant.
+//
+// ffmpeg invocation:
+//   -an: drop audio streams from the output (we only want the picture)
+//   -vn implicit-off: we DO want the video stream (the cover)
+//   -frames:v 1: cap at one frame so multi-page TIFF-style covers
+//     don't bloat the output
+//   -c copy: pass the embedded picture through without re-encoding —
+//     the embedded format is already JPEG or PNG in 99% of cases and
+//     re-encoding loses quality for no gain. The "cover" variant's
+//     content-type is set from the codec we read out of ffprobe.
+//
+// Output sits in the same temp dir as the waveform render so the
+// existing cleanup defers it cleanly.
+func (h *AudioHandler) extractCover(ctx context.Context, src, hash string) error {
+	dir := filepath.Dir(src)
+	// We don't yet know whether the embedded picture is JPEG or PNG;
+	// ffmpeg's -c copy preserves the original encoding. Write to a
+	// generic name and sniff the bytes after to set content-type.
+	outPath := filepath.Join(dir, "cover.bin")
+	cmd := exec.CommandContext(ctx, h.ffmpegBin(),
+		"-hide_banner", "-loglevel", "error",
+		"-i", src,
+		"-an",
+		"-map", "0:v?",
+		"-frames:v", "1",
+		"-c", "copy",
+		"-y", outPath,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		tail := strings.TrimSpace(stderr.String())
+		if len(tail) > 400 {
+			tail = "..." + tail[len(tail)-400:]
+		}
+		return fmt.Errorf("ffmpeg cover: %w: %s", err, tail)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return fmt.Errorf("read cover: %w", err)
+	}
+	if len(data) == 0 {
+		return errors.New("cover extracted but empty")
+	}
+	ctype := http.DetectContentType(data)
+	if !strings.HasPrefix(ctype, "image/") {
+		// Defensive: -map 0:v? matches non-image attached pics too
+		// (rare, but possible — e.g. video clips embedded as cover).
+		// Skip rather than serve them as cover art.
+		return fmt.Errorf("cover bytes not an image: %s", ctype)
+	}
+
+	if _, err := h.Storage.Backend.Put(ctx, hash, "cover", bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("backend put cover: %w", err)
+	}
+	_ = storage.New(h.Pool).UpsertVariant(ctx, storage.UpsertVariantParams{
+		ObjectHash:  hash,
+		VariantKey:  "cover",
+		SizeBytes:   int64(len(data)),
+		ContentType: ctype,
+		Metadata:    []byte("{}"),
+	})
 	return nil
 }
 
