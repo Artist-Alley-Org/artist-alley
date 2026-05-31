@@ -29,7 +29,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   import type {
-    BBox, BrushContent, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
+    BBox, BrushContent, BrushStamp, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
   } from '$lib/whiteboard/types';
   import {
     MAX_PASTED_IMAGE_BYTES,
@@ -38,6 +38,7 @@
     itemBBox, pointInItem, translateItem, resizeItemToBBox,
     itemInPolygon,
   } from '$lib/whiteboard/types';
+  import { getStamp, getTintedStamp } from '$lib/whiteboard/brushes';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 
   // Per-session local clipboard for copy/cut/paste of items. Lives
@@ -408,6 +409,26 @@
   function drawStroke(stroke: StrokeItem) {
     if (!ctx) return;
     if (stroke.points.length === 0) return;
+
+    // Stamp-based brush path (Phase 1.21). When the stroke carries a
+    // `stampId` we walk the centerline + stamp a tinted bitmap at
+    // every spacing interval. Falls back to perfect-freehand below
+    // if the stamp isn't loaded yet (Image still decoding) so the
+    // user sees *something* while the stamp resolves.
+    if (stroke.stampId) {
+      const stamp = getStamp(stroke.stampId);
+      if (stamp) {
+        const tinted = getTintedStamp(stamp, stroke.color);
+        if (tinted) {
+          drawStampedStroke(stroke, stamp, tinted);
+          return;
+        }
+      }
+      // Stamp missing / not loaded — fall through to PF outline so
+      // the stroke is still visible. Will re-render with the right
+      // visual on the next $effect tick once the image loads.
+    }
+
     const style = stroke.brushStyle ?? 'default';
     const opts = strokeOptionsFor(stroke.tool, style);
     const outline = getStroke(
@@ -441,6 +462,101 @@
       else if (style === 'pencil') drawPencilGrain(stroke);
     }
     ctx.restore();
+  }
+
+  /** Phase 1.21b — Stamp-based stroke rendering. Walks the raw
+   *  sample path at fixed intervals (spacing × stamp diameter,
+   *  GIMP / Photoshop convention) and draws the pre-tinted stamp
+   *  at each step. The math:
+   *
+   *    1. Resample the path into a list of {x, y, pressure, t}
+   *       where t is cumulative arc length in source-canvas px.
+   *    2. Walk from t=0 to total length, stepping by `step` where
+   *       step = max(1, spacing × stamp diameter × pressure).
+   *    3. At each step, interpolate (x, y, pressure) from the
+   *       resampled path, optionally compute the tangent angle,
+   *       optionally apply jitter, draw the stamp.
+   *
+   *  Performance: linear in number of stamps. Pre-tinted offscreen
+   *  canvas means each stamp is one drawImage. For a 200-stamp
+   *  stroke at 60 fps that's 12k drawImage/sec — well within
+   *  modern canvas budgets. */
+  function drawStampedStroke(stroke: StrokeItem, stamp: BrushStamp, tinted: HTMLCanvasElement) {
+    if (!ctx) return;
+    const pts = stroke.points;
+    if (pts.length === 0) return;
+    const baseAlpha = stroke.opacity ?? 1;
+    const stampW = tinted.width;
+    // Min step of 1 source-px so degenerate (spacing=0) stamps
+    // don't spin in a infinite-density loop. Max step capped at
+    // stamp diameter so very-sparse spacing still lays down at
+    // least the perimeter density.
+    const baseStep = Math.max(1, Math.min(stampW, (stamp.spacing || 0.1) * stroke.width));
+
+    ctx.save();
+    ctx.globalAlpha = (ctx.globalAlpha ?? 1) * baseAlpha;
+
+    // Walk segments and stamp at each interval. `leftover` carries
+    // sub-step distance from the previous segment so spacing stays
+    // even across path joins (rather than re-counting from each
+    // segment start, which produces visible clumping at corners).
+    let leftover = 0;
+    // Always stamp at the first point so single-tap strokes leave
+    // a dot rather than nothing.
+    stampAt(stroke, stamp, tinted, pts[0][0], pts[0][1], 0, pts[0][2] ?? 0.5);
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const segLen = Math.hypot(dx, dy);
+      if (segLen === 0) continue;
+      const ang = Math.atan2(dy, dx);
+      let t = baseStep - leftover;
+      while (t < segLen) {
+        const u = t / segLen;
+        const px = a[0] + dx * u;
+        const py = a[1] + dy * u;
+        const pp = ((a[2] ?? 0.5) * (1 - u)) + ((b[2] ?? 0.5) * u);
+        stampAt(stroke, stamp, tinted, px, py, ang, pp);
+        t += baseStep;
+      }
+      leftover = segLen - (t - baseStep);
+    }
+    ctx.restore();
+  }
+
+  /** One stamp placement. Size + opacity scale with pressure; jitter
+   *  (when configured on the stamp) perturbs each placement. */
+  function stampAt(stroke: StrokeItem, stamp: BrushStamp, tinted: HTMLCanvasElement, x: number, y: number, ang: number, pressure: number) {
+    if (!ctx) return;
+    const stampW = tinted.width;
+    const stampH = tinted.height;
+    // Effective stamp size in source-canvas px: scale the source
+    // bitmap so its width matches the stroke's brush width × pressure.
+    // (Photoshop's "Size" dynamic — bigger pressure = bigger stamp.)
+    const sizeJ = stamp.sizeJitter ? (Math.random() * 2 - 1) * stamp.sizeJitter : 0;
+    const scale = (stroke.width / stampW) * (0.5 + 0.5 * pressure) * (1 + sizeJ);
+    const drawW = stampW * scale;
+    const drawH = stampH * scale;
+    if (drawW < 0.5 || drawH < 0.5) return;
+    const opJ = stamp.opacityJitter ? Math.random() * stamp.opacityJitter : 0;
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * (1 - opJ);
+    let rot = stamp.alignToPath ? ang : 0;
+    if (stamp.angleJitter) {
+      rot += (Math.random() * 2 - 1) * (stamp.angleJitter * Math.PI / 180);
+    }
+    if (rot !== 0) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.drawImage(tinted, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.drawImage(tinted, x - drawW / 2, y - drawH / 2, drawW, drawH);
+    }
+    ctx.globalAlpha = prevAlpha;
   }
 
   /** Airbrush — scatter soft circles along the stroke. Sparser at
@@ -1058,6 +1174,11 @@
         kind: 'stroke',
         tool: session.tool,
         brushStyle: session.tool === 'pen' ? session.brushStyle : 'default',
+        // Phase 1.21 — when the user has picked a stamp brush, every
+        // new stroke carries the stamp id so the renderer takes the
+        // stamp path. Eraser / highlighter / marker stay procedural
+        // (they're alpha-mask operators, not stroke styles).
+        stampId: session.tool === 'pen' && session.stampId ? session.stampId : undefined,
         color: gestureColor,
         width: session.width,
         opacity: session.opacity,

@@ -117,6 +117,15 @@ export interface WhiteboardSession {
   // Brush style — sub-picker for the pen tool.
   brushStyle: BrushStyle;
 
+  /** Phase 1.21 — active stamp-brush id, or null when the user is
+   *  drawing with a procedural brush style. When set, new pen
+   *  strokes carry it as `stampId` so the renderer takes the stamp
+   *  path. Setting a stamp clears `brushStyle` from the UI
+   *  perspective (panel highlights the stamp button, not a style
+   *  button) but the stored value is left alone so toggling back
+   *  to a procedural brush restores the previous style choice. */
+  stampId: string | null;
+
   // Whole-doc operations
   clearAll: () => void;
   /** Load a saved doc (e.g. user opened a previous whiteboard for
@@ -232,6 +241,9 @@ export function createWhiteboardSession(
      *  selected. The brushes sub-picker mutates this; new
      *  StrokeItems pick it up on commit. */
     brushStyle: BrushStyle;
+    /** Phase 1.21 — active stamp brush id, or null when the user is
+     *  drawing with a procedural style. */
+    stampId: string | null;
     // ── View transform (C-1.19, infinite canvas) ────────────────
     // The map is: cssX = worldX * viewZoom + viewX. Pan + zoom are
     // applied at render time via ctx.setTransform; pointer events
@@ -257,6 +269,7 @@ export function createWhiteboardSession(
     italic: false,
     textAlign: 'left',
     brushStyle: 'default',
+    stampId: null,
     viewX: 0,
     viewY: 0,
     viewZoom: 1,
@@ -539,7 +552,19 @@ export function createWhiteboardSession(
       }
     },
     get brushStyle() { return state.brushStyle; },
-    set brushStyle(v) { state.brushStyle = v; },
+    set brushStyle(v) {
+      state.brushStyle = v;
+      // Picking a procedural style clears any active stamp brush so
+      // the panel UI + renderer don't get into a "both set" state.
+      state.stampId = null;
+    },
+    get stampId() { return state.stampId; },
+    set stampId(v) {
+      state.stampId = v;
+      // Picking a stamp also implies the pen tool (other brush tools
+      // ignore stamps) — auto-switch so the user can paint right away.
+      if (v && state.tool !== 'pen') state.tool = 'pen';
+    },
 
     get textAlign() { return state.textAlign; },
     set textAlign(v) {

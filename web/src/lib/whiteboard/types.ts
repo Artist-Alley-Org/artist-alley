@@ -86,6 +86,61 @@ export interface StrokeItem {
   opacity?: number;
   /** Pointer samples — perfect-freehand input. */
   points: Point[];
+  /** Phase 1.21 — when set, the stroke is rendered by stamping a
+   *  bitmap brush (looked up in the session's brush-pack registry)
+   *  along the path at the brush's spacing × pressure × jitter,
+   *  instead of via perfect-freehand's outline fill. The id is the
+   *  `stamp.id` from a BrushStamp registered in the session. When
+   *  the id is missing or the stamp isn't loaded, the renderer
+   *  falls back to perfect-freehand so old saves still render. */
+  stampId?: string;
+}
+
+// ── Brush packs (stamp-based brushes, Phase 1.21) ────────────────
+//
+// A brush pack is a set of bitmap stamps + per-stamp dynamics
+// (spacing, jitter, etc). At least one pack ships built-in; users
+// import ABR (Photoshop) packs in Phase 1.21d. Packs are *display*
+// state — they don't round-trip through the save format. Strokes
+// reference stamps by `stampId` and the host loads the necessary
+// packs when opening a saved whiteboard.
+
+/** One stamp = one alpha-mask bitmap + how to lay it down. */
+export interface BrushStamp {
+  /** Globally unique id. ABR-sourced stamps use the original UUID;
+   *  built-in stamps use stable hand-authored ids like
+   *  `builtin:soft-round`. */
+  id: string;
+  /** Human-readable name (panel button tooltip). */
+  label: string;
+  /** Either an HTMLImageElement (already loaded) or a URL to fetch
+   *  on first use. The renderer expects a grayscale alpha mask —
+   *  255 = fully solid stamp, 0 = transparent. */
+  source: HTMLImageElement | string;
+  /** Spacing between successive stamps as a fraction of the
+   *  effective stamp diameter. 0.1 (GIMP default) = dense; 1.0 =
+   *  stamps just touch; >1 = sparse / stippled. */
+  spacing: number;
+  /** When true, the stamp rotates to follow the stroke direction
+   *  (good for stroke-stamps + ribbon-style brushes). When false,
+   *  the stamp keeps its original orientation (good for tip-stamps
+   *  + texture brushes). */
+  alignToPath?: boolean;
+  /** 0..1 of stamp diameter — random size perturbation per stamp.
+   *  0 = no jitter; 0.5 = stamps vary up to ±50%. */
+  sizeJitter?: number;
+  /** 0..1 — random opacity perturbation per stamp. */
+  opacityJitter?: number;
+  /** 0..360° — random angle perturbation per stamp. Only meaningful
+   *  when alignToPath = false (otherwise the path tangent dominates). */
+  angleJitter?: number;
+}
+
+/** A named collection of stamps. */
+export interface BrushPack {
+  id: string;
+  name: string;
+  stamps: BrushStamp[];
 }
 
 /** Geometric shape — defined by a rectangle (x, y, w, h) the user

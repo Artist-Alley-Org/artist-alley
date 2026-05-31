@@ -31,6 +31,7 @@
   import { loadFont } from '$lib/whiteboard/fonts.svelte';
   import { ITEM_SOFT_CAP, ITEM_HARD_CAP } from '$lib/whiteboard/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
+  import { listBrushPacks } from '$lib/whiteboard/brushes';
   import ColorPicker from './ColorPicker.svelte';
 
   interface Props {
@@ -546,6 +547,49 @@
             </button>
           {/each}
         </div>
+        <!-- ── Stamp brushes (Phase 1.21b) ──────────────────────
+             Surfaces every stamp from every loaded brush pack as
+             a button alongside the procedural styles. Clicking
+             sets session.stampId + auto-switches tool=pen so
+             drawing immediately uses the stamp renderer.
+             Built-in pack is registered at module load; future
+             user-imported ABR packs (Phase 1.21d) will register
+             themselves on import + show up here automatically. -->
+        {#each listBrushPacks() as pack (pack.id)}
+          <div class="mt-2 text-[10px] uppercase tracking-wide text-fg-muted/70">
+            {pack.name} stamps
+          </div>
+          <div class="mt-1 grid grid-cols-5 gap-1">
+            {#each pack.stamps as stamp (stamp.id)}
+              {@const active = session.stampId === stamp.id}
+              <button
+                type="button"
+                onclick={() => (session.stampId = active ? null : stamp.id)}
+                class="inline-flex aspect-square items-center justify-center rounded border border-border bg-surface transition-colors"
+                class:border-accent={active}
+                class:ring-1={active}
+                class:ring-accent={active}
+                class:hover:border-fg-muted={!active}
+                title={`${stamp.label} \u2014 stamp brush (${pack.name})`}
+                aria-label={stamp.label}
+                aria-pressed={active}
+              >
+                <!-- Preview: render the stamp source as a tiny img
+                     inside the button. Browsers handle the async
+                     decode (the procedural ones resolve instantly
+                     since they're data: URLs). -->
+                {#if typeof stamp.source !== 'string'}
+                  <img
+                    src={stamp.source.src}
+                    alt={stamp.label}
+                    class="h-6 w-6 object-contain"
+                    style:filter="invert(1)"
+                  />
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/each}
       {/if}
     </section>
 
