@@ -580,3 +580,37 @@ CREATE TABLE jobs (
     started_at          TIMESTAMPTZ  NULL,
     finished_at         TIMESTAMPTZ  NULL
 );
+
+-- migrations/00030_brush_packs.sql — Photoshop / native brush packs.
+-- Manifest only; stamp bitmaps live in object storage. See
+-- internal/brushpacks for the import + serving service.
+CREATE TABLE brush_packs (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_ref           BIGINT       NOT NULL REFERENCES "user"(ref) ON DELETE CASCADE,
+    name                TEXT         NOT NULL,
+    source_file         TEXT         NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    origin_server_id    UUID         NULL
+);
+CREATE INDEX brush_packs_owner_idx ON brush_packs(owner_ref);
+
+CREATE TABLE brush_pack_stamps (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    pack_id             UUID         NOT NULL REFERENCES brush_packs(id) ON DELETE CASCADE,
+    abr_id              TEXT         NULL,
+    label               TEXT         NULL,
+    width               INTEGER      NOT NULL CHECK (width > 0),
+    height              INTEGER      NOT NULL CHECK (height > 0),
+    storage_key         TEXT         NOT NULL,
+    spacing             DOUBLE PRECISION NOT NULL DEFAULT 0.1
+                                     CHECK (spacing > 0 AND spacing <= 10),
+    align_to_path       BOOLEAN      NOT NULL DEFAULT FALSE,
+    size_jitter         DOUBLE PRECISION NULL CHECK (size_jitter IS NULL OR (size_jitter >= 0 AND size_jitter <= 1)),
+    opacity_jitter      DOUBLE PRECISION NULL CHECK (opacity_jitter IS NULL OR (opacity_jitter >= 0 AND opacity_jitter <= 1)),
+    angle_jitter        DOUBLE PRECISION NULL CHECK (angle_jitter IS NULL OR (angle_jitter >= 0 AND angle_jitter <= 360)),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX brush_pack_stamps_pack_idx ON brush_pack_stamps(pack_id);
+CREATE UNIQUE INDEX brush_pack_stamps_pack_abr_uniq
+    ON brush_pack_stamps(pack_id, abr_id)
+    WHERE abr_id IS NOT NULL;

@@ -483,3 +483,20 @@ func (rtOnly) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRe
 func (rtOnly) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	panic("CreatePostWhiteboard called from assettype test shim")
 }
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (rtOnly) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from rtOnly test shim")
+}
+func (rtOnly) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from rtOnly test shim")
+}
+func (rtOnly) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from rtOnly test shim")
+}
+func (rtOnly) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from rtOnly test shim")
+}
+func (rtOnly) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from rtOnly test shim")
+}

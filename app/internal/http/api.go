@@ -9,6 +9,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/brushpacks"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -50,6 +51,7 @@ type apiServer struct {
 	sysconfigH   *sysconfig.Handler
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
+	brushpacks   *brushpacks.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
@@ -69,6 +71,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
+		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 	}
 }
 
@@ -440,4 +443,22 @@ func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPubl
 
 func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	return s.i18n.ListLocales(ctx, req)
+}
+
+// --- brush packs (Phase 1.21) ---------------------------------------------
+
+func (s *apiServer) ListBrushPacks(ctx context.Context, req openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	return s.brushpacks.ListBrushPacks(ctx, req)
+}
+func (s *apiServer) ImportBrushPack(ctx context.Context, req openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	return s.brushpacks.ImportBrushPack(ctx, req)
+}
+func (s *apiServer) GetBrushPack(ctx context.Context, req openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	return s.brushpacks.GetBrushPack(ctx, req)
+}
+func (s *apiServer) DeleteBrushPack(ctx context.Context, req openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	return s.brushpacks.DeleteBrushPack(ctx, req)
+}
+func (s *apiServer) GetBrushPackStamp(ctx context.Context, req openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	return s.brushpacks.GetBrushPackStamp(ctx, req)
 }

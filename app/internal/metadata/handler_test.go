@@ -763,3 +763,20 @@ func (metaShim) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboards
 func (metaShim) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	panic("CreatePostWhiteboard called from metadata_test test shim")
 }
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (metaShim) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from metaShim test shim")
+}
+func (metaShim) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from metaShim test shim")
+}
+func (metaShim) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from metaShim test shim")
+}
+func (metaShim) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from metaShim test shim")
+}
+func (metaShim) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from metaShim test shim")
+}

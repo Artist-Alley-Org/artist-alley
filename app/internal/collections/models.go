@@ -130,6 +130,31 @@ type AuditEvent struct {
 	Metadata       []byte
 }
 
+type BrushPack struct {
+	ID             pgtype.UUID
+	OwnerRef       int64
+	Name           string
+	SourceFile     *string
+	CreatedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+}
+
+type BrushPackStamp struct {
+	ID            pgtype.UUID
+	PackID        pgtype.UUID
+	AbrID         *string
+	Label         *string
+	Width         int32
+	Height        int32
+	StorageKey    string
+	Spacing       float64
+	AlignToPath   bool
+	SizeJitter    *float64
+	OpacityJitter *float64
+	AngleJitter   *float64
+	CreatedAt     pgtype.Timestamptz
+}
+
 type Capability struct {
 	Code        string
 	Description string

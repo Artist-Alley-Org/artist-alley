@@ -769,3 +769,20 @@ func (shimImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboards
 func (shimImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	panic("CreatePostWhiteboard called from assets_test test shim")
 }
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (shimImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from shimImpl test shim")
+}
+func (shimImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from shimImpl test shim")
+}
+func (shimImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from shimImpl test shim")
+}

@@ -130,6 +130,31 @@ type AuditEvent struct {
 	Metadata       []byte             `json:"metadata"`
 }
 
+type BrushPack struct {
+	ID             pgtype.UUID        `json:"id"`
+	OwnerRef       int64              `json:"owner_ref"`
+	Name           string             `json:"name"`
+	SourceFile     *string            `json:"source_file"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+}
+
+type BrushPackStamp struct {
+	ID            pgtype.UUID        `json:"id"`
+	PackID        pgtype.UUID        `json:"pack_id"`
+	AbrID         *string            `json:"abr_id"`
+	Label         *string            `json:"label"`
+	Width         int32              `json:"width"`
+	Height        int32              `json:"height"`
+	StorageKey    string             `json:"storage_key"`
+	Spacing       float64            `json:"spacing"`
+	AlignToPath   bool               `json:"align_to_path"`
+	SizeJitter    *float64           `json:"size_jitter"`
+	OpacityJitter *float64           `json:"opacity_jitter"`
+	AngleJitter   *float64           `json:"angle_jitter"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Capability struct {
 	Code        string             `json:"code"`
 	Description string             `json:"description"`

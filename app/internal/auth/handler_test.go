@@ -839,3 +839,20 @@ func (authOnlyImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhitebo
 func (authOnlyImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	panic("CreatePostWhiteboard called from auth test shim")
 }
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (authOnlyImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from authOnlyImpl test shim")
+}

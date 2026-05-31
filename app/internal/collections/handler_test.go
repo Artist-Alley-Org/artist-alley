@@ -758,3 +758,20 @@ func (collShim) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboards
 func (collShim) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	panic("CreatePostWhiteboard called from collections_test test shim")
 }
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (collShim) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from collShim test shim")
+}
+func (collShim) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from collShim test shim")
+}
+func (collShim) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from collShim test shim")
+}
+func (collShim) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from collShim test shim")
+}
+func (collShim) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from collShim test shim")
+}

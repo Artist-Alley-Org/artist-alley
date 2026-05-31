@@ -3078,6 +3078,136 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppearanceConfig" }
 
+  /brush-packs:
+    get:
+      operationId: listBrushPacks
+      summary: List the caller's imported brush packs
+      description: |
+        Returns every brush pack owned by the authenticated user,
+        most-recent first. Each pack carries its stamp manifest
+        (id, dimensions, dynamics) — the actual stamp bitmaps are
+        fetched on demand via `/brush-packs/stamps/{stampId}`.
+        Built-in stamps shipped with the frontend are NOT listed
+        here; the frontend registers those locally.
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Brush pack list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [packs]
+                properties:
+                  packs:
+                    type: array
+                    items: { $ref: "#/components/schemas/BrushPack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: importBrushPack
+      summary: Import a Photoshop .abr brush pack
+      description: |
+        Accepts a binary `.abr` upload, parses it, writes every
+        decoded brush stamp to object storage, and registers the
+        pack under the caller's ownership. Returns the freshly
+        created pack manifest so the frontend can immediately add
+        the stamps to its brush picker.
+      tags: [brushpacks]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                name:
+                  type: string
+                  description: Display name; defaults to the filename when omitted.
+                file:
+                  type: string
+                  format: binary
+                  description: The .abr pack bytes.
+      responses:
+        "201":
+          description: Pack imported
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrushPack" }
+        "400":
+          description: Malformed file or unsupported ABR version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /brush-packs/{packId}:
+    parameters:
+      - name: packId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getBrushPack
+      summary: Get a brush pack + stamp manifest
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Pack manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrushPack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteBrushPack
+      summary: Delete a brush pack
+      description: |
+        Drops the pack + stamp manifest rows. The stamp bitmaps in
+        object storage are NOT immediately deleted — content-
+        addressed storage means the same bitmap may be referenced
+        by other packs. A future GC pass cleans orphans.
+      tags: [brushpacks]
+      responses:
+        "204":
+          description: Pack deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /brush-packs/stamps/{stampId}:
+    parameters:
+      - name: stampId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getBrushPackStamp
+      summary: Stream a brush stamp bitmap
+      description: |
+        Returns the raw PNG bytes of one stamp. The frontend renderer
+        fetches this URL on first use of the stamp + caches the
+        decoded Image element in memory. Owner-scoped — stamps in
+        another user's pack 404 (no existence-leak).
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Stamp PNG bytes
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -3144,6 +3274,78 @@ components:
           type: string
           description: Human-readable error summary
           example: could not list resource types
+    BrushPackStamp:
+      type: object
+      required: [id, width, height, spacing, align_to_path]
+      description: |
+        One brush stamp in a pack. The bitmap itself is fetched via
+        `/brush-packs/stamps/{id}` — this schema is the metadata the
+        frontend renderer needs to know how to draw with it.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable per-stamp identifier.
+        label:
+          type: string
+          nullable: true
+          description: Optional human-readable name (from the ABR descriptor).
+        width:
+          type: integer
+          description: Stamp bitmap width in source pixels.
+        height:
+          type: integer
+          description: Stamp bitmap height in source pixels.
+        spacing:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 10
+          description: |
+            Step between successive stamps as a fraction of the
+            effective stamp diameter. GIMP / Photoshop convention:
+            0.1 = smooth (default), 1.0 = stamps just touch, >1 =
+            sparse stippling.
+        align_to_path:
+          type: boolean
+          description: When true, the stamp rotates to follow the stroke tangent.
+        size_jitter:
+          type: number
+          format: double
+          nullable: true
+          description: 0..1 random size perturbation per stamp.
+        opacity_jitter:
+          type: number
+          format: double
+          nullable: true
+        angle_jitter:
+          type: number
+          format: double
+          nullable: true
+          description: 0..360 degrees random angle perturbation.
+    BrushPack:
+      type: object
+      required: [id, name, created_at, stamps]
+      description: |
+        Imported or authored brush pack owned by the caller. Includes
+        the full stamp manifest so the frontend has everything it
+        needs in one request.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        source_file:
+          type: string
+          nullable: true
+          description: Original .abr filename, when imported.
+        created_at:
+          type: string
+          format: date-time
+        stamps:
+          type: array
+          items: { $ref: "#/components/schemas/BrushPackStamp" }
     LoginRequest:
       type: object
       required: [username, password]
