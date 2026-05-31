@@ -4583,9 +4583,11 @@ components:
                     # Stroke fields
                     tool:
                       type: string
-                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, ellipse]
-                    color: { type: string }
-                    width: { type: number, minimum: 0.5, maximum: 200 }
+                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, rounded-rect, ellipse, triangle, right-triangle, diamond, pentagon, hexagon, star, heart, callout-rect, callout-oval]
+                    color: { type: string, description: "Legacy single color (still set on shape items for back-compat). Stroke + text items use this exclusively; shape items prefer strokeColor / fillColor when present." }
+                    strokeColor: { type: string, description: "Shape outline color (C-1.17). Falls back to `color` when missing." }
+                    fillColor: { type: string, description: "Shape fill color (C-1.17). Falls back to `color` when missing." }
+                    width: { type: number, minimum: 0, maximum: 200 }
                     opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
                     points:
                       type: array
@@ -4599,7 +4601,7 @@ components:
                     y: { type: number }
                     w: { type: number }
                     h: { type: number }
-                    fill: { type: number, minimum: 0, maximum: 1 }
+                    fill: { type: number, minimum: 0, maximum: 1, description: "Shape fill opacity. 0 = outline only, 1 = solid fill." }
                     # Text fields
                     body: { type: string, maxLength: 10000 }
                     fontSize: { type: number, minimum: 8, maximum: 256 }

@@ -90,7 +90,13 @@ export interface StrokeItem {
 
 /** Geometric shape — defined by a rectangle (x, y, w, h) the user
  *  dragged out. Line + arrow use the rect's diagonal; rect + ellipse
- *  fit inside. Negative w/h are allowed (right-to-left drag). */
+ *  fit inside. Negative w/h are allowed (right-to-left drag).
+ *
+ *  Color model (C-1.17): outline and fill are independent. `color`
+ *  was the only field through C-1.16 and is kept for back-compat
+ *  reads — `strokeColor` falls back to `color` and `fillColor`
+ *  falls back to `color` when missing, so old saves render the
+ *  same. New saves emit the explicit fields. */
 export interface ShapeItem {
   kind: 'shape';
   tool: ShapeTool;
@@ -100,11 +106,20 @@ export interface ShapeItem {
   /** Signed dimensions — negatives indicate drag direction. */
   w: number;
   h: number;
+  /** Legacy single color (C-1.0..C-1.16 saves). Kept on the type
+   *  so old docs read cleanly; new saves write strokeColor +
+   *  fillColor and leave this set for compatibility. */
   color: string;
-  /** Stroke width in source-canvas px. */
+  /** Independent outline color. Defaults to `color` when missing
+   *  (legacy doc read path). */
+  strokeColor?: string;
+  /** Independent fill color. Defaults to `color` when missing. */
+  fillColor?: string;
+  /** Stroke width in source-canvas px. 0 = no outline. */
   width: number;
-  /** When set, the shape is filled with the same color at this
-   *  opacity (0..1). Rect + ellipse only. */
+  /** When > 0, the shape is filled with `fillColor` at this opacity
+   *  (0..1). Rect / ellipse / triangle / polygon-style shapes only;
+   *  line / arrow ignore fill. */
   fill?: number;
   opacity?: number;
   /** Rotation in degrees around the bbox center. C-1.6 selection

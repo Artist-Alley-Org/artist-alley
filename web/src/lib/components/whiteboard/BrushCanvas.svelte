@@ -366,6 +366,11 @@
     const y = s.h >= 0 ? s.y : s.y + s.h;
     const w = Math.abs(s.w);
     const h = Math.abs(s.h);
+    // C-1.17 — outline + fill colors are independent. Legacy saves
+    // only have `color`; fall back to it when the explicit field is
+    // missing so old whiteboards render the same.
+    const strokeC = s.strokeColor ?? s.color;
+    const fillC = s.fillColor ?? s.color;
     ctx.save();
     if (s.rotation) {
       const cx = x + w / 2;
@@ -374,7 +379,7 @@
       ctx.rotate((s.rotation * Math.PI) / 180);
       ctx.translate(-cx, -cy);
     }
-    ctx.strokeStyle = s.color;
+    ctx.strokeStyle = strokeC;
     ctx.lineWidth = s.width;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -388,24 +393,24 @@
       drawArrow(s.x, s.y, s.x + s.w, s.y + s.h, s.width);
     } else if (s.tool === 'rect') {
       if (s.fill && s.fill > 0) {
-        ctx.fillStyle = s.color;
+        ctx.fillStyle = fillC;
         const prevAlpha = ctx.globalAlpha;
         ctx.globalAlpha = prevAlpha * s.fill;
         ctx.fillRect(x, y, w, h);
         ctx.globalAlpha = prevAlpha;
       }
-      ctx.strokeRect(x, y, w, h);
+      if (s.width > 0) ctx.strokeRect(x, y, w, h);
     } else if (s.tool === 'ellipse') {
       ctx.beginPath();
       ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
       if (s.fill && s.fill > 0) {
-        ctx.fillStyle = s.color;
+        ctx.fillStyle = fillC;
         const prevAlpha = ctx.globalAlpha;
         ctx.globalAlpha = prevAlpha * s.fill;
         ctx.fill();
         ctx.globalAlpha = prevAlpha;
       }
-      ctx.stroke();
+      if (s.width > 0) ctx.stroke();
     } else if (s.tool === 'triangle') {
       // Isoceles triangle: apex at top-center, base across bottom.
       ctx.beginPath();
@@ -521,32 +526,35 @@
       tailPath.closePath();
       // First fill body + tail together, then stroke both.
       if (s.fill && s.fill > 0) {
-        ctx.fillStyle = s.color;
+        ctx.fillStyle = fillC;
         const prevAlpha = ctx.globalAlpha;
         ctx.globalAlpha = prevAlpha * s.fill;
         ctx.fill();
         ctx.fill(tailPath);
         ctx.globalAlpha = prevAlpha;
       }
-      ctx.stroke();
-      ctx.stroke(tailPath);
+      if (s.width > 0) {
+        ctx.stroke();
+        ctx.stroke(tailPath);
+      }
     }
     ctx.restore();
   }
 
   /** Shared fill+stroke for the simple-path shapes above. Pull-out
    *  helper because every new shape branch was repeating the same
-   *  six lines. */
+   *  six lines. Uses strokeColor / fillColor with legacy `color`
+   *  fallback (C-1.17). */
   function fillStrokeShape(s: ShapeItem) {
     if (!ctx) return;
     if (s.fill && s.fill > 0) {
-      ctx.fillStyle = s.color;
+      ctx.fillStyle = s.fillColor ?? s.color;
       const prevAlpha = ctx.globalAlpha;
       ctx.globalAlpha = prevAlpha * s.fill;
       ctx.fill();
       ctx.globalAlpha = prevAlpha;
     }
-    ctx.stroke();
+    if (s.width > 0) ctx.stroke();
   }
 
   function drawArrow(x1: number, y1: number, x2: number, y2: number, w: number) {
@@ -745,7 +753,15 @@
         if (item && layer && !layer.locked) {
           let next: Item = item;
           if (item.kind === 'shape') {
-            next = { ...item, color: session.color, fill: Math.max(session.fillShapes ? 0.5 : 1, item.fill ?? 1) };
+            // C-1.17 — bucket recolors the FILL only. Outline stays
+            // put (Paint's behaviour). Forces fill > 0 so the click
+            // actually turns the shape filled.
+            next = {
+              ...item,
+              fillColor: session.color,
+              color: session.color, // legacy
+              fill: Math.max(item.fill ?? 0, 1),
+            };
           } else if (item.kind === 'stroke' || item.kind === 'text') {
             next = { ...item, color: session.color };
           }
@@ -804,13 +820,21 @@
       e.preventDefault();
     } else if (isShapeTool(session.tool)) {
       dragStart = { x: p.x, y: p.y };
+      // C-1.17 — outline and fill are independent. Default mapping
+      // matches Paint: left-drag → outline=Color 1, fill=Color 2;
+      // right-drag swaps them. Legacy `color` stays set so back-
+      // compat readers keep working.
+      const strokeC = usingColor2 ? session.color2 : session.color;
+      const fillC = usingColor2 ? session.color : session.color2;
       liveShape = {
         kind: 'shape',
         tool: session.tool,
         x: p.x, y: p.y, w: 0, h: 0,
         color: gestureColor,
+        strokeColor: strokeC,
+        fillColor: fillC,
         width: session.width,
-        fill: session.fillShapes ? 0.25 : 0,
+        fill: session.fillShapes ? 1 : 0,
         opacity: session.opacity,
       };
       render();

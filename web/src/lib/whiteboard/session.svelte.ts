@@ -680,6 +680,17 @@ export function createWhiteboardSession(
       for (const layer of state.doc.layers) {
         layer.items = layer.items.map((item) => {
           if (item.kind === 'image') return item;
+          if (item.kind === 'shape') {
+            // C-1.17 — invert every color the shape carries so the
+            // outline + fill flip together. Legacy `color` stays in
+            // sync so back-compat readers see consistent state.
+            return {
+              ...item,
+              color: invert(item.color),
+              strokeColor: item.strokeColor ? invert(item.strokeColor) : undefined,
+              fillColor: item.fillColor ? invert(item.fillColor) : undefined,
+            };
+          }
           return { ...item, color: invert(item.color) };
         });
       }

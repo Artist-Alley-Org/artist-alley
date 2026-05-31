@@ -179,15 +179,92 @@
   }
   let showMoveMenu = $state(false);
   let showColorPicker = $state(false);
-  // Which color slot a palette / picker click writes into. false =
-  // primary (Color 1), true = secondary (Color 2). User flips by
-  // clicking the slot's swatch in the Colors section.
-  let color2Target = $state(false);
-  const activeColor = $derived(color2Target ? session.color2 : session.color);
+  // Which color slot a palette / picker click writes into.
+  //   'primary'  — session.color (Color 1)
+  //   'secondary'— session.color2 (Color 2)
+  //   'outline'  — selected shape's strokeColor
+  //   'fill'     — selected shape's fillColor
+  // User flips by clicking the slot's swatch in the Colors / Shape
+  // style sections. The outline/fill targets only matter when a
+  // shape is selected; otherwise we treat them as primary/secondary.
+  type ColorTarget = 'primary' | 'secondary' | 'outline' | 'fill';
+  let colorTarget = $state<ColorTarget>('primary');
+  // C-1.17 — currently-selected shape item, exposed for the Shape
+  // style section (outline / fill swatches + fill toggle). null
+  // when nothing's selected OR the selected item isn't a shape.
+  const selectedShapeItem = $derived(() => {
+    const sel = session.selection;
+    if (!sel) return null;
+    const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+    const item = layer?.items[sel.index];
+    return item && item.kind === 'shape' ? { layerId: sel.layerId, index: sel.index, item } : null;
+  });
+  const activeColor = $derived.by(() => {
+    if (colorTarget === 'secondary') return session.color2;
+    if (colorTarget === 'outline') {
+      const s = selectedShapeItem();
+      return s ? (s.item.strokeColor ?? s.item.color) : session.color;
+    }
+    if (colorTarget === 'fill') {
+      const s = selectedShapeItem();
+      return s ? (s.item.fillColor ?? s.item.color) : session.color2;
+    }
+    return session.color;
+  });
   function setActiveColor(hex: string) {
-    if (color2Target) session.color2 = hex;
-    else session.color = hex;
+    if (colorTarget === 'secondary') { session.color2 = hex; return; }
+    if (colorTarget === 'outline') {
+      const s = selectedShapeItem();
+      if (s) {
+        session.replaceItem(s.layerId, s.index, { ...s.item, strokeColor: hex, color: hex });
+      } else {
+        session.color = hex;
+      }
+      return;
+    }
+    if (colorTarget === 'fill') {
+      const s = selectedShapeItem();
+      if (s) {
+        // Setting a fill color implies turning the fill on if it
+        // wasn't already — otherwise the picker change wouldn't read
+        // visually.
+        session.replaceItem(s.layerId, s.index, {
+          ...s.item,
+          fillColor: hex,
+          fill: Math.max(s.item.fill ?? 0, 1),
+        });
+      } else {
+        session.color2 = hex;
+      }
+      return;
+    }
+    session.color = hex;
   }
+  // Outline / fill colors as currently displayed in the Shape style
+  // section — pull from the selected shape when one's picked,
+  // otherwise fall back to the session defaults (Color 1 + Color 2).
+  const shapeOutlineColor = $derived(() => {
+    const s = selectedShapeItem();
+    return s ? (s.item.strokeColor ?? s.item.color) : session.color;
+  });
+  const shapeFillColor = $derived(() => {
+    const s = selectedShapeItem();
+    return s ? (s.item.fillColor ?? s.item.color) : session.color2;
+  });
+  const shapeHasFill = $derived(() => {
+    const s = selectedShapeItem();
+    return s ? (s.item.fill ?? 0) > 0 : session.fillShapes;
+  });
+  function toggleShapeFill() {
+    const s = selectedShapeItem();
+    if (s) {
+      const next = (s.item.fill ?? 0) > 0 ? 0 : 1;
+      session.replaceItem(s.layerId, s.index, { ...s.item, fill: next });
+    } else {
+      session.fillShapes = !session.fillShapes;
+    }
+  }
+  const showShapeStyle = $derived(isShapeTool(session.tool) || !!selectedShapeItem());
   // Viewport-relative coords for the color picker. Recomputed on
   // open so the dropdown sits below the swatch even when the sidebar
   // scrolls. fixed-positioned so it stacks above the canvas overlay
@@ -431,25 +508,25 @@
         <div class="flex items-center gap-1">
           <button
             type="button"
-            onclick={() => (color2Target = false)}
+            onclick={() => (colorTarget = 'primary')}
             class="h-9 w-9 rounded border-2"
-            class:border-accent={!color2Target}
-            class:border-border={color2Target}
+            class:border-accent={colorTarget === 'primary'}
+            class:border-border={colorTarget !== 'primary'}
             style:background-color={session.color}
             title={`Color 1 (primary) — ${session.color}`}
             aria-label="Select primary color slot"
-            aria-pressed={!color2Target}
+            aria-pressed={colorTarget === 'primary'}
           ></button>
           <button
             type="button"
-            onclick={() => (color2Target = true)}
+            onclick={() => (colorTarget = 'secondary')}
             class="h-9 w-9 rounded border-2"
-            class:border-accent={color2Target}
-            class:border-border={!color2Target}
+            class:border-accent={colorTarget === 'secondary'}
+            class:border-border={colorTarget !== 'secondary'}
             style:background-color={session.color2}
             title={`Color 2 (secondary) — ${session.color2}`}
             aria-label="Select secondary color slot"
-            aria-pressed={color2Target}
+            aria-pressed={colorTarget === 'secondary'}
           ></button>
           <button
             type="button"
@@ -490,7 +567,7 @@
           onclick={openColorPicker}
           class="inline-flex h-6 w-6 items-center justify-center rounded border border-border ring-1 ring-fg-muted/30 hover:ring-accent"
           style:background-color={activeColor}
-          title={`Custom color picker (writes to ${color2Target ? 'Color 2' : 'Color 1'})`}
+          title={`Custom color picker (writes to ${colorTarget === 'secondary' ? 'Color 2' : colorTarget === 'outline' ? 'Outline' : colorTarget === 'fill' ? 'Fill' : 'Color 1'})`}
           aria-label="Open custom color picker"
           aria-expanded={showColorPicker}
         >
@@ -500,6 +577,85 @@
         </button>
       </div>
     </section>
+
+    <!-- ── Shape style ───────────────────────────────────────────
+         Outline + fill color slots, independent of Color 1/2.
+         Visible whenever a shape tool is active OR a shape item is
+         selected. For a selected shape, swatches read & write the
+         item's own strokeColor / fillColor; otherwise they preview
+         the defaults that get applied when a new shape is dragged
+         out (left-drag → Color 1 outline + Color 2 fill, right-
+         drag swaps). Clicking a swatch makes it the target slot
+         for the palette + custom color picker. -->
+    {#if showShapeStyle}
+      <section class="space-y-2 border-b border-border p-3">
+        <div class="flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">
+          <span>Shape style</span>
+          {#if selectedShapeItem()}
+            <span class="normal-case tracking-normal text-[10px] text-fg-muted">editing selection</span>
+          {:else}
+            <span class="normal-case tracking-normal text-[10px] text-fg-muted">defaults for new shapes</span>
+          {/if}
+        </div>
+        <div class="flex items-center gap-3">
+          <!-- Outline swatch -->
+          <button
+            type="button"
+            onclick={() => (colorTarget = 'outline')}
+            class="flex flex-col items-center gap-1"
+            title="Click to make outline the color-picker target"
+            aria-pressed={colorTarget === 'outline'}
+          >
+            <div class="relative h-9 w-9 rounded border-2"
+              class:border-accent={colorTarget === 'outline'}
+              class:border-border={colorTarget !== 'outline'}
+            >
+              <!-- Outline preview = ring of color over a white core. -->
+              <div class="absolute inset-0 rounded-sm" style:background-color={shapeOutlineColor()}></div>
+              <div class="absolute inset-1.5 rounded-sm bg-white"></div>
+            </div>
+            <span class="text-[10px] text-fg-muted">Outline</span>
+          </button>
+          <!-- Fill swatch -->
+          <button
+            type="button"
+            onclick={() => (colorTarget = 'fill')}
+            class="flex flex-col items-center gap-1"
+            title="Click to make fill the color-picker target"
+            aria-pressed={colorTarget === 'fill'}
+          >
+            <div class="relative h-9 w-9 rounded border-2"
+              class:border-accent={colorTarget === 'fill'}
+              class:border-border={colorTarget !== 'fill'}
+            >
+              <div class="absolute inset-0 rounded-sm" style:background-color={shapeFillColor()}></div>
+              {#if !shapeHasFill()}
+                <!-- Visual "no fill" hash through the swatch. -->
+                <svg xmlns="http://www.w3.org/2000/svg" class="absolute inset-0 h-full w-full" viewBox="0 0 24 24" preserveAspectRatio="none">
+                  <line x1="3" y1="21" x2="21" y2="3" stroke="#ef4444" stroke-width="2.5" />
+                </svg>
+              {/if}
+            </div>
+            <span class="text-[10px] text-fg-muted">Fill</span>
+          </button>
+          <div class="flex-1"></div>
+          <label class="inline-flex items-center gap-1 text-xs">
+            <input
+              type="checkbox"
+              checked={shapeHasFill()}
+              onchange={toggleShapeFill}
+              class="accent-accent"
+            />
+            <span>Filled</span>
+          </label>
+        </div>
+        {#if !selectedShapeItem()}
+          <p class="text-[10px] text-fg-muted">
+            Drag = outline Color 1, fill Color 2. Right-drag swaps.
+          </p>
+        {/if}
+      </section>
+    {/if}
 
     <!-- ── Size + Opacity ──────────────────────────────────────── -->
     <section class="space-y-3 border-b border-border p-3">
@@ -543,17 +699,6 @@
           aria-label="Opacity"
         />
       </div>
-      {#if isShapeTool(session.tool)}
-        <label class="flex cursor-pointer items-center justify-between text-xs">
-          <span>Fill shape</span>
-          <input
-            type="checkbox"
-            checked={session.fillShapes}
-            onchange={(e) => (session.fillShapes = (e.currentTarget as HTMLInputElement).checked)}
-            class="accent-accent"
-          />
-        </label>
-      {/if}
     </section>
 
     <!-- ── Typography ───────────────────────────────────────────
