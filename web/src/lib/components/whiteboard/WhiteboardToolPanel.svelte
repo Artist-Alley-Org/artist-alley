@@ -29,6 +29,7 @@
   } from '$lib/whiteboard/types';
   import { loadFont } from '$lib/whiteboard/fonts.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
+  import ColorPicker from './ColorPicker.svelte';
 
   interface Props {
     session: WhiteboardSession;
@@ -83,6 +84,7 @@
     session.selectItem(targetLayerId, newIdx);
   }
   let showMoveMenu = $state(false);
+  let showColorPicker = $state(false);
 
   // Typography surface — visible when the text tool is active, OR
   // when a text item is the current selection. Switching the family
@@ -176,16 +178,41 @@
             aria-pressed={session.color === c}
           ></button>
         {/each}
-        <!-- Native color picker for arbitrary hues. Reuses the OS
-             picker — no custom HSL UI in C-1.5; that's C-1.7. -->
-        <input
-          type="color"
-          value={session.color}
-          oninput={(e) => (session.color = (e.currentTarget as HTMLInputElement).value)}
-          class="h-6 w-6 cursor-pointer rounded border border-border bg-transparent p-0"
-          title="Custom color"
-          aria-label="Custom color"
-        />
+        <!-- Custom color picker — clicking the swatch opens a
+             dropdown with HSV field + hue slider + RGB/Hex inputs
+             + EyeDropper API + recent-colors strip. -->
+        <div class="relative">
+          <button
+            type="button"
+            onclick={() => (showColorPicker = !showColorPicker)}
+            class="inline-flex h-6 w-6 items-center justify-center rounded border border-border ring-1 ring-fg-muted/30 hover:ring-accent"
+            style:background-color={session.color}
+            title="Custom color picker"
+            aria-label="Open custom color picker"
+            aria-expanded={showColorPicker}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={session.color === '#ffffff' || session.color === '#0f172a' ? 'currentColor' : 'white'} stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {#if showColorPicker}
+            <!-- Anchored bottom-left of the swatch. z-50 keeps us
+                 above the rest of the sidebar; outside-click
+                 closes via the backdrop button. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div
+              class="fixed inset-0 z-40"
+              onclick={() => (showColorPicker = false)}
+            ></div>
+            <div class="absolute right-0 top-full z-50 mt-1">
+              <ColorPicker
+                value={session.color}
+                oninput={(hex) => (session.color = hex)}
+                onclose={() => (showColorPicker = false)}
+              />
+            </div>
+          {/if}
+        </div>
       </div>
     </section>
 
