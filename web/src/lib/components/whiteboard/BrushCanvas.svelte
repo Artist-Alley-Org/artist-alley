@@ -29,13 +29,21 @@
   import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   import type {
-    BrushContent, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
+    BBox, BrushContent, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
   } from '$lib/whiteboard/types';
   import {
     MAX_PASTED_IMAGE_BYTES,
+    DEFAULT_FONT_FAMILY,
     isBrushTool, isShapeTool, strokeOptionsFor,
+    itemBBox, pointInItem, translateItem, resizeItemToBBox,
   } from '$lib/whiteboard/types';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
+
+  // Per-session local clipboard for copy/cut/paste of items. Lives
+  // in module scope so it survives canvas remounts within the same
+  // tab. Shared across whiteboard sessions in the same tab — useful
+  // when the user copies from one sketch and pastes into another.
+  let sessionClipboard: Item | null = null;
 
   interface Props {
     /** Shared reactive session. Owns doc, active layer, tools. */
@@ -202,6 +210,13 @@
     const w = Math.abs(s.w);
     const h = Math.abs(s.h);
     ctx.save();
+    if (s.rotation) {
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((s.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
     ctx.strokeStyle = s.color;
     ctx.lineWidth = s.width;
     ctx.lineCap = 'round';
@@ -275,15 +290,24 @@
     if (!ctx) return;
     if (!t.body) return;
     ctx.save();
+    if (t.rotation) {
+      const cx = t.x + t.w / 2;
+      const cy = t.y + t.h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((t.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
     ctx.fillStyle = t.color;
     ctx.globalAlpha = (ctx.globalAlpha ?? 1);
     const weight = t.bold ? '700' : '500';
     const style = t.italic ? 'italic ' : '';
-    ctx.font = `${style}${weight} ${t.fontSize}px system-ui, -apple-system, sans-serif`;
+    // Quote the font-family for safety when it contains spaces
+    // ("Open Sans", "Permanent Marker", etc).
+    const family = t.fontFamily ? `"${t.fontFamily}", system-ui, sans-serif` : 'system-ui, sans-serif';
+    ctx.font = `${style}${weight} ${t.fontSize}px ${family}`;
     ctx.textBaseline = 'top';
     ctx.textAlign = t.align ?? 'left';
     const x = t.align === 'center' ? t.x + t.w / 2 : (t.align === 'right' ? t.x + t.w : t.x);
-    // Wrap on \n; no auto-wrap for now (commit-time editor handles it).
     const lines = t.body.split('\n');
     const lineH = t.fontSize * 1.25;
     for (let i = 0; i < lines.length; i++) {
@@ -310,10 +334,73 @@
 
   // ── Pointer handlers ──────────────────────────────────────────────
 
+  // ── Selection drag state ─────────────────────────────────────────
+  // Active transform gesture started by mousedown on the selected
+  // item's bbox or one of its handles. The mousemove handler reads
+  // this to know what to update; mouseup clears it + commits.
+  type SelectGesture =
+    | { kind: 'move'; startX: number; startY: number; original: Item }
+    | { kind: 'resize'; handle: HandleId; startX: number; startY: number; original: Item; originalBBox: BBox }
+    | { kind: 'rotate'; cx: number; cy: number; startAngle: number; originalRotation: number; original: Item };
+  type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+  let selectGesture: SelectGesture | null = null;
+
+  function selectedItem(): { layerId: string; index: number; item: Item } | null {
+    const sel = session.selection;
+    if (!sel) return null;
+    const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+    if (!layer) return null;
+    const item = layer.items[sel.index];
+    if (!item) return null;
+    return { layerId: sel.layerId, index: sel.index, item };
+  }
+
+  /** Hit-test items in z-order (newest first within a layer; topmost
+   *  layer first). Returns the first item the point falls inside. */
+  function pickItem(px: number, py: number): { layerId: string; index: number } | null {
+    for (let li = session.doc.layers.length - 1; li >= 0; li--) {
+      const layer = session.doc.layers[li];
+      if (!layer.visible) continue;
+      for (let i = layer.items.length - 1; i >= 0; i--) {
+        if (pointInItem(px, py, layer.items[i])) {
+          return { layerId: layer.id, index: i };
+        }
+      }
+    }
+    return null;
+  }
+
   function onPointerDown(e: PointerEvent) {
     if (readOnly) return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (!canvasEl) return;
+
+    // Select tool — hit-test and either pick or deselect. Drag-to-
+    // move happens in onPointerMove if the user drags after picking.
+    if (session.tool === 'select') {
+      const p = eventToSource(e);
+      const hit = pickItem(p.x, p.y);
+      if (hit) {
+        session.selectItem(hit.layerId, hit.index);
+        // Start a move gesture; mousemove + mouseup decide whether
+        // it's a click or a drag.
+        const layer = session.doc.layers.find((l) => l.id === hit.layerId)!;
+        const item = layer.items[hit.index];
+        if (!layer.locked) {
+          canvasEl.setPointerCapture(e.pointerId);
+          selectGesture = {
+            kind: 'move',
+            startX: p.x,
+            startY: p.y,
+            original: JSON.parse(JSON.stringify(item)),
+          };
+        }
+      } else {
+        session.deselect();
+      }
+      e.preventDefault();
+      return;
+    }
 
     // Block input on the active layer when it's locked.
     const layer = session.doc.layers.find((l) => l.id === session.activeLayerId);
@@ -360,6 +447,70 @@
 
   function onPointerMove(e: PointerEvent) {
     const p = eventToSource(e);
+    // Selection-gesture transforms — mutate the selected item in
+    // place without committing to history (we commit on mouseup so
+    // a single drag becomes one undo step).
+    if (selectGesture) {
+      const sel = selectedItem();
+      if (!sel) { selectGesture = null; return; }
+      const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+      if (!layer) return;
+      const g = selectGesture;
+      if (g.kind === 'move') {
+        const dx = p.x - g.startX;
+        const dy = p.y - g.startY;
+        layer.items[sel.index] = translateItem(g.original, dx, dy);
+      } else if (g.kind === 'resize') {
+        const b = g.originalBBox;
+        let nx = b.x, ny = b.y, nw = b.w, nh = b.h;
+        // Edge / corner ID drives which sides move.
+        const h = g.handle;
+        if (h.includes('w')) { const dx = p.x - g.startX; nx = b.x + dx; nw = b.w - dx; }
+        if (h.includes('e')) { nw = b.w + (p.x - g.startX); }
+        if (h.includes('n')) { const dy = p.y - g.startY; ny = b.y + dy; nh = b.h - dy; }
+        if (h.includes('s')) { nh = b.h + (p.y - g.startY); }
+        // Shift = uniform scale (corner handles only).
+        if (e.shiftKey && (h === 'nw' || h === 'ne' || h === 'sw' || h === 'se') && b.w > 0 && b.h > 0) {
+          const ratio = b.h / b.w;
+          if (h === 'nw' || h === 'se') {
+            nh = nw * ratio;
+            if (h === 'nw') ny = b.y + b.h - nh;
+          } else {
+            nh = nw * ratio;
+            if (h === 'ne') ny = b.y + b.h - nh;
+          }
+        }
+        // Don't allow zero/negative dimensions — clamp to 4 px.
+        if (nw < 4) { nw = 4; if (h.includes('w')) nx = b.x + b.w - 4; }
+        if (nh < 4) { nh = 4; if (h.includes('n')) ny = b.y + b.h - 4; }
+        layer.items[sel.index] = resizeItemToBBox(g.original, nx, ny, nw, nh);
+      } else if (g.kind === 'rotate') {
+        const ang = (Math.atan2(p.y - g.cy, p.x - g.cx) * 180) / Math.PI;
+        let next = g.originalRotation + (ang - g.startAngle);
+        // Shift snaps to 15° increments.
+        if (e.shiftKey) next = Math.round(next / 15) * 15;
+        const item = g.original;
+        if (item.kind === 'stroke') {
+          // Strokes don't carry a rotation field — rotation reshapes
+          // the points instead. Build the rotated copy.
+          const rad = ((next - (g.originalRotation || 0)) * Math.PI) / 180;
+          const c = Math.cos(rad);
+          const s = Math.sin(rad);
+          layer.items[sel.index] = {
+            ...item,
+            points: item.points.map((pt) => {
+              const dx = pt[0] - g.cx;
+              const dy = pt[1] - g.cy;
+              return [g.cx + dx * c - dy * s, g.cy + dx * s + dy * c, pt[2]];
+            }),
+          };
+        } else {
+          layer.items[sel.index] = { ...item, rotation: next } as Item;
+        }
+      }
+      render();
+      return;
+    }
     if (liveStroke) {
       liveStroke = {
         ...liveStroke,
@@ -391,6 +542,22 @@
   function onPointerUp(e: PointerEvent) {
     if (canvasEl?.hasPointerCapture(e.pointerId)) {
       canvasEl.releasePointerCapture(e.pointerId);
+    }
+    // Selection gesture commit — push one history snapshot for the
+    // whole drag so undo rewinds to pre-drag in one step.
+    if (selectGesture) {
+      const sel = selectedItem();
+      if (sel) {
+        const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+        const finalItem = layer?.items[sel.index];
+        if (finalItem) {
+          // Replace via session method so history snapshots cleanly.
+          session.replaceItem(sel.layerId, sel.index, finalItem);
+        }
+      }
+      selectGesture = null;
+      render();
+      return;
     }
     const layerId = session.activeLayerId;
     if (liveStroke && layerId) {
@@ -519,6 +686,155 @@
     }
   }
 
+  // ── Selection overlay derived values ─────────────────────────────
+
+  // Computed in the template; exposed via a getter for clarity.
+  const selectionBBox = $derived(() => {
+    const sel = session.selection;
+    if (!sel) return null;
+    const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+    const item = layer?.items[sel.index];
+    if (!item) return null;
+    return { bbox: itemBBox(item), item, layerId: sel.layerId, index: sel.index };
+  });
+
+  // Convert source-canvas bbox to CSS-pixel rect for handle layout.
+  function bboxToCss(bb: BBox): { left: number; top: number; width: number; height: number } {
+    const a = sourceToCss(bb.x, bb.y);
+    const b = sourceToCss(bb.x + bb.w, bb.y + bb.h);
+    return { left: a.left, top: a.top, width: b.left - a.left, height: b.top - a.top };
+  }
+
+  function startHandleDrag(e: PointerEvent, handle: HandleId) {
+    e.stopPropagation();
+    e.preventDefault();
+    const sel = selectedItem();
+    if (!sel) return;
+    const p = eventToSource(e);
+    selectGesture = {
+      kind: 'resize',
+      handle,
+      startX: p.x,
+      startY: p.y,
+      original: JSON.parse(JSON.stringify(sel.item)),
+      originalBBox: itemBBox(sel.item),
+    };
+    if (canvasEl) canvasEl.setPointerCapture(e.pointerId);
+  }
+
+  function startRotateDrag(e: PointerEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    const sel = selectedItem();
+    if (!sel) return;
+    const bb = itemBBox(sel.item);
+    const cx = bb.x + bb.w / 2;
+    const cy = bb.y + bb.h / 2;
+    const p = eventToSource(e);
+    selectGesture = {
+      kind: 'rotate',
+      cx, cy,
+      startAngle: (Math.atan2(p.y - cy, p.x - cx) * 180) / Math.PI,
+      originalRotation: sel.item.kind !== 'stroke' ? (sel.item.rotation ?? 0) : 0,
+      original: JSON.parse(JSON.stringify(sel.item)),
+    };
+    if (canvasEl) canvasEl.setPointerCapture(e.pointerId);
+  }
+
+  // Double-click a text item with the select tool active → re-enter
+  // edit mode at that item. The contenteditable overlay reuses the
+  // text-input UI so commit-on-blur/Enter works the same way.
+  let editingTextRef: { layerId: string; index: number } | null = $state(null);
+
+  function onCanvasDblClick(e: MouseEvent) {
+    if (readOnly) return;
+    if (session.tool !== 'select') return;
+    const p = eventToSource(e);
+    const hit = pickItem(p.x, p.y);
+    if (!hit) return;
+    const layer = session.doc.layers.find((l) => l.id === hit.layerId);
+    const item = layer?.items[hit.index];
+    if (!item || item.kind !== 'text') return;
+    editingTextRef = { layerId: hit.layerId, index: hit.index };
+    textEditBody = item.body;
+    queueMicrotask(() => textEditRef?.focus());
+    e.preventDefault();
+  }
+
+  function commitTextEdit2() {
+    if (!editingTextRef) return;
+    const layer = session.doc.layers.find((l) => l.id === editingTextRef!.layerId);
+    const item = layer?.items[editingTextRef.index];
+    if (item && item.kind === 'text') {
+      const next: TextItem = { ...item, body: textEditBody.trim() || item.body };
+      session.replaceItem(editingTextRef.layerId, editingTextRef.index, next);
+    }
+    editingTextRef = null;
+    textEditBody = '';
+  }
+
+  // ── Clipboard (copy / cut / paste of selected items) ─────────────
+  // Per-session clipboard. Lives in module scope so paste works
+  // even when the canvas remounts (Vite HMR, layer changes, etc).
+  // We don't go through the OS clipboard because items are JSON, not
+  // text/HTML/image — local clipboard is simpler + reliable.
+
+  function copySelection(): Item | null {
+    const sel = selectedItem();
+    if (!sel) return null;
+    sessionClipboard = JSON.parse(JSON.stringify(sel.item)) as Item;
+    return sessionClipboard;
+  }
+
+  function cutSelection() {
+    const sel = selectedItem();
+    if (!sel) return;
+    copySelection();
+    session.removeItems(sel.layerId, [sel.index]);
+  }
+
+  function pasteFromClipboard() {
+    if (!sessionClipboard) return;
+    const targetLayer = session.activeLayerId;
+    if (!targetLayer) return;
+    // Offset the paste by 20 px so the user sees it land beside the
+    // original instead of stacking exactly on top.
+    const offsetItem = translateItem(JSON.parse(JSON.stringify(sessionClipboard)) as Item, 20, 20);
+    session.addItem(targetLayer, offsetItem);
+    // Auto-select the newly pasted item.
+    const layer = session.doc.layers.find((l) => l.id === targetLayer);
+    if (layer) session.selectItem(targetLayer, layer.items.length - 1);
+  }
+
+  // Document-level keyboard for selection-related shortcuts.
+  function onDocKey(e: KeyboardEvent) {
+    if (readOnly) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    // Delete / Backspace = remove selected item.
+    if ((e.key === 'Delete' || e.key === 'Backspace') && session.selection) {
+      e.preventDefault();
+      const sel = session.selection;
+      session.removeItems(sel.layerId, [sel.index]);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      copySelection();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+      e.preventDefault();
+      cutSelection();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+      e.preventDefault();
+      pasteFromClipboard();
+      return;
+    }
+  }
+
   // ── Public helper for the host: rasterized PNG snapshot ───────────
 
   export function snapshotPng(): string {
@@ -547,10 +863,14 @@
       img.onload = () => { backgroundImg = img; render(); };
       img.src = backgroundUrl;
     }
+    document.addEventListener('keydown', onDocKey);
     return () => ro.disconnect();
   });
 
-  onDestroy(() => { ctx = null; });
+  onDestroy(() => {
+    ctx = null;
+    document.removeEventListener('keydown', onDocKey);
+  });
 
   // Re-render reactively when session doc changes (undo/redo, items
   // added by paste, layer toggles, etc).
@@ -597,15 +917,93 @@
     class="absolute inset-0 h-full w-full touch-none"
     style:cursor={readOnly
       ? 'default'
-      : session.tool === 'text'
-        ? 'text'
-        : isShapeTool(session.tool)
-          ? 'crosshair'
+      : session.tool === 'select'
+        ? 'default'
+        : session.tool === 'text'
+          ? 'text'
           : 'crosshair'}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
+    ondblclick={onCanvasDblClick}
   ></canvas>
+
+  {#if selectionBBox() && session.tool === 'select'}
+    {@const sb = selectionBBox()!}
+    {@const css = bboxToCss(sb.bbox)}
+    <!-- Selection overlay: bbox outline + 8 resize handles + rotate
+         handle. Positioned absolute over the canvas in CSS pixels so
+         handle size stays constant regardless of source-canvas
+         dimensions. Rotated via transform so the user sees the
+         rotation live. -->
+    <div
+      class="pointer-events-none absolute"
+      style:left={`${css.left}px`}
+      style:top={`${css.top}px`}
+      style:width={`${css.width}px`}
+      style:height={`${css.height}px`}
+      style:transform={sb.bbox.rotation ? `rotate(${sb.bbox.rotation}deg)` : 'none'}
+      style:transform-origin="center"
+    >
+      <div class="absolute inset-0 border-2 border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.3)]"></div>
+      <!-- 8 resize handles. pointer-events-auto so they receive the
+           drag; the wrapping div is pointer-events-none so clicks
+           inside the bbox (but outside handles) fall through to the
+           canvas for re-pick. -->
+      {#each [
+        { id: 'nw', pos: 'left-0 top-0 -translate-x-1/2 -translate-y-1/2', cursor: 'nwse-resize' },
+        { id: 'n',  pos: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2', cursor: 'ns-resize' },
+        { id: 'ne', pos: 'right-0 top-0 translate-x-1/2 -translate-y-1/2', cursor: 'nesw-resize' },
+        { id: 'e',  pos: 'right-0 top-1/2 translate-x-1/2 -translate-y-1/2', cursor: 'ew-resize' },
+        { id: 'se', pos: 'right-0 bottom-0 translate-x-1/2 translate-y-1/2', cursor: 'nwse-resize' },
+        { id: 's',  pos: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2', cursor: 'ns-resize' },
+        { id: 'sw', pos: 'left-0 bottom-0 -translate-x-1/2 translate-y-1/2', cursor: 'nesw-resize' },
+        { id: 'w',  pos: 'left-0 top-1/2 -translate-x-1/2 -translate-y-1/2', cursor: 'ew-resize' },
+      ] as h (h.id)}
+        <button
+          type="button"
+          class={`pointer-events-auto absolute h-3 w-3 rounded-sm border-2 border-accent bg-white shadow-sm ${h.pos}`}
+          style:cursor={h.cursor}
+          onpointerdown={(e) => startHandleDrag(e, h.id as HandleId)}
+          aria-label={`Resize ${h.id}`}
+        ></button>
+      {/each}
+      <!-- Rotate handle — sits above the bbox top-center, connected
+           by a short stem so it reads as "the rotate one" not "extra
+           resize". -->
+      <div class="pointer-events-none absolute left-1/2 top-0 h-5 w-px -translate-x-1/2 -translate-y-full bg-accent"></div>
+      <button
+        type="button"
+        class="pointer-events-auto absolute left-1/2 top-0 h-3.5 w-3.5 -translate-x-1/2 -translate-y-[calc(100%+0.5rem)] rounded-full border-2 border-accent bg-white shadow-sm"
+        style:cursor="grab"
+        onpointerdown={startRotateDrag}
+        title="Rotate (Shift = snap 15°)"
+        aria-label="Rotate"
+      ></button>
+    </div>
+  {/if}
+
+  {#if editingTextRef && !readOnly}
+    {@const layer = session.doc.layers.find((l) => l.id === editingTextRef!.layerId)}
+    {@const item = layer?.items[editingTextRef!.index] as TextItem | undefined}
+    {#if item}
+      {@const css = sourceToCss(item.x, item.y)}
+      <!-- svelte-ignore a11y_autofocus -->
+      <div
+        bind:this={textEditRef}
+        contenteditable="true"
+        class="absolute z-10 min-h-[1.5em] cursor-text rounded border border-accent bg-white/95 px-1 text-black outline-none focus:ring-2 focus:ring-accent"
+        style:left={`${css.left}px`}
+        style:top={`${css.top}px`}
+        style:font-size={`${item.fontSize * (wrapperEl ? (wrapperEl.clientWidth / session.doc.source_w) : 1)}px`}
+        style:font-family={item.fontFamily ?? 'system-ui'}
+        style:color={item.color}
+        oninput={(e) => textEditBody = (e.currentTarget as HTMLDivElement).innerText}
+        onkeydown={(e) => { if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); commitTextEdit2(); } }}
+        onblur={commitTextEdit2}
+      >{item.body}</div>
+    {/if}
+  {/if}
 
   {#if textEdit && !readOnly}
     {@const css = sourceToCss(textEdit.x, textEdit.y)}

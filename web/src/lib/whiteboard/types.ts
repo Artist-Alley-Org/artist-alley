@@ -70,6 +70,9 @@ export interface ShapeItem {
    *  opacity (0..1). Rect + ellipse only. */
   fill?: number;
   opacity?: number;
+  /** Rotation in degrees around the bbox center. C-1.6 selection
+   *  tool sets this. */
+  rotation?: number;
 }
 
 /** Text label placed at a point and editable inline. */
@@ -85,12 +88,16 @@ export interface TextItem {
   body: string;
   fontSize: number;
   color: string;
+  /** CSS font-family. Whiteboard ships a curated Google Fonts list
+   *  (see GOOGLE_FONTS in types) — picking a face lazy-loads its
+   *  webfont. Falls back to system-ui if missing / loading. */
+  fontFamily?: string;
   /** 'left' | 'center' | 'right' — basic text alignment. */
   align?: 'left' | 'center' | 'right';
-  /** Bold / italic toggles. Italic skipped in C-1.5 toolbar; field
-   *  reserved so a future toolbar gets to it without schema change. */
   bold?: boolean;
   italic?: boolean;
+  /** Rotation in degrees around the bbox center. */
+  rotation?: number;
 }
 
 /** Pasted (or dropped) image. The bytes are stored as a base64
@@ -287,3 +294,137 @@ export function strokeOptionsFor(tool: BrushTool) {
  *  generous for screenshots, blocks accidentally pasting in a
  *  high-res photo that would balloon the JSON document. */
 export const MAX_PASTED_IMAGE_BYTES = 5 * 1024 * 1024;
+
+// ── Bounding boxes + hit-testing (used by selection tool) ────────
+
+export interface BBox { x: number; y: number; w: number; h: number; rotation: number; }
+
+/** Axis-aligned bbox of an item in source-canvas coords. Strokes
+ *  scan their points; shapes / text / image read their own x/y/w/h
+ *  (after normalizing negative shape sizes). The rotation field is
+ *  the item's own rotation around the bbox center; the bbox values
+ *  themselves are still axis-aligned. */
+export function itemBBox(item: Item): BBox {
+  switch (item.kind) {
+    case 'stroke': {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of item.points) {
+        if (p[0] < minX) minX = p[0];
+        if (p[1] < minY) minY = p[1];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[1] > maxY) maxY = p[1];
+      }
+      const pad = (item.width ?? 6) * 0.6;
+      if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 0, h: 0, rotation: 0 };
+      return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2, rotation: 0 };
+    }
+    case 'shape': {
+      const x = item.w >= 0 ? item.x : item.x + item.w;
+      const y = item.h >= 0 ? item.y : item.y + item.h;
+      return { x, y, w: Math.abs(item.w), h: Math.abs(item.h), rotation: item.rotation ?? 0 };
+    }
+    case 'text':
+      return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+    case 'image':
+      return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+  }
+}
+
+/** Test whether a point is inside an item's bbox (rotation-aware:
+ *  un-rotates the point into the bbox's local space first). Used by
+ *  the select tool's pick gesture. */
+export function pointInItem(px: number, py: number, item: Item): boolean {
+  const bb = itemBBox(item);
+  if (bb.w === 0 || bb.h === 0) return false;
+  let lx = px, ly = py;
+  if (bb.rotation) {
+    const cx = bb.x + bb.w / 2;
+    const cy = bb.y + bb.h / 2;
+    const ang = (-bb.rotation * Math.PI) / 180;
+    const dx = px - cx;
+    const dy = py - cy;
+    lx = cx + dx * Math.cos(ang) - dy * Math.sin(ang);
+    ly = cy + dx * Math.sin(ang) + dy * Math.cos(ang);
+  }
+  return lx >= bb.x && lx <= bb.x + bb.w && ly >= bb.y && ly <= bb.y + bb.h;
+}
+
+// ── Item mutation helpers (selection / move / resize) ─────────────
+
+/** Translate an item by (dx, dy) in source coords. Strokes shift
+ *  every point; the others bump x/y. */
+export function translateItem(item: Item, dx: number, dy: number): Item {
+  if (item.kind === 'stroke') {
+    return { ...item, points: item.points.map((p) => [p[0] + dx, p[1] + dy, p[2]]) };
+  }
+  return { ...item, x: item.x + dx, y: item.y + dy };
+}
+
+/** Scale an item to a new bbox. Strokes re-map every point; shapes /
+ *  text / image just re-set x/y/w/h. fontSize on text scales with
+ *  height so re-sizing the box re-sizes the text proportionally. */
+export function resizeItemToBBox(item: Item, x: number, y: number, w: number, h: number): Item {
+  const old = itemBBox(item);
+  if (item.kind === 'stroke') {
+    if (old.w === 0 || old.h === 0) return item;
+    const sx = w / old.w;
+    const sy = h / old.h;
+    return {
+      ...item,
+      points: item.points.map((p) => [
+        x + (p[0] - old.x) * sx,
+        y + (p[1] - old.y) * sy,
+        p[2],
+      ]),
+    };
+  }
+  if (item.kind === 'shape') {
+    return { ...item, x, y, w, h };
+  }
+  if (item.kind === 'text') {
+    const scaleY = old.h > 0 ? h / old.h : 1;
+    return { ...item, x, y, w, h, fontSize: Math.max(8, Math.min(256, item.fontSize * scaleY)) };
+  }
+  // image
+  return { ...item, x, y, w, h };
+}
+
+// ── Google Fonts (curated, lazy-loaded) ──────────────────────────
+
+export interface FontEntry {
+  family: string;          // CSS font-family value (must match Google's API name)
+  label: string;           // Human-friendly label in the picker
+  category: 'sans' | 'serif' | 'display' | 'handwriting' | 'mono';
+  /** CSS weight options to request via Google Fonts. Pickers only
+   *  expose 400 + 700 — bold toggle picks 700, otherwise 400. */
+  weights: number[];
+}
+
+/** Curated set. Limelight is the user's brand display face (per
+ *  account.preferences.themes config). The rest cover the common
+ *  family categories users reach for: clean sans, serious serif,
+ *  display, hand, monospace. */
+export const GOOGLE_FONTS: readonly FontEntry[] = [
+  { family: 'Limelight',           label: 'Limelight (brand)', category: 'display', weights: [400] },
+  { family: 'Inter',               label: 'Inter',             category: 'sans',    weights: [400, 700] },
+  { family: 'Roboto',              label: 'Roboto',            category: 'sans',    weights: [400, 700] },
+  { family: 'Open Sans',           label: 'Open Sans',         category: 'sans',    weights: [400, 700] },
+  { family: 'Merriweather',        label: 'Merriweather',      category: 'serif',   weights: [400, 700] },
+  { family: 'Lora',                label: 'Lora',              category: 'serif',   weights: [400, 700] },
+  { family: 'Playfair Display',    label: 'Playfair Display',  category: 'serif',   weights: [400, 700] },
+  { family: 'Bebas Neue',          label: 'Bebas Neue',        category: 'display', weights: [400] },
+  { family: 'Pacifico',            label: 'Pacifico',          category: 'handwriting', weights: [400] },
+  { family: 'Caveat',              label: 'Caveat',            category: 'handwriting', weights: [400, 700] },
+  { family: 'Permanent Marker',    label: 'Permanent Marker',  category: 'handwriting', weights: [400] },
+  { family: 'JetBrains Mono',      label: 'JetBrains Mono',    category: 'mono',    weights: [400, 700] },
+] as const;
+
+/** Default font family for new text items. Inter is a safe, neutral
+ *  sans that reads well at every size and is widely cached on the
+ *  Google Fonts CDN. */
+export const DEFAULT_FONT_FAMILY = 'Inter';
+
+/** Min/max font-size for the typography slider. */
+export const FONT_SIZE_MIN = 8;
+export const FONT_SIZE_MAX = 96;
+export const FONT_SIZE_PRESETS = [14, 18, 24, 36, 48, 72, 96] as const;

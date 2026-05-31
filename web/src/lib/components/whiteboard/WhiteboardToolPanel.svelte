@@ -36,6 +36,8 @@
   let { session, saving = false, saveError = null, onSave, onClose }: Props = $props();
 
   const TOOLS: Array<{ id: Tool; label: string; icon: string }> = [
+    // Selection (cursor) — clicks pick items, drags transform.
+    { id: 'select',      label: 'Select (V)',      icon: 'M3 3l8 19 2-8 8-2z' },
     // Brushes
     { id: 'pen',         label: 'Pen (P)',         icon: 'M14 4l6 6-10 10H4v-6z' },
     { id: 'marker',      label: 'Marker (M)',      icon: 'M16 2l6 6-12 12-4-4z' },
@@ -53,6 +55,29 @@
   // Currently editing the name of which layer? Keyed by layer id.
   let editingLayerId = $state<string | null>(null);
   let editingLayerName = $state('');
+
+  // Selection actions — only meaningful when session.selection is
+  // set. The buttons are in their own section that appears between
+  // tool controls and the layer panel.
+  function moveSelectedToLayer(targetLayerId: string) {
+    const sel = session.selection;
+    if (!sel) return;
+    if (sel.layerId === targetLayerId) return;
+    const fromLayer = session.doc.layers.find((l) => l.id === sel.layerId);
+    const toLayer = session.doc.layers.find((l) => l.id === targetLayerId);
+    if (!fromLayer || !toLayer || toLayer.locked) return;
+    const item = fromLayer.items[sel.index];
+    if (!item) return;
+    // Add to destination first, then remove from source. addItem
+    // commits one history snapshot; removeItems commits another.
+    // Selection re-targets the item in its new home so handles
+    // stay glued.
+    session.addItem(targetLayerId, item);
+    session.removeItems(sel.layerId, [sel.index]);
+    const newIdx = (session.doc.layers.find((l) => l.id === targetLayerId)?.items.length ?? 1) - 1;
+    session.selectItem(targetLayerId, newIdx);
+  }
+  let showMoveMenu = $state(false);
 
   function startRename(id: string, current: string) {
     editingLayerId = id;
@@ -190,6 +215,53 @@
         </label>
       {/if}
     </section>
+
+    <!-- ── Selection actions ────────────────────────────────────
+         Only meaningful when an item is picked (select tool + click).
+         When nothing's selected we hint at the workflow so users
+         find the tool. -->
+    {#if session.selection}
+      <section class="border-b border-border p-3">
+        <div class="mb-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted/80">Selection</div>
+        <div class="mb-2 text-[10px] text-fg-muted">
+          One item selected. Drag = move · handles = resize / rotate · Delete · Ctrl/⌘ C / X / V.
+        </div>
+        <div class="flex flex-wrap gap-1">
+          <button
+            type="button"
+            onclick={() => session.removeItems(session.selection!.layerId, [session.selection!.index])}
+            class="inline-flex h-7 items-center rounded border border-border px-2 text-xs text-fg hover:border-danger hover:text-danger"
+            title="Delete (Del / Backspace)"
+          >Delete</button>
+          <div class="relative">
+            <button
+              type="button"
+              onclick={() => (showMoveMenu = !showMoveMenu)}
+              class="inline-flex h-7 items-center rounded border border-border px-2 text-xs text-fg hover:border-fg-muted/60"
+              title="Move selected item to another layer"
+            >Move to layer ▾</button>
+            {#if showMoveMenu}
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div
+                class="absolute left-0 top-full z-50 mt-1 min-w-[10rem] rounded border border-border bg-surface-elevated shadow-lg"
+                onclick={() => (showMoveMenu = false)}
+              >
+                {#each session.doc.layers as l (l.id)}
+                  <button
+                    type="button"
+                    onclick={() => moveSelectedToLayer(l.id)}
+                    disabled={l.id === session.selection!.layerId || l.locked}
+                    class="block w-full truncate px-3 py-1.5 text-left text-xs text-fg hover:bg-state-hover disabled:opacity-40 disabled:hover:bg-transparent"
+                  >
+                    {l.name || 'Untitled'}{l.id === session.selection!.layerId ? '  ✓' : ''}{l.locked ? '  🔒' : ''}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      </section>
+    {/if}
 
     <!-- ── Layers ──────────────────────────────────────────────── -->
     <section class="border-b border-border p-3">
@@ -359,8 +431,12 @@
     <section class="p-3 text-[10px] text-fg-muted">
       <div class="mb-1 font-medium uppercase tracking-wide text-fg-muted/80">Tips</div>
       <ul class="space-y-0.5">
+        <li>V = select · click to pick · drag handles to resize · rotate handle to rotate</li>
+        <li>Double-click text to re-edit</li>
+        <li>Delete / Backspace removes selected</li>
         <li>Paste images / text directly (Ctrl/⌘+V)</li>
-        <li>Shift while dragging a shape constrains it</li>
+        <li>Ctrl/⌘ C / X / V — copy / cut / paste (offsets paste by 20 px)</li>
+        <li>Shift while dragging a shape / handle constrains it</li>
         <li>p / m / h / e / l / a / r / o / t — tool quick-keys</li>
         <li>Ctrl/⌘+Z undo · +Shift redo</li>
       </ul>

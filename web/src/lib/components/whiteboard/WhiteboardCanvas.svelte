@@ -47,6 +47,7 @@
       return;
     }
     const map: Record<string, typeof session.tool> = {
+      v: 'select',
       p: 'pen', m: 'marker', h: 'highlighter', e: 'eraser',
       l: 'line', a: 'arrow', r: 'rect', o: 'ellipse',
       t: 'text',
