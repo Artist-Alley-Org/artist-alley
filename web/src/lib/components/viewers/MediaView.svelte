@@ -113,10 +113,12 @@
   let hls: any = null;
 
   // detectedFps is the "frame rate" the controller surfaces. Video
-  // gets the real FPS once metadata loads; audio uses 100 (10 ms
-  // granularity per "frame") so scrub steps + the frame counter map
-  // cleanly to human-readable time. The shell's "step ±1" thus
-  // advances 10 ms for audio, one frame for video — both feel right.
+  // gets the real FPS once metadata loads; audio uses 1000 (1 ms
+  // granularity per "frame") so the timecode reads true milliseconds
+  // (DAW convention — M:SS.mmm) and scrubbing is sample-precise.
+  // Shift+,/. still steps 10 frames, which at fps=1000 is the 10 ms
+  // increment most audio review actually wants; the bare ,/. step
+  // is 1 ms for the rare "I need one sample over" case.
   let detectedFps = $state(24);
 
   // Waveform progress 0–100 — updated each rAF tick from the audio
@@ -188,14 +190,18 @@
     const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
     return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
   }
-  // Audio: M:SS.s (one decimal). Audio-listeners don't think in
-  // frames; mm:ss matches every other player.
+  // Audio: M:SS.mmm — millisecond precision (DAW idiom). Audio
+  // listeners don't think in frames; mm:ss.mmm is the format every
+  // serious audio tool (Audacity, Reaper, Pro Tools, Ableton) uses
+  // for sub-second positions. We compute from the frame index using
+  // detectedFps=1000, so the displayed ms is exact, not rounded.
   function tcAudio(frame: number): string {
     if (!Number.isFinite(frame) || frame < 0) frame = 0;
-    const t = frame / Math.max(1, detectedFps);
-    const m = Math.floor(t / 60);
-    const s = t % 60;
-    return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+    const totalMs = Math.round(frame * (1000 / Math.max(1, detectedFps)));
+    const m = Math.floor(totalMs / 60000);
+    const s = Math.floor(totalMs / 1000) % 60;
+    const ms = totalMs % 1000;
+    return `${m}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
   }
 
   // ── Transport implementations (installed onto controller) ────────
@@ -234,7 +240,7 @@
     controller.kind = isAudio ? 'audio' : 'video';
     controller.hasTimeline = true;
     if (isAudio) {
-      detectedFps = 100;
+      detectedFps = 1000;
       controller.formatAnchor = tcAudio;
       controller.spritesUrl = '';
       controller.spritesVttUrl = '';

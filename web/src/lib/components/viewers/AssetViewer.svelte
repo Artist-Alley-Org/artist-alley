@@ -581,7 +581,14 @@
         class="pointer-events-none absolute bottom-3 left-3 rounded bg-black/70 px-2 py-1 font-mono text-xs"
       >
         {#if controller.hasTimeline}
-          {controller.formatAnchor(controller.currentFrame)} · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
+          {controller.formatAnchor(controller.currentFrame)}
+          {#if controller.kind !== 'audio'}
+            <!-- Frame counter — only meaningful for video / pdf / etc.
+                 Audio runs at 1000 fps (1 ms per "frame") so "f95000"
+                 reads as noise; the M:SS.mmm timecode already carries
+                 the precise position. -->
+            · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
+          {/if}
         {/if}
         {#if zoom !== 1}
           {controller.hasTimeline ? ' · ' : ''}{Math.round(zoom * 100)}%
