@@ -125,6 +125,17 @@
   let whiteboardSession = $state<ReturnType<typeof createWhiteboardSession> | null>(null);
   let whiteboardSaving = $state(false);
   let whiteboardSaveError = $state<string | null>(null);
+  // Compact mode for the whiteboard tool panel. Persisted across
+  // sessions; flips the right-pane width down to an icon rail and
+  // tells WhiteboardToolPanel to render its compact icon strip.
+  let whiteboardPanelCompact = $state(
+    typeof localStorage !== 'undefined' && localStorage.getItem('aa.whiteboard.panel.compact') === '1',
+  );
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('aa.whiteboard.panel.compact', whiteboardPanelCompact ? '1' : '0');
+    }
+  });
 
   // Read-only session for the sidebar-click preview overlay. Lazily
   // built from the previewed whiteboard's annotation_data; null when
@@ -511,6 +522,7 @@
   onToggleWhiteboard={toggleWhiteboard}
   {whiteboardOpen}
   extraHotkeySection={whiteboardOpen && whiteboardSession ? whiteboardHotkeys : undefined}
+  bind:paneCompact={whiteboardPanelCompact}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -538,6 +550,8 @@
       saveError={whiteboardSaveError}
       onSave={saveWhiteboard}
       onClose={toggleWhiteboard}
+      compact={whiteboardPanelCompact}
+      onToggleCompact={() => (whiteboardPanelCompact = !whiteboardPanelCompact)}
     />
   {/if}
 {/snippet}
@@ -714,7 +728,14 @@
     <span class="truncate text-sm font-medium text-white/90" title={post.title || t('viewer_menu.untitled')}>
       {post.title || t('viewer_menu.untitled')}
     </span>
-    {#if showAssetSubtitle}
+    {#if whiteboardOpen}
+      <!-- Whiteboard mode replaces the asset subtitle with a static
+           "Whiteboard" so the title bar reads "<post> / Whiteboard"
+           and the user knows the right pane is the canvas tool, not
+           an asset viewer. -->
+      <span class="mx-1.5 text-white/30">/</span>
+      <span class="truncate text-xs text-white/70">Whiteboard</span>
+    {:else if showAssetSubtitle}
       <!-- Current asset's title — changes as the cursor moves between
            assets within the post (↑ / ↓). Slash separator instead of
            middle-dot to read as "post / asset" hierarchy. -->

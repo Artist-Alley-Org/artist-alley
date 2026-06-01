@@ -93,6 +93,10 @@ const builtinPack: BrushPack = {
       // Photoshop default for "smooth" pen brushes).
       spacing: 0.1,
       alignToPath: false,
+      // Low flow so the soft gradient mask actually reads as soft:
+      // overlapping stamps at 90% overlap build the stroke up
+      // smoothly instead of saturating to solid on the first pass.
+      flow: 0.15,
     },
     {
       id: 'builtin:hard-round',
@@ -100,6 +104,9 @@ const builtinPack: BrushPack = {
       source: makeHardRoundStamp(256),
       spacing: 0.1,
       alignToPath: false,
+      // Hard round runs at full flow so adjacent stamps overwrite
+      // cleanly into a crisp solid line.
+      flow: 1,
     },
   ],
 };
@@ -219,25 +226,47 @@ export function registerPackFromAPI(api: APIPack) {
  *  the stamp's source is already an HTMLImageElement, no-op. On
  *  load, replace the source + notify so any in-progress render
  *  picks up the bitmap on the next frame. */
-function preloadStamp(stamp: BrushStamp) {
+async function preloadStamp(stamp: BrushStamp) {
   if (typeof stamp.source !== 'string') return;
   const url = stamp.source;
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = () => {
-    stamp.source = img;
-    // Drop any cached tints that were rendered against the (null)
-    // pre-load state. Keys are `${stampId}|${color}` — scan once.
-    for (const k of Array.from(tintCache.keys())) {
-      if (k.startsWith(stamp.id + '|')) tintCache.delete(k);
+  try {
+    // Use `fetch` (not `new Image()`) so we get explicit cookie
+    // handling + visible HTTP status on failure. Owner-scoped
+    // stamps 404 without the session cookie, and `new Image()` was
+    // swallowing the error silently. credentials: 'include' ships
+    // the cookie even if the URL were cross-origin (it isn't today,
+    // but this future-proofs the deployment).
+    const r = await fetch(url, { credentials: 'include' });
+    if (!r.ok) {
+      // eslint-disable-next-line no-console
+      console.warn(`[whiteboard] stamp fetch failed: HTTP ${r.status} ${url}`);
+      return;
     }
-    notifyChange();
-  };
-  img.onerror = () => {
+    const blob = await r.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      stamp.source = img;
+      // Drop any cached tints rendered against the (null) pre-load
+      // state. Keys are `${stampId}|${color}` — scan once.
+      for (const k of Array.from(tintCache.keys())) {
+        if (k.startsWith(stamp.id + '|')) tintCache.delete(k);
+      }
+      notifyChange();
+      // Object URL is now redundant — the Image keeps the bitmap
+      // in memory regardless. Revoke to release the blob.
+      URL.revokeObjectURL(objectUrl);
+    };
+    img.onerror = () => {
+      // eslint-disable-next-line no-console
+      console.warn(`[whiteboard] stamp decode failed: ${url}`);
+      URL.revokeObjectURL(objectUrl);
+    };
+    img.src = objectUrl;
+  } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn(`[whiteboard] stamp preload failed: ${url}`);
-  };
-  img.src = url;
+    console.warn(`[whiteboard] stamp preload error: ${url}`, e);
+  }
 }
 
 // ── Tinted-stamp cache ───────────────────────────────────────────
@@ -276,8 +305,12 @@ export function getTintedStamp(stamp: BrushStamp, color: string): HTMLCanvasElem
     h = src.naturalHeight;
     drawable = src;
   } else {
-    // String URL — caller should pre-load + replace `source` with the
-    // resolved Image element. For now, kick off a load + return null.
+    // String URL — pre-load isn't done yet. Kick one off so a click
+    // on a stamp the user just imported still resolves even if the
+    // registerPackFromAPI path's eager preload was missed (e.g. HMR
+    // dropped the pending load mid-flight). Returns null this call;
+    // notifyChange will trigger a re-render once the load completes.
+    void preloadStamp(stamp);
     return null;
   }
   const canvas = document.createElement('canvas');

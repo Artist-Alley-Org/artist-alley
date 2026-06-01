@@ -88,6 +88,11 @@
         accordion so users see all viewer + mode hotkeys in one
         place. */
     extraHotkeySection?: Snippet;
+    /** Compact-pane state — when true, AssetViewer's right pane
+        shrinks to an icon-rail width. The slotted contextSlot is
+        expected to render its own compact UI in that width. Host-
+        owned + bindable so the contextSlot's content can drive it. */
+    paneCompact?: boolean;
   }
 
   let {
@@ -108,6 +113,7 @@
     onToggleWhiteboard,
     whiteboardOpen = false,
     extraHotkeySection,
+    paneCompact = $bindable(false),
   }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
@@ -449,6 +455,7 @@
               active={true}
               bind:reviewMode
               bind:paneCollapsed
+              bind:paneCompact
               metadataSlot={contextSlot}
               {titleSlot}
               {canvasOverlay}

@@ -212,11 +212,14 @@ func (h *Handler) GetBrushPackStamp(
 		return nil, err
 	}
 	// 200 with the streamed PNG. The oapi-codegen response type for
-	// `image/png` accepts a reader + content length (we don't track
-	// length yet; pass -1 to signal chunked).
+	// `image/png` writes Content-Length verbatim when non-zero, so
+	// pass 0 to skip the header — Go's http server then chooses
+	// chunked transfer encoding from the body itself. (An earlier
+	// version passed -1 thinking it meant "unknown"; it produced
+	// `Content-Length: -1` which browsers reject as malformed.)
 	return openapi.GetBrushPackStamp200ImagepngResponse{
 		Body:          body,
-		ContentLength: -1,
+		ContentLength: 0,
 	}, nil
 }
 

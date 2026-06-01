@@ -79,6 +79,12 @@
         user's preference in its own localStorage. Default open when
         there's something to show. */
     paneCollapsed?: boolean;
+    /** Bindable compact-pane state. When true and the pane isn't
+        fully collapsed, the pane shrinks to an icon-strip width
+        (~3.5rem). The slotted metadata content is expected to
+        render its own compact UI in that width — AssetViewer just
+        shrinks the rail. */
+    paneCompact?: boolean;
     /** Optional close handler. When set, ViewerMenuBar shows a close
         button in the window-controls zone *and* a "Close" entry in
         the File menu. Hosts that own their own close affordance
@@ -113,6 +119,7 @@
     maximized = false,
     onToggleMaximize,
     paneCollapsed = $bindable(false),
+    paneCompact = $bindable(false),
     onClose,
     onAddToCollection,
     onRecreatePreviews,
@@ -268,6 +275,11 @@
   // don't fight it.
   function onCanvasDoubleClick(e: MouseEvent) {
     if (kind === '3d') return;
+    // When the whiteboard surface owns the canvas overlay + the right
+    // pane, a stray dblclick toggling review mode would swap the
+    // panel contents out from under the user. Skip the gesture in
+    // that case — the whiteboard host owns the UX.
+    if (whiteboardOpen) return;
     // Cancel any pending single-click play/pause on timeline kinds
     // so we don't flip play state right before flipping review mode.
     if (pendingClickTimer !== undefined) {
@@ -691,15 +703,23 @@
     {#if paneEnabled}
       <aside
         class="flex max-w-[40vw] shrink-0 flex-col overflow-hidden border-l border-border bg-surface text-fg shadow-2xl transition-[width] duration-200 ease-out"
-        class:w-96={!paneCollapsed}
+        class:w-96={!paneCollapsed && !paneCompact}
+        class:w-14={!paneCollapsed && paneCompact}
         class:w-0={paneCollapsed}
         class:border-l-0={paneCollapsed}
         aria-label={reviewMode ? 'Review tools' : 'Asset details'}
       >
-        <header class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-          <h2 class="text-sm font-medium">
-            {#if reviewMode}Review tools{:else}Details{/if}
-          </h2>
+        <header
+          class="flex shrink-0 items-center border-b border-border py-3"
+          class:justify-between={!paneCompact}
+          class:px-4={!paneCompact}
+          class:justify-center={paneCompact}
+        >
+          {#if !paneCompact}
+            <h2 class="text-sm font-medium">
+              {#if reviewMode}Review tools{:else}Details{/if}
+            </h2>
+          {/if}
           <button
             type="button"
             onclick={togglePane}

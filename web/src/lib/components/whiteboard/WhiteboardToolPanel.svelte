@@ -16,9 +16,8 @@
   // Everything binds straight to the session store — there's no
   // local state we have to forward back to the canvas.
 
-  import type { Tool } from '$lib/whiteboard/types';
+  import type { Tool, MindmapItem, MindmapNode } from '$lib/whiteboard/types';
   import {
-    BRUSH_STYLES,
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
     FONT_SIZE_PRESETS,
@@ -27,6 +26,10 @@
     SIZES,
     isBrushTool,
     isShapeTool,
+    addMindmapChild,
+    removeMindmapNode,
+    renameMindmapNode,
+    walkMindmap,
   } from '$lib/whiteboard/types';
   import { loadFont } from '$lib/whiteboard/fonts.svelte';
   import { ITEM_SOFT_CAP, ITEM_HARD_CAP } from '$lib/whiteboard/session.svelte';
@@ -47,9 +50,16 @@
     saveError?: string | null;
     onSave: () => void;
     onClose: () => void;
+    /** Compact-mode flag. When true, render the icon-strip layout
+     *  (one icon per tool category, right-click to switch within
+     *  the category). When false, render the full panel. */
+    compact?: boolean;
+    /** Callback to toggle the compact mode from inside the panel
+     *  (the toggle button lives here for discoverability). */
+    onToggleCompact?: () => void;
   }
 
-  let { session, saving = false, saveError = null, onSave, onClose }: Props = $props();
+  let { session, saving = false, saveError = null, onSave, onClose, compact = false, onToggleCompact }: Props = $props();
 
   // ── Brush-pack management (Phase 1.21d) ──────────────────────
   //
@@ -158,6 +168,10 @@
     { id: 'frame',      label: 'Frame', icon: 'M4 6h16v12H4z M4 9h16' },
     // Phase 1.23 — sticky note: drop a colored card with text.
     { id: 'sticky',     label: 'Sticky note', icon: 'M5 4h12l2 2v14H5z M19 6h-3v-2 M5 19h10' },
+    // Label: a flat colored rectangle with centered text — a
+    // Miro-style chip/tag. Same item kind as sticky but with the
+    // `style: 'label'` field for renderer-flipping.
+    { id: 'label',      label: 'Label', icon: 'M3 7h14l4 5-4 5H3z M16 12h.01' },
     // Phase 1.24 — mindmap: drop a hierarchical tree with auto-
     // layout; double-click nodes to rename, panel buttons to add
     // / remove children.
@@ -323,6 +337,34 @@
     const item = layer?.items[sel.index];
     return item && item.kind === 'shape' ? { layerId: sel.layerId, index: sel.index, item } : null;
   });
+
+  // Selected mindmap, if any — drives the Mindmap tree editor below.
+  type MindmapSelection = { layerId: string; index: number; item: MindmapItem };
+  const mindmapSelection = $derived(() => {
+    const sel = session.selection;
+    if (!sel) return null;
+    const layer = session.doc.layers.find((l) => l.id === sel.layerId);
+    const item = layer?.items[sel.index];
+    if (!item || item.kind !== 'mindmap') return null;
+    return { layerId: sel.layerId, index: sel.index, item } satisfies MindmapSelection;
+  });
+  // Flatten the mindmap into rows for the indented tree list.
+  function flattenMindmap(item: MindmapItem): { node: MindmapNode; depth: number }[] {
+    const rows: { node: MindmapNode; depth: number }[] = [];
+    walkMindmap(item.root, (node, depth) => { rows.push({ node, depth }); });
+    return rows;
+  }
+  function renameMindmapAt(sel: MindmapSelection, nodeId: string, label: string) {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    session.replaceItem(sel.layerId, sel.index, renameMindmapNode(sel.item, nodeId, trimmed));
+  }
+  function addMindmapChildAt(sel: MindmapSelection, parentId: string) {
+    session.replaceItem(sel.layerId, sel.index, addMindmapChild(sel.item, parentId));
+  }
+  function removeMindmapAt(sel: MindmapSelection, nodeId: string) {
+    session.replaceItem(sel.layerId, sel.index, removeMindmapNode(sel.item, nodeId));
+  }
   const activeColor = $derived.by(() => {
     if (colorTarget === 'secondary') return session.color2;
     if (colorTarget === 'outline') {
@@ -398,14 +440,99 @@
   }
   const showShapeStyle = $derived(isShapeTool(session.tool) || !!selectedShapeItem());
 
+  // ── Compact-mode categories ───────────────────────────────────
+  // In compact mode the panel collapses to a vertical icon rail —
+  // one icon per category, showing the *last-used* tool from that
+  // category. Right-click on a category opens a flyout listing
+  // every tool in it (single click switches). Click cycles back to
+  // the category's last-used tool.
+  interface ToolCategory { id: string; label: string; tools: ToolEntry[]; }
+  const CATEGORIES: ToolCategory[] = $derived([
+    { id: 'select',  label: 'Select',  tools: [
+      { id: 'select',      label: 'Select (V)',         icon: 'M3 3l8 19 2-8 8-2z' },
+      { id: 'lasso',       label: 'Lasso (Q)',          icon: 'M5 17c0-6 8-12 14-6s-2 12-7 9' },
+      { id: 'rect-select', label: 'Rectangle select',   icon: 'M4 4h16v16H4z M4 4l2 2 M20 4l-2 2 M4 20l2-2 M20 20l-2-2' },
+    ]},
+    { id: 'brushes', label: 'Brushes', tools: [
+      { id: 'pen',         label: 'Pen (P)',            icon: 'M14 4l6 6-10 10H4v-6z' },
+      { id: 'marker',      label: 'Marker (M)',         icon: 'M16 2l6 6-12 12-4-4z' },
+      { id: 'highlighter', label: 'Highlighter (H)',    icon: 'M9 11l-6 6v4h4l6-6 M14 4l6 6-7 7-6-6z' },
+      { id: 'eraser',      label: 'Eraser (E)',         icon: 'M3 19h18 M18 13L10 5l-7 7 6 6h8z' },
+    ]},
+    { id: 'shapes',  label: 'Shapes',  tools: TOOLS_SHAPES },
+    { id: 'text',    label: 'Text',    tools: [
+      { id: 'text',        label: 'Text (T)',           icon: 'M5 5h14 M12 5v14' },
+      { id: 'sticky',      label: 'Sticky note',        icon: 'M5 4h12l2 2v14H5z M19 6h-3v-2 M5 19h10' },
+      { id: 'label',       label: 'Label',              icon: 'M3 7h14l4 5-4 5H3z M16 12h.01' },
+    ]},
+    { id: 'diagram', label: 'Diagram', tools: [
+      { id: 'connector',   label: 'Connector',          icon: 'M6 18a4 4 0 0 0 4-4 M14 10a4 4 0 0 0 4-4 M10 14L14 10' },
+      { id: 'frame',       label: 'Frame',              icon: 'M4 6h16v12H4z M4 9h16' },
+      { id: 'mindmap',     label: 'Mindmap',            icon: 'M4 12h6 M14 8h6 M14 16h6 M10 12c0 -2 2 -4 4 -4 M10 12c0 2 2 4 4 4' },
+    ]},
+    { id: 'image',   label: 'Image',   tools: [
+      { id: 'crop',        label: 'Crop (C)',           icon: 'M6 2v14h14 M2 6h14v14' },
+      { id: 'bucket',      label: 'Fill bucket (B)',    icon: 'M19 11l-7-7-8 8 7 7z M5 19h16 M16 4l3 7' },
+      { id: 'eyedropper',  label: 'Eyedropper (I)',     icon: 'M2 22l1-1h4l9-9-3-3-9 9v4z M14 7l3 3 M17 4l3 3-3 3-3-3z' },
+    ]},
+  ]);
+
+  // Last-used tool per category, persisted. Records every time the
+  // session tool changes so the compact rail always shows what the
+  // user reached for most recently in each group.
+  type LastUsedMap = Record<string, Tool>;
+  const LAST_USED_KEY = 'aa.whiteboard.panel.lastUsedPerCategory';
+  function loadLastUsed(): LastUsedMap {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(LAST_USED_KEY);
+      return raw ? JSON.parse(raw) as LastUsedMap : {};
+    } catch { return {}; }
+  }
+  let lastUsedPerCat = $state<LastUsedMap>(loadLastUsed());
+  function categoryOf(t: Tool): string | null {
+    for (const c of CATEGORIES) if (c.tools.some((x) => x.id === t)) return c.id;
+    return null;
+  }
+  $effect(() => {
+    const t = session.tool;
+    const c = categoryOf(t);
+    if (c && lastUsedPerCat[c] !== t) {
+      lastUsedPerCat = { ...lastUsedPerCat, [c]: t };
+      if (typeof localStorage !== 'undefined') {
+        try { localStorage.setItem(LAST_USED_KEY, JSON.stringify(lastUsedPerCat)); } catch { /* quota / disabled */ }
+      }
+    }
+  });
+  function categoryIconFor(cat: ToolCategory): ToolEntry {
+    const last = lastUsedPerCat[cat.id];
+    if (last) {
+      const found = cat.tools.find((t) => t.id === last);
+      if (found) return found;
+    }
+    return cat.tools[0];
+  }
+  // Flyout state for the right-click "pick another tool in this
+  // category" popup. Anchored to the icon's screen position.
+  let categoryFlyout: { catId: string; x: number; y: number } | null = $state(null);
+  function openCategoryFlyout(e: MouseEvent, catId: string) {
+    e.preventDefault();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    categoryFlyout = { catId, x: r.right + 6, y: r.top };
+  }
+  function pickFromFlyout(toolId: Tool) {
+    session.tool = toolId;
+    categoryFlyout = null;
+  }
+
   // ── Collapsible sections (persisted) ─────────────────────────
   // Per-section open/closed state, keyed by the section id used in
   // the header. Persisted to localStorage so the user's panel
   // arrangement survives reloads (and HMR).
   type SectionId =
-    | 'tools' | 'brushes' | 'shapes' | 'selection' | 'image'
+    | 'tools' | 'brushes' | 'stamps' | 'shapes' | 'selection' | 'image'
     | 'canvas' | 'color' | 'shape_style' | 'size' | 'typography'
-    | 'selected' | 'comments' | 'layers' | 'history';
+    | 'selected' | 'mindmap' | 'comments' | 'layers' | 'history';
   const SECTION_STORAGE_KEY = 'aa.whiteboard.panel.sections';
   function loadSectionState(): Record<string, boolean> {
     if (typeof localStorage === 'undefined') return {};
@@ -480,19 +607,133 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-fg">
-  <!-- Header -->
-  <header class="flex shrink-0 items-center justify-between border-b border-border bg-surface-elevated px-3 py-2">
-    <span class="text-sm font-semibold">Whiteboard</span>
-    <button
-      type="button"
-      onclick={onClose}
-      class="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-danger hover:text-white"
-      title="Exit whiteboard (ESC)"
-      aria-label="Exit whiteboard"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+  <!-- Header. In compact mode title hides + buttons stack vertical
+       so they fit the icon-rail width. -->
+  <header
+    class="flex shrink-0 items-center border-b border-border bg-surface-elevated py-2"
+    class:justify-between={!compact}
+    class:px-3={!compact}
+    class:flex-col={compact}
+    class:gap-1={compact}
+    class:px-1={compact}
+  >
+    {#if !compact}
+      <span class="text-sm font-semibold">Whiteboard</span>
+    {/if}
+    <div class="flex items-center gap-1" class:flex-col={compact}>
+      {#if onToggleCompact}
+        <button
+          type="button"
+          onclick={onToggleCompact}
+          class="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+          title={compact ? 'Expand panel' : 'Compact panel'}
+          aria-label={compact ? 'Expand panel' : 'Compact panel'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            {#if compact}
+              <path d="M15 6l-6 6 6 6" />
+            {:else}
+              <path d="M9 6l6 6-6 6" />
+            {/if}
+          </svg>
+        </button>
+      {/if}
+      <button
+        type="button"
+        onclick={onClose}
+        class="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-danger hover:text-white"
+        title="Exit whiteboard (ESC)"
+        aria-label="Exit whiteboard"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
   </header>
+
+  {#if compact}
+    <!-- Compact rail: one icon per category. Click cycles to last-
+         used tool; right-click opens the flyout with every tool in
+         the category. Save button at the bottom mirrors the full
+         panel's bottom action. -->
+    <nav class="flex shrink-0 flex-col items-center gap-1 border-b border-border bg-surface-elevated p-1">
+      {#each CATEGORIES as cat (cat.id)}
+        {@const icon = categoryIconFor(cat)}
+        {@const active = categoryOf(session.tool) === cat.id}
+        <button
+          type="button"
+          onclick={() => (session.tool = icon.id)}
+          oncontextmenu={(e) => openCategoryFlyout(e, cat.id)}
+          class="inline-flex h-10 w-10 items-center justify-center rounded transition-colors"
+          class:bg-accent={active}
+          class:text-on-accent={active}
+          class:text-fg-muted={!active}
+          class:hover:bg-state-hover={!active}
+          title={`${cat.label} \u2014 ${icon.label} (right-click for more)`}
+          aria-label={`${cat.label} category`}
+          aria-pressed={active}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d={icon.icon} />
+          </svg>
+        </button>
+      {/each}
+    </nav>
+    <div class="flex-1"></div>
+    <footer class="flex shrink-0 flex-col items-center gap-1 border-t border-border bg-surface-elevated p-1">
+      <button
+        type="button"
+        onclick={onSave}
+        disabled={saving}
+        class="inline-flex h-10 w-10 items-center justify-center rounded bg-accent text-on-accent hover:opacity-90 disabled:opacity-40"
+        title={saving ? 'Saving\u2026' : 'Save whiteboard'}
+        aria-label="Save whiteboard"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z M17 21v-8H7v8 M7 3v5h8" />
+        </svg>
+      </button>
+    </footer>
+
+    {#if categoryFlyout}
+      <!-- Click-outside scrim closes the flyout. -->
+      <div
+        class="fixed inset-0 z-30"
+        role="presentation"
+        onpointerdown={(e) => { e.preventDefault(); categoryFlyout = null; }}
+        oncontextmenu={(e) => { e.preventDefault(); categoryFlyout = null; }}
+      ></div>
+      {@const flyoutCat = CATEGORIES.find((c) => c.id === categoryFlyout!.catId)}
+      {#if flyoutCat}
+        <div
+          class="fixed z-40 grid grid-cols-3 gap-1 rounded border border-border bg-surface-elevated p-2 shadow-lg"
+          style:left={`${categoryFlyout.x}px`}
+          style:top={`${categoryFlyout.y}px`}
+          role="menu"
+        >
+          {#each flyoutCat.tools as t (t.id)}
+            {@const active = session.tool === t.id}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => pickFromFlyout(t.id)}
+              class="inline-flex h-9 w-9 items-center justify-center rounded"
+              class:bg-accent={active}
+              class:text-on-accent={active}
+              class:text-fg={!active}
+              class:hover:bg-state-hover={!active}
+              title={t.label}
+              aria-label={t.label}
+              aria-pressed={active}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d={t.icon} />
+              </svg>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  {:else}
 
   <div class="min-h-0 flex-1 overflow-y-auto">
     <!-- Soft-cap warning banner — surfaces when the doc passes
@@ -544,51 +785,6 @@
           <path d={p.icon} />
         </svg>
       </button>
-    {/snippet}
-    {#snippet brushStyleIcon(id: typeof BRUSH_STYLES[number]['id'])}
-      <!-- Tiny iconography per brush — each is a different stroke
-           hint so the picker reads visually instead of "8 identical
-           pens". Single-color SVG paths; the active highlight is
-           applied via currentColor on stroke. -->
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-        {#if id === 'default'}
-          <!-- Smooth pen: tapered line -->
-          <path d="M5 19c4-2 8-4 14-14" stroke-width="2" />
-        {:else if id === 'calligraphy'}
-          <!-- Wedge stroke -->
-          <path d="M5 19l14-14" stroke-width="4" />
-          <path d="M5 19l14-14" stroke-width="1" stroke-opacity="0.4" />
-        {:else if id === 'pen-tip'}
-          <!-- Thin steady line + pen-tip triangle -->
-          <path d="M4 20l12-12" stroke-width="1" />
-          <path d="M16 8l4-4-2 6z" stroke-width="1.5" fill="currentColor" fill-opacity="0.6" />
-        {:else if id === 'pencil'}
-          <!-- Pencil: line + sharpened tip -->
-          <path d="M4 20l12-12" stroke-width="1.2" />
-          <path d="M16 8l3-3-1-1-3 3" stroke-width="1.5" />
-          <path d="M3 21l1-1" stroke-width="1.5" />
-        {:else if id === 'airbrush'}
-          <!-- Spray dots -->
-          <circle cx="6" cy="18" r="0.8" fill="currentColor" />
-          <circle cx="9" cy="15" r="1.2" fill="currentColor" />
-          <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-          <circle cx="15" cy="9"  r="1.2" fill="currentColor" />
-          <circle cx="18" cy="6"  r="0.8" fill="currentColor" />
-          <circle cx="4" cy="20" r="0.5" fill="currentColor" />
-          <circle cx="20" cy="4" r="0.5" fill="currentColor" />
-        {:else if id === 'oil'}
-          <!-- Wide heavy stroke -->
-          <path d="M5 19l14-14" stroke-width="5" stroke-linecap="butt" />
-        {:else if id === 'crayon'}
-          <!-- Broken-edge crayon stroke -->
-          <path d="M5 19l14-14" stroke-width="2.5" />
-          <path d="M5 19l14-14" stroke-width="3.5" stroke-dasharray="2 2" stroke-opacity="0.5" />
-        {:else if id === 'watercolor'}
-          <!-- Soft transparent wash -->
-          <path d="M5 19l14-14" stroke-width="5" stroke-opacity="0.35" />
-          <path d="M5 19l14-14" stroke-width="2" stroke-opacity="0.6" />
-        {/if}
-      </svg>
     {/snippet}
     {#snippet sectionHeader(id: SectionId, label: string, badge?: string)}
       <!-- Click-to-collapse header. Chevron rotates 0° when open,
@@ -662,75 +858,77 @@
     </section>
 
     <!-- ── Brushes ───────────────────────────────────────────────
-         Until C-1.18 brush *styles* lived behind a dropdown that
-         only enabled for the pen tool — most users never saw the
-         visual differences between calligraphy / airbrush / oil /
-         crayon / pencil / watercolor / etc. Now each brush style
-         gets its own visible button alongside marker + highlighter
-         so the BRUSHES grid mirrors Procreate / Photoshop's brush
-         picker. Clicking a style auto-switches tool to `pen` and
-         sets the brushStyle in one step. -->
+         The three top-level brush *tools*: pen, marker, highlighter.
+         Each has its own stroke math (taper, opacity blend mode,
+         pressure handling) so they're not interchangeable styles —
+         they're separate tools. For variety beyond the basics,
+         users reach for the Stamps section below (built-ins plus
+         imported .abr packs). -->
     <section class="border-b border-border p-3">
       {@render sectionHeader('brushes', 'Brushes')}
       {#if !isCollapsed('brushes')}
-        <div id="wb-section-brushes" class="grid grid-cols-5 gap-1">
-          <!-- Marker + Highlighter — distinct top-level tools (own
-               stroke math, ignore brushStyle). Render first so the
-               row reads "marker, highlighter, then a bunch of pens". -->
-          {#each TOOLS_BRUSHES.filter(t => t.id !== 'pen') as t (t.id)}{@render toolBtn(t)}{/each}
-          <!-- Each brush style → tool=pen + brushStyle=<id>. Active
-               highlight matches when BOTH conditions hold so users
-               see exactly which sub-style is live. -->
-          {#each BRUSH_STYLES as b (b.id)}
-            {@const active = session.tool === 'pen' && session.brushStyle === b.id}
+        <!-- 3 brush tools laid out as icon-plus-label tiles so the
+             user can identify pen / marker / highlighter at a glance
+             instead of guessing from icons. -->
+        <div id="wb-section-brushes" class="grid grid-cols-3 gap-1">
+          {#each TOOLS_BRUSHES as t (t.id)}
+            {@const active = session.tool === t.id}
             <button
               type="button"
-              onclick={() => { session.tool = 'pen'; session.brushStyle = b.id; }}
-              class="inline-flex aspect-square items-center justify-center rounded transition-colors"
+              onclick={() => (session.tool = t.id)}
+              class="flex flex-col items-center justify-center gap-1 rounded p-2 transition-colors"
               class:bg-accent={active}
               class:text-on-accent={active}
               class:text-fg-muted={!active}
               class:hover:bg-state-hover={!active}
-              title={b.label}
-              aria-label={b.label}
+              title={t.label}
+              aria-label={t.label}
               aria-pressed={active}
             >
-              {@render brushStyleIcon(b.id)}
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d={t.icon} />
+              </svg>
+              <span class="text-[10px] leading-tight">{t.label.replace(/ \([A-Z]\)$/, '')}</span>
             </button>
           {/each}
         </div>
-        <!-- ── Stamp brushes (Phase 1.21b/d) ─────────────────────
-             Each registered brush pack renders as a header strip
-             with its name, a delete button (when removable), and
-             a grid of stamp buttons. Clicking a stamp sets
-             session.stampId + auto-switches tool=pen. The Import
-             button opens a file picker for .abr packs which upload
-             through /api/v1/brush-packs and re-register on success.
-             -->
-        <div class="mt-3 flex items-center justify-between">
-          <span class="text-[10px] uppercase tracking-wide text-fg-muted/70">Stamp brushes</span>
-          <button
-            type="button"
-            onclick={() => importInput?.click()}
-            disabled={importBusy}
-            class="inline-flex h-6 items-center rounded border border-border px-2 text-[10px] text-fg hover:border-fg-muted disabled:opacity-50"
-            title="Import a Photoshop .abr brush pack"
-          >
-            {importBusy ? 'Importing\u2026' : 'Import .abr\u2026'}
-          </button>
-          <input
-            bind:this={importInput}
-            type="file"
-            accept=".abr,application/octet-stream"
-            class="hidden"
-            onchange={onImportFiles}
-          />
-        </div>
-        {#if importError}
-          <div class="mt-1 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
-            {importError}
+      {/if}
+    </section>
+
+    <!-- ── Stamps ────────────────────────────────────────────────
+         Stamp-based brushes (Phase 1.21b/d). Built-ins ship with
+         soft + hard round; users import additional .abr packs via
+         the Import button. Each pack header strip carries a delete
+         button (built-ins hide for the session only). Clicking a
+         stamp sets session.stampId + auto-switches tool=pen. -->
+    <section class="border-b border-border p-3">
+      {@render sectionHeader('stamps', 'Stamps')}
+      {#if !isCollapsed('stamps')}
+        <div id="wb-section-stamps">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] uppercase tracking-wide text-fg-muted/70">Brush packs</span>
+            <button
+              type="button"
+              onclick={() => importInput?.click()}
+              disabled={importBusy}
+              class="inline-flex h-6 items-center rounded border border-border px-2 text-[10px] text-fg hover:border-fg-muted disabled:opacity-50"
+              title="Import a Photoshop .abr brush pack"
+            >
+              {importBusy ? 'Importing\u2026' : 'Import .abr\u2026'}
+            </button>
+            <input
+              bind:this={importInput}
+              type="file"
+              accept=".abr,application/octet-stream"
+              class="hidden"
+              onchange={onImportFiles}
+            />
           </div>
-        {/if}
+          {#if importError}
+            <div class="mt-1 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
+              {importError}
+            </div>
+          {/if}
         {#each installedPacks as pack (pack.id)}
           <div class="mt-2 flex items-center justify-between">
             <span class="text-[10px] uppercase tracking-wide text-fg-muted/70">
@@ -741,14 +939,25 @@
               onclick={() => deletePack(pack.id)}
               class="text-[10px] text-fg-muted hover:text-danger"
               title={pack.id === 'builtin' ? 'Hide built-in stamps for this session' : 'Delete brush pack'}
-            >\u00d7</button>
+            >×</button>
           </div>
           <div class="mt-1 grid grid-cols-5 gap-1">
             {#each pack.stamps as stamp (stamp.id)}
               {@const active = session.stampId === stamp.id}
               <button
                 type="button"
-                onclick={() => (session.stampId = active ? null : stamp.id)}
+                onclick={() => {
+                  // Stamps only render on the pen tool — clicking a
+                  // stamp without auto-switching left users staring at
+                  // identical-looking marker / highlighter output. Flip
+                  // to pen and assign in one step.
+                  if (active) {
+                    session.stampId = null;
+                  } else {
+                    session.tool = 'pen';
+                    session.stampId = stamp.id;
+                  }
+                }}
                 class="inline-flex aspect-square items-center justify-center rounded border border-border bg-surface transition-colors"
                 class:border-accent={active}
                 class:ring-1={active}
@@ -777,12 +986,13 @@
                        preloader fires (registerPackFromAPI). Until
                        then, show a tiny placeholder so the layout
                        doesn't jump. -->
-                  <span class="text-[9px] text-fg-muted">\u2026</span>
+                  <span class="text-[9px] text-fg-muted">…</span>
                 {/if}
               </button>
             {/each}
           </div>
         {/each}
+        </div>
       {/if}
     </section>
 
@@ -1237,6 +1447,54 @@
       </section>
     {/if}
 
+    <!-- ── Mindmap tree editor ─────────────────────────────────
+         Shown only when a mindmap item is selected. Lists every
+         node as an indented row with: rename (click), add child
+         (+), delete (trash). Double-click on the canvas also
+         opens an inline rename overlay on the clicked bubble. -->
+    {#if mindmapSelection()}
+      {@const sel = mindmapSelection()!}
+      <section class="border-b border-border p-3">
+        {@render sectionHeader('mindmap', 'Mindmap')}
+        {#if !isCollapsed('mindmap')}
+          <div class="mb-2 text-[10px] text-fg-muted">
+            Edit each node's label inline below. Use + to add a child, × to delete (root protected).
+          </div>
+          <ul class="space-y-0.5 text-[11px]">
+            {#each flattenMindmap(sel.item) as row (row.node.id)}
+              <li
+                class="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-state-hover"
+                style:padding-left={`${row.depth * 12 + 4}px`}
+              >
+                <input
+                  type="text"
+                  value={row.node.label}
+                  onchange={(e) => renameMindmapAt(sel, row.node.id, (e.currentTarget as HTMLInputElement).value)}
+                  class="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-fg focus:bg-surface focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <button
+                  type="button"
+                  onclick={() => addMindmapChildAt(sel, row.node.id)}
+                  class="inline-flex h-5 w-5 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
+                  title="Add child"
+                  aria-label="Add child node"
+                >+</button>
+                {#if row.node.id !== sel.item.root.id}
+                  <button
+                    type="button"
+                    onclick={() => removeMindmapAt(sel, row.node.id)}
+                    class="inline-flex h-5 w-5 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-danger"
+                    title="Delete node + subtree"
+                    aria-label="Delete node"
+                  >×</button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+    {/if}
+
     <!-- ── Comments on selected element (Phase 1.27) ───────────
          AFFiNE pattern: comments live on individual canvas
          elements. Shown only when an item is selected. Same
@@ -1266,7 +1524,7 @@
                       title="Delete message"
                       aria-label="Delete message"
                       onclick={() => session.deleteComment(t.id, msg.id)}
-                    >\u00d7</button>
+                    >×</button>
                   </div>
                   <div class="whitespace-pre-wrap text-fg">{msg.body}</div>
                 </div>
@@ -1500,7 +1758,8 @@
     </div>
   {/if}
 
-  <!-- ── Save / cancel — sticky footer ───────────────────────── -->
+  <!-- ── Save / cancel — sticky footer (full mode only; compact
+       mode has its own icon-only save footer above). -->
   <footer class="flex shrink-0 items-center gap-2 border-t border-border bg-surface-elevated px-3 py-2">
     <span class="flex-1 truncate text-xs text-danger">{saveError ?? ''}</span>
     <button
@@ -1519,4 +1778,5 @@
       {saving ? 'Saving…' : 'Save'}
     </button>
   </footer>
+  {/if}
 </div>

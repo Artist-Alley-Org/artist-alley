@@ -60,7 +60,7 @@ export type ShapeTool =
 export type OtherTool =
   | 'text' | 'select' | 'lasso' | 'rect-select'
   | 'crop' | 'clone' | 'bucket' | 'eyedropper'
-  | 'connector' | 'frame' | 'sticky' | 'mindmap';
+  | 'connector' | 'frame' | 'sticky' | 'label' | 'mindmap';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;
@@ -135,6 +135,14 @@ export interface BrushStamp {
   /** 0..360° — random angle perturbation per stamp. Only meaningful
    *  when alignToPath = false (otherwise the path tangent dominates). */
   angleJitter?: number;
+  /** 0..1 — per-stamp opacity multiplier (Photoshop's "Flow"). At
+   *  dense spacings (10%, 90% overlap), full per-stamp opacity makes
+   *  every brush look like a solid line because adjacent stamps
+   *  over-saturate the soft falloff. Lower flow lets overlap build
+   *  up smoothly, revealing the stamp's edge character. Default 1
+   *  preserves the existing behaviour; soft brushes typically use
+   *  ~0.15 so the alpha mask reads as a true gradient. */
+  flow?: number;
 }
 
 /** A named collection of stamps. */
@@ -321,6 +329,12 @@ export interface StickyNoteItem {
   fontSize?: number;
   fontFamily?: string;
   rotation?: number;
+  /** Visual style. 'sticky' = classic yellow paper note with drop
+   *  shadow + slight padding. 'label' = flat colored rectangle
+   *  with no shadow, square corners; reads as a tag / band header
+   *  rather than a paper note. Default = 'sticky' so pre-existing
+   *  docs render unchanged. */
+  style?: 'sticky' | 'label';
 }
 
 // ── Mindmap (Phase 1.24) ─────────────────────────────────────────
@@ -363,6 +377,11 @@ export interface MindmapItem {
    *  When unset the renderer uses a curated default cycle. */
   branchColors?: string[];
   rotation?: number;
+  /** Uniform scale factor applied to the whole laid-out tree.
+   *  Default = 1. Resize-handle drag computes a new scale from
+   *  the new-bbox / old-bbox ratio so users can grow or shrink
+   *  the entire tree without losing branch readability. */
+  scale?: number;
 }
 
 /** Polymorphic discriminated union over every kind of layer item. */
@@ -557,47 +576,55 @@ export function isShapeTool(tool: Tool): tool is ShapeTool {
  *  in the stroke math. */
 export function strokeOptionsFor(tool: BrushTool, style: BrushStyle = 'default') {
   if (tool === 'highlighter') {
-    return { size: 1, thinning: 0, smoothing: 0.6, streamline: 0.6, easing: (t: number) => t, simulatePressure: false, last: true };
+    // Highlighter: constant-width chunky band. Higher streamline so
+    // fast hand-drag strokes still look like one continuous swipe
+    // instead of a faceted polyline.
+    return { size: 1, thinning: 0, smoothing: 0.8, streamline: 0.75, easing: (t: number) => t, simulatePressure: false, last: true };
   }
   if (tool === 'marker') {
-    return { size: 1, thinning: 0.15, smoothing: 0.5, streamline: 0.5, easing: (t: number) => t, simulatePressure: true, last: true };
+    return { size: 1, thinning: 0.15, smoothing: 0.75, streamline: 0.7, easing: (t: number) => t, simulatePressure: true, last: true };
   }
   if (tool === 'eraser') {
-    return { size: 1, thinning: 0.2, smoothing: 0.5, streamline: 0.5, easing: (t: number) => t, simulatePressure: true, last: true };
+    return { size: 1, thinning: 0.2, smoothing: 0.7, streamline: 0.65, easing: (t: number) => t, simulatePressure: true, last: true };
   }
   // Pen — branch on brush style.
   switch (style) {
     case 'calligraphy':
       // Velocity-modulated thick taper. High thinning + delayed
       // easing = the swooping width changes that read as calligraphy.
-      return { size: 1, thinning: 0.8, smoothing: 0.4, streamline: 0.4, easing: (t: number) => t * t * t, simulatePressure: true, last: true };
+      return { size: 1, thinning: 0.8, smoothing: 0.7, streamline: 0.6, easing: (t: number) => t * t * t, simulatePressure: true, last: true };
     case 'pen-tip':
       // Thin steady fountain-pen. Almost no thinning so the line
       // reads as a constant ink trail.
-      return { size: 1, thinning: 0.05, smoothing: 0.5, streamline: 0.3, easing: (t: number) => t, simulatePressure: false, last: true };
+      return { size: 1, thinning: 0.05, smoothing: 0.75, streamline: 0.6, easing: (t: number) => t, simulatePressure: false, last: true };
     case 'pencil':
       // Sharp, low-flow, slightly broken edges. Low smoothing so
       // we keep the wobble; the noise overlay (drawStroke effects)
       // adds the texture.
-      return { size: 1, thinning: 0.5, smoothing: 0.25, streamline: 0.2, easing: (t: number) => t, simulatePressure: true, last: true };
+      return { size: 1, thinning: 0.5, smoothing: 0.5, streamline: 0.5, easing: (t: number) => t, simulatePressure: true, last: true };
     case 'airbrush':
       // Soft fat stroke; scatter dots layered in drawStroke add
       // the "spray" texture.
-      return { size: 1, thinning: 0.1, smoothing: 0.7, streamline: 0.7, easing: (t: number) => t, simulatePressure: false, last: true };
+      return { size: 1, thinning: 0.1, smoothing: 0.8, streamline: 0.75, easing: (t: number) => t, simulatePressure: false, last: true };
     case 'oil':
       // Heavy paint feel — wide, low thinning, very smooth.
-      return { size: 1, thinning: 0.25, smoothing: 0.7, streamline: 0.6, easing: (t: number) => t, simulatePressure: true, last: true };
+      return { size: 1, thinning: 0.25, smoothing: 0.8, streamline: 0.7, easing: (t: number) => t, simulatePressure: true, last: true };
     case 'crayon':
       // Same baseline as pen but the noise overlay in drawStroke
       // gives the wax-on-paper roughness.
-      return { size: 1, thinning: 0.4, smoothing: 0.4, streamline: 0.3, easing: (t: number) => t, simulatePressure: true, last: true };
+      return { size: 1, thinning: 0.4, smoothing: 0.6, streamline: 0.55, easing: (t: number) => t, simulatePressure: true, last: true };
     case 'watercolor':
       // Wide, soft, semi-transparent — the layer-opacity halving
       // in drawStroke gives the buildup look.
-      return { size: 1, thinning: 0.15, smoothing: 0.7, streamline: 0.8, easing: (t: number) => t, simulatePressure: false, last: true };
+      return { size: 1, thinning: 0.15, smoothing: 0.8, streamline: 0.8, easing: (t: number) => t, simulatePressure: false, last: true };
     case 'default':
     default:
-      return { size: 1, thinning: 0.55, smoothing: 0.5, streamline: 0.35, easing: (t: number) => t * t, simulatePressure: true, last: true };
+      // Default pen: bumped smoothing + streamline from 0.5/0.35 so
+      // fast cursor movements (sparse pointer samples) produce a
+      // genuinely curved line instead of an angular polyline. Easing
+      // dropped to linear because the t² easing was making the
+      // pressure ramp feel laggy at the start of strokes.
+      return { size: 1, thinning: 0.5, smoothing: 0.75, streamline: 0.65, easing: (t: number) => t, simulatePressure: true, last: true };
   }
 }
 
@@ -766,25 +793,32 @@ function subtreeHeight(node: MindmapNode): number {
 export function layoutMindmap(item: MindmapItem): MindmapLayout {
   const positions = new Map<string, MindmapLayoutPos>();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  // Uniform scale grows/shrinks the entire laid-out tree (positions
+  // + node sizes) while keeping the (x, y) anchor in place. Clamped
+  // to a sane range so handle-drags can't reduce the tree to zero
+  // or balloon it past memory limits.
+  const s = Math.max(0.2, Math.min(8, item.scale ?? 1));
 
   function place(node: MindmapNode, x: number, y: number) {
-    const w = nodeWidth(node);
-    positions.set(node.id, { x, y, w, h: MINDMAP_NODE_H });
+    const w = nodeWidth(node) * s;
+    const h = MINDMAP_NODE_H * s;
+    positions.set(node.id, { x, y, w, h });
     if (x < minX) minX = x;
     if (y < minY) minY = y;
     if (x + w > maxX) maxX = x + w;
-    if (y + MINDMAP_NODE_H > maxY) maxY = y + MINDMAP_NODE_H;
+    if (y + h > maxY) maxY = y + h;
     if (node.collapsed || node.children.length === 0) return;
     // Children: stack vertically; each child's y is the center of
-    // its subtree, offset from the cumulative top.
-    const childX = x + w + MINDMAP_HSPACING;
-    const totalH = subtreeHeight(node);
-    let cursorY = y + MINDMAP_NODE_H / 2 - totalH / 2;
+    // its subtree, offset from the cumulative top. All spacings
+    // scale with `s` so the tree grows/shrinks uniformly.
+    const childX = x + w + MINDMAP_HSPACING * s;
+    const totalH = subtreeHeight(node) * s;
+    let cursorY = y + h / 2 - totalH / 2;
     for (const c of node.children) {
-      const ch = subtreeHeight(c);
-      const cyTop = cursorY + ch / 2 - MINDMAP_NODE_H / 2;
+      const ch = subtreeHeight(c) * s;
+      const cyTop = cursorY + ch / 2 - h / 2;
       place(c, childX, cyTop);
-      cursorY += ch + MINDMAP_VSPACING;
+      cursorY += ch + MINDMAP_VSPACING * s;
     }
   }
 
@@ -823,6 +857,28 @@ export function addMindmapChild(item: MindmapItem, parentId: string | null, labe
       return { ...n, children: [...n.children, newNode], collapsed: false };
     }
     return { ...n, children: n.children.map(recur) };
+  }
+  return { ...item, root: recur(item.root) };
+}
+
+/** Rename a node anywhere in the tree. Returns a fresh MindmapItem
+ *  with the node's label swapped; tree shape unchanged. Returns the
+ *  item unchanged if `nodeId` doesn't match anything. */
+export function renameMindmapNode(item: MindmapItem, nodeId: string, label: string): MindmapItem {
+  function recur(n: MindmapNode): MindmapNode {
+    if (n.id === nodeId) return { ...n, label };
+    return { ...n, children: n.children.map(recur) };
+  }
+  return { ...item, root: recur(item.root) };
+}
+
+/** Remove a node (and its subtree). The root is protected — passing
+ *  the root id returns the item unchanged so the mindmap always has
+ *  at least one node. */
+export function removeMindmapNode(item: MindmapItem, nodeId: string): MindmapItem {
+  if (nodeId === item.root.id) return item;
+  function recur(n: MindmapNode): MindmapNode {
+    return { ...n, children: n.children.filter((c) => c.id !== nodeId).map(recur) };
   }
   return { ...item, root: recur(item.root) };
 }
@@ -954,11 +1010,17 @@ export function resizeItemToBBox(item: Item, x: number, y: number, w: number, h:
     return { ...item, x, y, w, h };
   }
   if (item.kind === 'mindmap') {
-    // Mindmap dimensions are derived from layout; resizing via the
-    // bbox doesn't make sense. Just re-anchor the root to the new
-    // (x, y) of the requested bbox so a "resize" drag effectively
-    // becomes a move-to-corner.
-    return { ...item, x, y };
+    // Mindmap dimensions come from auto-layout, but we honor a
+    // uniform scale field so resize-handle drags actually resize
+    // the tree. Compute the ratio between the requested bbox and
+    // the current one, then bake that into a new `scale`.
+    if (old.w <= 0 || old.h <= 0) return { ...item, x, y };
+    const currentScale = item.scale ?? 1;
+    // Pick the smaller axis ratio so the tree fits inside the
+    // requested bbox at both axes (uniform scale, never squashed).
+    const ratio = Math.min(w / old.w, h / old.h);
+    const nextScale = Math.max(0.2, Math.min(8, currentScale * ratio));
+    return { ...item, x, y, scale: nextScale };
   }
   // image
   return { ...item, x, y, w, h };
