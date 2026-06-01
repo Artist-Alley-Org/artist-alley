@@ -82,12 +82,18 @@ export default defineConfig({
           },
         ]),
       ],
+      // All groups default to `collapsed: true` so navigating between pages
+      // doesn't fan every section open on every page load. Starlight auto-
+      // expands the ancestor group of the current page, so the user always
+      // sees the section they're reading without having to manually collapse
+      // the rest.
       sidebar: [
         { label: "Overview", link: "/" },
         { label: "Roadmap", link: "/roadmap/", badge: { text: "WIP", variant: "tip" } },
         { label: "Engineering", link: "/engineering/", badge: { text: "Live", variant: "success" } },
         {
           label: "Whitepaper",
+          collapsed: true,
           items: [
             { label: "Why artist-alley", link: "/whitepaper/" },
             { label: "Architecture", link: "/whitepaper/architecture/" },
@@ -96,6 +102,7 @@ export default defineConfig({
         },
         {
           label: "Guides",
+          collapsed: true,
           items: [
             { label: "Getting started", link: "/guides/getting-started/" },
             { label: "Installing", link: "/guides/install/" },
@@ -105,16 +112,8 @@ export default defineConfig({
           ],
         },
         {
-          label: "Reference",
-          items: [
-            { label: "Overview", link: "/reference/" },
-            { label: "3D preview pipeline", link: "/reference/3d-preview-pipeline/" },
-            // OpenAPI pages are appended automatically by starlight-openapi:
-            ...openAPISidebarGroups,
-          ],
-        },
-        {
           label: "Developers",
+          collapsed: true,
           items: [
             { label: "Overview", link: "/developers/" },
             { label: "Coding standards", link: "/developers/coding-standards/" },
@@ -125,6 +124,16 @@ export default defineConfig({
               autogenerate: { directory: "developers/database" },
               collapsed: true,
             },
+          ],
+        },
+        {
+          label: "Reference",
+          collapsed: true,
+          items: [
+            { label: "Overview", link: "/reference/" },
+            { label: "3D preview pipeline", link: "/reference/3d-preview-pipeline/" },
+            // OpenAPI pages are appended automatically by starlight-openapi:
+            ...openAPISidebarGroups,
           ],
         },
         {
