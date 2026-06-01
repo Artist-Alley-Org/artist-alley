@@ -275,6 +275,21 @@
     session.selectItem(targetLayerId, newIdx);
   }
   let showMoveMenu = $state(false);
+
+  // Phase 1.27 — comment composer state. Pulls the current user's
+  // ref from window.aaUserRef (set by the auth bootstrap); falls
+  // back to 0 ("unknown author") so the post still works.
+  let commentDraft = $state('');
+  function currentUserRef(): number {
+    return (window as { aaUserRef?: number }).aaUserRef ?? 0;
+  }
+  function postComment() {
+    if (!session.selection) return;
+    const body = commentDraft.trim();
+    if (!body) return;
+    session.addComment(session.selection.layerId, session.selection.index, body, currentUserRef());
+    commentDraft = '';
+  }
   let showColorPicker = $state(false);
   // Which color slot a palette / picker click writes into.
   //   'primary'  — session.color (Color 1)
@@ -390,7 +405,7 @@
   type SectionId =
     | 'tools' | 'brushes' | 'shapes' | 'selection' | 'image'
     | 'canvas' | 'color' | 'shape_style' | 'size' | 'typography'
-    | 'selected' | 'layers' | 'history';
+    | 'selected' | 'comments' | 'layers' | 'history';
   const SECTION_STORAGE_KEY = 'aa.whiteboard.panel.sections';
   function loadSectionState(): Record<string, boolean> {
     if (typeof localStorage === 'undefined') return {};
@@ -1218,6 +1233,72 @@
             {/if}
           </div>
         </div>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- ── Comments on selected element (Phase 1.27) ───────────
+         AFFiNE pattern: comments live on individual canvas
+         elements. Shown only when an item is selected. Same
+         engine will power asset annotations in the future
+         (annotation surface = same shape with an additional
+         doc.anchor = {assetId, frameRange} field). -->
+    {#if session.selection}
+      <section class="border-b border-border p-3">
+        {@render sectionHeader('comments', 'Comments')}
+        {#if !isCollapsed('comments')}
+          {@const threads = session.commentsForItem(session.selection.layerId, session.selection.index)}
+          {#if threads.length === 0}
+            <div class="mb-2 text-[10px] text-fg-muted">No comments yet.</div>
+          {/if}
+          {#each threads as t (t.id)}
+            <div class="mb-2 rounded border border-border p-2 text-[11px]"
+              class:opacity-60={t.resolved}
+            >
+              {#each t.messages as msg (msg.id)}
+                <div class="mb-1.5">
+                  <div class="mb-0.5 flex items-center gap-2 text-[10px] text-fg-muted">
+                    <span class="font-medium">@{msg.author_ref}</span>
+                    <span>{new Date(msg.created_at).toLocaleString()}</span>
+                    <button
+                      type="button"
+                      class="ml-auto text-fg-muted hover:text-danger"
+                      title="Delete message"
+                      aria-label="Delete message"
+                      onclick={() => session.deleteComment(t.id, msg.id)}
+                    >\u00d7</button>
+                  </div>
+                  <div class="whitespace-pre-wrap text-fg">{msg.body}</div>
+                </div>
+              {/each}
+              <div class="mt-1 flex justify-end">
+                <button
+                  type="button"
+                  onclick={() => session.setCommentResolved(t.id, !t.resolved)}
+                  class="text-[10px] text-fg-muted hover:text-fg"
+                >
+                  {t.resolved ? 'Reopen' : 'Resolve'}
+                </button>
+              </div>
+            </div>
+          {/each}
+          <!-- New-comment input. Author ref pulled from
+               window.aaUserRef (populated by the auth-bootstrap
+               hook); falls back to 0 if missing so the comment
+               still records but with an "unknown" attribution
+               that the rendering layer can flag. -->
+          <textarea
+            bind:value={commentDraft}
+            placeholder="Add a comment\u2026"
+            class="mb-1 block w-full rounded border border-border bg-surface px-2 py-1 text-xs"
+            rows="2"
+          ></textarea>
+          <button
+            type="button"
+            onclick={postComment}
+            disabled={!commentDraft.trim()}
+            class="inline-flex h-7 items-center rounded bg-accent px-2 text-xs font-medium text-on-accent disabled:opacity-40"
+          >Post</button>
         {/if}
       </section>
     {/if}

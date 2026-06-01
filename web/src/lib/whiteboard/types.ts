@@ -383,6 +383,49 @@ export interface Layer {
   items: Item[];
 }
 
+// ── Element comments / annotations (Phase 1.27) ───────────────────
+//
+// AFFiNE pattern: comments on elements. Each comment is a thread
+// attached to an element id (per-layer item index). Threads live
+// on `BrushContent.comments[]` (top-level) so the renderer can
+// look up "does this item have comments?" in O(1) without walking
+// every layer. The annotation surface (asset-anchored mode, future
+// phase) reuses the same shape — the doc just has an additional
+// `anchor: {assetId, frameRange}` field; the comment-on-element
+// flow is identical.
+
+export interface ElementCommentMessage {
+  /** Stable per-message id (UUIDv4). */
+  id: string;
+  /** Author user ref (BIGINT from the user table). Server resolves
+   *  to a display name at render time; not denormalized here so a
+   *  user rename propagates without re-writing every comment. */
+  author_ref: number;
+  /** ISO-8601 timestamp at message commit. */
+  created_at: string;
+  body: string;
+  /** Optional reply-to message id for threading (single-level reply;
+   *  v1 doesn't render nested trees, just chronological with reply
+   *  hints). */
+  reply_to?: string;
+}
+
+export interface ElementCommentThread {
+  /** Thread id (UUIDv4 — stable identifier separate from address). */
+  id: string;
+  /** Targeted item address: layer id + item index. v1 caveat —
+   *  reordering items via moveLayer/moveItem breaks attachment.
+   *  Future hardening: add stable item-level ids to every kind so
+   *  the address survives reorders. For now reorders are rare;
+   *  add this only when it bites. */
+  layer_id: string;
+  item_index: number;
+  /** Resolved threads are greyed out + hidden by default in the
+   *  panel. Comments stay attached; thread re-opens on new reply. */
+  resolved?: boolean;
+  messages: ElementCommentMessage[];
+}
+
 /** The full vector document. Stored verbatim in comments.annotation_
  *  data (JSONB) and re-rendered on view. */
 export interface BrushContent {
@@ -396,6 +439,9 @@ export interface BrushContent {
    *  behind every layer in BrushCanvas.render. Surfaced to the
    *  user via the Canvas section in the tool panel. */
   canvas_color?: string;
+  /** Phase 1.27 — comment threads attached to elements. Top-level
+   *  for fast lookup. Empty array when nothing's annotated. */
+  comments?: ElementCommentThread[];
   layers: Layer[];
 }
 

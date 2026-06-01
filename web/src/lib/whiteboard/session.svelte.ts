@@ -16,6 +16,7 @@ import type {
   BrushContent,
   BrushStyle,
   BrushTool,
+  ElementCommentThread,
   Item,
   Layer,
   ShapeTool,
@@ -169,6 +170,22 @@ export interface WhiteboardSession {
    *  panel binds straight to it. Every write commits a history
    *  snapshot so undo rewinds the color change as a discrete step. */
   canvasColor: string;
+
+  // ── Element comments (Phase 1.27) ────────────────────────────
+  /** Read every thread on the doc. Use commentsForItem to filter
+   *  to a single item. */
+  comments: ElementCommentThread[];
+  /** Find every thread attached to a given (layer_id, item_index).
+   *  Returns [] when nothing's attached. */
+  commentsForItem: (layerId: string, itemIndex: number) => ElementCommentThread[];
+  /** Append a new message to an existing thread, or create a new
+   *  thread on the item if none exists. Returns the thread id. */
+  addComment: (layerId: string, itemIndex: number, body: string, authorRef: number, replyTo?: string) => string;
+  /** Toggle resolved state on a thread. */
+  setCommentResolved: (threadId: string, resolved: boolean) => void;
+  /** Delete a single message; if it was the only one in the
+   *  thread, the thread is also removed. */
+  deleteComment: (threadId: string, messageId: string) => void;
 
   // ── Viewport (C-1.19, infinite-canvas mode) ─────────────────────
   // Per-user pan + zoom state. Lives on the session (not the doc)
@@ -1020,6 +1037,70 @@ export function createWhiteboardSession(
       state.viewZoom = z;
       state.viewX = (viewportW - state.doc.source_w * z) / 2;
       state.viewY = (viewportH - state.doc.source_h * z) / 2;
+    },
+
+    // ── Comments (Phase 1.27) ─────────────────────────────────────
+    // Top-level on the doc so the panel can list every thread + the
+    // canvas can lookup "does item X have comments?" in O(threads).
+    // Threads addressed by (layer_id, item_index); resolved threads
+    // greyed-out in the UI but kept in storage.
+    get comments() { return state.doc.comments ?? []; },
+    commentsForItem(layerId, itemIndex) {
+      return (state.doc.comments ?? []).filter(
+        (t) => t.layer_id === layerId && t.item_index === itemIndex,
+      );
+    },
+    addComment(layerId, itemIndex, body, authorRef, replyTo) {
+      const trimmed = body.trim();
+      if (!trimmed) return '';
+      const msg = {
+        id: crypto.randomUUID(),
+        author_ref: authorRef,
+        created_at: new Date().toISOString(),
+        body: trimmed,
+        reply_to: replyTo,
+      };
+      const threads = state.doc.comments ?? [];
+      // Reuse the existing unresolved thread for this item if there
+      // is one — keeps the conversation linear. New thread only
+      // when none exists OR the only one is resolved (then a fresh
+      // comment opens a new thread; the resolved one stays
+      // available in the panel's history).
+      const open = threads.find((t) => t.layer_id === layerId && t.item_index === itemIndex && !t.resolved);
+      if (open) {
+        open.messages.push(msg);
+        state.doc = { ...state.doc, comments: [...threads] };
+        commit();
+        return open.id;
+      }
+      const thread: ElementCommentThread = {
+        id: crypto.randomUUID(),
+        layer_id: layerId,
+        item_index: itemIndex,
+        messages: [msg],
+      };
+      state.doc = { ...state.doc, comments: [...threads, thread] };
+      commit();
+      return thread.id;
+    },
+    setCommentResolved(threadId, resolved) {
+      const threads = state.doc.comments ?? [];
+      const t = threads.find((t) => t.id === threadId);
+      if (!t) return;
+      t.resolved = resolved;
+      state.doc = { ...state.doc, comments: [...threads] };
+      commit();
+    },
+    deleteComment(threadId, messageId) {
+      const threads = state.doc.comments ?? [];
+      const idx = threads.findIndex((t) => t.id === threadId);
+      if (idx < 0) return;
+      const filtered = threads[idx].messages.filter((m) => m.id !== messageId);
+      const next = filtered.length === 0
+        ? threads.filter((_, i) => i !== idx)
+        : threads.map((t, i) => i === idx ? { ...t, messages: filtered } : t);
+      state.doc = { ...state.doc, comments: next };
+      commit();
     },
   };
 }
