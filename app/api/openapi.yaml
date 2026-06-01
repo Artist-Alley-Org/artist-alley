@@ -915,6 +915,142 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/alternates:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetAlternates
+      summary: List variant files (palette swaps, transcodes, thumbnails) for an asset
+      description: |
+        Returns the sibling-version variants attached to this asset,
+        most-recently-created first. Where companions are sidecars the
+        primary asset references, alternates are variants of the asset
+        itself — a palette-swapped sprite sheet, a web-res thumbnail,
+        a transcoded proxy. Each alternate stands on its own and can
+        be downloaded directly.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of alternates (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AssetAlternate" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addAssetAlternate
+      summary: Attach a variant file to an asset
+      description: |
+        Streams the variant body content-addressed into storage, then
+        attaches it as a sibling alternate. Replaces any existing
+        alternate with the same label (the old pin is removed). Pass
+        the kind tag in X-Alternate-Kind so the UI can group + filter;
+        kind-specific metadata travels as JSON in X-Alternate-Metadata.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: X-Alternate-Label
+          in: header
+          required: true
+          description: |
+            Human label shown in alt-file lists. Unique per asset; an
+            upload with an existing label replaces the previous variant.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: X-Alternate-Kind
+          in: header
+          required: false
+          description: |
+            Provenance tag — palette_swap | thumbnail | low_res |
+            authored | transcode. Free-form so new generators don't
+            need a backend change; defaults to "authored".
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: X-Alternate-Metadata
+          in: header
+          required: false
+          description: |
+            JSON-encoded per-kind metadata. The sprite tool's palette
+            swap encodes its "from → to" colour map here; thumbnail
+            workers encode dimensions. Opaque to the backend.
+          schema: { type: string, maxLength: 8192 }
+        - name: X-Content-Type
+          in: header
+          required: false
+          description: MIME type of the alternate bytes.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Alternate attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetAlternate" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/alternates/{alternate_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: alternate_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: downloadAssetAlternate
+      summary: Download an alternate's bytes
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Alternate body
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeAssetAlternate
+      summary: Detach an alternate from an asset
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Alternate removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/companions/{companion_id}:
     parameters:
       - name: id
@@ -4929,6 +5065,53 @@ components:
         created_at:
           type: string
           format: date-time
+
+    AssetAlternate:
+      type: object
+      description: |
+        A sibling-version variant of an asset (palette swap, transcode,
+        thumbnail, authored variant). Where companions are sidecars the
+        primary asset references, alternates stand on their own and can
+        be downloaded individually.
+      required: [id, asset_id, label, kind, content_type, size_bytes, created_at, metadata, created_by_user_ref]
+      properties:
+        id:
+          type: string
+          format: uuid
+        asset_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          description: Human label shown in alt-file lists; unique per asset.
+          example: walk — team-green palette
+        kind:
+          type: string
+          description: |
+            Provenance tag — palette_swap | thumbnail | low_res |
+            authored | transcode. Open-ended.
+          example: palette_swap
+        content_type:
+          type: string
+          example: image/png
+        size_bytes:
+          type: integer
+          format: int64
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Kind-specific JSON. Sprite tool palette swaps store the colour remap here.
 
     UploadResult:
       type: object

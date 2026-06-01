@@ -59,6 +59,12 @@ const maxListLimit = 200
 // invalidation through cache.Registry.Emit.
 const CacheDomainAssetCompanions = "asset.companions"
 
+// CacheDomainAssetAlternates keys the per-asset alternate-list cache.
+// Mirrors the companions domain — sprite-tool palette swaps, future
+// painting-track variants, and the thumbnail pipeline all mutate the
+// alternate list and need to broadcast invalidations through this key.
+const CacheDomainAssetAlternates = "asset.alternates"
+
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
@@ -76,6 +82,10 @@ type Handler struct {
 	// high once a session settles on a working set of assets).
 	// nil-safe — tests can pass a nil registry.
 	companions *cache.Cache[[]openapi.AssetCompanion]
+	// alternates caches the per-asset list of sibling variants.
+	// Mostly hit by the sprite-tool palette swap UI + the future
+	// authored-variant track.
+	alternates *cache.Cache[[]openapi.AssetAlternate]
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
@@ -87,6 +97,7 @@ func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Lo
 		// is "active assets being reviewed" which is well under that
 		// for a single host.
 		h.companions = cache.Register[[]openapi.AssetCompanion](registry, CacheDomainAssetCompanions, 5_000)
+		h.alternates = cache.Register[[]openapi.AssetAlternate](registry, CacheDomainAssetAlternates, 5_000)
 	}
 	return h
 }

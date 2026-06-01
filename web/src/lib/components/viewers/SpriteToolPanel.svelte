@@ -11,8 +11,11 @@
   //   5. Slice grid — manual slicer (only when no metadata)
   //   6. Playback   — prev/play/next, fps, loop mode
 
+  import { onMount } from 'svelte';
   import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import { exportGIF, exportSpriteSheet, exportPNGsZip, downloadBlob, type ExportFrame } from '$lib/sprite/export';
+  import { applyPaletteRemap, entryToHex, parseHexColor, type PaletteEntry, type RemapPair } from '$lib/sprite/palette';
+  import { listAlternates, addAlternate, removeAlternate, alternateDownloadURL, type Alternate } from '$lib/sprite/alternates';
 
   let { session = $bindable<SpriteSessionInstance>() }: { session: SpriteSessionInstance } = $props();
 
@@ -94,6 +97,87 @@
     session.addSlice(name);
     newSliceName = '';
   }
+
+  // ── Palette remap (Phase 9) ──────────────────────────────────
+  // Staged colour-swap pairs. User picks a source from the
+  // palette grid then a target via <input type=color>; we don't
+  // touch the source PNG — applying writes a NEW PNG as an
+  // alt-file on the asset (the alternates panel below lists them).
+  let remapPairs = $state<RemapPair[]>([]);
+  let pendingSource = $state<PaletteEntry | null>(null);
+  let pendingTargetHex = $state('#ff00ff');
+  let altLabel = $state('');
+  let altBusy = $state(false);
+  let altError = $state<string | null>(null);
+  function pickPaletteSource(e: PaletteEntry) {
+    pendingSource = { r: e.r, g: e.g, b: e.b, a: e.a };
+    pendingTargetHex = entryToHex(e);
+  }
+  function commitRemapPair() {
+    if (!pendingSource) return;
+    const t = parseHexColor(pendingTargetHex);
+    if (!t) return;
+    // Replace any existing pair targeting the same source so the
+    // user can refine a mapping without manually removing first.
+    const next = remapPairs.filter(
+      (p) => !(p.from.r === pendingSource!.r && p.from.g === pendingSource!.g && p.from.b === pendingSource!.b),
+    );
+    next.push({ from: pendingSource, to: { ...t, a: pendingSource.a } });
+    remapPairs = next;
+    pendingSource = null;
+  }
+  function removeRemapPair(i: number) {
+    remapPairs = remapPairs.filter((_, idx) => idx !== i);
+  }
+
+  // ── Alternates (Phase 9) ─────────────────────────────────────
+  let alternates = $state<Alternate[]>([]);
+  let alternatesError = $state<string | null>(null);
+  async function refreshAlternates() {
+    try {
+      alternates = await listAlternates(session.assetId);
+    } catch (e) {
+      alternatesError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  async function applyAndSaveRemap() {
+    if (!session.img || remapPairs.length === 0) return;
+    const label = altLabel.trim() || `palette swap ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`;
+    altBusy = true;
+    altError = null;
+    try {
+      const blob = await applyPaletteRemap(session.img, remapPairs);
+      await addAlternate({
+        assetId: session.assetId,
+        label,
+        kind: 'palette_swap',
+        contentType: 'image/png',
+        metadata: {
+          remap: remapPairs.map((p) => ({
+            from: entryToHex(p.from),
+            to: entryToHex(p.to),
+          })),
+        },
+        body: blob,
+      });
+      await refreshAlternates();
+      remapPairs = [];
+      altLabel = '';
+    } catch (e) {
+      altError = e instanceof Error ? e.message : String(e);
+    } finally {
+      altBusy = false;
+    }
+  }
+  async function deleteAlt(id: string) {
+    try {
+      await removeAlternate(session.assetId, id);
+      await refreshAlternates();
+    } catch (e) {
+      alternatesError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  onMount(() => { void refreshAlternates(); });
 
   async function doExportGIF() {
     if (!session.img) return;
@@ -252,17 +336,22 @@
         </dl>
         {#if a.palette.length > 0}
           <!-- Palette swatches — first 64 entries in usage-
-               frequency order. Hovers show hex + count. -->
+               frequency order. Click to stage a colour as the
+               source of a remap pair (Phase 9). Hovers show hex
+               + count. -->
           <div class="mt-2">
             <span class="mb-1 block text-[10px] text-fg-muted">Palette</span>
             <div class="flex flex-wrap gap-0.5">
               {#each a.palette.slice(0, 64) as p (`${p.r}-${p.g}-${p.b}-${p.a}`)}
-                {@const hex = `#${[p.r, p.g, p.b].map((v) => v.toString(16).padStart(2, '0')).join('')}`}
-                <div
-                  class="h-4 w-4 rounded-sm border border-black/40"
+                {@const hex = entryToHex(p)}
+                <button
+                  type="button"
+                  class={`h-4 w-4 rounded-sm border ${pendingSource && pendingSource.r === p.r && pendingSource.g === p.g && pendingSource.b === p.b ? 'border-accent ring-1 ring-accent' : 'border-black/40 hover:border-fg'}`}
                   style:background-color={hex}
-                  title={`${hex} · ${p.count.toLocaleString()} px${p.a < 255 ? ` · α${p.a}` : ''}`}
-                ></div>
+                  title={`${hex} · ${p.count.toLocaleString()} px${p.a < 255 ? ` · α${p.a}` : ''} · click to stage palette swap`}
+                  onclick={() => pickPaletteSource(p)}
+                  aria-label={`Stage ${hex} as remap source`}
+                ></button>
               {/each}
               {#if a.palette.length > 64}
                 <span class="text-[9px] text-fg-muted/70">+{a.palette.length - 64}</span>
@@ -270,6 +359,103 @@
             </div>
           </div>
         {/if}
+      </section>
+    {/if}
+
+    <!-- Palette swap — Phase 9. Re-renders the full sheet with one
+         or more colour remaps applied and saves the result as a new
+         alternate file on the asset. Source PNG stays untouched —
+         this is a sibling variant, not an edit. -->
+    {#if session.img && session.analysis && session.analysis.palette.length > 0}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Palette swap</h3>
+        <p class="mb-2 text-[10px] leading-snug text-fg-muted">
+          Click a palette swatch above to pick a source colour, then choose a target and add the pair. Apply writes a remapped PNG as an alternate file on this asset.
+        </p>
+        {#if pendingSource}
+          <div class="mb-2 flex items-center gap-2 rounded border border-accent/40 bg-accent/10 px-2 py-1">
+            <span class="h-4 w-4 shrink-0 rounded border border-black/40" style:background-color={entryToHex(pendingSource)}></span>
+            <span class="font-mono text-[10px] text-fg">{entryToHex(pendingSource)}</span>
+            <span class="text-[10px] text-fg-muted">→</span>
+            <input
+              type="color"
+              bind:value={pendingTargetHex}
+              class="h-5 w-6 rounded border border-border"
+              aria-label="Target colour"
+            />
+            <input
+              type="text"
+              bind:value={pendingTargetHex}
+              class="flex-1 rounded border border-border bg-surface px-1 py-0.5 font-mono text-[10px] text-fg"
+              maxlength="7"
+            />
+            <button type="button" onclick={commitRemapPair} class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] text-fg hover:bg-accent/25">Add</button>
+            <button type="button" onclick={() => (pendingSource = null)} class="text-fg-muted hover:text-danger" title="Cancel" aria-label="Cancel">×</button>
+          </div>
+        {/if}
+        {#if remapPairs.length > 0}
+          <div class="mb-2 space-y-0.5">
+            {#each remapPairs as p, i (i)}
+              <div class="flex items-center gap-1 rounded border border-border px-1.5 py-0.5">
+                <span class="h-3 w-3 rounded-sm border border-black/40" style:background-color={entryToHex(p.from)}></span>
+                <span class="font-mono text-[10px] text-fg">{entryToHex(p.from)}</span>
+                <span class="text-[10px] text-fg-muted">→</span>
+                <span class="h-3 w-3 rounded-sm border border-black/40" style:background-color={entryToHex(p.to)}></span>
+                <span class="flex-1 font-mono text-[10px] text-fg">{entryToHex(p.to)}</span>
+                <button type="button" onclick={() => removeRemapPair(i)} class="text-fg-muted hover:text-danger" aria-label="Remove pair">×</button>
+              </div>
+            {/each}
+          </div>
+          <input
+            type="text"
+            bind:value={altLabel}
+            placeholder="Label (defaults to a timestamp)…"
+            class="mb-1 w-full rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+          />
+          <button
+            type="button"
+            onclick={applyAndSaveRemap}
+            disabled={altBusy}
+            class="w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-40"
+          >{altBusy ? 'Saving…' : `Apply + save (${remapPairs.length} pair${remapPairs.length === 1 ? '' : 's'})`}</button>
+        {/if}
+        {#if altError}
+          <p class="mt-1 text-[10px] text-danger">{altError}</p>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- Alternates — Phase 9. Lists sibling-variant files attached
+         to this asset (palette swaps so far; future paint-track
+         output lands here too). Each row links to the raw bytes
+         and offers a delete. -->
+    {#if alternates.length > 0 || alternatesError}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Alternates</h3>
+        {#if alternatesError}
+          <p class="mb-2 text-[10px] text-danger">{alternatesError}</p>
+        {/if}
+        <div class="space-y-1">
+          {#each alternates as alt (alt.id)}
+            <div class="flex items-center gap-2 rounded border border-border p-1.5">
+              <div class="flex-1 min-w-0">
+                <div class="truncate text-[10px] text-fg" title={alt.label}>{alt.label}</div>
+                <div class="font-mono text-[9px] text-fg-muted">{alt.kind} · {(alt.size_bytes / 1024).toFixed(1)} KB</div>
+              </div>
+              <a
+                href={alternateDownloadURL(alt.asset_id, alt.id)}
+                download={`${alt.label}.png`}
+                class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent"
+              >↓</a>
+              <button
+                type="button"
+                onclick={() => deleteAlt(alt.id)}
+                class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted hover:border-danger hover:text-danger"
+                aria-label="Delete alternate"
+              >×</button>
+            </div>
+          {/each}
+        </div>
       </section>
     {/if}
 

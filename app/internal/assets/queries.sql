@@ -227,3 +227,47 @@ SELECT id, asset_id, companion_path, object_hash,
 -- pin remains.
 DELETE FROM asset_companions
  WHERE id = $1;
+
+-- ─── Asset alternates (Phase 9 + paint-track Phase 13+) ─────────
+-- Variants of the asset itself (palette swap, transcode, thumbnail,
+-- authored). Mirrors the companions shape but adds a label, a kind
+-- tag, and free-form per-kind JSONB metadata.
+
+-- name: AddAssetAlternate :one
+INSERT INTO asset_alternates (
+    asset_id, label, kind, object_hash, content_type, size_bytes,
+    origin_server_id, created_by_user_ref, metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING id, asset_id, label, kind, object_hash, content_type,
+          size_bytes, origin_server_id, created_by_user_ref, created_at,
+          metadata;
+
+-- name: ListAssetAlternates :many
+-- All alternates for one asset, ordered by created_at desc so the
+-- most recent variant lands at the top of the UI list.
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1
+ ORDER BY created_at DESC;
+
+-- name: GetAssetAlternateByLabel :one
+-- Resolve one alternate by label — used by the upload path to
+-- replace an existing variant with the same label.
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1 AND label = $2;
+
+-- name: GetAssetAlternate :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE id = $1;
+
+-- name: DeleteAssetAlternate :exec
+-- Remove an alternate by id. Caller unpins the underlying blob.
+DELETE FROM asset_alternates
+ WHERE id = $1;

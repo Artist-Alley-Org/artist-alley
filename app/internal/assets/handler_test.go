@@ -482,6 +482,18 @@ func (s shimImpl) DownloadAssetCompanion(ctx context.Context, req openapi.Downlo
 func (s shimImpl) RemoveAssetCompanion(ctx context.Context, req openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	return s.assets.RemoveAssetCompanion(ctx, req)
 }
+func (s shimImpl) ListAssetAlternates(ctx context.Context, req openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	return s.assets.ListAssetAlternates(ctx, req)
+}
+func (s shimImpl) AddAssetAlternate(ctx context.Context, req openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	return s.assets.AddAssetAlternate(ctx, req)
+}
+func (s shimImpl) DownloadAssetAlternate(ctx context.Context, req openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	return s.assets.DownloadAssetAlternate(ctx, req)
+}
+func (s shimImpl) RemoveAssetAlternate(ctx context.Context, req openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	return s.assets.RemoveAssetAlternate(ctx, req)
+}
 
 func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
 	panic("Login called from assets test shim")

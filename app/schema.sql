@@ -352,6 +352,23 @@ CREATE TABLE asset_companions (
     UNIQUE (asset_id, companion_path)
 );
 
+-- migrations/00035_asset_alternates.sql — sibling-version variants
+-- (palette swaps, transcodes, thumbnails, authored variants).
+CREATE TABLE asset_alternates (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id         UUID         NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    label            TEXT         NOT NULL CHECK (length(label) BETWEEN 1 AND 256),
+    kind             TEXT         NOT NULL DEFAULT 'authored' CHECK (length(kind) BETWEEN 1 AND 64),
+    object_hash      TEXT         NOT NULL REFERENCES storage_objects(hash),
+    content_type     TEXT         NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes       BIGINT       NOT NULL CHECK (size_bytes >= 0),
+    origin_server_id UUID,
+    created_by_user_ref BIGINT,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    metadata         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    UNIQUE (asset_id, label)
+);
+
 -- migrations/00005_sessions.sql — first-class session table. One row per
 -- active login; replaces RS's single-session-per-user model while still
 -- maintaining user.session for PHP coexistence.

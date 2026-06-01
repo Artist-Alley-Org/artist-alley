@@ -210,6 +210,19 @@ func (s *apiServer) RemoveAssetCompanion(ctx context.Context, req openapi.Remove
 	return s.assets.RemoveAssetCompanion(ctx, req)
 }
 
+func (s *apiServer) ListAssetAlternates(ctx context.Context, req openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	return s.assets.ListAssetAlternates(ctx, req)
+}
+func (s *apiServer) AddAssetAlternate(ctx context.Context, req openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	return s.assets.AddAssetAlternate(ctx, req)
+}
+func (s *apiServer) DownloadAssetAlternate(ctx context.Context, req openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	return s.assets.DownloadAssetAlternate(ctx, req)
+}
+func (s *apiServer) RemoveAssetAlternate(ctx context.Context, req openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	return s.assets.RemoveAssetAlternate(ctx, req)
+}
+
 // --- metadata --------------------------------------------------------------
 
 func (s *apiServer) ListFields(ctx context.Context, req openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {

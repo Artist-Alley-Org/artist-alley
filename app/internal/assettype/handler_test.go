@@ -207,6 +207,18 @@ func (rtOnly) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompa
 func (rtOnly) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from assettype test shim")
 }
+func (rtOnly) ListAssetAlternates(context.Context, openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	panic("ListAssetAlternates called from assettype test shim")
+}
+func (rtOnly) AddAssetAlternate(context.Context, openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	panic("AddAssetAlternate called from assettype test shim")
+}
+func (rtOnly) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	panic("DownloadAssetAlternate called from assettype test shim")
+}
+func (rtOnly) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	panic("RemoveAssetAlternate called from assettype test shim")
+}
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from assettype test shim")
 }

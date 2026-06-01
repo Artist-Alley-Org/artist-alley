@@ -66,6 +66,20 @@ type Asset struct {
 	DeletedAt            pgtype.Timestamptz
 }
 
+type AssetAlternate struct {
+	ID               pgtype.UUID
+	AssetID          pgtype.UUID
+	Label            string
+	Kind             string
+	ObjectHash       string
+	ContentType      string
+	SizeBytes        int64
+	OriginServerID   pgtype.UUID
+	CreatedByUserRef *int64
+	CreatedAt        pgtype.Timestamptz
+	Metadata         []byte
+}
+
 type AssetCompanion struct {
 	ID            pgtype.UUID
 	AssetID       pgtype.UUID

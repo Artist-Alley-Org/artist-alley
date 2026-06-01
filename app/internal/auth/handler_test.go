@@ -495,6 +495,18 @@ func (a authOnlyImpl) AddAssetCompanion(_ context.Context, _ openapi.AddAssetCom
 func (a authOnlyImpl) DownloadAssetCompanion(_ context.Context, _ openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
 	panic("DownloadAssetCompanion called from auth test shim")
 }
+func (a authOnlyImpl) ListAssetAlternates(_ context.Context, _ openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	panic("ListAssetAlternates called from auth test shim")
+}
+func (a authOnlyImpl) AddAssetAlternate(_ context.Context, _ openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	panic("AddAssetAlternate called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetAlternate(_ context.Context, _ openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	panic("DownloadAssetAlternate called from auth test shim")
+}
+func (a authOnlyImpl) RemoveAssetAlternate(_ context.Context, _ openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	panic("RemoveAssetAlternate called from auth test shim")
+}
 func (a authOnlyImpl) RemoveAssetCompanion(_ context.Context, _ openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from auth test shim")
 }

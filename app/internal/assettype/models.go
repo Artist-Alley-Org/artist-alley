@@ -66,6 +66,20 @@ type Asset struct {
 	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type AssetAlternate struct {
+	ID               pgtype.UUID        `json:"id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	Label            string             `json:"label"`
+	Kind             string             `json:"kind"`
+	ObjectHash       string             `json:"object_hash"`
+	ContentType      string             `json:"content_type"`
+	SizeBytes        int64              `json:"size_bytes"`
+	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
+	CreatedByUserRef *int64             `json:"created_by_user_ref"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Metadata         []byte             `json:"metadata"`
+}
+
 type AssetCompanion struct {
 	ID            pgtype.UUID        `json:"id"`
 	AssetID       pgtype.UUID        `json:"asset_id"`

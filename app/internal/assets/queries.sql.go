@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addAssetAlternate = `-- name: AddAssetAlternate :one
+
+INSERT INTO asset_alternates (
+    asset_id, label, kind, object_hash, content_type, size_bytes,
+    origin_server_id, created_by_user_ref, metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING id, asset_id, label, kind, object_hash, content_type,
+          size_bytes, origin_server_id, created_by_user_ref, created_at,
+          metadata
+`
+
+type AddAssetAlternateParams struct {
+	AssetID          pgtype.UUID
+	Label            string
+	Kind             string
+	ObjectHash       string
+	ContentType      string
+	SizeBytes        int64
+	OriginServerID   pgtype.UUID
+	CreatedByUserRef *int64
+	Metadata         []byte
+}
+
+// ─── Asset alternates (Phase 9 + paint-track Phase 13+) ─────────
+// Variants of the asset itself (palette swap, transcode, thumbnail,
+// authored). Mirrors the companions shape but adds a label, a kind
+// tag, and free-form per-kind JSONB metadata.
+func (q *Queries) AddAssetAlternate(ctx context.Context, arg AddAssetAlternateParams) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, addAssetAlternate,
+		arg.AssetID,
+		arg.Label,
+		arg.Kind,
+		arg.ObjectHash,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.OriginServerID,
+		arg.CreatedByUserRef,
+		arg.Metadata,
+	)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const addAssetCompanion = `-- name: AddAssetCompanion :one
 INSERT INTO asset_companions (
     asset_id, companion_path, object_hash, content_type, size_bytes
@@ -160,6 +218,17 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	return i, err
 }
 
+const deleteAssetAlternate = `-- name: DeleteAssetAlternate :exec
+DELETE FROM asset_alternates
+ WHERE id = $1
+`
+
+// Remove an alternate by id. Caller unpins the underlying blob.
+func (q *Queries) DeleteAssetAlternate(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAssetAlternate, id)
+	return err
+}
+
 const deleteAssetCompanion = `-- name: DeleteAssetCompanion :exec
 DELETE FROM asset_companions
  WHERE id = $1
@@ -225,6 +294,65 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 	return i, err
 }
 
+const getAssetAlternate = `-- name: GetAssetAlternate :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE id = $1
+`
+
+func (q *Queries) GetAssetAlternate(ctx context.Context, id pgtype.UUID) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, getAssetAlternate, id)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const getAssetAlternateByLabel = `-- name: GetAssetAlternateByLabel :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1 AND label = $2
+`
+
+type GetAssetAlternateByLabelParams struct {
+	AssetID pgtype.UUID
+	Label   string
+}
+
+// Resolve one alternate by label — used by the upload path to
+// replace an existing variant with the same label.
+func (q *Queries) GetAssetAlternateByLabel(ctx context.Context, arg GetAssetAlternateByLabelParams) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, getAssetAlternateByLabel, arg.AssetID, arg.Label)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const getAssetCompanion = `-- name: GetAssetCompanion :one
 SELECT id, asset_id, companion_path, object_hash,
        content_type, size_bytes, created_at
@@ -277,6 +405,48 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAssetAlternates = `-- name: ListAssetAlternates :many
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1
+ ORDER BY created_at DESC
+`
+
+// All alternates for one asset, ordered by created_at desc so the
+// most recent variant lands at the top of the UI list.
+func (q *Queries) ListAssetAlternates(ctx context.Context, assetID pgtype.UUID) ([]AssetAlternate, error) {
+	rows, err := q.db.Query(ctx, listAssetAlternates, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssetAlternate
+	for rows.Next() {
+		var i AssetAlternate
+		if err := rows.Scan(
+			&i.ID,
+			&i.AssetID,
+			&i.Label,
+			&i.Kind,
+			&i.ObjectHash,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.OriginServerID,
+			&i.CreatedByUserRef,
+			&i.CreatedAt,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAssetCompanions = `-- name: ListAssetCompanions :many

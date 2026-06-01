@@ -258,6 +258,18 @@ func (shimImpl) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCom
 func (shimImpl) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from storage test shim")
 }
+func (shimImpl) ListAssetAlternates(context.Context, openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	panic("ListAssetAlternates called from storage test shim")
+}
+func (shimImpl) AddAssetAlternate(context.Context, openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	panic("AddAssetAlternate called from storage test shim")
+}
+func (shimImpl) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	panic("DownloadAssetAlternate called from storage test shim")
+}
+func (shimImpl) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	panic("RemoveAssetAlternate called from storage test shim")
+}
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from storage test shim")
 }
