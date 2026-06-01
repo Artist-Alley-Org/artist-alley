@@ -1131,9 +1131,18 @@ func isImageExt(ext *string) bool {
 // videoExts: same role for video. Coverage is "anything we'd want
 // to spin up a video.probe job for" — the actual transcode list
 // lives in the (future) video pipeline.
+//
+// Camera + broadcast formats included so uploads from a GoPro
+// (.lrv proxy), Insta360 (.insv), AVCHD camcorder (.mts / .m2ts),
+// DVD rip (.vob), broadcast workflow (.mxf), Flash (.f4v), or
+// MPEG-4 variant (.m4v / .ts) land as Video instead of Photo /
+// unknown. RED / ARRI / ProRes RAW deferred — those need a paid
+// codec license to even probe metadata.
 var videoExts = map[string]struct{}{
 	"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
+	"m4v": {}, "ts": {}, "lrv": {}, "insv": {}, "mts": {},
+	"m2ts": {}, "vob": {}, "f4v": {}, "mxf": {},
 }
 
 // modelExts: formats the preview.3d handler can ingest.
@@ -1160,11 +1169,46 @@ var modelExts = map[string]struct{}{
 // extension, used by createAsset to auto-promote uploads to the right
 // category. Returns 0 (unset) when we don't have a strong opinion —
 // the caller's explicit choice still wins.
+//
+// Type refs (seeded in migrations 00027 + 00031 + 00033 + 00034):
+//   1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
+//   7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture
+//   13 Sprite · 14 Code
+//
+// Editor-source files (psd / ai / eps / sketch / etc.) land in Image
+// alongside finished raster outputs. Texture / sprite / audiobook
+// recognised only by dedicated file extensions — generic png / mp3
+// stay Image / Audio because the extension can't tell them apart.
 func assetTypeFor(ext string) int64 {
 	if ext == "" {
 		return 0
 	}
 	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+	switch e {
+	case "ttf", "otf", "ttc", "otc", "woff", "woff2":
+		return 7 // Font
+	case "cbr", "cbz", "cb7":
+		return 8 // Comic
+	case "epub", "mobi", "azw", "azw3", "fb2", "lit", "prc", "pdb":
+		return 10 // Ebook
+	case "m4b", "aax":
+		return 11 // Audiobook
+	case "dds", "ktx", "ktx2", "basis", "sbsar", "sbs":
+		return 12 // Texture
+	case "aseprite", "ase", "pyxel":
+		return 13 // Sprite
+	case "py", "js", "jsx", "ts", "tsx", "mjs", "cjs",
+		"c", "cpp", "cc", "cxx", "h", "hpp", "hh",
+		"cs", "java", "go", "rs", "rb", "php", "swift", "kt", "kts", "scala",
+		"sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+		"lua", "gd", "tres", "tscn",
+		"mel", "ms", "mxs", "hda", "vex",
+		"hlsl", "glsl", "vert", "frag", "shader", "cginc", "usf":
+		return 14 // Code
+	case "psd", "psb", "ai", "sketch", "fig", "xd", "eps", "cdr",
+		"afdesign", "afphoto", "afpub", "clip", "ora", "kra":
+		return 1 // Image (editor-source files belong with finished raster)
+	}
 	if _, ok := modelExts[e]; ok {
 		return 5 // 3D Object
 	}
@@ -1172,15 +1216,15 @@ func assetTypeFor(ext string) int64 {
 		return 3 // Video
 	}
 	if _, ok := imageExts[e]; ok {
-		return 1 // Photo
+		return 1 // Image
 	}
 	switch e {
 	case "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "txz":
 		return 6 // Archive
 	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma":
 		return 4 // Audio
-	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt", "ttf", "otf", "ttc", "otc", "woff", "woff2":
-		return 2 // Document (fonts → Document for now; no dedicated Font type yet)
+	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt":
+		return 2 // Document
 	}
 	return 0
 }

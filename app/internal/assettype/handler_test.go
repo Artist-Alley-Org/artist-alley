@@ -48,7 +48,7 @@ func TestListAssetTypes_Live(t *testing.T) {
 		t.Fatalf("expected at least 4 seeded rows, got %d", len(ok))
 	}
 
-	want := map[int64]string{1: "Photo", 2: "Document", 3: "Video", 4: "Audio"}
+	want := map[int64]string{1: "Image", 2: "Document", 3: "Video", 4: "Audio"}
 	for ref, name := range want {
 		found := false
 		for _, rt := range ok {
@@ -403,7 +403,7 @@ func ensureAssetTypeSeed(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 
 	const ensure = `
 INSERT INTO asset_types (ref, name, icon)
-VALUES (1, 'Photo', 'image'),
+VALUES (1, 'Image', 'image'),
        (2, 'Document', 'file-text'),
        (3, 'Video', 'video'),
        (4, 'Audio', 'music')

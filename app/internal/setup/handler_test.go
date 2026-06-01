@@ -247,6 +247,16 @@ type fixture struct {
 	cfg           config.Config
 	adminUsername string
 	dbName        string
+	// Snapshot of every system.admin-granting user_roles row that
+	// existed before the test wiped them. Repopulated post-test so
+	// the dev environment's interactive admin keeps working without
+	// a manual re-INSERT after every Go test run.
+	savedAdmins []savedUserRole
+}
+
+type savedUserRole struct {
+	rsUserID int64
+	roleID   string
 }
 
 func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
@@ -259,6 +269,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	defer cancel()
 
 	pool := openPool(t, pwd)
+	// Defers run LIFO: pool.Close() is registered FIRST so it runs
+	// LAST, ensuring the admin snapshot-restore (registered after)
+	// still has a live pool to talk to. t.Cleanup runs even later
+	// than function defers, so it can't be used here.
 	defer pool.Close()
 
 	fx := &fixture{
@@ -279,9 +293,23 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		},
 	}
 
-	// Pre-clean — a previous killed run could have left this user.
+	// Snapshot any pre-existing admins BEFORE we wipe them, then
+	// restore at function exit so the dev environment's interactive
+	// admin survives unchanged. Pre-clean still has to drop everything
+	// to satisfy the test's needs_setup=true gate.
+	//
+	// Use defer (not t.Cleanup): t.Cleanup runs after function defers,
+	// by which time `defer pool.Close()` above has shut the pool. Our
+	// restore needs a live pool, so it has to ride a defer that fires
+	// BEFORE pool close — which means registering it AFTER pool.Close's
+	// defer so LIFO order works in our favor.
+	fx.snapshotAdmins(ctx)
 	fx.cleanupAdmin(ctx)
-	t.Cleanup(func() { fx.cleanupAdmin(context.Background()) })
+	defer func() {
+		bgCtx := context.Background()
+		fx.cleanupAdmin(bgCtx)
+		fx.restoreAdmins(bgCtx)
+	}()
 
 	fx.installHandler()
 	fn(ctx, fx)
@@ -295,14 +323,53 @@ func (f *fixture) installHandler() {
 	f.router = router
 }
 
+// snapshotAdmins records every system.admin-granting user_roles row
+// that currently exists so restoreAdmins can put them back at the
+// end of the test. Without this, every run of `./scripts/test.sh
+// --go` left the developer's interactive admin demoted.
+func (f *fixture) snapshotAdmins(ctx context.Context) {
+	rows, err := f.pool.Query(ctx, `
+		SELECT ur.rs_user_id, ur.role_id::text
+		FROM user_roles ur
+		WHERE ur.role_id IN (
+		    SELECT DISTINCT rc.role_id FROM role_capabilities rc
+		    WHERE rc.capability_code = 'system.admin'
+		)
+	`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r savedUserRole
+		if err := rows.Scan(&r.rsUserID, &r.roleID); err != nil {
+			continue
+		}
+		f.savedAdmins = append(f.savedAdmins, r)
+	}
+}
+
+// restoreAdmins re-INSERTs the rows captured by snapshotAdmins. Run
+// AFTER cleanupAdmin so the test's own admin doesn't get spared.
+// Tolerates rows that were since deleted (e.g. user removed in the
+// test) — ON CONFLICT DO NOTHING and ignoring errors keeps the test
+// teardown best-effort.
+func (f *fixture) restoreAdmins(ctx context.Context) {
+	for _, r := range f.savedAdmins {
+		_, _ = f.pool.Exec(ctx, `
+			INSERT INTO user_roles (rs_user_id, role_id)
+			VALUES ($1, $2::uuid)
+			ON CONFLICT DO NOTHING
+		`, r.rsUserID, r.roleID)
+	}
+}
+
 // cleanupAdmin returns the DB to needs_setup=true: removes every
 // user_role row that grants system.admin (so CountSystemAdmins drops
-// to zero) plus this fixture's specific test user. This is by design
-// destructive of any *interactively* created admin — the setup-flow
-// test inherently requires a clean "no admin" state, and the
-// integration test environment (docker-compose live DB) is shared
-// with the interactive user. Re-run the setup wizard from the
-// browser after the test suite if you need a real admin back.
+// to zero) plus this fixture's specific test user. The destruction
+// is paired with snapshotAdmins / restoreAdmins above so the dev
+// admin gets re-INSERTed at the very end — Go test runs no longer
+// require a manual user_roles re-INSERT to log back in.
 func (f *fixture) cleanupAdmin(ctx context.Context) {
 	// Drop the role assignment from every admin so needs_setup flips
 	// back to true. We leave the user rows alone (the user could

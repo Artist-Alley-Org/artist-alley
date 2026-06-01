@@ -214,9 +214,14 @@ const IMAGE_EXTS = new Set([
   'avif', 'heic', 'heif', 'svg',
   'hdr', 'exr', 'pic',
 ]);
+// Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
+// proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv
+// / AVCHD .mts / .m2ts / DVD .vob / broadcast .mxf / Flash .f4v
+// upload lands as Video instead of Photo or placeholder.
 const VIDEO_EXTS = new Set([
   'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',
-  'flv', 'm4v', 'ts',
+  'flv', 'm4v', 'ts', 'lrv', 'insv', 'mts', 'm2ts', 'vob', 'f4v',
+  'mxf',
 ]);
 const AUDIO_EXTS = new Set([
   'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'opus',
