@@ -120,7 +120,35 @@
     if (session.currentFrame >= frameCount) session.currentFrame = 0;
   });
 
+  // Sprite-scoped hotkeys: Space toggles play, `,`/`.` step frames.
+  // Mounted at document level so they fire regardless of focus, but
+  // bail when typing in an input/textarea so panel fields keep
+  // working. Arrow keys are deliberately NOT bound here — the
+  // surrounding AssetPlaylist owns ←/→ for asset navigation; the
+  // sprite's `,`/`.` aliases give frame-by-frame access without
+  // hijacking it.
+  function onSpriteKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === ' ') {
+      e.preventDefault();
+      session.playing = !session.playing;
+    } else if (e.key === ',') {
+      e.preventDefault();
+      // Step backward by computing the new frame within playRange.
+      const len = frameCount;
+      if (len > 1) session.currentFrame = (session.currentFrame - 1 + len) % len;
+      session.playing = false;
+    } else if (e.key === '.') {
+      e.preventDefault();
+      session.stepFrame();
+      session.playing = false;
+    }
+  }
+
   onMount(() => {
+    document.addEventListener('keydown', onSpriteKey);
     const i = new Image();
     i.onload = () => {
       session.imgW = i.naturalWidth;
@@ -138,6 +166,10 @@
         session.cellW = guess.w;
         session.cellH = guess.h;
       }
+      // Image-info / palette analysis is cheap (single pass over
+      // the pixel buffer) — run it once on load so the panel can
+      // show the analyzer stats without an explicit user click.
+      session.runAnalyze();
       render();
     };
     i.onerror = () => { loadError = 'Failed to load sprite image.'; };
@@ -153,6 +185,7 @@
   onDestroy(() => {
     if (rafHandle) cancelAnimationFrame(rafHandle);
     rafHandle = 0;
+    document.removeEventListener('keydown', onSpriteKey);
   });
 
   const canvasBgClass = $derived(

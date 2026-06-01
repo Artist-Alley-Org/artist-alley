@@ -36,6 +36,9 @@ export interface SpriteCompanion {
 export type LoopMode = 'forward' | 'pingpong';
 export type BgMode = 'checker' | 'transparent' | 'solid';
 
+import type { DetectOptions, SortMode, DetectedBox, SheetAnalysis } from './detect';
+import { detectSprites, analyzeSheet, sortBoxes } from './detect';
+
 export interface SpriteSession {
   // ── Image (owner: canvas mounts the Image, writes back here) ──
   img: HTMLImageElement | null;
@@ -83,6 +86,27 @@ export interface SpriteSession {
   bgSolid: string;
   /** false = pixel-perfect (default), true = bilinear. */
   smoothing: boolean;
+
+  // ── Auto-detect (Sprite-Splitter parity) ─────────────────────
+  /** Background mode: 'alpha' = use the alpha channel; 'color' =
+   *  treat pixels matching detectBgColor (± tolerance) as bg. */
+  detectBgMode: 'alpha' | 'color';
+  detectBgColor: string;       // hex, used when detectBgMode='color'
+  detectBgTolerance: number;   // 0..255 RGB euclidean
+  detectMergeGap: number;      // px, 0 = no merging
+  detectMinW: number;
+  detectMinH: number;
+  detectMaxW: number;          // null-like cap; defaults to imgW on first detect
+  detectMaxH: number;
+  detectSort: SortMode;
+  /** Last-run output. Populated alongside metadataFrames so the
+   *  rest of the playback pipeline picks it up; kept separately so
+   *  a re-run replaces only the auto-detected frames + doesn't
+   *  clobber companion-loaded metadata. */
+  detectedBoxes: DetectedBox[] | null;
+
+  // ── Image analysis (Sprite Analyzer's Overview parity) ───────
+  analysis: SheetAnalysis | null;
 }
 
 /** Asset id this session was created for. Lets the panel call the
@@ -101,6 +125,24 @@ export interface SpriteSessionMethods {
   /** Pick a sensible cell-size default for a fresh sheet load.
    *  Heuristic; caller writes the result into cellW / cellH. */
   guessCellSize(imgW: number, imgH: number): { w: number; h: number };
+  /** Run the auto-detect pipeline on the currently-loaded sheet.
+   *  Populates session.detectedBoxes + session.metadataFrames so
+   *  playback / preview pick up the result automatically. */
+  runDetect(): void;
+  /** Compute image-level stats (dimensions, palette, transparent-
+   *  pixel count, etc.) on the currently-loaded sheet. Cached on
+   *  state.analysis. */
+  runAnalyze(): void;
+  /** Package detectedBoxes as TexturePacker JSON Hash + upload as
+   *  a sidecar companion on the asset. Same shape the loader reads
+   *  back, so a future reload of the asset picks up the saved
+   *  frame definitions automatically. */
+  saveDetectedAsCompanion(): Promise<void>;
+  /** Re-sort the existing detection output according to the
+   *  session's current detectSort mode. Called by the panel when
+   *  the Sort dropdown changes so the user doesn't have to re-run
+   *  the full detection just to flip ordering. */
+  applySort(): void;
 }
 
 export type SpriteSessionInstance = SpriteSession & SpriteSessionMethods & { assetId: string };
@@ -141,6 +183,19 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     bg: 'checker',
     bgSolid: '#1a1a1a',
     smoothing: false,
+
+    detectBgMode: 'alpha',
+    detectBgColor: '#000000',
+    detectBgTolerance: 8,
+    detectMergeGap: 0,
+    detectMinW: 4,
+    detectMinH: 4,
+    detectMaxW: 9999,
+    detectMaxH: 9999,
+    detectSort: 'animationRows',
+    detectedBoxes: null,
+
+    analysis: null,
   });
 
   // ── Companion / metadata helpers ─────────────────────────────
@@ -301,19 +356,148 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     state.zoom = Math.max(1, Math.min(32, z));
   }
 
-  // Best-guess cell size for a freshly-loaded sheet. Tries common
-  // pixel-art sprite sizes from largest to smallest and picks the
-  // first that divides both image dimensions cleanly. Falls back
-  // to a 1×1 cell (= "whole sheet is one frame") when nothing
-  // matches, which preserves the previous default behaviour.
-  // Heuristic only — users override via the slicer fields.
-  function autoCellSize(imgW: number, imgH: number): { w: number; h: number } {
-    const candidates = [128, 96, 64, 48, 40, 32, 24, 16, 8];
-    for (const c of candidates) {
-      if (imgW % c === 0 && imgH % c === 0 && imgW / c >= 2) {
-        return { w: c, h: c };
+  // ── Detect / analyze helpers ────────────────────────────────
+  // Both methods need pixel data; draw the loaded Image into a
+  // throwaway offscreen canvas once per call. OffscreenCanvas
+  // when available, falls back to a regular detached canvas.
+  function readImageData(): ImageData | null {
+    const img = state.img;
+    if (!img) return null;
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (w === 0 || h === 0) return null;
+    // OffscreenCanvas is widely supported; fall back to a detached
+    // <canvas> if not (e.g. older Safari without the prefix).
+    const canvas: OffscreenCanvas | HTMLCanvasElement =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(w, h)
+        : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const ctx = (canvas as OffscreenCanvas).getContext('2d') as
+      | OffscreenCanvasRenderingContext2D
+      | CanvasRenderingContext2D
+      | null;
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    return ctx.getImageData(0, 0, w, h);
+  }
+
+  function hexToRgb(hex: string): { r: number; g: number; b: number } {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return { r: 0, g: 0, b: 0 };
+    const n = parseInt(m[1], 16);
+    return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
+  }
+
+  function runDetect() {
+    const data = readImageData();
+    if (!data) return;
+    const detOpts: DetectOptions = {
+      bgColor: state.detectBgMode === 'alpha' ? null : hexToRgb(state.detectBgColor),
+      bgTolerance: state.detectBgTolerance,
+      mergeGap: state.detectMergeGap,
+      minW: state.detectMinW,
+      minH: state.detectMinH,
+      maxW: state.detectMaxW > 0 ? state.detectMaxW : data.width,
+      maxH: state.detectMaxH > 0 ? state.detectMaxH : data.height,
+    };
+    const boxes = detectSprites(data, detOpts, state.detectSort);
+    state.detectedBoxes = boxes;
+    // Push into the metadataFrames pipe so the existing playback /
+    // panel preview / range pickers all work without per-feature
+    // wiring. Names follow Aseprite-export convention so a later
+    // companion-save round-trips cleanly.
+    state.metadataFrames = boxes.map((b, i) => ({
+      name: `frame_${String(i).padStart(3, '0')}`,
+      sx: b.x, sy: b.y, sw: b.w, sh: b.h,
+    }));
+    state.metadataTags = [];
+    state.activeTag = null;
+    state.currentFrame = 0;
+  }
+
+  function runAnalyze() {
+    const data = readImageData();
+    if (!data) return;
+    state.analysis = analyzeSheet(data);
+  }
+
+  function applySort() {
+    if (!state.detectedBoxes) return;
+    const sorted = sortBoxes(state.detectedBoxes, state.detectSort);
+    state.detectedBoxes = sorted;
+    state.metadataFrames = sorted.map((b, i) => ({
+      name: `frame_${String(i).padStart(3, '0')}`,
+      sx: b.x, sy: b.y, sw: b.w, sh: b.h,
+    }));
+    state.currentFrame = 0;
+  }
+
+  async function saveDetectedAsCompanion(): Promise<void> {
+    const boxes = state.detectedBoxes;
+    if (!boxes || boxes.length === 0) return;
+    state.metadataLoading = true;
+    state.metadataError = null;
+    try {
+      // TexturePacker JSON Hash form — same shape the loader reads
+      // back. meta.image is the sprite asset's filename hint;
+      // meta.size lets downstream tools render bounding-box overlays
+      // at correct scale.
+      const frames: Record<string, unknown> = {};
+      for (let i = 0; i < boxes.length; i++) {
+        const b = boxes[i];
+        const name = `frame_${String(i).padStart(3, '0')}.png`;
+        frames[name] = {
+          frame: { x: b.x, y: b.y, w: b.w, h: b.h },
+          rotated: false,
+          trimmed: false,
+          spriteSourceSize: { x: 0, y: 0, w: b.w, h: b.h },
+          sourceSize: { w: b.w, h: b.h },
+        };
       }
+      const payload = {
+        frames,
+        meta: {
+          app: 'artist-alley sprite splitter',
+          version: '1',
+          image: `${opts.assetId}.png`,
+          size: { w: state.imgW, h: state.imgH },
+          scale: '1',
+        },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const file = new File([blob], 'sprites.json', { type: 'application/json' });
+      await uploadMetadataFile(file);
+      // uploadMetadataFile re-fetches companions, which repopulates
+      // metadataFrames from the saved JSON. detectedBoxes can stay
+      // — the user might want to re-run with different settings
+      // before saving again.
+    } finally {
+      state.metadataLoading = false;
     }
+  }
+
+  // Best-guess cell size for a freshly-loaded sheet. Two-pass:
+  //
+  //   1. Run a cheap auto-detect over the sheet. If we find ≥ 4
+  //      sprites and a clear majority share the same bbox W×H,
+  //      use those dimensions — the sprite's actual on-pixel size
+  //      beats any divisibility maths.
+  //   2. Otherwise fall back to "biggest divisor of both dims that
+  //      yields ≥ 2 cols" — works on uniform grids that auto-
+  //      detect would also nail but is faster on small / simple
+  //      sheets.
+  //
+  // Mode (most-common value) is more robust than mean here: a
+  // single oversized sprite (combat-pose vs idle) won't drag the
+  // estimate up.
+  function autoCellSize(_imgW: number, _imgH: number): { w: number; h: number } {
+    // Auto cell-size guessing kept getting it wrong — divisibility
+    // heuristics overshoot on regular grids (picks 64 when sprites
+    // are 32), detection-mode probes overfit on disconnected pieces
+    // (picks 12×10 when each hair strand is one component but the
+    // sprite is 32×32). Honest UX: start at "no slice" and let the
+    // user either set cell W/H or click Auto detect. The panel
+    // banners the next step when cellW/cellH are 0.
     return { w: 0, h: 0 };
   }
 
@@ -377,5 +561,9 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     pickFitZoom,
     stepFrame,
     guessCellSize: autoCellSize,
+    runDetect,
+    runAnalyze,
+    saveDetectedAsCompanion,
+    applySort,
   });
 }
