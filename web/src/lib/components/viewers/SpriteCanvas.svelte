@@ -261,8 +261,48 @@
     }
   }
 
+  // Drag-select via document-level pointer events. Per-tile
+  // pointerenter doesn't fire reliably once a drag is in flight
+  // because browsers fire enter/leave based on the pointer's
+  // direct target — and most pointer-event setups end up
+  // routing to the wrong element when the user drags fast.
+  // elementFromPoint is the reliable answer: hit-test the actual
+  // pixel under the pointer each move.
+  function onDocPointerMove(e: PointerEvent) {
+    if (dragAnchor == null) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const tile = el?.closest('[data-frame]') as HTMLElement | null;
+    if (!tile) return;
+    const idx = parseInt(tile.dataset.frame ?? '', 10);
+    if (Number.isFinite(idx)) {
+      // dragHover stores the ABSOLUTE frame index (playRange.from + i)
+      // since rangeStart/End live in the absolute frame space.
+      dragHover = playRange.from + idx;
+    }
+  }
+  function onDocPointerUp() {
+    if (dragAnchor == null || dragHover == null) return;
+    const from = Math.min(dragAnchor, dragHover);
+    const to = Math.max(dragAnchor, dragHover);
+    if (from === to) {
+      // No-drag click — clear any narrow range so a single click
+      // on a tile restarts the whole sequence.
+      session.rangeStart = 0;
+      session.rangeEnd = null;
+    } else {
+      session.rangeStart = from;
+      session.rangeEnd = to;
+      session.currentFrame = 0;
+    }
+    dragAnchor = null;
+    dragHover = null;
+  }
+
   onMount(() => {
     document.addEventListener('keydown', onSpriteKey);
+    document.addEventListener('pointermove', onDocPointerMove);
+    document.addEventListener('pointerup', onDocPointerUp);
+    document.addEventListener('pointercancel', onDocPointerUp);
     const i = new Image();
     i.onload = () => {
       session.imgW = i.naturalWidth;
@@ -300,6 +340,9 @@
     if (rafHandle) cancelAnimationFrame(rafHandle);
     rafHandle = 0;
     document.removeEventListener('keydown', onSpriteKey);
+    document.removeEventListener('pointermove', onDocPointerMove);
+    document.removeEventListener('pointerup', onDocPointerUp);
+    document.removeEventListener('pointercancel', onDocPointerUp);
   });
 
   const canvasBgClass = $derived(
@@ -420,34 +463,16 @@
                 session.rangeEnd = Math.max(session.rangeEnd ?? session.rangeStart, absoluteIdx);
                 return;
               }
+              // Start the drag via document-level listeners (set up
+              // in onMount). setPointerCapture on the SOURCE tile
+              // would route subsequent pointer events ONLY to this
+              // tile, breaking pointermove hit-testing on neighbours.
+              // The doc-level path uses elementFromPoint so the
+              // drag tracks the actual tile under the cursor.
               dragAnchor = absoluteIdx;
               dragHover = absoluteIdx;
               session.currentFrame = i;
               session.playing = false;
-              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-            }}
-            onpointerenter={() => {
-              if (dragAnchor != null) dragHover = absoluteIdx;
-            }}
-            onpointerup={(e) => {
-              if (dragAnchor != null && dragHover != null) {
-                const from = Math.min(dragAnchor, dragHover);
-                const to = Math.max(dragAnchor, dragHover);
-                if (from === to) {
-                  // No-drag click — clear any narrow range so the
-                  // user can re-play the whole sequence by clicking
-                  // a single tile without first resetting.
-                  session.rangeStart = 0;
-                  session.rangeEnd = null;
-                } else {
-                  session.rangeStart = from;
-                  session.rangeEnd = to;
-                  session.currentFrame = 0;
-                }
-                dragAnchor = null;
-                dragHover = null;
-                (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-              }
             }}
             title={`Frame ${i + 1} — click to jump · drag to select range · Shift+click to extend`}
           >

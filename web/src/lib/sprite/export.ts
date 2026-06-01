@@ -33,6 +33,9 @@ export interface ExportOptions {
   /** Optional integer scale factor — useful for sharing 32×32
    *  sprite animations as bigger GIFs without external scaling. */
   scale?: number;
+  /** Per-frame progress callback (0..1). Called as each frame
+   *  finishes encoding so the panel can show a progress bar. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 // ── GIF ──────────────────────────────────────────────────────────
@@ -63,25 +66,54 @@ export async function exportGIF(
   ctx.imageSmoothingEnabled = false;
 
   const enc = GIFEncoder();
+  let done = 0;
+  // Yield to the event loop every 10 frames so the UI's "Saving…"
+  // text can repaint and the user sees progress instead of a
+  // frozen tab. Without this, a 150-frame encode locks the main
+  // thread for ~4 s and the panel buttons look hung.
+  const YIELD_EVERY = 10;
   for (const f of frames) {
     ctx.clearRect(0, 0, outW, outH);
     const dx = Math.floor((outW - f.sw * scale) / 2);
     const dy = Math.floor((outH - f.sh * scale) / 2);
     ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, dx, dy, f.sw * scale, f.sh * scale);
     const data = ctx.getImageData(0, 0, outW, outH).data;
-    // 256-colour palette per frame — gifenc's defaults give a clean
-    // result on pixel art (limited palette to begin with). For
-    // photographic input we'd want a shared palette across frames;
-    // sprite sheets don't need that complexity.
-    const palette = quantize(data, 256, { format: 'rgba4444' });
+    // Quantise with oneBitAlpha so transparent pixels are
+    // explicitly preserved AND the encoder can pick a guaranteed
+    // transparent palette entry. Without this, the quantiser picks
+    // colours by RGB distance only and the transparentIndex we
+    // pass below points at whatever happens to be at index 0 —
+    // commonly an opaque colour, stamping visible holes through
+    // the sprite where its real pixels matched that index.
+    //
+    // 255 max colours (not 256) leaves headroom for the reserved
+    // transparent entry. clearAlphaThreshold 128 routes alpha < 128
+    // to the transparent slot — matches what most sprite sheets
+    // mean by "this pixel is empty."
+    const palette = quantize(data, 255, {
+      format: 'rgba4444',
+      oneBitAlpha: true,
+      clearAlpha: true,
+      clearAlphaThreshold: 128,
+    });
     const index = applyPalette(data, palette, 'rgba4444');
+    // gifenc places the transparent entry at the last index when
+    // oneBitAlpha is on. Find it (alpha === 0) rather than
+    // hard-coding so future library changes don't silently break.
+    let transparentIndex = palette.findIndex((p) => p[3] === 0);
+    if (transparentIndex < 0) transparentIndex = 0;
     enc.writeFrame(index, outW, outH, {
       palette,
       delay: Math.max(20, Math.round(f.duration ?? opts.defaultFrameMs)),
       transparent: true,
-      transparentIndex: 0,
+      transparentIndex,
       dispose: 2,
     });
+    done++;
+    opts.onProgress?.(done, frames.length);
+    if (done % YIELD_EVERY === 0) {
+      await new Promise((res) => setTimeout(res, 0));
+    }
   }
   enc.finish();
   // gifenc returns a Uint8Array<ArrayBufferLike>; Blob's typings
@@ -105,19 +137,45 @@ export async function exportSpriteSheet(
   frames: ExportFrame[],
 ): Promise<{ png: Blob; json: Blob }> {
   if (frames.length === 0) throw new Error('exportSpriteSheet: no frames');
-  // Uniform cell size = the biggest frame's W × H. Simpler than
-  // bin-packing; matches what most sprite-sheet readers expect.
-  // A future commit can add the packed/bin-packed option.
-  let cellW = 0, cellH = 0;
-  for (const f of frames) {
-    if (f.sw > cellW) cellW = f.sw;
-    if (f.sh > cellH) cellH = f.sh;
+
+  // Shelf-pack — sort frames by height descending, then place
+  // left-to-right on rows. When the next frame doesn't fit on the
+  // current row's remaining width, open a new row at the previous
+  // row's bottom. Width is bounded by max(maxFrameW, 512) so a
+  // single huge frame doesn't force a 1-px-wide sheet, and small
+  // sprites get many per row. Way more efficient than the old
+  // uniform-cell layout, which wasted ~90% of the canvas when
+  // frame sizes varied.
+  //
+  // Trade-off: shelf-pack is greedy + not optimal. A proper
+  // bin-pack (MaxRects, Skyline) would be tighter on irregular
+  // size distributions but adds material code complexity. Shelf
+  // is enough for the common sprite-sheet case where many frames
+  // share similar heights anyway.
+  const idx = frames.map((_, i) => i);
+  idx.sort((a, b) => frames[b].sh - frames[a].sh);
+  let maxFrameW = 0;
+  for (const f of frames) if (f.sw > maxFrameW) maxFrameW = f.sw;
+  const shelfMaxW = Math.max(maxFrameW, 512);
+  // First pass: compute placements + the resulting sheet bounds.
+  const placements = new Array<{ x: number; y: number }>(frames.length);
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowH = 0;
+  let outW = 0;
+  for (const i of idx) {
+    const f = frames[i];
+    if (cursorX + f.sw > shelfMaxW && cursorX > 0) {
+      cursorY += rowH;
+      cursorX = 0;
+      rowH = 0;
+    }
+    placements[i] = { x: cursorX, y: cursorY };
+    cursorX += f.sw;
+    if (f.sh > rowH) rowH = f.sh;
+    if (cursorX > outW) outW = cursorX;
   }
-  // Choose a roughly-square layout. cols = ceil(sqrt(N)).
-  const cols = Math.max(1, Math.ceil(Math.sqrt(frames.length)));
-  const rows = Math.ceil(frames.length / cols);
-  const outW = cols * cellW;
-  const outH = rows * cellH;
+  const outH = cursorY + rowH;
 
   const work = new OffscreenCanvas(outW, outH);
   const ctx = work.getContext('2d');
@@ -128,14 +186,11 @@ export async function exportSpriteSheet(
   const framesOut: Record<string, unknown> = {};
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const dx = col * cellW + Math.floor((cellW - f.sw) / 2);
-    const dy = row * cellH + Math.floor((cellH - f.sh) / 2);
-    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, dx, dy, f.sw, f.sh);
+    const p = placements[i];
+    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, p.x, p.y, f.sw, f.sh);
     const name = `frame_${String(i).padStart(3, '0')}.png`;
     framesOut[name] = {
-      frame: { x: dx, y: dy, w: f.sw, h: f.sh },
+      frame: { x: p.x, y: p.y, w: f.sw, h: f.sh },
       rotated: false,
       trimmed: false,
       spriteSourceSize: { x: 0, y: 0, w: f.sw, h: f.sh },

@@ -24,7 +24,24 @@
   function buildExportFrames(): ExportFrame[] {
     const frames = session.metadataFrames;
     if (frames && frames.length > 0) {
-      return frames.map((f) => ({ sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, duration: f.duration }));
+      // Active tag wins (explicit pick); otherwise honour the
+      // user's rangeStart/rangeEnd selection (drag-selected in the
+      // timeline OR typed in the slicer's Start/End fields).
+      let from = 0;
+      let to = frames.length - 1;
+      if (session.activeTag) {
+        const t = session.metadataTags.find((x) => x.name === session.activeTag);
+        if (t) { from = t.from; to = t.to; }
+      } else {
+        from = Math.max(0, Math.min(frames.length - 1, session.rangeStart));
+        to = Math.max(from, Math.min(frames.length - 1, session.rangeEnd ?? frames.length - 1));
+      }
+      const out: ExportFrame[] = [];
+      for (let i = from; i <= to; i++) {
+        const f = frames[i];
+        out.push({ sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, duration: f.duration });
+      }
+      return out;
     }
     const cols = gridCols;
     const rows = gridRows;
@@ -49,6 +66,7 @@
   let exportBusy = $state(false);
   let exportError = $state<string | null>(null);
   let exportScale = $state(1);
+  let exportProgress = $state<{ done: number; total: number } | null>(null);
 
   // Tag composer — user types a name, picks a direction, saves
   // the current rangeStart..rangeEnd window as a tag with that
@@ -77,15 +95,22 @@
     if (!session.img) return;
     exportBusy = true;
     exportError = null;
+    exportProgress = { done: 0, total: 0 };
     try {
       const frames = buildExportFrames();
+      exportProgress = { done: 0, total: frames.length };
       const defaultMs = 1000 / Math.max(0.1, session.fps);
-      const blob = await exportGIF(session.img, frames, { defaultFrameMs: defaultMs, scale: exportScale });
+      const blob = await exportGIF(session.img, frames, {
+        defaultFrameMs: defaultMs,
+        scale: exportScale,
+        onProgress: (done, total) => { exportProgress = { done, total }; },
+      });
       downloadBlob(blob, `${session.assetId}-sprite.gif`);
     } catch (e) {
       exportError = e instanceof Error ? e.message : 'GIF export failed';
     } finally {
       exportBusy = false;
+      exportProgress = null;
     }
   }
   async function doExportSheet() {
@@ -358,7 +383,9 @@
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="truncate font-mono text-fg" title={session.metadataCompanion.path}>{session.metadataCompanion.path}</div>
-              <div class="text-fg-muted">{session.metadataFrames?.length ?? 0} frames{session.metadataTags.length ? ` · ${session.metadataTags.length} tags` : ''}</div>
+              <div class="text-fg-muted">
+                {session.metadataFrames?.length ?? 0} frames{session.metadataTags.length ? ` · ${session.metadataTags.length} tags` : ''}{session.slices.length ? ` · ${session.slices.length} slices` : ''}
+              </div>
             </div>
             <button
               type="button"
@@ -392,6 +419,21 @@
         <div class="mt-2 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
           {session.metadataError}
         </div>
+      {/if}
+      <!-- Single consolidated save. Persists frames + tags +
+           slices together (one companion JSON owns all three).
+           Shown whenever the user has in-memory metadata to
+           save, regardless of whether the source is auto-detect
+           or a previously-loaded companion. The two old
+           per-section buttons (one in Animations, one in Slices)
+           that confusingly both saved everything are retired. -->
+      {#if session.metadataFrames && session.metadataFrames.length > 0}
+        <button
+          type="button"
+          onclick={() => session.saveTagsAsCompanion()}
+          disabled={session.metadataLoading}
+          class="mt-2 w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+        >{session.metadataLoading ? 'Saving\u2026' : 'Save metadata to companion JSON'}</button>
       {/if}
     </section>
 
@@ -469,14 +511,9 @@
             disabled={!newTagName.trim() || session.metadataLoading}
             class="w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-40"
           >Save range as tag</button>
-          {#if session.metadataTags.length > 0}
-            <button
-              type="button"
-              onclick={() => session.saveTagsAsCompanion()}
-              disabled={session.metadataLoading}
-              class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-fg-muted disabled:opacity-40"
-            >{session.metadataLoading ? 'Saving…' : `Persist ${session.metadataTags.length} tag${session.metadataTags.length === 1 ? '' : 's'} to companion JSON`}</button>
-          {/if}
+          <!-- Persist button retired — single "Save metadata to
+               companion JSON" in the Metadata section above covers
+               both tags + slices in one round-trip. -->
         </div>
       </section>
     {/if}
@@ -839,14 +876,9 @@
             class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-40"
           >Add</button>
         </div>
-        {#if session.slices.length > 0 && session.metadataFrames}
-          <button
-            type="button"
-            onclick={() => session.saveTagsAsCompanion()}
-            disabled={session.metadataLoading}
-            class="mt-2 w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-fg-muted disabled:opacity-40"
-          >{session.metadataLoading ? 'Saving…' : 'Save slices to companion JSON'}</button>
-        {/if}
+        <!-- Persist button retired — single "Save metadata to
+             companion JSON" in the Metadata section saves slices
+             along with frames + tags. -->
       </section>
     {/if}
 
@@ -914,7 +946,7 @@
             onclick={doExportGIF}
             disabled={exportBusy}
             class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent disabled:opacity-40"
-          >{exportBusy ? 'Working…' : 'Export GIF'}</button>
+          >{#if exportBusy && exportProgress && exportProgress.total > 0}Encoding {exportProgress.done} / {exportProgress.total}{:else if exportBusy}Working…{:else}Export GIF{/if}</button>
           <button
             type="button"
             onclick={doExportSheet}
