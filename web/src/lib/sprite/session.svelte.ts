@@ -17,7 +17,20 @@ export interface SpriteFrameRect {
   sx: number; sy: number; sw: number; sh: number;
   /** Per-frame ms from the source format (Aseprite). Optional. */
   duration?: number;
+  /** Frame transforms — applied at render + export time. The source
+   *  pixels stay untouched; this is metadata that tells the renderer
+   *  to mirror / rotate the same source rect. Lets the user clean up
+   *  a wonky sheet (flip a frame that was authored facing the wrong
+   *  way) without ever writing pixels. Phase 8 of the sprite arc. */
+  flipH?: boolean;
+  flipV?: boolean;
+  /** Rotation in degrees applied around the frame's centre. Limited
+   *  to 90° increments so the result remains a rect that fits the
+   *  canvas; arbitrary rotation would need bounding-box recompute. */
+  rotate?: 0 | 90 | 180 | 270;
 }
+
+export type LightboxMode = 'side' | 'stack' | 'diff';
 
 export interface SpriteTagRange {
   name: string;
@@ -138,6 +151,21 @@ export interface SpriteSession {
   slices: SpriteSlice[];
   /** UI-only — which slice's rect is highlighted on the canvas. */
   activeSlice: string | null;
+
+  // ── Lightbox (Phase 8 — comparison surface) ──────────────────
+  // When enabled, SpriteCanvas commandeers the canvas pane and
+  // renders the pinned frames side-by-side / stacked / XOR-diff
+  // for visual review. Pins are absolute indices into
+  // metadataFrames (or the manual grid if no metadata is
+  // loaded). UI state only — never persisted to the companion
+  // JSON since it's a review tool, not part of the sprite
+  // definition.
+  lightboxEnabled: boolean;
+  lightboxMode: LightboxMode;
+  lightboxPins: number[];
+  /** Stack-mode opacity for layered frames (0..1). Diff mode
+   *  ignores this — it's a hard XOR. */
+  lightboxStackOpacity: number;
 }
 
 /** Asset id this session was created for. Lets the panel call the
@@ -193,6 +221,32 @@ export interface SpriteSessionMethods {
    *  one. Used by the panel's per-field editors so a rename or
    *  bounds edit propagates through the same path as add. */
   updateSlice(prevName: string, next: SpriteSlice): void;
+  // ── Frame ops (Phase 8) ──────────────────────────────────────
+  /** Move frame at `from` to position `to`. Both indices are
+   *  zero-based positions in metadataFrames. Tags are remapped
+   *  best-effort: tag ranges that wholly contain or are wholly
+   *  outside the move stay valid; tags straddling the moved
+   *  position get clamped. Pure no-op when no metadata loaded. */
+  moveFrame(from: number, to: number): void;
+  /** Remove frame at idx. Shifts subsequent frames down by one.
+   *  Tags that lose all their frames are deleted; tags that
+   *  partially overlap shrink. Resets currentFrame to 0 if it
+   *  pointed at or past the deleted index. */
+  deleteFrame(idx: number): void;
+  /** Insert a copy of the frame at idx immediately after it.
+   *  Tags whose range contains idx grow to absorb the duplicate. */
+  duplicateFrame(idx: number): void;
+  /** Per-frame retiming. ms === 0 means "use the session default".
+   *  Persists into companion JSON as `duration`. */
+  setFrameDuration(idx: number, ms: number): void;
+  /** Patch one or more transform fields on a frame. Pass undefined
+   *  to leave a field unchanged. */
+  setFrameTransform(idx: number, t: { flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 }): void;
+  // ── Lightbox (Phase 8) ───────────────────────────────────────
+  pinToLightbox(idx: number): void;
+  unpinFromLightbox(idx: number): void;
+  clearLightbox(): void;
+  toggleLightbox(): void;
 }
 
 export type SpriteSessionInstance = SpriteSession & SpriteSessionMethods & { assetId: string };
@@ -255,6 +309,11 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
 
     slices: [],
     activeSlice: null,
+
+    lightboxEnabled: false,
+    lightboxMode: 'side',
+    lightboxPins: [],
+    lightboxStackOpacity: 0.5,
   });
 
   // ── Companion / metadata helpers ─────────────────────────────
@@ -287,6 +346,20 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     const obj = data as Record<string, unknown>;
     const rawFrames = obj.frames;
     const out: SpriteFrameRect[] = [];
+    // Per-entry helper — pulls our `transform` sidecar so phase-8
+    // mirror / flip / rotate survive a round-trip through the
+    // companion JSON. The TexturePacker `rotated` boolean is a
+    // PACKING concern (this rect was stored rotated to fit better)
+    // and intentionally NOT the same field; we leave it alone.
+    function readTransform(ef: Record<string, unknown>): Pick<SpriteFrameRect, 'flipH' | 'flipV' | 'rotate'> {
+      const tr = ef.transform as Record<string, unknown> | undefined;
+      if (!tr || typeof tr !== 'object') return {};
+      const out: Pick<SpriteFrameRect, 'flipH' | 'flipV' | 'rotate'> = {};
+      if (tr.flipH === true) out.flipH = true;
+      if (tr.flipV === true) out.flipV = true;
+      if (tr.rotate === 90 || tr.rotate === 180 || tr.rotate === 270) out.rotate = tr.rotate;
+      return out;
+    }
     if (Array.isArray(rawFrames)) {
       // Array form — JSON order is authoritative.
       for (const entry of rawFrames) {
@@ -297,6 +370,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           name: String(ef.filename ?? ef.name ?? out.length),
           sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
           duration: typeof ef.duration === 'number' ? ef.duration : undefined,
+          ...readTransform(ef),
         });
       }
     } else if (rawFrames && typeof rawFrames === 'object') {
@@ -310,6 +384,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           name,
           sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
           duration: typeof ef.duration === 'number' ? ef.duration : undefined,
+          ...readTransform(ef),
         });
       }
     } else {
@@ -551,6 +626,14 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
       const framesOut: Record<string, unknown> = {};
       for (let i = 0; i < frames.length; i++) {
         const f = frames[i];
+        const transform =
+          f.flipH || f.flipV || f.rotate
+            ? {
+                ...(f.flipH ? { flipH: true } : {}),
+                ...(f.flipV ? { flipV: true } : {}),
+                ...(f.rotate ? { rotate: f.rotate } : {}),
+              }
+            : undefined;
         framesOut[f.name || `frame_${String(i).padStart(3, '0')}.png`] = {
           frame: { x: f.sx, y: f.sy, w: f.sw, h: f.sh },
           rotated: false,
@@ -558,6 +641,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           spriteSourceSize: { x: 0, y: 0, w: f.sw, h: f.sh },
           sourceSize: { w: f.sw, h: f.sh },
           duration: f.duration ?? undefined,
+          ...(transform ? { transform } : {}),
         };
       }
       const payload = {
@@ -621,6 +705,144 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     if (state.activeSlice === prevName && next.name !== prevName) {
       state.activeSlice = next.name;
     }
+  }
+
+  // ── Frame ops (Phase 8) ─────────────────────────────────────
+  // Tag remap: tags reference positions in metadataFrames, so
+  // any insert / delete / move that shifts positions has to update
+  // the tag range too. Slices reference SHEET pixels (not frame
+  // indices), so they're unaffected by frame reordering.
+
+  function clampFrameIndex(idx: number): number {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length === 0) return -1;
+    return Math.max(0, Math.min(frames.length - 1, Math.floor(idx)));
+  }
+
+  function moveFrame(from: number, to: number) {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length < 2) return;
+    const src = clampFrameIndex(from);
+    let dst = Math.max(0, Math.min(frames.length - 1, Math.floor(to)));
+    if (src === dst || src < 0) return;
+    const next = frames.slice();
+    const [moved] = next.splice(src, 1);
+    // After splice, the array is short by 1 — adjust dst so a
+    // move-right lands AT the intended visual slot.
+    if (dst > src) dst--;
+    next.splice(dst, 0, moved);
+    state.metadataFrames = next;
+    // Tag remap: model the move as "delete from src, insert at dst"
+    // (which is what we just did). Tags that wholly contained both
+    // positions stay; tags that straddled may need clamping.
+    state.metadataTags = state.metadataTags.flatMap((t) => {
+      let f = t.from, e = t.to;
+      // Delete pass
+      if (src < f) { f--; e--; }
+      else if (src <= e) { e--; if (f > e) return []; }
+      // Insert pass — dst here is the post-splice destination.
+      if (dst <= f) { f++; e++; }
+      else if (dst <= e + 1) { e++; }
+      return [{ ...t, from: f, to: e }];
+    });
+    // Re-anchor currentFrame on the frame the user just moved.
+    state.currentFrame = dst;
+  }
+
+  function deleteFrame(idx: number) {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length === 0) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const next = frames.slice();
+    next.splice(i, 1);
+    state.metadataFrames = next;
+    state.metadataTags = state.metadataTags.flatMap((t) => {
+      let f = t.from, e = t.to;
+      if (i < f) { f--; e--; }
+      else if (i <= e) { e--; if (f > e) return []; }
+      return [{ ...t, from: f, to: e }];
+    });
+    // Lightbox pins reference positions too — drop the deleted
+    // one and shift higher ones down.
+    state.lightboxPins = state.lightboxPins
+      .filter((p) => p !== i)
+      .map((p) => (p > i ? p - 1 : p));
+    if (state.currentFrame >= next.length) state.currentFrame = Math.max(0, next.length - 1);
+  }
+
+  function duplicateFrame(idx: number) {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length === 0) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const src = frames[i];
+    const clone: SpriteFrameRect = { ...src, name: `${src.name}_copy` };
+    const next = frames.slice();
+    next.splice(i + 1, 0, clone);
+    state.metadataFrames = next;
+    // Tags that included the duplicated frame grow to include the
+    // clone (intuitive — duplicating frame 3 inside a walk-2-5 tag
+    // gives walk-2-6, not a broken tag).
+    state.metadataTags = state.metadataTags.map((t) => {
+      const insertAt = i + 1;
+      if (insertAt <= t.from) return { ...t, from: t.from + 1, to: t.to + 1 };
+      if (insertAt <= t.to + 1) return { ...t, to: t.to + 1 };
+      return t;
+    });
+    state.lightboxPins = state.lightboxPins.map((p) => (p >= i + 1 ? p + 1 : p));
+    state.currentFrame = i + 1;
+  }
+
+  function setFrameDuration(idx: number, ms: number) {
+    const frames = state.metadataFrames;
+    if (!frames) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const next = frames.slice();
+    // ms = 0 = "use session default"; encode as undefined so the
+    // JSON round-trip doesn't pin a literal 0.
+    const d = ms > 0 ? Math.max(1, Math.round(ms)) : undefined;
+    next[i] = { ...next[i], duration: d };
+    state.metadataFrames = next;
+  }
+
+  function setFrameTransform(
+    idx: number,
+    t: { flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 },
+  ) {
+    const frames = state.metadataFrames;
+    if (!frames) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const next = frames.slice();
+    const cur = next[i];
+    next[i] = {
+      ...cur,
+      flipH: t.flipH !== undefined ? t.flipH : cur.flipH,
+      flipV: t.flipV !== undefined ? t.flipV : cur.flipV,
+      rotate: t.rotate !== undefined ? t.rotate : cur.rotate,
+    };
+    state.metadataFrames = next;
+  }
+
+  function pinToLightbox(idx: number) {
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    if (state.lightboxPins.includes(i)) return;
+    state.lightboxPins = [...state.lightboxPins, i];
+  }
+
+  function unpinFromLightbox(idx: number) {
+    state.lightboxPins = state.lightboxPins.filter((p) => p !== idx);
+  }
+
+  function clearLightbox() {
+    state.lightboxPins = [];
+  }
+
+  function toggleLightbox() {
+    state.lightboxEnabled = !state.lightboxEnabled;
   }
 
   function applySort() {
@@ -773,5 +995,14 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     addSlice,
     removeSlice,
     updateSlice,
+    moveFrame,
+    deleteFrame,
+    duplicateFrame,
+    setFrameDuration,
+    setFrameTransform,
+    pinToLightbox,
+    unpinFromLightbox,
+    clearLightbox,
+    toggleLightbox,
   });
 }

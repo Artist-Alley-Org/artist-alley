@@ -41,10 +41,43 @@
     return playRange;
   });
 
+  // Helper: draw a source rect with optional flip + rotate around
+  // the destination centre. Used by render() + thumbCanvas + the
+  // lightbox so a single piece of math owns the transform pipeline.
+  // Rotation is limited to 90° increments so the destination rect
+  // stays axis-aligned (a 45° rotation would need a larger canvas
+  // to avoid clipping the corners).
+  function drawTransformedFrame(
+    ctx: CanvasRenderingContext2D,
+    img: CanvasImageSource,
+    src: { sx: number; sy: number; sw: number; sh: number },
+    dst: { x: number; y: number; w: number; h: number },
+    transform?: { flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 },
+  ) {
+    const flipH = !!transform?.flipH;
+    const flipV = !!transform?.flipV;
+    const rot = transform?.rotate ?? 0;
+    if (!flipH && !flipV && rot === 0) {
+      ctx.drawImage(img, src.sx, src.sy, src.sw, src.sh, dst.x, dst.y, dst.w, dst.h);
+      return;
+    }
+    ctx.save();
+    // Translate to dst centre, apply rotation + flips, then draw
+    // around (-w/2, -h/2). Means the transform never moves the
+    // frame off its slot in the parent canvas.
+    const cx = dst.x + dst.w / 2;
+    const cy = dst.y + dst.h / 2;
+    ctx.translate(cx, cy);
+    if (rot !== 0) ctx.rotate((rot * Math.PI) / 180);
+    ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+    ctx.drawImage(img, src.sx, src.sy, src.sw, src.sh, -dst.w / 2, -dst.h / 2, dst.w, dst.h);
+    ctx.restore();
+  }
+
   // Svelte action that paints one frame thumbnail into a per-tile
   // <canvas>. Re-runs when the frame rect or scale changes so the
   // strip stays in sync with the slicer.
-  function thumbCanvas(node: HTMLCanvasElement, params: { frame: { sx: number; sy: number; sw: number; sh: number }; scale: number }) {
+  function thumbCanvas(node: HTMLCanvasElement, params: { frame: { sx: number; sy: number; sw: number; sh: number; flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 }; scale: number }) {
     function paint() {
       if (!session.img) return;
       const dw = params.frame.sw * params.scale;
@@ -55,11 +88,17 @@
       if (!ctx) return;
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, node.width, node.height);
-      ctx.drawImage(session.img, params.frame.sx, params.frame.sy, params.frame.sw, params.frame.sh, 0, 0, dw, dh);
+      drawTransformedFrame(
+        ctx,
+        session.img,
+        { sx: params.frame.sx, sy: params.frame.sy, sw: params.frame.sw, sh: params.frame.sh },
+        { x: 0, y: 0, w: dw, h: dh },
+        { flipH: params.frame.flipH, flipV: params.frame.flipV, rotate: params.frame.rotate },
+      );
     }
     paint();
     return {
-      update(next: { frame: { sx: number; sy: number; sw: number; sh: number }; scale: number }) {
+      update(next: { frame: { sx: number; sy: number; sw: number; sh: number; flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 }; scale: number }) {
         params = next;
         paint();
       },
@@ -96,12 +135,16 @@
   });
   const frameCount = $derived(Math.max(1, playRange.to - playRange.from + 1));
 
-  function frameRect(relIdx: number): { sx: number; sy: number; sw: number; sh: number } {
+  type FrameRect = {
+    sx: number; sy: number; sw: number; sh: number;
+    flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270;
+  };
+  function frameRect(relIdx: number): FrameRect {
     const idx = playRange.from + relIdx;
     const frames = session.metadataFrames;
     if (frames && frames.length > 0) {
       const f = frames[Math.max(0, Math.min(frames.length - 1, idx))];
-      return { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh };
+      return { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, flipH: f.flipH, flipV: f.flipV, rotate: f.rotate };
     }
     if (session.cellW <= 0 || session.cellH <= 0) {
       return { sx: 0, sy: 0, sw: session.imgW, sh: session.imgH };
@@ -115,9 +158,36 @@
       sh: session.cellH,
     };
   }
+  // Absolute version — pull a frame by its absolute metadataFrames
+  // index, ignoring playRange. The lightbox pins absolute indices
+  // so a tag/range change doesn't shift the comparison out from
+  // under the user.
+  function frameRectAbs(absIdx: number): FrameRect {
+    const frames = session.metadataFrames;
+    if (frames && frames.length > 0) {
+      const i = Math.max(0, Math.min(frames.length - 1, absIdx));
+      const f = frames[i];
+      return { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, flipH: f.flipH, flipV: f.flipV, rotate: f.rotate };
+    }
+    if (session.cellW <= 0 || session.cellH <= 0) {
+      return { sx: 0, sy: 0, sw: session.imgW, sh: session.imgH };
+    }
+    const c = absIdx % gridCols;
+    const r = Math.floor(absIdx / gridCols);
+    return {
+      sx: session.originX + c * (session.cellW + session.padX),
+      sy: session.originY + r * (session.cellH + session.padY),
+      sw: session.cellW,
+      sh: session.cellH,
+    };
+  }
 
   function render() {
     if (!canvasEl || !session.img) return;
+    if (session.lightboxEnabled) {
+      renderLightbox();
+      return;
+    }
     const f = frameRect(session.currentFrame);
     const dw = f.sw * session.zoom;
     const dh = f.sh * session.zoom;
@@ -150,7 +220,12 @@
         const a = session.onionOpacity * (1 - (dist - 1) / maxDist);
         ctx.save();
         ctx.globalAlpha = Math.max(0, Math.min(1, a));
-        ctx.drawImage(session.img!, of.sx, of.sy, of.sw, of.sh, ox, oy, of.sw * session.zoom, of.sh * session.zoom);
+        drawTransformedFrame(
+          ctx, session.img!,
+          { sx: of.sx, sy: of.sy, sw: of.sw, sh: of.sh },
+          { x: ox, y: oy, w: of.sw * session.zoom, h: of.sh * session.zoom },
+          { flipH: of.flipH, flipV: of.flipV, rotate: of.rotate },
+        );
         // Tint pass — composite a flat colour over the just-drawn
         // pixels using source-atop so transparent regions aren't
         // recoloured. Skipped when tinting is off.
@@ -168,7 +243,96 @@
       for (let n = session.onionNext; n >= 1; n--) drawOnionFrame(n, 'future');
     }
 
-    ctx.drawImage(session.img, f.sx, f.sy, f.sw, f.sh, 0, 0, dw, dh);
+    drawTransformedFrame(
+      ctx, session.img,
+      { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh },
+      { x: 0, y: 0, w: dw, h: dh },
+      { flipH: f.flipH, flipV: f.flipV, rotate: f.rotate },
+    );
+  }
+
+  // ── Lightbox rendering ────────────────────────────────────────
+  // Three modes:
+  //   - side: each pinned frame painted left-to-right in the same
+  //     canvas, separated by checker gutters
+  //   - stack: all frames drawn on top of each other at
+  //     `lightboxStackOpacity`, useful for spotting silhouette drift
+  //   - diff: XOR-style — paint frame 0 normally, then for each
+  //     subsequent frame, composite using 'difference' so any
+  //     pixel that's identical between A + B reads black; non-
+  //     identical pixels glow with the colour delta
+  function renderLightbox() {
+    if (!canvasEl || !session.img) return;
+    const pins = session.lightboxPins;
+    if (pins.length === 0) {
+      // Empty-state — clear to a neutral panel so the user knows
+      // the lightbox is on but unpopulated.
+      canvasEl.width = 240;
+      canvasEl.height = 80;
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      return;
+    }
+    const rects = pins.map(frameRectAbs);
+    const maxW = Math.max(...rects.map((r) => r.sw));
+    const maxH = Math.max(...rects.map((r) => r.sh));
+    const z = session.zoom;
+    if (session.lightboxMode === 'side') {
+      const gap = 8;
+      const cellW = maxW * z;
+      const cellH = maxH * z;
+      canvasEl.width = Math.max(1, cellW * rects.length + gap * (rects.length - 1));
+      canvasEl.height = Math.max(1, cellH);
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = session.smoothing;
+      ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        const ox = i * (cellW + gap) + Math.floor((cellW - r.sw * z) / 2);
+        const oy = Math.floor((cellH - r.sh * z) / 2);
+        drawTransformedFrame(
+          ctx, session.img,
+          { sx: r.sx, sy: r.sy, sw: r.sw, sh: r.sh },
+          { x: ox, y: oy, w: r.sw * z, h: r.sh * z },
+          { flipH: r.flipH, flipV: r.flipV, rotate: r.rotate },
+        );
+      }
+    } else {
+      // stack + diff share the same canvas dimensions — every pin
+      // composited into the same maxW × maxH slot.
+      canvasEl.width = Math.max(1, maxW * z);
+      canvasEl.height = Math.max(1, maxH * z);
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = session.smoothing;
+      ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        const ox = Math.floor((canvasEl.width - r.sw * z) / 2);
+        const oy = Math.floor((canvasEl.height - r.sh * z) / 2);
+        ctx.save();
+        if (session.lightboxMode === 'stack') {
+          // First pin draws at full opacity (baseline), subsequent
+          // pins blend at the configured opacity so the eye can
+          // pick out silhouette drift.
+          ctx.globalAlpha = i === 0 ? 1 : Math.max(0.05, Math.min(1, session.lightboxStackOpacity));
+        } else {
+          // diff — 'difference' composite makes identical pixels
+          // black and mismatches glow. First frame painted normally
+          // is the reference; later frames XOR against it.
+          if (i > 0) ctx.globalCompositeOperation = 'difference';
+        }
+        drawTransformedFrame(
+          ctx, session.img,
+          { sx: r.sx, sy: r.sy, sw: r.sw, sh: r.sh },
+          { x: ox, y: oy, w: r.sw * z, h: r.sh * z },
+          { flipH: r.flipH, flipV: r.flipV, rotate: r.rotate },
+        );
+        ctx.restore();
+      }
+    }
   }
 
   // RAF tick — drives playback. Reads frameMs derived from
@@ -203,6 +367,8 @@
     void session.activeTag;
     void session.onionEnabled; void session.onionPrev; void session.onionNext;
     void session.onionOpacity; void session.onionTint;
+    void session.lightboxEnabled; void session.lightboxMode;
+    void session.lightboxPins; void session.lightboxStackOpacity;
     render();
   });
 

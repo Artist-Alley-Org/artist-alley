@@ -25,6 +25,36 @@ export interface ExportFrame {
   /** Per-frame duration in ms. Falls back to the session FPS when
    *  the metadata didn't carry per-frame timing. */
   duration?: number;
+  /** Per-frame transforms (Phase 8). Applied during encode so a
+   *  mirrored / rotated frame exports as those pixels — the source
+   *  sheet stays untouched. */
+  flipH?: boolean;
+  flipV?: boolean;
+  rotate?: 0 | 90 | 180 | 270;
+}
+
+/** Draw a source rect with optional flip + rotate around the dest
+ *  centre. Mirrors the canvas-side helper in SpriteCanvas so render
+ *  and export stay pixel-identical. */
+function drawTransformed(
+  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  f: ExportFrame,
+  dx: number, dy: number, dw: number, dh: number,
+): void {
+  const flipH = !!f.flipH;
+  const flipV = !!f.flipV;
+  const rot = f.rotate ?? 0;
+  if (!flipH && !flipV && rot === 0) {
+    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+    return;
+  }
+  ctx.save();
+  ctx.translate(dx + dw / 2, dy + dh / 2);
+  if (rot !== 0) ctx.rotate((rot * Math.PI) / 180);
+  ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+  ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
 }
 
 export interface ExportOptions {
@@ -76,7 +106,7 @@ export async function exportGIF(
     ctx.clearRect(0, 0, outW, outH);
     const dx = Math.floor((outW - f.sw * scale) / 2);
     const dy = Math.floor((outH - f.sh * scale) / 2);
-    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, dx, dy, f.sw * scale, f.sh * scale);
+    drawTransformed(ctx, img, f, dx, dy, f.sw * scale, f.sh * scale);
     const data = ctx.getImageData(0, 0, outW, outH).data;
     // Quantise with oneBitAlpha so transparent pixels are
     // explicitly preserved AND the encoder can pick a guaranteed
@@ -187,7 +217,7 @@ export async function exportSpriteSheet(
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
     const p = placements[i];
-    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, p.x, p.y, f.sw, f.sh);
+    drawTransformed(ctx, img, f, p.x, p.y, f.sw, f.sh);
     const name = `frame_${String(i).padStart(3, '0')}.png`;
     framesOut[name] = {
       frame: { x: p.x, y: p.y, w: f.sw, h: f.sh },
@@ -230,7 +260,7 @@ export async function exportPNGsZip(
     const ctx = work.getContext('2d');
     if (!ctx) throw new Error('exportPNGsZip: 2D context unavailable');
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, f.sw, f.sh);
+    drawTransformed(ctx, img, f, 0, 0, f.sw, f.sh);
     const blob = await work.convertToBlob({ type: 'image/png' });
     const bytes = new Uint8Array(await blob.arrayBuffer());
     files[`frame_${String(i).padStart(3, '0')}.png`] = bytes;

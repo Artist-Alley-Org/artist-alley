@@ -39,7 +39,11 @@
       const out: ExportFrame[] = [];
       for (let i = from; i <= to; i++) {
         const f = frames[i];
-        out.push({ sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, duration: f.duration });
+        out.push({
+          sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh,
+          duration: f.duration,
+          flipH: f.flipH, flipV: f.flipV, rotate: f.rotate,
+        });
       }
       return out;
     }
@@ -514,6 +518,128 @@
           <!-- Persist button retired — single "Save metadata to
                companion JSON" in the Metadata section above covers
                both tags + slices in one round-trip. -->
+        </div>
+      </section>
+    {/if}
+
+    <!-- Frame ops — Phase 8. Per-frame manipulation: reorder,
+         delete, duplicate, retime, mirror, flip, rotate-90°.
+         Operates on session.currentFrame (the tile selected in
+         the timeline strip). All transforms are metadata — the
+         source PNG pixels stay untouched. Tags remap automatically
+         when frames are inserted / deleted; the user is expected
+         to verify after a reorder since tags reference positions
+         (no stable per-frame IDs in the model yet). -->
+    {#if session.metadataFrames && session.metadataFrames.length > 0}
+      {@const frames = session.metadataFrames}
+      {@const cur = Math.max(0, Math.min(frames.length - 1, session.currentFrame))}
+      {@const curFrame = frames[cur]}
+      <section class="border-b border-border p-3 text-xs">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Frame ops</h3>
+          <span class="font-mono text-[10px] text-fg-muted">{cur + 1} / {frames.length}</span>
+        </div>
+        <p class="mb-2 truncate font-mono text-[10px] text-fg-muted" title={curFrame.name}>
+          {curFrame.name}
+        </p>
+        <div class="mb-2 grid grid-cols-4 gap-1">
+          <button type="button" onclick={() => session.moveFrame(cur, cur - 1)} disabled={cur <= 0} class="rounded border border-border bg-surface px-1 py-1 text-fg hover:border-accent disabled:opacity-30">←</button>
+          <button type="button" onclick={() => session.moveFrame(cur, cur + 1)} disabled={cur >= frames.length - 1} class="rounded border border-border bg-surface px-1 py-1 text-fg hover:border-accent disabled:opacity-30">→</button>
+          <button type="button" onclick={() => session.duplicateFrame(cur)} class="rounded border border-border bg-surface px-1 py-1 text-fg hover:border-accent" title="Duplicate this frame">⎘</button>
+          <button type="button" onclick={() => session.deleteFrame(cur)} class="rounded border border-border bg-surface px-1 py-1 text-fg hover:border-danger hover:text-danger" title="Delete this frame">×</button>
+        </div>
+        <div class="mb-2 grid grid-cols-3 gap-1">
+          <button
+            type="button"
+            onclick={() => session.setFrameTransform(cur, { flipH: !curFrame.flipH })}
+            class={`rounded border px-1 py-1 ${curFrame.flipH ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+            title="Flip horizontally"
+          >⇄</button>
+          <button
+            type="button"
+            onclick={() => session.setFrameTransform(cur, { flipV: !curFrame.flipV })}
+            class={`rounded border px-1 py-1 ${curFrame.flipV ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+            title="Flip vertically"
+          >⇅</button>
+          <button
+            type="button"
+            onclick={() => {
+              const r = curFrame.rotate ?? 0;
+              const next = ((r + 90) % 360) as 0 | 90 | 180 | 270;
+              session.setFrameTransform(cur, { rotate: next });
+            }}
+            class={`rounded border px-1 py-1 ${curFrame.rotate ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+            title={`Rotate 90° (currently ${curFrame.rotate ?? 0}°)`}
+          >↻ {curFrame.rotate ?? 0}°</button>
+        </div>
+        <label class="block">
+          <span class="mb-0.5 flex justify-between text-fg-muted">
+            <span>Duration (ms)</span>
+            <span class="font-mono text-fg">{curFrame.duration ? `${curFrame.duration}` : 'default'}</span>
+          </span>
+          <input
+            type="number"
+            min="0"
+            step="10"
+            value={curFrame.duration ?? 0}
+            oninput={(e) => session.setFrameDuration(cur, Number((e.currentTarget as HTMLInputElement).value))}
+            class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+          />
+          <span class="mt-0.5 block text-[10px] text-fg-muted">0 = use session FPS default.</span>
+        </label>
+        <button
+          type="button"
+          onclick={() => session.pinToLightbox(cur)}
+          disabled={session.lightboxPins.includes(cur)}
+          class="mt-2 w-full rounded border border-border bg-surface px-2 py-1 text-fg hover:border-accent disabled:opacity-40"
+          title="Add this frame to the lightbox comparison"
+        >Pin to lightbox</button>
+      </section>
+    {/if}
+
+    <!-- Lightbox — Phase 8 review surface. When enabled, the main
+         canvas pane swaps from single-frame view to a comparison
+         view of all pinned frames (side-by-side / stacked /
+         XOR-diff). This is animation-review brainstorm material —
+         pins are session-local, never saved to the companion JSON. -->
+    {#if session.metadataFrames && session.metadataFrames.length > 0}
+      <section class="border-b border-border p-3 text-xs">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Lightbox</h3>
+          <label class="flex items-center gap-1 text-[10px] text-fg-muted">
+            <input type="checkbox" bind:checked={session.lightboxEnabled} class="accent-accent" />
+            On
+          </label>
+        </div>
+        {#if session.lightboxEnabled}
+          <div class="mb-2 grid grid-cols-3 gap-1">
+            <button type="button" onclick={() => (session.lightboxMode = 'side')} class={`rounded border px-1 py-1 ${session.lightboxMode === 'side' ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}>Side</button>
+            <button type="button" onclick={() => (session.lightboxMode = 'stack')} class={`rounded border px-1 py-1 ${session.lightboxMode === 'stack' ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}>Stack</button>
+            <button type="button" onclick={() => (session.lightboxMode = 'diff')} class={`rounded border px-1 py-1 ${session.lightboxMode === 'diff' ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}>Diff</button>
+          </div>
+          {#if session.lightboxMode === 'stack'}
+            <label class="mb-2 block">
+              <span class="mb-0.5 flex justify-between text-fg-muted">
+                <span>Overlay opacity</span><span class="font-mono text-fg">{Math.round(session.lightboxStackOpacity * 100)}%</span>
+              </span>
+              <input type="range" min="0.05" max="1" step="0.05" bind:value={session.lightboxStackOpacity} class="w-full accent-accent" />
+            </label>
+          {/if}
+        {/if}
+        <div class="space-y-1">
+          {#if session.lightboxPins.length === 0}
+            <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] leading-snug text-fg-muted">
+              No frames pinned. Use <span class="font-mono text-fg">Pin to lightbox</span> in Frame ops, or pin from the timeline strip.
+            </p>
+          {:else}
+            {#each session.lightboxPins as p (p)}
+              <div class="flex items-center gap-1 rounded border border-border px-2 py-1">
+                <span class="flex-1 font-mono text-[10px] text-fg-muted">Frame {p + 1}</span>
+                <button type="button" onclick={() => session.unpinFromLightbox(p)} class="text-fg-muted hover:text-danger" title="Unpin">×</button>
+              </div>
+            {/each}
+            <button type="button" onclick={() => session.clearLightbox()} class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-fg-muted hover:border-fg-muted hover:text-fg">Clear all pins</button>
+          {/if}
         </div>
       </section>
     {/if}
