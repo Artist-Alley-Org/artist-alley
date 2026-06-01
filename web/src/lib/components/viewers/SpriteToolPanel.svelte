@@ -1311,6 +1311,38 @@
       </section>
     {/if}
 
+    <!-- Authoring (stub) — Phase 13. The painting track is
+         deliberately separate from review / brainstorm / manipulate
+         (everything above). The split keeps the sprite tool honest:
+         this section reads existing pixels and rearranges metadata
+         around them; authoring will produce NEW pixels and persist
+         them as kind="authored" alternates. Disabled until that
+         track lands; the UI here is a signpost so users see where
+         it's going. -->
+    <section class="border-b border-border p-3 text-xs">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Authoring · coming soon</h3>
+      <p class="mb-2 text-[10px] leading-snug text-fg-muted">
+        The painting track is its own future phase. Outputs will land
+        as new <span class="font-mono text-fg">authored</span> alternates
+        on this asset (sibling-version variants, same shape as the
+        palette-swap output already shown above). Source PNG stays
+        primary; painting never edits it in place.
+      </p>
+      <ul class="mb-2 list-disc space-y-0.5 pl-4 text-[10px] text-fg-muted">
+        <li>Pencil · line · shapes · eraser · bucket</li>
+        <li>Symmetry guides (horizontal · vertical · radial)</li>
+        <li>Layers + cels (per-frame editing stack)</li>
+        <li>Undo / redo command history</li>
+        <li>Output saved as <span class="font-mono text-fg">authored</span> alternate</li>
+      </ul>
+      <button
+        type="button"
+        disabled
+        class="w-full cursor-not-allowed rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg-muted opacity-50"
+        title="Authoring track lands in a future phase"
+      >Open painter (coming soon)</button>
+    </section>
+
     <!-- Tips — quick reference for sprite-specific gestures.
          Sticks at the bottom of the scrollable panel area so it's
          always findable. Hotkeys live in this list even if not all
