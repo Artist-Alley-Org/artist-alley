@@ -50,6 +50,19 @@
   let exportError = $state<string | null>(null);
   let exportScale = $state(1);
 
+  // Tag composer — user types a name, picks a direction, saves
+  // the current rangeStart..rangeEnd window as a tag with that
+  // name. Persistence to the companion JSON is a separate explicit
+  // button so users can stage multiple tags before round-tripping.
+  let newTagName = $state('');
+  let newTagDirection = $state<'forward' | 'reverse' | 'pingpong'>('forward');
+  function onSaveTag() {
+    const name = newTagName.trim();
+    if (!name) return;
+    session.addTag(name, newTagDirection);
+    newTagName = '';
+  }
+
   async function doExportGIF() {
     if (!session.img) return;
     exportBusy = true;
@@ -372,8 +385,14 @@
       {/if}
     </section>
 
-    <!-- Tag picker (only when metadata supplies tag ranges) -->
-    {#if session.metadataTags.length > 0}
+    <!-- Animations — picker + editor for named frame ranges. The
+         user's flow: drag-select a window in the timeline strip
+         (or set Start / End in the slicer) → type a name → "Save
+         as tag" → range is named + persists to the companion JSON
+         on the next save. Always shows when there are frames to
+         tag (not just when companion-supplied tags exist), so
+         users can author tags from scratch. -->
+    {#if session.metadataFrames && session.metadataFrames.length > 0}
       <section class="border-b border-border p-3 text-xs">
         <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Animations</h3>
         <div class="space-y-1">
@@ -383,21 +402,71 @@
             class={`block w-full rounded border px-2 py-1 text-left text-[10px] ${session.activeTag === null ? 'border-accent bg-accent/20 text-fg' : 'border-border text-fg-muted hover:border-fg-muted hover:text-fg'}`}
           >All frames <span class="float-right font-mono text-fg-muted">{session.metadataFrames?.length ?? 0}</span></button>
           {#each session.metadataTags as t (t.name)}
+            <div class={`group flex items-center gap-1 rounded border ${session.activeTag === t.name ? 'border-accent bg-accent/20' : 'border-border'}`}>
+              <button
+                type="button"
+                onclick={() => {
+                  session.activeTag = t.name;
+                  session.currentFrame = 0;
+                  session.pingDir = 1;
+                  if (t.direction === 'pingpong') session.loopMode = 'pingpong';
+                  else if (t.direction === 'forward' || t.direction === 'reverse') session.loopMode = 'forward';
+                }}
+                class="flex-1 px-2 py-1 text-left text-[10px] text-fg hover:text-fg"
+              >
+                {t.name}
+                <span class="float-right font-mono text-fg-muted">{t.from}–{t.to}</span>
+              </button>
+              <button
+                type="button"
+                onclick={() => { session.removeTag(t.name); }}
+                class="px-1.5 py-1 text-[10px] text-fg-muted opacity-0 hover:text-danger group-hover:opacity-100"
+                title="Delete tag"
+                aria-label="Delete tag"
+              >×</button>
+            </div>
+          {/each}
+        </div>
+        <!-- Compose-tag form: name + direction + save button.
+             Uses whatever the user's currently-selected range is
+             (rangeStart..rangeEnd) so the workflow lines up with
+             the drag-select gesture in the timeline strip. -->
+        <div class="mt-3 space-y-1.5 border-t border-border pt-2">
+          <p class="text-[10px] leading-snug text-fg-muted">
+            Drag-select a range in the timeline strip below, then
+            name + save it as a tag.
+          </p>
+          <div class="flex items-center gap-1">
+            <input
+              type="text"
+              bind:value={newTagName}
+              placeholder="Tag name…"
+              class="flex-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+              onkeydown={(e) => { if (e.key === 'Enter') onSaveTag(); }}
+            />
+            <select
+              bind:value={newTagDirection}
+              class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg"
+            >
+              <option value="forward">→</option>
+              <option value="reverse">←</option>
+              <option value="pingpong">↔</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            onclick={onSaveTag}
+            disabled={!newTagName.trim() || session.metadataLoading}
+            class="w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-40"
+          >Save range as tag</button>
+          {#if session.metadataTags.length > 0}
             <button
               type="button"
-              onclick={() => {
-                session.activeTag = t.name;
-                session.currentFrame = 0;
-                session.pingDir = 1;
-                if (t.direction === 'pingpong') session.loopMode = 'pingpong';
-                else if (t.direction === 'forward' || t.direction === 'reverse') session.loopMode = 'forward';
-              }}
-              class={`block w-full rounded border px-2 py-1 text-left text-[10px] ${session.activeTag === t.name ? 'border-accent bg-accent/20 text-fg' : 'border-border text-fg-muted hover:border-fg-muted hover:text-fg'}`}
-            >
-              {t.name}
-              <span class="float-right font-mono text-fg-muted">{t.from}\u2013{t.to}</span>
-            </button>
-          {/each}
+              onclick={() => session.saveTagsAsCompanion()}
+              disabled={session.metadataLoading}
+              class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-fg-muted disabled:opacity-40"
+            >{session.metadataLoading ? 'Saving…' : `Persist ${session.metadataTags.length} tag${session.metadataTags.length === 1 ? '' : 's'} to companion JSON`}</button>
+          {/if}
         </div>
       </section>
     {/if}

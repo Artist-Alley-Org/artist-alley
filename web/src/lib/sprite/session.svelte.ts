@@ -155,6 +155,17 @@ export interface SpriteSessionMethods {
    *  the Sort dropdown changes so the user doesn't have to re-run
    *  the full detection just to flip ordering. */
   applySort(): void;
+  /** Add a tag spanning the current rangeStart..rangeEnd (or the
+   *  full frame list when no range is set) with the given name.
+   *  Mutates metadataTags in place. Caller decides when to save
+   *  the tag list via saveTagsAsCompanion(). */
+  addTag(name: string, direction?: 'forward' | 'reverse' | 'pingpong'): void;
+  removeTag(name: string): void;
+  /** Save current metadataFrames + metadataTags as a TexturePacker
+   *  JSON Hash companion. Used after addTag/removeTag so changes
+   *  persist across reloads. If a companion is already loaded,
+   *  this REPLACES it (detach + re-upload). */
+  saveTagsAsCompanion(): Promise<void>;
 }
 
 export type SpriteSessionInstance = SpriteSession & SpriteSessionMethods & { assetId: string };
@@ -439,6 +450,83 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     state.analysis = analyzeSheet(data);
   }
 
+  // ── Tag editing ──────────────────────────────────────────────
+  // Tags name a contiguous frame range as a single animation.
+  // Adding pulls from the current rangeStart/rangeEnd (or the
+  // whole frame list when no range is narrowed), so the user
+  // workflow is: drag-select a range in the timeline → "Save
+  // as tag…" → name it.
+  function addTag(name: string, direction: 'forward' | 'reverse' | 'pingpong' = 'forward') {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const total = state.metadataFrames ? state.metadataFrames.length : 0;
+    const from = Math.max(0, Math.min(total - 1, state.rangeStart));
+    const to = Math.max(from, Math.min(total - 1, state.rangeEnd ?? total - 1));
+    // Replace any existing tag with the same name so editing flow
+    // (rename a tag's range by re-saving with the same name) works.
+    const filtered = state.metadataTags.filter((t) => t.name !== trimmed);
+    state.metadataTags = [...filtered, { name: trimmed, from, to, direction }];
+  }
+
+  function removeTag(name: string) {
+    state.metadataTags = state.metadataTags.filter((t) => t.name !== name);
+    if (state.activeTag === name) state.activeTag = null;
+  }
+
+  async function saveTagsAsCompanion(): Promise<void> {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length === 0) return;
+    state.metadataLoading = true;
+    state.metadataError = null;
+    try {
+      // If a companion is already loaded, detach it first so the
+      // replacement upload doesn't fight an existing same-named
+      // sidecar at the companion endpoint.
+      if (state.metadataCompanion) {
+        await fetch(`/api/v1/assets/${opts.assetId}/companions/${state.metadataCompanion.id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        state.metadataCompanion = null;
+      }
+      const framesOut: Record<string, unknown> = {};
+      for (let i = 0; i < frames.length; i++) {
+        const f = frames[i];
+        framesOut[f.name || `frame_${String(i).padStart(3, '0')}.png`] = {
+          frame: { x: f.sx, y: f.sy, w: f.sw, h: f.sh },
+          rotated: false,
+          trimmed: false,
+          spriteSourceSize: { x: 0, y: 0, w: f.sw, h: f.sh },
+          sourceSize: { w: f.sw, h: f.sh },
+          duration: f.duration ?? undefined,
+        };
+      }
+      const payload = {
+        frames: framesOut,
+        meta: {
+          app: 'artist-alley sprite tools',
+          version: '1',
+          image: `${opts.assetId}.png`,
+          size: { w: state.imgW, h: state.imgH },
+          scale: '1',
+          frameTags: state.metadataTags.map((t) => ({
+            name: t.name,
+            from: t.from,
+            to: t.to,
+            direction: t.direction ?? 'forward',
+          })),
+        },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const file = new File([blob], 'sprites.json', { type: 'application/json' });
+      await uploadMetadataFile(file);
+    } catch (e) {
+      state.metadataError = 'Tag save error: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      state.metadataLoading = false;
+    }
+  }
+
   function applySort() {
     if (!state.detectedBoxes) return;
     const sorted = sortBoxes(state.detectedBoxes, state.detectSort);
@@ -583,5 +671,8 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     runAnalyze,
     saveDetectedAsCompanion,
     applySort,
+    addTag,
+    removeTag,
+    saveTagsAsCompanion,
   });
 }
