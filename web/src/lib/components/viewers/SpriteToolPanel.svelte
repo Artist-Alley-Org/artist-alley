@@ -12,8 +12,88 @@
   //   6. Playback   — prev/play/next, fps, loop mode
 
   import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
+  import { exportGIF, exportSpriteSheet, exportPNGsZip, downloadBlob, type ExportFrame } from '$lib/sprite/export';
 
   let { session = $bindable<SpriteSessionInstance>() }: { session: SpriteSessionInstance } = $props();
+
+  // ── Export ────────────────────────────────────────────────────
+  // Build the export-frame list from whichever source is
+  // authoritative — companion metadata when loaded, the manual
+  // slicer otherwise. Honours the user's start/end range so a
+  // partial selection exports only what they're playing.
+  function buildExportFrames(): ExportFrame[] {
+    const frames = session.metadataFrames;
+    if (frames && frames.length > 0) {
+      return frames.map((f) => ({ sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh, duration: f.duration }));
+    }
+    const cols = gridCols;
+    const rows = gridRows;
+    const total = cols * rows;
+    if (session.cellW <= 0 || session.cellH <= 0 || total <= 0) return [];
+    const from = Math.max(0, Math.min(total - 1, session.rangeStart));
+    const to = Math.max(from, Math.min(total - 1, session.rangeEnd ?? total - 1));
+    const out: ExportFrame[] = [];
+    for (let i = from; i <= to; i++) {
+      const c = i % cols;
+      const r = Math.floor(i / cols);
+      out.push({
+        sx: session.originX + c * (session.cellW + session.padX),
+        sy: session.originY + r * (session.cellH + session.padY),
+        sw: session.cellW,
+        sh: session.cellH,
+      });
+    }
+    return out;
+  }
+
+  let exportBusy = $state(false);
+  let exportError = $state<string | null>(null);
+  let exportScale = $state(1);
+
+  async function doExportGIF() {
+    if (!session.img) return;
+    exportBusy = true;
+    exportError = null;
+    try {
+      const frames = buildExportFrames();
+      const defaultMs = 1000 / Math.max(0.1, session.fps);
+      const blob = await exportGIF(session.img, frames, { defaultFrameMs: defaultMs, scale: exportScale });
+      downloadBlob(blob, `${session.assetId}-sprite.gif`);
+    } catch (e) {
+      exportError = e instanceof Error ? e.message : 'GIF export failed';
+    } finally {
+      exportBusy = false;
+    }
+  }
+  async function doExportSheet() {
+    if (!session.img) return;
+    exportBusy = true;
+    exportError = null;
+    try {
+      const frames = buildExportFrames();
+      const { png, json } = await exportSpriteSheet(session.img, frames);
+      downloadBlob(png, `${session.assetId}-sheet.png`);
+      downloadBlob(json, `${session.assetId}-sheet.json`);
+    } catch (e) {
+      exportError = e instanceof Error ? e.message : 'Sheet export failed';
+    } finally {
+      exportBusy = false;
+    }
+  }
+  async function doExportZip() {
+    if (!session.img) return;
+    exportBusy = true;
+    exportError = null;
+    try {
+      const frames = buildExportFrames();
+      const blob = await exportPNGsZip(session.img, frames);
+      downloadBlob(blob, `${session.assetId}-frames.zip`);
+    } catch (e) {
+      exportError = e instanceof Error ? e.message : 'Zip export failed';
+    } finally {
+      exportBusy = false;
+    }
+  }
 
   const ZOOM_PRESETS = [1, 2, 4, 8, 16, 24, 32] as const;
 
@@ -557,6 +637,52 @@
       </div>
     </section>
 
+    <!-- Export — client-side encoders for the three formats people
+         actually ask for (animated GIF, packed sheet PNG + JSON,
+         individual PNGs in a zip). All run in the browser via
+         OffscreenCanvas + gifenc + fflate, which keeps federation
+         trivial (any node that can read the asset can export from
+         it without a backend round-trip). Disabled when the
+         frame list is empty (no slicer + no metadata + no
+         detection). -->
+    {#if (session.metadataFrames && session.metadataFrames.length > 0) || (session.cellW > 0 && session.cellH > 0)}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Export</h3>
+        <label class="mb-2 flex items-center justify-between gap-2 text-[10px] text-fg-muted">
+          <span>Scale</span>
+          <select bind:value={exportScale} class="w-20 rounded border border-border bg-surface px-1.5 py-0.5 text-fg">
+            <option value={1}>1×</option>
+            <option value={2}>2×</option>
+            <option value={4}>4×</option>
+            <option value={8}>8×</option>
+          </select>
+        </label>
+        <div class="space-y-1">
+          <button
+            type="button"
+            onclick={doExportGIF}
+            disabled={exportBusy}
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+          >{exportBusy ? 'Working…' : 'Export GIF'}</button>
+          <button
+            type="button"
+            onclick={doExportSheet}
+            disabled={exportBusy}
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+          >{exportBusy ? 'Working…' : 'Export sheet (PNG + JSON)'}</button>
+          <button
+            type="button"
+            onclick={doExportZip}
+            disabled={exportBusy}
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+          >{exportBusy ? 'Working…' : 'Export PNGs (zip)'}</button>
+        </div>
+        {#if exportError}
+          <div class="mt-2 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">{exportError}</div>
+        {/if}
+      </section>
+    {/if}
+
     <!-- Tips — quick reference for sprite-specific gestures.
          Sticks at the bottom of the scrollable panel area so it's
          always findable. Hotkeys live in this list even if not all
@@ -578,6 +704,10 @@
           <dt class="font-mono text-fg">Merge gap</dt><dd class="text-fg-muted">Glue separated pixels (floating hats, accessories) into one sprite</dd>
           <dt class="col-span-2 mt-1 text-fg-muted/70">Save</dt>
           <dt class="font-mono text-fg">Companion JSON</dt><dd class="text-fg-muted">Persists frames + tags as a sidecar — reloads pick them up automatically</dd>
+          <dt class="col-span-2 mt-1 text-fg-muted/70">Export</dt>
+          <dt class="font-mono text-fg">GIF</dt><dd class="text-fg-muted">Animated GIF of the current frame range at the current FPS</dd>
+          <dt class="font-mono text-fg">Sheet</dt><dd class="text-fg-muted">Packed PNG + TexturePacker JSON describing the layout</dd>
+          <dt class="font-mono text-fg">Zip</dt><dd class="text-fg-muted">Each frame as an independent PNG, ordered by filename</dd>
         </dl>
       </details>
     </section>

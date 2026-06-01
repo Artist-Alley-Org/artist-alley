@@ -30,6 +30,8 @@
   "dependencies": {
     "@google/model-viewer": "^4.2.0",
     "@scalar/api-reference": "^1.57.5",
+    "fflate": "^0.8.3",
+    "gifenc": "^1.0.3",
     "hls.js": "^1.6.16",
     "openapi-fetch": "latest",
     "pdfjs-dist": "^5.7.284",
