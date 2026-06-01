@@ -11,12 +11,13 @@
 
   import { onMount, onDestroy, type Snippet } from 'svelte';
   import type { ViewController } from './controller';
-  import { defaultController, kindForExtension } from './controller';
+  import { defaultController, kindForAsset } from './controller';
   import ImageView from './ImageView.svelte';
   import MediaView from './MediaView.svelte';
   import ModelView from './ModelView.svelte';
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
+  import SpriteView from './SpriteView.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
 
@@ -143,7 +144,7 @@
     paneCollapsed = !paneCollapsed;
   }
 
-  const kind = $derived(kindForExtension(asset.file_extension));
+  const kind = $derived(kindForAsset(asset));
   let controller = $state(defaultController());
 
   // ---- pan + zoom (shell-owned) -----------------------------------------
@@ -167,6 +168,9 @@
     // specimen page and the in-view size control. Let the inner
     // overflow-auto handle the wheel.
     if (kind === 'font') return;
+    // Sprite view owns its own integer-step zoom + scroll for the
+    // canvas; outer wheel-zoom would smush the pixel-perfect rendering.
+    if (kind === 'sprite') return;
     // Timeline kinds (video, audio, paged PDF later) treat plain wheel
     // as one frame's worth of scrub — the muscle memory for review
     // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
@@ -207,6 +211,9 @@
     // raster. Drag-to-pan would slide the whole page around like
     // an image, which reads as broken UX. Skip.
     if (kind === 'font') return;
+    // Sprite view: scrollable canvas centred in the viewport;
+    // drag-to-pan doesn't apply. Same reasoning as font.
+    if (kind === 'sprite') return;
     // Timeline kinds (video, audio) don't need pan/zoom — the wheel
     // already specialises to scrub frames, and the canvas surface is
     // a video frame or a waveform-with-cover, neither of which is a
@@ -581,14 +588,24 @@
     onmousedown={onCanvasMouseDown}
     ondblclick={onCanvasDoubleClick}
   >
-    <!-- Font view bypasses the pan/zoom transform wrapper — it's a
-         scrollable, self-laying-out specimen page that wants the
-         full canvas area, not a centered raster. Lives as a sibling
-         absolute layer; on font kind the transform layer is empty. -->
+    <!-- Font + Sprite views bypass the pan/zoom transform wrapper.
+         Both own their own zoom semantics (the font has a size
+         slider; the sprite uses integer-step pixel-perfect zoom),
+         and both render scrollable bodies that want the full canvas
+         area, not a centred raster behind the viewer's outer
+         translate/scale. Each lives as an absolute sibling layer
+         to the transform; on those kinds the transform layer is
+         empty. -->
     {#if kind === 'font'}
       {#key asset.id}
         <div class="absolute inset-0">
           <FontView {asset} bind:controller />
+        </div>
+      {/key}
+    {:else if kind === 'sprite'}
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <SpriteView {asset} bind:controller />
         </div>
       {/key}
     {:else}

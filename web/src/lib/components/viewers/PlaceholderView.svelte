@@ -47,6 +47,7 @@
     pdf: { title: 'PDF preview', phase: 'Phase 1.18.B-12', icon: 'file-text' },
     audio: { title: 'Audio waveform', phase: 'Phase 1.18.B-12', icon: 'audio' },
     font: { title: 'Font specimen', phase: 'Phase 1.18.E', icon: 'placeholder' },
+    sprite: { title: 'Sprite viewer', phase: '', icon: 'placeholder' },
     '3d': { title: '3D viewer', phase: 'Phase 1.18.B-10', icon: 'cube' },
     sequence: { title: 'Image sequence', phase: 'Phase 1.18.B-4', icon: 'film' },
     placeholder: { title: 'Preview', phase: '', icon: 'placeholder' },

@@ -26,6 +26,7 @@ export type ViewKind =
   | 'audio'
   | 'sequence'
   | 'font'
+  | 'sprite'
   | '3d'
   | 'placeholder';
 
@@ -47,6 +48,12 @@ export interface ViewAsset {
   title?: string | null;
   file_extension?: string | null;
   file_hash?: string | null;
+  /** Numeric ref into the asset_types table. Overrides the
+      extension-based kind detection when set — important for
+      kinds whose extensions overlap with another bucket (a
+      sprite atlas is a PNG; a texture is a PNG; only the
+      asset_type can tell them apart at the viewer layer). */
+  asset_type?: number | null;
   /** Asset-level JSONB. Per-kind view bodies read their own
       namespaced keys (audio, pdf, font, video, etc). */
   metadata?: Record<string, unknown> | null;
@@ -255,6 +262,26 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (FONT_EXTS.has(e)) return 'font';
   if (MODEL_EXTS.has(e)) return '3d';
   return 'placeholder';
+}
+
+// Asset-type refs that override the extension-based kind. A PNG
+// uploaded as a Sprite (ref=13) routes to SpriteView even though
+// `.png` would otherwise resolve to `image`. Mirror of the
+// asset_types table seeded by migrations 00031 / 00033 / 00034.
+const ASSET_TYPE_KIND: Record<number, ViewKind> = {
+  13: 'sprite',
+};
+
+/** Resolve the view kind from an asset's full shape. Prefers
+ *  asset_type when set (so a sprite atlas PNG opens in SpriteView
+ *  even though its extension says image); falls back to the
+ *  extension-based detector. */
+export function kindForAsset(asset: { asset_type?: number | null; file_extension?: string | null }): ViewKind {
+  if (asset.asset_type != null) {
+    const k = ASSET_TYPE_KIND[asset.asset_type];
+    if (k) return k;
+  }
+  return kindForExtension(asset.file_extension);
 }
 
 export function isImageExt(ext: string | null | undefined): boolean {

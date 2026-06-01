@@ -29,7 +29,7 @@
 
   import { onDestroy, onMount, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
-  import { kindForExtension } from './viewers/controller';
+  import { kindForAsset } from './viewers/controller';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
 
@@ -175,7 +175,7 @@
   // playback + loop) vs static kinds. Falls back to 'placeholder'
   // when no item is mounted yet.
   const currentKind = $derived(
-    currentItem ? kindForExtension(currentItem.asset.file_extension) : 'placeholder',
+    currentItem ? kindForAsset(currentItem.asset) : 'placeholder',
   );
   const isTimelineKind = $derived(currentKind === 'video' || currentKind === 'audio');
 
