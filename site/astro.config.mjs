@@ -108,10 +108,23 @@ export default defineConfig({
           label: "Reference",
           items: [
             { label: "Overview", link: "/reference/" },
-            { label: "Database schema", link: "/reference/schema/" },
             { label: "3D preview pipeline", link: "/reference/3d-preview-pipeline/" },
             // OpenAPI pages are appended automatically by starlight-openapi:
             ...openAPISidebarGroups,
+          ],
+        },
+        {
+          label: "Developers",
+          items: [
+            { label: "Overview", link: "/developers/" },
+            { label: "Coding standards", link: "/developers/coding-standards/" },
+            { label: "Security in Artist Alley", link: "/developers/security/" },
+            { label: "Developer reference", link: "/developers/reference/" },
+            {
+              label: "Database",
+              autogenerate: { directory: "developers/database" },
+              collapsed: true,
+            },
           ],
         },
         {
