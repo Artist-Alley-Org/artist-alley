@@ -162,6 +162,11 @@
     // object, not the viewer" semantics 3D needs). Skip our outer
     // transform entirely.
     if (kind === '3d') return;
+    // Font view has its own scroll + size-slider UX. Wheel-zooming
+    // the whole pane would fight the user's scroll through the
+    // specimen page and the in-view size control. Let the inner
+    // overflow-auto handle the wheel.
+    if (kind === 'font') return;
     // Timeline kinds (video, audio, paged PDF later) treat plain wheel
     // as one frame's worth of scrub — the muscle memory for review
     // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
@@ -198,6 +203,10 @@
     if (e.button !== 0) return;
     // 3D bodies own all drag (orbit). Leave the outer transform alone.
     if (kind === '3d') return;
+    // Font view is a scrollable specimen page, not a draggable
+    // raster. Drag-to-pan would slide the whole page around like
+    // an image, which reads as broken UX. Skip.
+    if (kind === 'font') return;
     // Timeline kinds (video, audio) don't need pan/zoom — the wheel
     // already specialises to scrub frames, and the canvas surface is
     // a video frame or a waveform-with-cover, neither of which is a
@@ -572,6 +581,17 @@
     onmousedown={onCanvasMouseDown}
     ondblclick={onCanvasDoubleClick}
   >
+    <!-- Font view bypasses the pan/zoom transform wrapper — it's a
+         scrollable, self-laying-out specimen page that wants the
+         full canvas area, not a centered raster. Lives as a sibling
+         absolute layer; on font kind the transform layer is empty. -->
+    {#if kind === 'font'}
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <FontView {asset} bind:controller />
+        </div>
+      {/key}
+    {:else}
     <div
       class="absolute inset-0 flex items-center justify-center"
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
@@ -589,8 +609,6 @@
           <ImageView {asset} bind:controller />
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
-        {:else if kind === 'font'}
-          <FontView {asset} bind:controller />
         {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
           <ModelView {asset} bind:controller {reviewMode} />
         {:else}
@@ -598,6 +616,7 @@
         {/if}
       {/key}
     </div>
+    {/if}
 
     <!-- HUD: live frame counter / zoom %. The static asset info
          (filename, dimensions, codec) is in the toolbar above; the
