@@ -773,6 +773,21 @@
           />
           <span class="mt-0.5 block text-[10px] text-fg-muted">0 = use session FPS default.</span>
         </label>
+        <!-- Phase 10 brainstorm note. Short free-form annotation
+             shown as a hover marker on the timeline tile. Persists
+             to the companion JSON under `note`. -->
+        <label class="mt-2 block">
+          <span class="mb-0.5 flex justify-between text-fg-muted">
+            <span>Note</span>
+            {#if curFrame.note}<span class="font-mono text-[9px] text-accent">●</span>{/if}
+          </span>
+          <textarea
+            value={curFrame.note ?? ''}
+            oninput={(e) => session.setFrameNote(cur, (e.currentTarget as HTMLTextAreaElement).value)}
+            placeholder="Brainstorm note for this frame…"
+            class="h-12 w-full resize-none rounded border border-border bg-surface px-1.5 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+          ></textarea>
+        </label>
         <button
           type="button"
           onclick={() => session.pinToLightbox(cur)}

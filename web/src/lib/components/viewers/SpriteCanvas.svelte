@@ -617,6 +617,7 @@
           {@const dh = f.sh * s}
           {@const absoluteIdx = playRange.from + i}
           {@const inRange = visibleRange ? (absoluteIdx >= visibleRange.from && absoluteIdx <= visibleRange.to) : true}
+          {@const note = session.metadataFrames?.[absoluteIdx]?.note}
           <button
             type="button"
             data-frame={i}
@@ -640,7 +641,7 @@
               session.currentFrame = i;
               session.playing = false;
             }}
-            title={`Frame ${i + 1} — click to jump · drag to select range · Shift+click to extend`}
+            title={note ? `Frame ${i + 1} · note: ${note}` : `Frame ${i + 1} — click to jump · drag to select range · Shift+click to extend`}
           >
             <div class="sprite-checker p-0.5" style:width={`${thumbBudget + 4}px`} style:height={`${thumbBudget + 4}px`}>
               <div class="flex h-full w-full items-center justify-center">
@@ -652,6 +653,15 @@
                 ></canvas>
               </div>
             </div>
+            <!-- Phase 10 note marker — small dot in the top-right
+                 corner when the frame has a brainstorm note. Hover
+                 the tile to read the note in the title tooltip. -->
+            {#if note}
+              <span
+                class="pointer-events-none absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent ring-1 ring-black/40"
+                aria-label="Has a note"
+              ></span>
+            {/if}
             <span class="px-1 pb-0.5 font-mono text-[9px] leading-none text-white/50">{i + 1}</span>
           </button>
         {/each}

@@ -28,6 +28,11 @@ export interface SpriteFrameRect {
    *  to 90° increments so the result remains a rect that fits the
    *  canvas; arbitrary rotation would need bounding-box recompute. */
   rotate?: 0 | 90 | 180 | 270;
+  /** Phase 10 brainstorm note — short free-form annotation
+   *  surfaced as a hover-tooltip marker on the timeline strip.
+   *  Persisted to the companion JSON so reviewers see the same
+   *  notes on reload. Empty / undefined means no marker. */
+  note?: string;
 }
 
 export type LightboxMode = 'side' | 'stack' | 'diff';
@@ -242,6 +247,10 @@ export interface SpriteSessionMethods {
   /** Patch one or more transform fields on a frame. Pass undefined
    *  to leave a field unchanged. */
   setFrameTransform(idx: number, t: { flipH?: boolean; flipV?: boolean; rotate?: 0 | 90 | 180 | 270 }): void;
+  /** Phase 10 — set / clear a brainstorm note on a frame. Empty
+   *  string removes the note (so the JSON round-trip drops the key
+   *  rather than persisting an empty string). */
+  setFrameNote(idx: number, note: string): void;
   // ── Lightbox (Phase 8) ───────────────────────────────────────
   pinToLightbox(idx: number): void;
   unpinFromLightbox(idx: number): void;
@@ -360,6 +369,13 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
       if (tr.rotate === 90 || tr.rotate === 180 || tr.rotate === 270) out.rotate = tr.rotate;
       return out;
     }
+    // Phase 10 — frame note read-back. Stored under `note` so the
+    // field name is self-describing for anyone diffing the JSON.
+    function readNote(ef: Record<string, unknown>): { note?: string } {
+      const n = ef.note;
+      if (typeof n === 'string' && n.length > 0) return { note: n };
+      return {};
+    }
     if (Array.isArray(rawFrames)) {
       // Array form — JSON order is authoritative.
       for (const entry of rawFrames) {
@@ -371,6 +387,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
           duration: typeof ef.duration === 'number' ? ef.duration : undefined,
           ...readTransform(ef),
+          ...readNote(ef),
         });
       }
     } else if (rawFrames && typeof rawFrames === 'object') {
@@ -385,6 +402,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
           duration: typeof ef.duration === 'number' ? ef.duration : undefined,
           ...readTransform(ef),
+          ...readNote(ef),
         });
       }
     } else {
@@ -642,6 +660,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
           sourceSize: { w: f.sw, h: f.sh },
           duration: f.duration ?? undefined,
           ...(transform ? { transform } : {}),
+          ...(f.note && f.note.length > 0 ? { note: f.note } : {}),
         };
       }
       const payload = {
@@ -826,6 +845,17 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     state.metadataFrames = next;
   }
 
+  function setFrameNote(idx: number, note: string) {
+    const frames = state.metadataFrames;
+    if (!frames) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const trimmed = note.trim();
+    const next = frames.slice();
+    next[i] = { ...next[i], note: trimmed.length > 0 ? trimmed : undefined };
+    state.metadataFrames = next;
+  }
+
   function pinToLightbox(idx: number) {
     const i = clampFrameIndex(idx);
     if (i < 0) return;
@@ -1000,6 +1030,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     duplicateFrame,
     setFrameDuration,
     setFrameTransform,
+    setFrameNote,
     pinToLightbox,
     unpinFromLightbox,
     clearLightbox,
