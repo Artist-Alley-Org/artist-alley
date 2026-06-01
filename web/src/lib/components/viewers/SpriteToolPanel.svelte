@@ -637,6 +637,44 @@
       </div>
     </section>
 
+    <!-- Onion skin — show prev / next frames at low opacity behind
+         the current frame so the animator can compare nearby
+         poses. Aseprite parity: prev frames tinted red, next blue,
+         configurable counts + opacity, F3 hotkey toggles. -->
+    {#if (session.metadataFrames && session.metadataFrames.length > 1) || (session.cellW > 0 && session.cellH > 0 && gridCols * gridRows > 1)}
+      <section class="border-b border-border p-3 text-xs">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Onion skin</h3>
+          <label class="flex items-center gap-1 text-[10px] text-fg-muted">
+            <input type="checkbox" bind:checked={session.onionEnabled} class="accent-accent" />
+            On (F3)
+          </label>
+        </div>
+        {#if session.onionEnabled}
+          <div class="grid grid-cols-2 gap-2">
+            <label>
+              <span class="mb-0.5 block text-fg-muted">Prev frames</span>
+              <input type="number" min="0" max="8" bind:value={session.onionPrev} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            </label>
+            <label>
+              <span class="mb-0.5 block text-fg-muted">Next frames</span>
+              <input type="number" min="0" max="8" bind:value={session.onionNext} class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg" />
+            </label>
+          </div>
+          <label class="mt-2 block">
+            <span class="mb-0.5 flex justify-between text-fg-muted">
+              <span>Opacity</span><span class="font-mono text-fg">{Math.round(session.onionOpacity * 100)}%</span>
+            </span>
+            <input type="range" min="0.05" max="0.8" step="0.05" bind:value={session.onionOpacity} class="w-full accent-accent" />
+          </label>
+          <label class="mt-1 flex items-center justify-between text-[10px] text-fg-muted">
+            <span>Red / blue tint</span>
+            <input type="checkbox" bind:checked={session.onionTint} class="accent-accent" />
+          </label>
+        {/if}
+      </section>
+    {/if}
+
     <!-- Export — client-side encoders for the three formats people
          actually ask for (animated GIF, packed sheet PNG + JSON,
          individual PNGs in a zip). All run in the browser via
@@ -695,6 +733,11 @@
           <dt class="font-mono text-fg">Space</dt><dd class="text-fg-muted">Play / pause</dd>
           <dt class="font-mono text-fg">,</dt><dd class="text-fg-muted">Previous frame</dd>
           <dt class="font-mono text-fg">.</dt><dd class="text-fg-muted">Next frame</dd>
+          <dt class="font-mono text-fg">F3</dt><dd class="text-fg-muted">Toggle onion skin</dd>
+          <dt class="col-span-2 mt-1 text-fg-muted/70">Timeline strip</dt>
+          <dt class="font-mono text-fg">Click</dt><dd class="text-fg-muted">Jump to that frame · clears any active sub-range</dd>
+          <dt class="font-mono text-fg">Drag</dt><dd class="text-fg-muted">Drag across tiles to set a loop range</dd>
+          <dt class="font-mono text-fg">Shift+click</dt><dd class="text-fg-muted">Extend the existing range to that frame</dd>
           <dt class="col-span-2 mt-1 text-fg-muted/70">Slicing</dt>
           <dt class="font-mono text-fg">Cell W / H</dt><dd class="text-fg-muted">Sprite size in pixels — auto-guessed from detection on load</dd>
           <dt class="font-mono text-fg">Start / End</dt><dd class="text-fg-muted">Frame range to loop — narrow to one row of a multi-section sheet</dd>

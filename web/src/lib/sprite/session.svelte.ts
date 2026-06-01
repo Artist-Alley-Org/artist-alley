@@ -107,6 +107,18 @@ export interface SpriteSession {
 
   // ── Image analysis (Sprite Analyzer's Overview parity) ───────
   analysis: SheetAnalysis | null;
+
+  // ── Onion skinning (Aseprite parity) ─────────────────────────
+  // Show N previous + M next frames behind the current frame at
+  // low opacity to help compare motion across nearby frames. F3
+  // toggles. Aseprite tints prev frames red and next frames blue
+  // by default — we match that since it's the colour mnemonic
+  // pixel artists already know.
+  onionEnabled: boolean;
+  onionPrev: number;
+  onionNext: number;
+  onionOpacity: number;
+  onionTint: boolean;
 }
 
 /** Asset id this session was created for. Lets the panel call the
@@ -196,6 +208,12 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     detectedBoxes: null,
 
     analysis: null,
+
+    onionEnabled: false,
+    onionPrev: 2,
+    onionNext: 2,
+    onionOpacity: 0.35,
+    onionTint: true,
   });
 
   // ── Companion / metadata helpers ─────────────────────────────

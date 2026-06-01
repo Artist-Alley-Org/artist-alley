@@ -23,6 +23,23 @@
   let loadError = $state<string | null>(null);
   let canvasEl: HTMLCanvasElement | undefined = $state();
   let stripEl: HTMLDivElement | undefined = $state();
+  // Drag-to-select range state. Pointer-down on a tile starts a
+  // drag; subsequent pointer-enters on other tiles update the
+  // range endpoint; pointer-up commits + leaves the range in
+  // session.rangeStart / rangeEnd. Shift+click extends the end of
+  // an existing range without starting a fresh drag.
+  let dragAnchor = $state<number | null>(null);
+  let dragHover = $state<number | null>(null);
+  // Visual range — derived during a drag so highlight follows the
+  // pointer; falls back to the committed session range otherwise.
+  const visibleRange = $derived.by(() => {
+    if (dragAnchor != null && dragHover != null) {
+      return { from: Math.min(dragAnchor, dragHover), to: Math.max(dragAnchor, dragHover) };
+    }
+    // Don't show a range if the user hasn't narrowed it.
+    if (session.rangeStart === 0 && session.rangeEnd === null) return null;
+    return playRange;
+  });
 
   // Svelte action that paints one frame thumbnail into a per-tile
   // <canvas>. Re-runs when the frame rect or scale changes so the
@@ -62,12 +79,17 @@
   );
   const playRange = $derived.by(() => {
     const frames = session.metadataFrames;
+    // Tag range wins over manual range when both are set — picking
+    // a tag is an explicit "play this animation" gesture.
     if (frames && session.activeTag) {
       const t = session.metadataTags.find((x) => x.name === session.activeTag);
       if (t) return { from: t.from, to: t.to };
     }
-    if (frames) return { from: 0, to: Math.max(0, frames.length - 1) };
-    const total = gridCols * gridRows;
+    // Manual range (set via drag-select in the timeline strip OR
+    // the Start/End fields in the slicer) applies on top of either
+    // metadata frames or the manual grid. Lets users loop a custom
+    // sub-window without authoring a tag.
+    const total = frames ? frames.length : gridCols * gridRows;
     const from = Math.max(0, Math.min(total - 1, session.rangeStart));
     const to = Math.max(from, Math.min(total - 1, session.rangeEnd ?? total - 1));
     return { from, to };
@@ -105,6 +127,47 @@
     if (!ctx) return;
     ctx.imageSmoothingEnabled = session.smoothing;
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+    // Onion skin pass — paint prev / next frames at low opacity
+    // BEHIND the current frame, optionally tinted red (past) /
+    // blue (future). Skipped when disabled, frame count is 1, or
+    // both prev/next counts are 0. Frames outside the play range
+    // clamp at the ends — no wrap, no over-paint of the current
+    // frame's slot.
+    if (session.onionEnabled && frameCount > 1) {
+      const drawOnionFrame = (offset: number, tint: 'past' | 'future') => {
+        const idx = session.currentFrame + offset;
+        if (idx < 0 || idx >= frameCount) return;
+        const of = frameRect(idx);
+        // Centre each onion frame inside the current canvas so
+        // non-uniform sheets line up at the canvas centre.
+        const ox = Math.floor((canvasEl!.width - of.sw * session.zoom) / 2);
+        const oy = Math.floor((canvasEl!.height - of.sh * session.zoom) / 2);
+        // Fade scales with distance — frames closer to the current
+        // one show stronger so you can tell the order at a glance.
+        const dist = Math.abs(offset);
+        const maxDist = Math.max(session.onionPrev, session.onionNext, 1);
+        const a = session.onionOpacity * (1 - (dist - 1) / maxDist);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, a));
+        ctx.drawImage(session.img!, of.sx, of.sy, of.sw, of.sh, ox, oy, of.sw * session.zoom, of.sh * session.zoom);
+        // Tint pass — composite a flat colour over the just-drawn
+        // pixels using source-atop so transparent regions aren't
+        // recoloured. Skipped when tinting is off.
+        if (session.onionTint) {
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.fillStyle = tint === 'past' ? 'rgba(255,80,80,0.55)' : 'rgba(80,140,255,0.55)';
+          ctx.fillRect(ox, oy, of.sw * session.zoom, of.sh * session.zoom);
+        }
+        ctx.restore();
+      };
+      // Past frames first (so future overlays draw later), in
+      // reverse so the immediate-prev paints LAST and reads
+      // strongest among the past.
+      for (let n = session.onionPrev; n >= 1; n--) drawOnionFrame(-n, 'past');
+      for (let n = session.onionNext; n >= 1; n--) drawOnionFrame(n, 'future');
+    }
+
     ctx.drawImage(session.img, f.sx, f.sy, f.sw, f.sh, 0, 0, dw, dh);
   }
 
@@ -138,6 +201,8 @@
     void session.originY; void session.img; void session.smoothing;
     void session.currentFrame; void session.metadataFrames;
     void session.activeTag;
+    void session.onionEnabled; void session.onionPrev; void session.onionNext;
+    void session.onionOpacity; void session.onionTint;
     render();
   });
 
@@ -190,6 +255,9 @@
       e.preventDefault();
       session.stepFrame();
       session.playing = false;
+    } else if (e.key === 'F3' || e.key === 'f3') {
+      e.preventDefault();
+      session.onionEnabled = !session.onionEnabled;
     }
   }
 
@@ -294,12 +362,50 @@
           {@const s = Math.max(1, Math.floor(Math.min(thumbBudget / f.sw, thumbBudget / f.sh)))}
           {@const dw = f.sw * s}
           {@const dh = f.sh * s}
+          {@const absoluteIdx = playRange.from + i}
+          {@const inRange = visibleRange ? (absoluteIdx >= visibleRange.from && absoluteIdx <= visibleRange.to) : true}
           <button
             type="button"
             data-frame={i}
-            class={`group relative flex shrink-0 flex-col items-center gap-0.5 rounded border ${i === session.currentFrame ? 'border-accent bg-accent/15' : 'border-white/15 hover:border-white/40'}`}
-            onclick={() => { session.currentFrame = i; session.playing = false; }}
-            title={`Frame ${i + 1}`}
+            class={`group relative flex shrink-0 flex-col items-center gap-0.5 rounded border ${i === session.currentFrame ? 'border-accent bg-accent/15' : inRange ? 'border-white/30 hover:border-white/50' : 'border-white/10 opacity-50 hover:opacity-80'}`}
+            onpointerdown={(e) => {
+              if (e.shiftKey) {
+                // Shift-click extends the range end of the existing
+                // selection without starting a new drag.
+                session.rangeStart = Math.min(session.rangeStart, absoluteIdx);
+                session.rangeEnd = Math.max(session.rangeEnd ?? session.rangeStart, absoluteIdx);
+                return;
+              }
+              dragAnchor = absoluteIdx;
+              dragHover = absoluteIdx;
+              session.currentFrame = i;
+              session.playing = false;
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            }}
+            onpointerenter={() => {
+              if (dragAnchor != null) dragHover = absoluteIdx;
+            }}
+            onpointerup={(e) => {
+              if (dragAnchor != null && dragHover != null) {
+                const from = Math.min(dragAnchor, dragHover);
+                const to = Math.max(dragAnchor, dragHover);
+                if (from === to) {
+                  // No-drag click — clear any narrow range so the
+                  // user can re-play the whole sequence by clicking
+                  // a single tile without first resetting.
+                  session.rangeStart = 0;
+                  session.rangeEnd = null;
+                } else {
+                  session.rangeStart = from;
+                  session.rangeEnd = to;
+                  session.currentFrame = 0;
+                }
+                dragAnchor = null;
+                dragHover = null;
+                (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+              }
+            }}
+            title={`Frame ${i + 1} — click to jump · drag to select range · Shift+click to extend`}
           >
             <div class="sprite-checker p-0.5" style:width={`${thumbBudget + 4}px`} style:height={`${thumbBudget + 4}px`}>
               <div class="flex h-full w-full items-center justify-center">
