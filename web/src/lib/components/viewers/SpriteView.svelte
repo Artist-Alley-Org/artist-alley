@@ -51,19 +51,48 @@
   let frameCountOverride = $state<number | null>(null);
   let showGrid = $state(false);
 
-  const cols = $derived(
+  const gridCols = $derived(
     cellW > 0
       ? Math.max(1, Math.floor((imgW - originX + padX) / (cellW + padX)))
       : 1,
   );
-  const rows = $derived(
+  const gridRows = $derived(
     cellH > 0
       ? Math.max(1, Math.floor((imgH - originY + padY) / (cellH + padY)))
       : 1,
   );
-  const frameCount = $derived(
-    Math.max(1, frameCountOverride ?? cols * rows),
-  );
+
+  // ── Companion metadata ────────────────────────────────────────
+  // When the asset has a companion .json sidecar (TexturePacker
+  // JSON Hash / Array, Phaser, Aseprite export), parse it for
+  // explicit frame rects + named animation tags. Metadata wins
+  // over manual grid — slicer hides when frames are loaded.
+  interface FrameRect { name: string; sx: number; sy: number; sw: number; sh: number; duration?: number }
+  interface TagRange { name: string; from: number; to: number; direction?: 'forward' | 'reverse' | 'pingpong' }
+  interface AssetCompanion { id: string; asset_id: string; path: string; content_type: string; size_bytes: number }
+
+  let metadataFrames = $state<FrameRect[] | null>(null);
+  let metadataTags = $state<TagRange[]>([]);
+  let metadataCompanion = $state<AssetCompanion | null>(null);
+  let metadataError = $state<string | null>(null);
+  let metadataLoading = $state(false);
+  // Active tag — when set, playback loops within the tag's [from, to]
+  // range instead of the full frame list. null = play everything.
+  let activeTag = $state<string | null>(null);
+
+  const frames = $derived<FrameRect[] | null>(metadataFrames);
+
+  // Effective playback window: tag range when one is active, else
+  // the whole frame list. Used by stepFrame + the playhead clamp.
+  const playRange = $derived.by(() => {
+    if (frames && activeTag) {
+      const t = metadataTags.find((x) => x.name === activeTag);
+      if (t) return { from: t.from, to: t.to, dir: t.direction ?? 'forward' };
+    }
+    const len = frames ? frames.length : (frameCountOverride ?? gridCols * gridRows);
+    return { from: 0, to: Math.max(0, len - 1), dir: 'forward' as 'forward' | 'reverse' | 'pingpong' };
+  });
+  const frameCount = $derived(Math.max(1, playRange.to - playRange.from + 1));
 
   // ── Playback ──────────────────────────────────────────────────
   let playing = $state(true);
@@ -106,12 +135,20 @@
   let canvasEl: HTMLCanvasElement | undefined = $state();
   let overlayEl: HTMLCanvasElement | undefined = $state();
 
-  function frameRect(idx: number): { sx: number; sy: number; sw: number; sh: number } {
+  // Map a relative index inside the active playRange into a frame
+  // rect. When metadata frames are loaded we index those; otherwise
+  // we walk the manual grid in reading order.
+  function frameRect(relIdx: number): { sx: number; sy: number; sw: number; sh: number } {
+    const idx = playRange.from + relIdx;
+    if (frames && frames.length > 0) {
+      const f = frames[Math.max(0, Math.min(frames.length - 1, idx))];
+      return { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh };
+    }
     if (cellW <= 0 || cellH <= 0) {
       return { sx: 0, sy: 0, sw: imgW, sh: imgH };
     }
-    const c = idx % cols;
-    const r = Math.floor(idx / cols);
+    const c = idx % gridCols;
+    const r = Math.floor(idx / gridCols);
     return {
       sx: originX + c * (cellW + padX),
       sy: originY + r * (cellH + padY),
@@ -144,19 +181,27 @@
     const ctx = overlayEl.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
-    if (!showGrid || cellW <= 0 || cellH <= 0) return;
+    if (!showGrid) return;
     ctx.strokeStyle = 'rgba(255, 100, 100, 0.7)';
     ctx.lineWidth = 1;
-    // Vertical cell boundaries.
-    for (let c = 0; c <= cols; c++) {
+    if (frames && frames.length > 0) {
+      // Metadata mode — draw each frame's exact rect. Lets the user
+      // verify the JSON's frame coords against the artwork.
+      for (const f of frames) {
+        ctx.strokeRect(f.sx * zoom + 0.5, f.sy * zoom + 0.5, f.sw * zoom, f.sh * zoom);
+      }
+      return;
+    }
+    if (cellW <= 0 || cellH <= 0) return;
+    // Manual-grid mode — draw the cell boundaries.
+    for (let c = 0; c <= gridCols; c++) {
       const x = (originX + c * (cellW + padX)) * zoom + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, overlayEl.height);
       ctx.stroke();
     }
-    // Horizontal cell boundaries.
-    for (let r = 0; r <= rows; r++) {
+    for (let r = 0; r <= gridRows; r++) {
       const y = (originY + r * (cellH + padY)) * zoom + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -191,11 +236,11 @@
     void currentFrame;
     render();
   });
-  // Overlay reacts to slicer params + toggle + zoom.
+  // Overlay reacts to slicer params + toggle + zoom + metadata.
   $effect(() => {
     void zoom; void cellW; void cellH; void padX; void padY;
     void originX; void originY; void img; void showGrid;
-    void cols; void rows;
+    void gridCols; void gridRows; void frames;
     renderOverlay();
   });
 
@@ -223,6 +268,7 @@
       kind: 'sprite' as const,
       hudExtra: '',
     };
+    void loadCompanions();
   });
 
   onDestroy(() => {
@@ -243,6 +289,199 @@
     const budget = 640;
     const z = Math.max(1, Math.floor(Math.min(budget / imgW, budget / imgH)));
     zoom = Math.max(1, Math.min(32, z));
+  }
+
+  // ── Companion metadata: fetch + parse ─────────────────────────
+  //
+  // Sidecar formats we recognise:
+  //   - TexturePacker JSON Hash: { frames: { "frame_name": {frame:{x,y,w,h}, ...}, ... }, meta: {...} }
+  //   - TexturePacker / Phaser JSON Array: { frames: [{filename, frame:{x,y,w,h}, ...}], meta: {...} }
+  //   - Aseprite export (same as TP, plus meta.frameTags for named ranges)
+  //
+  // For Hash form we natural-sort entries by key so files named
+  // "walk 0.png", "walk 1.png" ... land in order. For Array form
+  // the JSON's order is authoritative. Frame durations + tag
+  // ranges come straight from the meta block when present.
+
+  // Pick the companion that looks like sprite metadata. Heuristic:
+  // application/json content type, OR file path ending in .json /
+  // .atlas. We don't yet pick "best" if there are several — first
+  // match wins; the user can detach + re-upload if they hit a
+  // disambiguation case (unlikely on a sprite asset).
+  function pickMetadataCompanion(list: AssetCompanion[]): AssetCompanion | null {
+    for (const c of list) {
+      const p = c.path.toLowerCase();
+      if (c.content_type.startsWith('application/json')) return c;
+      if (p.endsWith('.json') || p.endsWith('.atlas')) return c;
+    }
+    return null;
+  }
+
+  // Natural-sort comparator for keys like "walk 0.png", "walk 10.png".
+  function naturalCompare(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  // Convert a parsed JSON blob into our FrameRect[] + TagRange[].
+  // Tolerant: returns null on shape it can't make sense of. Logs
+  // shape mismatches to the metadataError state so the user sees
+  // why their sidecar didn't take.
+  function parseSpriteJSON(text: string): { frames: FrameRect[]; tags: TagRange[] } | null {
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      metadataError = 'Companion JSON failed to parse: ' + (e instanceof Error ? e.message : String(e));
+      return null;
+    }
+    if (!data || typeof data !== 'object') {
+      metadataError = 'Companion JSON is not an object.';
+      return null;
+    }
+    const obj = data as Record<string, unknown>;
+    const rawFrames = obj.frames;
+    const out: FrameRect[] = [];
+    if (Array.isArray(rawFrames)) {
+      // Array form — JSON order is authoritative.
+      for (const entry of rawFrames) {
+        const ef = (entry as Record<string, unknown>);
+        const fr = ef.frame as { x?: number; y?: number; w?: number; h?: number } | undefined;
+        if (!fr || typeof fr.x !== 'number') continue;
+        out.push({
+          name: String(ef.filename ?? ef.name ?? out.length),
+          sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
+          duration: typeof ef.duration === 'number' ? ef.duration : undefined,
+        });
+      }
+    } else if (rawFrames && typeof rawFrames === 'object') {
+      // Hash form — natural-sort entries by key.
+      const entries = Object.entries(rawFrames as Record<string, unknown>);
+      entries.sort((a, b) => naturalCompare(a[0], b[0]));
+      for (const [name, entry] of entries) {
+        const ef = entry as Record<string, unknown>;
+        const fr = ef.frame as { x?: number; y?: number; w?: number; h?: number } | undefined;
+        if (!fr || typeof fr.x !== 'number') continue;
+        out.push({
+          name,
+          sx: fr.x, sy: fr.y ?? 0, sw: fr.w ?? 0, sh: fr.h ?? 0,
+          duration: typeof ef.duration === 'number' ? ef.duration : undefined,
+        });
+      }
+    } else {
+      metadataError = 'Companion JSON has no `frames` field; not a sprite atlas.';
+      return null;
+    }
+    if (out.length === 0) {
+      metadataError = 'Companion JSON had no valid frame rects.';
+      return null;
+    }
+    // Tag ranges from Aseprite-style `meta.frameTags`.
+    const meta = (obj.meta ?? {}) as Record<string, unknown>;
+    const rawTags = (meta.frameTags ?? []) as unknown[];
+    const tags: TagRange[] = [];
+    for (const t of rawTags) {
+      const tg = t as Record<string, unknown>;
+      if (typeof tg.from === 'number' && typeof tg.to === 'number') {
+        tags.push({
+          name: String(tg.name ?? `tag ${tags.length + 1}`),
+          from: tg.from,
+          to: tg.to,
+          direction: tg.direction === 'reverse' || tg.direction === 'pingpong' ? tg.direction : 'forward',
+        });
+      }
+    }
+    return { frames: out, tags };
+  }
+
+  // Fetch the companion list + parse metadata if present. Called
+  // at mount; also re-called after the user uploads a fresh
+  // sidecar so the parsed frames refresh without a reload.
+  async function loadCompanions() {
+    metadataError = null;
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}/companions`, { credentials: 'include' });
+      if (!r.ok) return;
+      const list = (await r.json()) as AssetCompanion[];
+      const meta = pickMetadataCompanion(list);
+      if (!meta) return;
+      const rr = await fetch(`/api/v1/assets/${asset.id}/companions/${meta.id}`, { credentials: 'include' });
+      if (!rr.ok) {
+        metadataError = `Companion fetch failed: HTTP ${rr.status}`;
+        return;
+      }
+      const text = await rr.text();
+      const parsed = parseSpriteJSON(text);
+      if (parsed) {
+        metadataCompanion = meta;
+        metadataFrames = parsed.frames;
+        metadataTags = parsed.tags;
+        // Recommend FPS from the first frame's duration if metadata
+        // provides one (Aseprite-style per-frame ms). Otherwise leave
+        // the user's setting alone.
+        const d = parsed.frames[0]?.duration;
+        if (d && d > 0) fps = Math.max(0.5, Math.min(60, 1000 / d));
+      }
+    } catch (e) {
+      metadataError = 'Companion load error: ' + (e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  // Detach the current metadata companion. Reverts the view to
+  // manual-grid mode. Server-side the companion row is deleted +
+  // its storage pin removed.
+  async function detachMetadata() {
+    if (!metadataCompanion) return;
+    metadataLoading = true;
+    try {
+      await fetch(`/api/v1/assets/${asset.id}/companions/${metadataCompanion.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+    } finally {
+      metadataCompanion = null;
+      metadataFrames = null;
+      metadataTags = [];
+      activeTag = null;
+      metadataLoading = false;
+    }
+  }
+
+  // Upload a .json sidecar as a companion. Mirrors the existing
+  // 3D-model companion flow: octet-stream PUT-like POST with an
+  // X-Companion-Path header carrying the relative filename. After
+  // upload we re-fetch the companion list to pick the new entry.
+  let metadataInput: HTMLInputElement | undefined = $state();
+  async function uploadMetadataFile(file: File) {
+    metadataLoading = true;
+    metadataError = null;
+    try {
+      const r = await fetch(`/api/v1/assets/${asset.id}/companions`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Companion-Path': file.name,
+          'X-Content-Type': file.type || 'application/json',
+        },
+        body: file,
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+        metadataError = (j as { error?: string }).error ?? `Upload failed (HTTP ${r.status})`;
+        return;
+      }
+      await loadCompanions();
+    } catch (e) {
+      metadataError = 'Upload error: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      metadataLoading = false;
+    }
+  }
+  function onMetadataPick(e: Event) {
+    const t = e.currentTarget as HTMLInputElement;
+    const f = t.files?.[0];
+    t.value = '';
+    if (f) void uploadMetadataFile(f);
   }
 </script>
 
@@ -360,7 +599,89 @@
       </div>
     </section>
 
-    <!-- Slicer -->
+    <!-- Metadata sidecar -->
+    <section class="border-b border-white/10 p-3">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-white/40">Metadata</h3>
+      {#if metadataCompanion}
+        <div class="rounded border border-accent/40 bg-accent/10 p-2 text-[10px]">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-mono text-white/90" title={metadataCompanion.path}>{metadataCompanion.path}</div>
+              <div class="text-white/50">{frames?.length ?? 0} frames{metadataTags.length ? ` · ${metadataTags.length} tags` : ''}</div>
+            </div>
+            <button
+              type="button"
+              onclick={detachMetadata}
+              disabled={metadataLoading}
+              class="text-white/40 hover:text-danger disabled:opacity-40"
+              title="Detach metadata + revert to manual grid"
+            >Detach</button>
+          </div>
+        </div>
+      {:else}
+        <p class="mb-2 text-[10px] leading-snug text-white/50">
+          Drop a sprite-atlas <span class="font-mono text-white/70">.json</span>
+          (TexturePacker / Phaser / Aseprite export) to skip the manual slicer.
+          Frame rects + animation tags come straight from the file.
+        </p>
+        <button
+          type="button"
+          onclick={() => metadataInput?.click()}
+          disabled={metadataLoading}
+          class="w-full rounded border border-white/15 bg-[#0f1117] px-2 py-1 text-[10px] text-white/80 hover:border-white/40 hover:text-white disabled:opacity-40"
+        >{metadataLoading ? 'Uploading…' : 'Upload metadata JSON…'}</button>
+        <input
+          bind:this={metadataInput}
+          type="file"
+          accept=".json,application/json"
+          class="hidden"
+          onchange={onMetadataPick}
+        />
+      {/if}
+      {#if metadataError}
+        <div class="mt-2 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
+          {metadataError}
+        </div>
+      {/if}
+    </section>
+
+    <!-- Tag picker (only when metadata supplies tag ranges) -->
+    {#if metadataTags.length > 0}
+      <section class="border-b border-white/10 p-3">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-white/40">Animations</h3>
+        <div class="space-y-1">
+          <button
+            type="button"
+            onclick={() => { activeTag = null; currentFrame = 0; pingDir = 1; }}
+            class={`block w-full rounded border px-2 py-1 text-left text-[10px] ${activeTag === null ? 'border-accent bg-accent/20 text-white' : 'border-white/15 text-white/60 hover:border-white/40 hover:text-white'}`}
+          >All frames <span class="float-right font-mono text-white/40">{frames?.length ?? 0}</span></button>
+          {#each metadataTags as t (t.name)}
+            <button
+              type="button"
+              onclick={() => {
+                activeTag = t.name;
+                currentFrame = 0;
+                pingDir = 1;
+                // Honour the tag's preferred direction if the
+                // exporter set one — Aseprite tags carry forward /
+                // reverse / pingpong, and "play the tag as authored"
+                // beats "use the global loop pref" here.
+                if (t.direction === 'pingpong') loopMode = 'pingpong';
+                else if (t.direction === 'forward' || t.direction === 'reverse') loopMode = 'forward';
+              }}
+              class={`block w-full rounded border px-2 py-1 text-left text-[10px] ${activeTag === t.name ? 'border-accent bg-accent/20 text-white' : 'border-white/15 text-white/60 hover:border-white/40 hover:text-white'}`}
+            >
+              {t.name}
+              <span class="float-right font-mono text-white/40">{t.from}\u2013{t.to}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    <!-- Slicer — only when no metadata is loaded; metadata mode owns
+         frame definitions and the manual grid would just confuse. -->
+    {#if !frames}
     <section class="border-b border-white/10 p-3">
       <div class="mb-2 flex items-center justify-between">
         <h3 class="text-[10px] font-medium uppercase tracking-wider text-white/40">Slice grid</h3>
@@ -396,19 +717,19 @@
         </label>
       </div>
       <div class="mt-2 flex items-center justify-between text-[10px] text-white/50">
-        <span>Grid <span class="font-mono text-white/70">{cols} × {rows}</span></span>
-        <span>Total <span class="font-mono text-white/70">{cols * rows}</span></span>
+        <span>Grid <span class="font-mono text-white/70">{gridCols} × {gridRows}</span></span>
+        <span>Total <span class="font-mono text-white/70">{gridCols * gridRows}</span></span>
       </div>
       <label class="mt-2 flex items-center gap-2 text-[10px]">
         <span class="text-white/50">Limit frames</span>
         <input
           type="number"
           min="1"
-          max={cols * rows}
+          max={gridCols * gridRows}
           value={frameCountOverride ?? ''}
           oninput={(e) => {
             const v = (e.currentTarget as HTMLInputElement).value;
-            frameCountOverride = v === '' ? null : Math.max(1, Math.min(cols * rows, parseInt(v, 10) || 1));
+            frameCountOverride = v === '' ? null : Math.max(1, Math.min(gridCols * gridRows, parseInt(v, 10) || 1));
           }}
           placeholder="auto"
           class="w-16 rounded border border-white/15 bg-[#0f1117] px-1.5 py-0.5 text-white"
@@ -423,6 +744,16 @@
         {/if}
       </label>
     </section>
+    {:else}
+    <!-- Metadata mode owns slicing; keep a "Show frame boxes" toggle
+         so users can verify the JSON's coords against the artwork. -->
+    <section class="border-b border-white/10 p-3">
+      <label class="flex items-center justify-between text-[10px] text-white/60">
+        <span>Show frame boxes</span>
+        <input type="checkbox" bind:checked={showGrid} class="accent-accent" />
+      </label>
+    </section>
+    {/if}
 
     <!-- Playback -->
     <section class="p-3">
