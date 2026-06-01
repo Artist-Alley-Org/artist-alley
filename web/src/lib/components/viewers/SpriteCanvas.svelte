@@ -332,6 +332,50 @@
           class="block"
           style:image-rendering={session.smoothing ? 'auto' : 'pixelated'}
         ></canvas>
+        <!-- Slice overlay — Aseprite-style coloured rects on top
+             of the current frame. Each slice is mapped from sheet
+             coords into the frame's local space by subtracting
+             the frame's source-rect origin. Only slices that
+             intersect the current frame's bounds render here so
+             the user sees what's relevant per frame. -->
+        {#if session.slices.length > 0}
+          {@const f = frameRect(session.currentFrame)}
+          <svg
+            class="pointer-events-none absolute inset-0"
+            width={f.sw * session.zoom}
+            height={f.sh * session.zoom}
+            viewBox={`0 0 ${f.sw} ${f.sh}`}
+            preserveAspectRatio="none"
+          >
+            {#each session.slices as s (s.name)}
+              {@const sx = s.bounds.x - f.sx}
+              {@const sy = s.bounds.y - f.sy}
+              {@const visible = sx + s.bounds.w > 0 && sy + s.bounds.h > 0 && sx < f.sw && sy < f.sh}
+              {#if visible}
+                <rect
+                  x={sx}
+                  y={sy}
+                  width={s.bounds.w}
+                  height={s.bounds.h}
+                  fill="none"
+                  stroke={s.color ?? '#00ff00'}
+                  stroke-width={session.activeSlice === s.name ? 2 : 1}
+                  vector-effect="non-scaling-stroke"
+                />
+                {#if s.pivot}
+                  <circle
+                    cx={s.pivot.x - f.sx}
+                    cy={s.pivot.y - f.sy}
+                    r={3 / session.zoom}
+                    fill={s.color ?? '#00ff00'}
+                    stroke="black"
+                    stroke-width={1 / session.zoom}
+                  />
+                {/if}
+              {/if}
+            {/each}
+          </svg>
+        {/if}
       </div>
     </div>
     <div class="mt-3 flex shrink-0 items-center gap-4 text-xs text-white/60">

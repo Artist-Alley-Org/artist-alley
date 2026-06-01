@@ -25,6 +25,21 @@ export interface SpriteTagRange {
   direction?: 'forward' | 'reverse' | 'pingpong';
 }
 
+// Aseprite-compatible slice (region annotation on the sheet).
+// `bounds` is the slice rect in sheet pixels; `center` is an
+// optional 9-patch inner rect; `pivot` is an optional anchor
+// point for rotation / placement. We only support a single
+// keyframe per slice in v1 — Aseprite's multi-key slices
+// (different bounds per frame) are a follow-on.
+export interface SpriteSlice {
+  name: string;
+  /** CSS colour for the overlay (defaults to the accent if unset). */
+  color?: string;
+  bounds: { x: number; y: number; w: number; h: number };
+  center?: { x: number; y: number; w: number; h: number };
+  pivot?: { x: number; y: number };
+}
+
 export interface SpriteCompanion {
   id: string;
   asset_id: string;
@@ -109,16 +124,20 @@ export interface SpriteSession {
   analysis: SheetAnalysis | null;
 
   // ── Onion skinning (Aseprite parity) ─────────────────────────
-  // Show N previous + M next frames behind the current frame at
-  // low opacity to help compare motion across nearby frames. F3
-  // toggles. Aseprite tints prev frames red and next frames blue
-  // by default — we match that since it's the colour mnemonic
-  // pixel artists already know.
   onionEnabled: boolean;
   onionPrev: number;
   onionNext: number;
   onionOpacity: number;
   onionTint: boolean;
+
+  // ── Slices (Aseprite parity) ─────────────────────────────────
+  // Named region annotations on the sheet. Aseprite uses them
+  // for UI 9-patches, hit boxes, pivot points, etc. Stored
+  // alongside metadataFrames + metadataTags in the companion
+  // JSON's `meta.slices` array on save.
+  slices: SpriteSlice[];
+  /** UI-only — which slice's rect is highlighted on the canvas. */
+  activeSlice: string | null;
 }
 
 /** Asset id this session was created for. Lets the panel call the
@@ -166,6 +185,14 @@ export interface SpriteSessionMethods {
    *  persist across reloads. If a companion is already loaded,
    *  this REPLACES it (detach + re-upload). */
   saveTagsAsCompanion(): Promise<void>;
+  /** Add a new slice. Bounds default to a 32×32 square at the
+   *  origin; caller updates them via direct field edits. */
+  addSlice(name: string): void;
+  removeSlice(name: string): void;
+  /** Replace an existing slice (matched by `prevName`) with a new
+   *  one. Used by the panel's per-field editors so a rename or
+   *  bounds edit propagates through the same path as add. */
+  updateSlice(prevName: string, next: SpriteSlice): void;
 }
 
 export type SpriteSessionInstance = SpriteSession & SpriteSessionMethods & { assetId: string };
@@ -225,6 +252,9 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     onionNext: 2,
     onionOpacity: 0.35,
     onionTint: true,
+
+    slices: [],
+    activeSlice: null,
   });
 
   // ── Companion / metadata helpers ─────────────────────────────
@@ -243,7 +273,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     return null;
   }
 
-  function parseSpriteJSON(text: string): { frames: SpriteFrameRect[]; tags: SpriteTagRange[] } | null {
+  function parseSpriteJSON(text: string): { frames: SpriteFrameRect[]; tags: SpriteTagRange[]; slices: SpriteSlice[] } | null {
     let data: unknown;
     try { data = JSON.parse(text); }
     catch (e) {
@@ -304,7 +334,33 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
         });
       }
     }
-    return { frames: out, tags };
+    // Slices — Aseprite-style { name, color, keys: [{ frame,
+    // bounds, center, pivot }] }. We only honour the first key
+    // (per-frame slice variations land in a follow-up).
+    const rawSlices = (meta.slices ?? []) as unknown[];
+    const slices: SpriteSlice[] = [];
+    for (const s of rawSlices) {
+      const sl = s as Record<string, unknown>;
+      const keys = sl.keys as Array<Record<string, unknown>> | undefined;
+      const k0 = keys?.[0];
+      const bounds = (k0?.bounds ?? sl.bounds) as { x?: number; y?: number; w?: number; h?: number } | undefined;
+      if (!bounds || typeof bounds.x !== 'number') continue;
+      const slice: SpriteSlice = {
+        name: String(sl.name ?? `slice ${slices.length + 1}`),
+        color: typeof sl.color === 'string' ? sl.color : undefined,
+        bounds: { x: bounds.x, y: bounds.y ?? 0, w: bounds.w ?? 0, h: bounds.h ?? 0 },
+      };
+      const center = k0?.center as { x?: number; y?: number; w?: number; h?: number } | undefined;
+      if (center && typeof center.x === 'number') {
+        slice.center = { x: center.x, y: center.y ?? 0, w: center.w ?? 0, h: center.h ?? 0 };
+      }
+      const pivot = k0?.pivot as { x?: number; y?: number } | undefined;
+      if (pivot && typeof pivot.x === 'number') {
+        slice.pivot = { x: pivot.x, y: pivot.y ?? 0 };
+      }
+      slices.push(slice);
+    }
+    return { frames: out, tags, slices };
   }
 
   async function loadCompanions() {
@@ -326,6 +382,7 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
         state.metadataCompanion = meta;
         state.metadataFrames = parsed.frames;
         state.metadataTags = parsed.tags;
+        state.slices = parsed.slices;
         const d = parsed.frames[0]?.duration;
         if (d && d > 0) state.fps = Math.max(0.5, Math.min(60, 1000 / d));
       }
@@ -347,6 +404,8 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
       state.metadataFrames = null;
       state.metadataTags = [];
       state.activeTag = null;
+      state.slices = [];
+      state.activeSlice = null;
       state.metadataLoading = false;
     }
   }
@@ -515,6 +574,16 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
             to: t.to,
             direction: t.direction ?? 'forward',
           })),
+          slices: state.slices.map((s) => ({
+            name: s.name,
+            color: s.color ?? '#00ff00ff',
+            keys: [{
+              frame: 0,
+              bounds: s.bounds,
+              ...(s.center ? { center: s.center } : {}),
+              ...(s.pivot ? { pivot: s.pivot } : {}),
+            }],
+          })),
         },
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -524,6 +593,33 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
       state.metadataError = 'Tag save error: ' + (e instanceof Error ? e.message : String(e));
     } finally {
       state.metadataLoading = false;
+    }
+  }
+
+  function addSlice(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    // Skip if a slice with the same name already exists — the
+    // user must rename via updateSlice before adding a duplicate.
+    if (state.slices.some((s) => s.name === trimmed)) return;
+    const next: SpriteSlice = {
+      name: trimmed,
+      color: '#00ff00ff',
+      bounds: { x: 0, y: 0, w: Math.min(32, state.imgW), h: Math.min(32, state.imgH) },
+    };
+    state.slices = [...state.slices, next];
+    state.activeSlice = trimmed;
+  }
+
+  function removeSlice(name: string) {
+    state.slices = state.slices.filter((s) => s.name !== name);
+    if (state.activeSlice === name) state.activeSlice = null;
+  }
+
+  function updateSlice(prevName: string, next: SpriteSlice) {
+    state.slices = state.slices.map((s) => (s.name === prevName ? next : s));
+    if (state.activeSlice === prevName && next.name !== prevName) {
+      state.activeSlice = next.name;
     }
   }
 
@@ -674,5 +770,8 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     addTag,
     removeTag,
     saveTagsAsCompanion,
+    addSlice,
+    removeSlice,
+    updateSlice,
   });
 }

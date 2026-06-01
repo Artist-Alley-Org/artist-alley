@@ -63,6 +63,16 @@
     newTagName = '';
   }
 
+  // Slice composer — name + Add. Bounds default at the session
+  // factory; user adjusts via the per-slice editor row.
+  let newSliceName = $state('');
+  function onAddSlice() {
+    const name = newSliceName.trim();
+    if (!name) return;
+    session.addSlice(name);
+    newSliceName = '';
+  }
+
   async function doExportGIF() {
     if (!session.img) return;
     exportBusy = true;
@@ -705,6 +715,140 @@
         </div>
       </div>
     </section>
+
+    <!-- Slices — Aseprite-style region annotations on the sheet.
+         9-patch / pivot / bounds, all persisted as part of the
+         companion JSON's meta.slices array. Always shown when a
+         sheet is loaded; works with or without companion-metadata
+         frames. -->
+    {#if session.img}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Slices</h3>
+        {#if session.slices.length === 0}
+          <p class="mb-2 text-[10px] leading-snug text-fg-muted">
+            Region annotations on the sheet — useful for hit-box,
+            9-patch UI, or pivot anchors. Hover the canvas to see
+            each slice; edit bounds in the list below.
+          </p>
+        {/if}
+        <div class="space-y-1.5">
+          {#each session.slices as s (s.name)}
+            {@const active = session.activeSlice === s.name}
+            <div class={`rounded border ${active ? 'border-accent bg-accent/10' : 'border-border'} p-1.5`}>
+              <div class="flex items-center gap-1">
+                <button
+                  type="button"
+                  onclick={() => (session.activeSlice = active ? null : s.name)}
+                  class="h-3 w-3 rounded-sm border border-black/40"
+                  style:background-color={s.color ?? '#00ff00'}
+                  title="Toggle highlight"
+                  aria-label="Slice colour swatch"
+                ></button>
+                <input
+                  type="text"
+                  value={s.name}
+                  onchange={(e) => session.updateSlice(s.name, { ...s, name: (e.currentTarget as HTMLInputElement).value })}
+                  class="flex-1 rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onclick={() => session.removeSlice(s.name)}
+                  class="text-[10px] text-fg-muted hover:text-danger"
+                  title="Delete slice"
+                  aria-label="Delete slice"
+                >×</button>
+              </div>
+              <div class="mt-1 grid grid-cols-4 gap-1 text-[10px]">
+                {#each [
+                  { k: 'x' as const, label: 'X' },
+                  { k: 'y' as const, label: 'Y' },
+                  { k: 'w' as const, label: 'W' },
+                  { k: 'h' as const, label: 'H' },
+                ] as field (field.k)}
+                  <label class="flex flex-col">
+                    <span class="text-fg-muted/70">{field.label}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={s.bounds[field.k]}
+                      oninput={(e) => {
+                        const v = parseInt((e.currentTarget as HTMLInputElement).value, 10) || 0;
+                        session.updateSlice(s.name, { ...s, bounds: { ...s.bounds, [field.k]: v } });
+                      }}
+                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                    />
+                  </label>
+                {/each}
+              </div>
+              <!-- Pivot (optional) -->
+              <details class="mt-1">
+                <summary class="cursor-pointer text-[10px] text-fg-muted hover:text-fg">Pivot / 9-patch</summary>
+                <div class="mt-1 grid grid-cols-2 gap-1 text-[10px]">
+                  <label class="flex flex-col">
+                    <span class="text-fg-muted/70">Pivot X</span>
+                    <input
+                      type="number"
+                      value={s.pivot?.x ?? ''}
+                      placeholder="—"
+                      oninput={(e) => {
+                        const raw = (e.currentTarget as HTMLInputElement).value;
+                        const v = raw === '' ? null : parseInt(raw, 10) || 0;
+                        const pivot = v === null ? undefined : { x: v, y: s.pivot?.y ?? 0 };
+                        session.updateSlice(s.name, { ...s, pivot });
+                      }}
+                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                    />
+                  </label>
+                  <label class="flex flex-col">
+                    <span class="text-fg-muted/70">Pivot Y</span>
+                    <input
+                      type="number"
+                      value={s.pivot?.y ?? ''}
+                      placeholder="—"
+                      oninput={(e) => {
+                        const raw = (e.currentTarget as HTMLInputElement).value;
+                        const v = raw === '' ? null : parseInt(raw, 10) || 0;
+                        const pivot = v === null ? undefined : { x: s.pivot?.x ?? 0, y: v };
+                        session.updateSlice(s.name, { ...s, pivot });
+                      }}
+                      class="rounded border border-border bg-surface px-1 py-0.5 text-fg"
+                    />
+                  </label>
+                </div>
+                <p class="mt-1 text-[10px] leading-snug text-fg-muted/70">
+                  9-patch centre rect lands in a follow-up; pivot
+                  + bounds round-trip through Aseprite-compatible
+                  JSON already.
+                </p>
+              </details>
+            </div>
+          {/each}
+        </div>
+        <div class="mt-2 flex items-center gap-1">
+          <input
+            type="text"
+            bind:value={newSliceName}
+            placeholder="New slice name…"
+            class="flex-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg focus:border-accent focus:outline-none"
+            onkeydown={(e) => { if (e.key === 'Enter') onAddSlice(); }}
+          />
+          <button
+            type="button"
+            onclick={onAddSlice}
+            disabled={!newSliceName.trim()}
+            class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-40"
+          >Add</button>
+        </div>
+        {#if session.slices.length > 0 && session.metadataFrames}
+          <button
+            type="button"
+            onclick={() => session.saveTagsAsCompanion()}
+            disabled={session.metadataLoading}
+            class="mt-2 w-full rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-fg-muted disabled:opacity-40"
+          >{session.metadataLoading ? 'Saving…' : 'Save slices to companion JSON'}</button>
+        {/if}
+      </section>
+    {/if}
 
     <!-- Onion skin — show prev / next frames at low opacity behind
          the current frame so the animator can compare nearby
