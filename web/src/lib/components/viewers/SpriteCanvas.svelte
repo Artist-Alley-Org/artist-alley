@@ -22,6 +22,32 @@
 
   let loadError = $state<string | null>(null);
   let canvasEl: HTMLCanvasElement | undefined = $state();
+  let stripEl: HTMLDivElement | undefined = $state();
+
+  // Svelte action that paints one frame thumbnail into a per-tile
+  // <canvas>. Re-runs when the frame rect or scale changes so the
+  // strip stays in sync with the slicer.
+  function thumbCanvas(node: HTMLCanvasElement, params: { frame: { sx: number; sy: number; sw: number; sh: number }; scale: number }) {
+    function paint() {
+      if (!session.img) return;
+      const dw = params.frame.sw * params.scale;
+      const dh = params.frame.sh * params.scale;
+      node.width = Math.max(1, dw);
+      node.height = Math.max(1, dh);
+      const ctx = node.getContext('2d');
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, node.width, node.height);
+      ctx.drawImage(session.img, params.frame.sx, params.frame.sy, params.frame.sw, params.frame.sh, 0, 0, dw, dh);
+    }
+    paint();
+    return {
+      update(next: { frame: { sx: number; sy: number; sw: number; sh: number }; scale: number }) {
+        params = next;
+        paint();
+      },
+    };
+  }
 
   // ── Derived counts (mirror of session.stepFrame's math) ──────
   const gridCols = $derived(
@@ -118,6 +144,26 @@
   // Clamp currentFrame when the frame count shrinks underneath.
   $effect(() => {
     if (session.currentFrame >= frameCount) session.currentFrame = 0;
+  });
+
+  // Auto-scroll the timeline strip so the active frame stays in
+  // view during playback. Without this, a long animation scrolls
+  // off the right edge and the user can't see which frame is
+  // playing without manually scrolling the strip.
+  $effect(() => {
+    void session.currentFrame;
+    if (!stripEl) return;
+    const tile = stripEl.querySelector(`[data-frame="${session.currentFrame}"]`) as HTMLElement | null;
+    if (!tile) return;
+    const tileLeft = tile.offsetLeft;
+    const tileRight = tileLeft + tile.offsetWidth;
+    const viewLeft = stripEl.scrollLeft;
+    const viewRight = viewLeft + stripEl.clientWidth;
+    if (tileLeft < viewLeft) {
+      stripEl.scrollTo({ left: tileLeft - 16, behavior: 'smooth' });
+    } else if (tileRight > viewRight) {
+      stripEl.scrollTo({ left: tileRight - stripEl.clientWidth + 16, behavior: 'smooth' });
+    }
   });
 
   // Sprite-scoped hotkeys: Space toggles play, `,`/`.` step frames.
@@ -229,6 +275,47 @@
         <span class="text-white/30">single frame — set cell size in the side panel to slice</span>
       {/if}
     </div>
+
+    <!-- Frame timeline strip — Aseprite-style horizontal thumbnail
+         row at the bottom of the canvas area. Each tile is the
+         frame's source rect drawn at a fixed thumbnail size.
+         Click → jumps to the frame + pauses. Active frame gets an
+         accent border. Auto-scrolls so the active tile stays in
+         view during playback. -->
+    {#if frameCount > 1}
+      <div
+        bind:this={stripEl}
+        class="mt-2 flex shrink-0 items-center gap-1 overflow-x-auto border-t border-white/10 pt-2"
+        style:scrollbar-width="thin"
+      >
+        {#each Array(frameCount) as _, i (i)}
+          {@const f = frameRect(i)}
+          {@const thumbBudget = 56}
+          {@const s = Math.max(1, Math.floor(Math.min(thumbBudget / f.sw, thumbBudget / f.sh)))}
+          {@const dw = f.sw * s}
+          {@const dh = f.sh * s}
+          <button
+            type="button"
+            data-frame={i}
+            class={`group relative flex shrink-0 flex-col items-center gap-0.5 rounded border ${i === session.currentFrame ? 'border-accent bg-accent/15' : 'border-white/15 hover:border-white/40'}`}
+            onclick={() => { session.currentFrame = i; session.playing = false; }}
+            title={`Frame ${i + 1}`}
+          >
+            <div class="sprite-checker p-0.5" style:width={`${thumbBudget + 4}px`} style:height={`${thumbBudget + 4}px`}>
+              <div class="flex h-full w-full items-center justify-center">
+                <canvas
+                  width={dw}
+                  height={dh}
+                  style:image-rendering="pixelated"
+                  use:thumbCanvas={{ frame: f, scale: s }}
+                ></canvas>
+              </div>
+            </div>
+            <span class="px-1 pb-0.5 font-mono text-[9px] leading-none text-white/50">{i + 1}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>
 
