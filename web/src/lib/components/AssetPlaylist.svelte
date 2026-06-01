@@ -124,7 +124,6 @@
   // captures input (orbit / pan / scrub) and swaps the right pane to
   // its kind-aware tools panel. Toggled by the Review button or by
   // double-clicking the asset.
-  let reviewMode = $state(false);
 
   // Pane open/closed state for AssetViewer's right pane. Bindable
   // through so we can drive it from the 'i' hotkey here and persist
@@ -360,21 +359,10 @@
         paneCollapsed = !paneCollapsed;
         break;
       case 'Escape':
-        if (reviewMode) {
-          e.preventDefault();
-          reviewMode = false;
-        }
-        // ESC outside review falls through to the dialog's native
-        // close behaviour (platform's "ESC closes dialog").
+        // ESC falls through to the dialog's native close behaviour
+        // (platform's "ESC closes dialog").
         break;
     }
-  }
-
-  function enterReview() {
-    reviewMode = true;
-  }
-  function exitReview() {
-    reviewMode = false;
   }
 
   function toggleStrip() {
@@ -453,7 +441,6 @@
             <AssetViewer
               asset={currentItem.asset}
               active={true}
-              bind:reviewMode
               bind:paneCollapsed
               bind:paneCompact
               metadataSlot={contextSlot}

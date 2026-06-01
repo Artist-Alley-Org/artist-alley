@@ -21,7 +21,6 @@
   interface Props {
     asset: ViewAsset;
     controller: ViewController;
-    reviewMode: boolean;
     paneCollapsed: boolean;
     paneEnabled: boolean;
     isFullscreen: boolean;
@@ -36,7 +35,6 @@
     onResetView: () => void;
     onToggleFullscreen: () => void;
     onTogglePane: () => void;
-    onToggleReview: () => void;
     /** Optional — when set, ViewerMenuBar shows a close button in the
         window-controls zone (right edge) AND a "Close" entry in the
         File menu. Hosts that own their own close affordance omit this. */
@@ -65,12 +63,18 @@
     /** Currently-on state for the Whiteboard toggle (drives the
         Tools-menu checkmark). */
     whiteboardOpen?: boolean;
+    /** Tools-menu "Slice as sprite" override — lets the user open
+        SpriteView's slicer + playback tools on any raster image
+        regardless of its asset_type. AssetViewer flips the entry
+        on for image-kind assets and off for everything else. */
+    canSliceAsSprite?: boolean;
+    sliceAsSpriteOn?: boolean;
+    onToggleSliceAsSprite?: () => void;
   }
 
   let {
     asset,
     controller,
-    reviewMode,
     paneCollapsed,
     paneEnabled,
     isFullscreen,
@@ -80,7 +84,6 @@
     onResetView,
     onToggleFullscreen,
     onTogglePane,
-    onToggleReview,
     onClose,
     onAddToCollection,
     onRecreatePreviews,
@@ -91,6 +94,9 @@
     onDeleteAsset,
     onToggleWhiteboard,
     whiteboardOpen = false,
+    canSliceAsSprite = false,
+    sliceAsSpriteOn = false,
+    onToggleSliceAsSprite,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -111,7 +117,7 @@
   // Tools-dropdown "any tool currently active" indicator — drives a
   // subtle tint on the dropdown trigger so the user can see "something
   // is on" from a closed bar.
-  const toolsActive = $derived(reviewMode || whiteboardOpen);
+  const toolsActive = $derived(whiteboardOpen);
 
   // ── Actions ───────────────────────────────────────────────────────
   function downloadOriginal() {
@@ -395,24 +401,10 @@
         <span class="hidden text-xs md:inline">{t('viewer_menu.tools')}</span>
       </span>
     {/snippet}
-    <!-- Review mode item -->
-    <button
-      type="button"
-      role="menuitem"
-      onclick={onToggleReview}
-      class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
-    >
-      <span class="inline-flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7" />
-          <path d="m21 21-4.3-4.3" />
-        </svg>
-        {t('viewer_menu.review')}
-      </span>
-      {#if reviewMode}
-        <span class="text-accent">●</span>
-      {/if}
-    </button>
+    <!-- "Review" toggle retired — tool panels are always visible
+         for kinds that have them (3D / sprite / etc.). The Tools
+         menu still surfaces the side-panel toggle (above) so users
+         can collapse the pane for more canvas room. -->
     <!-- Whiteboard item — disabled when the host hasn't wired one
          (e.g. the standalone /assets/[id] route has no post to bind
          a whiteboard to). -->
@@ -452,6 +444,35 @@
           </svg>
           {t('viewer_menu.whiteboard')}
         </span>
+      </button>
+    {/if}
+    <!-- "Slice as sprite" — only meaningful for raster images.
+         Lets the user open SpriteView's slicer + playback tools on
+         a regular PNG (e.g. a sprite sheet that's typed as Image
+         because the uploader didn't tag it as Sprite). Resets on
+         asset change so it doesn't leak across navigation. -->
+    {#if onToggleSliceAsSprite}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={onToggleSliceAsSprite}
+        disabled={!canSliceAsSprite && !sliceAsSpriteOn}
+        class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated disabled:cursor-not-allowed disabled:text-fg-muted disabled:opacity-60"
+        title={(!canSliceAsSprite && !sliceAsSpriteOn) ? 'Sprite slicing is only enabled for PNG images' : ''}
+      >
+        <span class="inline-flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <!-- Grid icon — reads as "slice into cells" -->
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+          </svg>
+          Slice as sprite
+        </span>
+        {#if sliceAsSpriteOn}
+          <span class="text-accent">●</span>
+        {/if}
       </button>
     {/if}
     <!-- Reserved slots for the next phases — disabled placeholders so

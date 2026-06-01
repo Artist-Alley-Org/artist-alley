@@ -33,7 +33,10 @@
     reviewMode?: boolean;
   }
 
-  let { asset, controller = $bindable(), reviewMode = false }: Props = $props();
+  // Review-mode gating was retired in the viewer; orbit controls
+  // are always enabled for 3D. Prop default flipped to true so any
+  // caller that's stopped passing it still gets working orbit.
+  let { asset, controller = $bindable(), reviewMode = true }: Props = $props();
 
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
   const ext = $derived((asset.file_extension || '').toLowerCase().replace(/^\./, ''));

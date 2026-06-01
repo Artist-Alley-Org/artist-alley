@@ -37,6 +37,7 @@ export interface PostForPlaylist {
       title?: string;
       file_hash?: string | null;
       file_extension?: string | null;
+      asset_type?: number | null;
       metadata?: Record<string, unknown> | null;
     };
   }>;
@@ -128,6 +129,7 @@ export function createPostPlaylistSource(postId: string) {
             title: m.asset?.title ?? '',
             file_extension: m.asset?.file_extension ?? null,
             file_hash: m.asset?.file_hash ?? null,
+            asset_type: m.asset?.asset_type ?? null,
             metadata: m.asset?.metadata ?? null,
           },
         }),

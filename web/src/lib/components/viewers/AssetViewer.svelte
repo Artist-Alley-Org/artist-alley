@@ -17,7 +17,9 @@
   import ModelView from './ModelView.svelte';
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
-  import SpriteView from './SpriteView.svelte';
+  import SpriteCanvas from './SpriteCanvas.svelte';
+  import SpriteToolPanel from './SpriteToolPanel.svelte';
+  import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
 
@@ -40,13 +42,6 @@
     active?: boolean;
     /** True once the host (e.g. PostModal) has explicitly entered
         review mode. Review mode swaps the right pane from metadata
-        to the per-kind tools panel and turns on review-only
-        affordances (3D wireframe toggle, exposure sliders, etc).
-        Pan + zoom are *not* gated on this — they're always live the
-        moment an asset is on screen, so a user can inspect anything
-        without first hunting for a mode toggle. The Review button in
-        the toolbar or a double-click on the canvas flips this on. */
-    reviewMode?: boolean;
     /** Host-provided content for the right pane when NOT in review
         mode. PostModal injects its post metadata snippet here; the
         standalone /assets/[id] page can pass asset-only info; an
@@ -112,7 +107,6 @@
   let {
     asset,
     active = true,
-    reviewMode = $bindable(false),
     metadataSlot,
     titleSlot,
     hotkeyLegend,
@@ -137,14 +131,71 @@
   // review tools are always available for an active viewer; the
   // metadata slot is host-provided. No slot + no review = no pane
   // (so a small card preview doesn't grow an empty sidebar).
-  const paneEnabled = $derived(reviewMode || !!metadataSlot);
+  // User-driven "treat this as a sprite" override. Lets the user
+  // open SpriteCanvas's slicer + playback tools on any raster
+  // image, not just assets explicitly classified as Sprite. Resets
+  // when the mounted asset changes — the override is per-view-
+  // session, not persisted on the asset.
+  let spriteOverride = $state(false);
+  let lastAssetIdForSprite = '';
+  $effect(() => {
+    if (asset.id !== lastAssetIdForSprite) {
+      lastAssetIdForSprite = asset.id;
+      spriteOverride = false;
+    }
+  });
+  const detectedKind = $derived(kindForAsset(asset));
+  const kind = $derived(spriteOverride && detectedKind === 'image' ? 'sprite' : detectedKind);
+
+  // Kinds that own their own tool panel rendering. Sprite is built-
+  // in (SpriteToolPanel above); 3D plumbs through controller.tools.
+  // Any kind on this list auto-opens the right pane regardless of
+  // whether the host wired a metadataSlot.
+  const kindHasTools = $derived(kind === 'sprite' || kind === '3d');
+  const paneEnabled = $derived(!!metadataSlot || kindHasTools);
+  // Auto-expand the pane when a kind with tools comes into view so
+  // the user sees the controls immediately. Only force-open on the
+  // transition INTO a tools kind; the user can collapse manually
+  // after.
+  let hadToolsKind = false;
+  $effect(() => {
+    if (kindHasTools && !hadToolsKind && paneCollapsed) {
+      paneCollapsed = false;
+    }
+    hadToolsKind = kindHasTools;
+  });
   const paneOpen = $derived(paneEnabled && !paneCollapsed);
 
   function togglePane() {
     paneCollapsed = !paneCollapsed;
   }
-
-  const kind = $derived(kindForAsset(asset));
+  // A fresh sprite session per mounted asset. Both SpriteCanvas
+  // (in the canvas area) and SpriteToolPanel (in the outer right
+  // pane) read + write through this same object — change cell
+  // width in the panel and the canvas re-slices instantly. The
+  // session is rebuilt whenever the asset changes so navigating
+  // between sprites doesn't bleed slicer / playhead state.
+  let spriteSession = $state<SpriteSessionInstance | null>(null);
+  let lastAssetIdForSession = '';
+  $effect(() => {
+    if (kind === 'sprite' && asset.id !== lastAssetIdForSession) {
+      lastAssetIdForSession = asset.id;
+      spriteSession = createSpriteSession({ assetId: asset.id });
+    } else if (kind !== 'sprite' && spriteSession) {
+      spriteSession = null;
+      lastAssetIdForSession = '';
+    }
+  });
+  // The Tools-menu "Slice as sprite" entry only makes sense for
+  // PNGs. Sprite sheets in the wild are essentially all PNG (lossless
+  // + alpha); JPG/WEBP/etc. images may be photos / illustrations
+  // where treating them as a sliced grid would be nonsense. Locking
+  // to .png keeps the menu item out of users' way except where it
+  // actually applies.
+  const canOverrideToSprite = $derived(
+    detectedKind === 'image'
+    && (asset.file_extension?.toLowerCase().replace(/^\./, '') === 'png'),
+  );
   let controller = $state(defaultController());
 
   // ---- pan + zoom (shell-owned) -----------------------------------------
@@ -283,27 +334,20 @@
     { label: '400%', factor: 4 },
   ];
 
-  // Double-click on the canvas = enter / exit review mode. The
-  // gesture is symmetrical with the toolbar's Review button and with
-  // a future keyboard shortcut — same mental model regardless of how
-  // the user triggers it. 3D has its own orbit gesture on
-  // double-click (recenter / dolly-to-fit per OrbitControls), so we
-  // don't fight it.
+  // Canvas double-click as a review-mode toggle was retired —
+  // users kept landing on it accidentally (panel swap mid-scroll,
+  // sprite-slice override flipped under them, etc.) and the
+  // Tools-menu "Review" entry plus its hotkey already cover the
+  // gesture. The handler binding below is left wired so timeline
+  // kinds can still cancel their pending-click before a dblclick
+  // resolves as something else; it no longer touches review mode.
   function onCanvasDoubleClick(e: MouseEvent) {
     if (kind === '3d') return;
-    // When the whiteboard surface owns the canvas overlay + the right
-    // pane, a stray dblclick toggling review mode would swap the
-    // panel contents out from under the user. Skip the gesture in
-    // that case — the whiteboard host owns the UX.
-    if (whiteboardOpen) return;
-    // Cancel any pending single-click play/pause on timeline kinds
-    // so we don't flip play state right before flipping review mode.
     if (pendingClickTimer !== undefined) {
       clearTimeout(pendingClickTimer);
       pendingClickTimer = undefined;
     }
     e.preventDefault();
-    reviewMode = !reviewMode;
   }
 
   // ---- fullscreen --------------------------------------------------------
@@ -493,10 +537,6 @@
 
   function handleKey(e: KeyboardEvent) {
     if (!active) return;
-    // Hotkeys are review-mode-only. Outside review the asset is just
-    // chrome and the host owns the keyboard (modal nav, sidebar
-    // toggle, ESC-to-close).
-    if (!reviewMode) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
@@ -547,7 +587,6 @@
   <ViewerMenuBar
     {asset}
     {controller}
-    {reviewMode}
     {paneCollapsed}
     {paneEnabled}
     {isFullscreen}
@@ -557,7 +596,6 @@
     onResetView={resetView}
     onToggleFullscreen={toggleFullscreen}
     onTogglePane={togglePane}
-    onToggleReview={() => (reviewMode = !reviewMode)}
     {onClose}
     {onAddToCollection}
     {onRecreatePreviews}
@@ -568,6 +606,9 @@
     {onDeleteAsset}
     {onToggleWhiteboard}
     {whiteboardOpen}
+    canSliceAsSprite={canOverrideToSprite}
+    sliceAsSpriteOn={spriteOverride}
+    onToggleSliceAsSprite={() => (spriteOverride = !spriteOverride)}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
@@ -602,10 +643,10 @@
           <FontView {asset} bind:controller />
         </div>
       {/key}
-    {:else if kind === 'sprite'}
+    {:else if kind === 'sprite' && spriteSession}
       {#key asset.id}
         <div class="absolute inset-0">
-          <SpriteView {asset} bind:controller />
+          <SpriteCanvas {asset} bind:session={spriteSession} bind:controller />
         </div>
       {/key}
     {:else}
@@ -627,7 +668,7 @@
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
         {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
-          <ModelView {asset} bind:controller {reviewMode} />
+          <ModelView {asset} bind:controller />
         {:else}
           <PlaceholderView {asset} bind:controller />
         {/if}
@@ -743,7 +784,7 @@
         class:w-14={!paneCollapsed && paneCompact}
         class:w-0={paneCollapsed}
         class:border-l-0={paneCollapsed}
-        aria-label={reviewMode ? 'Review tools' : 'Asset details'}
+        aria-label="Asset tools"
       >
         <header
           class="flex shrink-0 items-center border-b border-border py-3"
@@ -753,7 +794,7 @@
         >
           {#if !paneCompact}
             <h2 class="text-sm font-medium">
-              {#if reviewMode}Review tools{:else}Details{/if}
+              {#if kindHasTools}Tools{:else}Details{/if}
             </h2>
           {/if}
           <button
@@ -769,7 +810,15 @@
           </button>
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto">
-          {#if reviewMode}
+          <!-- Priority: sprite tools first (own session, dedicated
+               panel), then any other kind-aware tools (3D today;
+               more later), then metadataSlot as a fallback for hosts
+               that wired post details, etc. Review-mode gating is
+               retired — kind tools always show, and the user can
+               collapse the pane for more canvas room. -->
+          {#if kind === 'sprite' && spriteSession}
+            <SpriteToolPanel bind:session={spriteSession} />
+          {:else if kindHasTools}
             <!-- Kind-aware tools. The "View" section is shell-owned
                  (every 2D kind shares the same zoom + pan transform
                  the shell applies), so it renders without any per-
@@ -992,7 +1041,7 @@
              the scroll area) so it stays in view as the user scrolls
              through metadata. Hidden in review mode where the kind-
              aware tools have their own labelled hotkeys. -->
-        {#if hotkeyLegend && !reviewMode}
+        {#if hotkeyLegend && !kindHasTools}
           {@render hotkeyLegend()}
         {/if}
       </aside>
