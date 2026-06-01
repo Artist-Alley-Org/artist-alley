@@ -60,7 +60,7 @@ export type ShapeTool =
 export type OtherTool =
   | 'text' | 'select' | 'lasso' | 'rect-select'
   | 'crop' | 'clone' | 'bucket' | 'eyedropper'
-  | 'connector';
+  | 'connector' | 'frame' | 'sticky' | 'mindmap';
 
 /** Every tool the WhiteboardToolPanel surfaces. */
 export type Tool = BrushTool | ShapeTool | OtherTool;
@@ -276,8 +276,97 @@ export interface ConnectorItem {
   endArrow?: 'none' | 'arrow' | 'dot';
 }
 
+// ── Frames + sticky notes (Phase 1.23) ─────────────────────────────
+//
+// FRAME: a boundary box that acts as a visual container + a move-
+// together unit. Like Figma frames / Miro frames / slide pages.
+// The contained-items semantics live in the move gesture: when a
+// frame is translated, every item whose bbox falls inside the
+// frame's OLD bbox is translated by the same delta. We use the
+// OLD bbox so the membership snapshot is taken before the move,
+// which avoids items "falling out" mid-drag.
+
+/** A titled rectangular boundary that contains other items. */
+export interface FrameItem {
+  kind: 'frame';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Optional label rendered above the frame's top-left corner. */
+  title?: string;
+  /** Border + title color. Defaults to a theme accent at render time. */
+  color?: string;
+  rotation?: number;
+}
+
+/** STICKY: a colored card with editable text inside. The
+ *  universal whiteboard idiom for "quick text block." Differs from
+ *  plain text because it has a visible background card + auto-grows
+ *  with content. Five built-in colors; custom hex via the color
+ *  picker overrides. */
+export interface StickyNoteItem {
+  kind: 'sticky';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  body: string;
+  /** Background card color. Default ='#fef08a' (Photoshop / Miro
+   *  default yellow). */
+  background?: string;
+  /** Text color — auto-picked at render time from the background's
+   *  perceived luminance when not set. */
+  color?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  rotation?: number;
+}
+
+// ── Mindmap (Phase 1.24) ─────────────────────────────────────────
+//
+// Hierarchical tree of nodes. Each node has a text label + a list
+// of children. The whole mindmap is ONE item with its own root
+// node + recursive children — keeps the tree contained, and the
+// renderer + layout walk the tree in one pass.
+//
+// Auto-layout: horizontal-tree algorithm — root on the left, each
+// subtree stacked vertically to the right, child x = parent x +
+// horizontal step, child y centered on the subtree's own visual
+// extent. Computed at render time from the stored tree; no x/y on
+// nodes themselves except the root's anchor.
+
+export interface MindmapNode {
+  /** Stable id within the mindmap. UUIDv4 from the client. Used as
+   *  the key for "add child to node X" / "rename node X" mutations. */
+  id: string;
+  /** Node label — rendered inside the bubble. */
+  label: string;
+  /** Subtree branch color override. Optional; falls back to the
+   *  mindmap's `branchColor` palette indexed by branch order. */
+  color?: string;
+  /** When true, child subtree is hidden in render + skipped in
+   *  layout (still stored). Click the disclosure dot to expand. */
+  collapsed?: boolean;
+  /** Recursive children. Empty array = leaf node. */
+  children: MindmapNode[];
+}
+
+export interface MindmapItem {
+  kind: 'mindmap';
+  /** Root-node anchor in source coords — the (x, y) of the root
+   *  node's center. Everything else is computed via auto-layout. */
+  x: number;
+  y: number;
+  root: MindmapNode;
+  /** Optional palette for branch colors (one per top-level child).
+   *  When unset the renderer uses a curated default cycle. */
+  branchColors?: string[];
+  rotation?: number;
+}
+
 /** Polymorphic discriminated union over every kind of layer item. */
-export type Item = StrokeItem | ShapeItem | TextItem | ImageItem | ConnectorItem;
+export type Item = StrokeItem | ShapeItem | TextItem | ImageItem | ConnectorItem | FrameItem | StickyNoteItem | MindmapItem;
 
 /** Stacked bottom-to-top. */
 export interface Layer {
@@ -521,6 +610,20 @@ export function itemBBox(item: Item, doc?: BrushContent): BBox {
       return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
     case 'image':
       return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+    case 'frame':
+      return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+    case 'sticky':
+      return { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation ?? 0 };
+    case 'mindmap': {
+      // Approximate bbox from the laid-out tree. Single full pass
+      // of layoutMindmap covers it; layoutMindmap is the renderer's
+      // own helper but the math is identical here. We accept a
+      // small extra walk for cleanliness over caching a layout
+      // result on the item (which would need invalidation on
+      // every node add/rename).
+      const layout = layoutMindmap(item);
+      return { x: layout.minX, y: layout.minY, w: layout.maxX - layout.minX, h: layout.maxY - layout.minY, rotation: item.rotation ?? 0 };
+    }
     case 'connector': {
       // The bbox spans the two resolved endpoints. doc is needed
       // to resolve attached endpoints — without it we fall back to
@@ -561,6 +664,121 @@ export function resolveConnectorEndpoint(ep: ConnectorEndpoint, doc?: BrushConte
     }
   }
   return { x: ep.x ?? 0, y: ep.y ?? 0 };
+}
+
+// ── Mindmap layout (Phase 1.24) ───────────────────────────────────
+//
+// Horizontal-tree algorithm. Root on the left at the item's (x, y);
+// each subtree stacked vertically to the right of its parent;
+// node y centered on the subtree's vertical extent.
+//
+// Output:
+//   - positions: Map<nodeId, {x, y}> world coords for each node
+//   - minX / minY / maxX / maxY: visual bbox bounds (for itemBBox)
+//
+// Constants picked to feel like mindmap-style apps (Mindly,
+// XMind): wide enough horizontal step that node bubbles don't
+// overlap their neighbours at typical label lengths, tight enough
+// vertical step that big trees fit in a scrollable canvas.
+
+/** Per-node sizing — used by both layout + render. Width follows
+ *  the label's character count so long labels get wider bubbles
+ *  instead of being clipped. */
+export const MINDMAP_NODE_H = 36;
+export const MINDMAP_NODE_MIN_W = 80;
+export const MINDMAP_NODE_PAD_X = 14;
+export const MINDMAP_HSPACING = 56;  // horizontal gap between parent right + child left
+export const MINDMAP_VSPACING = 14;  // vertical gap between siblings
+
+export interface MindmapLayoutPos { x: number; y: number; w: number; h: number; }
+
+export interface MindmapLayout {
+  positions: Map<string, MindmapLayoutPos>;
+  minX: number; minY: number; maxX: number; maxY: number;
+}
+
+/** Approximate text width — `label.length × ~7.5px` is good enough
+ *  for the panel font without measuring. Render-time measureText
+ *  would be more accurate but we avoid pulling a canvas context
+ *  into the type helper. */
+function nodeWidth(node: MindmapNode): number {
+  return Math.max(MINDMAP_NODE_MIN_W, Math.ceil(node.label.length * 7.5) + MINDMAP_NODE_PAD_X * 2);
+}
+
+/** Compute the vertical extent (in px) needed by a subtree —
+ *  number of leaf-level vertical slots × (node height + spacing). */
+function subtreeHeight(node: MindmapNode): number {
+  if (node.collapsed || node.children.length === 0) return MINDMAP_NODE_H;
+  let total = 0;
+  for (const c of node.children) {
+    total += subtreeHeight(c) + MINDMAP_VSPACING;
+  }
+  // Drop the last trailing spacer.
+  return Math.max(MINDMAP_NODE_H, total - MINDMAP_VSPACING);
+}
+
+export function layoutMindmap(item: MindmapItem): MindmapLayout {
+  const positions = new Map<string, MindmapLayoutPos>();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  function place(node: MindmapNode, x: number, y: number) {
+    const w = nodeWidth(node);
+    positions.set(node.id, { x, y, w, h: MINDMAP_NODE_H });
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x + w > maxX) maxX = x + w;
+    if (y + MINDMAP_NODE_H > maxY) maxY = y + MINDMAP_NODE_H;
+    if (node.collapsed || node.children.length === 0) return;
+    // Children: stack vertically; each child's y is the center of
+    // its subtree, offset from the cumulative top.
+    const childX = x + w + MINDMAP_HSPACING;
+    const totalH = subtreeHeight(node);
+    let cursorY = y + MINDMAP_NODE_H / 2 - totalH / 2;
+    for (const c of node.children) {
+      const ch = subtreeHeight(c);
+      const cyTop = cursorY + ch / 2 - MINDMAP_NODE_H / 2;
+      place(c, childX, cyTop);
+      cursorY += ch + MINDMAP_VSPACING;
+    }
+  }
+
+  // Root is anchored at the item's (x, y) — that's the root's
+  // top-left, not center, so the item's anchor is intuitive when
+  // dragging the mindmap around.
+  place(item.root, item.x, item.y);
+
+  if (!isFinite(minX)) {
+    minX = item.x; minY = item.y; maxX = item.x; maxY = item.y;
+  }
+  return { positions, minX, minY, maxX, maxY };
+}
+
+/** Walk the tree depth-first + invoke `fn` on each node. Used by
+ *  the renderer (draw lines for each parent-child edge) + the
+ *  tool (find the clicked node on hit-test). */
+export function walkMindmap(node: MindmapNode, fn: (n: MindmapNode, depth: number, parent: MindmapNode | null) => void, depth = 0, parent: MindmapNode | null = null) {
+  fn(node, depth, parent);
+  if (node.collapsed) return;
+  for (const c of node.children) walkMindmap(c, fn, depth + 1, node);
+}
+
+/** Helper for adding a child node to a mindmap. Returns a *new*
+ *  MindmapItem with the child appended (we never mutate items in
+ *  place — Svelte 5 $state proxies prefer immutable swaps for
+ *  reactivity). `parentId` of null targets the root. */
+export function addMindmapChild(item: MindmapItem, parentId: string | null, label = 'Idea'): MindmapItem {
+  const newNode: MindmapNode = {
+    id: crypto.randomUUID(),
+    label,
+    children: [],
+  };
+  function recur(n: MindmapNode): MindmapNode {
+    if (n.id === parentId || (parentId === null && n === item.root)) {
+      return { ...n, children: [...n.children, newNode], collapsed: false };
+    }
+    return { ...n, children: n.children.map(recur) };
+  }
+  return { ...item, root: recur(item.root) };
 }
 
 /** Five canonical anchor points on an item's bbox — the four edge
@@ -682,6 +900,19 @@ export function resizeItemToBBox(item: Item, x: number, y: number, w: number, h:
     // return the item unchanged. The user moves endpoints via a
     // future endpoint-handle gesture (Phase 1.22 follow-up).
     return item;
+  }
+  if (item.kind === 'frame' || item.kind === 'sticky') {
+    // Frames + sticky notes resize like image / shape — just
+    // re-set x/y/w/h. Sticky text re-wraps automatically since
+    // the renderer measures + lays out per frame.
+    return { ...item, x, y, w, h };
+  }
+  if (item.kind === 'mindmap') {
+    // Mindmap dimensions are derived from layout; resizing via the
+    // bbox doesn't make sense. Just re-anchor the root to the new
+    // (x, y) of the requested bbox so a "resize" drag effectively
+    // becomes a move-to-corner.
+    return { ...item, x, y };
   }
   // image
   return { ...item, x, y, w, h };

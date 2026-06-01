@@ -153,6 +153,15 @@
     // Phase 1.22 — connector: click anchor → click anchor to link
     // shapes with a line. End sticks when the shape moves.
     { id: 'connector',  label: 'Connector', icon: 'M6 18a4 4 0 0 0 4-4 M14 10a4 4 0 0 0 4-4 M10 14L14 10' },
+    // Phase 1.23 — frame: drag out a labelled boundary; items
+    // inside move with it (Figma / Miro frames).
+    { id: 'frame',      label: 'Frame', icon: 'M4 6h16v12H4z M4 9h16' },
+    // Phase 1.23 — sticky note: drop a colored card with text.
+    { id: 'sticky',     label: 'Sticky note', icon: 'M5 4h12l2 2v14H5z M19 6h-3v-2 M5 19h10' },
+    // Phase 1.24 — mindmap: drop a hierarchical tree with auto-
+    // layout; double-click nodes to rename, panel buttons to add
+    // / remove children.
+    { id: 'mindmap',    label: 'Mindmap', icon: 'M4 12h6 M14 8h6 M14 16h6 M10 12c0 -2 2 -4 4 -4 M10 12c0 2 2 4 4 4' },
   ];
 
   // Brushes — same Tool ids today; C-1.13 will add a brush-style

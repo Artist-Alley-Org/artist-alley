@@ -29,7 +29,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getStroke } from 'perfect-freehand';
   import type {
-    BBox, BrushContent, BrushStamp, ConnectorEndpoint, ConnectorItem, ImageItem, Item, Layer, ShapeItem, StrokeItem, TextItem,
+    BBox, BrushContent, BrushStamp, ConnectorEndpoint, ConnectorItem, FrameItem, ImageItem, Item, Layer, MindmapItem, MindmapNode, ShapeItem, StickyNoteItem, StrokeItem, TextItem,
   } from '$lib/whiteboard/types';
   import {
     MAX_PASTED_IMAGE_BYTES,
@@ -38,6 +38,7 @@
     itemBBox, pointInItem, translateItem, resizeItemToBBox,
     itemInPolygon,
     anchorsForItem, resolveConnectorEndpoint,
+    layoutMindmap, walkMindmap, addMindmapChild,
   } from '$lib/whiteboard/types';
   import { getStamp, getTintedStamp } from '$lib/whiteboard/brushes';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
@@ -141,6 +142,11 @@
   // commit), so the render path can `drawConnector(liveConnector
   // as ConnectorItem)` directly for the preview.
   let liveConnector: Omit<ConnectorItem, 'kind'> | null = $state(null);
+  // Frame + sticky drag-out previews (Phase 1.23). Live items are
+  // the full FrameItem / StickyNoteItem so the same renderer paths
+  // handle the preview as the committed item.
+  let liveFrame: FrameItem | null = $state(null);
+  let liveSticky: StickyNoteItem | null = $state(null);
   // Currently-hovered anchor (under the cursor when connector tool
   // is active). Drives the visual snap hint that draws a small ring
   // around the anchor point.
@@ -350,6 +356,8 @@
     // Live previews on top
     if (liveStroke) drawItem(liveStroke);
     if (liveShape) drawItem(liveShape);
+    if (liveFrame) drawItem(liveFrame);
+    if (liveSticky) drawItem(liveSticky);
     if (liveConnector) drawConnector({ kind: 'connector', ...liveConnector });
     if (liveLasso && liveLasso.length >= 2) drawLassoPreview(liveLasso);
     if (liveCrop) drawCropPreview(liveCrop);
@@ -433,6 +441,9 @@
       case 'text': return drawText(item);
       case 'image': return drawImageItem(item);
       case 'connector': return drawConnector(item);
+      case 'frame': return drawFrame(item);
+      case 'sticky': return drawSticky(item);
+      case 'mindmap': return drawMindmap(item);
     }
   }
 
@@ -1026,6 +1037,263 @@
     ctx.fill();
   }
 
+  /** Phase 1.23 — Frame: a labelled boundary rectangle. Used to
+   *  visually group items + as a slide-like region for export
+   *  later. We draw a thin rounded-rect border + an optional
+   *  title bar above. NOT filled: items inside show through. */
+  function drawFrame(f: FrameItem) {
+    if (!ctx) return;
+    const x = f.w >= 0 ? f.x : f.x + f.w;
+    const y = f.h >= 0 ? f.y : f.y + f.h;
+    const w = Math.abs(f.w);
+    const h = Math.abs(f.h);
+    if (w < 1 || h < 1) return;
+    ctx.save();
+    if (f.rotation) {
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((f.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+    const color = f.color ?? '#94a3b8'; // slate-400 default
+    const r = 6;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    // Border
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+    ctx.stroke();
+    // Title bar above the frame — bg pill + text. Font scales
+    // mildly with viewport so labels stay readable at all zooms
+    // without becoming dominant.
+    if (f.title) {
+      const fontSize = 14;
+      ctx.font = `500 ${fontSize}px system-ui, sans-serif`;
+      const textMetrics = ctx.measureText(f.title);
+      const padX = 8;
+      const padY = 4;
+      const labelW = textMetrics.width + padX * 2;
+      const labelH = fontSize + padY * 2;
+      ctx.fillStyle = color;
+      // Pill background, just above the frame.
+      ctx.beginPath();
+      const lr = labelH / 2;
+      const lx = x;
+      const ly = y - labelH - 4;
+      ctx.moveTo(lx + lr, ly);
+      ctx.arcTo(lx + labelW, ly,            lx + labelW, ly + labelH, lr);
+      ctx.arcTo(lx + labelW, ly + labelH,   lx,          ly + labelH, lr);
+      ctx.arcTo(lx,          ly + labelH,   lx,          ly,          lr);
+      ctx.arcTo(lx,          ly,            lx + labelW, ly,          lr);
+      ctx.closePath();
+      ctx.fill();
+      // Title text in white on the pill.
+      ctx.fillStyle = '#fff';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(f.title, lx + padX, ly + labelH / 2);
+    }
+    ctx.restore();
+  }
+
+  /** Phase 1.23 — StickyNote: a colored card with editable text.
+   *  Background uses a slight gradient + drop shadow to read as
+   *  a paper post-it. Text wraps automatically inside the card
+   *  bounds. Foreground color auto-derives from background
+   *  luminance for legibility. */
+  function drawSticky(s: StickyNoteItem) {
+    if (!ctx) return;
+    const w = Math.abs(s.w);
+    const h = Math.abs(s.h);
+    if (w < 1 || h < 1) return;
+    ctx.save();
+    if (s.rotation) {
+      const cx = s.x + w / 2;
+      const cy = s.y + h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((s.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+    const bg = s.background ?? '#fef08a';
+    // Drop shadow — short + soft so the note feels resting on the
+    // canvas without dominating. ctx.shadowOffset works in-canvas;
+    // we draw the rect, save the shadow, then clear shadow before
+    // drawing the text so the text doesn't double-blur.
+    ctx.shadowColor = 'rgba(0,0,0,0.18)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = bg;
+    ctx.fillRect(s.x, s.y, w, h);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    if (s.body) {
+      const fg = s.color ?? autoTextColor(bg);
+      const fontSize = s.fontSize ?? 18;
+      const family = s.fontFamily ? `"${s.fontFamily}", system-ui` : 'system-ui, sans-serif';
+      ctx.fillStyle = fg;
+      ctx.font = `500 ${fontSize}px ${family}`;
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      const padding = 12;
+      wrapTextInside(s.body, s.x + padding, s.y + padding, w - padding * 2, fontSize * 1.3);
+    }
+    ctx.restore();
+  }
+
+  /** Pick a readable text color (black or white) for a given hex
+   *  background. Uses the WCAG-recommended sRGB-relative-luminance
+   *  threshold. Returns #000 for light bgs, #fff for dark ones —
+   *  the most legible for sticky-note paper feel. */
+  /** Phase 1.24 — Mindmap renderer. Lays out the tree (horizontal,
+   *  root on left), draws curved connector lines from each parent
+   *  to its children, then draws node bubbles on top. Branch color
+   *  cycles per top-level subtree so the tree reads as branches.
+   *
+   *  The node bubble is a pill with text inside. Collapsed nodes
+   *  show a small +N circle indicating hidden child count. */
+  function drawMindmap(m: MindmapItem) {
+    if (!ctx) return;
+    // Capture ctx into a non-nullable local so the closures below
+    // (walkMindmap callbacks) inherit the narrowing — TS can't
+    // prove `ctx` stayed non-null through the walk function call.
+    const c2d = ctx;
+    const layout = layoutMindmap(m);
+    const defaultPalette = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16'];
+    const palette = m.branchColors ?? defaultPalette;
+    // Walk to draw edges, tagging branch index by top-level child.
+    c2d.save();
+    if (m.rotation) {
+      const cx = (layout.minX + layout.maxX) / 2;
+      const cy = (layout.minY + layout.maxY) / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((m.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+    // Determine branch index for every node: same as the index of
+    // its top-level ancestor (or -1 for the root itself).
+    const branchOf = new Map<string, number>();
+    branchOf.set(m.root.id, -1);
+    m.root.children.forEach((c, i) => {
+      walkMindmap(c, (n) => branchOf.set(n.id, i));
+    });
+    // Edges first so node bubbles paint on top of the line ends.
+    walkMindmap(m.root, (n, _depth, parent) => {
+      if (!parent) return;
+      const pp = layout.positions.get(parent.id);
+      const cp = layout.positions.get(n.id);
+      if (!pp || !cp) return;
+      const branchIdx = branchOf.get(n.id) ?? 0;
+      const color = n.color ?? palette[((branchIdx >= 0 ? branchIdx : 0)) % palette.length];
+      // Cubic bezier from parent's right edge to child's left edge,
+      // tangents horizontal — gives the classic mindmap "branch
+      // curve" look.
+      const px = pp.x + pp.w;
+      const py = pp.y + pp.h / 2;
+      const cx = cp.x;
+      const cy = cp.y + cp.h / 2;
+      const t = Math.max(20, (cx - px) * 0.5);
+      c2d.strokeStyle = color;
+      c2d.lineWidth = 2;
+      c2d.beginPath();
+      c2d.moveTo(px, py);
+      c2d.bezierCurveTo(px + t, py, cx - t, cy, cx, cy);
+      c2d.stroke();
+    });
+    // Nodes second.
+    walkMindmap(m.root, (n) => {
+      const pos = layout.positions.get(n.id);
+      if (!pos) return;
+      const isRoot = n.id === m.root.id;
+      const branchIdx = branchOf.get(n.id) ?? -1;
+      const color = n.color ?? (isRoot ? '#0f172a' : palette[((branchIdx >= 0 ? branchIdx : 0)) % palette.length]);
+      // Pill bubble.
+      const r = pos.h / 2;
+      c2d.fillStyle = isRoot ? color : '#ffffff';
+      c2d.strokeStyle = color;
+      c2d.lineWidth = isRoot ? 0 : 2;
+      c2d.beginPath();
+      c2d.moveTo(pos.x + r, pos.y);
+      c2d.arcTo(pos.x + pos.w, pos.y,            pos.x + pos.w, pos.y + pos.h, r);
+      c2d.arcTo(pos.x + pos.w, pos.y + pos.h,    pos.x,         pos.y + pos.h, r);
+      c2d.arcTo(pos.x,         pos.y + pos.h,    pos.x,         pos.y,         r);
+      c2d.arcTo(pos.x,         pos.y,            pos.x + pos.w, pos.y,         r);
+      c2d.closePath();
+      c2d.fill();
+      if (!isRoot) c2d.stroke();
+      // Label.
+      c2d.fillStyle = isRoot ? '#ffffff' : '#0f172a';
+      c2d.font = '500 14px system-ui, sans-serif';
+      c2d.textBaseline = 'middle';
+      c2d.textAlign = 'center';
+      c2d.fillText(n.label, pos.x + pos.w / 2, pos.y + pos.h / 2);
+      // Collapsed indicator — small filled circle with the hidden
+      // child count, sitting at the right edge.
+      if (n.collapsed && n.children.length > 0) {
+        const ix = pos.x + pos.w + 4;
+        const iy = pos.y + pos.h / 2;
+        c2d.beginPath();
+        c2d.arc(ix + 8, iy, 8, 0, Math.PI * 2);
+        c2d.fillStyle = color;
+        c2d.fill();
+        c2d.fillStyle = '#ffffff';
+        c2d.font = 'bold 10px system-ui, sans-serif';
+        c2d.fillText(String(n.children.length), ix + 8, iy);
+      }
+    });
+    c2d.restore();
+  }
+
+  function autoTextColor(hex: string): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return '#000';
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 0xff;
+    const g = (n >> 8) & 0xff;
+    const b = n & 0xff;
+    // sRGB → linear → relative luminance. Threshold 140 picks dark
+    // text for the post-it yellow + light text for slate/navy
+    // backgrounds.
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    return lum > 140 ? '#0f172a' : '#ffffff';
+  }
+
+  /** Word-wrap text within a fixed pixel width on the canvas.
+   *  Splits on whitespace + measures cumulative width per token,
+   *  starting a new line when the next token would overflow.
+   *  Newlines in the source are respected. */
+  function wrapTextInside(body: string, x: number, y: number, maxW: number, lineH: number) {
+    if (!ctx) return;
+    const paragraphs = body.split('\n');
+    let curY = y;
+    for (const para of paragraphs) {
+      const words = para.split(/\s+/).filter(Boolean);
+      if (words.length === 0) { curY += lineH; continue; }
+      let line = '';
+      for (const word of words) {
+        const candidate = line ? line + ' ' + word : word;
+        if (ctx.measureText(candidate).width > maxW && line) {
+          ctx.fillText(line, x, curY);
+          curY += lineH;
+          line = word;
+        } else {
+          line = candidate;
+        }
+      }
+      if (line) {
+        ctx.fillText(line, x, curY);
+        curY += lineH;
+      }
+    }
+  }
+
   function drawText(t: TextItem) {
     if (!ctx) return;
     if (!t.body) return;
@@ -1159,7 +1427,11 @@
   // item's bbox or one of its handles. The mousemove handler reads
   // this to know what to update; mouseup clears it + commits.
   type SelectGesture =
-    | { kind: 'move'; startX: number; startY: number; original: Item }
+    // Phase 1.23 — `containedAtStart` carries a snapshot of the
+    // items inside a frame at gesture start, so they move with the
+    // frame at the same dx/dy. Empty array when the moved item
+    // isn't a frame.
+    | { kind: 'move'; startX: number; startY: number; original: Item; containedAtStart: { layerId: string; index: number; original: Item }[] }
     | { kind: 'resize'; handle: HandleId; startX: number; startY: number; original: Item; originalBBox: BBox }
     | { kind: 'rotate'; cx: number; cy: number; startAngle: number; originalRotation: number; original: Item };
   type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -1251,11 +1523,36 @@
         const item = layer.items[hit.index];
         if (!layer.locked) {
           canvasEl.setPointerCapture(e.pointerId);
+          // Phase 1.23 — frame containment: if we just picked a
+          // frame, snapshot every item whose bbox-center falls
+          // inside the frame's bbox at gesture start. They get
+          // translated along with the frame on every mousemove.
+          // We use center-in-frame (not bbox-fully-inside) so an
+          // item that overflows the frame slightly still moves
+          // with it, matching Figma's behaviour.
+          const contained: { layerId: string; index: number; original: Item }[] = [];
+          if (item.kind === 'frame') {
+            const fbb = itemBBox(item);
+            for (const l of session.doc.layers) {
+              if (l.locked) continue;
+              l.items.forEach((other, oi) => {
+                if (l.id === hit.layerId && oi === hit.index) return; // skip self
+                if (other.kind === 'frame') return; // don't nest frames in the move set
+                const obb = itemBBox(other, session.doc);
+                const cx = obb.x + obb.w / 2;
+                const cy = obb.y + obb.h / 2;
+                if (cx >= fbb.x && cx <= fbb.x + fbb.w && cy >= fbb.y && cy <= fbb.y + fbb.h) {
+                  contained.push({ layerId: l.id, index: oi, original: JSON.parse(JSON.stringify(other)) });
+                }
+              });
+            }
+          }
           selectGesture = {
             kind: 'move',
             startX: p.x,
             startY: p.y,
             original: JSON.parse(JSON.stringify(item)),
+            containedAtStart: contained,
           };
         }
       } else {
@@ -1440,6 +1737,56 @@
       };
       render();
       e.preventDefault();
+    } else if (session.tool === 'frame') {
+      // Frame: drag out a labeled boundary. Live preview is the
+      // FrameItem itself; bbox commits on pointerup.
+      dragStart = { x: p.x, y: p.y };
+      liveFrame = {
+        kind: 'frame',
+        x: p.x, y: p.y, w: 0, h: 0,
+        title: 'Frame',
+      };
+      render();
+      e.preventDefault();
+    } else if (session.tool === 'sticky') {
+      // Sticky note: drag out a card (or single-click for a sane
+      // default size). The text is empty at creation; double-click
+      // (or click again with select tool) opens the inline editor.
+      // Default to a fixed 240×180 card on single-tap so most
+      // users get the expected post-it size without dragging.
+      dragStart = { x: p.x, y: p.y };
+      liveSticky = {
+        kind: 'sticky',
+        x: p.x, y: p.y, w: 240, h: 180,
+        body: '',
+      };
+      render();
+      e.preventDefault();
+    } else if (session.tool === 'mindmap') {
+      // Mindmap: single-click drops a fresh mindmap with a root +
+      // three starter "Idea" children at the click point. Users
+      // double-click a node to rename, or click-add-child via the
+      // selection panel (Phase 1.24 follow-up).
+      const root: MindmapNode = {
+        id: crypto.randomUUID(),
+        label: 'Central idea',
+        children: [
+          { id: crypto.randomUUID(), label: 'Idea 1', children: [] },
+          { id: crypto.randomUUID(), label: 'Idea 2', children: [] },
+          { id: crypto.randomUUID(), label: 'Idea 3', children: [] },
+        ],
+      };
+      const item: MindmapItem = { kind: 'mindmap', x: p.x, y: p.y, root };
+      session.addItem(layer.id, item);
+      // Auto-select so the typography / properties panel can show
+      // mindmap-specific actions next.
+      const idx = layer.items.length - 1;
+      session.selectItem(layer.id, idx);
+      // Switch to select so the user can interact with the mindmap
+      // immediately rather than keep dropping new ones.
+      session.tool = 'select';
+      e.preventDefault();
+      return;
     } else if (session.tool === 'text') {
       // Begin a text-edit at the click point. The contenteditable
       // overlay below gets focused; commit on blur or Enter (without
@@ -1497,6 +1844,14 @@
         const dx = p.x - g.startX;
         const dy = p.y - g.startY;
         layer.items[sel.index] = translateItem(g.original, dx, dy);
+        // Phase 1.23 — translate every snapshotted contained item
+        // by the same delta. Reading from the original snapshot
+        // (not the live item) keeps deltas stable across the drag.
+        for (const c of g.containedAtStart) {
+          const cLayer = session.doc.layers.find((l) => l.id === c.layerId);
+          if (!cLayer) continue;
+          cLayer.items[c.index] = translateItem(c.original, dx, dy);
+        }
       } else if (g.kind === 'resize') {
         const b = g.originalBBox;
         let nx = b.x, ny = b.y, nw = b.w, nh = b.h;
@@ -1606,6 +1961,18 @@
       }
       liveShape = { ...liveShape, w: dx, h: dy };
       render();
+    } else if (liveFrame && dragStart) {
+      liveFrame = { ...liveFrame, w: p.x - dragStart.x, h: p.y - dragStart.y };
+      render();
+    } else if (liveSticky && dragStart) {
+      // Drag changes the card size; if dx/dy are tiny (single tap),
+      // the pointerup commit uses a default 240×180 instead.
+      const dx = p.x - dragStart.x;
+      const dy = p.y - dragStart.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        liveSticky = { ...liveSticky, w: dx, h: dy };
+      }
+      render();
     }
   }
 
@@ -1693,6 +2060,16 @@
           // Replace via session method so history snapshots cleanly.
           session.replaceItem(sel.layerId, sel.index, finalItem);
         }
+        // Phase 1.23 — also commit every contained item that moved
+        // with this frame so they each get a history-clean
+        // replaceItem call. Single-undo rewinds the whole drag.
+        if (selectGesture.kind === 'move' && selectGesture.containedAtStart.length > 0) {
+          for (const c of selectGesture.containedAtStart) {
+            const cLayer = session.doc.layers.find((l) => l.id === c.layerId);
+            const cFinal = cLayer?.items[c.index];
+            if (cFinal) session.replaceItem(c.layerId, c.index, cFinal);
+          }
+        }
       }
       selectGesture = null;
       render();
@@ -1711,12 +2088,44 @@
       }
       liveShape = null;
       dragStart = null;
+    } else if (liveFrame && layerId) {
+      // Frame commit — drop tiny accidental drags (default min 48
+      // px each way so the frame is at least usable).
+      if (Math.abs(liveFrame.w) >= 48 && Math.abs(liveFrame.h) >= 48) {
+        // Normalize to positive w/h for storage so contained-item
+        // calculations are simpler.
+        const x = liveFrame.w >= 0 ? liveFrame.x : liveFrame.x + liveFrame.w;
+        const y = liveFrame.h >= 0 ? liveFrame.y : liveFrame.y + liveFrame.h;
+        session.addItem(layerId, { ...liveFrame, x, y, w: Math.abs(liveFrame.w), h: Math.abs(liveFrame.h) });
+      }
+      liveFrame = null;
+      dragStart = null;
+    } else if (liveSticky && layerId) {
+      // Sticky commit — drag or no-drag both make a sticky. The
+      // size on no-drag is the default 240×180 set at pointerdown.
+      const x = liveSticky.w >= 0 ? liveSticky.x : liveSticky.x + liveSticky.w;
+      const y = liveSticky.h >= 0 ? liveSticky.y : liveSticky.y + liveSticky.h;
+      const item: StickyNoteItem = { ...liveSticky, x, y, w: Math.max(120, Math.abs(liveSticky.w)), h: Math.max(80, Math.abs(liveSticky.h)) };
+      session.addItem(layerId, item);
+      liveSticky = null;
+      dragStart = null;
+      // Open the inline editor on the freshly-added sticky so the
+      // user can type right away — matches "double-click to edit"
+      // muscle memory without the extra click.
+      queueMicrotask(() => {
+        const layer = session.doc.layers.find((l) => l.id === layerId);
+        if (!layer) return;
+        const idx = layer.items.length - 1;
+        editingStickyRef = { layerId, index: idx };
+        stickyEditBody = '';
+        queueMicrotask(() => textEditRef?.focus());
+      });
     }
     render();
   }
 
   function handleWindowPointerUp(e: PointerEvent) {
-    if (liveStroke || liveShape) onPointerUp(e);
+    if (liveStroke || liveShape || liveFrame || liveSticky) onPointerUp(e);
   }
 
   // ── Text edit commit ─────────────────────────────────────────────
@@ -1901,6 +2310,11 @@
   // edit mode at that item. The contenteditable overlay reuses the
   // text-input UI so commit-on-blur/Enter works the same way.
   let editingTextRef: { layerId: string; index: number } | null = $state(null);
+  // Sticky-note text-edit gesture (Phase 1.23). Same DOM overlay
+  // as the text item editor, just targets a StickyNoteItem.body
+  // on commit instead of TextItem.body.
+  let editingStickyRef: { layerId: string; index: number } | null = $state(null);
+  let stickyEditBody = $state('');
 
   function onCanvasDblClick(e: MouseEvent) {
     if (readOnly) return;
@@ -1910,11 +2324,35 @@
     if (!hit) return;
     const layer = session.doc.layers.find((l) => l.id === hit.layerId);
     const item = layer?.items[hit.index];
-    if (!item || item.kind !== 'text') return;
-    editingTextRef = { layerId: hit.layerId, index: hit.index };
-    textEditBody = item.body;
-    queueMicrotask(() => textEditRef?.focus());
-    e.preventDefault();
+    if (!item) return;
+    if (item.kind === 'text') {
+      editingTextRef = { layerId: hit.layerId, index: hit.index };
+      textEditBody = item.body;
+      queueMicrotask(() => textEditRef?.focus());
+      e.preventDefault();
+      return;
+    }
+    if (item.kind === 'sticky') {
+      editingStickyRef = { layerId: hit.layerId, index: hit.index };
+      stickyEditBody = item.body;
+      queueMicrotask(() => textEditRef?.focus());
+      e.preventDefault();
+      return;
+    }
+  }
+
+  /** Commit the sticky-note body edit. Mirror of commitTextEdit2
+   *  for text items; just targets the StickyNoteItem.body field. */
+  function commitStickyEdit() {
+    if (!editingStickyRef) return;
+    const layer = session.doc.layers.find((l) => l.id === editingStickyRef!.layerId);
+    const item = layer?.items[editingStickyRef.index];
+    if (item && item.kind === 'sticky') {
+      const next: StickyNoteItem = { ...item, body: stickyEditBody };
+      session.replaceItem(editingStickyRef.layerId, editingStickyRef.index, next);
+    }
+    editingStickyRef = null;
+    stickyEditBody = '';
   }
 
   function commitTextEdit2() {
@@ -2186,6 +2624,33 @@
         oninput={(e) => textEditBody = (e.currentTarget as HTMLDivElement).innerText}
         onkeydown={(e) => { if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); commitTextEdit2(); } }}
         onblur={commitTextEdit2}
+      >{item.body}</div>
+    {/if}
+  {/if}
+
+  {#if editingStickyRef && !readOnly}
+    {@const layer = session.doc.layers.find((l) => l.id === editingStickyRef!.layerId)}
+    {@const item = layer?.items[editingStickyRef!.index] as StickyNoteItem | undefined}
+    {#if item}
+      {@const css = sourceToCss(item.x, item.y)}
+      {@const wCss = (item.w) * (infinite ? session.viewZoom : (canvasEl ? canvasEl.getBoundingClientRect().width / session.doc.source_w : 1))}
+      {@const hCss = (item.h) * (infinite ? session.viewZoom : (canvasEl ? canvasEl.getBoundingClientRect().height / session.doc.source_h : 1))}
+      <!-- svelte-ignore a11y_autofocus -->
+      <div
+        bind:this={textEditRef}
+        contenteditable="true"
+        class="absolute z-10 cursor-text overflow-hidden rounded p-3 outline-none focus:ring-2 focus:ring-accent"
+        style:left={`${css.left}px`}
+        style:top={`${css.top}px`}
+        style:width={`${wCss}px`}
+        style:height={`${hCss}px`}
+        style:background-color={item.background ?? '#fef08a'}
+        style:font-size={`${textCssFontSize(item.fontSize ?? 18)}px`}
+        style:font-family={item.fontFamily ? `"${item.fontFamily}", system-ui` : 'system-ui'}
+        style:color={item.color ?? '#0f172a'}
+        oninput={(e) => stickyEditBody = (e.currentTarget as HTMLDivElement).innerText}
+        onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitStickyEdit(); } }}
+        onblur={commitStickyEdit}
       >{item.body}</div>
     {/if}
   {/if}

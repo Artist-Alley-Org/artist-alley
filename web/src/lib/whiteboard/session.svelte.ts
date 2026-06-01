@@ -28,6 +28,7 @@ import {
   SIZES,
   defaultOpacityFor,
   emptyDoc,
+  itemBBox,
   newLayer,
   resolveConnectorEndpoint,
 } from './types';
@@ -691,6 +692,11 @@ export function createWhiteboardSession(
             };
             return { ...item, start: flip(item.start), end: flip(item.end) };
           }
+          if (item.kind === 'mindmap') {
+            // Mindmap: just mirror the root x. Layout regenerates
+            // from the root anchor + tree.
+            return { ...item, x: w - item.x };
+          }
           // text / image: anchor x flips so the box still lives on
           // the canvas; aligned-left text re-aligns relative to its
           // anchor visually, which is the expected mirror behaviour.
@@ -721,6 +727,9 @@ export function createWhiteboardSession(
               return { ...ep, y: h - (ep.y ?? 0) };
             };
             return { ...item, start: flip(item.start), end: flip(item.end) };
+          }
+          if (item.kind === 'mindmap') {
+            return { ...item, y: h - item.y };
           }
           return { ...item, y: h - item.y - item.h };
         });
@@ -756,6 +765,9 @@ export function createWhiteboardSession(
             };
             return { ...item, start: rot(item.start), end: rot(item.end) };
           }
+          if (item.kind === 'mindmap') {
+            return { ...item, x: H - item.y, y: item.x };
+          }
           // text / image — keep dims, just re-anchor.
           return { ...item, x: H - item.y - item.h, y: item.x, w: item.h, h: item.w };
         });
@@ -789,6 +801,9 @@ export function createWhiteboardSession(
             };
             return { ...item, start: rot(item.start), end: rot(item.end) };
           }
+          if (item.kind === 'mindmap') {
+            return { ...item, x: item.y, y: W - item.x };
+          }
           return { ...item, x: item.y, y: W - item.x - item.w, w: item.h, h: item.w };
         });
       }
@@ -819,6 +834,9 @@ export function createWhiteboardSession(
               return { ...ep, x: (ep.x ?? 0) * sx, y: (ep.y ?? 0) * sy };
             };
             return { ...item, start: scale(item.start), end: scale(item.end) };
+          }
+          if (item.kind === 'mindmap') {
+            return { ...item, x: item.x * sx, y: item.y * sy };
           }
           return {
             ...item,
@@ -859,6 +877,31 @@ export function createWhiteboardSession(
               fillColor: item.fillColor ? invert(item.fillColor) : undefined,
             };
           }
+          if (item.kind === 'frame') {
+            return { ...item, color: item.color ? invert(item.color) : undefined };
+          }
+          if (item.kind === 'sticky') {
+            return {
+              ...item,
+              background: item.background ? invert(item.background) : undefined,
+              color: item.color ? invert(item.color) : undefined,
+            };
+          }
+          if (item.kind === 'mindmap') {
+            // Mindmap colors live per-node in the tree + per-branch
+            // in branchColors[]. Invert both.
+            const invertNode = (n: typeof item.root): typeof item.root => ({
+              ...n,
+              color: n.color ? invert(n.color) : undefined,
+              children: n.children.map(invertNode),
+            });
+            return {
+              ...item,
+              root: invertNode(item.root),
+              branchColors: item.branchColors?.map(invert),
+            };
+          }
+          // stroke / text / connector all carry required `color`.
           return { ...item, color: invert(item.color) };
         });
       }
@@ -889,6 +932,11 @@ export function createWhiteboardSession(
               const e = resolveConnectorEndpoint(item.end, state.doc);
               return (s.x >= x && s.x <= x2 && s.y >= y && s.y <= y2)
                   || (e.x >= x && e.x <= x2 && e.y >= y && e.y <= y2);
+            }
+            if (item.kind === 'mindmap') {
+              // Mindmap doesn't carry w/h on the type; use bbox.
+              const bb = itemBBox(item, state.doc);
+              return bb.x + bb.w >= x && bb.x <= x2 && bb.y + bb.h >= y && bb.y <= y2;
             }
             const ix = item.kind === 'shape' && item.w < 0 ? item.x + item.w : item.x;
             const iy = item.kind === 'shape' && item.h < 0 ? item.y + item.h : item.y;
