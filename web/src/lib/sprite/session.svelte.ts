@@ -49,8 +49,15 @@ export interface SpriteSession {
   padY: number;
   originX: number;
   originY: number;
-  frameCountOverride: number | null;
-  showGrid: boolean;
+  /** Inclusive start frame in the manually-sliced grid. Default 0.
+   *  Lets the user pick a sub-range — e.g. on a 9×6 sheet whose
+   *  rows are colour-grouped, playing frames 0–8 plays just the
+   *  top row instead of cycling every colour. */
+  rangeStart: number;
+  /** Inclusive end frame. null = "use the last frame in the grid"
+   *  (so growing the grid past the previous end auto-extends the
+   *  range). Set to a number to clamp. */
+  rangeEnd: number | null;
 
   // ── Metadata (from a companion JSON sidecar) ─────────────────
   metadataFrames: SpriteFrameRect[] | null;
@@ -91,6 +98,9 @@ export interface SpriteSessionMethods {
   uploadMetadataFile(file: File): Promise<void>;
   pickFitZoom(): void;
   stepFrame(): void;
+  /** Pick a sensible cell-size default for a fresh sheet load.
+   *  Heuristic; caller writes the result into cellW / cellH. */
+  guessCellSize(imgW: number, imgH: number): { w: number; h: number };
 }
 
 export type SpriteSessionInstance = SpriteSession & SpriteSessionMethods & { assetId: string };
@@ -111,8 +121,8 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     padY: 0,
     originX: 0,
     originY: 0,
-    frameCountOverride: null,
-    showGrid: false,
+    rangeStart: 0,
+    rangeEnd: null,
 
     metadataFrames: null,
     metadataTags: [],
@@ -291,6 +301,22 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     state.zoom = Math.max(1, Math.min(32, z));
   }
 
+  // Best-guess cell size for a freshly-loaded sheet. Tries common
+  // pixel-art sprite sizes from largest to smallest and picks the
+  // first that divides both image dimensions cleanly. Falls back
+  // to a 1×1 cell (= "whole sheet is one frame") when nothing
+  // matches, which preserves the previous default behaviour.
+  // Heuristic only — users override via the slicer fields.
+  function autoCellSize(imgW: number, imgH: number): { w: number; h: number } {
+    const candidates = [128, 96, 64, 48, 40, 32, 24, 16, 8];
+    for (const c of candidates) {
+      if (imgW % c === 0 && imgH % c === 0 && imgW / c >= 2) {
+        return { w: c, h: c };
+      }
+    }
+    return { w: 0, h: 0 };
+  }
+
   // Public read of derived counts. We don't expose these as
   // $derived from inside the factory because consumers expect a
   // plain object shape; instead the components recompute them
@@ -312,8 +338,14 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
       const rows = state.cellH > 0
         ? Math.max(1, Math.floor((state.imgH - state.originY + state.padY) / (state.cellH + state.padY)))
         : 1;
-      const total = state.frameCountOverride ?? cols * rows;
-      to = Math.max(0, total - 1);
+      const total = cols * rows;
+      // Manual sub-range — clamps the playable window to
+      // [rangeStart, rangeEnd] inside the full grid so users can
+      // play a single row of a multi-section sheet without
+      // re-slicing the whole thing.
+      from = Math.max(0, Math.min(total - 1, state.rangeStart));
+      const rawEnd = state.rangeEnd ?? total - 1;
+      to = Math.max(from, Math.min(total - 1, rawEnd));
     }
     const len = to - from + 1;
     if (len <= 1) return;
@@ -344,5 +376,6 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     uploadMetadataFile,
     pickFitZoom,
     stepFrame,
+    guessCellSize: autoCellSize,
   });
 }

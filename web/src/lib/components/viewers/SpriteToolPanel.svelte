@@ -170,16 +170,78 @@
       </section>
     {/if}
 
-    <!-- Slice grid OR frame-box toggle -->
+    <!-- Slice grid (manual mode) -->
     {#if !session.metadataFrames}
       <section class="border-b border-border p-3 text-xs">
-        <div class="mb-2 flex items-center justify-between">
-          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Slice grid</h3>
-          <label class="flex items-center gap-1 text-[10px] text-fg-muted">
-            <input type="checkbox" bind:checked={session.showGrid} class="accent-accent" />
-            Show grid
-          </label>
-        </div>
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Slice grid</h3>
+        {#if session.imgW > 0 && session.imgH > 0}
+          <!-- Always-on sheet-preview thumbnail. Shows the entire
+               sprite sheet at fit-to-panel size with red cell
+               borders + an accent highlight tracking the active
+               frame. Replaces the old "Show grid" toggle that
+               swapped the main canvas between single-frame and
+               full-sheet views — now you see both at once. -->
+          {@const previewMax = 240}
+          {@const previewScale = Math.min(previewMax / session.imgW, previewMax / session.imgH)}
+          {@const previewW = session.imgW * previewScale}
+          {@const previewH = session.imgH * previewScale}
+          <div class="mb-2 flex justify-center">
+            <div class="relative sprite-checker inline-block" style:width={`${previewW}px`} style:height={`${previewH}px`}>
+              <img
+                src={`/api/v1/assets/${session.assetId}/file`}
+                alt=""
+                width={previewW}
+                height={previewH}
+                style:image-rendering="pixelated"
+                class="block"
+              />
+              <!-- Grid lines + active-frame highlight via SVG so
+                   the math stays trivially scalable. -->
+              {#if session.cellW > 0 && session.cellH > 0}
+                {@const activeIdx = (session.rangeStart ?? 0) + session.currentFrame}
+                {@const activeC = activeIdx % gridCols}
+                {@const activeR = Math.floor(activeIdx / gridCols)}
+                <svg
+                  class="pointer-events-none absolute inset-0"
+                  width={previewW}
+                  height={previewH}
+                  viewBox={`0 0 ${session.imgW} ${session.imgH}`}
+                  preserveAspectRatio="none"
+                >
+                  {#each Array(Math.max(2, gridCols + 1)) as _, c (`v${c}`)}
+                    <line
+                      x1={session.originX + c * (session.cellW + session.padX)}
+                      y1={0}
+                      x2={session.originX + c * (session.cellW + session.padX)}
+                      y2={session.imgH}
+                      stroke="rgba(255,100,100,0.7)"
+                      stroke-width="0.5"
+                    />
+                  {/each}
+                  {#each Array(Math.max(2, gridRows + 1)) as _, r (`h${r}`)}
+                    <line
+                      x1={0}
+                      y1={session.originY + r * (session.cellH + session.padY)}
+                      x2={session.imgW}
+                      y2={session.originY + r * (session.cellH + session.padY)}
+                      stroke="rgba(255,100,100,0.7)"
+                      stroke-width="0.5"
+                    />
+                  {/each}
+                  <rect
+                    x={session.originX + activeC * (session.cellW + session.padX)}
+                    y={session.originY + activeR * (session.cellH + session.padY)}
+                    width={session.cellW}
+                    height={session.cellH}
+                    fill="none"
+                    stroke="rgb(96,165,250)"
+                    stroke-width="1"
+                  />
+                </svg>
+              {/if}
+            </div>
+          </div>
+        {/if}
         <div class="grid grid-cols-2 gap-2">
           <label>
             <span class="mb-0.5 block text-fg-muted">Cell W</span>
@@ -210,36 +272,74 @@
           <span>Grid <span class="font-mono text-fg">{gridCols} × {gridRows}</span></span>
           <span>Total <span class="font-mono text-fg">{gridCols * gridRows}</span></span>
         </div>
-        <label class="mt-2 flex items-center gap-2 text-[10px]">
-          <span class="text-fg-muted">Limit frames</span>
-          <input
-            type="number"
-            min="1"
-            max={gridCols * gridRows}
-            value={session.frameCountOverride ?? ''}
-            oninput={(e) => {
-              const v = (e.currentTarget as HTMLInputElement).value;
-              session.frameCountOverride = v === '' ? null : Math.max(1, Math.min(gridCols * gridRows, parseInt(v, 10) || 1));
-            }}
-            placeholder="auto"
-            class="w-16 rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
-          />
-          {#if session.frameCountOverride != null}
-            <button
-              type="button"
-              onclick={() => (session.frameCountOverride = null)}
-              class="text-fg-muted hover:text-fg"
-              title="Clear override"
-            >clear</button>
-          {/if}
-        </label>
-      </section>
-    {:else}
-      <section class="border-b border-border p-3 text-xs">
-        <label class="flex items-center justify-between text-[10px] text-fg-muted">
-          <span>Show frame boxes</span>
-          <input type="checkbox" bind:checked={session.showGrid} class="accent-accent" />
-        </label>
+        <!-- Sub-range picker. Lets the user play a slice of the
+             grid (e.g. just frames 0–8 of a 9×6 sheet) without
+             re-slicing the whole sheet. Defaults: 0 → end. -->
+        <div class="mt-2 grid grid-cols-2 gap-2">
+          <label>
+            <span class="mb-0.5 block text-fg-muted">Start frame</span>
+            <input
+              type="number"
+              min="0"
+              max={Math.max(0, gridCols * gridRows - 1)}
+              value={session.rangeStart}
+              oninput={(e) => {
+                const v = (e.currentTarget as HTMLInputElement).value;
+                const total = gridCols * gridRows;
+                session.rangeStart = v === '' ? 0 : Math.max(0, Math.min(total - 1, parseInt(v, 10) || 0));
+                if (session.currentFrame !== 0) session.currentFrame = 0;
+              }}
+              class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+            />
+          </label>
+          <label>
+            <span class="mb-0.5 block text-fg-muted">End frame</span>
+            <input
+              type="number"
+              min="0"
+              max={Math.max(0, gridCols * gridRows - 1)}
+              value={session.rangeEnd ?? (gridCols * gridRows - 1)}
+              oninput={(e) => {
+                const v = (e.currentTarget as HTMLInputElement).value;
+                const total = gridCols * gridRows;
+                const parsed = v === '' ? total - 1 : Math.max(0, Math.min(total - 1, parseInt(v, 10) || 0));
+                session.rangeEnd = parsed === total - 1 ? null : parsed;
+                if (session.currentFrame !== 0) session.currentFrame = 0;
+              }}
+              class="w-full rounded border border-border bg-surface px-1.5 py-0.5 text-fg"
+            />
+          </label>
+        </div>
+        <!-- Quick row picker — sets start/end to span a single
+             grid row, the common "play only the red character"
+             gesture. -->
+        {#if gridRows > 1}
+          <div class="mt-2">
+            <span class="mb-1 block text-[10px] text-fg-muted">Play one row</span>
+            <div class="flex flex-wrap gap-1">
+              {#each Array(gridRows) as _, r (r)}
+                <button
+                  type="button"
+                  onclick={() => {
+                    session.rangeStart = r * gridCols;
+                    session.rangeEnd = (r + 1) * gridCols - 1;
+                    session.currentFrame = 0;
+                  }}
+                  class="rounded border border-border bg-surface px-2 py-0.5 text-[10px] text-fg-muted hover:border-fg-muted hover:text-fg"
+                >Row {r + 1}</button>
+              {/each}
+              <button
+                type="button"
+                onclick={() => {
+                  session.rangeStart = 0;
+                  session.rangeEnd = null;
+                  session.currentFrame = 0;
+                }}
+                class="rounded border border-border bg-surface px-2 py-0.5 text-[10px] text-fg-muted hover:border-fg-muted hover:text-fg"
+              >All</button>
+            </div>
+          </div>
+        {/if}
       </section>
     {/if}
 

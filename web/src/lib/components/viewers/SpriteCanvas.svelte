@@ -22,7 +22,6 @@
 
   let loadError = $state<string | null>(null);
   let canvasEl: HTMLCanvasElement | undefined = $state();
-  let overlayEl: HTMLCanvasElement | undefined = $state();
 
   // ── Derived counts (mirror of session.stepFrame's math) ──────
   const gridCols = $derived(
@@ -41,8 +40,11 @@
       const t = session.metadataTags.find((x) => x.name === session.activeTag);
       if (t) return { from: t.from, to: t.to };
     }
-    const len = frames ? frames.length : (session.frameCountOverride ?? gridCols * gridRows);
-    return { from: 0, to: Math.max(0, len - 1) };
+    if (frames) return { from: 0, to: Math.max(0, frames.length - 1) };
+    const total = gridCols * gridRows;
+    const from = Math.max(0, Math.min(total - 1, session.rangeStart));
+    const to = Math.max(from, Math.min(total - 1, session.rangeEnd ?? total - 1));
+    return { from, to };
   });
   const frameCount = $derived(Math.max(1, playRange.to - playRange.from + 1));
 
@@ -80,40 +82,6 @@
     ctx.drawImage(session.img, f.sx, f.sy, f.sw, f.sh, 0, 0, dw, dh);
   }
 
-  function renderOverlay() {
-    if (!overlayEl || !session.img) return;
-    overlayEl.width = session.imgW * session.zoom;
-    overlayEl.height = session.imgH * session.zoom;
-    const ctx = overlayEl.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
-    if (!session.showGrid) return;
-    ctx.strokeStyle = 'rgba(255, 100, 100, 0.7)';
-    ctx.lineWidth = 1;
-    const frames = session.metadataFrames;
-    if (frames && frames.length > 0) {
-      for (const f of frames) {
-        ctx.strokeRect(f.sx * session.zoom + 0.5, f.sy * session.zoom + 0.5, f.sw * session.zoom, f.sh * session.zoom);
-      }
-      return;
-    }
-    if (session.cellW <= 0 || session.cellH <= 0) return;
-    for (let c = 0; c <= gridCols; c++) {
-      const x = (session.originX + c * (session.cellW + session.padX)) * session.zoom + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, overlayEl.height);
-      ctx.stroke();
-    }
-    for (let r = 0; r <= gridRows; r++) {
-      const y = (session.originY + r * (session.cellH + session.padY)) * session.zoom + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(overlayEl.width, y);
-      ctx.stroke();
-    }
-  }
-
   // RAF tick — drives playback. Reads frameMs derived from
   // session.fps so the user's slider takes effect mid-loop.
   let lastTick = 0;
@@ -146,13 +114,6 @@
     void session.activeTag;
     render();
   });
-  $effect(() => {
-    void session.zoom; void session.cellW; void session.cellH;
-    void session.padX; void session.padY; void session.originX;
-    void session.originY; void session.img; void session.showGrid;
-    void gridCols; void gridRows; void session.metadataFrames;
-    renderOverlay();
-  });
 
   // Clamp currentFrame when the frame count shrinks underneath.
   $effect(() => {
@@ -168,6 +129,15 @@
       // Reasonable starting zoom: aim for ~512 px tall canvas.
       const target = 512;
       session.zoom = Math.max(1, Math.min(16, Math.round(target / Math.max(session.imgW, session.imgH))));
+      // Auto-pick a cell size when the slicer is still untouched.
+      // 9-col × 6-row pixel sheets typically slice cleanly at 32 or
+      // 16 px; the heuristic tries common sizes and stops at the
+      // largest that divides both dims cleanly. Users can override.
+      if (session.cellW === 0 && session.cellH === 0 && !session.metadataFrames) {
+        const guess = session.guessCellSize(session.imgW, session.imgH);
+        session.cellW = guess.w;
+        session.cellH = guess.h;
+      }
       render();
     };
     i.onerror = () => { loadError = 'Failed to load sprite image.'; };
@@ -206,27 +176,15 @@
         class="relative inline-block {canvasBgClass}"
         style:background-color={session.bg === 'solid' ? session.bgSolid : undefined}
       >
-        {#if session.showGrid}
-          <canvas
-            bind:this={overlayEl}
-            class="block"
-            style:image-rendering="pixelated"
-          ></canvas>
-          {@const f = frameRect(session.currentFrame)}
-          <div
-            class="pointer-events-none absolute border-2 border-accent"
-            style:left={`${f.sx * session.zoom}px`}
-            style:top={`${f.sy * session.zoom}px`}
-            style:width={`${f.sw * session.zoom}px`}
-            style:height={`${f.sh * session.zoom}px`}
-          ></div>
-        {:else}
-          <canvas
-            bind:this={canvasEl}
-            class="block"
-            style:image-rendering={session.smoothing ? 'auto' : 'pixelated'}
-          ></canvas>
-        {/if}
+        <!-- Main canvas always shows the current frame. The
+             full-sheet-with-grid preview moved to the tool panel
+             (see SpriteToolPanel's Slicer section), so the user
+             never loses the playback view to look at slicing. -->
+        <canvas
+          bind:this={canvasEl}
+          class="block"
+          style:image-rendering={session.smoothing ? 'auto' : 'pixelated'}
+        ></canvas>
       </div>
     </div>
     <div class="mt-3 flex shrink-0 items-center gap-4 text-xs text-white/60">
