@@ -20,6 +20,7 @@ related:
   - "0034"
   - "0036"
   - "0037"
+  - "0040"
 tags:
   - monetization
   - licensing
@@ -287,6 +288,18 @@ We do **not** ship as a premium add-on (or any add-on) any of:
   metrics locally (Prometheus) and never call our servers.
 - **Engagement-bait / dark-pattern add-ons.** Anything optimising
   for time-on-site or notification-fatigue at the user's expense.
+- **Code derived from GPL / AGPL / LGPL reverse-engineering work
+  inside any premium (closed-source) add-on.** A closed-source
+  derivative of a copyleft implementation is a license violation
+  on our side — ours, not the upstream's. Contributors to a
+  premium add-on do not read GPL / AGPL / LGPL implementations of
+  the same format and follow documented clean-room methodology
+  (read the spec, observe behaviour, document provenance per
+  decision). Calling a GPL'd worker as a subprocess (the Blender
+  pattern) stays compatible because the GPL boundary terminates
+  at the process boundary and data flows in as files, out as
+  files. See [ADR 0039](/adr/0039-native-dcc-format-viewers/)
+  for the load-bearing application of this rule.
 
 This list is editable in future ADRs but each addition deserves an
 ADR not a quiet PR.
