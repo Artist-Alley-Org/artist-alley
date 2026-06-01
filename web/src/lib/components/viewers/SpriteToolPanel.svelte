@@ -788,6 +788,24 @@
             class="h-12 w-full resize-none rounded border border-border bg-surface px-1.5 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
           ></textarea>
         </label>
+        <!-- Phase 11 trim. Per-frame shrinks the source rect to its
+             non-transparent bounding box; bulk trims every frame.
+             Pure metadata — source PNG pixels never change. Fully
+             transparent frames are no-ops (don't collapse to zero). -->
+        <div class="mt-2 grid grid-cols-2 gap-1">
+          <button
+            type="button"
+            onclick={() => session.trimFrame(cur)}
+            class="rounded border border-border bg-surface px-2 py-1 text-fg hover:border-accent"
+            title="Shrink this frame's rect to its non-transparent bounds"
+          >Trim frame</button>
+          <button
+            type="button"
+            onclick={() => session.trimAllFrames()}
+            class="rounded border border-border bg-surface px-2 py-1 text-fg hover:border-accent"
+            title="Trim every frame"
+          >Trim all</button>
+        </div>
         <button
           type="button"
           onclick={() => session.pinToLightbox(cur)}

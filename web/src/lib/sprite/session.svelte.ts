@@ -71,6 +71,7 @@ export type BgMode = 'checker' | 'transparent' | 'solid';
 
 import type { DetectOptions, SortMode, DetectedBox, SheetAnalysis } from './detect';
 import { detectSprites, analyzeSheet, sortBoxes } from './detect';
+import { trimSourceRect, readSheetImageData } from './trim';
 
 export interface SpriteSession {
   // ── Image (owner: canvas mounts the Image, writes back here) ──
@@ -251,6 +252,13 @@ export interface SpriteSessionMethods {
    *  string removes the note (so the JSON round-trip drops the key
    *  rather than persisting an empty string). */
   setFrameNote(idx: number, note: string): void;
+  /** Phase 11 — shrink one frame's source rect to its non-
+   *  transparent bounding box. No-op when the frame is fully
+   *  transparent (don't collapse to a zero-size rect). */
+  trimFrame(idx: number): void;
+  /** Phase 11 — trim every frame. Reads the sheet pixels once so
+   *  the bulk pass doesn't pay per-frame getImageData cost. */
+  trimAllFrames(): void;
   // ── Lightbox (Phase 8) ───────────────────────────────────────
   pinToLightbox(idx: number): void;
   unpinFromLightbox(idx: number): void;
@@ -856,6 +864,33 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     state.metadataFrames = next;
   }
 
+  function trimFrame(idx: number) {
+    const frames = state.metadataFrames;
+    if (!frames || !state.img) return;
+    const i = clampFrameIndex(idx);
+    if (i < 0) return;
+    const data = readSheetImageData(state.img);
+    if (!data) return;
+    const cur = frames[i];
+    const tight = trimSourceRect(data, { sx: cur.sx, sy: cur.sy, sw: cur.sw, sh: cur.sh });
+    if (!tight) return;
+    const next = frames.slice();
+    next[i] = { ...cur, ...tight };
+    state.metadataFrames = next;
+  }
+
+  function trimAllFrames() {
+    const frames = state.metadataFrames;
+    if (!frames || frames.length === 0 || !state.img) return;
+    const data = readSheetImageData(state.img);
+    if (!data) return;
+    const next = frames.map((f) => {
+      const tight = trimSourceRect(data, { sx: f.sx, sy: f.sy, sw: f.sw, sh: f.sh });
+      return tight ? { ...f, ...tight } : f;
+    });
+    state.metadataFrames = next;
+  }
+
   function pinToLightbox(idx: number) {
     const i = clampFrameIndex(idx);
     if (i < 0) return;
@@ -1031,6 +1066,8 @@ export function createSpriteSession(opts: SpriteSessionOpts): SpriteSessionInsta
     setFrameDuration,
     setFrameTransform,
     setFrameNote,
+    trimFrame,
+    trimAllFrames,
     pinToLightbox,
     unpinFromLightbox,
     clearLightbox,
