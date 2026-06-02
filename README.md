@@ -1,5 +1,11 @@
 # artist-alley
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/mscrnt/artist-alley)](https://goreportcard.com/report/github.com/mscrnt/artist-alley)
+[![Go version](https://img.shields.io/github/go-mod/go-version/mscrnt/artist-alley?filename=app/go.mod)](app/go.mod)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/mscrnt/artist-alley?include_prereleases&sort=semver)](https://github.com/mscrnt/artist-alley/releases)
+[![Docs](https://img.shields.io/badge/docs-artist--alley.org-7c3aed)](https://artist-alley.org)
+
 A self-hosted art review and archival tool for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
 > **Status:** pre-MVP, active development. The architecture is settled; the feature set is still landing. Not production-ready.
