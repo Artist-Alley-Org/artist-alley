@@ -328,6 +328,15 @@ func (s *apiServer) ListPostWhiteboards(ctx context.Context, req openapi.ListPos
 func (s *apiServer) CreatePostWhiteboard(ctx context.Context, req openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	return s.social.CreatePostWhiteboard(ctx, req)
 }
+func (s *apiServer) ListAssetTextAnnotations(ctx context.Context, req openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	return s.social.ListAssetTextAnnotations(ctx, req)
+}
+func (s *apiServer) CreateAssetTextAnnotation(ctx context.Context, req openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	return s.social.CreateAssetTextAnnotation(ctx, req)
+}
+func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	return s.social.UpdateTextAnnotation(ctx, req)
+}
 
 // --- posts -----------------------------------------------------------------
 

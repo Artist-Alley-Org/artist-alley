@@ -510,6 +510,182 @@ func (h *Handler) CreatePostWhiteboard(
 }
 
 // ---------------------------------------------------------------------------
+// Text-range annotations — doc-viewer review tools.
+// ---------------------------------------------------------------------------
+//
+// Same storage trick as whiteboards: a text annotation is a top-level
+// comments row with annotation_type='text-range'. annotation_data
+// carries { style, color, start_line, start_col, end_line, end_col,
+// resolved }. Replies on annotations thread under it via the regular
+// comment thread query — only the top-level anchors surface here.
+
+func (h *Handler) ListAssetTextAnnotations(
+	ctx context.Context,
+	req openapi.ListAssetTextAnnotationsRequestObject,
+) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListAssetTextAnnotations401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
+		return nil, fmt.Errorf("social: asset check: %w", err)
+	} else if !exists {
+		return openapi.ListAssetTextAnnotations404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	rows, err := New(h.Pool).ListTextAnnotationsForAsset(ctx, pgAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("social: list text annotations: %w", err)
+	}
+	out := make(openapi.ListAssetTextAnnotations200JSONResponse, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, commentRowToAPI(r))
+	}
+	return out, nil
+}
+
+func (h *Handler) CreateAssetTextAnnotation(
+	ctx context.Context,
+	req openapi.CreateAssetTextAnnotationRequestObject,
+) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.CreateAssetTextAnnotation401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can(CapPostsComment) && !caller.Can(CapSystemAdmin) {
+		return openapi.CreateAssetTextAnnotation403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "posts.comment capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.CreateAssetTextAnnotation400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	pgAssetID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if exists, err := h.assetExists(ctx, pgAssetID); err != nil {
+		return nil, fmt.Errorf("social: asset check: %w", err)
+	} else if !exists {
+		return openapi.CreateAssetTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	anchorBytes, err := json.Marshal(req.Body.Anchor)
+	if err != nil {
+		return openapi.CreateAssetTextAnnotation400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid anchor payload"},
+		}, nil
+	}
+	body := ""
+	if req.Body.Body != nil {
+		body = *req.Body.Body
+	}
+	newID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	annotationType := "text-range"
+	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
+		ID:             newID,
+		TargetKind:     "asset",
+		TargetID:       pgAssetID,
+		ParentID:       pgtype.UUID{},
+		RootID:         newID,
+		Depth:          0,
+		AuthorUserRef:  caller.UserRef,
+		Body:           body,
+		BodyHtml:       "",
+		AnnotationType: &annotationType,
+		AnnotationData: anchorBytes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("social: create text annotation: %w", err)
+	}
+	return openapi.CreateAssetTextAnnotation201JSONResponse(commentRowToAPI(row)), nil
+}
+
+func (h *Handler) UpdateTextAnnotation(
+	ctx context.Context,
+	req openapi.UpdateTextAnnotationRequestObject,
+) (openapi.UpdateTextAnnotationResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.UpdateTextAnnotation401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateTextAnnotation400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	existing, err := New(h.Pool).GetComment(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateTextAnnotation404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("social: load annotation: %w", err)
+	}
+	if existing.DeletedAt.Valid {
+		return openapi.UpdateTextAnnotation404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+		}, nil
+	}
+	if existing.AnnotationType == nil || *existing.AnnotationType != "text-range" {
+		return openapi.UpdateTextAnnotation400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "not a text-range annotation"},
+		}, nil
+	}
+	// Author can always update; moderators (comments.delete.any holders)
+	// can also update — we treat the moderator cap as "manage any
+	// comment" for now since we don't have a separate update gate.
+	isAuthor := existing.AuthorUserRef == caller.UserRef
+	isMod := caller.Can(CapCommentsDeleteAny) || caller.Can(CapSystemAdmin)
+	if !isAuthor && !isMod {
+		return openapi.UpdateTextAnnotation403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the author"},
+		}, nil
+	}
+
+	// Resolve next anchor — caller can pass a full anchor or omit it
+	// to keep the existing blob.
+	anchorBytes := existing.AnnotationData
+	if req.Body.Anchor != nil {
+		nb, err := json.Marshal(req.Body.Anchor)
+		if err != nil {
+			return openapi.UpdateTextAnnotation400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid anchor payload"},
+			}, nil
+		}
+		anchorBytes = nb
+	}
+
+	params := UpdateAnnotationDataParams{
+		ID:             pgID,
+		AnnotationData: anchorBytes,
+	}
+	if req.Body.Body != nil {
+		params.Body = req.Body.Body
+	}
+	row, err := New(h.Pool).UpdateAnnotationData(ctx, params)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.UpdateTextAnnotation404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "annotation not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("social: update annotation: %w", err)
+	}
+	return openapi.UpdateTextAnnotation200JSONResponse(commentRowToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -517,6 +693,18 @@ func (h *Handler) postExists(ctx context.Context, id pgtype.UUID) (bool, error) 
 	var exists bool
 	err := h.Pool.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM posts WHERE id = $1 AND deleted_at IS NULL)`, id,
+	).Scan(&exists)
+	return exists, err
+}
+
+// assetExists mirrors postExists for the text-annotation handlers —
+// asserts the target asset row is present and not soft-deleted before
+// we accept a write. Returns false (not an error) on a clean miss so
+// the caller can surface a 404.
+func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error) {
+	var exists bool
+	err := h.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1)`, id,
 	).Scan(&exists)
 	return exists, err
 }

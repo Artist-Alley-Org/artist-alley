@@ -2084,6 +2084,116 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/text-annotations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetTextAnnotations
+      summary: List text-range annotations on a doc asset
+      description: |
+        Doc-viewer review tools (Phase 1.18.D-B). Each entry is a
+        top-level `comments` row with `annotation_type='text-range'`;
+        its `annotation_data` carries `{style, color, start_line,
+        start_col, end_line, end_col, resolved}`. `body` is the
+        user's commentary text (empty for pure highlights).
+
+        Replies on annotations live in the regular comment thread
+        and surface via `GET /assets/{id}/comments`, not here.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Annotations on the asset
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createAssetTextAnnotation
+      summary: Create a text-range annotation on a doc asset
+      description: |
+        Persists a highlight / strikethrough / underline / comment /
+        note as a top-level `comments` row with
+        `annotation_type='text-range'`. `body` carries the user's
+        commentary (empty string is fine for a pure highlight).
+
+        Requires `posts.comment` capability — annotations are
+        comments at the storage layer, so the same gate applies.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TextAnnotationCreate" }
+      responses:
+        "201":
+          description: Annotation created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /text-annotations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateTextAnnotation
+      summary: Update a text-range annotation
+      description: |
+        Mutates `body` (the commentary text) and/or `annotation_data`
+        (style / color / range / resolved). The annotation must
+        already exist with `annotation_type='text-range'`. Only the
+        annotation's author or a moderator can update.
+
+        For deletion, use `DELETE /comments/{id}` — annotations are
+        comments at the storage layer.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TextAnnotationPatch" }
+      responses:
+        "200":
+          description: Updated annotation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /comments/{id}:
     parameters:
       - name: id
@@ -4972,7 +5082,7 @@ components:
           description: Server-rendered safe HTML; clients should render this rather than reformatting `body`.
         annotation_type:
           type: string
-          enum: [point, rect, timestamp, frame]
+          enum: [point, rect, timestamp, frame, whiteboard, text-range]
           nullable: true
         annotation_data:
           type: object
@@ -5131,6 +5241,74 @@ components:
           description: Optional title for the sidebar list.
         content:
           $ref: "#/components/schemas/WhiteboardContent"
+
+    TextAnnotationAnchor:
+      type: object
+      description: |
+        Range anchor for a doc-viewer annotation. Lines are 1-based;
+        columns are 0-based (CodeMirror convention). The range may
+        be empty (`start == end`) for a sticky note at a position.
+      required: [style, color, start_line, start_col, end_line, end_col]
+      properties:
+        style:
+          type: string
+          enum: [highlight, strikethrough, underline, comment, note]
+          description: |
+            Visual treatment the editor's decoration extension applies.
+            `comment` + `note` carry user text in the parent comment's
+            `body`; `highlight` / `strikethrough` / `underline` typically
+            have empty bodies but the field is free to set.
+        color:
+          type: string
+          description: |
+            Hex color (`#fef08a` etc.). The default swatch palette is
+            five highlighter colors, but any hex string is accepted so
+            the future "custom color" picker works without a schema
+            change.
+          maxLength: 16
+        start_line:
+          type: integer
+          minimum: 1
+        start_col:
+          type: integer
+          minimum: 0
+        end_line:
+          type: integer
+          minimum: 1
+        end_col:
+          type: integer
+          minimum: 0
+        resolved:
+          type: boolean
+          default: false
+          description: |
+            Review-flow flag — the panel can filter resolved annotations
+            out of the active list. Resolution does not delete; the
+            anchor stays anchored for audit.
+
+    TextAnnotationCreate:
+      type: object
+      required: [anchor]
+      properties:
+        body:
+          type: string
+          description: User commentary (Markdown later; plain text now).
+          maxLength: 8000
+        anchor:
+          $ref: "#/components/schemas/TextAnnotationAnchor"
+
+    TextAnnotationPatch:
+      type: object
+      description: |
+        Field-by-field PATCH. Pass only what changed. Pass the full
+        `anchor` when changing any range/style/color field — the
+        server replaces the whole anchor blob (no partial JSON merge).
+      properties:
+        body:
+          type: string
+          maxLength: 8000
+        anchor:
+          $ref: "#/components/schemas/TextAnnotationAnchor"
 
     AclEntry:
       type: object

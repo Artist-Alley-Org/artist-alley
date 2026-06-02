@@ -54,19 +54,37 @@ export interface DocStats {
   fileSize: number | null;
 }
 
-/** Stub for Phase B annotations — the table + REST + decorations
- *  land in B. The session shape stays compatible so the panel's
- *  "coming soon" pane can morph in place. */
+/** Text-range annotation — Phase B. Mirrors the backend
+ *  `comments` row with `annotation_type='text-range'`; the visual
+ *  style + color + anchor + resolved flag live in `annotation_data`
+ *  on the wire and as direct fields here for ergonomic access. */
 export interface DocAnnotation {
   id: string;
-  kind: 'highlight' | 'strikethrough' | 'underline' | 'comment' | 'note';
-  anchor: { startLine: number; startCol: number; endLine: number; endCol: number };
-  body: string;
+  style: 'highlight' | 'strikethrough' | 'underline' | 'comment' | 'note';
   color: string;
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
   resolved: boolean;
+  body: string;
   authorRef: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Selection the editor reports to the panel when the user
+ *  highlights a range. Used by the floating selection toolbar +
+ *  the side-panel "Annotate selection" button. */
+export interface DocSelection {
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+  /** True when start === end (no characters selected). The toolbar
+   *  uses this to gate which annotation styles make sense — a
+   *  zero-width range can only carry a sticky note. */
+  empty: boolean;
 }
 
 export interface DocSession {
@@ -126,8 +144,28 @@ export interface DocSession {
   /** Total matches the editor reports for the current query. */
   searchMatchCount: number;
 
-  // ── Annotations (Phase B stub) ───────────────────────────────
+  // ── Annotations (Phase B) ────────────────────────────────────
+  /** Live annotation list — fetched on mount + mutated by the
+   *  selection toolbar / panel. The viewer's decoration extension
+   *  re-reads on every change and re-paints the editor. */
   annotations: DocAnnotation[];
+  /** True while the initial GET is in flight. */
+  annotationsLoading: boolean;
+  annotationsError: string | null;
+  /** Last error from a write (create/update/delete). Cleared on
+   *  the next successful write. */
+  annotationsWriteError: string | null;
+  /** Current editor selection — pushed by DocView on selectionSet.
+   *  null when nothing is selected. Drives the floating toolbar. */
+  selection: DocSelection | null;
+  /** Pixel coordinates the selection toolbar should anchor to.
+   *  Viewport-relative (clientX/clientY) so the panel doesn't have
+   *  to know about CodeMirror's coordinate system. */
+  selectionAnchor: { x: number; y: number } | null;
+  /** Panel filter — which annotation kinds to show. `null` = all. */
+  annotationsFilter: DocAnnotation['style'] | null;
+  /** Hide resolved entries by default; user can flip the toggle. */
+  annotationsShowResolved: boolean;
 }
 
 export interface DocSessionOpts { assetId: string; }
@@ -168,6 +206,29 @@ export interface DocSessionMethods {
   replaceCurrent(): void;
   /** Replace every match for the current query. */
   replaceAll(): void;
+
+  // Annotations (Phase B)
+  /** Initial fetch — called once after mount. Idempotent. */
+  loadAnnotations(): Promise<void>;
+  /** Persist a new annotation. Optimistically inserts into
+   *  `annotations` on success. */
+  createAnnotation(input: {
+    style: DocAnnotation['style'];
+    color: string;
+    body?: string;
+    anchor: { startLine: number; startCol: number; endLine: number; endCol: number };
+  }): Promise<DocAnnotation | null>;
+  /** Patch body / style / color / range / resolved. The patch is
+   *  shallow-merged with the existing annotation before the
+   *  PATCH /text-annotations/{id} call. */
+  updateAnnotation(id: string, patch: Partial<Pick<DocAnnotation,
+    'body' | 'style' | 'color' | 'startLine' | 'startCol' | 'endLine' | 'endCol' | 'resolved'>>): Promise<void>;
+  /** DELETE /comments/{id} — annotations are comments under the hood. */
+  deleteAnnotation(id: string): Promise<void>;
+  /** Push selection state from the viewer to the panel + toolbar. */
+  setSelection(sel: DocSelection | null, anchor?: { x: number; y: number } | null): void;
+  setAnnotationsFilter(f: DocAnnotation['style'] | null): void;
+  toggleAnnotationsShowResolved(): void;
 }
 
 export type DocSessionInstance =
@@ -240,6 +301,13 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
     searchMatchCount: 0,
 
     annotations: [],
+    annotationsLoading: false,
+    annotationsError: null,
+    annotationsWriteError: null,
+    selection: null,
+    selectionAnchor: null,
+    annotationsFilter: null,
+    annotationsShowResolved: false,
   });
 
   // Trigger counters — the panel calls a method, the counter
@@ -309,6 +377,158 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
   function replaceCurrent() { triggers.replaceCurrent++; }
   function replaceAll() { triggers.replaceAll++; }
 
+  // ─── Annotations (Phase B) ───────────────────────────────────
+  // Server returns the comments-shaped row; we flatten its
+  // annotation_data blob onto the DocAnnotation shape for ergonomic
+  // panel access. The reverse direction packs the same fields back
+  // into the `anchor` payload the API expects.
+  type CommentRow = {
+    id: string;
+    author_user_ref: number | null;
+    body: string;
+    annotation_data?: Record<string, unknown> | null;
+    created_at: string;
+    updated_at: string;
+  };
+  function rowToAnnotation(c: CommentRow): DocAnnotation | null {
+    const a = c.annotation_data ?? {};
+    const style = String(a.style ?? 'highlight') as DocAnnotation['style'];
+    return {
+      id: c.id,
+      style,
+      color: String(a.color ?? '#fef08a'),
+      startLine: Number(a.start_line ?? 1),
+      startCol: Number(a.start_col ?? 0),
+      endLine: Number(a.end_line ?? 1),
+      endCol: Number(a.end_col ?? 0),
+      resolved: Boolean(a.resolved ?? false),
+      body: c.body ?? '',
+      authorRef: c.author_user_ref,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    };
+  }
+  function annotationToAnchor(a: {
+    style: DocAnnotation['style']; color: string; startLine: number;
+    startCol: number; endLine: number; endCol: number; resolved?: boolean;
+  }) {
+    return {
+      style: a.style,
+      color: a.color,
+      start_line: a.startLine,
+      start_col: a.startCol,
+      end_line: a.endLine,
+      end_col: a.endCol,
+      resolved: a.resolved ?? false,
+    };
+  }
+
+  async function loadAnnotations() {
+    state.annotationsLoading = true;
+    state.annotationsError = null;
+    try {
+      const r = await fetch(`/api/v1/assets/${opts.assetId}/text-annotations`, {
+        credentials: 'include',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const rows = (await r.json()) as CommentRow[];
+      state.annotations = rows
+        .map(rowToAnnotation)
+        .filter((x): x is DocAnnotation => !!x);
+    } catch (e) {
+      state.annotationsError = e instanceof Error ? e.message : String(e);
+    } finally {
+      state.annotationsLoading = false;
+    }
+  }
+
+  async function createAnnotation(input: {
+    style: DocAnnotation['style'];
+    color: string;
+    body?: string;
+    anchor: { startLine: number; startCol: number; endLine: number; endCol: number };
+  }): Promise<DocAnnotation | null> {
+    state.annotationsWriteError = null;
+    try {
+      const r = await fetch(`/api/v1/assets/${opts.assetId}/text-annotations`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          body: input.body ?? '',
+          anchor: annotationToAnchor({
+            style: input.style, color: input.color,
+            startLine: input.anchor.startLine, startCol: input.anchor.startCol,
+            endLine: input.anchor.endLine, endCol: input.anchor.endCol,
+            resolved: false,
+          }),
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const row = (await r.json()) as CommentRow;
+      const ann = rowToAnnotation(row);
+      if (ann) state.annotations = [...state.annotations, ann];
+      return ann;
+    } catch (e) {
+      state.annotationsWriteError = e instanceof Error ? e.message : String(e);
+      return null;
+    }
+  }
+
+  async function updateAnnotation(id: string, patch: Partial<Pick<DocAnnotation,
+    'body' | 'style' | 'color' | 'startLine' | 'startCol' | 'endLine' | 'endCol' | 'resolved'>>) {
+    state.annotationsWriteError = null;
+    const existing = state.annotations.find((a) => a.id === id);
+    if (!existing) return;
+    const merged: DocAnnotation = { ...existing, ...patch };
+    try {
+      // Build the PATCH body. Only include `anchor` if any range /
+      // style / color / resolved changed; only include `body` if the
+      // commentary changed.
+      const wantsAnchor =
+        'style' in patch || 'color' in patch || 'startLine' in patch
+        || 'startCol' in patch || 'endLine' in patch || 'endCol' in patch
+        || 'resolved' in patch;
+      const payload: { body?: string; anchor?: ReturnType<typeof annotationToAnchor> } = {};
+      if ('body' in patch) payload.body = merged.body;
+      if (wantsAnchor) payload.anchor = annotationToAnchor(merged);
+      const r = await fetch(`/api/v1/text-annotations/${id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const row = (await r.json()) as CommentRow;
+      const ann = rowToAnnotation(row);
+      if (!ann) return;
+      state.annotations = state.annotations.map((a) => (a.id === id ? ann : a));
+    } catch (e) {
+      state.annotationsWriteError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function deleteAnnotation(id: string) {
+    state.annotationsWriteError = null;
+    try {
+      const r = await fetch(`/api/v1/comments/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
+      state.annotations = state.annotations.filter((a) => a.id !== id);
+    } catch (e) {
+      state.annotationsWriteError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function setSelection(sel: DocSelection | null, anchor?: { x: number; y: number } | null) {
+    state.selection = sel;
+    state.selectionAnchor = anchor ?? null;
+  }
+  function setAnnotationsFilter(f: DocAnnotation['style'] | null) { state.annotationsFilter = f; }
+  function toggleAnnotationsShowResolved() { state.annotationsShowResolved = !state.annotationsShowResolved; }
+
   return Object.assign(state as DocSessionInstance, {
     assetId: opts.assetId,
     // Trigger getters exposed so view-body $effects can read them
@@ -327,6 +547,8 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
     setSearchQuery, setSearchCaseSensitive, setSearchRegex,
     setSearchWholeWord, setReplaceWith,
     findNext, findPrev, replaceCurrent, replaceAll,
+    loadAnnotations, createAnnotation, updateAnnotation, deleteAnnotation,
+    setSelection, setAnnotationsFilter, toggleAnnotationsShowResolved,
   });
 }
 

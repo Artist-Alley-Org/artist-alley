@@ -880,3 +880,12 @@ func (authOnlyImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequ
 func (authOnlyImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
 	panic("GetBrushPackStamp called from authOnlyImpl test shim")
 }
+func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from auth_test test shim")
+}
+func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from auth_test test shim")
+}
+func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from auth_test test shim")
+}

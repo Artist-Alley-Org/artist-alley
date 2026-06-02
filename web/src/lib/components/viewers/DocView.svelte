@@ -17,6 +17,7 @@
   import type { ViewController } from './controller';
   import type { DocSessionInstance, DocOutlineEntry } from '$lib/doc/session.svelte';
   import { persistDocScroll } from '$lib/doc/session.svelte';
+  import { annotationField, annotationTheme, setDocAnnotations } from '$lib/doc/annotation-deco';
 
   type Asset = import('./controller').ViewAsset;
 
@@ -42,6 +43,8 @@
   let sourceText = $state<string>('');
   /** Markdown HTML cache — computed on demand inside the effect. */
   let renderedHTML = $state<string>('');
+  /** Annotation the panel asked the editor to scroll into view. */
+  let focusedAnnotationId = $state<string | null>(null);
 
   // ── Language detection ────────────────────────────────────────
   // Mapping from file extension to CodeMirror language id. Used for
@@ -352,6 +355,8 @@
         lineNumCompartment.of(session.lineNumbers ? lineNumbers() : []),
         tabCompartment.of(indentUnit.of(' '.repeat(session.tabSize))),
         langCompartment.of(lang ? [lang] : []),
+        annotationField,
+        annotationTheme,
         EditorState.readOnly.of(true),
         EditorView.updateListener.of((upd) => {
           if (upd.selectionSet || upd.docChanged || upd.viewportChanged) {
@@ -362,6 +367,35 @@
               persistDocScroll(asset.id, ln);
             }
           }
+          if (upd.selectionSet || upd.docChanged) {
+            reportSelection(upd.view);
+          }
+        }),
+        EditorView.domEventHandlers({
+          mouseup(_, view) {
+            // Re-anchor on mouseup so the floating toolbar sits
+            // where the cursor landed, not where the drag started.
+            queueMicrotask(() => reportSelection(view));
+            return false;
+          },
+          click(ev, view) {
+            // Click an existing annotation → open it in the panel.
+            const t = ev.target as HTMLElement | null;
+            const annoEl = t?.closest('[data-annotation-id]') as HTMLElement | null;
+            if (!annoEl) return false;
+            const id = annoEl.getAttribute('data-annotation-id');
+            if (id) {
+              focusedAnnotationId = id;
+              // Surface in the panel (scroll the entry into view)
+              session.setSelection(null);
+              const ev2 = new CustomEvent('aa-doc-anno-focus', {
+                detail: { id },
+                bubbles: true,
+              });
+              view.dom.dispatchEvent(ev2);
+            }
+            return false;
+          },
         }),
       ],
     });
@@ -388,7 +422,55 @@
       search: { setSearchQuery, openSearchPanel, closeSearchPanel, findNext, findPrevious, replaceNext, replaceAll, SearchQuery },
     };
 
+    // Initial paint of any annotations already loaded into the
+    // session, then fetch fresh ones from the server.
+    pushAnnotations(view);
+    void session.loadAnnotations();
+
     cleanupFn = () => { view.destroy(); host = null; };
+  }
+
+  // ── Selection + annotation bridges ────────────────────────────
+  function reportSelection(view: import('@codemirror/view').EditorView) {
+    const sel = view.state.selection.main;
+    const doc = view.state.doc;
+    const startLine = doc.lineAt(sel.from);
+    const endLine = doc.lineAt(sel.to);
+    const desc = {
+      startLine: startLine.number,
+      startCol: sel.from - startLine.from,
+      endLine: endLine.number,
+      endCol: sel.to - endLine.from,
+      empty: sel.empty,
+    };
+    if (sel.empty) {
+      session.setSelection(desc, null);
+      return;
+    }
+    // Anchor the toolbar above the end of the selection. Coords
+    // are viewport-relative because the toolbar lives in fixed
+    // positioning at the top of AssetViewer's overlay.
+    const coords = view.coordsAtPos(sel.to);
+    if (coords) {
+      session.setSelection(desc, { x: (coords.left + coords.right) / 2, y: coords.top });
+    } else {
+      session.setSelection(desc, null);
+    }
+  }
+
+  function pushAnnotations(view: import('@codemirror/view').EditorView) {
+    view.dispatch({ effects: setDocAnnotations.of(
+      session.annotations.map((a) => ({
+        id: a.id,
+        style: a.style,
+        color: a.color,
+        startLine: a.startLine,
+        startCol: a.startCol,
+        endLine: a.endLine,
+        endCol: a.endCol,
+        resolved: a.resolved,
+      })),
+    ) });
   }
 
   // ── Reactive bridges (session → CodeMirror) ──────────────────
@@ -476,6 +558,42 @@
     void renderMarkdownNow(sourceText).then((html) => { renderedHTML = html; });
   });
 
+  // Re-paint editor decorations when the annotation list mutates.
+  // The viewer-driven `setDocAnnotations` effect inside the editor
+  // rebuilds the decoration set from scratch each call — cheap for
+  // the dozen-or-so annotations a single document carries.
+  $effect(() => {
+    if (!host) return;
+    void session.annotations;
+    pushAnnotations(host.view);
+  });
+
+  // The panel emits a custom 'aa-doc-anno-jump' event with an
+  // annotation id when the user clicks an entry — scroll the editor
+  // to that range. Listening at the window level since the panel
+  // lives in a sibling DOM subtree.
+  function onJump(e: Event) {
+    if (!host) return;
+    const detail = (e as CustomEvent<{ id: string }>).detail;
+    const ann = session.annotations.find((a) => a.id === detail.id);
+    if (!ann) return;
+    const ln = Math.min(ann.startLine, host.view.state.doc.lines);
+    const lineFrom = host.view.state.doc.line(ln).from;
+    const col = Math.min(ann.startCol, host.view.state.doc.line(ln).length);
+    const pos = lineFrom + col;
+    host.view.dispatch({
+      selection: host.EditorSelection.cursor(pos),
+      effects: host.EditorView.scrollIntoView(pos, { y: 'center' }),
+    });
+    focusedAnnotationId = detail.id;
+  }
+  onMount(() => {
+    window.addEventListener('aa-doc-anno-jump', onJump as EventListener);
+  });
+  onDestroy(() => {
+    window.removeEventListener('aa-doc-anno-jump', onJump as EventListener);
+  });
+
   // HUD shows the language tag + line count.
   $effect(() => {
     const lng = session.languageId !== 'plain' ? session.languageId : ext;
@@ -485,6 +603,53 @@
   const showPreview = $derived(
     session.renderMarkdown && languageId === 'markdown' && renderedHTML.length > 0,
   );
+
+  // ── Selection toolbar ─────────────────────────────────────────
+  // Anchored above the user's selection. Five swatches + four style
+  // buttons; pressing one fires session.createAnnotation and clears
+  // the selection so the toolbar dismisses. Comments + notes open a
+  // local body-text prompt inline before persisting.
+  const HIGHLIGHT_SWATCHES = ['#fef08a', '#bef264', '#7dd3fc', '#f9a8d4', '#fca5a5'];
+  let pickedColor = $state(HIGHLIGHT_SWATCHES[0]);
+  let commentDraft = $state<{ style: 'comment' | 'note'; body: string } | null>(null);
+
+  function selectionExists(): boolean {
+    return !!session.selection && !session.selection.empty;
+  }
+
+  async function applyStyle(style: 'highlight' | 'strikethrough' | 'underline') {
+    if (!session.selection) return;
+    const sel = session.selection;
+    await session.createAnnotation({
+      style, color: pickedColor, body: '',
+      anchor: { startLine: sel.startLine, startCol: sel.startCol, endLine: sel.endLine, endCol: sel.endCol },
+    });
+    session.setSelection(null);
+  }
+  function openCommentDraft(style: 'comment' | 'note') {
+    if (!session.selection) return;
+    commentDraft = { style, body: '' };
+  }
+  async function submitDraft() {
+    if (!session.selection || !commentDraft) return;
+    const sel = session.selection;
+    await session.createAnnotation({
+      style: commentDraft.style,
+      color: pickedColor,
+      body: commentDraft.body.trim(),
+      // Notes anchor at the cursor (zero-width) when selection is
+      // empty, but if there's a range selected we keep it so a "note
+      // about this whole paragraph" lands as a paragraph-scoped pin.
+      anchor: {
+        startLine: sel.startLine, startCol: sel.startCol,
+        endLine: commentDraft.style === 'note' ? sel.startLine : sel.endLine,
+        endCol:  commentDraft.style === 'note' ? sel.startCol  : sel.endCol,
+      },
+    });
+    commentDraft = null;
+    session.setSelection(null);
+  }
+  function cancelDraft() { commentDraft = null; }
 </script>
 
 <div class="relative flex h-full w-full flex-col bg-surface text-fg">
@@ -520,6 +685,98 @@
       <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-surface p-8 text-center text-sm text-danger">
         <p>{session.loadError}</p>
         <a href={fileUrl} class="text-accent underline" target="_blank">Download original</a>
+      </div>
+    {/if}
+
+    <!-- Floating selection toolbar. Appears when text is selected
+         and we have a viewport anchor for it. Positioned above the
+         selection's top-right; the parent flex column is the
+         offset reference. -->
+    {#if selectionExists() && session.selectionAnchor && !commentDraft}
+      <div
+        class="pointer-events-auto fixed z-50 flex items-center gap-1 rounded-md border border-border bg-surface-elevated px-1.5 py-1 text-xs shadow-2xl"
+        style:left={`${Math.max(8, session.selectionAnchor.x - 110)}px`}
+        style:top={`${Math.max(8, session.selectionAnchor.y - 44)}px`}
+        role="toolbar"
+        aria-label="Annotation tools"
+      >
+        <div class="flex items-center gap-0.5">
+          {#each HIGHLIGHT_SWATCHES as c (c)}
+            <button
+              type="button"
+              onclick={() => (pickedColor = c)}
+              class="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
+              class:border-fg={pickedColor === c}
+              class:border-transparent={pickedColor !== c}
+              style:background-color={c}
+              title="Color"
+              aria-label="Color {c}"
+            ></button>
+          {/each}
+        </div>
+        <span class="mx-1 h-4 w-px bg-border"></span>
+        <button type="button" onclick={() => applyStyle('highlight')} title="Highlight" aria-label="Highlight" class="rounded p-1 hover:bg-surface">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+        </button>
+        <button type="button" onclick={() => applyStyle('strikethrough')} title="Strikethrough" aria-label="Strikethrough" class="rounded p-1 hover:bg-surface">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" y1="12" x2="20" y2="12"/></svg>
+        </button>
+        <button type="button" onclick={() => applyStyle('underline')} title="Underline" aria-label="Underline" class="rounded p-1 hover:bg-surface">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><line x1="4" y1="20" x2="20" y2="20"/></svg>
+        </button>
+        <button type="button" onclick={() => openCommentDraft('comment')} title="Comment" aria-label="Comment" class="rounded p-1 hover:bg-surface">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button type="button" onclick={() => openCommentDraft('note')} title="Sticky note" aria-label="Sticky note" class="rounded p-1 hover:bg-surface">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+        </button>
+      </div>
+    {/if}
+
+    <!-- Comment / note draft prompt — replaces the toolbar while the
+         user types the body. ESC cancels, Enter (without shift) saves. -->
+    {#if commentDraft && session.selectionAnchor}
+      <div
+        class="pointer-events-auto fixed z-50 w-72 rounded-md border border-accent bg-surface-elevated p-2 shadow-2xl"
+        style:left={`${Math.max(8, session.selectionAnchor.x - 140)}px`}
+        style:top={`${Math.max(8, session.selectionAnchor.y - 110)}px`}
+      >
+        <div class="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-fg-muted">
+          <span>{commentDraft.style === 'note' ? 'Sticky note' : 'Comment'}</span>
+          <span class="font-mono">
+            {session.selection?.startLine}:{session.selection?.startCol}
+          </span>
+        </div>
+        <textarea
+          bind:value={commentDraft.body}
+          placeholder="Type your {commentDraft.style}…"
+          rows="3"
+          autofocus
+          onkeydown={(e) => {
+            if (e.key === 'Escape') cancelDraft();
+            else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submitDraft(); }
+          }}
+          class="w-full resize-none rounded border border-border bg-surface px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+        ></textarea>
+        <div class="mt-1 flex items-center justify-between">
+          <div class="flex items-center gap-0.5">
+            {#each HIGHLIGHT_SWATCHES as c (c)}
+              <button
+                type="button"
+                onclick={() => (pickedColor = c)}
+                class="h-4 w-4 rounded-full border-2 transition-transform hover:scale-110"
+                class:border-fg={pickedColor === c}
+                class:border-transparent={pickedColor !== c}
+                style:background-color={c}
+                aria-label="Color {c}"
+              ></button>
+            {/each}
+          </div>
+          <div class="flex items-center gap-1">
+            <button type="button" onclick={cancelDraft} class="rounded border border-border bg-surface px-2 py-0.5 text-[10px] text-fg hover:border-accent">Cancel</button>
+            <button type="button" onclick={() => void submitDraft()} class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-fg hover:bg-accent/25">Save</button>
+          </div>
+        </div>
       </div>
     {/if}
   </div>

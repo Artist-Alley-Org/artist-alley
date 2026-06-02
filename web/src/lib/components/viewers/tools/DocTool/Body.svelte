@@ -18,7 +18,7 @@
   //   6. Annotations · coming soon — Phase B teaser
 
   import type { ToolContext } from '../contract';
-  import type { DocTheme, DocFontFamily } from '$lib/doc/session.svelte';
+  import type { DocTheme, DocFontFamily, DocAnnotation } from '$lib/doc/session.svelte';
 
   let { ctx }: { ctx: ToolContext } = $props();
   const session = $derived(ctx.docSession);
@@ -42,6 +42,47 @@
   }
 
   let replaceOpen = $state(false);
+
+  // ── Annotations panel state ───────────────────────────────────
+  const FILTERS: { id: DocAnnotation['style']; label: string }[] = [
+    { id: 'highlight',     label: 'Highlight' },
+    { id: 'strikethrough', label: 'Strike' },
+    { id: 'underline',     label: 'Under' },
+    { id: 'comment',       label: 'Comment' },
+    { id: 'note',          label: 'Note' },
+  ];
+  const HIGHLIGHT_SWATCHES = ['#fef08a', '#bef264', '#7dd3fc', '#f9a8d4', '#fca5a5'];
+
+  const visibleAnnotations = $derived(
+    (session?.annotations ?? []).filter((a) =>
+      (session?.annotationsFilter === null || a.style === session?.annotationsFilter)
+      && (session?.annotationsShowResolved || !a.resolved),
+    ),
+  );
+
+  let editingId = $state<string | null>(null);
+  let editDraft = $state('');
+  let editColor = $state(HIGHLIGHT_SWATCHES[0]);
+  function beginEdit(a: DocAnnotation) {
+    editingId = a.id;
+    editDraft = a.body;
+    editColor = a.color;
+  }
+  function cancelEdit() {
+    editingId = null;
+    editDraft = '';
+  }
+  async function saveEdit(a: DocAnnotation) {
+    if (!session) return;
+    await session.updateAnnotation(a.id, {
+      body: editDraft,
+      color: editColor,
+    });
+    cancelEdit();
+  }
+  function jumpTo(id: string) {
+    window.dispatchEvent(new CustomEvent('aa-doc-anno-jump', { detail: { id } }));
+  }
 
   function formatDate(iso: string): string {
     try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
@@ -328,17 +369,133 @@
       </section>
     {/if}
 
-    <!-- ── 6. Annotations · coming soon (Phase B) ────────────── -->
+    <!-- ── 6. Annotations ────────────────────────────────────── -->
     <section class="p-3 text-xs">
-      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Annotations · coming soon</h3>
-      <p class="text-[10px] leading-snug text-fg-muted">
-        Phase&nbsp;B lands the review toolbox: select text in the editor and pick
-        <span class="font-medium text-fg">highlight</span>,
-        <span class="font-medium text-fg">strikethrough</span>,
-        <span class="font-medium text-fg">underline</span>,
-        <span class="font-medium text-fg">comment</span>, or a sticky
-        <span class="font-medium text-fg">note</span>. Annotations persist server-side, attach to a text range, and surface here for filter / resolve / delete.
-      </p>
+      <div class="mb-2 flex items-center justify-between">
+        <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Annotations</h3>
+        {#if session.annotations.length > 0}
+          <span class="font-mono text-[10px] text-fg-muted">{visibleAnnotations.length} / {session.annotations.length}</span>
+        {/if}
+      </div>
+
+      {#if session.annotationsLoading}
+        <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] text-fg-muted">Loading…</p>
+      {:else if session.annotationsError}
+        <p class="rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">{session.annotationsError}</p>
+      {:else}
+        <!-- Style filter chips. Click an active chip to clear. -->
+        <div class="mb-2 flex flex-wrap items-center gap-1">
+          {#each FILTERS as f (f.id)}
+            <button
+              type="button"
+              onclick={() => session.setAnnotationsFilter(session.annotationsFilter === f.id ? null : f.id)}
+              class={`rounded border px-1.5 py-0.5 text-[10px] capitalize ${session.annotationsFilter === f.id ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg-muted hover:border-accent hover:text-fg'}`}
+              title={`Filter to ${f.label}`}
+            >{f.label}</button>
+          {/each}
+          <label class="ml-auto flex items-center gap-1 text-[10px] text-fg-muted">
+            <input
+              type="checkbox"
+              checked={session.annotationsShowResolved}
+              onchange={() => session.toggleAnnotationsShowResolved()}
+              class="h-3 w-3 accent-accent"
+            />
+            <span>Show resolved</span>
+          </label>
+        </div>
+
+        {#if visibleAnnotations.length === 0}
+          <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] leading-snug text-fg-muted">
+            {#if session.annotations.length === 0}
+              No annotations yet. Select text in the document and pick a tool from the floating toolbar.
+            {:else}
+              No annotations match the current filter.
+            {/if}
+          </p>
+        {:else}
+          <div class="space-y-1">
+            {#each visibleAnnotations as a (a.id)}
+              <div class={`group rounded border bg-surface px-2 py-1 ${a.resolved ? 'opacity-60' : ''}`} style:border-color={a.color}>
+                <div class="mb-0.5 flex items-center gap-1 text-[10px]">
+                  <span class="rounded px-1 py-px font-mono text-[9px] uppercase tracking-wide text-fg" style:background-color={a.color}>
+                    {a.style}
+                  </span>
+                  <span class="font-mono text-fg-muted/70">L{a.startLine}{a.startLine !== a.endLine ? `–${a.endLine}` : ''}</span>
+                  <span class="ml-auto text-fg-muted/60">{formatDate(a.createdAt)}</span>
+                </div>
+                <button
+                  type="button"
+                  onclick={() => jumpTo(a.id)}
+                  class="block w-full text-left text-[10px]"
+                >
+                  {#if a.body}
+                    <div class="text-fg">{a.body}</div>
+                  {:else}
+                    <div class="text-fg-muted italic">(no commentary)</div>
+                  {/if}
+                </button>
+                <div class="mt-1 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onclick={() => session.updateAnnotation(a.id, { resolved: !a.resolved })}
+                    class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent"
+                    title={a.resolved ? 'Mark unresolved' : 'Mark resolved'}
+                  >{a.resolved ? '↶' : '✓'}</button>
+                  <button
+                    type="button"
+                    onclick={() => beginEdit(a)}
+                    class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent"
+                    title="Edit body"
+                  >✎</button>
+                  <button
+                    type="button"
+                    onclick={() => session.deleteAnnotation(a.id)}
+                    class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-danger hover:text-danger"
+                    title="Delete"
+                  >×</button>
+                </div>
+                {#if editingId === a.id}
+                  <div class="mt-1 rounded border border-accent bg-surface/80 p-1">
+                    <textarea
+                      bind:value={editDraft}
+                      rows="2"
+                      class="w-full resize-none rounded border border-border bg-surface px-1.5 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+                    ></textarea>
+                    <div class="mt-1 flex items-center gap-1">
+                      {#each HIGHLIGHT_SWATCHES as c (c)}
+                        <button
+                          type="button"
+                          onclick={() => (editColor = c)}
+                          class="h-4 w-4 rounded-full border-2"
+                          class:border-fg={editColor === c}
+                          class:border-transparent={editColor !== c}
+                          style:background-color={c}
+                          aria-label="Color {c}"
+                        ></button>
+                      {/each}
+                      <button
+                        type="button"
+                        onclick={cancelEdit}
+                        class="ml-auto rounded border border-border bg-surface px-2 py-0.5 text-[10px] text-fg hover:border-accent"
+                      >Cancel</button>
+                      <button
+                        type="button"
+                        onclick={() => void saveEdit(a)}
+                        class="rounded border border-accent bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-fg hover:bg-accent/25"
+                      >Save</button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if session.annotationsWriteError}
+          <p class="mt-1 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
+            {session.annotationsWriteError}
+          </p>
+        {/if}
+      {/if}
     </section>
   </div>
 {/if}

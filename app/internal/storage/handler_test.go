@@ -544,3 +544,12 @@ func (shimImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestO
 func (shimImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
 	panic("GetBrushPackStamp called from shimImpl test shim")
 }
+func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from storage_test test shim")
+}
+func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from storage_test test shim")
+}
+func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from storage_test test shim")
+}
