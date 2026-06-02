@@ -18,10 +18,13 @@
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
-  import SpriteToolPanel from './SpriteToolPanel.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
+  import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
+  import ToolPanelShell from './ToolPanelShell.svelte';
+  import { TOOLS } from './tools/registry';
+  import type { ToolContext, ToolDef } from './tools/contract';
 
   // Native + three-loader 3D paths we ship today. Other 3D
   // extensions (mview, blend, mb, ma, max, usd*) fall through to
@@ -40,23 +43,37 @@
         only fire for the focused viewer so two carousel slides don't
         fight for the keyboard. */
     active?: boolean;
-    /** True once the host (e.g. PostModal) has explicitly entered
-        review mode. Review mode swaps the right pane from metadata
-    /** Host-provided content for the right pane when NOT in review
-        mode. PostModal injects its post metadata snippet here; the
-        standalone /assets/[id] page can pass asset-only info; an
-        embedded viewer can pass anything. When reviewMode flips on
-        the pane swaps to the kind-aware tools panel the viewer owns. */
-    metadataSlot?: Snippet;
     /** Centered title bar content. Threaded to ViewerMenuBar to
         replace the default filename strip in the title bar (post
         hosts use this for "title — by author"). */
     titleSlot?: Snippet;
-    /** Bottom-of-right-pane hotkey legend. Rendered outside the
-        metadata scroll area so it stays pinned even when the host's
-        contextSlot is long. Shell-provided because the shell owns
-        the keys it lists (A/D within-playlist, ←/→ sibling-nav). */
-    hotkeyLegend?: Snippet;
+    /** Extra Tips rows rendered below the active tool's Tips in
+        the shell footer. Hosts use this for nav shortcuts (A/D
+        within-playlist, ←/→ sibling-nav) that aren't owned by any
+        specific tool. */
+    extraTips?: Snippet;
+    /** Host-injected tools that merge into the registry at shell
+        mount. Hosts that own richer surfaces (PostHost has post
+        details with likes / comments / cover-picker) register
+        their own ToolDef with the appropriate order. The built-in
+        Details tool stays in the dropdown alongside — the user
+        picks which surface they want from the dropdown. */
+    customTools?: ToolDef[];
+    /** Whiteboard session — wired by hosts that mount a whiteboard
+        surface (post-anchored today; any asset eventually). Passed
+        through into the ToolContext so the WhiteboardTool body
+        picks it up. */
+    whiteboardSession?: WhiteboardSession;
+    /** Host hook bag forwarded to every tool via ToolContext.
+        Conventions:
+          - `hostHooks.whiteboard`: { saving, saveError, onSave,
+            onClose, compact, onToggleCompact } consumed by
+            WhiteboardTool.
+          - `hostHooks.details`: free-form host-specific surface
+            for custom DetailsTool bodies.
+        Other tools that want host integration claim their own
+        namespace key. */
+    hostHooks?: Record<string, unknown>;
     /** Overlay rendered ABOVE the asset canvas (between the asset
         and the annotation layer) so tool surfaces — whiteboard,
         annotations — can paint over the asset without hiding the
@@ -72,14 +89,11 @@
     maximized?: boolean;
     onToggleMaximize?: () => void;
     /** Bindable pane open/closed state so the host can persist the
-        user's preference in its own localStorage. Default open when
-        there's something to show. */
+        user's preference in its own localStorage. Default open. */
     paneCollapsed?: boolean;
-    /** Bindable compact-pane state. When true and the pane isn't
-        fully collapsed, the pane shrinks to an icon-strip width
-        (~3.5rem). The slotted metadata content is expected to
-        render its own compact UI in that width — AssetViewer just
-        shrinks the rail. */
+    /** Bindable compact-rail state for tools that opt in
+        (Whiteboard). Shell shrinks the aside to ~3.5rem and the
+        tool body switches to its icon-rail layout. */
     paneCompact?: boolean;
     /** Optional close handler. When set, ViewerMenuBar shows a close
         button in the window-controls zone *and* a "Close" entry in
@@ -98,18 +112,16 @@
     onDownloadVariant?: () => void;
     onShareAsset?: () => void;
     onDeleteAsset?: () => void;
-    /** Tools-menu Whiteboard item. Host wires this when a whiteboard
-        surface is mountable (post-anchored). */
-    onToggleWhiteboard?: () => void;
-    whiteboardOpen?: boolean;
   }
 
   let {
     asset,
     active = true,
-    metadataSlot,
     titleSlot,
-    hotkeyLegend,
+    extraTips,
+    customTools = [],
+    whiteboardSession,
+    hostHooks,
     canvasOverlay,
     maximized = false,
     onToggleMaximize,
@@ -123,14 +135,13 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
-    onToggleWhiteboard,
-    whiteboardOpen = false,
   }: Props = $props();
 
-  // The right pane is shown when there's something to put in it:
-  // review tools are always available for an active viewer; the
-  // metadata slot is host-provided. No slot + no review = no pane
-  // (so a small card preview doesn't grow an empty sidebar).
+  // Derived: is whiteboard mode currently active? Source-of-truth
+  // is the session existing. The selection-orchestration effect
+  // below uses this to decide whether to fire onActivate / onClose.
+  const whiteboardOpen = $derived(!!whiteboardSession);
+
   // User-driven "treat this as a sprite" override. Lets the user
   // open SpriteCanvas's slicer + playback tools on any raster
   // image, not just assets explicitly classified as Sprite. Resets
@@ -147,22 +158,22 @@
   const detectedKind = $derived(kindForAsset(asset));
   const kind = $derived(spriteOverride && detectedKind === 'image' ? 'sprite' : detectedKind);
 
-  // Kinds that own their own tool panel rendering. Sprite is built-
-  // in (SpriteToolPanel above); 3D plumbs through controller.tools.
-  // Any kind on this list auto-opens the right pane regardless of
-  // whether the host wired a metadataSlot.
-  const kindHasTools = $derived(kind === 'sprite' || kind === '3d');
-  const paneEnabled = $derived(!!metadataSlot || kindHasTools);
-  // Auto-expand the pane when a kind with tools comes into view so
-  // the user sees the controls immediately. Only force-open on the
-  // transition INTO a tools kind; the user can collapse manually
-  // after.
-  let hadToolsKind = false;
+  // The pane shows whenever the registry + host-injected tools
+  // have at least one available entry for this asset. Built-in
+  // tools (Details) are always available, so the pane shows for
+  // every non-placeholder kind. The shell handles the collapse-
+  // to-rail state internally.
+  const paneEnabled = $derived(kind !== 'placeholder');
+  // Auto-expand once when a sprite or 3D kind comes into view so
+  // the user sees the dedicated tool immediately. Only force-open
+  // on the transition INTO a tools kind; the user can re-collapse.
+  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d');
+  let hadRichToolsKind = false;
   $effect(() => {
-    if (kindHasTools && !hadToolsKind && paneCollapsed) {
+    if (kindHasRichTools && !hadRichToolsKind && paneCollapsed) {
       paneCollapsed = false;
     }
-    hadToolsKind = kindHasTools;
+    hadRichToolsKind = kindHasRichTools;
   });
   const paneOpen = $derived(paneEnabled && !paneCollapsed);
 
@@ -333,6 +344,109 @@
     { label: '200%', factor: 2 },
     { label: '400%', factor: 4 },
   ];
+
+  // ToolPanelShell consumes this. Built fresh on every reactive
+  // change so the shell's $derived(isAvailable) fires when sessions
+  // come / go (sprite spin-up, whiteboard open). zoomPresets is
+  // declared above so this $derived can reference it without
+  // tripping TDZ during initial evaluation.
+  const toolCtx = $derived<ToolContext>({
+    asset,
+    controller,
+    spriteSession: spriteSession ?? undefined,
+    whiteboardSession,
+    hostHooks,
+    shellState: {
+      zoom,
+      setZoom,
+      resetView,
+      zoomPresets,
+      // paneCompact is a placeholder here — the shell overrides
+      // it with the resolved (and tool-gated) value before
+      // mounting the active Body so tools don't have to know
+      // about supportsCompact.
+      paneCompact: false,
+    },
+  });
+  // Built-in registry + host-injected tools. Hosts REPLACE built-in
+  // tools by id (PostHost overrides Details so the body renders
+  // post info instead of the generic asset-info stub). Unmatched
+  // host tools simply append.
+  const mergedTools = $derived.by<ToolDef[]>(() => {
+    const customIds = new Set(customTools.map((t) => t.id));
+    return [...TOOLS.filter((t) => !customIds.has(t.id)), ...customTools];
+  });
+  // Filter to what's available for the current asset, sorted in
+  // dropdown order. Shared by the menubar (picker items) + the
+  // shell (Body / Tips mounter) so both ends agree on what the
+  // user can switch to.
+  const availableTools = $derived(
+    mergedTools.filter((t) => t.isAvailable(toolCtx)).sort((a, b) => a.order - b.order),
+  );
+  // Active tool id — persisted per-tab in localStorage and shared
+  // with the menubar's Tools menu. Auto-falls-back when the
+  // persisted id isn't valid for the current asset (shell does
+  // the write-back).
+  const ACTIVE_TOOL_KEY = 'aa.viewer.activeTool';
+  let activeToolId = $state<string>('details');
+  onMount(() => {
+    try {
+      const stored = localStorage.getItem(ACTIVE_TOOL_KEY);
+      if (stored) activeToolId = stored;
+    } catch { /* ignore — private browsing */ }
+  });
+  $effect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TOOL_KEY, activeToolId);
+    } catch { /* ignore */ }
+  });
+  function selectTool(id: string) {
+    activeToolId = id;
+  }
+  // Resolved label for the active tool — labelFn overrides label
+  // when present so the menubar trigger ("Tools • Details" / "Tools
+  // • Sprite Viewer" / etc.) reflects what the panel header shows.
+  const activeToolLabel = $derived.by(() => {
+    const t = availableTools.find((x) => x.id === activeToolId);
+    if (!t) return '';
+    return t.labelFn ? t.labelFn(toolCtx) : t.label;
+  });
+
+  // Tool-selection orchestration. Two tools need side effects on
+  // becoming active (or going inactive):
+  //
+  //   Sprite Viewer — flips spriteOverride so the canvas re-mounts
+  //   as SpriteCanvas and a session spawns. Reverts on deselection
+  //   so picking Details / Whiteboard restores the original kind.
+  //
+  //   Whiteboard — calls the host's onActivate hook to open the
+  //   canvas overlay + create the WhiteboardSession. Calls onClose
+  //   on deselection so picking Details / Sprite Viewer also exits
+  //   whiteboard mode.
+  //
+  // Effect reads activeToolId reactively + the previous value via a
+  // closure so we only fire on transitions, not on every reactive
+  // tick.
+  let lastActiveTool: string | null = null;
+  $effect(() => {
+    const next = activeToolId;
+    const prev = lastActiveTool;
+    if (next === prev) return;
+    lastActiveTool = next;
+    // Sprite Viewer transitions
+    if (next === 'sprite' && detectedKind === 'image' && !spriteOverride) {
+      spriteOverride = true;
+    } else if (prev === 'sprite' && spriteOverride) {
+      spriteOverride = false;
+    }
+    // Whiteboard transitions
+    const wb = hostHooks?.whiteboard as { onActivate?: () => void; onClose?: () => void } | undefined;
+    if (next === 'whiteboard' && wb?.onActivate && !whiteboardOpen) {
+      wb.onActivate();
+    } else if (prev === 'whiteboard' && wb?.onClose && whiteboardOpen) {
+      wb.onClose();
+    }
+  });
 
   // Canvas double-click as a review-mode toggle was retired —
   // users kept landing on it accidentally (panel swap mid-scroll,
@@ -604,11 +718,11 @@
     {onDownloadVariant}
     {onShareAsset}
     {onDeleteAsset}
-    {onToggleWhiteboard}
-    {whiteboardOpen}
-    canSliceAsSprite={canOverrideToSprite}
-    sliceAsSpriteOn={spriteOverride}
-    onToggleSliceAsSprite={() => (spriteOverride = !spriteOverride)}
+    sidePanelTools={availableTools}
+    sidePanelToolCtx={toolCtx}
+    sidePanelActiveTool={activeToolId}
+    sidePanelActiveToolLabel={activeToolLabel}
+    onSelectSidePanelTool={selectTool}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
@@ -778,273 +892,15 @@
          w-96 (open) and w-0 (collapsed) for the same smooth slide the
          old translate-based overlay gave us. -->
     {#if paneEnabled}
-      <aside
-        class="flex max-w-[40vw] shrink-0 flex-col overflow-hidden border-l border-border bg-surface text-fg shadow-2xl transition-[width] duration-200 ease-out"
-        class:w-96={!paneCollapsed && !paneCompact}
-        class:w-14={!paneCollapsed && paneCompact}
-        class:w-0={paneCollapsed}
-        class:border-l-0={paneCollapsed}
-        aria-label="Asset tools"
-      >
-        <header
-          class="flex shrink-0 items-center border-b border-border py-3"
-          class:justify-between={!paneCompact}
-          class:px-4={!paneCompact}
-          class:justify-center={paneCompact}
-        >
-          {#if !paneCompact}
-            <h2 class="text-sm font-medium">
-              {#if kindHasTools}Tools{:else}Details{/if}
-            </h2>
-          {/if}
-          <button
-            type="button"
-            onclick={togglePane}
-            class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-surface-elevated hover:text-fg"
-            aria-label="Collapse panel"
-            title="Collapse (i)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
-        </header>
-        <div class="min-h-0 flex-1 overflow-y-auto">
-          <!-- Priority: sprite tools first (own session, dedicated
-               panel), then any other kind-aware tools (3D today;
-               more later), then metadataSlot as a fallback for hosts
-               that wired post details, etc. Review-mode gating is
-               retired — kind tools always show, and the user can
-               collapse the pane for more canvas room. -->
-          {#if kind === 'sprite' && spriteSession}
-            <SpriteToolPanel bind:session={spriteSession} />
-          {:else if kindHasTools}
-            <!-- Kind-aware tools. The "View" section is shell-owned
-                 (every 2D kind shares the same zoom + pan transform
-                 the shell applies), so it renders without any per-
-                 kind body wiring. Below it, per-kind sections render
-                 only if the mounted view body exposed them via
-                 controller.tools — wireframe has no meaning for
-                 image/pdf, exposure works for both 3D paths, etc. -->
-            <div class="space-y-1 p-3">
-              {#if kind !== '3d'}
-                <section class="rounded-md border border-border bg-surface-elevated">
-                  <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">View</header>
-                  <div class="flex flex-wrap gap-1.5 p-3">
-                    {#each zoomPresets as p}
-                      <button
-                        type="button"
-                        onclick={() => (p.factor === null ? resetView() : setZoom(p.factor))}
-                        class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated"
-                        class:border-accent={p.factor !== null && Math.abs(zoom - p.factor) < 0.001}
-                        class:text-accent={p.factor !== null && Math.abs(zoom - p.factor) < 0.001}
-                      >
-                        {p.label}
-                      </button>
-                    {/each}
-                  </div>
-                </section>
-              {/if}
-
-              {#if controller.tools}
-                {@const tools = controller.tools}
-                <!-- ── Camera section ───────────────────────────────── -->
-                {#if tools.frameAll || tools.resetCamera || tools.cameraPreset}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Camera</header>
-                    <div class="flex flex-wrap gap-1.5 p-3">
-                      {#if tools.frameAll}
-                        <button type="button" onclick={tools.frameAll} class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated">
-                          Frame all
-                        </button>
-                      {/if}
-                      {#if tools.resetCamera}
-                        <button type="button" onclick={tools.resetCamera} class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated">
-                          Reset
-                        </button>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-
-                <!-- ── Display section ──────────────────────────────── -->
-                {#if tools.grid || tools.axes || tools.wireframe || tools.groundShadow}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Display</header>
-                    <div class="space-y-2 p-3">
-                      {#if tools.grid}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Grid</span>
-                          <button
-                            type="button"
-                            onclick={tools.grid.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.grid.enabled}
-                            class:bg-border={!tools.grid.enabled}
-                            role="switch"
-                            aria-checked={tools.grid.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.grid.enabled} class:translate-x-0.5={!tools.grid.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.axes}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Axes</span>
-                          <button
-                            type="button"
-                            onclick={tools.axes.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.axes.enabled}
-                            class:bg-border={!tools.axes.enabled}
-                            role="switch"
-                            aria-checked={tools.axes.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.axes.enabled} class:translate-x-0.5={!tools.axes.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.groundShadow}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Ground shadow</span>
-                          <button
-                            type="button"
-                            onclick={tools.groundShadow.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.groundShadow.enabled}
-                            class:bg-border={!tools.groundShadow.enabled}
-                            role="switch"
-                            aria-checked={tools.groundShadow.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.groundShadow.enabled} class:translate-x-0.5={!tools.groundShadow.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.wireframe}
-                        <div class="flex items-center justify-between text-xs">
-                          <span>Wireframe</span>
-                          <button
-                            type="button"
-                            onclick={tools.wireframe.cycle}
-                            class="rounded-md border border-border bg-surface px-2 py-0.5 text-xs capitalize hover:border-fg-muted/60 hover:bg-surface-elevated"
-                            title="Cycle: {tools.wireframe.options.join(' → ')}"
-                          >
-                            {tools.wireframe.mode}
-                          </button>
-                        </div>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-
-                <!-- ── Lighting section ─────────────────────────────── -->
-                {#if tools.exposure || tools.envIntensity}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Lighting</header>
-                    <div class="space-y-3 p-3">
-                      {#if tools.exposure}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.exposure.label ?? 'Exposure'}</span>
-                            <span class="font-mono text-fg-muted">{tools.exposure.value.toFixed(2)}</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.exposure.min}
-                            max={tools.exposure.max}
-                            step={tools.exposure.step ?? 0.01}
-                            value={tools.exposure.value}
-                            oninput={(e) => tools.exposure!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                      {#if tools.envIntensity}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.envIntensity.label ?? 'Env intensity'}</span>
-                            <span class="font-mono text-fg-muted">{tools.envIntensity.value.toFixed(2)}</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.envIntensity.min}
-                            max={tools.envIntensity.max}
-                            step={tools.envIntensity.step ?? 0.01}
-                            value={tools.envIntensity.value}
-                            oninput={(e) => tools.envIntensity!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-
-                <!-- ── Auto-rotate section ──────────────────────────── -->
-                {#if tools.autoRotate || tools.autoRotateSpeed}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Auto-rotate</header>
-                    <div class="space-y-3 p-3">
-                      {#if tools.autoRotate}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Enabled</span>
-                          <button
-                            type="button"
-                            onclick={tools.autoRotate.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.autoRotate.enabled}
-                            class:bg-border={!tools.autoRotate.enabled}
-                            role="switch"
-                            aria-checked={tools.autoRotate.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.autoRotate.enabled} class:translate-x-0.5={!tools.autoRotate.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.autoRotateSpeed && tools.autoRotate?.enabled}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.autoRotateSpeed.label ?? 'Speed'}</span>
-                            <span class="font-mono text-fg-muted">{tools.autoRotateSpeed.value.toFixed(1)}×</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.autoRotateSpeed.min}
-                            max={tools.autoRotateSpeed.max}
-                            step={tools.autoRotateSpeed.step ?? 0.1}
-                            value={tools.autoRotateSpeed.value}
-                            oninput={(e) => tools.autoRotateSpeed!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-              {/if}
-
-              {#if kind === '3d' && !controller.tools}
-                <!-- 3D body hasn't mounted yet (or this kind has no
-                     per-kind tools yet — only 3D currently uses the
-                     controller.tools path; image / pdf / font / audio
-                     get the shell-owned "View" section above). -->
-                <div class="p-4 text-sm text-fg-muted">
-                  <p>Loading review tools…</p>
-                </div>
-              {/if}
-            </div>
-          {:else if metadataSlot}
-            {@render metadataSlot()}
-          {/if}
-        </div>
-        <!-- Hotkey legend — pinned footer of the right pane (outside
-             the scroll area) so it stays in view as the user scrolls
-             through metadata. Hidden in review mode where the kind-
-             aware tools have their own labelled hotkeys. -->
-        {#if hotkeyLegend && !kindHasTools}
-          {@render hotkeyLegend()}
-        {/if}
-      </aside>
+      <ToolPanelShell
+        ctx={toolCtx}
+        tools={mergedTools}
+        bind:activeToolId
+        bind:paneCollapsed
+        bind:paneCompact
+        onTogglePane={togglePane}
+        {extraTips}
+      />
     {/if}
   </div><!-- /canvas+pane row -->
 

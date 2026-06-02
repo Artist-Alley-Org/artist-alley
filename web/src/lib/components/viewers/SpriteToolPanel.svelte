@@ -254,11 +254,10 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-fg">
-  <header class="flex shrink-0 items-center justify-between border-b border-border bg-surface-elevated px-3 py-2">
-    <span class="text-sm font-semibold">Sprite</span>
-    <span class="font-mono text-[10px] text-fg-muted">{session.imgW}×{session.imgH}</span>
-  </header>
-
+  <!-- Internal "Sprite NNNxNNN" header retired — the shell header
+       already shows "Sprite Viewer" + collapse chevron, and the
+       sheet dimensions live in the Image info section's
+       Dimensions row below. Two stacked headers looked redundant. -->
   <div class="min-h-0 flex-1 overflow-y-auto">
     <!-- Display -->
     <section class="border-b border-border p-3 text-xs">

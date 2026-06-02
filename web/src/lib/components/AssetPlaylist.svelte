@@ -30,13 +30,13 @@
   import { onDestroy, onMount, type Snippet } from 'svelte';
   import AssetViewer from './viewers/AssetViewer.svelte';
   import { kindForAsset } from './viewers/controller';
+  import type { ToolDef } from './viewers/tools/contract';
+  import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import type { PlaylistSource } from '$lib/playlist/types';
   import { t } from '$stores/lang.svelte';
 
   interface Props {
     source: PlaylistSource;
-    /** Sidebar content threaded into AssetViewer's metadataSlot. */
-    contextSlot?: Snippet;
     /** Centered title bar content. Rendered in the middle zone of the
         top toolbar (between the File/Edit/About menus and the window
         controls), replacing the default filename strip. Post hosts
@@ -75,29 +75,30 @@
     onDownloadVariant?: (assetId: string) => void;
     onShareAsset?: (assetId: string) => void;
     onDeleteAsset?: (assetId: string) => void;
-    /** Tools-menu Whiteboard item. Hosts that aren't post-anchored
-        omit this and the item stays disabled in the menu. */
-    onToggleWhiteboard?: () => void;
-    whiteboardOpen?: boolean;
-    /** Extra rows to append to the hotkey legend at the bottom of
-        the right pane. Hosts that own a mode-specific tool surface
-        (whiteboard, annotation, future review modes) pass a snippet
-        that renders its own `<dt>/<dd>` rows plus an uppercase
-        section header so the legend stays one consolidated
-        reference. Rendered inside the existing `<details>`
-        accordion so users see all viewer + mode hotkeys in one
-        place. */
-    extraHotkeySection?: Snippet;
-    /** Compact-pane state — when true, AssetViewer's right pane
-        shrinks to an icon-rail width. The slotted contextSlot is
-        expected to render its own compact UI in that width. Host-
-        owned + bindable so the contextSlot's content can drive it. */
-    paneCompact?: boolean;
+    /** Extra rows to append to the global TipsSection footer at the
+        bottom of the side panel. Hosts that own mode-specific tool
+        surfaces (whiteboard, annotation, future review modes) pass
+        a snippet that renders `<dt>/<dd>` rows + an uppercase
+        section header so every tool's tips stay in one consolidated
+        reference inside the shell's single Tips footer. */
+    extraTips?: Snippet;
+    /** Host-injected tools — appended to the registry at shell
+        mount. Hosts that own rich detail surfaces (PostHost's post
+        details / likes / comments / cover-picker) register their
+        own ToolDef with the right order. The built-in Details
+        tool stays in the dropdown alongside. */
+    customTools?: ToolDef[];
+    /** Whiteboard session passed through to the WhiteboardTool
+        when the host has wired one (post-anchored today). */
+    whiteboardSession?: WhiteboardSession;
+    /** Host hook bag forwarded into the ToolContext. See
+        AssetViewer's prop docs for the conventional namespaces
+        (hostHooks.whiteboard, hostHooks.details, ...). */
+    hostHooks?: Record<string, unknown>;
   }
 
   let {
     source,
-    contextSlot,
     titleSlot,
     canvasOverlay,
     onClose,
@@ -110,10 +111,10 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
-    onToggleWhiteboard,
-    whiteboardOpen = false,
-    extraHotkeySection,
-    paneCompact = $bindable(false),
+    extraTips,
+    customTools = [],
+    whiteboardSession,
+    hostHooks,
   }: Props = $props();
 
   // ---- Local state ---------------------------------------------------------
@@ -359,8 +360,12 @@
         paneCollapsed = !paneCollapsed;
         break;
       case 'Escape':
-        // ESC falls through to the dialog's native close behaviour
-        // (platform's "ESC closes dialog").
+        // <dialog> only handles ESC natively when opened via
+        // showModal() (maximized mode). Windowed mode uses show(),
+        // which has no native ESC. Close explicitly so the gesture
+        // works the same in both modes.
+        e.preventDefault();
+        handleClose();
         break;
     }
   }
@@ -442,11 +447,12 @@
               asset={currentItem.asset}
               active={true}
               bind:paneCollapsed
-              bind:paneCompact
-              metadataSlot={contextSlot}
+              {customTools}
+              {whiteboardSession}
+              {hostHooks}
               {titleSlot}
               {canvasOverlay}
-              hotkeyLegend={playlistHotkeys}
+              extraTips={playlistHotkeys}
               {maximized}
               onToggleMaximize={toggleMaximize}
               onClose={handleClose}
@@ -471,8 +477,6 @@
               onDeleteAsset={onDeleteAsset
                 ? () => onDeleteAsset(currentItem.asset.id)
                 : undefined}
-              {onToggleWhiteboard}
-              {whiteboardOpen}
             />
           </div>
         {:else}
@@ -625,85 +629,47 @@
      context: A/D only appear in multi-asset playlists; ←/→ only when
      the host wired sibling-nav (browse-feed overlay does; standalone
      /posts/{id} doesn't). -->
+<!-- Nav / shell hotkey rows. Emits `<dt>/<dd>` pairs directly into
+     the shell's TipsSection <dl> grid (no outer <details> — the
+     shell owns the accordion). Section dividers use the
+     col-span-2 sub-heading convention. The host's own
+     extraTips (e.g. PostHost's mode-specific shortcuts) appends
+     below this via AssetViewer's extraTips prop. -->
 {#snippet playlistHotkeys()}
-  <details class="aa-collapse shrink-0 border-t border-border bg-surface-elevated text-[11px] text-fg-muted">
-    <summary class="cursor-pointer list-none px-3 py-2 font-medium uppercase tracking-wide text-fg-muted/80 hover:text-fg">
-      <span class="inline-flex items-center gap-1">
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-        {extraHotkeySection ? t('viewer_hotkeys.title_tips') : t('viewer_hotkeys.title')}
-      </span>
-    </summary>
-    <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-      {#if hasMultipleItems}
-        <dt class="font-mono text-fg">↑ · ↓</dt>
-        <dd>{t('viewer_hotkeys.prev_asset')} · {t('viewer_hotkeys.next_asset')}</dd>
-      {/if}
-      {#if onNavigateSibling}
-        <dt class="font-mono text-fg">← · →</dt>
-        <dd>{t('viewer_hotkeys.prev_post')} · {t('viewer_hotkeys.next_post')}</dd>
-      {/if}
-      <dt class="font-mono text-fg">I</dt>
-      <dd>{t('viewer_hotkeys.toggle_panel')}</dd>
-      <dt class="font-mono text-fg">F</dt>
-      <dd>{t('viewer_hotkeys.fullscreen')}</dd>
-      <dt class="font-mono text-fg">R</dt>
-      <dd>{t('viewer_hotkeys.reset_view')}</dd>
-      <dt class="font-mono text-fg">Esc</dt>
-      <dd>{t('viewer_hotkeys.close')}</dd>
-    </dl>
-    {#if isTimelineKind}
-      <!-- Timeline / playback (video + audio). Owned by the shell's
-           per-kind hotkey handler; only meaningful when a body with
-           a timeline is mounted, so we hide for image / pdf / etc. -->
-      <div class="mb-1 mt-2 px-3 font-medium uppercase tracking-wide text-fg-muted/80">
-        {t('viewer_hotkeys.section_playback')}
-      </div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Space · K</dt>
-        <dd>{t('viewer_hotkeys.play_pause')}</dd>
-        <dt class="font-mono text-fg">J · L</dt>
-        <dd>{t('viewer_hotkeys.rewind_forward')}</dd>
-        <dt class="font-mono text-fg">, · .</dt>
-        <dd>{t('viewer_hotkeys.step_back_forward')}</dd>
-        <dt class="font-mono text-fg">⇧ + , · .</dt>
-        <dd>{t('viewer_hotkeys.step_back_forward_10')}</dd>
-        <dt class="font-mono text-fg">1 – 5</dt>
-        <dd>{t('viewer_hotkeys.speed_range')}</dd>
-        <dt class="font-mono text-fg">G</dt>
-        <dd>{t('viewer_hotkeys.goto_frame')}</dd>
-        <dt class="font-mono text-fg">I · O</dt>
-        <dd>{t('viewer_hotkeys.loop_in_out')}</dd>
-        <dt class="font-mono text-fg">⌫</dt>
-        <dd>{t('viewer_hotkeys.loop_clear')}</dd>
-        <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt>
-        <dd>{t('viewer_hotkeys.zoom_scrubber')}</dd>
-      </dl>
-    {/if}
-    {#if currentKind === 'audio'}
-      <!-- Audio waveform pointer gestures — only render for audio
-           since the waveform surface only exists there. -->
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">
-        {t('viewer_hotkeys.section_waveform')}
-      </div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Click</dt>
-        <dd>{t('viewer_hotkeys.wave_seek')}</dd>
-        <dt class="font-mono text-fg">⇧ + drag</dt>
-        <dd>{t('viewer_hotkeys.wave_select_loop')}</dd>
-        <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt>
-        <dd>{t('viewer_hotkeys.wave_zoom')}</dd>
-      </dl>
-    {/if}
-    {#if extraHotkeySection}
-      <!-- Host-owned extra section (whiteboard tips, annotation
-           hotkeys, etc). Renders below the viewer hotkeys so the
-           legend stays one consolidated reference instead of two
-           competing panels. -->
-      {@render extraHotkeySection()}
-    {/if}
-  </details>
+  <dt class="col-span-2 mt-1 text-fg-muted/70">{t('viewer_hotkeys.title')}</dt>
+  {#if hasMultipleItems}
+    <dt class="font-mono text-fg">↑ · ↓</dt>
+    <dd class="text-fg-muted">{t('viewer_hotkeys.prev_asset')} · {t('viewer_hotkeys.next_asset')}</dd>
+  {/if}
+  {#if onNavigateSibling}
+    <dt class="font-mono text-fg">← · →</dt>
+    <dd class="text-fg-muted">{t('viewer_hotkeys.prev_post')} · {t('viewer_hotkeys.next_post')}</dd>
+  {/if}
+  <dt class="font-mono text-fg">I</dt><dd class="text-fg-muted">{t('viewer_hotkeys.toggle_panel')}</dd>
+  <dt class="font-mono text-fg">F</dt><dd class="text-fg-muted">{t('viewer_hotkeys.fullscreen')}</dd>
+  <dt class="font-mono text-fg">R</dt><dd class="text-fg-muted">{t('viewer_hotkeys.reset_view')}</dd>
+  <dt class="font-mono text-fg">Esc</dt><dd class="text-fg-muted">{t('viewer_hotkeys.close')}</dd>
+  {#if isTimelineKind}
+    <dt class="col-span-2 mt-1 text-fg-muted/70">{t('viewer_hotkeys.section_playback')}</dt>
+    <dt class="font-mono text-fg">Space · K</dt><dd class="text-fg-muted">{t('viewer_hotkeys.play_pause')}</dd>
+    <dt class="font-mono text-fg">J · L</dt><dd class="text-fg-muted">{t('viewer_hotkeys.rewind_forward')}</dd>
+    <dt class="font-mono text-fg">, · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward')}</dd>
+    <dt class="font-mono text-fg">⇧ + , · .</dt><dd class="text-fg-muted">{t('viewer_hotkeys.step_back_forward_10')}</dd>
+    <dt class="font-mono text-fg">1 – 5</dt><dd class="text-fg-muted">{t('viewer_hotkeys.speed_range')}</dd>
+    <dt class="font-mono text-fg">G</dt><dd class="text-fg-muted">{t('viewer_hotkeys.goto_frame')}</dd>
+    <dt class="font-mono text-fg">I · O</dt><dd class="text-fg-muted">{t('viewer_hotkeys.loop_in_out')}</dd>
+    <dt class="font-mono text-fg">⌫</dt><dd class="text-fg-muted">{t('viewer_hotkeys.loop_clear')}</dd>
+    <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt><dd class="text-fg-muted">{t('viewer_hotkeys.zoom_scrubber')}</dd>
+  {/if}
+  {#if currentKind === 'audio'}
+    <dt class="col-span-2 mt-1 text-fg-muted/70">{t('viewer_hotkeys.section_waveform')}</dt>
+    <dt class="font-mono text-fg">Click</dt><dd class="text-fg-muted">{t('viewer_hotkeys.wave_seek')}</dd>
+    <dt class="font-mono text-fg">⇧ + drag</dt><dd class="text-fg-muted">{t('viewer_hotkeys.wave_select_loop')}</dd>
+    <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt><dd class="text-fg-muted">{t('viewer_hotkeys.wave_zoom')}</dd>
+  {/if}
+  {#if extraTips}
+    {@render extraTips()}
+  {/if}
 {/snippet}
 
 <style>

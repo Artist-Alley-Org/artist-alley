@@ -11,7 +11,7 @@
 // SpriteSession returns false when ctx.spriteSession is undefined;
 // the shell hides its dropdown entry automatically.
 
-import type { Component } from 'svelte';
+import type { Component, Snippet } from 'svelte';
 import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
 import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
@@ -41,6 +41,28 @@ export interface ToolContext {
    *  ViewTool reads this to drive zoom presets; other tools
    *  ignore it. Populated by AssetViewer. */
   shellState?: ShellState;
+  /** Id of the tool the shell currently has selected. Set by
+   *  the shell so adapter components (SnippetBody / SnippetTips
+   *  in tools/snippet-tool.ts) can resolve their host-provided
+   *  snippet from `hostHooks[`tool:${activeToolId}`]`. */
+  activeToolId?: string;
+}
+
+/** Convention for host-injected snippet tools: hosts register a
+ *  ToolDef built via `defineSnippetTool({ id, ... })` and pass the
+ *  snippet body / tips through `hostHooks[`tool:${id}`]`. Typed
+ *  here so hosts + adapters agree without each one re-declaring
+ *  the shape. */
+export interface SnippetToolHooks {
+  body?: Snippet<[ToolContext]>;
+  tips?: Snippet<[ToolContext]>;
+}
+
+/** Compose the hostHooks key the snippet-tool adapter looks up
+ *  for a given tool id. Hosts use the same helper when populating
+ *  hostHooks so the two ends stay in sync. */
+export function snippetToolHookKey(toolId: string): string {
+  return `tool:${toolId}`;
 }
 
 /** Surface the AssetViewer shell exposes to tools that drive the
@@ -52,6 +74,11 @@ export interface ShellState {
   setZoom(z: number): void;
   resetView(): void;
   zoomPresets: Array<{ label: string; factor: number | null }>;
+  /** True when the shell is rendering in compact-rail width.
+   *  Tools that opt in via `supportsCompact` read this and switch
+   *  their Body to a narrow layout. Always false for tools that
+   *  didn't opt in (the shell ignores compact for them). */
+  paneCompact: boolean;
 }
 
 /** One tool entry in the registry. The shell renders the picker by
@@ -61,8 +88,15 @@ export interface ToolDef {
   /** Stable id — used as the selected-tool key in URL / localStorage
    *  for future tool-persistence. Lowercase, ascii. */
   id: string;
-  /** Shown in the dropdown trigger + the active-tool header. */
+  /** Static fallback label. Always present so a tool can list in
+   *  the picker before any ctx-derived data is ready. */
   label: string;
+  /** Optional dynamic label — when supplied, the shell + menubar
+   *  prefer this over `label`. Lets a tool's header reflect ctx
+   *  state (PostHost's Details tool returns "{post title} Details"
+   *  so the panel header carries the post the user's on). Called
+   *  on every reactive read of ctx; keep it cheap. */
+  labelFn?: (ctx: ToolContext) => string;
   /** 14×14 inline-SVG component receiving { ctx } so the icon can
    *  react to ctx (e.g. show an "unsaved" dot). Component (not
    *  Snippet) so per-tool icons live in tiny .svelte files and
@@ -83,6 +117,20 @@ export interface ToolDef {
    *  muted/70">Heading</dt>`. Optional — tools without shortcuts
    *  omit it and the footer collapses. */
   Tips?: Component<{ ctx: ToolContext }>;
+  /** When true, the shell hides its collapse chevron + refuses to
+   *  honor paneCollapsed for this tool. The Whiteboard tool sets
+   *  this so a user can't accidentally hide their entire toolbox
+   *  mid-stroke. Defaults to false — most tools are fine to
+   *  collapse to a rail. */
+  noCollapse?: boolean;
+  /** Tool wants to support a "compact" pane state — the shell
+   *  shrinks the aside width to an icon-rail (~3.5rem) and sets
+   *  ctx.shellState.paneCompact=true so the Body can render its
+   *  icon-rail layout. The shell renders a shrink/expand chevron
+   *  in the header that toggles this state. Whiteboard sets this
+   *  so the user has a "minimised but not hidden" option that
+   *  still leaves the toolbox reachable. */
+  supportsCompact?: boolean;
 }
 
 /** Public re-export of the global TipsSection title default. Kept

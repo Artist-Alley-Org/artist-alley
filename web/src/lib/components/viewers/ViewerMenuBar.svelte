@@ -17,6 +17,7 @@
   import Menu from '$components/Menu.svelte';
   import { t } from '$stores/lang.svelte';
   import type { ViewAsset, ViewController } from './controller';
+  import type { ToolContext, ToolDef } from './tools/contract';
 
   interface Props {
     asset: ViewAsset;
@@ -56,20 +57,31 @@
     onDownloadVariant?: () => void;
     onShareAsset?: () => void;
     onDeleteAsset?: () => void;
-    /** Optional — when wired, the Tools dropdown's Whiteboard item
-        becomes active. Currently host-provided by PostHost (post-level
-        whiteboards); future hosts can ignore it. */
-    onToggleWhiteboard?: () => void;
-    /** Currently-on state for the Whiteboard toggle (drives the
-        Tools-menu checkmark). */
-    whiteboardOpen?: boolean;
-    /** Tools-menu "Slice as sprite" override — lets the user open
-        SpriteView's slicer + playback tools on any raster image
-        regardless of its asset_type. AssetViewer flips the entry
-        on for image-kind assets and off for everything else. */
-    canSliceAsSprite?: boolean;
-    sliceAsSpriteOn?: boolean;
-    onToggleSliceAsSprite?: () => void;
+    /** Side-panel tool picker. Populated by the viewer with the
+     *  current asset's available tools (Details / Sprite /
+     *  Whiteboard / host-injected, etc). Renders as the top
+     *  section of this Tools dropdown — selecting one swaps the
+     *  side panel's active tool. Each item shows the tool's
+     *  Icon + label with a check on whichever is currently
+     *  active. Empty array = no tool picker (e.g. placeholder
+     *  asset with no available tools). */
+    sidePanelTools?: ToolDef[];
+    /** Context object the tool icons read so they can react
+     *  (badge an unsaved dot, etc.). Forwarded to each item's
+     *  Icon component. */
+    sidePanelToolCtx?: ToolContext;
+    /** Currently-active tool id. Drives the check indicator. */
+    sidePanelActiveTool?: string;
+    /** Display label for the active tool — appended to the Tools
+     *  trigger as "Tools • {label}" so the menubar advertises
+     *  what's currently in the side panel without the user having
+     *  to look. Provided by the viewer so labelFn (per-tool
+     *  dynamic labels) resolves with the same ctx the panel uses. */
+    sidePanelActiveToolLabel?: string;
+    /** Called when the user picks a tool from the menu. The
+     *  viewer updates its activeToolId state and the side panel
+     *  re-renders with the new tool's Body. */
+    onSelectSidePanelTool?: (id: string) => void;
   }
 
   let {
@@ -92,11 +104,11 @@
     onDownloadVariant,
     onShareAsset,
     onDeleteAsset,
-    onToggleWhiteboard,
-    whiteboardOpen = false,
-    canSliceAsSprite = false,
-    sliceAsSpriteOn = false,
-    onToggleSliceAsSprite,
+    sidePanelTools = [],
+    sidePanelToolCtx,
+    sidePanelActiveTool,
+    sidePanelActiveToolLabel,
+    onSelectSidePanelTool,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -117,7 +129,11 @@
   // Tools-dropdown "any tool currently active" indicator — drives a
   // subtle tint on the dropdown trigger so the user can see "something
   // is on" from a closed bar.
-  const toolsActive = $derived(whiteboardOpen);
+  // Tools-menu trigger highlights when something other than the
+  // default Details tool is active in the side panel — a passive
+  // cue so the user can spot "something's on" from the bar without
+  // opening the menu.
+  const toolsActive = $derived(!!sidePanelActiveTool && sidePanelActiveTool !== 'details');
 
   // ── Actions ───────────────────────────────────────────────────────
   function downloadOriginal() {
@@ -378,15 +394,15 @@
        from the bar itself. -->
   <Menu align="right" panelClass="min-w-[12rem]">
     {#snippet trigger({ open })}
-      <!-- bg-white/10 in the hover state can't go through class:
-           directive (Tailwind slash-syntax fights Svelte's parser);
-           build the class string in JS the same way triggerClass()
-           does for the File/Edit/About menus above. -->
+      <!-- Match the File/Edit/About triggerClass exactly so the
+           hover + open backgrounds look identical across the
+           menubar. The icon sits inside the same padding box; the
+           active-tool name is visible inline so we don't need a
+           heavy bg-accent treatment to signal "something's on" —
+           the text itself is the cue. -->
       {@const cls = (() => {
-        const base = 'inline-flex h-7 items-center gap-1 rounded px-2 hover:bg-white/10';
-        if (open) return `${base} bg-white/10`;
-        if (toolsActive) return `${base} bg-accent text-on-accent`;
-        return base;
+        const base = 'inline-flex items-center gap-1.5 rounded px-2.5 py-1 hover:bg-white/10';
+        return open ? `${base} bg-white/10` : base;
       })()}
       <span
         class={cls}
@@ -398,104 +414,50 @@
           <path d="M3 9h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
           <path d="M8 9V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3" />
         </svg>
-        <span class="hidden text-xs md:inline">{t('viewer_menu.tools')}</span>
+        <span class="hidden text-xs md:inline-flex md:items-baseline md:gap-1.5">
+          <span>{t('viewer_menu.tools')}</span>
+          {#if sidePanelActiveToolLabel}
+            <span class="text-fg-muted/60">•</span>
+            <span>{sidePanelActiveToolLabel}</span>
+          {/if}
+        </span>
       </span>
     {/snippet}
-    <!-- "Review" toggle retired — tool panels are always visible
-         for kinds that have them (3D / sprite / etc.). The Tools
-         menu still surfaces the side-panel toggle (above) so users
-         can collapse the pane for more canvas room. -->
-    <!-- Whiteboard item — disabled when the host hasn't wired one
-         (e.g. the standalone /assets/[id] route has no post to bind
-         a whiteboard to). -->
-    {#if onToggleWhiteboard}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={onToggleWhiteboard}
-        class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
-      >
-        <span class="inline-flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <!-- Presentation board -->
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <line x1="8" y1="21" x2="16" y2="21" />
-            <line x1="12" y1="17" x2="12" y2="21" />
-          </svg>
-          {t('viewer_menu.whiteboard')}
-        </span>
-        {#if whiteboardOpen}
-          <span class="text-accent">●</span>
-        {/if}
-      </button>
-    {:else}
-      <button
-        type="button"
-        role="menuitem"
-        disabled
-        class="flex w-full cursor-not-allowed items-center justify-between px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-        title={t('viewer_menu.coming_soon')}
-      >
-        <span class="inline-flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <line x1="8" y1="21" x2="16" y2="21" />
-            <line x1="12" y1="17" x2="12" y2="21" />
-          </svg>
-          {t('viewer_menu.whiteboard')}
-        </span>
-      </button>
+    <!-- Side-panel tool picker. Each item swaps the active tool in
+         the right-side panel without changing modes / overlays. The
+         picker lives here (not in the panel) so the panel's full
+         width stays available for tool content. Items render the
+         tool's Icon component + label with a check on the active
+         one. Empty list = host didn't wire any tools (placeholder
+         kind, etc.) — render nothing rather than an awkward divider. -->
+    {#if sidePanelTools.length > 0 && sidePanelToolCtx}
+      <div class="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('viewer_menu.side_panel') ?? 'Side panel'}</div>
+      {#each sidePanelTools as tool (tool.id)}
+        {@const ToolIcon = tool.Icon}
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => onSelectSidePanelTool?.(tool.id)}
+          class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+        >
+          <span class="inline-flex items-center gap-2">
+            <ToolIcon ctx={sidePanelToolCtx} />
+            {tool.label}
+          </span>
+          {#if tool.id === sidePanelActiveTool}
+            <span class="text-accent" aria-label="Active">●</span>
+          {/if}
+        </button>
+      {/each}
+      <div class="my-1 h-px bg-border"></div>
     {/if}
-    <!-- "Slice as sprite" — only meaningful for raster images.
-         Lets the user open SpriteView's slicer + playback tools on
-         a regular PNG (e.g. a sprite sheet that's typed as Image
-         because the uploader didn't tag it as Sprite). Resets on
-         asset change so it doesn't leak across navigation. -->
-    {#if onToggleSliceAsSprite}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={onToggleSliceAsSprite}
-        disabled={!canSliceAsSprite && !sliceAsSpriteOn}
-        class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated disabled:cursor-not-allowed disabled:text-fg-muted disabled:opacity-60"
-        title={(!canSliceAsSprite && !sliceAsSpriteOn) ? 'Sprite slicing is only enabled for PNG images' : ''}
-      >
-        <span class="inline-flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <!-- Grid icon — reads as "slice into cells" -->
-            <rect x="3" y="3" width="7" height="7" />
-            <rect x="14" y="3" width="7" height="7" />
-            <rect x="3" y="14" width="7" height="7" />
-            <rect x="14" y="14" width="7" height="7" />
-          </svg>
-          Slice as sprite
-        </span>
-        {#if sliceAsSpriteOn}
-          <span class="text-accent">●</span>
-        {/if}
-      </button>
-    {/if}
-    <!-- Reserved slots for the next phases — disabled placeholders so
-         the menu shape is set and the user sees what's coming. -->
-    <div class="my-1 h-px bg-border"></div>
-    <button
-      type="button"
-      role="menuitem"
-      disabled
-      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-      title={t('viewer_menu.coming_soon')}
-    >
-      {t('viewer_menu.annotate')}
-    </button>
-    <button
-      type="button"
-      role="menuitem"
-      disabled
-      class="block w-full cursor-not-allowed px-3 py-1.5 text-left text-sm text-fg-muted opacity-60"
-      title={t('viewer_menu.coming_soon')}
-    >
-      {t('viewer_menu.compare')}
-    </button>
+    <!-- Mode-toggle items retired. The picker above IS the only
+         tool list. Whiteboard absorbed: picker selection fires
+         the host's onActivate hook to open the overlay. Sprite
+         Viewer absorbed: picker availability covers PNG images so
+         "Slice as sprite" is just "pick Sprite Viewer" now.
+         Annotate / Compare will land as new picker entries when
+         their tools ship. -->
   </Menu>
 
   <!-- Quick-action icon row -->

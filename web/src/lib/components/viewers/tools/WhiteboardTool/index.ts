@@ -7,6 +7,12 @@ import Body from './Body.svelte';
 import Tips from './Tips.svelte';
 import Icon from './Icon.svelte';
 
+// Whiteboard tool is available whenever the host wired the
+// activate hook (onActivate opens the overlay + creates the
+// session). Selecting Whiteboard in the menubar IS the entry
+// point — no separate "Open whiteboard" menu item. PostHost wires
+// it; standalone /assets/[id] doesn't (no post anchor to bind
+// the brushstrokes to), and the tool is hidden there.
 export const whiteboardTool: ToolDef = {
   id: 'whiteboard',
   label: 'Whiteboard',
@@ -14,6 +20,14 @@ export const whiteboardTool: ToolDef = {
   Icon,
   Body,
   Tips,
+  // Losing the toolbox mid-stroke would be miserable UX — the
+  // shell hides its full-collapse chevron while Whiteboard is
+  // active. supportsCompact gives the user a "minimised but not
+  // hidden" state: the shell shrinks the aside to an icon rail
+  // and the Body reads ctx.shellState.paneCompact to render its
+  // own compact (icon-strip) layout.
+  noCollapse: true,
+  supportsCompact: true,
   isAvailable: (ctx) =>
-    !!ctx.whiteboardSession && !!(ctx.hostHooks?.whiteboard as { onSave?: unknown } | undefined)?.onSave,
+    !!(ctx.hostHooks?.whiteboard as { onActivate?: unknown } | undefined)?.onActivate,
 };

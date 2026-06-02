@@ -52,14 +52,13 @@
     onClose: () => void;
     /** Compact-mode flag. When true, render the icon-strip layout
      *  (one icon per tool category, right-click to switch within
-     *  the category). When false, render the full panel. */
+     *  the category). When false, render the full panel. Driven
+     *  by the ToolPanelShell's paneCompact state — the shell's
+     *  header chevron is the single toggle, no in-tool button. */
     compact?: boolean;
-    /** Callback to toggle the compact mode from inside the panel
-     *  (the toggle button lives here for discoverability). */
-    onToggleCompact?: () => void;
   }
 
-  let { session, saving = false, saveError = null, onSave, onClose, compact = false, onToggleCompact }: Props = $props();
+  let { session, saving = false, saveError = null, onSave, onClose, compact = false }: Props = $props();
 
   // ── Brush-pack management (Phase 1.21d) ──────────────────────
   //
@@ -607,48 +606,12 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-fg">
-  <!-- Header. In compact mode title hides + buttons stack vertical
-       so they fit the icon-rail width. -->
-  <header
-    class="flex shrink-0 items-center border-b border-border bg-surface-elevated py-2"
-    class:justify-between={!compact}
-    class:px-3={!compact}
-    class:flex-col={compact}
-    class:gap-1={compact}
-    class:px-1={compact}
-  >
-    {#if !compact}
-      <span class="text-sm font-semibold">Whiteboard</span>
-    {/if}
-    <div class="flex items-center gap-1" class:flex-col={compact}>
-      {#if onToggleCompact}
-        <button
-          type="button"
-          onclick={onToggleCompact}
-          class="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-state-hover hover:text-fg"
-          title={compact ? 'Expand panel' : 'Compact panel'}
-          aria-label={compact ? 'Expand panel' : 'Compact panel'}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            {#if compact}
-              <path d="M15 6l-6 6 6 6" />
-            {:else}
-              <path d="M9 6l6 6-6 6" />
-            {/if}
-          </svg>
-        </button>
-      {/if}
-      <button
-        type="button"
-        onclick={onClose}
-        class="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-danger hover:text-white"
-        title="Exit whiteboard (ESC)"
-        aria-label="Exit whiteboard"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-  </header>
+  <!-- Both the "Whiteboard" title row and the in-tool compact
+       toggle are retired. The shell owns both pieces of chrome:
+       its header shows the tool name + the rail-toggle chevron,
+       and selecting a different tool from the menubar fires the
+       host's onClose. Compact mode is driven by ctx.shellState.
+       paneCompact, which arrives here as the `compact` prop. -->
 
   {#if compact}
     <!-- Compact rail: one icon per category. Click cycles to last-

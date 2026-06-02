@@ -23,8 +23,10 @@
   import CommentsThread from './CommentsThread.svelte';
   import Menu from './Menu.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
-  import WhiteboardToolPanel from './whiteboard/WhiteboardToolPanel.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
+  import DetailsIcon from './viewers/tools/DetailsTool/Icon.svelte';
+  import { defineSnippetTool } from './viewers/tools/snippet-tool';
+  import { snippetToolHookKey } from './viewers/tools/contract';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
   import { createWhiteboardSession } from '$lib/whiteboard/session.svelte';
   import { normalizeDoc, type BrushContent } from '$lib/whiteboard/types';
@@ -125,16 +127,38 @@
   let whiteboardSession = $state<ReturnType<typeof createWhiteboardSession> | null>(null);
   let whiteboardSaving = $state(false);
   let whiteboardSaveError = $state<string | null>(null);
-  // Compact mode for the whiteboard tool panel. Persisted across
-  // sessions; flips the right-pane width down to an icon rail and
-  // tells WhiteboardToolPanel to render its compact icon strip.
-  let whiteboardPanelCompact = $state(
-    typeof localStorage !== 'undefined' && localStorage.getItem('aa.whiteboard.panel.compact') === '1',
-  );
-  $effect(() => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('aa.whiteboard.panel.compact', whiteboardPanelCompact ? '1' : '0');
-    }
+  // Whiteboard compact / rail state retired here — ToolPanelShell
+  // owns the toggle (chevron in the panel header) + the localStorage
+  // persistence under its own key (aa.viewer.paneCompact). Removing
+  // the duplicate keeps a single source of truth for the flag.
+
+
+  // OVERRIDE the built-in Details tool. The merge logic in
+  // AssetViewer replaces any built-in tool whose id matches a host-
+  // injected one, so registering Details here with id='details' takes
+  // the Details slot entirely — post info / likes / comments /
+  // whiteboard list / metadata are what "Details" means in the post
+  // context. The standalone /assets/[id] route doesn't register this
+  // and falls back to the generic asset-info Details body.
+  //
+  // Body lives as a snippet in this file's scope (postSocialPane
+  // below) so the 25+ reactive references to PostHost-local state
+  // (post, author, isOwner, whiteboards, currentFields, …) stay in
+  // scope without a giant props surface. The SnippetBody adapter
+  // resolves the snippet through hostHooks under the conventional
+  // `tool:details` key.
+  const postDetailsTool = defineSnippetTool({
+    id: 'details',
+    label: 'Details',
+    order: 0,
+    Icon: DetailsIcon,
+    // Dynamic label — panel header + menubar trigger read
+    // "{post title} Details" so the user always knows which post
+    // they're viewing without the title also being duplicated in
+    // the body. Falls back to plain "Details" on the brief render
+    // tick before `post` has loaded.
+    labelFn: () => (post?.title ? `${post.title} Details` : 'Details'),
+    // No tips — details is read-only info.
   });
 
   // Read-only session for the sidebar-click preview overlay. Lazily
@@ -509,7 +533,27 @@
   {onClose}
   {standalone}
   {onNavigateSibling}
-  contextSlot={whiteboardOpen && whiteboardSession ? whiteboardToolsPane : postSocialPane}
+  customTools={[postDetailsTool]}
+  whiteboardSession={whiteboardOpen ? (whiteboardSession ?? undefined) : undefined}
+  hostHooks={{
+    [snippetToolHookKey('details')]: { body: postSocialPane },
+    whiteboard: {
+      // onActivate fires when the user picks Whiteboard from the
+      // menubar's Tools picker. Open the overlay only if it isn't
+      // already on so re-selecting the active tool stays a no-op.
+      onActivate: () => { if (!whiteboardOpen) toggleWhiteboard(); },
+      // onClose fires when the user switches away from Whiteboard
+      // (picks Details / Sprite). Toggle the overlay off.
+      onClose: toggleWhiteboard,
+      // Save state — only meaningful while the overlay is mounted.
+      // Compact pane state moved out of hostHooks: the shell owns
+      // paneCompact now (bindable on AssetPlaylist below) so
+      // there's a single source of truth across tools.
+      saving: whiteboardSaving,
+      saveError: whiteboardSaveError,
+      onSave: whiteboardSession ? saveWhiteboard : undefined,
+    },
+  }}
   canvasOverlay={whiteboardOpen && whiteboardSession ? whiteboardCanvasSlot : undefined}
   titleSlot={postTitleSlot}
   onAddToCollection={openPickerForCurrent}
@@ -519,10 +563,6 @@
   onDownloadVariant={downloadVariant}
   onShareAsset={shareAsset}
   onDeleteAsset={isOwner ? deleteAsset : undefined}
-  onToggleWhiteboard={toggleWhiteboard}
-  {whiteboardOpen}
-  extraHotkeySection={whiteboardOpen && whiteboardSession ? whiteboardHotkeys : undefined}
-  bind:paneCompact={whiteboardPanelCompact}
 />
 
 <!-- Canvas overlay snippet — rendered INSIDE AssetViewer's canvas
@@ -539,141 +579,15 @@
   {/if}
 {/snippet}
 
-<!-- Sidebar content swap: when whiteboard mode is on, the right
-     pane shows the tool panel instead of post details. The
-     metadataSlot prop above flips to whiteboardToolsPane and back. -->
-{#snippet whiteboardToolsPane()}
-  {#if whiteboardSession}
-    <WhiteboardToolPanel
-      session={whiteboardSession}
-      saving={whiteboardSaving}
-      saveError={whiteboardSaveError}
-      onSave={saveWhiteboard}
-      onClose={toggleWhiteboard}
-      compact={whiteboardPanelCompact}
-      onToggleCompact={() => (whiteboardPanelCompact = !whiteboardPanelCompact)}
-    />
-  {/if}
-{/snippet}
+<!-- whiteboardToolsPane + whiteboardHotkeys snippets retired:
+     - The tool body lives in WhiteboardTool/Body.svelte, which
+       AssetViewer mounts through the registry. The session +
+       save/close/compact hooks reach it via hostHooks.whiteboard.
+     - The hotkey list lives in WhiteboardTool/Tips.svelte and
+       renders into the global TipsSection footer the shell owns.
+     PostHost only keeps the canvas overlay snippet above, which
+     still threads through AssetViewer's canvasOverlay slot. -->
 
-<!-- Whiteboard tips legend — appended to AssetPlaylist's hotkeys
-     `<details>` (via the extraHotkeySection prop). Contents change
-     with the active tool so the user always sees the relevant
-     gestures + keyboard shortcuts for whatever they're doing right
-     now, rather than one giant always-on list. Common shortcuts
-     (undo / redo / paste / color swap) always render at the top so
-     they don't get lost behind tool-specific noise. -->
-{#snippet whiteboardHotkeys()}
-  {#if whiteboardSession}
-    {@const tool = whiteboardSession.tool}
-    <div class="mb-1 mt-2 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Whiteboard</div>
-    <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-      <dt class="font-mono text-fg">Ctrl/⌘ + Z</dt><dd>Undo</dd>
-      <dt class="font-mono text-fg">Ctrl/⌘ + ⇧ + Z</dt><dd>Redo</dd>
-      <dt class="font-mono text-fg">Ctrl/⌘ + V</dt><dd>Paste image / text</dd>
-      <dt class="font-mono text-fg">X</dt><dd>Swap Color 1 ↔ Color 2</dd>
-      <dt class="font-mono text-fg">Esc</dt><dd>Exit whiteboard</dd>
-    </dl>
-    <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">View · pan / zoom</div>
-    <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-      <dt class="font-mono text-fg">Ctrl/⌘ + wheel</dt><dd>Zoom in / out at cursor</dd>
-      <dt class="font-mono text-fg">Wheel · ⇧ + wheel</dt><dd>Pan vertically · horizontally</dd>
-      <dt class="font-mono text-fg">Middle-drag</dt><dd>Pan</dd>
-      <dt class="font-mono text-fg">Space + drag</dt><dd>Pan (hand tool)</dd>
-      <dt class="font-mono text-fg">+ · −</dt><dd>Zoom in · out (viewport center)</dd>
-      <dt class="font-mono text-fg">F</dt><dd>Fit to content</dd>
-      <dt class="font-mono text-fg">0</dt><dd>Reset zoom + recenter</dd>
-      <dt class="font-mono text-fg">Minimap</dt><dd>Click / drag to recenter</dd>
-    </dl>
-    {#if tool === 'select'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Select tool</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Click</dt><dd>Pick item</dd>
-        <dt class="font-mono text-fg">Drag</dt><dd>Move</dd>
-        <dt class="font-mono text-fg">Handles</dt><dd>Resize (Shift = uniform)</dd>
-        <dt class="font-mono text-fg">Top handle</dt><dd>Rotate (Shift = snap 15°)</dd>
-        <dt class="font-mono text-fg">Dbl-click text</dt><dd>Re-edit</dd>
-        <dt class="font-mono text-fg">Ctrl/⌘ + C / X / V</dt><dd>Copy · cut · paste (offset 20 px)</dd>
-        <dt class="font-mono text-fg">Ctrl/⌘ + A</dt><dd>Select all</dd>
-        <dt class="font-mono text-fg">Delete · ⌫</dt><dd>Remove selection</dd>
-      </dl>
-    {:else if tool === 'pen' || tool === 'marker' || tool === 'highlighter'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Brush ({tool})</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Left-drag</dt><dd>Paint with Color 1</dd>
-        <dt class="font-mono text-fg">Right-drag</dt><dd>Paint with Color 2</dd>
-        {#if tool === 'pen'}
-          <dt class="font-mono text-fg">Brush style</dt><dd>Switch sub-style in the Brushes section</dd>
-        {/if}
-        <dt class="font-mono text-fg">p · m · h</dt><dd>Pen · Marker · Highlighter</dd>
-        <dt class="font-mono text-fg">e</dt><dd>Eraser</dd>
-      </dl>
-    {:else if tool === 'eraser'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Eraser</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Drag</dt><dd>Erase on the active layer</dd>
-        <dt class="font-mono text-fg">p / m / h</dt><dd>Back to brush</dd>
-      </dl>
-    {:else if tool === 'text'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Text tool</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Click</dt><dd>Start typing at point</dd>
-        <dt class="font-mono text-fg">Enter</dt><dd>Commit · ⇧+Enter = newline</dd>
-        <dt class="font-mono text-fg">Esc</dt><dd>Cancel</dd>
-        <dt class="font-mono text-fg">Dbl-click text</dt><dd>Re-edit (with V selected)</dd>
-      </dl>
-    {:else if tool === 'bucket'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Fill bucket</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Click shape</dt><dd>Refill with Color 1 (outline stays)</dd>
-        <dt class="font-mono text-fg">Click stroke / text</dt><dd>Recolor</dd>
-      </dl>
-    {:else if tool === 'eyedropper'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Eyedropper</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Click item</dt><dd>Pick its color into Color 1</dd>
-        <dt class="font-mono text-fg">After pick</dt><dd>Auto-switches to Pen</dd>
-      </dl>
-    {:else if tool === 'lasso'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Lasso</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Drag</dt><dd>Sketch a polygon</dd>
-        <dt class="font-mono text-fg">Release</dt><dd>Select every item inside · switches to Select</dd>
-      </dl>
-    {:else if tool === 'rect-select'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Rectangle select</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Drag</dt><dd>Marquee selection</dd>
-        <dt class="font-mono text-fg">Release</dt><dd>Picks intersecting items · switches to Select</dd>
-      </dl>
-    {:else if tool === 'crop'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Crop</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Drag rect</dt><dd>Define new canvas bounds</dd>
-        <dt class="font-mono text-fg">Release</dt><dd>Commit (items outside are dropped)</dd>
-      </dl>
-    {:else if tool === 'clone'}
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Clone / stamp</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Coming in C-1.19</dt><dd>—</dd>
-      </dl>
-    {:else}
-      <!-- Shape tools share one block since the gestures are
-           identical (drag a bbox; modifier keys constrain). -->
-      <div class="mb-1 mt-1 px-3 font-medium uppercase tracking-wide text-fg-muted/80">Shape ({tool})</div>
-      <dl class="grid grid-cols-[max-content_1fr] gap-x-2 gap-y-0.5 px-3 pb-3">
-        <dt class="font-mono text-fg">Drag</dt><dd>Draw — outline Color 1, fill Color 2</dd>
-        <dt class="font-mono text-fg">Right-drag</dt><dd>Swap outline ↔ fill colors</dd>
-        {#if tool === 'line' || tool === 'arrow'}
-          <dt class="font-mono text-fg">Shift</dt><dd>Snap to 45° increments</dd>
-        {:else}
-          <dt class="font-mono text-fg">Shift</dt><dd>Square / 1:1 aspect</dd>
-        {/if}
-        <dt class="font-mono text-fg">Filled</dt><dd>Toggle in Shape style section</dd>
-      </dl>
-    {/if}
-  {/if}
-{/snippet}
 
 {#if previewedWhiteboard && previewedWhiteboard.annotation_data && previewSession}
   <!-- Read-only preview of a saved whiteboard. Lightweight modal
@@ -836,26 +750,10 @@
     </header>
 
     <div class="p-4 text-sm">
-      {#if post.title}
-        <h1 id="asset-playlist-title" class="text-lg font-semibold text-fg">
-          {post.title}
-        </h1>
-      {/if}
-      {#if showAssetSubtitle}
-        <!-- Per-asset subhead — updates as ↑/↓ moves between assets
-             within the post. "Asset N of M" prefix makes the
-             playlist-position cue redundant with the bottom strip's
-             indicator but useful when the strip is collapsed. -->
-        <p class="mb-2 text-sm text-fg-muted" title={currentAssetTitle}>
-          {#if pl.source.items.length > 1}
-            <span class="font-mono text-xs text-fg-muted/70">{pl.source.cursor + 1}/{pl.source.items.length}</span>
-            <span class="mx-1.5 text-fg-muted/40">·</span>
-          {/if}
-          <span class="break-words">{currentAssetTitle}</span>
-        </p>
-      {:else if post.title}
-        <div class="mb-2"></div>
-      {/if}
+      <!-- Post title retired from the body — the panel header now
+           reads "{post title} Details" so duplicating it here was
+           noise. Visibility chips + description stay (they're
+           post-level, not redundant with the header). -->
 
       <div class="mb-3 flex flex-wrap gap-1.5">
         <span class="inline-flex items-center rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted">
@@ -870,6 +768,24 @@
 
       {#if post.description}
         <p class="mb-4 whitespace-pre-wrap text-fg-muted">{post.description}</p>
+      {/if}
+
+      {#if showAssetSubtitle}
+        <!-- Per-asset subhead — updates as ↑/↓ moves between assets
+             within the post. Grouped under an "Asset Details"
+             section header so the user sees this block is about the
+             specific asset they're focused on (versus the post as a
+             whole, which the header + chips above represent). -->
+        <section class="mb-4 border-t border-border pt-3">
+          <h3 class="mb-1 text-xs font-medium uppercase tracking-wide text-fg-muted">Asset Details</h3>
+          <p class="text-sm text-fg" title={currentAssetTitle}>
+            {#if pl.source.items.length > 1}
+              <span class="font-mono text-xs text-fg-muted/70">{pl.source.cursor + 1}/{pl.source.items.length}</span>
+              <span class="mx-1.5 text-fg-muted/40">·</span>
+            {/if}
+            <span class="break-words">{currentAssetTitle}</span>
+          </p>
+        </section>
       {/if}
 
       {#if whiteboards.length > 0 || whiteboardLoading}
