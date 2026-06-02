@@ -14,12 +14,14 @@ import type { ToolDef } from './contract';
 import { detailsTool } from './DetailsTool/index';
 import { spriteTool } from './SpriteTool/index';
 import { whiteboardTool } from './WhiteboardTool/index';
+import { ebookTool } from './EbookTool/index';
 
 // View was retired — basic 2D zoom presets + per-kind 3D controls
 // live inside DetailsTool's body now, since "Details" is the no-
 // tool fallback that always renders for any kind.
 export const TOOLS: ToolDef[] = [
   detailsTool,
+  ebookTool,
   spriteTool,
   whiteboardTool,
 ];

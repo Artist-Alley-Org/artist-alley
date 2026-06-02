@@ -1,92 +1,49 @@
 <script lang="ts">
   // EpubView — page-by-page EPUB reader.
   //
-  // Backend serves the spine list, chapter HTML (with relative
-  // resource refs rewritten through us), and resource bytes.
-  // The reader fetches one chapter at a time and renders it
+  // Reading state (current chapter, font size, theme, bookmarks,
+  // search) lives in a shared EbookSession that AssetViewer
+  // builds per asset; the EbookTool's side-panel body binds the
+  // same instance, so picking a TOC entry in the panel flips
+  // currentIdx here without an event bus.
+  //
+  // The body fetches one chapter at a time and renders it
   // inside a sandboxed iframe srcdoc — same-origin so cookies
   // travel and the rewritten /resources URLs load through us,
   // sandbox locked-down (no scripts, no top-nav) so a hostile
   // EPUB can't run JS in our origin.
   //
-  // Reading position persists in localStorage per asset
-  // (`aa.epub.{id}.chapter` + `.scroll`) so reopening the
-  // viewer drops the user back where they left off — the
-  // standard ebook-reader UX.
-  //
-  // Controls live in the canvas overlay top bar: chapter prev /
-  // next + TOC picker. Page-down / ← / → / PgUp + PgDn are
-  // handled inside the iframe by scroll; chapter boundaries
-  // flip on ← / → at chapter ends.
-  //
-  // Per the four core principles:
-  //   ABC — Spine + chapter HTML cached at the backend (the
-  //     `cache.Registry` domains `asset.epub.spine` /
-  //     `asset.epub.chapter`); the client also fetches once per
-  //     chapter and lets the browser cache the iframe srcdoc.
-  //   UX first — keyboard nav, persisted position, dark-mode
-  //     aware iframe styling.
+  // Controls in the top bar: chapter prev / next + TOC picker.
+  // Page-down / ← / → / PgUp + PgDn handled inside the iframe
+  // by scroll; chapter boundaries flip on ← / → at chapter ends.
 
   import { onMount, onDestroy } from 'svelte';
   import type { ViewController } from './controller';
+  import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
 
   type Asset = import('./controller').ViewAsset;
 
   interface Props {
     asset: Asset;
     controller: ViewController;
+    /** Shared reactive state with the EbookTool — AssetViewer
+     *  builds one per asset and binds both sides. */
+    session: EbookSessionInstance;
   }
-  let { asset, controller = $bindable() }: Props = $props();
+  let { asset, controller = $bindable(), session = $bindable<EbookSessionInstance>() }: Props = $props();
 
-  interface SpineEntry {
-    idx: number;
-    label: string;
-    href: string;
-    media_type: string;
-  }
-
-  let spine = $state<SpineEntry[]>([]);
-  let loadingSpine = $state(true);
-  let spineError = $state<string | null>(null);
-  let currentIdx = $state(0);
   let chapterHTML = $state<string | null>(null);
-  let loadingChapter = $state(false);
-  let chapterError = $state<string | null>(null);
   let tocOpen = $state(false);
-
-  const positionKey = $derived(`aa.epub.${asset.id}.chapter`);
-
-  async function loadSpine() {
-    loadingSpine = true;
-    spineError = null;
-    try {
-      const r = await fetch(`/api/v1/assets/${asset.id}/epub/spine`, {
-        credentials: 'include',
-      });
-      if (!r.ok) throw new Error(`spine HTTP ${r.status}`);
-      spine = (await r.json()) as SpineEntry[];
-      // Restore reading position. Falls back to 0 on a fresh open
-      // or when the stored idx is out of range (e.g. the asset was
-      // re-uploaded and now has a different chapter count).
-      try {
-        const stored = parseInt(localStorage.getItem(positionKey) ?? '', 10);
-        if (Number.isFinite(stored) && stored >= 0 && stored < spine.length) {
-          currentIdx = stored;
-        }
-      } catch {
-        /* private browsing — ignore */
-      }
-    } catch (e) {
-      spineError = e instanceof Error ? e.message : String(e);
-    } finally {
-      loadingSpine = false;
-    }
-  }
+  let iframeEl: HTMLIFrameElement | undefined = $state();
+  /** Throttle handle for scroll persistence — fires at most once
+   *  per 250 ms while the user is scrolling, plus one final write
+   *  on chapter change so the last position isn't lost. */
+  let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function loadChapter(idx: number) {
-    if (idx < 0 || idx >= spine.length) return;
-    loadingChapter = true;
-    chapterError = null;
+    if (idx < 0 || idx >= session.spine.length) return;
+    session.chapterLoading = true;
+    session.chapterError = null;
     try {
       const r = await fetch(
         `/api/v1/assets/${asset.id}/epub/chapters/${idx}`,
@@ -95,69 +52,145 @@
       if (!r.ok) throw new Error(`chapter HTTP ${r.status}`);
       const html = await r.text();
       chapterHTML = wrapForIframe(html);
-      // Persist position only when loading succeeded.
-      try {
-        localStorage.setItem(positionKey, String(idx));
-      } catch {
-        /* ignore */
-      }
     } catch (e) {
-      chapterError = e instanceof Error ? e.message : String(e);
+      session.chapterError = e instanceof Error ? e.message : String(e);
     } finally {
-      loadingChapter = false;
+      session.chapterLoading = false;
     }
   }
 
-  // Wrap the chapter body in a minimal HTML envelope that gives
-  // it our preferred typography + dark-mode aware colours +
-  // generous reading max-width. The original <html>/<head> stays
-  // intact — we splice our overrides into <head>.
+  // Splice our typography + theme overrides into <head>. Tokens
+  // come from the session so the EbookTool's pickers flip the
+  // iframe styling live. We use !important sparingly — the
+  // EPUB's own stylesheet often hardcodes font-family on body
+  // (Calibre exports do this) so our overrides need to win
+  // without nuking the EPUB's structural CSS.
   function wrapForIframe(raw: string): string {
+    const t = themeTokens(session.theme);
+    const ff = fontFamilyStack(session.fontFamily);
     const override = `
 <style>
-  :root { color-scheme: light dark; }
-  html, body { background: transparent; color: inherit; }
+  :root { color-scheme: ${session.theme === 'dark' ? 'dark' : 'light'}; }
+  html, body { background: ${t.bg} !important; color: ${t.fg} !important; }
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 18px;
+    font-family: ${ff} !important;
+    font-size: ${session.fontSize}px !important;
     line-height: 1.7;
-    max-width: 38rem;
+    max-width: ${session.maxWidth}rem;
     margin: 0 auto;
-    padding: 2rem 1.25rem 4rem;
-    color: var(--aa-ebook-fg, #1a1a1a);
+    padding: 2rem 1.5rem 4rem;
   }
-  @media (prefers-color-scheme: dark) {
-    body { color: var(--aa-ebook-fg, #d8d8d8); }
-    a { color: #8ab4f8; }
-  }
+  /* Inherit the body font down into headings + lists + tables
+     so a Calibre export's "font-family: serif" on <h1> doesn't
+     fight the user's choice. */
+  h1, h2, h3, h4, h5, h6, p, li, blockquote, span, div, em, strong,
+  td, th, dt, dd { font-family: inherit !important; }
   img { max-width: 100%; height: auto; }
   p { margin: 0 0 1em; }
   h1, h2, h3 { line-height: 1.25; }
-  a { color: #1a73e8; }
-  ::selection { background: #ffeb3b66; }
+  a { color: ${t.link}; }
+  ::selection { background: ${t.selection}; }
 </style>`;
-    // Splice the override into <head>; if no <head>, prepend it.
     const headRe = /<head[^>]*>/i;
     if (headRe.test(raw)) return raw.replace(headRe, (m) => m + override);
     return override + raw;
   }
 
-  function goTo(idx: number) {
-    if (idx < 0 || idx >= spine.length) return;
-    currentIdx = idx;
-    void loadChapter(idx);
-    tocOpen = false;
+  function fontFamilyStack(f: string): string {
+    switch (f) {
+      case 'serif':
+        return '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Times New Roman", serif';
+      case 'mono':
+        return '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace';
+      case 'system':
+      default:
+        return 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+    }
   }
-  function prev() { goTo(currentIdx - 1); }
-  function next() { goTo(currentIdx + 1); }
+
+  function themeTokens(theme: string) {
+    switch (theme) {
+      case 'light':
+        return { bg: '#ffffff', fg: '#1a1a1a', link: '#1a73e8', selection: '#ffeb3b66' };
+      case 'sepia':
+        return { bg: '#f4ecd8', fg: '#3b2f1d', link: '#8b5e34', selection: '#d4af3766' };
+      case 'dark':
+      default:
+        return { bg: '#1a1a1a', fg: '#d8d8d8', link: '#8ab4f8', selection: '#5a4a1066' };
+    }
+  }
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); flushScroll(); session.goPrev(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); flushScroll(); session.goNext(); }
   }
+
+  // Read the iframe's current scroll position. Returns 0 when the
+  // iframe isn't mounted / contentWindow isn't accessible.
+  function currentScroll(): number {
+    try {
+      const w = iframeEl?.contentWindow;
+      if (!w) return 0;
+      // scrollY for windows that scroll naturally; the EPUB body
+      // sets max-width via our wrapper so the document scrolls.
+      return Math.round(w.scrollY ?? w.document.documentElement.scrollTop ?? 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  // Throttled persist — fires at most every 250 ms while the
+  // user drags the scrollbar / hits PgDn.
+  function schedulePersistScroll() {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(() => {
+      scrollTimer = undefined;
+      session.setScroll(session.currentIdx, currentScroll());
+    }, 250);
+  }
+
+  // Synchronous persist — called on chapter change / unmount so
+  // the last position isn't lost to a pending throttle window.
+  function flushScroll() {
+    if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = undefined; }
+    session.setScroll(session.currentIdx, currentScroll());
+  }
+
+  // Wire up scroll listening + restore-on-load after the iframe
+  // mounts a new chapter. Re-runs whenever chapterHTML changes;
+  // cleanup pulls the listener so the previous chapter doesn't
+  // double-fire into the new one's session entry.
+  $effect(() => {
+    void chapterHTML;
+    if (!iframeEl) return;
+    const fr = iframeEl;
+    function handle() {
+      try {
+        const w = fr.contentWindow;
+        if (!w) return;
+        // Restore the saved scroll for THIS chapter (if any).
+        const restore = session.scrollByChapter[session.currentIdx] ?? 0;
+        if (restore > 0) {
+          // Defer one frame so the iframe's layout is settled —
+          // setting scrollY before paint scrolls a zero-height
+          // doc and the value gets lost.
+          requestAnimationFrame(() => {
+            try { w.scrollTo(0, restore); } catch { /* ignore */ }
+          });
+        }
+        // Listen for scroll inside the iframe.
+        w.addEventListener('scroll', schedulePersistScroll, { passive: true });
+      } catch { /* cross-origin shouldn't happen on srcdoc — ignore */ }
+    }
+    fr.addEventListener('load', handle);
+    return () => {
+      fr.removeEventListener('load', handle);
+      try { fr.contentWindow?.removeEventListener('scroll', schedulePersistScroll); } catch { /* ignore */ }
+    };
+  });
 
   onMount(() => {
     controller.kind = 'ebook';
@@ -176,26 +209,40 @@
     controller.stepFrames = () => {};
     controller.setRate = () => {};
     document.addEventListener('keydown', onKey);
-    void loadSpine();
+    void session.loadSpine();
   });
   onDestroy(() => { document.removeEventListener('keydown', onKey); });
 
-  // Reactively load the active chapter once the spine + currentIdx
-  // are resolved. Re-fires when the user picks from the TOC or
-  // hits ← / →.
+  // Re-fetch chapter on session.currentIdx change (driven by ← /
+  // → here OR by goTo() from the EbookTool side panel).
   $effect(() => {
-    if (!loadingSpine && !spineError && spine.length > 0) {
-      void loadChapter(currentIdx);
+    if (!session.spineLoading && !session.spineError && session.spine.length > 0) {
+      void loadChapter(session.currentIdx);
+    }
+  });
+
+  // Re-render chapter HTML (re-wrap) when font/theme change so
+  // the iframe picks up the new styling without a chapter refetch.
+  $effect(() => {
+    void session.fontSize;
+    void session.theme;
+    void session.fontFamily;
+    void session.maxWidth;
+    if (chapterHTML) {
+      // Re-wrap the LAST raw chapter — but we only kept the
+      // wrapped version. Easiest: re-fetch (cached on the server,
+      // so it's a one-roundtrip cheap hit).
+      void loadChapter(session.currentIdx);
     }
   });
 
   $effect(() => {
-    controller.hudExtra = spine.length > 0
-      ? `${currentIdx + 1} / ${spine.length}`
+    controller.hudExtra = session.spine.length > 0
+      ? `${session.currentIdx + 1} / ${session.spine.length}`
       : '';
   });
 
-  const activeLabel = $derived(spine[currentIdx]?.label ?? '');
+  const activeLabel = $derived(session.spine[session.currentIdx]?.label ?? '');
 </script>
 
 <div class="relative flex h-full w-full flex-col bg-surface text-fg">
@@ -204,8 +251,8 @@
   <div class="flex shrink-0 items-center gap-2 border-b border-border bg-surface-elevated px-3 py-1.5 text-sm">
     <button
       type="button"
-      onclick={prev}
-      disabled={currentIdx <= 0}
+      onclick={() => { flushScroll(); session.goPrev(); }}
+      disabled={session.currentIdx <= 0}
       class="rounded p-1.5 text-fg-muted hover:bg-white/10 hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
       title="Previous chapter (←)"
       aria-label="Previous chapter"
@@ -216,15 +263,14 @@
       <button
         type="button"
         onclick={() => (tocOpen = !tocOpen)}
-        disabled={spine.length === 0}
+        disabled={session.spine.length === 0}
         class="flex w-full items-center justify-between rounded px-2 py-1 text-left hover:bg-white/5 disabled:opacity-50"
         title="Chapter picker"
       >
-        <span class="truncate">{activeLabel || (loadingSpine ? 'Loading…' : 'No chapters')}</span>
-        <span class="ml-2 shrink-0 font-mono text-xs text-fg-muted">{spine.length > 0 ? `${currentIdx + 1} / ${spine.length}` : ''}</span>
+        <span class="truncate">{activeLabel || (session.spineLoading ? 'Loading…' : 'No chapters')}</span>
+        <span class="ml-2 shrink-0 font-mono text-xs text-fg-muted">{session.spine.length > 0 ? `${session.currentIdx + 1} / ${session.spine.length}` : ''}</span>
       </button>
-      {#if tocOpen && spine.length > 0}
-        <!-- TOC popdown. Click outside (or pick a chapter) closes. -->
+      {#if tocOpen && session.spine.length > 0}
         <button
           type="button"
           class="fixed inset-0 z-10 cursor-default bg-transparent"
@@ -232,11 +278,11 @@
           aria-label="Close TOC"
         ></button>
         <div class="absolute left-0 right-0 top-full z-20 mt-1 max-h-80 overflow-y-auto rounded border border-border bg-surface-elevated shadow-2xl">
-          {#each spine as e (e.idx)}
+          {#each session.spine as e (e.idx)}
             <button
               type="button"
-              onclick={() => goTo(e.idx)}
-              class={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-surface ${e.idx === currentIdx ? 'text-accent' : 'text-fg'}`}
+              onclick={() => { flushScroll(); session.goTo(e.idx); tocOpen = false; }}
+              class={`flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-surface ${e.idx === session.currentIdx ? 'text-accent' : 'text-fg'}`}
             >
               <span class="truncate">{e.label}</span>
               <span class="ml-2 shrink-0 font-mono text-xs text-fg-muted">{e.idx + 1}</span>
@@ -247,8 +293,8 @@
     </div>
     <button
       type="button"
-      onclick={next}
-      disabled={currentIdx >= spine.length - 1}
+      onclick={() => { flushScroll(); session.goNext(); }}
+      disabled={session.currentIdx >= session.spine.length - 1}
       class="rounded p-1.5 text-fg-muted hover:bg-white/10 hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
       title="Next chapter (→)"
       aria-label="Next chapter"
@@ -257,29 +303,28 @@
     </button>
   </div>
 
-  <!-- Body: iframe sandbox. Loading + error states render in-line
-       so the reader chrome stays visible. -->
   <div class="relative flex-1 overflow-hidden bg-surface">
-    {#if loadingSpine}
+    {#if session.spineLoading}
       <div class="flex h-full w-full items-center justify-center text-sm text-fg-muted">
         <p>Loading EPUB…</p>
       </div>
-    {:else if spineError}
+    {:else if session.spineError}
       <div class="flex h-full w-full items-center justify-center p-8 text-center text-sm text-danger">
-        <p>Couldn't open EPUB: {spineError}</p>
+        <p>Couldn't open EPUB: {session.spineError}</p>
       </div>
-    {:else if chapterError}
+    {:else if session.chapterError}
       <div class="flex h-full w-full items-center justify-center p-8 text-center text-sm text-danger">
-        <p>Couldn't load chapter: {chapterError}</p>
+        <p>Couldn't load chapter: {session.chapterError}</p>
       </div>
     {:else if chapterHTML}
       <iframe
+        bind:this={iframeEl}
         title={asset.title || 'EPUB chapter'}
         srcdoc={chapterHTML}
         sandbox="allow-same-origin"
         class="h-full w-full border-0 bg-transparent"
       ></iframe>
-      {#if loadingChapter}
+      {#if session.chapterLoading}
         <div class="pointer-events-none absolute right-3 top-3 rounded bg-black/60 px-2 py-1 text-xs text-white">Loading…</div>
       {/if}
     {/if}

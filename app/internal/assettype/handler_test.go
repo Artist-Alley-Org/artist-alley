@@ -228,6 +228,10 @@ func (rtOnly) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObjec
 func (rtOnly) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	panic("GetEpubResource called from assettype test shim")
 }
+
+func (rtOnly) SearchEpub(context.Context, openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from assettype test shim")
+}
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from assettype test shim")
 }

@@ -503,6 +503,9 @@ func (s shimImpl) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapter
 func (s shimImpl) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	return s.assets.GetEpubResource(ctx, req)
 }
+func (s shimImpl) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	return s.assets.SearchEpub(ctx, req)
+}
 
 func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
 	panic("Login called from assets test shim")

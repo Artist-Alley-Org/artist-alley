@@ -1125,6 +1125,50 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/epub/search:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: q
+        in: query
+        required: true
+        description: |
+          Query string. Case-insensitive substring match against
+          each chapter's stripped-text body. Queries shorter than
+          two characters return an empty list (avoids degenerate
+          single-character spam).
+        schema: { type: string, minLength: 1 }
+    get:
+      operationId: searchEpub
+      summary: Full-text search across an EPUB's chapters
+      description: |
+        Scans every spine chapter for the query (case-insensitive),
+        returning up to 5 hits per chapter and 200 hits total.
+        Each hit carries the chapter idx (jump target), a label
+        (display), a snippet (~60 chars on each side of the match),
+        and the character offset inside the plain-text chapter
+        body (future use when EpubView grows in-page anchor jump).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Search hits (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EpubSearchHit" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/epub/resources/{path}:
     parameters:
       - name: id
@@ -5168,6 +5212,25 @@ components:
         media_type:
           type: string
           example: application/xhtml+xml
+
+    EpubSearchHit:
+      type: object
+      description: |
+        One match returned by the EPUB full-text search endpoint.
+        Multiple hits per chapter are possible (capped at 5).
+      required: [chapter_idx, chapter_label, snippet, char_offset]
+      properties:
+        chapter_idx:
+          type: integer
+          minimum: 0
+        chapter_label:
+          type: string
+        snippet:
+          type: string
+          description: ~120 char excerpt centred on the match.
+        char_offset:
+          type: integer
+          description: Char offset of the match in the plain-text chapter body.
 
     AssetCompanion:
       type: object

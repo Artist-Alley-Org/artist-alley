@@ -232,6 +232,9 @@ func (s *apiServer) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapt
 func (s *apiServer) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	return s.assets.GetEpubResource(ctx, req)
 }
+func (s *apiServer) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	return s.assets.SearchEpub(ctx, req)
+}
 
 // --- metadata --------------------------------------------------------------
 

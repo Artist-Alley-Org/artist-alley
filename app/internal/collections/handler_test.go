@@ -578,6 +578,10 @@ func (collShim) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObj
 func (collShim) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	panic("GetEpubResource called from collections test shim")
 }
+
+func (collShim) SearchEpub(context.Context, openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from collections test shim")
+}
 func (collShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from collections test shim")
 }

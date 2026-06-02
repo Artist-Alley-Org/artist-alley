@@ -279,6 +279,10 @@ func (shimImpl) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObj
 func (shimImpl) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	panic("GetEpubResource called from storage test shim")
 }
+
+func (shimImpl) SearchEpub(context.Context, openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from storage test shim")
+}
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from storage test shim")
 }

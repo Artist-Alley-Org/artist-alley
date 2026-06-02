@@ -14,6 +14,7 @@
 import type { Component, Snippet } from 'svelte';
 import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
 import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
+import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
 
 /** Everything a tool body needs to do its job. Threaded through
@@ -31,6 +32,10 @@ export interface ToolContext {
    *  anchored today; eventually any asset). Whiteboard tools gate
    *  on this. */
   whiteboardSession?: WhiteboardSession;
+  /** Ebook session — present when kind === 'ebook'. EpubView and
+   *  the EbookTool's side-panel body bind the same instance so
+   *  TOC / search / bookmarks / reading settings stay in sync. */
+  ebookSession?: EbookSessionInstance;
   /** Free-form bag of host-provided callbacks. Hosts that own
    *  details (e.g. PostHost has likes / comments / cover-picker)
    *  pass their handlers in; the matching tool reads them. Kept

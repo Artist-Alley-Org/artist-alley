@@ -20,6 +20,7 @@
   import EpubView from './EpubView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
+  import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
@@ -201,6 +202,22 @@
     } else if (kind !== 'sprite' && spriteSession) {
       spriteSession = null;
       lastAssetIdForSession = '';
+    }
+  });
+
+  // Ebook session — same per-asset rebuild pattern. EpubView reads
+  // / writes currentIdx + chapter state; the EbookTool's side-panel
+  // body binds the same instance for TOC / search / bookmarks /
+  // reading settings.
+  let ebookSession = $state<EbookSessionInstance | null>(null);
+  let lastAssetIdForEbook = '';
+  $effect(() => {
+    if (kind === 'ebook' && asset.id !== lastAssetIdForEbook) {
+      lastAssetIdForEbook = asset.id;
+      ebookSession = createEbookSession({ assetId: asset.id });
+    } else if (kind !== 'ebook' && ebookSession) {
+      ebookSession = null;
+      lastAssetIdForEbook = '';
     }
   });
   // The Tools-menu "Slice as sprite" entry only makes sense for
@@ -390,6 +407,7 @@
     asset,
     controller,
     spriteSession: spriteSession ?? undefined,
+    ebookSession: ebookSession ?? undefined,
     whiteboardSession,
     hostHooks,
     shellState: {
@@ -797,12 +815,13 @@
           <FontView {asset} bind:controller />
         </div>
       {/key}
-    {:else if kind === 'ebook'}
+    {:else if kind === 'ebook' && ebookSession}
       <!-- Ebook reader bypasses pan/zoom — the body owns its own
-           page-by-page layout (chapter iframe + TOC popdown). -->
+           page-by-page layout (chapter iframe + TOC popdown).
+           Session is shared with the side-panel EbookTool. -->
       {#key asset.id}
         <div class="absolute inset-0">
-          <EpubView {asset} bind:controller />
+          <EpubView {asset} bind:controller bind:session={ebookSession} />
         </div>
       {/key}
     {:else if kind === 'sprite' && spriteSession}

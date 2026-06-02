@@ -516,6 +516,9 @@ func (a authOnlyImpl) GetEpubChapter(_ context.Context, _ openapi.GetEpubChapter
 func (a authOnlyImpl) GetEpubResource(_ context.Context, _ openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	panic("GetEpubResource called from auth test shim")
 }
+func (a authOnlyImpl) SearchEpub(_ context.Context, _ openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from auth test shim")
+}
 func (a authOnlyImpl) RemoveAssetCompanion(_ context.Context, _ openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from auth test shim")
 }

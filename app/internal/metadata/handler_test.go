@@ -586,6 +586,10 @@ func (metaShim) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObj
 func (metaShim) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
 	panic("GetEpubResource called from metadata test shim")
 }
+
+func (metaShim) SearchEpub(context.Context, openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from metadata test shim")
+}
 func (metaShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from metadata test shim")
 }
