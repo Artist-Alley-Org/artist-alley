@@ -143,6 +143,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
+
+		// /assets/{id}/file with Range support so <audio>/<video>
+		// can seek into the middle of a large media asset. The
+		// openapi-derived handler streams the whole body in one
+		// shot; that's fine for downloads but kills seeking on
+		// audiobook .m4b / video .mp4. Registered AFTER the
+		// HandlerFromMux call so chi's last-write-wins semantics
+		// route GET (and the new HEAD) through this handler instead.
+		fileH := handlers.NewAssetFileHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/file", fileH.ServeHTTP)
+		r.Head("/assets/{id}/file", fileH.ServeHTTP)
 	})
 
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request

@@ -30,6 +30,7 @@ export type ViewKind =
   | '3d'
   | 'ebook'
   | 'doc'
+  | 'audiobook'
   | 'placeholder';
 
 // ViewAsset is the trimmed asset shape every view body accepts as
@@ -315,6 +316,11 @@ const VIDEO_EXTS = new Set([
 const AUDIO_EXTS = new Set([
   'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'opus',
 ]);
+// 'audiobook' is the semantic kind for spoken-word long-form audio.
+// .m4b is the de-facto container (AAC inside MP4 with chapter atoms);
+// .aax is Audible's encrypted variant — currently a placeholder since
+// decryption needs activation bytes per Amazon account.
+const AUDIOBOOK_EXTS = new Set(['m4b', 'aax']);
 const PDF_EXTS = new Set(['pdf']);
 // Kept in sync with app/internal/preview/font.go::fontExts.
 const FONT_EXTS = new Set(['ttf', 'otf', 'ttc', 'otc', 'woff', 'woff2']);
@@ -338,6 +344,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (!ext) return 'placeholder';
   const e = ext.toLowerCase().replace(/^\./, '');
   if (EBOOK_EXTS.has(e)) return 'ebook';
+  if (AUDIOBOOK_EXTS.has(e)) return 'audiobook';
   if (IMAGE_EXTS.has(e)) return 'image';
   if (VIDEO_EXTS.has(e)) return 'video';
   if (AUDIO_EXTS.has(e)) return 'audio';
@@ -353,6 +360,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
 // `.png` would otherwise resolve to `image`. Mirror of the
 // asset_types table seeded by migrations 00031 / 00033 / 00034.
 const ASSET_TYPE_KIND: Record<number, ViewKind> = {
+  11: 'audiobook',
   13: 'sprite',
 };
 
@@ -379,4 +387,7 @@ export function is3DExt(ext: string | null | undefined): boolean {
 }
 export function isDocExt(ext: string | null | undefined): boolean {
   return kindForExtension(ext) === 'doc';
+}
+export function isAudiobookExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'audiobook';
 }

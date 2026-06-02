@@ -19,11 +19,13 @@
   import FontView from './FontView.svelte';
   import EpubView from './EpubView.svelte';
   import DocView from './DocView.svelte';
+  import AudiobookView from './AudiobookView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
   import { createModelSession, type ModelSessionInstance } from '$lib/3d/session.svelte';
   import { createDocSession, type DocSessionInstance } from '$lib/doc/session.svelte';
+  import { createAudiobookSession, type AudiobookSessionInstance } from '$lib/audiobook/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
@@ -177,7 +179,7 @@
   // Auto-expand once when a sprite or 3D kind comes into view so
   // the user sees the dedicated tool immediately. Only force-open
   // on the transition INTO a tools kind; the user can re-collapse.
-  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook');
+  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook' || kind === 'audiobook');
   let hadRichToolsKind = false;
   $effect(() => {
     if (kindHasRichTools && !hadRichToolsKind && paneCollapsed) {
@@ -252,6 +254,22 @@
     } else if (kind !== 'doc' && docSession) {
       docSession = null;
       lastAssetIdForDoc = '';
+    }
+  });
+
+  // Audiobook session — per-asset rebuild for .m4b / asset_type=11.
+  // AudiobookView reads + writes through it for playback state;
+  // the AudiobookTool side panel binds the same instance for the
+  // chapter list / speed / sleep timer / bookmarks.
+  let audiobookSession = $state<AudiobookSessionInstance | null>(null);
+  let lastAssetIdForAudiobook = '';
+  $effect(() => {
+    if (kind === 'audiobook' && asset.id !== lastAssetIdForAudiobook) {
+      lastAssetIdForAudiobook = asset.id;
+      audiobookSession = createAudiobookSession({ assetId: asset.id });
+    } else if (kind !== 'audiobook' && audiobookSession) {
+      audiobookSession = null;
+      lastAssetIdForAudiobook = '';
     }
   });
   // The Tools-menu "Slice as sprite" entry only makes sense for
@@ -452,6 +470,7 @@
     ebookSession: ebookSession ?? undefined,
     modelSession: modelSession ?? undefined,
     docSession: docSession ?? undefined,
+    audiobookSession: audiobookSession ?? undefined,
     whiteboardSession,
     hostHooks,
     shellState: {
@@ -877,6 +896,16 @@
           <DocView {asset} bind:controller bind:session={docSession} />
         </div>
       {/key}
+    {:else if kind === 'audiobook' && audiobookSession}
+      <!-- Audiobook reader (large cover + chapter strip + big skip
+           buttons) bypasses pan/zoom — the surface is its own
+           Audiobookshelf-style chrome. Session shared with the
+           side-panel AudiobookTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <AudiobookView {asset} bind:controller bind:session={audiobookSession} />
+        </div>
+      {/key}
     {:else if kind === 'sprite' && spriteSession}
       {#key asset.id}
         <div class="absolute inset-0">
@@ -933,11 +962,11 @@
       >
         {#if controller.hasTimeline}
           {controller.formatAnchor(controller.currentFrame)}
-          {#if controller.kind !== 'audio'}
+          {#if controller.kind !== 'audio' && controller.kind !== 'audiobook'}
             <!-- Frame counter — only meaningful for video / pdf / etc.
-                 Audio runs at 1000 fps (1 ms per "frame") so "f95000"
-                 reads as noise; the M:SS.mmm timecode already carries
-                 the precise position. -->
+                 Audio + audiobook run at 1000 fps (1 ms per "frame")
+                 so "f95000" reads as noise; the M:SS.mmm timecode
+                 already carries the precise position. -->
             · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
           {/if}
         {/if}
@@ -1039,7 +1068,12 @@
        a horizontally-scrollable container so Ctrl/Cmd + wheel can
        zoom the scrubber into a section of the timeline — same idiom
        MediaView uses on its waveform. The reset chip appears only
-       when zoomed > 1×. -->
+       when zoomed > 1×.
+
+       Audiobook routes the same rail too — AudiobookView delegates
+       transport to the shell so users get one consistent set of
+       controls across video / audio / audiobook. The view itself
+       just renders cover + meta + chapter-strip context. -->
   {#if controller.hasTimeline}
     <div
       bind:this={scrubberScrollEl}
@@ -1075,6 +1109,35 @@
         <div class="absolute inset-y-0 left-0 bg-accent/60" style="width: {playheadPct}%"></div>
         {#if loopIn !== null && loopOut !== null && loopOut > loopIn}
           <div class="absolute inset-y-0 bg-yellow-500/30" style="left: {loopInPct}%; width: {loopOutPct - loopInPct}%"></div>
+        {/if}
+        <!-- Chapter ticks (audiobook only) — thin vertical lines at
+             each chapter boundary so the user can visually orient
+             "I'm 2/3 through chapter 4" without scrubbing. The
+             dedicated AudiobookView used to ship its own scrubber
+             with these ticks; we moved them onto the shell's rail
+             so there's exactly one progress bar. -->
+        {#if kind === 'audiobook' && audiobookSession && audiobookSession.chapters.length > 1 && audiobookSession.durationS > 0}
+          {#each audiobookSession.chapters as ch, i (i)}
+            {#if i > 0}
+              <span
+                class="pointer-events-none absolute inset-y-0 w-px bg-white/40"
+                style="left: {(ch.start / audiobookSession.durationS) * 100}%"
+              ></span>
+            {/if}
+          {/each}
+        {/if}
+        <!-- Bookmark diamonds (audiobook only). Click to jump back. -->
+        {#if kind === 'audiobook' && audiobookSession && audiobookSession.durationS > 0}
+          {#each audiobookSession.bookmarks as bm (bm.createdAt)}
+            <button
+              type="button"
+              onclick={(ev) => { ev.stopPropagation(); audiobookSession?.seekTo?.(bm.time); }}
+              class="absolute top-[-3px] h-[9px] w-[9px] -translate-x-1/2 rotate-45 cursor-pointer rounded-sm bg-yellow-400 shadow hover:scale-150"
+              style="left: {(bm.time / audiobookSession.durationS) * 100}%"
+              title={bm.note ? `${Math.round(bm.time)}s — ${bm.note}` : `Bookmark at ${Math.round(bm.time)}s`}
+              aria-label="Jump to bookmark"
+            ></button>
+          {/each}
         {/if}
         <div class="absolute inset-y-0 w-px bg-white" style="left: {playheadPct}%"></div>
       </div>

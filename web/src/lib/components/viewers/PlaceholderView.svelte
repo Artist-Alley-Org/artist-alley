@@ -55,6 +55,7 @@
     video: { title: 'Video', phase: '', icon: 'placeholder' },
     ebook: { title: 'Ebook reader', phase: '', icon: 'file-text' },
     doc: { title: 'Document viewer', phase: '', icon: 'file-text' },
+    audiobook: { title: 'Audiobook reader', phase: '', icon: 'audio' },
   };
   const label = $derived(labels[kind]);
 </script>

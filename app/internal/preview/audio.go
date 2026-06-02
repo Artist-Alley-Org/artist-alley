@@ -65,6 +65,15 @@ type AudioMetadata struct {
 	// art — the frontend falls back to the waveform-only display.
 	HasCover bool `json:"has_cover,omitempty"`
 
+	// Chapters extracted from the container — m4b's chpl atom,
+	// MP4 nero-chap track, ID3v2 CHAP frames, Vorbis CHAPTER tags.
+	// Populated via ffprobe -show_chapters. Empty for files that
+	// don't carry chapter metadata (a regular song or sound effect).
+	// The frontend uses this to drive the audiobook reader's
+	// chapter strip + the side-panel chapter list; falls back to a
+	// single-chapter rendering for chapterless audio.
+	Chapters []AudioChapter `json:"chapters,omitempty"`
+
 	// SubtitleTracks is a list of subtitle / caption tracks the file
 	// ships (rare in audio, common in video — but we surface it on
 	// both since the field is shared via the metadata JSONB). Currently
@@ -73,6 +82,17 @@ type AudioMetadata struct {
 	// same slot keyed by their own VTT variant ("sub.<lang>.vtt").
 	// The frontend renders one <track kind="subtitles"> per entry.
 	SubtitleTracks []SubtitleTrack `json:"subtitle_tracks,omitempty"`
+}
+
+// AudioChapter is one chapter entry as ffprobe -show_chapters
+// reports it. Start / End are seconds (float). Title comes from
+// the chapter's TAGS.title; empty string when missing (we render
+// "Chapter N" in that case at the frontend).
+type AudioChapter struct {
+	ID      int     `json:"id"`
+	StartS  float64 `json:"start_s"`
+	EndS    float64 `json:"end_s"`
+	Title   string  `json:"title,omitempty"`
 }
 
 // SubtitleTrack describes one subtitle / caption stream available
@@ -150,7 +170,11 @@ type AudioHandler struct {
 func NewAudioHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Store, logger *slog.Logger) *AudioHandler {
 	return &AudioHandler{
 		Pool: pool, Storage: st, SysConfig: sc, Logger: logger,
-		MaxSourceBytes: 500 * 1024 * 1024,
+		// Audiobooks routinely run 500MB–4GB (m4b at 64-128kbps for 10-30h).
+		// 4 GiB covers the long tail without opening us up to truly silly
+		// uploads; ffprobe + cover extraction are both stream-based so the
+		// cap only matters for the staging copy.
+		MaxSourceBytes: 4 * 1024 * 1024 * 1024,
 		MaxJobDuration: 10 * time.Minute,
 		WaveformWidth:  2048,
 		WaveformHeight: 384,
@@ -305,10 +329,14 @@ func (h *AudioHandler) stage(ctx context.Context, hash, ext string) (string, fun
 // come from the first audio stream; tags come from the format-level
 // `tags` block (Vorbis / ID3 / MP4 atom).
 func (h *AudioHandler) probeMetadata(ctx context.Context, src string) (AudioMetadata, error) {
+	// One ffprobe call covers everything we need — adding -show_chapters
+	// just appends a "chapters" key to the JSON. Audiobook .m4b files
+	// take ~50ms to probe; chapter atoms are tiny compared to the
+	// streams list.
 	cmd := exec.CommandContext(ctx, h.ffprobeBin(),
 		"-hide_banner", "-loglevel", "error",
 		"-print_format", "json",
-		"-show_format", "-show_streams",
+		"-show_format", "-show_streams", "-show_chapters",
 		src,
 	)
 	var out, stderr bytes.Buffer
@@ -335,6 +363,12 @@ func (h *AudioHandler) probeMetadata(ctx context.Context, src string) (AudioMeta
 				AttachedPic int `json:"attached_pic"`
 			} `json:"disposition"`
 		} `json:"streams"`
+		Chapters []struct {
+			ID        int               `json:"id"`
+			StartTime string            `json:"start_time"`
+			EndTime   string            `json:"end_time"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"chapters"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
 		return AudioMetadata{}, fmt.Errorf("ffprobe parse: %w", err)
@@ -400,6 +434,34 @@ func (h *AudioHandler) probeMetadata(ctx context.Context, src string) (AudioMeta
 	}
 	if len(tags) > 0 {
 		meta.Tags = tags
+	}
+
+	// Fold chapter atoms. Both m4b's native chpl table + MP3's ID3v2
+	// CHAP frames surface through the same shape under ffprobe's
+	// -show_chapters. Title comes from chapter-level TAGS.title;
+	// when blank we leave it empty and let the frontend render
+	// "Chapter N".
+	if len(raw.Chapters) > 0 {
+		chapters := make([]AudioChapter, 0, len(raw.Chapters))
+		for i, c := range raw.Chapters {
+			start, _ := strconv.ParseFloat(c.StartTime, 64)
+			end, _ := strconv.ParseFloat(c.EndTime, 64)
+			id := c.ID
+			if id == 0 {
+				id = i + 1
+			}
+			title := ""
+			for k, v := range c.Tags {
+				if strings.EqualFold(k, "title") && v != "" {
+					title = v
+					break
+				}
+			}
+			chapters = append(chapters, AudioChapter{
+				ID: id, StartS: start, EndS: end, Title: title,
+			})
+		}
+		meta.Chapters = chapters
 	}
 	return meta, nil
 }
@@ -621,6 +683,14 @@ func (h *AudioHandler) markFailed(ctx context.Context, id uuid.UUID, msg string)
 var audioExts = map[string]struct{}{
 	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
 	"m4a": {}, "aac": {}, "opus": {},
+	// Audiobook containers. .m4b is functionally the same as .m4a
+	// (AAC inside MP4) but with chapter atoms + the .m4b extension
+	// that signals "treat as long-form spoken word". .aax is
+	// Audible's encrypted variant — ffprobe can read its metadata
+	// + chapter table even without decryption, so we route it
+	// through here to get the chapter list for the player even
+	// though playback itself requires activation bytes.
+	"m4b": {}, "aax": {},
 }
 
 func isAudioExt(ext string) bool {

@@ -17,6 +17,7 @@ import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
 import type { ModelSessionInstance } from '$lib/3d/session.svelte';
 import type { DocSessionInstance } from '$lib/doc/session.svelte';
+import type { AudiobookSessionInstance } from '$lib/audiobook/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
 
 /** Everything a tool body needs to do its job. Threaded through
@@ -47,6 +48,11 @@ export interface ToolContext {
    *  the DocTool side-panel body bind the same instance for
    *  reading prefs / outline / find / bookmarks / stats. */
   docSession?: DocSessionInstance;
+  /** Audiobook session — present when kind === 'audiobook'. The
+   *  AudiobookView player and AudiobookTool side panel bind the
+   *  same instance so the chapter list, playback speed, sleep
+   *  timer, and bookmarks stay in sync. */
+  audiobookSession?: AudiobookSessionInstance;
   /** Free-form bag of host-provided callbacks. Hosts that own
    *  details (e.g. PostHost has likes / comments / cover-picker)
    *  pass their handlers in; the matching tool reads them. Kept

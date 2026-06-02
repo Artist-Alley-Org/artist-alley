@@ -405,6 +405,10 @@ var textExtsHandler = map[string]struct{}{
 var audioExtsHandler = map[string]struct{}{
 	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
 	"m4a": {}, "aac": {}, "opus": {},
+	// Audiobook containers — see preview.audio.audioExts for the
+	// rationale. Routes through the same handler so we get cover
+	// extraction, duration probing, and chapter atoms.
+	"m4b": {}, "aax": {},
 }
 
 // ---------------------------------------------------------------------------
