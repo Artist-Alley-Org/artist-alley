@@ -82,6 +82,13 @@
      *  viewer updates its activeToolId state and the side panel
      *  re-renders with the new tool's Body. */
     onSelectSidePanelTool?: (id: string) => void;
+    /** Tile-mode controls — texture-style asset feature. The viewer
+     *  enables this for image-kind assets so users can preview
+     *  seamless tileability. Toggle: off ↔ tile (both directions).
+     *  Hidden when canTile is false. */
+    canTile?: boolean;
+    tileMode?: 'off' | 'tile';
+    onToggleTileMode?: () => void;
   }
 
   let {
@@ -109,6 +116,9 @@
     sidePanelActiveTool,
     sidePanelActiveToolLabel,
     onSelectSidePanelTool,
+    canTile = false,
+    tileMode = 'off',
+    onToggleTileMode,
   }: Props = $props();
 
   // ── Derived asset display values ──────────────────────────────────
@@ -461,6 +471,29 @@
   </Menu>
 
   <!-- Quick-action icon row -->
+  {#if canTile}
+    <!-- Tile-mode toggle (texture preview). Same 2×2 grid glyph
+         in both states; we just flip the colour to accent when on
+         so the user can tell at a glance whether tile is active. -->
+    {@const tileTitle = tileMode === 'tile'
+      ? 'Tile preview on (press T to turn off)'
+      : 'Tile preview off (press T to turn on)'}
+    <button
+      type="button"
+      onclick={() => onToggleTileMode?.()}
+      class={`rounded p-1.5 hover:bg-white/10 ${tileMode === 'tile' ? 'text-accent' : ''}`}
+      title={tileTitle}
+      aria-label={tileTitle}
+      aria-pressed={tileMode === 'tile'}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="8" height="8" />
+        <rect x="13" y="3" width="8" height="8" />
+        <rect x="3" y="13" width="8" height="8" />
+        <rect x="13" y="13" width="8" height="8" />
+      </svg>
+    </button>
+  {/if}
   <button
     type="button"
     onclick={onResetView}

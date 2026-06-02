@@ -31,14 +31,23 @@ interface DefineSnippetToolOpts {
    *  Lets a host's snippet-tool return a ctx-derived header (e.g.
    *  "{post title} Details") without needing a custom ToolDef. */
   labelFn?: (ctx: ToolContext) => string;
-  /** Set true when the host will supply a tips snippet too. When
-   *  false we don't register a Tips component so the shell footer
-   *  collapses for this tool. */
+  /** Set true when the host will supply a tips snippet too. The
+   *  default SnippetTips adapter reads the snippet from hostHooks.
+   *  Mutually exclusive with `Tips` below. */
   hasTips?: boolean;
+  /** Drop in a specific Tips component (e.g. shared DetailsTips)
+   *  instead of the snippet adapter. Useful when an override tool
+   *  wants to reuse the built-in tool's tips verbatim — PostHost
+   *  overrides Details but the gestures (pan / zoom / tile) are
+   *  the same. */
+  Tips?: Component<{ ctx: ToolContext }>;
   /** Optional gate. Defaults to "always available" — most host
    *  tools are scoped to their host already, so an additional
    *  filter is rarely needed. */
   isAvailable?: (ctx: ToolContext) => boolean;
+  /** Pass through ToolDef flags for tools that need them. */
+  noCollapse?: boolean;
+  supportsCompact?: boolean;
 }
 
 export function defineSnippetTool(opts: DefineSnippetToolOpts): ToolDef {
@@ -49,7 +58,9 @@ export function defineSnippetTool(opts: DefineSnippetToolOpts): ToolDef {
     order: opts.order,
     Icon: opts.Icon,
     Body: SnippetBody,
-    Tips: opts.hasTips ? SnippetTips : undefined,
+    Tips: opts.Tips ?? (opts.hasTips ? SnippetTips : undefined),
     isAvailable: opts.isAvailable ?? (() => true),
+    noCollapse: opts.noCollapse,
+    supportsCompact: opts.supportsCompact,
   };
 }

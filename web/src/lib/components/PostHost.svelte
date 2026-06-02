@@ -25,6 +25,7 @@
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
   import DetailsIcon from './viewers/tools/DetailsTool/Icon.svelte';
+  import { DetailsTips } from './viewers/tools/DetailsTool';
   import { defineSnippetTool } from './viewers/tools/snippet-tool';
   import { snippetToolHookKey } from './viewers/tools/contract';
   import { createPostPlaylistSource } from '$lib/playlist/postSource.svelte';
@@ -158,7 +159,10 @@
     // the body. Falls back to plain "Details" on the brief render
     // tick before `post` has loaded.
     labelFn: () => (post?.title ? `${post.title} Details` : 'Details'),
-    // No tips — details is read-only info.
+    // Share the built-in Details Tips so the global gestures
+    // (pan / zoom / reset / fullscreen / tile-toggle) stay
+    // documented when PostHost takes the Details slot.
+    Tips: DetailsTips,
   });
 
   // Read-only session for the sidebar-click preview overlay. Lazily

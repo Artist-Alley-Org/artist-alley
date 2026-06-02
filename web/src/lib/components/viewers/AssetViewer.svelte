@@ -320,6 +320,36 @@
     panY = 0;
   }
 
+  // ── Tile mode (image / texture only) ───────────────────────────
+  // Two states: off (single pan-zoomable image, default) and
+  // tile (repeat across the full canvas, both directions, so the
+  // user can preview seamless tileability). Driven by the 't'
+  // hotkey + a small menubar button. Persisted per-tab in
+  // localStorage so navigating to the next texture keeps the
+  // user's last preference — they probably want to review a
+  // batch of textures the same way. Only the 'image' kind exposes
+  // it; for other kinds the menubar button is hidden and the
+  // hotkey is a no-op (the stored state still survives so the
+  // next image asset picks it up).
+  type TileMode = 'off' | 'tile';
+  const TILE_KEY = 'aa.viewer.tileMode';
+  let tileMode = $state<TileMode>('off');
+  const canTile = $derived(kind === 'image');
+  onMount(() => {
+    try {
+      if (localStorage.getItem(TILE_KEY) === 'tile') tileMode = 'tile';
+    } catch { /* ignore */ }
+  });
+  $effect(() => {
+    try {
+      localStorage.setItem(TILE_KEY, tileMode);
+    } catch { /* ignore */ }
+  });
+  function toggleTileMode() {
+    if (!canTile) return;
+    tileMode = tileMode === 'off' ? 'tile' : 'off';
+  }
+
   // setZoom keeps the visual centre stable while changing scale —
   // same arithmetic the wheel handler uses, factored out so the
   // tools panel's zoom-preset buttons land consistently with the
@@ -674,6 +704,7 @@
       case 'f': e.preventDefault(); toggleFullscreen(); break;
       case 'r': e.preventDefault(); resetView(); break;
       case 'g': if (controller.hasTimeline) { e.preventDefault(); goToOpen = true; } break;
+      case 't': if (canTile) { e.preventDefault(); toggleTileMode(); } break;
     }
   }
 
@@ -723,6 +754,9 @@
     sidePanelActiveTool={activeToolId}
     sidePanelActiveToolLabel={activeToolLabel}
     onSelectSidePanelTool={selectTool}
+    {canTile}
+    {tileMode}
+    onToggleTileMode={toggleTileMode}
   />
 
   <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
@@ -763,6 +797,17 @@
           <SpriteCanvas {asset} bind:session={spriteSession} bind:controller />
         </div>
       {/key}
+    {:else if kind === 'image' && tileMode !== 'off'}
+      <!-- Tile mode bypasses the pan/zoom transform — a repeating
+           texture wrapped in translate/scale would have edges
+           flying around as the user panned. The tile fills the
+           full canvas area so the user can preview seamless
+           tileability at a real on-screen size. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <ImageView {asset} bind:controller {tileMode} />
+        </div>
+      {/key}
     {:else}
     <div
       class="absolute inset-0 flex items-center justify-center"
@@ -778,7 +823,7 @@
         {#if kind === 'video' || kind === 'audio'}
           <MediaView {asset} bind:controller />
         {:else if kind === 'image'}
-          <ImageView {asset} bind:controller />
+          <ImageView {asset} bind:controller {tileMode} />
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
         {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}

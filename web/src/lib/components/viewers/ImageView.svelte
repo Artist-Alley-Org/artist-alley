@@ -15,12 +15,19 @@
 
   type Asset = import('./controller').ViewAsset;
 
+  type TileMode = 'off' | 'tile';
+
   interface Props {
     asset: Asset;
     controller: ViewController;
+    /** Tile mode for texture-style assets. 'off' = single
+     *  pan-zoomable image (default). 'tile' = fill the canvas
+     *  with the image repeated both directions at native size so
+     *  the user can preview seamless tileability. */
+    tileMode?: TileMode;
   }
 
-  let { asset, controller = $bindable() }: Props = $props();
+  let { asset, controller = $bindable(), tileMode = 'off' }: Props = $props();
 
   const hiresUrl = $derived(`/api/v1/assets/${asset.id}/variants/hires`);
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
@@ -83,6 +90,34 @@
       <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
     </svg>
   </div>
+{:else if tileMode !== 'off'}
+  <!-- Hidden loader IMG keeps natural-size + load-error handling
+       working in tile mode (otherwise we'd duplicate the variant /
+       fallback wiring). The background div is what the user sees. -->
+  <img
+    bind:this={imgEl}
+    src={imgSrc}
+    alt=""
+    onload={onLoad}
+    onerror={onError}
+    class="absolute h-0 w-0 opacity-0"
+    aria-hidden="true"
+  />
+  <!-- Tile background — repeat both directions at native pixel
+       size so the user can preview seamless tileability. The
+       wrapper covers the full canvas area; AssetViewer bypasses
+       the pan/zoom transform when tile mode is on (a repeated
+       texture inside translate/scale would have edges flying
+       around as the user panned). -->
+  <div
+    class="h-full w-full"
+    role="img"
+    aria-label={asset.title || ''}
+    style:background-image={`url(${imgSrc})`}
+    style:background-repeat="repeat"
+    style:background-size="auto"
+    style:background-position="center"
+  ></div>
 {:else}
   <img
     bind:this={imgEl}
