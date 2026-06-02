@@ -216,10 +216,26 @@ function noop() { /* default impl */ }
 // in here so it routes to ImageView (rendered natively by the
 // browser via <img>) and gets a rasterized variant ladder produced by
 // the backend SVG decoder (oksvg).
+// "Image" kind covers anything ImageView can mount via its hires-
+// variant fallback. Native browser-renderable formats (jpg/png/gif/
+// webp/avif) sit alongside formats that require the backend preview
+// pipeline (tiff/heic/exr/hdr/svg/eps/ps/psd) — ImageView fetches
+// /variants/hires which the backend rasterises to WEBP for any
+// format the preview workers handle. The Download original link in
+// the panel still gives the user the source bytes.
+//
+// Vector → image routing: EPS / PS via the Ghostscript worker
+// (preview/eps.go); SVG via the oksvg worker (preview/preview.go's
+// rasterExts). PSD / PSB via preview/psd.go. All converge on the
+// hires WEBP variant so the frontend doesn't care about the source
+// format — kind === 'image' is sufficient.
 const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'avif', 'heic', 'heif', 'svg',
   'hdr', 'exr', 'pic',
+  // Vector + Photoshop sources — backend preview workers rasterise
+  // these to a WEBP hires variant that ImageView picks up.
+  'eps', 'ps', 'psd', 'psb',
 ]);
 // Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
 // proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv
