@@ -62,3 +62,16 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Supply-chain forks — pinned to mscrnt/* mirrors so a small-
+// maintainer upstream can't disappear under us. See
+// memory/project_dep_fork_audit.md for the rule set + risk
+// rationale. Add a new entry here whenever a fork is created;
+// `go mod tidy` will resolve the version against the fork.
+replace (
+	github.com/chai2010/webp => github.com/mscrnt/webp v1.4.0
+	github.com/qmuntal/gltf => github.com/mscrnt/gltf v0.28.0
+	github.com/srwiley/oksvg => github.com/mscrnt/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx => github.com/mscrnt/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	go.n16f.net/thumbhash => github.com/mscrnt/go-thumbhash v1.1.0
+)
