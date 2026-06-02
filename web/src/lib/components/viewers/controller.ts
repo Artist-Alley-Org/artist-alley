@@ -377,3 +377,6 @@ export function isVideoExt(ext: string | null | undefined): boolean {
 export function is3DExt(ext: string | null | undefined): boolean {
   return kindForExtension(ext) === '3d';
 }
+export function isDocExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'doc';
+}
