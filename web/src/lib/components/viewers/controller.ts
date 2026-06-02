@@ -219,23 +219,40 @@ function noop() { /* default impl */ }
 // "Image" kind covers anything ImageView can mount via its hires-
 // variant fallback. Native browser-renderable formats (jpg/png/gif/
 // webp/avif) sit alongside formats that require the backend preview
-// pipeline (tiff/heic/exr/hdr/svg/eps/ps/psd) — ImageView fetches
-// /variants/hires which the backend rasterises to WEBP for any
-// format the preview workers handle. The Download original link in
-// the panel still gives the user the source bytes.
+// pipeline — ImageView fetches /variants/hires which the backend
+// rasterises to WEBP for every format a worker handles. The
+// Download original link in Details still gives the user the
+// source bytes.
 //
-// Vector → image routing: EPS / PS via the Ghostscript worker
-// (preview/eps.go); SVG via the oksvg worker (preview/preview.go's
-// rasterExts). PSD / PSB via preview/psd.go. All converge on the
-// hires WEBP variant so the frontend doesn't care about the source
-// format — kind === 'image' is sufficient.
+// Routing groups:
+//   raster (native)     : jpg / jpeg / png / gif / webp / bmp / avif
+//   raster (heavy)      : tiff / heic / heif / hdr / exr / pic
+//   vector              : svg (oksvg), eps / ps (Ghostscript)
+//   authoring           : psd / psb (preview/psd.go)
+//   document / ebook    : epub / mobi (preview/epub.go) — cover only
+//   comic               : cbz / cbr / cb7 (preview/comic.go) — cover only
+//
+// For ebook + comic the hires variant is the cover page only. A
+// proper multi-page reader is its own future view body; for now
+// the cover + Details metadata is the same user experience the
+// browse-card already provides.
 const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'avif', 'heic', 'heif', 'svg',
   'hdr', 'exr', 'pic',
-  // Vector + Photoshop sources — backend preview workers rasterise
-  // these to a WEBP hires variant that ImageView picks up.
+  // Vector + Photoshop sources — backend preview workers
+  // rasterise these to a WEBP hires variant.
   'eps', 'ps', 'psd', 'psb',
+  // Ebook + comic — cover thumbnail only. The reader for these
+  // (page-by-page navigation) is its own future view body; for
+  // now this shows the cover so users at least see what they're
+  // looking at instead of the generic placeholder. MOBI is
+  // included optimistically — backend support lands when the
+  // ebook worker grows mobi (the typical path is Calibre's
+  // `ebook-meta --get-cover`); until then the viewer falls back
+  // to the source file and ImageView's error path.
+  'epub', 'mobi',
+  'cbz', 'cbr', 'cb7',
 ]);
 // Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
 // proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv

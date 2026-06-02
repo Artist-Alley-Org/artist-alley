@@ -163,7 +163,12 @@
   // tools (Details) are always available, so the pane shows for
   // every non-placeholder kind. The shell handles the collapse-
   // to-rail state internally.
-  const paneEnabled = $derived(kind !== 'placeholder');
+  // Side panel always shows — Details tool is unconditionally
+  // available, so even placeholder-kind assets (formats with no
+  // viewer body, formats whose preview pipeline hasn't run yet)
+  // get the metadata + download link surface. Hiding the panel
+  // left those assets with no chrome to act on.
+  const paneEnabled = true;
   // Auto-expand once when a sprite or 3D kind comes into view so
   // the user sees the dedicated tool immediately. Only force-open
   // on the transition INTO a tools kind; the user can re-collapse.
