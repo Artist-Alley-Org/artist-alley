@@ -328,6 +328,9 @@ func (s *apiServer) ListPostWhiteboards(ctx context.Context, req openapi.ListPos
 func (s *apiServer) CreatePostWhiteboard(ctx context.Context, req openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
 	return s.social.CreatePostWhiteboard(ctx, req)
 }
+func (s *apiServer) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	return s.assets.LintAsset(ctx, req)
+}
 func (s *apiServer) ListAssetTextAnnotations(ctx context.Context, req openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
 	return s.social.ListAssetTextAnnotations(ctx, req)
 }

@@ -73,6 +73,19 @@ export interface DocAnnotation {
   updatedAt: string;
 }
 
+/** Lint diagnostic — mirrors the backend `LintDiagnostic` shape +
+ *  the CodeMirror lint extension shape. Severity matches CM6's
+ *  three-level system; the source label drives the panel badge. */
+export interface DocDiagnostic {
+  line: number;
+  col: number;
+  endLine?: number;
+  endCol?: number;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  source: string;
+}
+
 /** Selection the editor reports to the panel when the user
  *  highlights a range. Used by the floating selection toolbar +
  *  the side-panel "Annotate selection" button. */
@@ -166,6 +179,23 @@ export interface DocSession {
   annotationsFilter: DocAnnotation['style'] | null;
   /** Hide resolved entries by default; user can flip the toggle. */
   annotationsShowResolved: boolean;
+
+  // ── Lint (Phase C) ───────────────────────────────────────────
+  /** Current diagnostic list. Empty when never run, or when run
+   *  found nothing. Cleared on asset change (the session is
+   *  rebuilt per asset anyway). */
+  lintDiagnostics: DocDiagnostic[];
+  /** True while a /lint POST is in flight. */
+  lintRunning: boolean;
+  /** Last error from the lint endpoint. Cleared on next run. */
+  lintError: string | null;
+  /** Name of the linter that produced the diagnostics — drives the
+   *  panel header ("Lint · json", "Lint · markdown"). `null` when
+   *  the user hasn't run yet; `"none"` when no linter is wired. */
+  lintLinter: string | null;
+  /** True when the last run reported `skipped=true` (no linter
+   *  configured for the asset's extension). */
+  lintSkipped: boolean;
 }
 
 export interface DocSessionOpts { assetId: string; }
@@ -229,6 +259,15 @@ export interface DocSessionMethods {
   setSelection(sel: DocSelection | null, anchor?: { x: number; y: number } | null): void;
   setAnnotationsFilter(f: DocAnnotation['style'] | null): void;
   toggleAnnotationsShowResolved(): void;
+
+  // Lint (Phase C)
+  /** POST /assets/{id}/lint and pour the result into
+   *  lintDiagnostics. Safe to call repeatedly — the panel debounces
+   *  itself via lintRunning. */
+  runLint(): Promise<void>;
+  /** Drop the diagnostic list + linter label without re-fetching.
+   *  Used when the user wants to clear the lint gutter. */
+  clearLint(): void;
 }
 
 export type DocSessionInstance =
@@ -308,6 +347,12 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
     selectionAnchor: null,
     annotationsFilter: null,
     annotationsShowResolved: false,
+
+    lintDiagnostics: [],
+    lintRunning: false,
+    lintError: null,
+    lintLinter: null,
+    lintSkipped: false,
   });
 
   // Trigger counters — the panel calls a method, the counter
@@ -529,6 +574,51 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
   function setAnnotationsFilter(f: DocAnnotation['style'] | null) { state.annotationsFilter = f; }
   function toggleAnnotationsShowResolved() { state.annotationsShowResolved = !state.annotationsShowResolved; }
 
+  // ─── Lint ────────────────────────────────────────────────────
+  type LintWire = {
+    line: number; col: number;
+    end_line?: number | null; end_col?: number | null;
+    severity: 'info' | 'warning' | 'error';
+    message: string; source: string;
+  };
+  type LintResultWire = {
+    linter: string; skipped: boolean;
+    diagnostics?: LintWire[] | null;
+  };
+  async function runLint() {
+    if (state.lintRunning) return;
+    state.lintRunning = true;
+    state.lintError = null;
+    try {
+      const r = await fetch(`/api/v1/assets/${opts.assetId}/lint`, {
+        method: 'POST', credentials: 'include',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const wire = (await r.json()) as LintResultWire;
+      state.lintLinter = wire.linter;
+      state.lintSkipped = !!wire.skipped;
+      state.lintDiagnostics = (wire.diagnostics ?? []).map((d) => ({
+        line: d.line,
+        col: d.col,
+        endLine: d.end_line ?? undefined,
+        endCol: d.end_col ?? undefined,
+        severity: d.severity,
+        message: d.message,
+        source: d.source,
+      }));
+    } catch (e) {
+      state.lintError = e instanceof Error ? e.message : String(e);
+    } finally {
+      state.lintRunning = false;
+    }
+  }
+  function clearLint() {
+    state.lintDiagnostics = [];
+    state.lintLinter = null;
+    state.lintSkipped = false;
+    state.lintError = null;
+  }
+
   return Object.assign(state as DocSessionInstance, {
     assetId: opts.assetId,
     // Trigger getters exposed so view-body $effects can read them
@@ -549,6 +639,7 @@ export function createDocSession(opts: DocSessionOpts): DocSessionInstance {
     findNext, findPrev, replaceCurrent, replaceAll,
     loadAnnotations, createAnnotation, updateAnnotation, deleteAnnotation,
     setSelection, setAnnotationsFilter, toggleAnnotationsShowResolved,
+    runLint, clearLint,
   });
 }
 

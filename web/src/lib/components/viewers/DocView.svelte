@@ -272,7 +272,7 @@
       { syntaxHighlighting, defaultHighlightStyle, foldGutter, foldKeymap, indentUnit, bracketMatching, indentOnInput },
       { oneDark },
       { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap },
-      { lintKeymap },
+      { lintKeymap, linter, lintGutter, setDiagnostics, openLintPanel },
     ] = await Promise.all([
       import('@codemirror/state'),
       import('@codemirror/view'),
@@ -357,6 +357,13 @@
         langCompartment.of(lang ? [lang] : []),
         annotationField,
         annotationTheme,
+        // Lint extension — diagnostics are pushed via setDiagnostics
+        // from the $effect on session.lintDiagnostics below. The
+        // gutter shows severity dots; hovering the editor surfaces
+        // the message tooltips. linter(() => []) wires up the panel
+        // without providing its own diagnostic source.
+        lintGutter(),
+        linter(() => []),
         EditorState.readOnly.of(true),
         EditorView.updateListener.of((upd) => {
           if (upd.selectionSet || upd.docChanged || upd.viewportChanged) {
@@ -420,6 +427,7 @@
       tabCompartment, fontCompartment, langCompartment,
       themeExt, fontExt, lineNumbers, indentUnit,
       search: { setSearchQuery, openSearchPanel, closeSearchPanel, findNext, findPrevious, replaceNext, replaceAll, SearchQuery },
+      lint: { setDiagnostics, openLintPanel },
     };
 
     // Initial paint of any annotations already loaded into the
@@ -556,6 +564,35 @@
       return;
     }
     void renderMarkdownNow(sourceText).then((html) => { renderedHTML = html; });
+  });
+
+  // Push lint diagnostics into CodeMirror whenever the session list
+  // changes. The setDiagnostics helper converts each entry to a
+  // CM6 Diagnostic by translating (line, col) → char offset.
+  $effect(() => {
+    if (!host) return;
+    const diags = session.lintDiagnostics;
+    const doc = host.view.state.doc;
+    function lineColToPos(line: number, col: number): number {
+      const ln = Math.max(1, Math.min(line, doc.lines));
+      const lineObj = doc.line(ln);
+      const c = Math.max(0, Math.min(col - 1, lineObj.length));
+      return lineObj.from + c;
+    }
+    const mapped = diags.map((d) => {
+      const from = lineColToPos(d.line, d.col);
+      const to = d.endLine
+        ? lineColToPos(d.endLine, d.endCol ?? d.col + 1)
+        : Math.min(from + 1, doc.length);
+      return {
+        from,
+        to: Math.max(to, from + 1),
+        severity: d.severity,
+        message: d.message,
+        source: d.source,
+      };
+    });
+    host.view.dispatch(host.lint.setDiagnostics(host.view.state, mapped));
   });
 
   // Re-paint editor decorations when the annotation list mutates.

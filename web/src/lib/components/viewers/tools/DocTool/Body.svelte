@@ -369,7 +369,68 @@
       </section>
     {/if}
 
-    <!-- ── 6. Annotations ────────────────────────────────────── -->
+    <!-- ── 6. Lint ───────────────────────────────────────────── -->
+    <section class="border-b border-border p-3 text-xs">
+      <div class="mb-2 flex items-center justify-between">
+        <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">
+          Lint{session.lintLinter && !session.lintSkipped ? ` · ${session.lintLinter}` : ''}
+        </h3>
+        {#if session.lintDiagnostics.length > 0}
+          <span class="font-mono text-[10px] text-fg-muted">{session.lintDiagnostics.length}</span>
+        {/if}
+      </div>
+      <div class="mb-2 flex items-center gap-1">
+        <button
+          type="button"
+          onclick={() => session.runLint()}
+          disabled={session.lintRunning}
+          class="rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25 disabled:opacity-50"
+          title="Run the linter for this file"
+        >{session.lintRunning ? 'Running…' : 'Run lint'}</button>
+        {#if session.lintLinter !== null}
+          <button
+            type="button"
+            onclick={() => session.clearLint()}
+            class="rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent"
+          >Clear</button>
+        {/if}
+      </div>
+      {#if session.lintError}
+        <p class="rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">
+          {session.lintError}
+        </p>
+      {:else if session.lintSkipped}
+        <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] leading-snug text-fg-muted">
+          No linter wired for <span class="font-mono text-fg">.{session.languageId}</span> yet —
+          JSON / YAML / Markdown are covered today; py / js / ts / lua / sh follow.
+        </p>
+      {:else if session.lintLinter && session.lintDiagnostics.length === 0}
+        <p class="rounded border border-success/40 bg-success/10 px-2 py-1 text-[10px] text-fg">
+          No issues found.
+        </p>
+      {:else if session.lintDiagnostics.length > 0}
+        <div class="max-h-72 space-y-0.5 overflow-y-auto pr-1">
+          {#each session.lintDiagnostics as d, i (i)}
+            <button
+              type="button"
+              onclick={() => session.goToLine(d.line)}
+              class={`block w-full rounded border px-2 py-1 text-left text-[10px] hover:border-accent ${d.severity === 'error' ? 'border-danger/50 bg-danger/5' : d.severity === 'warning' ? 'border-yellow-500/50 bg-yellow-500/5' : 'border-border bg-surface/60'}`}
+            >
+              <div class="flex items-center gap-1">
+                <span class={`shrink-0 rounded px-1 py-px font-mono text-[9px] uppercase ${d.severity === 'error' ? 'bg-danger/30 text-fg' : d.severity === 'warning' ? 'bg-yellow-500/30 text-fg' : 'bg-fg-muted/20 text-fg-muted'}`}>
+                  {d.severity}
+                </span>
+                <span class="font-mono text-fg-muted">L{d.line}:{d.col}</span>
+                <span class="ml-auto text-fg-muted/70">{d.source}</span>
+              </div>
+              <div class="mt-0.5 text-fg">{d.message}</div>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- ── 7. Annotations ────────────────────────────────────── -->
     <section class="p-3 text-xs">
       <div class="mb-2 flex items-center justify-between">
         <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Annotations</h3>

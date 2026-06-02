@@ -823,3 +823,6 @@ func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTe
 func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
 	panic("UpdateTextAnnotation called from setup_test test shim")
 }
+func (shimImpl) LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	panic("LintAsset called from setup_test test shim")
+}
