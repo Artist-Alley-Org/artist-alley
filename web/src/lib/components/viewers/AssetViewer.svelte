@@ -18,10 +18,12 @@
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
   import EpubView from './EpubView.svelte';
+  import DocView from './DocView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
   import { createModelSession, type ModelSessionInstance } from '$lib/3d/session.svelte';
+  import { createDocSession, type DocSessionInstance } from '$lib/doc/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
@@ -175,7 +177,7 @@
   // Auto-expand once when a sprite or 3D kind comes into view so
   // the user sees the dedicated tool immediately. Only force-open
   // on the transition INTO a tools kind; the user can re-collapse.
-  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d');
+  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook');
   let hadRichToolsKind = false;
   $effect(() => {
     if (kindHasRichTools && !hadRichToolsKind && paneCollapsed) {
@@ -236,6 +238,22 @@
       lastAssetIdForModel = '';
     }
   });
+
+  // Doc session — same per-asset rebuild for txt / md / code files.
+  // DocView reads + writes through it for CodeMirror state; the
+  // DocTool side panel binds the same instance for reading prefs /
+  // outline / find / bookmarks / stats.
+  let docSession = $state<DocSessionInstance | null>(null);
+  let lastAssetIdForDoc = '';
+  $effect(() => {
+    if (kind === 'doc' && asset.id !== lastAssetIdForDoc) {
+      lastAssetIdForDoc = asset.id;
+      docSession = createDocSession({ assetId: asset.id });
+    } else if (kind !== 'doc' && docSession) {
+      docSession = null;
+      lastAssetIdForDoc = '';
+    }
+  });
   // The Tools-menu "Slice as sprite" entry only makes sense for
   // PNGs. Sprite sheets in the wild are essentially all PNG (lossless
   // + alpha); JPG/WEBP/etc. images may be photos / illustrations
@@ -272,6 +290,10 @@
     // Sprite view owns its own integer-step zoom + scroll for the
     // canvas; outer wheel-zoom would smush the pixel-perfect rendering.
     if (kind === 'sprite') return;
+    // Doc view (CodeMirror) owns wheel/select for scroll + drag-to-
+    // mark and Cmd+wheel-zoom comes from the editor's own keymap.
+    // Skip the shell's outer transform entirely.
+    if (kind === 'doc') return;
     // Timeline kinds (video, audio, paged PDF later) treat plain wheel
     // as one frame's worth of scrub — the muscle memory for review
     // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
@@ -315,6 +337,10 @@
     // Sprite view: scrollable canvas centred in the viewport;
     // drag-to-pan doesn't apply. Same reasoning as font.
     if (kind === 'sprite') return;
+    // Doc view (CodeMirror) handles its own selection / drag-to-
+    // select gestures. Outer pan/drag would fight the text-select
+    // behaviour users expect from an editor surface.
+    if (kind === 'doc') return;
     // Timeline kinds (video, audio) don't need pan/zoom — the wheel
     // already specialises to scrub frames, and the canvas surface is
     // a video frame or a waveform-with-cover, neither of which is a
@@ -425,6 +451,7 @@
     spriteSession: spriteSession ?? undefined,
     ebookSession: ebookSession ?? undefined,
     modelSession: modelSession ?? undefined,
+    docSession: docSession ?? undefined,
     whiteboardSession,
     hostHooks,
     shellState: {
@@ -839,6 +866,15 @@
       {#key asset.id}
         <div class="absolute inset-0">
           <EpubView {asset} bind:controller bind:session={ebookSession} />
+        </div>
+      {/key}
+    {:else if kind === 'doc' && docSession}
+      <!-- Document viewer (CodeMirror) bypasses pan/zoom — the
+           editor owns wheel/drag/select for find/replace etc.
+           Session shared with the side-panel DocTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <DocView {asset} bind:controller bind:session={docSession} />
         </div>
       {/key}
     {:else if kind === 'sprite' && spriteSession}

@@ -16,6 +16,7 @@ import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
 import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
 import type { ModelSessionInstance } from '$lib/3d/session.svelte';
+import type { DocSessionInstance } from '$lib/doc/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
 
 /** Everything a tool body needs to do its job. Threaded through
@@ -42,6 +43,10 @@ export interface ToolContext {
    *  env / lighting / display / camera / material picks land in the
    *  three.js scene live. */
   modelSession?: ModelSessionInstance;
+  /** Document session — present when kind === 'doc'. DocView and
+   *  the DocTool side-panel body bind the same instance for
+   *  reading prefs / outline / find / bookmarks / stats. */
+  docSession?: DocSessionInstance;
   /** Free-form bag of host-provided callbacks. Hosts that own
    *  details (e.g. PostHost has likes / comments / cover-picker)
    *  pass their handlers in; the matching tool reads them. Kept

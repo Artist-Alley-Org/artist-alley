@@ -29,6 +29,7 @@ export type ViewKind =
   | 'sprite'
   | '3d'
   | 'ebook'
+  | 'doc'
   | 'placeholder';
 
 // ViewAsset is the trimmed asset shape every view body accepts as
@@ -263,6 +264,45 @@ const IMAGE_EXTS = new Set([
 // Both share the kind so panel tools / shortcuts can live on the
 // kind level without each format duplicating chrome.
 const EBOOK_EXTS = new Set(['epub']);
+
+// 'doc' is the semantic kind for any plaintext / code / structured-
+// text document. Routes to DocView (CodeMirror 6 — read-only first
+// cut, edit later). One kind covers every text-shaped format so the
+// reading prefs, find/replace, annotations, and bookmarks live in
+// one place and don't need to be wired per-extension.
+//
+// Kept deliberately broad — anything a text editor would open is
+// fair game here. Office documents (.docx / .odt / .rtf) need a
+// backend converter so they sit out for now; a future Phase D will
+// route them through the doc kind via server-side text extraction.
+const DOC_EXTS = new Set([
+  // plain
+  'txt', 'log', 'csv', 'tsv',
+  // markdown / docs
+  'md', 'markdown', 'mdx', 'rst', 'adoc', 'org',
+  // config / data
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf',
+  'env', 'properties',
+  // shell / build
+  'sh', 'bash', 'zsh', 'fish', 'ps1',
+  'makefile', 'mk', 'dockerfile', 'gitignore', 'gitattributes',
+  // programming languages
+  'py', 'pyi', 'rb', 'lua', 'pl', 'pm',
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
+  'go', 'rs', 'java', 'kt', 'kts', 'scala', 'swift', 'dart',
+  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'm', 'mm', 'cs',
+  'php', 'hs', 'erl', 'ex', 'exs', 'clj', 'cljs', 'edn',
+  // web (svg lives in IMAGE_EXTS — it renders natively as an
+  // image. Users wanting to see svg source can flip the asset
+  // type via the metadata panel; future "view as text" override
+  // will surface here.)
+  'html', 'htm', 'css', 'scss', 'sass', 'less',
+  'vue', 'svelte',
+  // data + queries
+  'sql', 'graphql', 'gql', 'xml', 'plist',
+  // patches / diffs
+  'patch', 'diff',
+]);
 // Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
 // proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv
 // / AVCHD .mts / .m2ts / DVD .vob / broadcast .mxf / Flash .f4v
@@ -304,6 +344,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (PDF_EXTS.has(e)) return 'pdf';
   if (FONT_EXTS.has(e)) return 'font';
   if (MODEL_EXTS.has(e)) return '3d';
+  if (DOC_EXTS.has(e)) return 'doc';
   return 'placeholder';
 }
 

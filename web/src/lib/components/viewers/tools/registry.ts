@@ -16,6 +16,7 @@ import { spriteTool } from './SpriteTool/index';
 import { whiteboardTool } from './WhiteboardTool/index';
 import { ebookTool } from './EbookTool/index';
 import { modelTool } from './ModelTool/index';
+import { docTool } from './DocTool/index';
 
 // View was retired — basic 2D zoom presets live inside DetailsTool's
 // body now, since "Details" is the no-tool fallback that always
@@ -26,6 +27,7 @@ export const TOOLS: ToolDef[] = [
   detailsTool,
   ebookTool,
   modelTool,
+  docTool,
   spriteTool,
   whiteboardTool,
 ];

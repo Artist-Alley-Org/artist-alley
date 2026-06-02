@@ -1,0 +1,344 @@
+<script lang="ts">
+  // DocTool body — the document viewer's side-panel surface.
+  // Binds the shared DocSession that DocView also binds; both ends
+  // mutate the same $state object so flipping wrap / theme / font
+  // / search in the panel updates the editor without an event bus.
+  //
+  // Sections (top → bottom):
+  //   1. Reading    — font family, size, line-height, theme, wrap,
+  //                   line numbers, tab width, whitespace markers,
+  //                   render-as-markdown toggle (for .md only)
+  //   2. Outline    — markdown headings or code symbols; click
+  //                   jumps the editor to that line
+  //   3. Find       — query + flags (case / regex / word), prev /
+  //                   next; Replace pane (UI scaffold for Phase B)
+  //   4. Bookmarks  — line + optional note (localStorage per-asset,
+  //                   user-private; same shape as EbookTool)
+  //   5. Stats      — language, lines, words, chars, file size
+  //   6. Annotations · coming soon — Phase B teaser
+
+  import type { ToolContext } from '../contract';
+  import type { DocTheme, DocFontFamily } from '$lib/doc/session.svelte';
+
+  let { ctx }: { ctx: ToolContext } = $props();
+  const session = $derived(ctx.docSession);
+
+  const THEMES: { id: DocTheme; label: string; swatch: string }[] = [
+    { id: 'light', label: 'Light', swatch: '#ffffff' },
+    { id: 'sepia', label: 'Sepia', swatch: '#f4ecd8' },
+    { id: 'dark',  label: 'Dark',  swatch: '#1a1a1a' },
+  ];
+  const FONTS: { id: DocFontFamily; label: string }[] = [
+    { id: 'sans',  label: 'Sans' },
+    { id: 'serif', label: 'Serif' },
+    { id: 'mono',  label: 'Mono' },
+  ];
+
+  let bookmarkNote = $state('');
+  function addBookmark() {
+    if (!session) return;
+    session.addBookmark(bookmarkNote);
+    bookmarkNote = '';
+  }
+
+  let replaceOpen = $state(false);
+
+  function formatDate(iso: string): string {
+    try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
+  }
+  function fmtBytes(n: number | null): string {
+    if (n == null) return '—';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+  function fmtCount(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  }
+</script>
+
+{#if !session}
+  <div class="p-4 text-sm text-fg-muted"><p>Document viewer is loading…</p></div>
+{:else}
+  <div class="flex flex-col">
+
+    <!-- ── 1. Reading ────────────────────────────────────────── -->
+    <section class="border-b border-border p-3 text-xs">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Reading</h3>
+
+      <div class="mb-2">
+        <span class="mb-1 block text-fg-muted">Font</span>
+        <div class="grid grid-cols-3 gap-1">
+          {#each FONTS as f (f.id)}
+            <button
+              type="button"
+              onclick={() => session.setFontFamily(f.id)}
+              class={`rounded border px-1.5 py-1 text-[10px] ${session.fontFamily === f.id ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+              title={f.label}
+            >{f.label}</button>
+          {/each}
+        </div>
+      </div>
+
+      <label class="mb-2 block">
+        <span class="mb-1 flex items-center justify-between text-fg-muted">
+          <span>Size</span>
+          <span class="font-mono text-fg">{session.fontSize}px</span>
+        </span>
+        <input
+          type="range" min="10" max="24" step="1"
+          value={session.fontSize}
+          oninput={(e) => session.setFontSize(+(e.currentTarget as HTMLInputElement).value)}
+          class="w-full accent-accent"
+        />
+      </label>
+
+      <label class="mb-2 block">
+        <span class="mb-1 flex items-center justify-between text-fg-muted">
+          <span>Line height</span>
+          <span class="font-mono text-fg">{session.lineHeight.toFixed(1)}</span>
+        </span>
+        <input
+          type="range" min="1.0" max="2.2" step="0.1"
+          value={session.lineHeight}
+          oninput={(e) => session.setLineHeight(+(e.currentTarget as HTMLInputElement).value)}
+          class="w-full accent-accent"
+        />
+      </label>
+
+      <div class="mb-2">
+        <span class="mb-1 block text-fg-muted">Theme</span>
+        <div class="grid grid-cols-3 gap-1">
+          {#each THEMES as t (t.id)}
+            <button
+              type="button"
+              onclick={() => session.setTheme(t.id)}
+              class={`flex items-center justify-center gap-1.5 rounded border px-2 py-1.5 ${session.theme === t.id ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+              title={t.label}
+            >
+              <span class="h-3 w-3 rounded border border-black/30" style:background-color={t.swatch}></span>
+              <span class="text-[10px]">{t.label}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="mb-2 flex items-center justify-between text-fg-muted">
+        <span>Tab width</span>
+        <div class="flex overflow-hidden rounded border border-border">
+          {#each [2, 4, 8] as n (n)}
+            <button
+              type="button"
+              onclick={() => session.setTabSize(n)}
+              class={`px-2 py-1 text-[10px] ${session.tabSize === n ? 'bg-accent/20 text-fg' : 'bg-surface text-fg hover:bg-surface-elevated'}`}
+            >{n}</button>
+          {/each}
+        </div>
+      </div>
+
+      <label class="mb-1 flex items-center justify-between text-fg-muted">
+        <span>Wrap lines</span>
+        <button type="button" onclick={() => session.toggleWrap()} class="inline-flex h-5 w-9 items-center rounded-full transition-colors" class:bg-accent={session.wrap} class:bg-border={!session.wrap} role="switch" aria-checked={session.wrap} aria-label="Wrap long lines">
+          <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={session.wrap} class:translate-x-0.5={!session.wrap}></span>
+        </button>
+      </label>
+      <label class="mb-1 flex items-center justify-between text-fg-muted">
+        <span>Line numbers</span>
+        <button type="button" onclick={() => session.toggleLineNumbers()} class="inline-flex h-5 w-9 items-center rounded-full transition-colors" class:bg-accent={session.lineNumbers} class:bg-border={!session.lineNumbers} role="switch" aria-checked={session.lineNumbers} aria-label="Show line numbers">
+          <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={session.lineNumbers} class:translate-x-0.5={!session.lineNumbers}></span>
+        </button>
+      </label>
+      {#if session.languageId === 'markdown'}
+        <label class="flex items-center justify-between text-fg-muted">
+          <span>Render markdown</span>
+          <button type="button" onclick={() => session.toggleRenderMarkdown()} class="inline-flex h-5 w-9 items-center rounded-full transition-colors" class:bg-accent={session.renderMarkdown} class:bg-border={!session.renderMarkdown} role="switch" aria-checked={session.renderMarkdown} aria-label="Render markdown preview">
+            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={session.renderMarkdown} class:translate-x-0.5={!session.renderMarkdown}></span>
+          </button>
+        </label>
+      {/if}
+    </section>
+
+    <!-- ── 2. Outline ────────────────────────────────────────── -->
+    {#if session.outline.length > 0}
+      <section class="border-b border-border p-3 text-xs">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Outline</h3>
+          <span class="font-mono text-[10px] text-fg-muted">{session.outline.length}</span>
+        </div>
+        <div class="max-h-72 space-y-0.5 overflow-y-auto">
+          {#each session.outline as o, i (i)}
+            <button
+              type="button"
+              onclick={() => session.goToLine(o.line)}
+              class="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-[10px] hover:bg-surface-elevated"
+              style:padding-left={`${0.5 + o.depth * 0.75}rem`}
+              title={`Line ${o.line}`}
+            >
+              <span class="truncate text-fg">{o.label}</span>
+              <span class="shrink-0 font-mono text-[10px] text-fg-muted/70">{o.line}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    <!-- ── 3. Find / Replace ─────────────────────────────────── -->
+    <section class="border-b border-border p-3 text-xs">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Find</h3>
+      <input
+        type="search"
+        value={session.searchQuery}
+        oninput={(e) => session.setSearchQuery((e.currentTarget as HTMLInputElement).value)}
+        placeholder="Find in document…"
+        class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+      />
+      <div class="mt-1 flex items-center gap-1">
+        <button
+          type="button"
+          onclick={() => (session.setSearchCaseSensitive(!session.searchCaseSensitive))}
+          class={`rounded border px-1.5 py-0.5 text-[10px] ${session.searchCaseSensitive ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+          title="Case sensitive"
+        >Aa</button>
+        <button
+          type="button"
+          onclick={() => session.setSearchWholeWord(!session.searchWholeWord)}
+          class={`rounded border px-1.5 py-0.5 text-[10px] ${session.searchWholeWord ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+          title="Whole word"
+        >W</button>
+        <button
+          type="button"
+          onclick={() => session.setSearchRegex(!session.searchRegex)}
+          class={`rounded border px-1.5 py-0.5 text-[10px] ${session.searchRegex ? 'border-accent bg-accent/20 text-fg' : 'border-border bg-surface text-fg hover:border-accent'}`}
+          title="Regex"
+        >.*</button>
+        <span class="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onclick={() => session.findPrev()}
+            disabled={!session.searchQuery}
+            class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+            title="Previous match (⇧ Ctrl/⌘ G)"
+            aria-label="Previous match"
+          >‹</button>
+          <button
+            type="button"
+            onclick={() => session.findNext()}
+            disabled={!session.searchQuery}
+            class="rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg hover:border-accent disabled:opacity-40"
+            title="Next match (Ctrl/⌘ G)"
+            aria-label="Next match"
+          >›</button>
+        </span>
+      </div>
+      <button
+        type="button"
+        onclick={() => (replaceOpen = !replaceOpen)}
+        class="mt-1 w-full rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-fg-muted hover:border-accent hover:text-fg"
+      >{replaceOpen ? 'Hide replace' : 'Replace…'}</button>
+      {#if replaceOpen}
+        <div class="mt-1 rounded border border-border bg-surface/60 p-2">
+          <input
+            type="text"
+            value={session.replaceWith}
+            oninput={(e) => session.setReplaceWith((e.currentTarget as HTMLInputElement).value)}
+            placeholder="Replace with…"
+            class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
+          />
+          <p class="mt-1 text-[10px] leading-snug text-fg-muted">
+            Replace lands when the editor flips to edit mode (Phase&nbsp;D). The
+            input persists in your session so the workflow is ready when it
+            does.
+          </p>
+        </div>
+      {/if}
+    </section>
+
+    <!-- ── 4. Bookmarks ──────────────────────────────────────── -->
+    <section class="border-b border-border p-3 text-xs">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Bookmarks</h3>
+      <div class="mb-2 flex gap-1">
+        <input
+          type="text"
+          bind:value={bookmarkNote}
+          placeholder="Optional note…"
+          onkeydown={(e) => { if (e.key === 'Enter') addBookmark(); }}
+          class="flex-1 rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg focus:border-accent focus:outline-none"
+        />
+        <button
+          type="button"
+          onclick={addBookmark}
+          class="rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25"
+          title={`Bookmark line ${session.currentLine}`}
+        >+</button>
+      </div>
+      {#if session.bookmarks.length === 0}
+        <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] leading-snug text-fg-muted">
+          No bookmarks yet. Press + to save the current line.
+        </p>
+      {:else}
+        <div class="space-y-0.5">
+          {#each session.bookmarks as bm (bm.createdAt + ':' + bm.line)}
+            <div class="group flex items-start gap-1 rounded border border-border bg-surface px-2 py-1">
+              <button
+                type="button"
+                onclick={() => session.goToLine(bm.line)}
+                class="flex-1 text-left text-[10px]"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="truncate font-mono text-fg">Line {bm.line}</span>
+                  <span class="ml-2 shrink-0 text-fg-muted/70">{formatDate(bm.createdAt)}</span>
+                </div>
+                {#if bm.note}
+                  <div class="mt-0.5 text-fg-muted">{bm.note}</div>
+                {/if}
+              </button>
+              <button
+                type="button"
+                onclick={() => session.removeBookmark(bm.line, bm.createdAt)}
+                class="text-fg-muted opacity-0 hover:text-danger group-hover:opacity-100"
+                aria-label="Remove bookmark"
+                title="Remove bookmark"
+              >×</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- ── 5. Stats ──────────────────────────────────────────── -->
+    {#if session.stats}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Stats</h3>
+        <dl class="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-[10px]">
+          <dt class="text-fg-muted">Language</dt>
+          <dd class="font-mono text-fg">{session.languageId}</dd>
+          <dt class="text-fg-muted">Lines</dt>
+          <dd class="font-mono text-fg">{fmtCount(session.stats.lines)}</dd>
+          <dt class="text-fg-muted">Words</dt>
+          <dd class="font-mono text-fg">{fmtCount(session.stats.words)}</dd>
+          <dt class="text-fg-muted">Characters</dt>
+          <dd class="font-mono text-fg">{fmtCount(session.stats.characters)}</dd>
+          <dt class="text-fg-muted">File size</dt>
+          <dd class="font-mono text-fg">{fmtBytes(session.stats.fileSize)}</dd>
+          <dt class="text-fg-muted">Cursor</dt>
+          <dd class="font-mono text-fg">Line {session.currentLine}</dd>
+        </dl>
+      </section>
+    {/if}
+
+    <!-- ── 6. Annotations · coming soon (Phase B) ────────────── -->
+    <section class="p-3 text-xs">
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Annotations · coming soon</h3>
+      <p class="text-[10px] leading-snug text-fg-muted">
+        Phase&nbsp;B lands the review toolbox: select text in the editor and pick
+        <span class="font-medium text-fg">highlight</span>,
+        <span class="font-medium text-fg">strikethrough</span>,
+        <span class="font-medium text-fg">underline</span>,
+        <span class="font-medium text-fg">comment</span>, or a sticky
+        <span class="font-medium text-fg">note</span>. Annotations persist server-side, attach to a text range, and surface here for filter / resolve / delete.
+      </p>
+    </section>
+  </div>
+{/if}
