@@ -17,6 +17,7 @@
   import ModelView from './ModelView.svelte';
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
+  import EpubView from './EpubView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
@@ -794,6 +795,14 @@
       {#key asset.id}
         <div class="absolute inset-0">
           <FontView {asset} bind:controller />
+        </div>
+      {/key}
+    {:else if kind === 'ebook'}
+      <!-- Ebook reader bypasses pan/zoom — the body owns its own
+           page-by-page layout (chapter iframe + TOC popdown). -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <EpubView {asset} bind:controller />
         </div>
       {/key}
     {:else if kind === 'sprite' && spriteSession}

@@ -270,6 +270,15 @@ func (shimImpl) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlt
 func (shimImpl) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
 	panic("RemoveAssetAlternate called from storage test shim")
 }
+func (shimImpl) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from storage test shim")
+}
+func (shimImpl) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from storage test shim")
+}
+func (shimImpl) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from storage test shim")
+}
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from storage test shim")
 }

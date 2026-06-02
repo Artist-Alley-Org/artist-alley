@@ -65,6 +65,14 @@ const CacheDomainAssetCompanions = "asset.companions"
 // alternate list and need to broadcast invalidations through this key.
 const CacheDomainAssetAlternates = "asset.alternates"
 
+// CacheDomainEPUBSpine + CacheDomainEPUBChapter — EPUB reader caches.
+// Spine is small (chapter index per asset); chapter HTML is bigger
+// (post-rewrite XHTML body). Both are invalidated only on asset re-
+// upload (which generates a new asset id, so cold-key churn handles
+// itself naturally).
+const CacheDomainEPUBSpine = "asset.epub.spine"
+const CacheDomainEPUBChapter = "asset.epub.chapter"
+
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
@@ -86,6 +94,12 @@ type Handler struct {
 	// Mostly hit by the sprite-tool palette swap UI + the future
 	// authored-variant track.
 	alternates *cache.Cache[[]openapi.AssetAlternate]
+	// EPUB reader caches — spine list per asset, rendered chapter
+	// HTML per (assetId, idx). Sized assuming a typical browsing
+	// session hits a handful of books deep but only reads through
+	// a few hundred chapters total.
+	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
+	epubChapters *cache.Cache[[]byte]
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
@@ -98,6 +112,8 @@ func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Lo
 		// for a single host.
 		h.companions = cache.Register[[]openapi.AssetCompanion](registry, CacheDomainAssetCompanions, 5_000)
 		h.alternates = cache.Register[[]openapi.AssetAlternate](registry, CacheDomainAssetAlternates, 5_000)
+		h.epubSpine = cache.Register[[]openapi.EpubSpineEntry](registry, CacheDomainEPUBSpine, 5_000)
+		h.epubChapters = cache.Register[[]byte](registry, CacheDomainEPUBChapter, 2_000)
 	}
 	return h
 }

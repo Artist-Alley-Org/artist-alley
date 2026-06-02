@@ -20,9 +20,11 @@ require (
 	github.com/qmuntal/gltf v0.28.0
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	github.com/taylorskalyo/goreader v0.0.0-00010101000000-000000000000
 	go.n16f.net/thumbhash v1.1.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.32.0
+	golang.org/x/net v0.54.0
 	golang.org/x/text v0.37.0
 )
 
@@ -58,7 +60,6 @@ require (
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
@@ -73,5 +74,9 @@ replace (
 	github.com/qmuntal/gltf => github.com/mscrnt/gltf v0.28.0
 	github.com/srwiley/oksvg => github.com/mscrnt/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx => github.com/mscrnt/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	// goreader's epub package — pure-Go EPUB parser. We only
+	// import the `epub/` subpackage (terminal UI half is dead
+	// weight Go tree-shaking drops at link time).
+	github.com/taylorskalyo/goreader => github.com/mscrnt/goreader v0.0.0-20250314214816-f9256af1ef9f
 	go.n16f.net/thumbhash => github.com/mscrnt/go-thumbhash v1.1.0
 )

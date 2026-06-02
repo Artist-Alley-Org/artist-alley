@@ -53,6 +53,7 @@
     placeholder: { title: 'Preview', phase: '', icon: 'placeholder' },
     image: { title: 'Image', phase: '', icon: 'placeholder' },
     video: { title: 'Video', phase: '', icon: 'placeholder' },
+    ebook: { title: 'Ebook reader', phase: '', icon: 'file-text' },
   };
   const label = $derived(labels[kind]);
 </script>

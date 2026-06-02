@@ -223,6 +223,16 @@ func (s *apiServer) RemoveAssetAlternate(ctx context.Context, req openapi.Remove
 	return s.assets.RemoveAssetAlternate(ctx, req)
 }
 
+func (s *apiServer) GetEpubSpine(ctx context.Context, req openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	return s.assets.GetEpubSpine(ctx, req)
+}
+func (s *apiServer) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	return s.assets.GetEpubChapter(ctx, req)
+}
+func (s *apiServer) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	return s.assets.GetEpubResource(ctx, req)
+}
+
 // --- metadata --------------------------------------------------------------
 
 func (s *apiServer) ListFields(ctx context.Context, req openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {

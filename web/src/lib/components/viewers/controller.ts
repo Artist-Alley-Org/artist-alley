@@ -28,6 +28,7 @@ export type ViewKind =
   | 'font'
   | 'sprite'
   | '3d'
+  | 'ebook'
   | 'placeholder';
 
 // ViewAsset is the trimmed asset shape every view body accepts as
@@ -243,17 +244,25 @@ const IMAGE_EXTS = new Set([
   // Vector + Photoshop sources — backend preview workers
   // rasterise these to a WEBP hires variant.
   'eps', 'ps', 'psd', 'psb',
-  // Ebook + comic — cover thumbnail only. The reader for these
-  // (page-by-page navigation) is its own future view body; for
-  // now this shows the cover so users at least see what they're
-  // looking at instead of the generic placeholder. MOBI is
+  // Comic + MOBI — cover thumbnail only for now. ComicView
+  // (page-by-page reader) is its own future view body. MOBI is
   // included optimistically — backend support lands when the
-  // ebook worker grows mobi (the typical path is Calibre's
-  // `ebook-meta --get-cover`); until then the viewer falls back
-  // to the source file and ImageView's error path.
-  'epub', 'mobi',
+  // ebook worker grows it; until then the viewer falls back to
+  // the source file + ImageView's friendly placeholder.
+  'mobi',
   'cbz', 'cbr', 'cb7',
+  // EPUB used to live here for cover-only display. It now lives
+  // under the 'ebook' kind below + routes to EpubView, a real
+  // page-by-page reader. Kept this comment as routing-history.
 ]);
+
+// 'ebook' is the semantic kind for any page-by-page document.
+// The view body is picked by extension inside AssetViewer:
+//   epub → EpubView (the goreader-backed reader)
+//   mobi → future MobiView when backend support lands
+// Both share the kind so panel tools / shortcuts can live on the
+// kind level without each format duplicating chrome.
+const EBOOK_EXTS = new Set(['epub']);
 // Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
 // proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv
 // / AVCHD .mts / .m2ts / DVD .vob / broadcast .mxf / Flash .f4v
@@ -288,6 +297,7 @@ const MODEL_EXTS = new Set([
 export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (!ext) return 'placeholder';
   const e = ext.toLowerCase().replace(/^\./, '');
+  if (EBOOK_EXTS.has(e)) return 'ebook';
   if (IMAGE_EXTS.has(e)) return 'image';
   if (VIDEO_EXTS.has(e)) return 'video';
   if (AUDIO_EXTS.has(e)) return 'audio';

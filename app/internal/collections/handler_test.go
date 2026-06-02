@@ -569,6 +569,15 @@ func (collShim) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlt
 func (collShim) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
 	panic("RemoveAssetAlternate called from collections test shim")
 }
+func (collShim) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from collections test shim")
+}
+func (collShim) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from collections test shim")
+}
+func (collShim) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from collections test shim")
+}
 func (collShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from collections test shim")
 }

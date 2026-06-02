@@ -577,6 +577,15 @@ func (metaShim) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlt
 func (metaShim) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
 	panic("RemoveAssetAlternate called from metadata test shim")
 }
+func (metaShim) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from metadata test shim")
+}
+func (metaShim) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from metadata test shim")
+}
+func (metaShim) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from metadata test shim")
+}
 func (metaShim) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from metadata test shim")
 }

@@ -1051,6 +1051,120 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/epub/spine:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getEpubSpine
+      summary: List the chapters of an EPUB asset (reading order)
+      description: |
+        Returns the ordered list of chapters from the default
+        rendition's spine. Each entry carries the chapter's
+        manifest id, a display label (NCX/TOC label when
+        available, else the manifest id, else "Chapter N"), and
+        the original href + media type for debugging. The
+        frontend reader uses this to populate the table of
+        contents + chapter picker.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ordered spine entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EpubSpineEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/epub/chapters/{idx}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: idx
+        in: path
+        required: true
+        description: Zero-based spine index.
+        schema: { type: integer, minimum: 0 }
+    get:
+      operationId: getEpubChapter
+      summary: Read one EPUB chapter as HTML with rewritten resource refs
+      description: |
+        Streams the chapter's XHTML body with every relative
+        href / src / srcset rewritten to point at
+        /assets/{id}/epub/resources/{path}. The frontend reader
+        injects this directly into an iframe srcdoc; resources
+        resolve through us so auth cookies travel + CORS isn't
+        a concern.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Chapter HTML
+          content:
+            text/html:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/epub/resources/{path}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: path
+        in: path
+        required: true
+        description: |
+          Zip-internal absolute path of the resource (image, CSS,
+          font, etc.). Resolved from the chapter's relative ref
+          during chapter rewriting; the frontend never constructs
+          these by hand.
+        schema: { type: string }
+    get:
+      operationId: getEpubResource
+      summary: Stream an EPUB-internal resource (image, CSS, font, …)
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource bytes
+          headers:
+            Content-Type:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/companions/{companion_id}:
     parameters:
       - name: id
@@ -5032,6 +5146,28 @@ components:
           type: integer
           format: int64
           nullable: true
+
+    EpubSpineEntry:
+      type: object
+      description: |
+        One chapter entry from an EPUB's spine (reading order).
+        Returned by GET /assets/{id}/epub/spine; consumed by the
+        frontend reader to render the TOC + chapter picker.
+      required: [idx, label, href, media_type]
+      properties:
+        idx:
+          type: integer
+          minimum: 0
+          description: Zero-based spine position; pass to /chapters/{idx}.
+        label:
+          type: string
+          description: Display label — NCX/TOC label, else manifest id, else "Chapter N".
+        href:
+          type: string
+          description: Original manifest href (debugging / federation parity).
+        media_type:
+          type: string
+          example: application/xhtml+xml
 
     AssetCompanion:
       type: object

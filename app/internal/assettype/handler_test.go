@@ -219,6 +219,15 @@ func (rtOnly) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlter
 func (rtOnly) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
 	panic("RemoveAssetAlternate called from assettype test shim")
 }
+func (rtOnly) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from assettype test shim")
+}
+func (rtOnly) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from assettype test shim")
+}
+func (rtOnly) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from assettype test shim")
+}
 func (rtOnly) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from assettype test shim")
 }

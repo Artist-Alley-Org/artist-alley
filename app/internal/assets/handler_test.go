@@ -494,6 +494,15 @@ func (s shimImpl) DownloadAssetAlternate(ctx context.Context, req openapi.Downlo
 func (s shimImpl) RemoveAssetAlternate(ctx context.Context, req openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
 	return s.assets.RemoveAssetAlternate(ctx, req)
 }
+func (s shimImpl) GetEpubSpine(ctx context.Context, req openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	return s.assets.GetEpubSpine(ctx, req)
+}
+func (s shimImpl) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	return s.assets.GetEpubChapter(ctx, req)
+}
+func (s shimImpl) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	return s.assets.GetEpubResource(ctx, req)
+}
 
 func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
 	panic("Login called from assets test shim")
