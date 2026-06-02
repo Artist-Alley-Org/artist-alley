@@ -21,6 +21,7 @@
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
+  import { createModelSession, type ModelSessionInstance } from '$lib/3d/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
@@ -220,6 +221,21 @@
       lastAssetIdForEbook = '';
     }
   });
+
+  // Model session — same per-asset rebuild pattern. ModelView reads
+  // / writes camera + env + lighting state; the ModelTool side panel
+  // binds the same instance for the rich 3D viewer surface.
+  let modelSession = $state<ModelSessionInstance | null>(null);
+  let lastAssetIdForModel = '';
+  $effect(() => {
+    if (kind === '3d' && asset.id !== lastAssetIdForModel) {
+      lastAssetIdForModel = asset.id;
+      modelSession = createModelSession({ assetId: asset.id });
+    } else if (kind !== '3d' && modelSession) {
+      modelSession = null;
+      lastAssetIdForModel = '';
+    }
+  });
   // The Tools-menu "Slice as sprite" entry only makes sense for
   // PNGs. Sprite sheets in the wild are essentially all PNG (lossless
   // + alpha); JPG/WEBP/etc. images may be photos / illustrations
@@ -408,6 +424,7 @@
     controller,
     spriteSession: spriteSession ?? undefined,
     ebookSession: ebookSession ?? undefined,
+    modelSession: modelSession ?? undefined,
     whiteboardSession,
     hostHooks,
     shellState: {
@@ -859,8 +876,8 @@
           <ImageView {asset} bind:controller {tileMode} />
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
-        {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
-          <ModelView {asset} bind:controller />
+        {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, '')) && modelSession}
+          <ModelView {asset} bind:controller bind:session={modelSession} />
         {:else}
           <PlaceholderView {asset} bind:controller />
         {/if}

@@ -15,13 +15,17 @@ import { detailsTool } from './DetailsTool/index';
 import { spriteTool } from './SpriteTool/index';
 import { whiteboardTool } from './WhiteboardTool/index';
 import { ebookTool } from './EbookTool/index';
+import { modelTool } from './ModelTool/index';
 
-// View was retired — basic 2D zoom presets + per-kind 3D controls
-// live inside DetailsTool's body now, since "Details" is the no-
-// tool fallback that always renders for any kind.
+// View was retired — basic 2D zoom presets live inside DetailsTool's
+// body now, since "Details" is the no-tool fallback that always
+// renders for any kind. Per-kind tools (Ebook / Sprite / Model /
+// Whiteboard) take over the rich surface when their session is
+// wired in by AssetViewer.
 export const TOOLS: ToolDef[] = [
   detailsTool,
   ebookTool,
+  modelTool,
   spriteTool,
   whiteboardTool,
 ];

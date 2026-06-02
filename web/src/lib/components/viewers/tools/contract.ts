@@ -15,6 +15,7 @@ import type { Component, Snippet } from 'svelte';
 import type { SpriteSessionInstance } from '$lib/sprite/session.svelte';
 import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
 import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
+import type { ModelSessionInstance } from '$lib/3d/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
 
 /** Everything a tool body needs to do its job. Threaded through
@@ -36,6 +37,11 @@ export interface ToolContext {
    *  the EbookTool's side-panel body bind the same instance so
    *  TOC / search / bookmarks / reading settings stay in sync. */
   ebookSession?: EbookSessionInstance;
+  /** Model session — present when kind === '3d'. ModelView and the
+   *  ModelTool side-panel body bind the same instance so the user's
+   *  env / lighting / display / camera / material picks land in the
+   *  three.js scene live. */
+  modelSession?: ModelSessionInstance;
   /** Free-form bag of host-provided callbacks. Hosts that own
    *  details (e.g. PostHost has likes / comments / cover-picker)
    *  pass their handlers in; the matching tool reads them. Kept

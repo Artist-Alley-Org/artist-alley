@@ -6,49 +6,63 @@
   //   * fbx         → FBXLoader  + material upgrade pass
   //   * obj         → OBJLoader  + material upgrade pass (.mtl in 1.18.B-12c)
   //   * mview       → Marmoset Toolbag self-contained player (1.18.B-11)
-  //   * mb/ma/max   → no open converter; AssetViewer dispatches to
-  //   blend         placeholder for those.
   //
-  // We previously routed glb through Google's <model-viewer>, but
-  // having a separate renderer for "one of the four" meant the tools
-  // panel (grid, wireframe, exposure, etc.) had to be wired twice
-  // with different APIs. GLTFLoader gives us a single code path,
-  // single material upgrade, single lighting setup. The model-viewer-
-  // exclusive AR button isn't critical for a studio review tool.
+  // Everything user-controllable (env / lighting / display / camera /
+  // materials / animation) flows through a shared ModelSession that
+  // the ModelTool side-panel binds to as well — both ends mutate the
+  // same $state object, no event bus. The viewer reacts to session
+  // mutations via $effects below.
   //
   // Everything is dynamically imported so the 3D libs don't bloat
   // the main bundle for non-3D users.
 
   import { onMount, onDestroy } from 'svelte';
   import type { ViewController } from './controller';
+  import type { ModelSessionInstance } from '$lib/3d/session.svelte';
+  import {
+    buildEnvironment,
+    buildDefaultMatcap,
+    toneMappingValue,
+    type EnvPresetId,
+  } from '$lib/3d/environments';
 
   type Asset = import('./controller').ViewAsset;
 
   interface Props {
     asset: Asset;
     controller: ViewController;
+    /** Shared reactive state with the ModelTool side panel. The
+     *  AssetViewer builds one per asset + binds both sides. */
+    session: ModelSessionInstance;
     /** When false, camera interaction is disabled so the parent (e.g.
         the PostModal scroll-snap) can take wheel + drag. Auto-rotate
         on glb/gltf still runs — that's animation, not input. */
     reviewMode?: boolean;
   }
 
-  // Review-mode gating was retired in the viewer; orbit controls
-  // are always enabled for 3D. Prop default flipped to true so any
-  // caller that's stopped passing it still gets working orbit.
-  let { asset, controller = $bindable(), reviewMode = true }: Props = $props();
+  let {
+    asset,
+    controller = $bindable(),
+    session = $bindable<ModelSessionInstance>(),
+    reviewMode = true,
+  }: Props = $props();
 
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
   const ext = $derived((asset.file_extension || '').toLowerCase().replace(/^\./, ''));
 
   let container: HTMLDivElement | undefined = $state();
-  let loadError = $state<string | null>(null);
-  let loading = $state(true);
-
   // Cleanup state (so onDestroy can dispose three.js resources).
   let cleanupFn: (() => void) | null = null;
   // Ref the reviewMode reactive effect needs to find again after mount.
   let threeControls: { enabled: boolean } | null = null;
+  // ModelView host bag the $effects below talk to. Populated in
+  // mountThree() — wrapped in $state so the moment it transitions
+  // from null → bag every dependent $effect re-runs and applies the
+  // user's persisted session state. Without this, the effects bailed
+  // on first mount (host still null while mountThree's async work
+  // ran) and never re-fired, leaving stored toggles inert.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let host = $state<any>(null);
 
   onMount(() => {
     controller.kind = '3d';
@@ -67,10 +81,8 @@
     controller.seekToFrame = () => {};
     controller.stepFrames = () => {};
     controller.setRate = () => {};
-    // Cleared at mount; mountThree / mountModelViewer populate it
-    // once the renderer is up.
     controller.tools = null;
-
+    session.resetForReload();
     void mount();
   });
 
@@ -80,34 +92,27 @@
 
   async function mount() {
     if (!container) return;
-    loadError = null;
-    loading = true;
+    session.loadError = null;
+    session.loading = true;
     try {
       if (ext === 'glb' || ext === 'gltf' || ext === 'fbx' || ext === 'obj') {
         await mountThree(ext);
       } else if (ext === 'mview') {
         await mountMarmoset();
       } else {
-        loadError = `${ext} viewer not yet implemented`;
+        session.loadError = `${ext} viewer not yet implemented`;
       }
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'load failed';
+      session.loadError = e instanceof Error ? e.message : 'load failed';
     } finally {
-      loading = false;
+      session.loading = false;
     }
   }
 
   // -----------------------------------------------------------------------
-  // .mview via Marmoset's WebViewer. Closed source, distributed as a
-  // single JS file from viewer.marmoset.co. We script-tag it on demand
-  // so the main bundle doesn't ship a network dependency for users who
-  // never open an .mview asset.
-  //
-  // The server-side preview.model handler already extracts the embedded
-  // thumbnail.jpg from the .mview archive and fans it through the
-  // raster ladder — so cards render fine without ever touching this
-  // code path. This mount runs only when the user opens the asset in
-  // the viewer.
+  // .mview via Marmoset's WebViewer. Closed source — we script-tag it on
+  // demand so the main bundle doesn't ship a network dep for users who
+  // never open one. Limited API: only frameAll is meaningfully wired.
   // -----------------------------------------------------------------------
 
   async function mountMarmoset() {
@@ -115,21 +120,25 @@
     if (!container) return;
     const w = container.clientWidth || 800;
     const h = container.clientHeight || 600;
-    const mv: any = (window as any).marmoset;
-    if (!mv || typeof mv.WebViewer !== 'function') {
-      loadError = 'marmoset.js failed to expose WebViewer';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mv: any = (window as unknown as { marmoset?: unknown }).marmoset;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!mv || typeof (mv as any).WebViewer !== 'function') {
+      session.loadError = 'marmoset.js failed to expose WebViewer';
       return;
     }
-    const viewer = new mv.WebViewer(w, h, fileUrl);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const viewer = new (mv as any).WebViewer(w, h, fileUrl);
     container.appendChild(viewer.domRoot);
-    // Auto-load on mount so the user doesn't have to press play.
-    // Marmoset's docs say loadScene() is async and idempotent.
-    try { viewer.loadScene?.(); } catch { /* ignore — falls back to the play button */ }
-
+    try { viewer.loadScene?.(); } catch { /* ignore */ }
     controller.hudExtra = 'MVIEW';
-    controller.tools = {
+
+    // Wire the only session command Marmoset gives us a path for.
+    host = {
+      kind: 'marmoset',
       frameAll: () => { try { viewer.resetCamera?.(); } catch { /* ignore */ } },
     };
+    session.backend = 'marmoset';
 
     const ro = new ResizeObserver(() => {
       if (!container) return;
@@ -143,15 +152,13 @@
       ro.disconnect();
       try { viewer.unload?.(); } catch { /* ignore */ }
       try { container?.removeChild(viewer.domRoot); } catch { /* ignore */ }
-      controller.tools = null;
+      host = null;
     };
   }
 
-  // Idempotent loader for the marmoset.js global. Mounting multiple
-  // .mview assets in one session only fetches the script once.
   let marmosetScriptPromise: Promise<void> | null = null;
   function ensureMarmosetScript(): Promise<void> {
-    if ((window as any).marmoset) return Promise.resolve();
+    if ((window as unknown as { marmoset?: unknown }).marmoset) return Promise.resolve();
     if (marmosetScriptPromise) return marmosetScriptPromise;
     marmosetScriptPromise = new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -165,60 +172,59 @@
   }
 
   // -----------------------------------------------------------------------
-  // Unified three.js path. Dynamic imports keep the 600KB three bundle
-  // out of the main chunk for sessions that never open a 3D asset.
+  // Unified three.js path. Dynamic imports keep the three bundle out of
+  // the main chunk for sessions that never open a 3D asset.
   // -----------------------------------------------------------------------
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function mountThree(kind: 'glb' | 'gltf' | 'fbx' | 'obj') {
     const THREE = await import('three');
 
     // ─── Companion lookup ────────────────────────────────────────────
     // Fetch the asset's sidecar files BEFORE loading. The viewer's
     // LoadingManager rewrites every relative resource URL the loader
-    // asks for ('textures/foo.png', 'character.mtl', etc.) through
-    // these entries — so as long as the user uploaded the right files,
-    // the model's external references just resolve.
-    //
-    // Best-effort: 401 / 404 / network errors just mean "no companions
-    // attached"; we fall back to the bare model and let the loader
-    // render whatever it can without external textures.
+    // asks for through these entries — textures, MTL, etc.
     const companions = new Map<string, string>();
     try {
       const r = await fetch(`/api/v1/assets/${asset.id}/companions`, { credentials: 'include' });
       if (r.ok) {
         const list = (await r.json()) as Array<{ id: string; path: string }>;
-        for (const c of list) {
-          companions.set(c.path, `/api/v1/assets/${asset.id}/companions/${c.id}`);
-        }
+        for (const c of list) companions.set(c.path, `/api/v1/assets/${asset.id}/companions/${c.id}`);
       }
-    } catch {
-      // Soft fail — companions are an enhancement, not a requirement.
-    }
+    } catch { /* soft fail — companions are an enhancement */ }
 
-    // LoadingManager rewrites every URL the loader requests so
-    // textures + MTL references resolve to companion fetch URLs.
-    //
-    // Loaders pass URLs that look like '/api/v1/assets/X/companions/
-    // {mtl_id}/Textures/foo.png' — the MTL's base URL plus the relative
-    // path the MTL specified. Prefix-stripping is fragile (the base
-    // varies depending on which file is the loader's anchor), so we
-    // tail-match the URL against every known companion path instead.
-    // Falls back to bare basename so a glTF asking for 'textures/foo.png'
-    // resolves to a 'foo.png' companion the user uploaded flat.
+    // ─── File size for stats ────────────────────────────────────────
+    // The /file endpoint only allows GET (server-side guard), so a
+    // HEAD probe was logging a console 405. We piggyback on the
+    // bytes the loader is about to fetch anyway: Range: bytes=0-0
+    // returns a 206 with Content-Range "bytes 0-0/<total>". Servers
+    // that don't honour Range fall back to a clean null.
+    let fileSize: number | null = null;
+    try {
+      const probe = await fetch(fileUrl, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },
+        credentials: 'include',
+      });
+      const cr = probe.headers.get('content-range');
+      const m = cr?.match(/\/(\d+)$/);
+      if (m) fileSize = parseInt(m[1], 10);
+      else if (probe.ok) {
+        const len = probe.headers.get('content-length');
+        if (len) fileSize = parseInt(len, 10);
+      }
+      // Drain so the connection can be reused.
+      void probe.body?.cancel();
+    } catch { /* ignore */ }
+
     const manager = new THREE.LoadingManager();
     if (companions.size > 0) {
       const lowerEntries = Array.from(companions, ([k, v]) => [k.toLowerCase(), v] as const);
       manager.setURLModifier((url) => {
         const lower = url.toLowerCase();
         for (const [path, companionUrl] of lowerEntries) {
-          // Exact tail match: URL ends with '/<path>' or equals '<path>'
-          // (the leading slash check kills false positives like
-          // 'foo.png' matching 'unfoo.png').
-          if (lower.endsWith('/' + path) || lower === path) {
-            return companionUrl;
-          }
+          if (lower.endsWith('/' + path) || lower === path) return companionUrl;
         }
-        // Last-resort basename match.
         const lastSlash = lower.lastIndexOf('/');
         const basename = lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
         for (const [path, companionUrl] of lowerEntries) {
@@ -229,49 +235,45 @@
       });
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let model: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let rawAnimations: any[] = [];
     if (kind === 'glb' || kind === 'gltf') {
       const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-      const result = await new Promise<any>((res, rej) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result: any = await new Promise((res, rej) => {
         new GLTFLoader(manager).load(fileUrl, res, undefined, rej);
       });
       model = result.scene;
-      // result.animations is available here; B-12b-3 wires AnimationMixer.
+      rawAnimations = result.animations || [];
     } else if (kind === 'fbx') {
       const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader.js');
-      model = await new Promise<any>((res, rej) => {
+      model = await new Promise((res, rej) => {
         new FBXLoader(manager).load(fileUrl, res, undefined, rej);
       });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rawAnimations = (model as any).animations || [];
     } else {
-      // OBJ has the most demanding sidecar story — geometry alone is
-      // useless without the MTL chain (materials + texture references).
-      // If the user uploaded an MTL companion, load it FIRST via
-      // MTLLoader, then hand the parsed materials to OBJLoader.
       const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
       const objLoader = new OBJLoader(manager);
-
       let mtlCompanionUrl: string | null = null;
       for (const [path, url] of companions) {
-        if (path.toLowerCase().endsWith('.mtl')) {
-          mtlCompanionUrl = url;
-          break;
-        }
+        if (path.toLowerCase().endsWith('.mtl')) { mtlCompanionUrl = url; break; }
       }
       if (mtlCompanionUrl) {
         try {
           const { MTLLoader } = await import('three/examples/jsm/loaders/MTLLoader.js');
           const mtlLoader = new MTLLoader(manager);
-          const materials = await new Promise<any>((res, rej) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const materials: any = await new Promise((res, rej) => {
             mtlLoader.load(mtlCompanionUrl!, res, undefined, rej);
           });
           materials.preload();
           objLoader.setMaterials(materials);
-        } catch {
-          // Couldn't parse the MTL — OBJ still loads as untextured;
-          // material upgrade below gives it neutral grey PBR.
-        }
+        } catch { /* OBJ still loads as untextured; upgrade gives PBR grey */ }
       }
-      model = await new Promise<any>((res, rej) => {
+      model = await new Promise((res, rej) => {
         objLoader.load(fileUrl, res, undefined, rej);
       });
     }
@@ -281,39 +283,21 @@
     const h = container.clientHeight || 600;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0b0c);
 
-    // Material normalisation — FBXLoader produces MeshPhongMaterial
-    // and OBJLoader (without an MTL) often leaves meshes with no
-    // material or a basic one. Neither responds to the RoomEnvironment
-    // envmap, so the model renders as a near-black silhouette no
-    // matter how bright the lights are. Walk the tree once and upgrade
-    // to MeshStandardMaterial (PBR) so IBL actually lands on it.
-    // Mirrors what model-viewer + the threejs editor + Sketchfab do
-    // on import: "if the source material isn't PBR, give us a PBR
-    // proxy that respects the env." Texture maps + colours carry over.
+    // ─── Material normalisation ────────────────────────────────────
+    // FBX/OBJ produce Phong/Basic materials; neither responds to IBL.
+    // Walk the tree once and upgrade to MeshStandardMaterial.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const upgradeMaterial = (m: any): any => {
       if (!m) {
-        return new THREE.MeshStandardMaterial({
-          color: 0x9a9a9a, roughness: 0.55, metalness: 0,
-        });
+        return new THREE.MeshStandardMaterial({ color: 0x9a9a9a, roughness: 0.55, metalness: 0 });
       }
       const isStandard = m.type === 'MeshStandardMaterial' || m.type === 'MeshPhysicalMaterial';
       if (isStandard) return m;
-      // Pull whatever metadata Phong/Basic shipped with — color, maps,
-      // emissive, PBR params if they exist — and rebuild as Standard.
-      // Per three.js forum guidance, FBXLoader's MeshPhongMaterial
-      // doesn't respond to envmap correctly, which is why every
-      // PBR-correct viewer (Sketchfab, model-viewer, threejs editor)
-      // upgrades on import.
       const color = m.color?.isColor ? m.color.clone() : new THREE.Color(0x9a9a9a);
-      // Some exports stamp the diffuse colour as pure black even when
-      // they meant "use the map only". Don't let that win.
       if (color.r === 0 && color.g === 0 && color.b === 0) {
         color.setHex(m.map ? 0xffffff : 0x9a9a9a);
       }
-      // If the source did set PBR-ish params, respect them. Phong's
-      // `shininess` (0–100) roughly maps to roughness via 1 - sqrt(s/100).
       const hasMetalness = typeof m.metalness === 'number';
       const hasRoughness = typeof m.roughness === 'number';
       const phongShininess = typeof m.shininess === 'number' ? m.shininess : null;
@@ -331,15 +315,13 @@
         emissive: m.emissive?.isColor ? m.emissive.clone() : new THREE.Color(0x000000),
         emissiveMap: m.emissiveMap ?? null,
         roughness: hasRoughness ? m.roughness : derivedRoughness,
-        // Default to fully dielectric for unknown materials. The
-        // metalness MAP, if present, will modulate this on a
-        // per-texel basis, so dielectric default is safe.
         metalness: hasMetalness ? m.metalness : (m.metalnessMap ? 1 : 0),
         transparent: m.transparent ?? false,
         opacity: m.opacity ?? 1,
         side: m.side ?? THREE.FrontSide,
       });
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     model.traverse((obj: any) => {
       if (!obj.isMesh) return;
       if (Array.isArray(obj.material)) {
@@ -347,7 +329,73 @@
       } else {
         obj.material = upgradeMaterial(obj.material);
       }
+      obj.castShadow = true;
+      obj.receiveShadow = true;
     });
+
+    // ─── Material catalogue (for the side-panel Materials section) ─
+    // Walk once after the upgrade pass, collect unique material refs,
+    // and snapshot their base PBR values so "Reset" can restore them
+    // without re-loading. Keyed by uuid so per-mesh-instance overrides
+    // stay accurate even if names collide.
+    //
+    // Naming fallback chain — most glTFs ship empty material.name, so
+    // "(unnamed)" everywhere is useless to the user. Try, in order:
+    //   1. material.name (when authored)
+    //   2. first mesh-using-this-material's name (often the part name
+    //      from the DCC, e.g. "Wood_Door_Frame")
+    //   3. numbered sequence "Material 1 / 2 / 3 …" so the user at
+    //      least has distinct labels to click between
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const materialMap = new Map<string, { mat: any; meshCount: number; firstMeshName: string; entry: import('$lib/3d/session.svelte').MaterialEntry }>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model.traverse((obj: any) => {
+      if (!obj.isMesh) return;
+      const meshName = (obj.name?.trim() as string) || '';
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mats.forEach((m: any) => {
+        if (!m) return;
+        const ex = materialMap.get(m.uuid);
+        if (ex) { ex.meshCount++; return; }
+        materialMap.set(m.uuid, {
+          mat: m, meshCount: 1, firstMeshName: meshName,
+          entry: {
+            id: m.uuid,
+            name: '', // resolved below once we know the index
+            meshCount: 1,
+            baseColor: '#' + (m.color?.getHexString?.() ?? '9a9a9a'),
+            baseMetalness: typeof m.metalness === 'number' ? m.metalness : 0,
+            baseRoughness: typeof m.roughness === 'number' ? m.roughness : 0.55,
+          },
+        });
+      });
+    });
+    let matIdx = 0;
+    for (const v of materialMap.values()) {
+      matIdx++;
+      v.entry.meshCount = v.meshCount;
+      const authored = (v.mat.name?.trim() as string) || '';
+      v.entry.name = authored || v.firstMeshName || `Material ${matIdx}`;
+    }
+    // Disambiguate collisions — when two materials end up with the
+    // same label (common when a model has multiple unnamed mats on
+    // the same mesh, or several meshes share names), suffix with
+    // " (1) / (2) / …" so each row in the panel is uniquely
+    // identifiable.
+    const nameCounts = new Map<string, number>();
+    for (const e of materialMap.values()) {
+      nameCounts.set(e.entry.name, (nameCounts.get(e.entry.name) ?? 0) + 1);
+    }
+    const seen = new Map<string, number>();
+    for (const e of materialMap.values()) {
+      if ((nameCounts.get(e.entry.name) ?? 0) > 1) {
+        const n = (seen.get(e.entry.name) ?? 0) + 1;
+        seen.set(e.entry.name, n);
+        e.entry.name = `${e.entry.name} (${n})`;
+      }
+    }
+    session.materials = Array.from(materialMap.values(), (v) => v.entry);
 
     // Frame the model — fit camera to bounding box.
     const box = new THREE.Box3().setFromObject(model);
@@ -355,76 +403,173 @@
     const center = box.getCenter(new THREE.Vector3());
     model.position.sub(center);
     scene.add(model);
-
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const minY = -size.y / 2;
 
-    // Initial camera pose — kept as a frame-all target. Frame All
-    // restores these values; the user reads "the view I had when I
-    // opened this" as the canonical reset.
+    // Initial camera pose — kept as a Frame All target.
     const initialCamPos = new THREE.Vector3();
     const initialTarget = new THREE.Vector3(0, 0, 0);
-
-    const camera = new THREE.PerspectiveCamera(45, w / h, maxDim / 1000, maxDim * 100);
     const dist = maxDim * 2.2;
     initialCamPos.set(dist, dist * 0.6, dist);
-    camera.position.copy(initialCamPos);
-    camera.lookAt(initialTarget);
+
+    const perspectiveCam = new THREE.PerspectiveCamera(session.fov, w / h, maxDim / 1000, maxDim * 100);
+    perspectiveCam.position.copy(initialCamPos);
+    perspectiveCam.lookAt(initialTarget);
+    const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, maxDim / 1000, maxDim * 100);
+    orthoCam.position.copy(initialCamPos);
+    orthoCam.lookAt(initialTarget);
+    function syncOrthoFrustum(c: typeof orthoCam, distance: number, aspect: number) {
+      // Match perspective-equivalent extent so toggling projection
+      // doesn't visually pop. zoom=1 covers ~maxDim*1.3 vertically.
+      const halfH = Math.max(0.5, distance / 2.4);
+      c.top = halfH; c.bottom = -halfH;
+      c.left = -halfH * aspect; c.right = halfH * aspect;
+      c.updateProjectionMatrix();
+    }
+    syncOrthoFrustum(orthoCam, initialCamPos.length(), w / h);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let camera: any = session.projection === 'orthographic' ? orthoCam : perspectiveCam;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(w, h);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // Per the three.js forum's PBR guidance: ACES filmic blows out the
-    // highlights at the default 1.0 exposure because the env carries
-    // most of the light now. 0.75 is the recommended starting point;
-    // user can drive it from the Lighting slider in the tools panel.
-    renderer.toneMappingExposure = 0.75;
+    renderer.toneMapping = toneMappingValue(session.toneMapping);
+    renderer.toneMappingExposure = session.exposure;
+    renderer.shadowMap.enabled = session.shadows;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
-    // Image-based lighting via RoomEnvironment — a procedural studio
-    // env generated on the fly. Without an envmap, PBR materials with
-    // any metalness look pitch-black (metals reflect the environment,
-    // and "no env" = "reflect nothing"); even dielectrics look dull.
-    // RoomEnvironment is the same primitive Sketchfab + the three.js
-    // editor use for the "general purpose viewer" default look.
-    const { RoomEnvironment } = await import('three/examples/jsm/environments/RoomEnvironment.js');
+    // ─── PMREMGenerator + initial environment ──────────────────────
     const pmrem = new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let envTexture: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let envBackground: any = null;
+    async function applyEnv(id: EnvPresetId) {
+      envTexture?.dispose?.();
+      // Don't dispose Color backgrounds — they're tiny POJOs.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((envBackground as any)?.isTexture) envBackground.dispose?.();
+      const { env, background } = await buildEnvironment(id, pmrem);
+      envTexture = env;
+      envBackground = background;
+      scene.environment = env;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (scene as any).environmentIntensity = session.envIntensity;
+      scene.background = session.backgroundVisible ? background : new THREE.Color(0x0b0b0c);
+    }
+    await applyEnv(session.envPreset);
 
-    // Key directional on top of the IBL — adds a crisp shadow term so
-    // the model has form even when the env is flat ambient. Intensity
-    // is intentionally low; the env carries most of the lighting now.
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
-    key.position.set(maxDim * 2, maxDim * 4, maxDim * 2);
-    scene.add(key);
+    // ─── Lighting rig (three-point) ─────────────────────────────
+    // Three lights + helpers. Each light's transform is recomputed
+    // from session sliders. Intensities can drive to zero so the
+    // light "disabled" just zeros it (lights stay in scene to avoid
+    // re-graph churn when the user toggles back).
+    const keyLight = new THREE.DirectionalLight(0xffffff, session.keyIntensity);
+    keyLight.castShadow = session.shadows;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 0.1;
+    keyLight.shadow.camera.far = maxDim * 10;
+    keyLight.shadow.camera.left = -maxDim * 2;
+    keyLight.shadow.camera.right = maxDim * 2;
+    keyLight.shadow.camera.top = maxDim * 2;
+    keyLight.shadow.camera.bottom = -maxDim * 2;
+    keyLight.shadow.bias = -0.00005;
+    keyLight.shadow.radius = 4;
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xffffff, session.fillIntensity);
+    scene.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xffffff, session.rimIntensity);
+    scene.add(rimLight);
 
-    // Studio grid — placed at the model's bottom so it visually
-    // grounds the asset. Hidden by default; toggleable via the tools
-    // panel. Sized to ~4× the model so the user can pan/orbit a bit
-    // and still see grid context.
+    function applyLightingFromSession() {
+      const r = Math.max(maxDim * 3, 1);
+      // Key from session.azimuth/elevation.
+      const az = (session.keyAzimuth * Math.PI) / 180;
+      const el = (session.keyElevation * Math.PI) / 180;
+      keyLight.position.set(
+        Math.cos(el) * Math.sin(az) * r,
+        Math.sin(el) * r,
+        Math.cos(el) * Math.cos(az) * r,
+      );
+      keyLight.intensity = session.keyEnabled ? session.keyIntensity : 0;
+      keyLight.color.set(session.keyColor);
+      keyLight.castShadow = session.shadows && session.keyEnabled;
+      keyLight.shadow.radius = 1 + session.shadowSoftness * 8;
+      // Fill opposite the key, slightly elevated.
+      fillLight.position.set(-keyLight.position.x, Math.abs(keyLight.position.y) * 0.7, -keyLight.position.z);
+      fillLight.intensity = session.fillEnabled ? session.fillIntensity : 0;
+      // Rim behind the model relative to camera.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const camPos = (camera as any).position;
+      const back = camPos.clone().normalize().multiplyScalar(-r);
+      back.y = Math.abs(back.y) + r * 0.4;
+      rimLight.position.copy(back);
+      rimLight.intensity = session.rimEnabled ? session.rimIntensity : 0;
+    }
+    applyLightingFromSession();
+
+    // ─── Ground plane + grid + axes + bbox helpers ─────────────
+    const groundGeo = new THREE.PlaneGeometry(maxDim * 6, maxDim * 6);
+    const groundMat = new THREE.ShadowMaterial({ opacity: 0.35, transparent: true });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = minY;
+    ground.receiveShadow = true;
+    ground.visible = session.contactShadow;
+    scene.add(ground);
+
+    // Optional opaque ground for product viz (vs the shadow-only one).
+    const groundOpaqueMat = new THREE.MeshStandardMaterial({ color: 0x1c1c20, roughness: 0.9, metalness: 0 });
+    const groundOpaque = new THREE.Mesh(groundGeo, groundOpaqueMat);
+    groundOpaque.rotation.x = -Math.PI / 2;
+    groundOpaque.position.y = minY - 0.001; // sit just below contact-shadow plane
+    groundOpaque.receiveShadow = true;
+    groundOpaque.visible = session.groundPlane;
+    scene.add(groundOpaque);
+
     const gridSize = maxDim * 4;
-    const gridDivisions = 20;
-    const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x606060, 0x303030);
+    const gridHelper = new THREE.GridHelper(gridSize, 20, 0x707070, 0x303030);
     gridHelper.position.y = minY;
-    gridHelper.visible = false;
+    gridHelper.visible = session.showGrid;
     scene.add(gridHelper);
 
-    // Cache every mesh so wireframe + material modes can re-traverse
-    // cheaply without walking the whole graph every toggle.
+    const axesHelper = new THREE.AxesHelper(maxDim * 1.2);
+    axesHelper.visible = session.showAxes;
+    scene.add(axesHelper);
+
+    const bboxHelper = new THREE.Box3Helper(
+      new THREE.Box3().setFromObject(model),
+      new THREE.Color(0xffaa00),
+    );
+    bboxHelper.visible = session.showBoundingBox;
+    scene.add(bboxHelper);
+
+    // ─── Render-mode plumbing ──────────────────────────────────
+    // Store the upgraded standard material for every mesh so the
+    // alt-mode paths (Normals / Matcap / X-Ray) can swap and snap
+    // back without re-loading the asset.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const meshes: any[] = [];
-    model.traverse((obj: any) => { if (obj.isMesh) meshes.push(obj); });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const baseMaterialOf = new Map<any, any | any[]>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model.traverse((obj: any) => {
+      if (obj.isMesh) {
+        meshes.push(obj);
+        baseMaterialOf.set(obj, Array.isArray(obj.material) ? obj.material.slice() : obj.material);
+      }
+    });
 
-    // Wireframe overlay group (lazy — only created the first time the
-    // user picks 'overlay'). Kept in scope so the tools cycle can
-    // toggle it on/off without rebuilding edge geometry every flip.
+    const matcapTex = buildDefaultMatcap();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let overlayGroup: any | null = null;
-
     function buildOverlay() {
       const group = new THREE.Group();
-      meshes.forEach((m: any) => {
+      meshes.forEach((m) => {
         const edges = new THREE.EdgesGeometry(m.geometry, 30);
         const line = new THREE.LineSegments(
           edges,
@@ -435,100 +580,285 @@
       });
       return group;
     }
-
-    function applyWireframeMode(mode: 'off' | 'on' | 'overlay') {
-      // First: clear overlay if any.
-      if (overlayGroup) {
-        scene.remove(overlayGroup);
-        overlayGroup.traverse((o: any) => {
-          o.geometry?.dispose?.();
-          o.material?.dispose?.();
-        });
-        overlayGroup = null;
-      }
-      // Then: set the wireframe flag on every material.
-      const showWire = mode === 'on';
-      meshes.forEach((m: any) => {
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        mats.forEach((mat: any) => {
-          if (mat && 'wireframe' in mat) mat.wireframe = showWire;
-        });
+    function disposeOverlay() {
+      if (!overlayGroup) return;
+      scene.remove(overlayGroup);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      overlayGroup.traverse((o: any) => {
+        o.geometry?.dispose?.();
+        o.material?.dispose?.();
       });
-      // Finally: add the overlay when in 'overlay' mode.
+      overlayGroup = null;
+    }
+    function applyRenderMode(mode: import('$lib/3d/session.svelte').RenderModeId) {
+      disposeOverlay();
+      meshes.forEach((m) => {
+        const base = baseMaterialOf.get(m);
+        if (!base) return;
+        // Restore base first so each pass is idempotent.
+        m.material = base;
+        const apply = (mat: import('three').Material) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const any = mat as any;
+          if ('wireframe' in any) any.wireframe = false;
+          if ('opacity' in any) any.opacity = 1;
+          if ('transparent' in any) any.transparent = false;
+          if ('depthWrite' in any) any.depthWrite = true;
+          if ('blending' in any) any.blending = THREE.NormalBlending;
+        };
+        if (Array.isArray(m.material)) m.material.forEach(apply); else apply(m.material);
+      });
+      if (mode === 'solid') return;
+      if (mode === 'wireframe') {
+        meshes.forEach((m) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          mats.forEach((mat: any) => { if (mat && 'wireframe' in mat) mat.wireframe = true; });
+        });
+        return;
+      }
       if (mode === 'overlay') {
         overlayGroup = buildOverlay();
         scene.add(overlayGroup);
+        return;
+      }
+      if (mode === 'normals') {
+        meshes.forEach((m) => { m.material = new THREE.MeshNormalMaterial(); });
+        return;
+      }
+      if (mode === 'matcap') {
+        meshes.forEach((m) => { m.material = new THREE.MeshMatcapMaterial({ matcap: matcapTex }); });
+        return;
+      }
+      if (mode === 'xray') {
+        meshes.forEach((m) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          mats.forEach((mat: any) => {
+            if (!mat) return;
+            mat.transparent = true;
+            mat.opacity = 0.35;
+            mat.depthWrite = false;
+            mat.blending = THREE.AdditiveBlending;
+          });
+        });
       }
     }
+    applyRenderMode(session.renderMode);
 
-    // Orbit controls for camera-around-target interaction.
+    // ─── Animations ────────────────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let mixer: any = null;
+    if (rawAnimations.length > 0) {
+      mixer = new THREE.AnimationMixer(model);
+      session.clips = rawAnimations.map((c) => ({ name: c.name || '(unnamed clip)', duration: c.duration }));
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let currentAction: any = null;
+    function selectClipImpl(idx: number) {
+      if (currentAction) { currentAction.stop(); currentAction = null; }
+      if (!mixer || idx < 0 || idx >= rawAnimations.length) return;
+      currentAction = mixer.clipAction(rawAnimations[idx]);
+      currentAction.setLoop(session.animationLoop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+      currentAction.clampWhenFinished = !session.animationLoop;
+      currentAction.timeScale = session.animationSpeed;
+      currentAction.reset();
+      if (session.animationPlaying) currentAction.play();
+    }
+    // Honor a session-driven auto-select for assets that come back
+    // with clips (the panel's default of -1 stays unless user picks).
+    if (session.currentClip >= 0 && session.currentClip < rawAnimations.length) {
+      selectClipImpl(session.currentClip);
+    } else if (rawAnimations.length > 0) {
+      // Convenience: auto-pick clip 0 paused, so the user sees the
+      // dropdown is populated even before they hit play.
+      session.clips = rawAnimations.map((c) => ({ name: c.name || '(unnamed clip)', duration: c.duration }));
+    }
+
+    // ─── Stats ─────────────────────────────────────────────────
+    let totalVerts = 0, totalTris = 0;
+    const seenTextures = new Set<unknown>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    model.traverse((obj: any) => {
+      if (!obj.isMesh || !obj.geometry) return;
+      const g = obj.geometry;
+      const pos = g.attributes?.position;
+      if (pos) totalVerts += pos.count;
+      if (g.index) totalTris += g.index.count / 3;
+      else if (pos) totalTris += pos.count / 3;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mats.forEach((m: any) => {
+        if (!m) return;
+        ['map', 'normalMap', 'aoMap', 'metalnessMap', 'roughnessMap', 'emissiveMap'].forEach((k) => {
+          const t = m[k];
+          if (t) seenTextures.add(t);
+        });
+      });
+    });
+    session.stats = {
+      vertices: Math.round(totalVerts),
+      triangles: Math.round(totalTris),
+      meshes: meshes.length,
+      materials: materialMap.size,
+      textures: seenTextures.size,
+      drawCalls: 0, // populated each frame from renderer.info
+      fileSize,
+    };
+
+    // ─── OrbitControls ─────────────────────────────────────────
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
-    const controls = new OrbitControls(camera, renderer.domElement);
+    let controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
     controls.target.copy(initialTarget);
     controls.enabled = reviewMode;
-    controls.autoRotateSpeed = 2.0;
+    controls.autoRotate = session.autoRotate;
+    controls.autoRotateSpeed = session.autoRotateSpeed;
     controls.update();
     threeControls = controls;
 
-    // Wire the tools panel into the controller. The shell reads from
-    // controller.tools and renders one section per defined group; we
-    // write live values back so sliders/toggles stay in sync if any
-    // other surface (hotkeys, future presets) mutates state.
-    const wireframeOptions = ['off', 'on', 'overlay'] as const;
-    let wireframeIdx = 0;
-    controller.tools = {
-      exposure: {
-        value: 0.75, min: 0.1, max: 5.0, step: 0.05, label: 'Exposure',
-        set: (v) => {
-          renderer.toneMappingExposure = v;
-          if (controller.tools?.exposure) controller.tools.exposure.value = v;
-        },
-      },
-      grid: {
-        enabled: false,
-        toggle: () => {
-          gridHelper.visible = !gridHelper.visible;
-          if (controller.tools?.grid) controller.tools.grid.enabled = gridHelper.visible;
-        },
-      },
-      wireframe: {
-        mode: 'off',
-        options: wireframeOptions,
-        cycle: () => {
-          wireframeIdx = (wireframeIdx + 1) % wireframeOptions.length;
-          const m = wireframeOptions[wireframeIdx];
-          applyWireframeMode(m);
-          if (controller.tools?.wireframe) controller.tools.wireframe.mode = m;
-        },
-      },
-      autoRotate: {
-        enabled: false,
-        toggle: () => {
-          controls.autoRotate = !controls.autoRotate;
-          if (controller.tools?.autoRotate) controller.tools.autoRotate.enabled = controls.autoRotate;
-        },
-      },
-      autoRotateSpeed: {
-        value: 2.0, min: 0.5, max: 8.0, step: 0.1, label: 'Spin speed',
-        set: (v) => {
-          controls.autoRotateSpeed = v;
-          if (controller.tools?.autoRotateSpeed) controller.tools.autoRotateSpeed.value = v;
-        },
-      },
-      frameAll: () => {
-        camera.position.copy(initialCamPos);
-        controls.target.copy(initialTarget);
-        controls.update();
-      },
-    };
-
-    // Animation loop.
-    let rafId = 0;
-    function tick() {
+    function rebuildControls() {
+      const oldTarget = controls.target.clone();
+      const enabled = controls.enabled;
+      controls.dispose();
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.1;
+      controls.target.copy(oldTarget);
+      controls.enabled = enabled;
+      controls.autoRotate = session.autoRotate;
+      controls.autoRotateSpeed = session.autoRotateSpeed;
       controls.update();
+      threeControls = controls;
+    }
+
+    function applyFov() {
+      // FOV is a perspective-only knob; updating it doesn't change
+      // which camera is active, so we skip the controls rebuild
+      // (slider drags would otherwise drop input mid-gesture).
+      const aspect = renderer.domElement.clientWidth / renderer.domElement.clientHeight;
+      perspectiveCam.aspect = aspect;
+      perspectiveCam.fov = session.fov;
+      perspectiveCam.updateProjectionMatrix();
+      syncOrthoFrustum(orthoCam, perspectiveCam.position.length(), aspect);
+    }
+    function applyProjection() {
+      const targetIsOrtho = session.projection === 'orthographic';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const target: any = targetIsOrtho ? orthoCam : perspectiveCam;
+      if (target === camera) {
+        // No actual switch — just refresh in case aspect/fov changed.
+        applyFov();
+        return;
+      }
+      applyFov();
+      // Mirror the live camera's pose onto the target before swap.
+      target.position.copy(camera.position);
+      target.quaternion.copy(camera.quaternion);
+      camera = target;
+      rebuildControls();
+    }
+
+    function applyCameraPreset(p: import('$lib/3d/session.svelte').CameraPresetId) {
+      const r = dist;
+      let pos = new THREE.Vector3(r, r * 0.6, r);
+      if (p === 'front')  pos = new THREE.Vector3(0, 0, r);
+      if (p === 'back')   pos = new THREE.Vector3(0, 0, -r);
+      if (p === 'right')  pos = new THREE.Vector3(r, 0, 0);
+      if (p === 'left')   pos = new THREE.Vector3(-r, 0, 0);
+      if (p === 'top')    pos = new THREE.Vector3(0, r, 0.001);
+      if (p === 'bottom') pos = new THREE.Vector3(0, -r, 0.001);
+      camera.position.copy(pos);
+      controls.target.copy(initialTarget);
+      camera.lookAt(initialTarget);
+      controls.update();
+    }
+    function doFrameAll() {
+      camera.position.copy(initialCamPos);
+      controls.target.copy(initialTarget);
+      camera.lookAt(initialTarget);
+      controls.update();
+    }
+    function doResetCamera() {
+      doFrameAll();
+      session.cameraPreset = 'iso';
+    }
+    function restoreSavedView() {
+      const sv = session.savedView;
+      if (!sv) return;
+      camera.position.set(sv.pos[0], sv.pos[1], sv.pos[2]);
+      controls.target.set(sv.target[0], sv.target[1], sv.target[2]);
+      if (session.projection === 'perspective') {
+        perspectiveCam.fov = sv.fov;
+        perspectiveCam.updateProjectionMatrix();
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (camera as any).zoom = sv.zoom || 1;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (camera as any).updateProjectionMatrix?.();
+      }
+      camera.lookAt(controls.target);
+      controls.update();
+    }
+    function snapshotView(): import('$lib/3d/session.svelte').SavedView {
+      return {
+        pos: [camera.position.x, camera.position.y, camera.position.z],
+        target: [controls.target.x, controls.target.y, controls.target.z],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        zoom: (camera as any).zoom ?? 1,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fov: (camera as any).fov ?? perspectiveCam.fov,
+      };
+    }
+
+    // ─── Material override applier ─────────────────────────────
+    function applyMaterialOverrides() {
+      for (const e of materialMap.values()) {
+        const ov = session.materialOverrides[e.entry.id];
+        const mat = e.mat;
+        if (ov?.color) mat.color?.set(ov.color);
+        else mat.color?.set(e.entry.baseColor);
+        if (typeof ov?.metalness === 'number') mat.metalness = ov.metalness;
+        else mat.metalness = e.entry.baseMetalness;
+        if (typeof ov?.roughness === 'number') mat.roughness = ov.roughness;
+        else mat.roughness = e.entry.baseRoughness;
+      }
+    }
+
+    // ─── Render loop ───────────────────────────────────────────
+    let rafId = 0;
+    let lastT = performance.now();
+    function tick() {
+      const now = performance.now();
+      const dt = (now - lastT) / 1000;
+      lastT = now;
+      controls.update();
+      if (mixer && currentAction && session.animationPlaying) {
+        mixer.update(dt * session.animationSpeed);
+        // Mirror viewer-driven time back to the panel scrubber.
+        session.animationTime = currentAction.time;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const camAny = camera as any;
+      if (session.envIntensity !== undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (scene as any).environmentIntensity = session.envIntensity;
+      }
+      // Rim direction needs to follow the camera each frame.
+      if (rimLight.intensity > 0 && camAny.position) {
+        const back = camAny.position.clone().normalize().multiplyScalar(-maxDim * 3);
+        back.y = Math.abs(back.y) + maxDim * 1.2;
+        rimLight.position.copy(back);
+      }
       renderer.render(scene, camera);
+      // Pull draw-call info post-render.
+      if (session.stats && renderer.info.render.calls !== session.stats.drawCalls) {
+        session.stats = { ...session.stats, drawCalls: renderer.info.render.calls };
+      }
       rafId = requestAnimationFrame(tick);
     }
     tick();
@@ -539,51 +869,213 @@
       const W = container.clientWidth || w;
       const H = container.clientHeight || h;
       renderer.setSize(W, H);
-      camera.aspect = W / H;
-      camera.updateProjectionMatrix();
+      perspectiveCam.aspect = W / H;
+      perspectiveCam.updateProjectionMatrix();
+      syncOrthoFrustum(orthoCam, perspectiveCam.position.length(), W / H);
     });
     ro.observe(container);
+
+    // Publish camera-state callbacks onto the session so the side
+    // panel can wire "Save view" / "Restore saved" without having to
+    // know anything about three.js. Cleared in cleanupFn so a new
+    // ModelView mount doesn't see stale closures.
+    session.snapshotView = snapshotView;
+    session.restoreSavedView = restoreSavedView;
+    session.backend = 'three';
+
+    host = {
+      kind: 'three',
+      applyEnv: (id: EnvPresetId) => applyEnv(id),
+      applyRenderMode,
+      applyLightingFromSession,
+      applyMaterialOverrides,
+      applyCameraPreset,
+      applyProjection,
+      applyFov,
+      doFrameAll, doResetCamera,
+      snapshotView, restoreSavedView,
+      selectClipImpl,
+      setAutoRotate: (v: boolean) => { controls.autoRotate = v; },
+      setAutoRotateSpeed: (v: number) => { controls.autoRotateSpeed = v; },
+      setToneMapping: (id: import('$lib/3d/session.svelte').ModelSession['toneMapping']) => { renderer.toneMapping = toneMappingValue(id); },
+      setExposure: (v: number) => { renderer.toneMappingExposure = v; },
+      setShadows: (v: boolean) => { renderer.shadowMap.enabled = v; keyLight.castShadow = v && session.keyEnabled; meshes.forEach((m) => { m.castShadow = v; m.receiveShadow = v; }); },
+      setBackgroundVisible: (v: boolean) => { scene.background = v ? envBackground : new THREE.Color(0x0b0b0c); },
+      setGridVisible: (v: boolean) => { gridHelper.visible = v; },
+      setAxesVisible: (v: boolean) => { axesHelper.visible = v; },
+      setBboxVisible: (v: boolean) => { bboxHelper.visible = v; },
+      setGroundPlaneVisible: (v: boolean) => { groundOpaque.visible = v; },
+      setContactShadowVisible: (v: boolean) => { ground.visible = v; },
+      setUpAxis: (a: import('$lib/3d/session.svelte').UpAxisId) => {
+        // 'z' rotates the model -90° on X so the file's Z-up sits
+        // visually as +Y on screen; 'y' leaves it as authored.
+        model.rotation.x = a === 'z' ? -Math.PI / 2 : 0;
+      },
+    };
 
     cleanupFn = () => {
       cancelAnimationFrame(rafId);
       ro.disconnect();
       controls.dispose();
       threeControls = null;
-      controller.tools = null;
-      if (overlayGroup) {
-        scene.remove(overlayGroup);
-        overlayGroup.traverse((o: any) => {
-          o.geometry?.dispose?.();
-          o.material?.dispose?.();
-        });
-        overlayGroup = null;
-      }
+      disposeOverlay();
       gridHelper.geometry.dispose();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (gridHelper.material as any).dispose?.();
-      scene.environment?.dispose?.();
+      groundGeo.dispose();
+      groundMat.dispose();
+      groundOpaqueMat.dispose();
+      matcapTex.dispose();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (envTexture as any)?.dispose?.();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((envBackground as any)?.isTexture) envBackground.dispose?.();
       pmrem.dispose();
       renderer.dispose();
       try { container?.removeChild(renderer.domElement); } catch { /* ignore */ }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       scene.traverse((obj: any) => {
         if (obj.geometry) obj.geometry.dispose?.();
         if (obj.material) {
-          if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose?.());
+          if (Array.isArray(obj.material)) obj.material.forEach((m: import('three').Material) => m.dispose?.());
           else obj.material.dispose?.();
         }
       });
+      session.snapshotView = undefined;
+      session.restoreSavedView = undefined;
+      host = null;
     };
   }
 
+  // ─── Session reactivity ───────────────────────────────────────
+  // Each $effect mirrors one slice of session state into the host
+  // imperative API. Only fires when its specific reactive read
+  // changes, so flipping the env doesn't re-run the render-mode
+  // pipeline (which is expensive).
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    void host.applyEnv(session.envPreset);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setToneMapping(session.toneMapping);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setExposure(session.exposure);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setBackgroundVisible(session.backgroundVisible);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    // Read every lighting-shaped field so the effect tracks them.
+    void session.keyEnabled; void session.keyIntensity;
+    void session.keyAzimuth; void session.keyElevation; void session.keyColor;
+    void session.fillEnabled; void session.fillIntensity;
+    void session.rimEnabled; void session.rimIntensity;
+    void session.shadowSoftness;
+    host.applyLightingFromSession();
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setShadows(session.shadows);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setGridVisible(session.showGrid);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setAxesVisible(session.showAxes);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setBboxVisible(session.showBoundingBox);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setGroundPlaneVisible(session.groundPlane);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setContactShadowVisible(session.contactShadow);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.applyRenderMode(session.renderMode);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    // Material overrides are a deep object — read every entry so the
+    // effect retracks when any field changes (Svelte 5 tracks fine-
+    // grained at property level; reading the wrapper is enough).
+    void session.materialOverrides;
+    host.applyMaterialOverrides();
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    void session.projection;
+    host.applyProjection();
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    void session.fov;
+    host.applyFov();
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setUpAxis(session.upAxis);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setAutoRotate(session.autoRotate);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.setAutoRotateSpeed(session.autoRotateSpeed);
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    if (session.cameraPreset !== 'custom') {
+      host.applyCameraPreset(session.cameraPreset);
+    }
+  });
+  // Trigger-counter effects — react to "imperative" commands that
+  // can be repeated (Frame all twice in a row, etc.).
+  $effect(() => {
+    if (!host) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (session as any)._frameAllTrigger;
+    if (host.kind === 'marmoset') host.frameAll?.();
+    else host.doFrameAll?.();
+  });
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    void (session as any)._resetCameraTrigger;
+    host.doResetCamera();
+  });
+  // Animation transport.
+  $effect(() => {
+    if (!host || host.kind !== 'three') return;
+    host.selectClipImpl(session.currentClip);
+  });
+  // Note: clip selection above already calls play/stop based on
+  // session.animationPlaying at the moment of selection. Pause /
+  // resume after selection is handled here.
+
   // React to reviewMode flips after mount: enable/disable orbit
-  // controls so the host's scroll-snap (or future page scroller) can
-  // take wheel events when the viewer is in display-only mode.
+  // controls so the host's scroll-snap can take wheel events when
+  // the viewer is in display-only mode.
   $effect(() => {
     if (threeControls) threeControls.enabled = reviewMode;
   });
 </script>
 
 <div bind:this={container} class="relative h-full w-full bg-zinc-950">
-  {#if loading}
+  {#if session.loading}
     <div class="pointer-events-none absolute inset-0 flex items-center justify-center text-zinc-500">
       <div class="flex items-center gap-2 text-xs">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
@@ -600,9 +1092,9 @@
       </div>
     </div>
   {/if}
-  {#if loadError}
+  {#if session.loadError}
     <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-zinc-500">
-      <p>Couldn't open {ext.toUpperCase()}: {loadError}</p>
+      <p>Couldn't open {ext.toUpperCase()}: {session.loadError}</p>
       <a href={fileUrl} class="text-accent underline" target="_blank">Download original</a>
     </div>
   {/if}
