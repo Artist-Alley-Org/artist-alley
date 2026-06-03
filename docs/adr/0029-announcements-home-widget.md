@@ -16,13 +16,13 @@ tags:
   - infrastructure
   - 3d
 excerpt: >-
-  RS ships a news plugin that puts an operator-authored news strip on the homepage. The audit (2026-05-30) initially marked this as low- priority. User locked it in 2026-05-30.
+  An operator-authored news strip on the homepage is a common DAM surface. The audit (2026-05-30) initially marked this as low-priority. User locked it in 2026-05-30.
 ---
 ## Context
 
-RS ships a `news` plugin that puts an operator-authored news strip on
-the homepage. The audit (2026-05-30) initially marked this as low-
-priority. User locked it in 2026-05-30.
+An operator-authored news strip on the homepage is a common DAM
+surface. The audit (2026-05-30) initially marked this as low-priority.
+User locked it in 2026-05-30.
 
 Studios have things to announce: new contractor onboarding, NDA
 expirations, "the Tuesday review moves to Wednesday this week," release

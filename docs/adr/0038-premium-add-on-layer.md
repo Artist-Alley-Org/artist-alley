@@ -125,12 +125,12 @@ An add-on is **free** if it is:
   Krita, Inkscape, GIMP, FreeCAD, Godot. The open-source DCC
   ecosystem is foundational to the audience and we do not paywall
   artists who use free tools.
-- **Migration on-ramp from competitive platforms** — the
-  Phase 1.25 RS migrator stays free because it is the largest
-  conversion audience. Future "import from X" tools at the
-  framework level (Phase 1.43) stay free where the connector is
-  generic; only specifically licensed commercial-vendor migrators
-  (proprietary SDK fees, premium support obligations) become paid.
+- **Migration on-ramp from competitive platforms** — the migration
+  tooling phase stays free because it serves the largest conversion
+  audience. Future "import from X" tools at the framework level
+  (Phase 1.43) stay free where the connector is generic; only
+  specifically licensed commercial-vendor migrators (proprietary SDK
+  fees, premium support obligations) become paid.
 
 An add-on is **paid** if it falls in one of two buckets:
 

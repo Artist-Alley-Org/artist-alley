@@ -3,11 +3,6 @@ BSD 3-Clause License
 Copyright (c) 2026, Kenneth Blossom and artist-alley contributors.
 All rights reserved.
 
-This project is a fork of and contains code from ResourceSpace, which is
-also distributed under the BSD 3-Clause License. The original ResourceSpace
-copyright notice is preserved in `license.txt` at the root of this
-repository. See that file for the ResourceSpace copyright and contributors.
-
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 

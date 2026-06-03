@@ -15,17 +15,17 @@ tags:
   - ai
   - 3d
 excerpt: >-
-  Game studios with a marketing / brand org maintain brand guidelines — logos, color tokens, font stacks, voice rules, do / don't examples, usage permissions, license states. Today, this lives in PDFs / Figma / Confluence and goes stale within a sprint. ResourceSpace's brand_gui…
+  Game studios with a marketing / brand org maintain brand guidelines — logos, color tokens, font stacks, voice rules, do / don't examples, usage permissions, license states. Today, this lives in PDFs / Figma / Confluence and goes stale within a sprint.
 ---
 ## Context
 
 Game studios with a marketing / brand org maintain brand guidelines —
 logos, color tokens, font stacks, voice rules, do / don't examples,
 usage permissions, license states. Today, this lives in PDFs / Figma /
-Confluence and goes stale within a sprint. ResourceSpace's
-`brand_guidelines` plugin lights up a curated brand area; the audit
-(2026-05-30) flagged this as a real fit for studios with public-
-facing IP — every AAA franchise, every published indie.
+Confluence and goes stale within a sprint. A curated brand-guidelines
+area is a common DAM surface; the audit (2026-05-30) flagged this as
+a real fit for studios with public-facing IP — every AAA franchise,
+every published indie.
 
 Artist Alley is already the asset source-of-truth. The brand workspace
 is "the curated subset of Artist Alley assets that comprises the brand

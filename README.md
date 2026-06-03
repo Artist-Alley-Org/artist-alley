@@ -6,7 +6,7 @@
 [![Latest release](https://img.shields.io/github/v/release/mscrnt/artist-alley?include_prereleases&sort=semver)](https://github.com/mscrnt/artist-alley/releases)
 [![Docs](https://img.shields.io/badge/docs-artist--alley.org-7c3aed)](https://artist-alley.org)
 
-A self-hosted art review and archival tool for game studios. Artist-first UX, reviewer-grade workflow, single-binary deploy.
+A self-hosted **art review and archival tool for game studios**. Artist-first UX, reviewer-grade workflow, single-binary deploy.
 
 > **Status:** pre-MVP, active development. The architecture is settled; the feature set is still landing. Not production-ready.
 
@@ -32,15 +32,11 @@ The target shape is intentionally small:
 - **PostgreSQL** (with `pgvector`) holds everything — assets, metadata, embeddings, sessions, audit log.
 - **nginx** in front for TLS termination and static serving.
 
-Three production containers, full stop: `nginx`, `app`, `postgres`. No microservices, no message bus, no sidecars.
+Three production containers: `nginx`, `app`, `postgres`. No microservices, no message bus, no sidecars.
 
-Storage is pluggable — filesystem by default, S3-compatible (S3 / R2 / Backblaze / MinIO) optional. The plugin model is WASM via [Extism](https://extism.org/), deferred until external plugin authors arrive.
+Storage is pluggable — filesystem by default, S3-compatible (S3 / R2 / Backblaze / MinIO) optional. Heavier capabilities (CLIP embeddings, Whisper transcription, Tesseract OCR, Blender-rendered thumbnails, Stable Diffusion / Flux / ComfyUI runtimes) ship as out-of-band **capability add-ons** that operators install separately — never baked into the binary. The plugin model for third-party extensions is WASM via [Extism](https://extism.org/), deferred until external authors arrive.
 
-ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions.
-
-### Transitional state
-
-The project began as a fork of [ResourceSpace](https://www.resourcespace.com/) (BSD-3-Clause), a mature DAM with 20 years of battle-tested code. RS PHP still lives at the repo root and currently serves a shrinking set of legacy routes through `/api/v1/legacy/*` while the Go side ports each capability. When the last legacy route is replaced, the `php-fpm` container is removed and the repo collapses to the three-container shape. See [ADR 0003](docs/adr/0003-strangler-fig-internal.md), [ADR 0006](docs/adr/0006-go-as-target-backend.md), and [ADR 0015](docs/adr/0015-php-as-legacy-backend.md).
+ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model).
 
 ---
 
@@ -49,12 +45,13 @@ The project began as a fork of [ResourceSpace](https://www.resourcespace.com/) (
 | Layer | Tech |
 |---|---|
 | Backend | Go 1.26, `pgx`, `sqlc`, OpenAPI 3 (oapi-codegen) |
-| Frontend | SvelteKit, TypeScript, Vite |
+| Frontend | SvelteKit (Svelte 5 runes), TypeScript, Vite |
 | Database | PostgreSQL 16 + pgvector |
 | Migrations | [goose](https://github.com/pressly/goose) |
 | Storage | filesystem (default), S3-compatible (optional) |
-| Search | Postgres `tsvector` (text), pgvector (semantic, future) |
-| License | BSD-3-Clause |
+| Search | Postgres `tsvector` (text), pgvector (semantic) |
+| AI add-ons | CLIP / Whisper / Tesseract (local), OpenAI / Anthropic / Stability (cloud bridge) — all opt-in |
+| License | BSD-3-Clause (relicense to AGPL + commercial planned, Phase 1.24) |
 
 ---
 
@@ -68,10 +65,12 @@ cd artist-alley
 ./scripts/bootstrap.sh
 ```
 
-`bootstrap.sh` creates `.env` with random passwords, matches container UIDs to your host user, and brings the stack up. The frontend dev container is opt-in:
+`bootstrap.sh` creates `.env` with random passwords, matches container UIDs to your host user, and brings the stack up.
 
 ```bash
-docker compose --profile web up -d
+docker compose up -d            # core stack
+docker compose --profile workers up -d   # + Blender worker for 3D thumbnails
+docker compose --profile storage-s3 up -d  # + MinIO for S3-backend testing
 ```
 
 Open `http://localhost:8080` (or the port in your `.env`). Stop with `docker compose down`. Persistent data lives in named Docker volumes.
@@ -82,44 +81,45 @@ Open `http://localhost:8080` (or the port in your `.env`). Stop with `docker com
 
 ```
 artist-alley/
-├── app/             # Go backend — the target architecture
+├── app/             # Go backend — the runtime
 │   ├── cmd/         # binaries (server entrypoint)
-│   ├── internal/    # handlers, db, storage, auth, ...
-│   └── api/         # OpenAPI spec + generated server stubs
+│   ├── internal/    # per-domain handlers, db, storage, auth, …
+│   ├── api/         # OpenAPI spec + generated server stubs
+│   └── schema.sql   # Postgres schema (mirrors goose migrations)
 ├── web/             # SvelteKit frontend
-├── aa_api/          # PHP legacy JSON wrappers (transitional — shrinking)
 ├── infra/           # Dockerfiles, nginx config, postgres init
-├── docs/adr/        # Architecture Decision Records
-├── scripts/         # bootstrap, test, seed scripts
-├── api/ batch/ include/ lib/ pages/ ...   # ResourceSpace fork (transitional)
+├── docs/
+│   ├── adr/         # Architecture Decision Records (source of truth)
+│   └── research/    # Investigation notes, not yet decisions
+├── site/            # Astro Starlight docs site → artist-alley.org
+├── scripts/         # bootstrap, test, seed
 ├── docker-compose.yml
-├── LICENSE          # BSD-3-Clause (our additions)
-└── license.txt      # ResourceSpace's notice, preserved
+├── Dockerfile
+├── LICENSE
+├── CONTRIBUTING.md
+└── RELEASING.md
 ```
 
 ---
 
 ## Roadmap
 
-The full roadmap lives in [`docs/roadmap.md`](docs/roadmap.md) — what's shipped, what's in flight, what's next, and what we're deliberately not building. The headline arc:
+The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`site/src/content/roadmap/roadmap.json`](site/src/content/roadmap/roadmap.json). Highlights:
 
-- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth, upload pipeline, posts + collections, browse feed, post detail modal, admin shell, theming, i18n.
-- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging.
-- **Load-bearing arc — review tool (Phase 1.18.B):** the post modal becomes a SyncSketch / Keyframe-Pro replacement. Shipping in sub-phases: video player → polish → subtitles → image sequences → **presentation rooms** → **annotation system** → timeline assembly → A/B compare → DCC integrations → native 3D viewer → heavy converters → audio/SVG/PDF → review projects → federation.
-- **On the map:** advanced search, teams + audit, real LDAP/SAML/OAuth, storage tooling, reports, moderation, federation, plugin ecosystem.
-
-See [`docs/roadmap.md`](docs/roadmap.md) for the canonical ordering and detail.
+- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth, upload pipeline, posts + collections, browse feed, post-detail modal, admin shell, theming, i18n, universal asset viewer with format coverage across image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets, whiteboard / brush surface.
+- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging, the load-bearing review tool arc (Phase 1.18.B) — video player → polish → captions → image sequences → presentation rooms → annotation system → timeline assembly → A/B compare → DCC integrations → native 3D viewer.
+- **On the map:** advanced search, teams + audit, real LDAP/SAML/OAuth, storage tooling, reports, moderation, brand workspace, AI creative editing, federation, plugin ecosystem, audit log, observability, capability add-ons, premium add-on layer (commerce / ads / DCC plugins / cloud-bridge AI), external imports framework, caption / subtitle artifacts, native viewers for proprietary DCC formats.
 
 ---
 
 ## Contributing
 
-Early days — please open an [issue](https://github.com/mscrnt/artist-alley/issues) or [Discussion](https://github.com/mscrnt/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the ADRs in [`docs/adr/`](docs/adr/) (especially 0006, 0008, 0010, 0014) before proposing structural changes.
+Early days — please open an [issue](https://github.com/mscrnt/artist-alley/issues) or [Discussion](https://github.com/mscrnt/artist-alley/discussions) before starting non-trivial work. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [developer docs](https://artist-alley.org/developers/) — particularly [coding standards](https://artist-alley.org/developers/coding-standards/) and [security](https://artist-alley.org/developers/security/) — before opening a PR.
+
+Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035-adr-conventions/). Reverse-engineering or interoperability work needs to follow the clean-room methodology in [ADR 0040](docs/adr/0040-clean-room-reverse-engineering-methodology/).
 
 ---
 
-## License and attribution
+## License
 
-artist-alley is licensed under **BSD-3-Clause** — see [LICENSE](LICENSE).
-
-The project is a fork of [ResourceSpace](https://www.resourcespace.com/) by [Montala Limited](https://www.montala.com/), also BSD-3-Clause. The original notice is preserved in [`license.txt`](license.txt) and [`documentation/licenses/`](documentation/licenses/). Sincere thanks to the RS contributors whose decades of work made this fork viable.
+artist-alley is currently licensed under **BSD-3-Clause** — see [LICENSE](LICENSE). A relicense to **AGPL + commercial** is planned at Phase 1.24 per [ADR 0016](docs/adr/0016-license-direction.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).

@@ -12,11 +12,17 @@ related:
   - "0005"
 tags:
   - architecture
-  - ai
-  - 3d
+  - history
 excerpt: >-
-  ADR 0001 establishes that we hard-fork from RS and do not track upstream. That gives us total control of the codebase but does not by itself answer the question: how do we evolve from "RS with a coat of paint" toward the artist-alley vision (modern frontend, AI-native search,…
+  Historical. The strangler-fig pattern proposed an incremental port from the bootstrapped upstream codebase to the new Go runtime, route by route. The approach was superseded by a clean-room rewrite in 2026-06; upstream code no longer ships.
 ---
+> **Superseded — historical record.** The strangler-fig porting layer
+> was abandoned in 2026-06 in favour of a clean-room rewrite. No
+> upstream code remains in the tree. See
+> [ADR 0006](/adr/0006-go-as-target-backend/) for the current
+> architecture. This ADR is retained as historical record only.
+
+
 ## Context
 
 ADR 0001 establishes that we hard-fork from RS and do not track upstream.

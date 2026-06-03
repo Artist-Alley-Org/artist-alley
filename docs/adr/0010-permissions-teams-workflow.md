@@ -42,23 +42,23 @@ approves a draft":
    `"ArtDirector + SecurityAuditor"` role explosion.
 2. **There are no teams.** A studio installing artist-alley has
    sub-orgs (Diablo R&D, Diablo Live, R&D Character Art, Cross-Studio
-   Art Review). RS doesn't model this and neither do we.
+   Art Review). The typical DAM doesn't model this and neither do we.
 3. **There is no way to scope a role to a subset of resources.** "X
    is a Director *within team Diablo-R&D*" can't be expressed; today
    `posts.admin` is global or absent.
-4. **There are no per-resource or per-collection ACLs.** RS has
-   `resource_custom_access` and `usergroup_collection`; we have neither.
-5. **There are no workflow states.** RS's `archive` column
+4. **There are no per-resource or per-collection ACLs.** A typical DAM
+   has `resource_custom_access` and `usergroup_collection`; we have neither.
+5. **There are no workflow states.** A configurable `archive` column
    (`-2 pending submit / -1 pending review / 0 active / 1-2 archived /
-   3 deleted`) and the `e{N}` capability codes that gate transitions
-   are a real feature we need, even though RS's specific implementation
-   is rough.
-6. **Anonymous browse has no first-class principal.** RS encodes
-   anonymous as a real user row named "guest", which scatters
-   `username == $anonymous_login` special cases throughout the codebase.
+   3 deleted`) with capability codes that gate transitions is a real
+   feature we need, even if existing implementations are rough.
+6. **Anonymous browse has no first-class principal.** Industry practice
+   often encodes anonymous as a real user row named "guest", which
+   scatters `username == $anonymous_login` special cases throughout the
+   codebase.
 
-The survey of RS's permission code surfaced eight design choices we
-will explicitly *not* copy:
+The survey of existing DAM permission code surfaced eight design choices
+we will explicitly *not* copy:
 
 - CSV-in-text-column for permissions (no FK integrity, no enum,
   typos silently no-op).
@@ -209,7 +209,7 @@ ACL rows) covers the gap.
 `expires_at` enables time-boxed shares ("Marketing has read access
 to this post for 7 days") without a separate share-links table.
 
-### Layer 7: Workflow states (RS-style, configurable per resource type)
+### Layer 7: Workflow states (configurable per resource type)
 
 Each resource type owns its own state list and its own transition
 graph. A concept-art pipeline can run `idea → wip → review → final`;
@@ -259,8 +259,8 @@ All state changes go through one central helper —
    note).
 4. Updates the resource row.
 
-This is the explicit fix for RS's "every call site has to remember
-`checkperm('e{N}')`" anti-pattern.
+This is the explicit fix for the "every call site has to remember
+`checkperm('e{N}')`" anti-pattern common in existing DAM tooling.
 
 ### Layer 7b: Anonymous as a synthetic role
 
@@ -489,7 +489,7 @@ backfill.
 - ACLs as additive exceptions, not the primary path, keeps reads
   fast: the common case never touches the ACL tables.
 - Workflow transitions are gated centrally; we cannot regress to
-  RS's "every caller remembers `checkperm`" failure mode.
+  the "every caller remembers `checkperm`" failure mode.
 - Anonymous is a real principal, not a magic username string —
   one code path handles authenticated and anonymous reads.
 - Federation hooks (`origin_server_id` on teams) mirror the pattern

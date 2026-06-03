@@ -18,13 +18,12 @@ tags:
   - infrastructure
   - 3d
 excerpt: >-
-  The openai_image_edit RS plugin demonstrates the DALL-E erase + regenerate pattern. Game studios use this for marketing asset prep (remove background, regenerate a logo placement, generate variations for A / B testing), concept-art ideation (mask part of a sketch and regenerat…
+  The DALL-E erase + regenerate pattern is widely used for marketing asset prep (remove background, regenerate a logo placement, generate variations for A / B testing), concept-art ideation (mask part of a sketch and regenerate it), and reference-image cleanup.
 ---
 ## Context
 
-The `openai_image_edit` RS plugin demonstrates the DALL-E erase +
-regenerate pattern. Game studios use this for marketing asset prep
-(remove background, regenerate a logo placement, generate
+The DALL-E erase + regenerate pattern is widely used for marketing
+asset prep (remove background, regenerate a logo placement, generate
 variations for A / B testing), concept-art ideation (mask part of
 a sketch and regenerate it), and reference-image cleanup. The audit
 (2026-05-30) flagged this as Phase 1.20+ in the lower-priority bucket.

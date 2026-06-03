@@ -1,6 +1,6 @@
 ---
 id: "0002"
-title: BSD-3-Clause license, mirroring ResourceSpace
+title: BSD-3-Clause license (initial choice)
 status: superseded
 date: 2026-05-23
 area: licensing
@@ -10,10 +10,16 @@ superseded_by: "0016"
 related: []
 tags:
   - licensing
-  - ai
+  - history
 excerpt: >-
-  artist-alley is forked from ResourceSpace (RS), which is distributed under BSD-3-Clause. Our additions must coexist with that license; we cannot relicense the inherited RS code, and a mismatched license on new code would create a confusing two-license repository.
+  Historical. The project's initial license choice. Superseded by ADR 0016 (relicense to AGPL + commercial, gated on Phase 1.24).
 ---
+> **Superseded — historical record.** The initial license choice
+> documented here is replaced by the AGPL + commercial direction in
+> [ADR 0016](/adr/0016-license-direction/). Retained as historical
+> record only.
+
+
 ## Context
 
 artist-alley is forked from ResourceSpace (RS), which is distributed under

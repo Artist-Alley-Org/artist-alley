@@ -28,11 +28,11 @@ valve and a `asset_tag` join table. Neither is enough on its own:
 - Tags are a degenerate multi-value text field. Fine for browsing,
   not enough for structured metadata.
 
-ResourceSpace solves this with a heavy three-table model
-(`asset_type_field` + `node` + `resource_node`) that supports
-admin-extensible fields, IPTC/EXIF auto-extraction, and full-text
-search — but at the cost of ~70 columns per field definition, every
-field value routing through a generic `node` row (even a 1-line
+The prior generation of DAM tooling solves this with a heavy
+three-table model (`asset_type_field` + `node` + `resource_node`)
+that supports admin-extensible fields, IPTC/EXIF auto-extraction, and
+full-text search — but at the cost of ~70 columns per field definition,
+every field value routing through a generic `node` row (even a 1-line
 title), and 15 partially-redundant field-type enums where most of
 the variation is UI-controlled (radio vs dropdown over the same data).
 
@@ -232,7 +232,7 @@ text content of every `searchable=true` field value. Maintained by
 trigger when `asset_field_value` rows change. Indexed via GIN.
 Full-text search uses `assets.search_text @@ to_tsquery(...)`.
 
-This replaces RS's `node_keyword` denormalized index. Single-source
+This replaces the legacy `node_keyword` denormalized index. Single-source
 of truth, no consistency drift.
 
 ### Federation model

@@ -14,14 +14,14 @@ tags:
   - ai
   - 3d
 excerpt: >-
-  ADR 0003 established that we keep RS's MySQL untouched and run a Postgres + pgvector adjunct database for new-feature data, linked to RS by rs_resource_id / rs_user_id. Phase 0 brings up the Postgres container but the database is empty.
+  ADR 0003 established that we run a Postgres + pgvector adjunct database for new-feature data, linked to the legacy backend by rs_resource_id / rs_user_id. Phase 0 brings up the Postgres container but the database is empty.
 ---
 ## Context
 
-ADR 0003 established that we keep RS's MySQL untouched and run a Postgres +
-pgvector adjunct database for new-feature data, linked to RS by
-`rs_resource_id` / `rs_user_id`. Phase 0 brings up the Postgres container
-but the database is empty.
+ADR 0003 established that we run a Postgres + pgvector adjunct database
+for new-feature data, linked to the legacy backend by `rs_resource_id` /
+`rs_user_id`. Phase 0 brings up the Postgres container but the database
+is empty.
 
 Every sidecar service we build — review sessions, AI gateway, embeddings,
 modern annotations, video pipeline — will read or write tables in this
@@ -31,9 +31,9 @@ any sidecar code is written.
 
 This ADR proposes:
 - Tooling: migration runner + layout
-- Identity strategy: how Postgres rows link back to RS
+- Identity strategy: how Postgres rows link back to the legacy backend
 - Initial table set covering the Phase 1-2 sidecars
-- The integration "seam": how PHP publishes events that sidecars consume
+- The integration "seam": how the legacy backend publishes events that sidecars consume
 
 ## Decision
 
@@ -70,7 +70,7 @@ and the file is deleted from its old location.
 | Kind of ID | Type | Why |
 |---|---|---|
 | Our primary keys | `UUID` (gen_random_uuid()) | Sidecars often generate IDs before persisting; UUIDs avoid round-trips for sequence values and play well across services |
-| RS-owned foreign keys | `BIGINT` | Matches RS's `ref` columns natively; no casting; fast joins inside Postgres queries |
+| Legacy-owned foreign keys | `BIGINT` | Matches the legacy backend's `ref` columns natively; no casting; fast joins inside Postgres queries |
 | Time | `TIMESTAMPTZ` always | Never store naive timestamps; UTC by default, display in the app |
 | Soft delete | `deleted_at TIMESTAMPTZ NULL` where applicable | We need deleted history for audit and review traceability |
 
@@ -81,11 +81,11 @@ sweeps; we will not pretend Postgres can enforce it.
 
 ### Tables (initial set)
 
-**`users` — mirror of RS user**
+**`users` — mirror of the legacy user**
 
 The minimal fields a sidecar needs to render an author label or send a
-notification. Synced on demand from PHP (see "Seam" below). Populated lazily
-the first time a Postgres-side action references the user.
+notification. Synced on demand from the legacy backend (see "Seam" below).
+Populated lazily the first time a Postgres-side action references the user.
 
 ```
 users
@@ -99,9 +99,10 @@ users
 
 **`events` — outbox / integration log**
 
-Single append-only table that PHP writes to on every meaningful action.
-Sidecars consume via Postgres `LISTEN/NOTIFY` on a `events_new` channel
-plus periodic polling for missed events. No Redis needed for Phase 1-2.
+Single append-only table that the legacy backend writes to on every
+meaningful action. Sidecars consume via Postgres `LISTEN/NOTIFY` on a
+`events_new` channel plus periodic polling for missed events. No Redis
+needed for Phase 1-2.
 
 ```
 events
@@ -156,9 +157,9 @@ review_session_events  -- only populated for sync sessions; high-cardinality
 
 **Comments and annotations**
 
-Modern comments live in Postgres. RS's own `comment` table is left alone
-for legacy data. We do NOT migrate RS comments forward unless/until we
-decide to.
+Modern comments live in Postgres. The legacy backend's own `comment`
+table is left alone for legacy data. We do NOT migrate legacy comments
+forward unless/until we decide to.
 
 ```
 annotations
@@ -218,12 +219,12 @@ CREATE INDEX ON embeddings_1536 (rs_resource_id);
 
 Initial dims to ship: `768`, `1024`, `1536`. Add others on demand.
 
-### The "seam": how PHP publishes events to Go
+### The "seam": how the legacy backend publishes events to Go
 
-PHP writes a row to `events` on every meaningful action. Hooked into RS at
-known extension points (we'll add `// ARTIST-ALLEY:` calls to small list of
-RS PHP files — upload, comment, login, resource edit). Go sidecars run a
-single goroutine that:
+The legacy backend writes a row to `events` on every meaningful action.
+Hooked into the legacy backend at known extension points (we'll add
+`// ARTIST-ALLEY:` calls to a small list of files — upload, comment,
+login, resource edit). Go sidecars run a single goroutine that:
 
 1. Issues `LISTEN events_new` on a dedicated Postgres connection
 2. On wake-up (or every ~5 seconds as a safety poll), processes rows where
@@ -234,10 +235,10 @@ Postgres `LISTEN/NOTIFY` gives sub-second delivery; the polling fallback
 covers gaps (e.g., listener was offline). No Redis, no Kafka, no extra
 infrastructure.
 
-PHP side: a `// ARTIST-ALLEY:` helper function `aa_publish_event($kind,
+Legacy side: a `// ARTIST-ALLEY:` helper function `aa_publish_event($kind,
 $subject_type, $subject_id, $payload)` opens a Postgres connection (via
 the existing `pdo_pgsql` extension we baked in) and inserts. Wrapped so
-one call per RS hook site.
+one call per legacy hook site.
 
 ## Consequences
 
@@ -247,12 +248,12 @@ one call per RS hook site.
 - LISTEN/NOTIFY gives us event-driven sidecars without Redis.
 - pgvector ANN search is fast enough for "millions of assets" with HNSW
   indexes.
-- BIGINT-for-RS-IDs makes joins inside Postgres cheap when we need to
+- BIGINT-for-legacy-IDs makes joins inside Postgres cheap when we need to
   fetch related data.
 
 **Negative**
 - Cross-DB referential integrity is a discipline, not a constraint —
-  orphaned rows are possible (e.g., RS resource deleted but comments remain).
+  orphaned rows are possible (e.g., a legacy resource deleted but comments remain).
   We will run a periodic sweep.
 - pgvector one-table-per-dim creates schema duplication if we add many
   dims. Acceptable at 3-4 dims; revisit if we hit 8+.
@@ -262,26 +263,26 @@ one call per RS hook site.
 ## Open questions (need user input)
 
 1. **Workspace / Project hierarchy.** Game studios have a natural
-   `Studio → Game → Milestone → Discipline → Asset` structure. RS has
-   collections (flat-ish with parents). Three options:
-   - **(a)** Use RS collections for everything; no `workspaces` table in
-     Postgres. Simpler.
+   `Studio → Game → Milestone → Discipline → Asset` structure. The legacy
+   backend has collections (flat-ish with parents). Three options:
+   - **(a)** Use legacy collections for everything; no `workspaces` table
+     in Postgres. Simpler.
    - **(b)** Add `workspaces`/`projects` tables in Postgres as a top-level
      grouping for dashboard/reporting, but actual asset organization stays
-     in RS collections. Hybrid.
-   - **(c)** Full hierarchy in Postgres, RS collections become an
+     in legacy collections. Hybrid.
+   - **(c)** Full hierarchy in Postgres, legacy collections become an
      implementation detail.
 
    **My lean: (b).** Lets us model "what game is this for" without
-   reinventing RS's collection ACLs. But this is a real call you should
-   weigh in on.
+   reinventing the legacy collection ACLs. But this is a real call you
+   should weigh in on.
 
 2. **User mirror — when does it sync?**
    - **(a) Lazy:** First time a Postgres action references a user, the
-     sidecar fetches their RS profile via PHP API and inserts.
-   - **(b) Eager event:** PHP fires `user.created` / `user.updated` events;
-     sidecars upsert from event payload.
-   - **(c) Periodic full sync:** Nightly job copies RS users into Postgres.
+     sidecar fetches their profile via the legacy API and inserts.
+   - **(b) Eager event:** The legacy backend fires `user.created` /
+     `user.updated` events; sidecars upsert from event payload.
+   - **(c) Periodic full sync:** Nightly job copies users into Postgres.
 
    **My lean: (b)** with `(a)` as a fallback for users that predate the
    event hook. Eager keeps the mirror near-real-time without a separate cron.
@@ -295,25 +296,25 @@ one call per RS hook site.
 
 4. **Auth bridge — how does a Go sidecar know who's calling?** Two paths:
    - **(a)** Sidecar trusts a header (`X-User-Id`) set by nginx after
-     validating RS's PHP session cookie. PHP middleware does the auth;
-     sidecars trust the perimeter.
-   - **(b)** Sidecar verifies the session cookie itself by calling a PHP
-     endpoint or reading RS's `user_session` table directly.
+     validating the legacy session cookie. The legacy middleware does the
+     auth; sidecars trust the perimeter.
+   - **(b)** Sidecar verifies the session cookie itself by calling a
+     legacy endpoint or reading the `user_session` table directly.
 
    **My lean: (a)**. Cheap, fast, requires that nothing reaches the
-   sidecar without passing through nginx + PHP — which is our deployment
-   topology anyway.
+   sidecar without passing through nginx + the legacy auth layer — which
+   is our deployment topology anyway.
 
 5. **Embeddings: also store the raw text/file that was embedded?**
-   Storing it lets us re-embed later without re-fetching from RS or
+   Storing it lets us re-embed later without re-fetching the source or
    regenerating captions. Costs a few KB per row. **My lean: yes — store
    `source_text TEXT NULL`** (truncate to 8KB if longer).
 
 ## Alternatives considered
 
-- **MySQL-only** (extend RS's schema): no pgvector path. Rejected.
-- **Single Postgres for everything** (migrate RS to Postgres): multi-month
-  project, blocks all feature work. Already rejected in ADR 0003.
+- **MySQL-only** (extend the legacy schema): no pgvector path. Rejected.
+- **Single Postgres for everything** (migrate the legacy backend to Postgres):
+  multi-month project, blocks all feature work. Already rejected in ADR 0003.
 - **Document DB (Mongo / DynamoDB)**: loses transactional integrity and
   the SQL ergonomic. No.
 - **Separate vector DB (Qdrant, Weaviate)**: more moving parts. pgvector

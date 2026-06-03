@@ -27,11 +27,11 @@ permission model (capability + team membership) does not solve "send this
 post / this collection to a publisher for sign-off, with the link
 expiring after 14 days and revoking on a single click."
 
-ResourceSpace ships first-class share links for both resources and
-collections, with password gating, expiry, per-link access scope, and
-usage tracking. The audit (2026-05-30) flagged share links as the
-single most-impactful gap on the Artist Alley roadmap — every studio
-hits this within the first week.
+First-class share links for both resources and collections — with
+password gating, expiry, per-link access scope, and usage tracking — are
+table stakes in existing DAM tooling. The audit (2026-05-30) flagged
+share links as the single most-impactful gap on the Artist Alley
+roadmap — every studio hits this within the first week.
 
 ## Decision
 
