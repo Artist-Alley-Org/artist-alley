@@ -15,6 +15,7 @@
   import type { ArchiveSessionInstance, ArchiveManifest, TreeNode } from '$lib/archive/session.svelte';
   import { buildTree, fmtBytes } from '$lib/archive/session.svelte';
   import { languageIdForExt, loadLanguage } from '$lib/codemirror/lang';
+  import { t } from '$stores/lang.svelte';
 
   type Asset = import('./controller').ViewAsset;
 
@@ -254,7 +255,7 @@
         type="search"
         value={session.filter}
         oninput={(e) => session.setFilter((e.currentTarget as HTMLInputElement).value)}
-        placeholder="Filter entries…"
+        placeholder={t('archive.filter_placeholder')}
         class="w-full rounded border border-border bg-surface px-2 py-1 text-[11px] text-fg focus:border-accent focus:outline-none"
       />
       <label class="mt-1 flex items-center gap-1 text-[10px] text-fg-muted">
@@ -264,19 +265,19 @@
           onchange={() => session.toggleHideDotfiles()}
           class="h-3 w-3 accent-accent"
         />
-        <span>Hide dotfiles</span>
+        <span>{t('archive.hide_dotfiles')}</span>
         <span class="ml-auto font-mono">
-          {session.manifest ? session.manifest.entryCount : 0} entries
+          {t('archive.entry_count', { count: session.manifest ? session.manifest.entryCount : 0 })}
         </span>
       </label>
     </header>
     <div class="flex-1 overflow-y-auto">
       {#if session.loading}
-        <p class="p-3 text-xs text-fg-muted">Loading manifest…</p>
+        <p class="p-3 text-xs text-fg-muted">{t('archive.loading_manifest')}</p>
       {:else if session.loadError}
         <p class="m-3 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">{session.loadError}</p>
       {:else if tree.length === 0}
-        <p class="p-3 text-xs text-fg-muted">No entries match the current filter.</p>
+        <p class="p-3 text-xs text-fg-muted">{t('archive.no_entries_match')}</p>
       {:else}
         {#each tree as node (node.path)}
           {@render treeNode(node, 0)}
@@ -285,7 +286,7 @@
     </div>
     {#if session.manifest?.truncated}
       <p class="border-t border-yellow-500/30 bg-yellow-500/10 px-2 py-1 text-[10px] text-yellow-300">
-        Manifest truncated at {session.manifest.entryCount} entries.
+        {t('archive.manifest_truncated', { count: session.manifest.entryCount })}
       </p>
     {/if}
   </aside>
@@ -294,7 +295,7 @@
   <section class="relative flex flex-1 flex-col overflow-hidden">
     {#if !session.selectedPath}
       <div class="flex h-full w-full items-center justify-center text-sm text-fg-muted">
-        <p>Select an entry on the left to preview its contents.</p>
+        <p>{t('archive.select_entry')}</p>
       </div>
     {:else}
       {@const kind = previewKind(session.selectedPath)}
@@ -312,8 +313,8 @@
           type="button"
           onclick={() => session.downloadEntry(session.selectedPath!)}
           class="shrink-0 rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25"
-          title="Download this entry"
-        >Download</button>
+          title={t('archive.download_entry_title')}
+        >{t('archive.download')}</button>
       </header>
       <div class="flex-1 overflow-auto">
         {#if kind === 'image'}
@@ -326,7 +327,7 @@
           </div>
         {:else if kind === 'text'}
           {#if session.previewLoading}
-            <p class="p-3 text-xs text-fg-muted">Loading entry…</p>
+            <p class="p-3 text-xs text-fg-muted">{t('archive.loading_entry')}</p>
           {:else if session.previewError}
             <p class="m-3 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">{session.previewError}</p>
           {:else}
@@ -338,7 +339,7 @@
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
               <polyline points="14 2 14 8 20 8"/>
             </svg>
-            <p>Inline preview not available for this entry — use Download to fetch it.</p>
+            <p>{t('archive.no_inline_preview')}</p>
           </div>
         {/if}
       </div>

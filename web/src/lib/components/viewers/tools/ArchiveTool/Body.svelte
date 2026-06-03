@@ -7,6 +7,7 @@
 
   import type { ToolContext } from '../contract';
   import { fmtBytes } from '$lib/archive/session.svelte';
+  import { t } from '$stores/lang.svelte';
 
   let { ctx }: { ctx: ToolContext } = $props();
   const session = $derived(ctx.archiveSession);
@@ -58,27 +59,27 @@
 </script>
 
 {#if !session}
-  <div class="p-4 text-sm text-fg-muted"><p>Archive viewer is loading…</p></div>
+  <div class="p-4 text-sm text-fg-muted"><p>{t('archive.tool_loading')}</p></div>
 {:else}
   <div class="flex flex-col">
     <!-- ── Stats ─────────────────────────────────────────────── -->
     <section class="border-b border-border p-3 text-xs">
-      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Stats</h3>
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('archive.stats')}</h3>
       {#if !session.manifest}
-        <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] text-fg-muted">No manifest yet.</p>
+        <p class="rounded border border-border bg-surface/60 px-2 py-1 text-[10px] text-fg-muted">{t('archive.no_manifest_yet')}</p>
       {:else}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-[10px]">
-          <dt class="text-fg-muted">Format</dt>
+          <dt class="text-fg-muted">{t('archive.stat_format')}</dt>
           <dd class="font-mono text-fg">{session.manifest.format || '—'}</dd>
-          <dt class="text-fg-muted">Files</dt>
+          <dt class="text-fg-muted">{t('archive.stat_files')}</dt>
           <dd class="font-mono text-fg">{fileCount}</dd>
-          <dt class="text-fg-muted">Folders</dt>
+          <dt class="text-fg-muted">{t('archive.stat_folders')}</dt>
           <dd class="font-mono text-fg">{dirCount}</dd>
-          <dt class="text-fg-muted">Total size</dt>
+          <dt class="text-fg-muted">{t('archive.stat_total_size')}</dt>
           <dd class="font-mono text-fg">{fmtBytes(session.manifest.totalSize)}</dd>
           {#if session.manifest.truncated}
-            <dt class="text-yellow-400">Truncated</dt>
-            <dd class="text-fg">Manifest hit the entry cap</dd>
+            <dt class="text-yellow-400">{t('archive.stat_truncated')}</dt>
+            <dd class="text-fg">{t('archive.stat_truncated_hint')}</dd>
           {/if}
         </dl>
       {/if}
@@ -87,7 +88,7 @@
     <!-- ── Selection ────────────────────────────────────────── -->
     {#if session.selectedPath}
       <section class="border-b border-border p-3 text-xs">
-        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Selected</h3>
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('archive.selected')}</h3>
         <p class="break-all font-mono text-[10px] text-fg">{session.selectedPath}</p>
         <div class="mt-1 flex items-center gap-2 text-[10px] text-fg-muted">
           <span>{fmtBytes(session.previewSize)}</span>
@@ -99,41 +100,39 @@
           type="button"
           onclick={() => session.downloadEntry(session.selectedPath!)}
           class="mt-2 w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25"
-        >Download entry</button>
+        >{t('archive.download_entry_button')}</button>
       </section>
     {/if}
 
     <!-- ── Tree controls ────────────────────────────────────── -->
     <section class="border-b border-border p-3 text-xs">
-      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Tree</h3>
+      <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('archive.tree')}</h3>
       <div class="grid grid-cols-2 gap-1">
         <button
           type="button"
           onclick={expandAll}
           class="rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent"
-        >Expand all</button>
+        >{t('archive.expand_all')}</button>
         <button
           type="button"
           onclick={collapseAll}
           class="rounded border border-border bg-surface px-2 py-1 text-[10px] text-fg hover:border-accent"
-        >Collapse all</button>
+        >{t('archive.collapse_all')}</button>
       </div>
     </section>
 
     <!-- ── Extract ──────────────────────────────────────────── -->
     {#if session.manifest && fileCount > 0}
       <section class="border-b border-border p-3 text-xs">
-        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Extract</h3>
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('archive.extract')}</h3>
         <button
           type="button"
           onclick={() => session.downloadBundle()}
           class="w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25"
-          title="Repackage every entry as a single ZIP and download"
-        >Extract all as .zip</button>
+          title={t('archive.extract_all_title')}
+        >{t('archive.extract_all_button')}</button>
         <p class="mt-1 text-[10px] leading-snug text-fg-muted">
-          Streams a fresh ZIP of every entry — convenient for sources the OS
-          can't open natively (.7z / .rar / .tar.xz). The original archive is
-          still available via the asset's Download button.
+          {t('archive.extract_all_blurb')}
         </p>
       </section>
     {/if}
@@ -141,14 +140,14 @@
     <!-- ── By extension ─────────────────────────────────────── -->
     {#if extBreakdown.length > 0}
       <section class="border-b border-border p-3 text-xs">
-        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">By extension</h3>
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">{t('archive.by_extension')}</h3>
         <div class="space-y-0.5">
           {#each extBreakdown as row (row.ext)}
             <button
               type="button"
               onclick={() => session.setFilter(row.ext === '(none)' ? '' : '.' + row.ext)}
               class="flex w-full items-center justify-between gap-2 rounded px-2 py-0.5 text-left text-[10px] text-fg hover:bg-surface-elevated"
-              title={`Filter the tree to .${row.ext} entries`}
+              title={t('archive.filter_to_ext', { ext: row.ext })}
             >
               <span class="font-mono text-fg-muted/80">.{row.ext}</span>
               <span class="ml-auto shrink-0 font-mono text-fg">{row.count}</span>
