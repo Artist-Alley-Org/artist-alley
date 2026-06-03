@@ -32,6 +32,7 @@ const (
 	EventLogout           = "logout"
 	EventSessionRevoked   = "session.revoked"
 	EventSessionExpired   = "session.expired"
+	EventUserStatusChanged = "user.status_changed"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -119,6 +120,19 @@ func (r *Recorder) SessionRevoked(ctx context.Context, req *http.Request, userRe
 	r.write(ctx, EventSessionRevoked, &userRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"session_id": sessionID,
 		"reason":     reason,
+	})
+}
+
+// UserStatusChanged records an admin moving a user across the
+// lifecycle state machine (Phase 1.17.B). `previous` + `next`
+// are the underlying user.approved values (1=active, 0=pending,
+// 2=disabled); `reason` is the admin-supplied free-text note —
+// surfaced verbatim in the audit viewer.
+func (r *Recorder) UserStatusChanged(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next int64, reason string) {
+	r.write(ctx, EventUserStatusChanged, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
 	})
 }
 

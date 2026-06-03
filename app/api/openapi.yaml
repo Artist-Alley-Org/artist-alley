@@ -342,6 +342,48 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /admin/users/{ref}/status:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    put:
+      operationId: setAdminUserStatus
+      summary: Change a user's lifecycle status (admin)
+      description: |
+        Phase 1.17.B — admin-only lifecycle transition. Moves a user
+        through pending / active / disabled. The audit log records
+        the before / after / reason tuple.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.approve"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserStatusUpdate"
+      responses:
+        "200":
+          description: New status (after the transition).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserStatusResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/tokens/{id}:
     delete:
       operationId: revokeApiToken
@@ -5089,6 +5131,41 @@ components:
           description: |
             Federation origin (when the profile row came from a peer
             instance). Null = home instance. See ADR 0007.
+
+    AdminUserStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Free-text justification recorded in the audit log alongside
+            the before/after pair. Encouraged but not required — an
+            empty reason still produces an audit row.
+
+    AdminUserStatusResult:
+      type: object
+      required: [ref, status, changed]
+      properties:
+        ref:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        previous_status:
+          type: string
+          enum: [active, pending, disabled]
+        changed:
+          type: boolean
+          description: |
+            False when the target status equals the current status (the
+            handler short-circuits the write but still returns 200 so
+            idempotent automation doesn't trip on a no-op).
 
     AdminUserList:
       type: object

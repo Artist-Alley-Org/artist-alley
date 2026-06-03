@@ -710,6 +710,9 @@ func (metaShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequ
 func (metaShim) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
 	panic("ListAdminUsers called from metadata test shim")
 }
+func (metaShim) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from metadata test shim")
+}
 func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from metadata_test test shim")
 }

@@ -665,6 +665,9 @@ func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequ
 func (shimImpl) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
 	panic("ListAdminUsers called from setup test shim")
 }
+func (shimImpl) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from setup test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from setup_test test shim")
 }

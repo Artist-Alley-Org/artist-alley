@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -31,10 +32,14 @@ import (
 
 // CapReadUsers gates the admin list. Same code as the SetUserRole
 // endpoint's `users.write` neighbour — admins read users; only the
-// `users.write` capability mutates them. Phase 1.17.B widens this
-// surface to include the status mutation endpoints, which keep
-// `users.write`.
+// `users.write` capability mutates them.
 const CapReadUsers = "users.read"
+
+// CapApproveUsers gates the lifecycle state machine (Phase 1.17.B).
+// Distinct from users.write so a future "User Approver" role can
+// move accounts through pending → active → disabled without
+// inheriting role-assignment + grant/revoke rights.
+const CapApproveUsers = "users.approve"
 
 // approvedFromStatus maps the API status enum onto the underlying
 // user.approved column (1=active, 0=pending, 2=disabled per RS
@@ -59,6 +64,48 @@ func approvedFromStatus(s *openapi.ListAdminUsersParamsStatus) (*int64, bool) {
 		return &v, true
 	}
 	return nil, false
+}
+
+// approvedFromUpdateStatus mirrors approvedFromStatus but takes
+// the *AdminUserStatusUpdateStatus enum the update endpoint
+// receives. Same numeric mapping — kept separate because the
+// openapi generator emits distinct types per endpoint.
+func approvedFromUpdateStatus(s openapi.AdminUserStatusUpdateStatus) (int64, bool) {
+	switch s {
+	case openapi.AdminUserStatusUpdateStatusActive:
+		return 1, true
+	case openapi.AdminUserStatusUpdateStatusPending:
+		return 0, true
+	case openapi.AdminUserStatusUpdateStatusDisabled:
+		return 2, true
+	}
+	return 0, false
+}
+
+// statusFromApprovedResult is the AdminUserStatusResult-enum variant
+// of statusFromApproved. Same mapping; openapi generator emits a
+// distinct enum type per response schema.
+func statusFromApprovedResult(approved int64) openapi.AdminUserStatusResultStatus {
+	switch approved {
+	case 1:
+		return openapi.AdminUserStatusResultStatusActive
+	case 0:
+		return openapi.AdminUserStatusResultStatusPending
+	}
+	return openapi.AdminUserStatusResultStatusDisabled
+}
+
+// statusFromApprovedResultPrevious — separate type because the
+// openapi generator emits a distinct enum per JSON property even
+// when the underlying values are identical.
+func statusFromApprovedResultPrevious(approved int64) openapi.AdminUserStatusResultPreviousStatus {
+	switch approved {
+	case 1:
+		return openapi.AdminUserStatusResultPreviousStatusActive
+	case 0:
+		return openapi.AdminUserStatusResultPreviousStatusPending
+	}
+	return openapi.AdminUserStatusResultPreviousStatusDisabled
 }
 
 // statusFromApproved is the inverse — the column value coming
@@ -251,5 +298,84 @@ func (h *Handler) ListAdminUsers(
 		resp.NextCursor = &c
 	}
 	return openapi.ListAdminUsers200JSONResponse(resp), nil
+}
+
+// SetAdminUserStatus moves a user through the lifecycle states
+// (Phase 1.17.B). The mutation is idempotent — re-sending the
+// current status returns 200 with `changed: false` rather than an
+// error, so admin tooling that drives this from a checkbox toggle
+// doesn't trip on a no-op.
+//
+// Audit + cache invalidation fire only when the row actually
+// changed; idempotent calls skip both.
+func (h *Handler) SetAdminUserStatus(
+	ctx context.Context,
+	req openapi.SetAdminUserStatusRequestObject,
+) (openapi.SetAdminUserStatusResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SetAdminUserStatus401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can(CapApproveUsers) {
+		return openapi.SetAdminUserStatus403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "users.approve capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.SetAdminUserStatus400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	newApproved, ok := approvedFromUpdateStatus(req.Body.Status)
+	if !ok {
+		return openapi.SetAdminUserStatus400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid status"},
+		}, nil
+	}
+
+	q := New(h.Pool)
+	row, err := q.UpdateUserStatus(ctx, UpdateUserStatusParams{
+		UserRef:   req.Ref,
+		NewStatus: newApproved,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetAdminUserStatus404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "user not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("users: update status: %w", err)
+	}
+
+	prevApproved := row.PrevStatus
+	resultStatus := statusFromApprovedResult(newApproved)
+	prevResultStatus := statusFromApprovedResultPrevious(prevApproved)
+
+	if row.Changed {
+		// Per-user profile cache could have the old status baked in
+		// (the public profile doesn't expose it today, but the admin
+		// detail view + future "is this user disabled" badges will).
+		// Invalidate so the next read repopulates.
+		if h.byRef != nil {
+			h.byRef.Invalidate(ctx, strconv.FormatInt(req.Ref, 10))
+		}
+		if h.Audit != nil {
+			reason := ""
+			if req.Body.Reason != nil {
+				reason = *req.Body.Reason
+			}
+			h.Audit.UserStatusChanged(ctx, auth.RequestFromContext(ctx), req.Ref, caller.UserRef, prevApproved, newApproved, reason)
+		}
+	}
+
+	resp := openapi.AdminUserStatusResult{
+		Ref:            req.Ref,
+		Status:         resultStatus,
+		PreviousStatus: &prevResultStatus,
+		Changed:        row.Changed,
+	}
+	return openapi.SetAdminUserStatus200JSONResponse(resp), nil
 }
 

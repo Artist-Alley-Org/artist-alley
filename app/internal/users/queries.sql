@@ -128,6 +128,39 @@ WHERE
     OR LOWER(COALESCE(u.email, '')) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
   );
 
+-- name: UpdateUserStatus :one
+-- Lifecycle mutation (Phase 1.17.B). Atomically swaps the user's
+-- approved column to $1 and returns the prior value alongside the
+-- new one + the user's username so the audit row can carry the
+-- before/after pair without a second SELECT.
+--
+-- Returns no rows when the user doesn't exist; handler turns that
+-- into a 404 rather than silently no-opping.
+WITH prior AS (
+  SELECT ref, username, approved FROM "user" WHERE ref = sqlc.arg('user_ref')::BIGINT
+),
+updated AS (
+  UPDATE "user"
+     SET approved = sqlc.arg('new_status')::BIGINT
+   WHERE ref = sqlc.arg('user_ref')::BIGINT
+     AND (SELECT approved FROM prior) <> sqlc.arg('new_status')::BIGINT
+  RETURNING ref
+)
+SELECT prior.ref       AS rs_user_id,
+       prior.username,
+       prior.approved  AS prev_status,
+       sqlc.arg('new_status')::BIGINT AS new_status,
+       (SELECT COUNT(*) FROM updated)::BIGINT > 0 AS changed
+FROM prior;
+
+-- name: GetUserStatusByRef :one
+-- Lightweight status-only read used by the handler's pre-write
+-- short-circuit + the per-user cache invalidation. Doesn't touch
+-- user_profiles.
+SELECT ref AS rs_user_id, username, approved
+FROM "user"
+WHERE ref = $1;
+
 -- name: UpsertUserProfile :one
 -- Caller's own profile edit. Idempotent — overwrites existing fields.
 -- The handler picks whether COALESCE-style PATCH or full overwrite

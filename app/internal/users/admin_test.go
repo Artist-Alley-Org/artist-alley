@@ -164,3 +164,98 @@ func TestStatusFromApproved(t *testing.T) {
 	}
 }
 
+// 1.17.B — lifecycle mutation guards. The status mutation handler
+// owns its own cap (users.approve), distinct from users.read. The
+// guards must fire before the DB write so a misconfigured shim
+// (Pool=nil) won't try to query — exact same pattern as the list
+// endpoint's guards above.
+
+func TestSetAdminUserStatus_Unauthenticated(t *testing.T) {
+	h := &Handler{}
+	resp, err := h.SetAdminUserStatus(context.Background(), openapi.SetAdminUserStatusRequestObject{
+		Ref:  42,
+		Body: &openapi.AdminUserStatusUpdate{Status: openapi.AdminUserStatusUpdateStatusActive},
+	})
+	if err != nil {
+		t.Fatalf("SetAdminUserStatus: %v", err)
+	}
+	if _, ok := resp.(openapi.SetAdminUserStatus401JSONResponse); !ok {
+		t.Errorf("expected 401, got %T", resp)
+	}
+}
+
+// Caller has users.read but NOT users.approve — must 403, not
+// silently allow. Separates the read-vs-mutate fence so a future
+// "User Approver" role can't be inadvertently widened.
+func TestSetAdminUserStatus_NeedsApproveCap(t *testing.T) {
+	h := &Handler{}
+	id := &auth.Identity{UserRef: 7, Capabilities: []string{CapReadUsers}} // read only
+	ctx := auth.WithIdentity(context.Background(), id)
+	resp, err := h.SetAdminUserStatus(ctx, openapi.SetAdminUserStatusRequestObject{
+		Ref:  42,
+		Body: &openapi.AdminUserStatusUpdate{Status: openapi.AdminUserStatusUpdateStatusDisabled},
+	})
+	if err != nil {
+		t.Fatalf("SetAdminUserStatus: %v", err)
+	}
+	if _, ok := resp.(openapi.SetAdminUserStatus403JSONResponse); !ok {
+		t.Errorf("expected 403, got %T", resp)
+	}
+}
+
+// Body validation gates BEFORE the DB call. Missing body → 400 not
+// 500; invalid enum → 400 not 500.
+func TestSetAdminUserStatus_MissingBody(t *testing.T) {
+	h := &Handler{}
+	id := &auth.Identity{UserRef: 7, Capabilities: []string{CapApproveUsers}}
+	ctx := auth.WithIdentity(context.Background(), id)
+	resp, err := h.SetAdminUserStatus(ctx, openapi.SetAdminUserStatusRequestObject{Ref: 42, Body: nil})
+	if err != nil {
+		t.Fatalf("SetAdminUserStatus: %v", err)
+	}
+	if _, ok := resp.(openapi.SetAdminUserStatus400JSONResponse); !ok {
+		t.Errorf("expected 400, got %T", resp)
+	}
+}
+
+// Update-status enum bijection. The openapi generator emits a
+// separate type per JSON property even for the same enum values,
+// so the helper has to be a separate function from approvedFromStatus.
+func TestApprovedFromUpdateStatus(t *testing.T) {
+	cases := []struct {
+		in   openapi.AdminUserStatusUpdateStatus
+		want int64
+	}{
+		{openapi.AdminUserStatusUpdateStatusActive, 1},
+		{openapi.AdminUserStatusUpdateStatusPending, 0},
+		{openapi.AdminUserStatusUpdateStatusDisabled, 2},
+	}
+	for _, c := range cases {
+		got, ok := approvedFromUpdateStatus(c.in)
+		if !ok {
+			t.Errorf("approvedFromUpdateStatus(%q) ok=false", c.in)
+		}
+		if got != c.want {
+			t.Errorf("approvedFromUpdateStatus(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+// Result-side enum mappings — both Status + PreviousStatus variants.
+// A swap here would surface as silently incorrect badges in the
+// admin chrome.
+func TestStatusFromApprovedResult(t *testing.T) {
+	if statusFromApprovedResult(1) != openapi.AdminUserStatusResultStatusActive {
+		t.Error("approved=1 → not Active (result enum)")
+	}
+	if statusFromApprovedResult(0) != openapi.AdminUserStatusResultStatusPending {
+		t.Error("approved=0 → not Pending (result enum)")
+	}
+	if statusFromApprovedResult(2) != openapi.AdminUserStatusResultStatusDisabled {
+		t.Error("approved=2 → not Disabled (result enum)")
+	}
+	if statusFromApprovedResultPrevious(1) != openapi.AdminUserStatusResultPreviousStatusActive {
+		t.Error("approved=1 → not Active (prev enum)")
+	}
+}
+

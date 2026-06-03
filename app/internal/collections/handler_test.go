@@ -705,6 +705,9 @@ func (collShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequ
 func (collShim) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
 	panic("ListAdminUsers called from collections test shim")
 }
+func (collShim) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from collections test shim")
+}
 func (collShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from collections_test test shim")
 }

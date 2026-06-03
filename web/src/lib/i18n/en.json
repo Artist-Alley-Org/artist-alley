@@ -435,7 +435,18 @@
       "title": "User: {username}",
       "role_label": "Role",
       "role_save": "Update role",
-      "role_saved": "Role updated."
+      "role_saved": "Role updated.",
+      "status_section": "Lifecycle status",
+      "status_intro": "Move this account through the lifecycle states. Every change is recorded in the audit log with the reason you supply.",
+      "status_current": "Current status: {status}",
+      "status_reason": "Reason (optional)",
+      "status_reason_placeholder": "e.g. approved after manual identity check",
+      "status_save_active": "Approve",
+      "status_save_pending": "Mark pending",
+      "status_save_disabled": "Disable",
+      "status_save_active_again": "Restore",
+      "status_no_change": "No change \u2014 user is already in that state.",
+      "status_updated": "Status updated to {status}."
     },
     "roles": {
       "title": "Roles & capabilities",

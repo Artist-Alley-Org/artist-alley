@@ -25,6 +25,7 @@ const TRACKED_FILES = [
   'src/lib/components/viewers/ArchiveView.svelte',
   'src/lib/components/viewers/tools/ArchiveTool/Body.svelte',
   'src/routes/admin/users/+page.svelte',
+  'src/routes/admin/users/[ref]/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":

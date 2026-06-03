@@ -64,7 +64,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
-		users:        users.NewHandler(pool, logger, cacheReg),
+		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
 		social:       social.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
@@ -73,6 +73,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 	}
+}
+
+// usersHandlerWithAudit constructs the users handler + attaches the
+// audit recorder. Split out so api.go's struct literal stays
+// expression-shaped without an inline statement block (gofmt
+// rejects that), and so a future "users handler needs LDAP-bind
+// hook too" addition lands in one spot.
+func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, auditRec *audit.Recorder) *users.Handler {
+	h := users.NewHandler(pool, logger, cacheReg)
+	h.SetAuditRecorder(auditRec)
+	return h
 }
 
 // --- jobs ------------------------------------------------------------------
@@ -426,6 +437,9 @@ func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUse
 }
 func (s *apiServer) ListAdminUsers(ctx context.Context, req openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
 	return s.users.ListAdminUsers(ctx, req)
+}
+func (s *apiServer) SetAdminUserStatus(ctx context.Context, req openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	return s.users.SetAdminUserStatus(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

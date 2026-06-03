@@ -421,6 +421,9 @@ func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequ
 func (shimImpl) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
 	panic("ListAdminUsers called from storage test shim")
 }
+func (shimImpl) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from storage test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from storage_test test shim")
 }

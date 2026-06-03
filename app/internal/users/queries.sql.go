@@ -180,6 +180,28 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 	return i, err
 }
 
+const getUserStatusByRef = `-- name: GetUserStatusByRef :one
+SELECT ref AS rs_user_id, username, approved
+FROM "user"
+WHERE ref = $1
+`
+
+type GetUserStatusByRefRow struct {
+	RsUserID int64
+	Username *string
+	Approved int64
+}
+
+// Lightweight status-only read used by the handler's pre-write
+// short-circuit + the per-user cache invalidation. Doesn't touch
+// user_profiles.
+func (q *Queries) GetUserStatusByRef(ctx context.Context, ref int64) (GetUserStatusByRefRow, error) {
+	row := q.db.QueryRow(ctx, getUserStatusByRef, ref)
+	var i GetUserStatusByRefRow
+	err := row.Scan(&i.RsUserID, &i.Username, &i.Approved)
+	return i, err
+}
+
 const listAdminUsers = `-- name: ListAdminUsers :many
 SELECT u.ref                                            AS rs_user_id,
        u.username,
@@ -301,6 +323,58 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateUserStatus = `-- name: UpdateUserStatus :one
+WITH prior AS (
+  SELECT ref, username, approved FROM "user" WHERE ref = $2::BIGINT
+),
+updated AS (
+  UPDATE "user"
+     SET approved = $1::BIGINT
+   WHERE ref = $2::BIGINT
+     AND (SELECT approved FROM prior) <> $1::BIGINT
+  RETURNING ref
+)
+SELECT prior.ref       AS rs_user_id,
+       prior.username,
+       prior.approved  AS prev_status,
+       $1::BIGINT AS new_status,
+       (SELECT COUNT(*) FROM updated)::BIGINT > 0 AS changed
+FROM prior
+`
+
+type UpdateUserStatusParams struct {
+	NewStatus int64
+	UserRef   int64
+}
+
+type UpdateUserStatusRow struct {
+	RsUserID   int64
+	Username   *string
+	PrevStatus int64
+	NewStatus  int64
+	Changed    bool
+}
+
+// Lifecycle mutation (Phase 1.17.B). Atomically swaps the user's
+// approved column to $1 and returns the prior value alongside the
+// new one + the user's username so the audit row can carry the
+// before/after pair without a second SELECT.
+//
+// Returns no rows when the user doesn't exist; handler turns that
+// into a 404 rather than silently no-opping.
+func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (UpdateUserStatusRow, error) {
+	row := q.db.QueryRow(ctx, updateUserStatus, arg.NewStatus, arg.UserRef)
+	var i UpdateUserStatusRow
+	err := row.Scan(
+		&i.RsUserID,
+		&i.Username,
+		&i.PrevStatus,
+		&i.NewStatus,
+		&i.Changed,
+	)
+	return i, err
 }
 
 const upsertUserProfile = `-- name: UpsertUserProfile :one
