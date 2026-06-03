@@ -10,6 +10,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "generate:api": "openapi-typescript ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} -o src/lib/api/schema.d.ts",
     "postinstall": "svelte-kit sync && (test -f ${AA_OPENAPI_SPEC:-../app/api/openapi.yaml} && npm run generate:api || echo 'openapi.yaml not found yet; skipping API codegen')"
   },
@@ -18,14 +21,19 @@
     "@sveltejs/kit": "latest",
     "@sveltejs/vite-plugin-svelte": "latest",
     "@tailwindcss/vite": "latest",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/svelte": "^5.3.1",
     "@types/node": "latest",
     "@types/three": "^0.184.1",
+    "@vitest/coverage-v8": "^4.1.8",
+    "happy-dom": "^20.9.0",
     "openapi-typescript": "latest",
     "svelte": "latest",
     "svelte-check": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.2",

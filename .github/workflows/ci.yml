@@ -70,6 +70,12 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npm run check
 
+      - name: vitest (frontend unit tests)
+        working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm test
+
       - name: vite build (catches errors svelte-check can't)
         working-directory: web
         env:
