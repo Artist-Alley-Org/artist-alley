@@ -74,7 +74,12 @@
         {
           "id": "format-coverage",
           "title": "Format coverage",
-          "description": "Images: PNG, JPEG, WebP, plus HDR / EXR / Radiance `.pic` via ffmpeg tonemap and a pure-Go RGBE decoder. Video: HLS adaptive ladder with frame-accurate scrubbing. Audio: waveform PNG + click-to-seek scrub. PDF: multi-page navigator + raster. Fonts: specimen render. 3D: native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`, Blender-rendered turntable thumbnails for heavy formats, pure-Go importers for legacy game formats (MD2 / MD3 / MDL / MS3D). Asset companion files (textures, `.mtl`, `.bin`) resolved per-asset. Phase 1.18.A / 1.18.B-1 / 1.18.B-10 / 1.18.B-12 / 1.18.C / 1.18.D / 1.18.E."
+          "description": "Images: PNG, JPEG, WebP, plus HDR / EXR / Radiance `.pic` via ffmpeg tonemap and a pure-Go RGBE decoder. Video: HLS adaptive ladder with frame-accurate scrubbing. Audio: waveform PNG + click-to-seek scrub. PDF: multi-page navigator + raster. Fonts: specimen render with interactive Try-it. 3D: native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`, Blender-rendered turntable thumbnails for heavy formats, pure-Go importers for legacy game formats (MD2 / MD3 / MDL / MS3D). Ebooks: in-app EPUB reader with typography + scroll memory. Comics: cover-extraction thumbnails for CBZ / CBR / CB7. Audiobooks: m4b chapter probe with `.nfo` / `.cue` companion fold and multi-file playlist auto-advance. Archives: zip / tar / 7z / rar / tar.xz browser with in-place file tree + CodeMirror-syntax-highlighted entry preview + Extract-all bundle. Docs: CodeMirror 6 reader for text/code with syntax highlighting + text-range annotations (highlight / strike / underline / comment / note) + lint-style diagnostics. Sprite sheets: auto-detect + per-frame tools + onion-skin + export. Asset companion files (textures, `.mtl`, `.bin`) resolved per-asset. Phase 1.18.A / 1.18.B-1 / 1.18.B-10 / 1.18.B-12 / 1.18.B-15 / 1.18.C / 1.18.D / 1.18.E."
+        },
+        {
+          "id": "whiteboard-brush-surface",
+          "title": "Whiteboard / brush surface",
+          "description": "Post-anchored brush canvas with pen / marker / highlighter / eraser, stamp-based brush renderer (built-in soft + hard round) + ABR (Adobe Photoshop Brush) parser with owner-scoped pack upload + storage. MS-Paint-style sectioned sidebar with shapes (rect / ellipse / triangle / line / arrow + nine more), text with Google Fonts, custom HSL+RGB+Hex+Eyedropper color picker, Color 1 / Color 2 split, shape outline + fill, image transforms, rect-select + lasso + Select All + Invert + crop, copy / cut / paste, layers, infinite canvas with pan + zoom-toward-cursor + minimap. Element-typed model (strokes / shapes / text / images / connectors with auto-reroute / frames / sticky notes / mindmap nodes) with element comments as the annotation foundation."
         }
       ]
     },
@@ -288,13 +293,13 @@
         {
           "id": "1.18.B-15",
           "title": "Sprite-sheet viewer",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "Auto-slice by uniform grid (rows × cols, configurable cell size) and by edge-detection (find tightest bounding box per visible region) — operator picks the strategy per asset.",
             "Frame index panel with thumbnails; reorder, name, and group frames into named action sequences (idle / walk / attack).",
             "Animation timeline + scrubber that plays the slices in order with configurable FPS, ping-pong, hold-frame, and onion-skin between adjacent frames. Reuses the existing video HUD primitives.",
-            "Per-frame metadata stored as anchor-tagged annotations: action name, duration, hitbox region, anchor point. Same anchor model as 1.18.B-6 so the annotation overlay works on sprite slices for free.",
-            "Export individual cels as PNG / WebP, or export the action set as a packed sprite sheet for engine import."
+            "Per-frame metadata persisted as a sidecar companion JSON (action ranges, per-frame notes, slices, alt-files). Anchor-tagged annotation integration with 1.18.B-6 deferred — the companion format is forward-compatible.",
+            "Export individual cels as PNG / WebP, or export the action set as a packed sprite sheet (PNG + JSON) or a per-frame zip; client-side GIF export via gifenc."
           ]
         },
         {

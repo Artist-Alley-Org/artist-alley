@@ -254,7 +254,7 @@ whatever anchor the presenter emits to everyone in the room.
   the HTTP claim API are the carrier.
 - Quick-generate PDF summary for offline clients.
 
-### 1.18.B-15 — Sprite-sheet viewer
+### 1.18.B-15 — Sprite-sheet viewer (shipped)
 - Auto-slice by uniform grid (rows × cols, configurable cell size)
   and by edge-detection (find tightest bounding box per visible
   region) — operator picks the strategy per asset.
@@ -263,12 +263,16 @@ whatever anchor the presenter emits to everyone in the room.
 - Animation timeline + scrubber that plays the slices in order with
   configurable FPS, ping-pong, hold-frame, and onion-skin between
   adjacent frames. Reuses the existing video HUD primitives.
-- Per-frame metadata stored as anchor-tagged annotations: action
-  name, duration, hitbox region, anchor point. Same anchor model
-  as 1.18.B-6 so the annotation overlay works on sprite slices for
-  free.
+- Per-frame metadata persisted as a sidecar companion JSON
+  (action ranges, per-frame notes, slices, alt-files /
+  palette-swap previews). The anchor-tagged annotation integration
+  with 1.18.B-6 is deferred — the companion format is forward-
+  compatible so a later commit can rewire it into the shared
+  annotation surface without re-tagging existing data.
 - Export individual cels as PNG / WebP, or export the action set
-  as a packed sprite sheet for engine import.
+  as a packed sprite sheet (PNG + JSON) or a per-frame zip; a
+  client-side GIF encoder lets the browser produce share-ready
+  animations without a server round-trip.
 
 ### 1.18.B-16 — Texture inspector
 - Channel splitter: view R / G / B / A as separate greyscale views,
