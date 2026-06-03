@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/ulikunitz/xz"
 )
 
 // ManifestTAR scans every TAR header from the start of the stream
@@ -105,8 +107,11 @@ func openTarStream(r io.Reader, compressedExt string) (*tar.Reader, error) {
 	case "bz2":
 		return tar.NewReader(bzip2.NewReader(r)), nil
 	case "xz":
-		// xz needs an external package — defer; surface as "unsupported".
-		return nil, &errUnsupported{ext: "tar.xz"}
+		xr, err := xz.NewReader(r)
+		if err != nil {
+			return nil, fmt.Errorf("archive.tar.xz: open: %w", err)
+		}
+		return tar.NewReader(xr), nil
 	}
 	return nil, &errUnsupported{ext: "tar." + compressedExt}
 }

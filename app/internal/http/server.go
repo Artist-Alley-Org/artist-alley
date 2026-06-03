@@ -170,6 +170,14 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// this handler is the per-click data-plane.
 		archEntryH := handlers.NewArchiveEntryHandler(pool, storageSvc, logger)
 		r.Get("/assets/{id}/archive/entry", archEntryH.ServeHTTP)
+
+		// /assets/{id}/archive/bundle.zip — re-package every entry of
+		// the source archive into a single ZIP the browser downloads.
+		// Powers the "Extract all" button in ArchiveView's panel; lets
+		// the user grab the contents of a TAR / 7z / RAR / tar.xz in
+		// a format every OS opens natively.
+		archBundleH := handlers.NewArchiveBundleHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/archive/bundle.zip", archBundleH.ServeHTTP)
 	})
 
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request

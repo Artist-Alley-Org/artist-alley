@@ -120,6 +120,24 @@
       </div>
     </section>
 
+    <!-- ── Extract ──────────────────────────────────────────── -->
+    {#if session.manifest && fileCount > 0}
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Extract</h3>
+        <button
+          type="button"
+          onclick={() => session.downloadBundle()}
+          class="w-full rounded border border-accent bg-accent/15 px-2 py-1 text-[10px] font-medium text-fg hover:bg-accent/25"
+          title="Repackage every entry as a single ZIP and download"
+        >Extract all as .zip</button>
+        <p class="mt-1 text-[10px] leading-snug text-fg-muted">
+          Streams a fresh ZIP of every entry — convenient for sources the OS
+          can't open natively (.7z / .rar / .tar.xz). The original archive is
+          still available via the asset's Download button.
+        </p>
+      </section>
+    {/if}
+
     <!-- ── By extension ─────────────────────────────────────── -->
     {#if extBreakdown.length > 0}
       <section class="border-b border-border p-3 text-xs">

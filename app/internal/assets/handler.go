@@ -406,7 +406,9 @@ var textExtsHandler = map[string]struct{}{
 // is extracted + cached on metadata.archive.
 var archiveExtsHandler = map[string]struct{}{
 	"zip": {}, "jar": {}, "war": {}, "ear": {}, "apk": {}, "ipa": {},
-	"tar": {}, "tgz": {}, "tar.gz": {}, "tar.bz2": {},
+	"7z": {}, "rar": {},
+	"tar": {}, "tgz": {}, "tbz2": {}, "txz": {},
+	"tar.gz": {}, "tar.bz2": {}, "tar.xz": {},
 }
 
 // audioExtsHandler mirrors preview.audioExts. Duplicated here so the

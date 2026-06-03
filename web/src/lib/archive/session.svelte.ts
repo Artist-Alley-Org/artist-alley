@@ -79,6 +79,9 @@ export interface ArchiveSessionMethods {
   /** Open the entry's bytes endpoint in a new tab — used by the
    *  Download button in both the canvas and the panel. */
   downloadEntry(path: string): void;
+  /** Trigger the "Extract all" download — server re-packages every
+   *  entry into a fresh ZIP regardless of source archive kind. */
+  downloadBundle(): void;
 }
 
 export type ArchiveSessionInstance =
@@ -160,11 +163,22 @@ export function createArchiveSession(opts: ArchiveSessionOpts): ArchiveSessionIn
     a.click();
     document.body.removeChild(a);
   }
+  function downloadBundle() {
+    const a = document.createElement('a');
+    a.href = `/api/v1/assets/${opts.assetId}/archive/bundle.zip`;
+    // Backend sets Content-Disposition with a friendly filename; the
+    // anchor download attr just hints at the kind for browsers that
+    // honour it ahead of the header.
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 
   return Object.assign(state as ArchiveSessionInstance, {
     assetId: opts.assetId,
     setFilter, toggleHideDotfiles, toggleFolder, setExpanded,
-    selectEntry, downloadEntry,
+    selectEntry, downloadEntry, downloadBundle,
   });
 }
 

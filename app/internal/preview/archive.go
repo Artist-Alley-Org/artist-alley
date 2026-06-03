@@ -125,11 +125,10 @@ func (h *ArchiveHandler) extractManifest(ctx context.Context, hash, format strin
 	if info != nil && info.Size > h.MaxSourceBytes {
 		return nil, fmt.Errorf("source %d bytes > cap %d", info.Size, h.MaxSourceBytes)
 	}
-	// ZIP needs ReaderAt + size — slurp into memory (capped). For
-	// huge zips we could DownloadRange the central-directory tail
-	// only; defer until we see archives in the wild that overflow
-	// the cap.
-	if format == "zip" {
+	// ZIP + 7z both need ReaderAt + size — slurp into memory (capped).
+	// For huge archives we could DownloadRange the header tail only;
+	// defer until we see ones in the wild that overflow the cap.
+	if format == "zip" || format == "7z" {
 		buf, err := io.ReadAll(io.LimitReader(rc, h.MaxSourceBytes+1))
 		if err != nil {
 			return nil, fmt.Errorf("read: %w", err)
@@ -137,9 +136,15 @@ func (h *ArchiveHandler) extractManifest(ctx context.Context, hash, format strin
 		if int64(len(buf)) > h.MaxSourceBytes {
 			return nil, fmt.Errorf("source exceeded cap during read")
 		}
-		return archive.ManifestZIP(bytes.NewReader(buf), int64(len(buf)))
+		if format == "zip" {
+			return archive.ManifestZIP(bytes.NewReader(buf), int64(len(buf)))
+		}
+		return archive.ManifestSevenZip(bytes.NewReader(buf), int64(len(buf)))
 	}
-	// TAR / TAR.GZ / TAR.BZ2 — stream-only.
+	if format == "rar" {
+		return archive.ManifestRAR(rc)
+	}
+	// TAR / TAR.GZ / TAR.BZ2 / TAR.XZ — stream-only.
 	compressed := ""
 	if strings.HasPrefix(format, "tar.") {
 		compressed = strings.TrimPrefix(format, "tar.")

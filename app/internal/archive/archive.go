@@ -72,19 +72,32 @@ func ParseFormat(ext string) string {
 	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
 	case "zip", "jar", "war", "ear", "apk", "ipa":
 		return "zip"
+	case "7z":
+		return "7z"
+	case "rar":
+		return "rar"
 	case "tar":
 		return "tar"
 	case "tgz":
 		return "tar.gz"
+	case "tbz2":
+		return "tar.bz2"
+	case "txz":
+		return "tar.xz"
 	case "gz":
 		// Bare .gz is single-file compression, not an archive.
 		// We don't surface those here — the file viewer can
 		// transparently decompress when the user opens it.
 		return ""
 	}
-	// Common compound: foo.tar.gz / foo.tar.bz2 / foo.tar.xz
-	if strings.HasSuffix(ext, ".tar.gz") || strings.HasSuffix(ext, ".tar.bz2") || strings.HasSuffix(ext, ".tar.xz") {
-		return "tar.gz"
+	// Compound extensions: foo.tar.gz / foo.tar.bz2 / foo.tar.xz.
+	// Returns the full compound name so the dispatcher knows which
+	// decompressor to wrap around the tar reader.
+	low := strings.ToLower(ext)
+	for _, sfx := range []string{".tar.gz", ".tar.bz2", ".tar.xz"} {
+		if strings.HasSuffix(low, sfx) {
+			return strings.TrimPrefix(sfx, ".")
+		}
 	}
 	return ""
 }
@@ -95,7 +108,9 @@ func ParseFormat(ext string) string {
 func SupportedExtensions() []string {
 	return []string{
 		"zip", "jar", "war", "ear", "apk", "ipa",
-		"tar", "tgz", "tar.gz", "tar.bz2", "tar.xz",
+		"7z", "rar",
+		"tar", "tgz", "tbz2", "txz",
+		"tar.gz", "tar.bz2", "tar.xz",
 	}
 }
 

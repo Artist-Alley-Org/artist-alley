@@ -24,21 +24,24 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
 
-// ArchiveEntryHandler serves a single entry out of a ZIP / TAR
-// archive without ever extracting the whole thing. The user picks
-// an entry in the ArchiveView's file tree, the frontend hits
-// GET /assets/{id}/archive/entry?path=<relpath>, and this handler
-// streams just that file's decompressed bytes back.
+// ArchiveEntryHandler serves a single entry out of a ZIP / TAR /
+// 7z / RAR archive without ever extracting the whole thing. The
+// user picks an entry in the ArchiveView's file tree, the frontend
+// hits GET /assets/{id}/archive/entry?path=<relpath>, and this
+// handler streams just that file's decompressed bytes back.
 //
 // Per-archive-kind cost:
 //   * ZIP: O(1) — central directory parse + seek to local header.
 //     We slurp the whole archive into memory (capped) since
 //     archive/zip needs io.ReaderAt; future optimisation:
 //     DownloadRange the tail + the entry's data range only.
+//   * 7z: O(1) — header at end-of-file, same slurp-into-RAM path.
 //   * TAR: O(entries before target) — must scan forward until we
 //     hit the matching header. A 1k-entry tar feels instant; a
 //     100k-entry tar will take seconds per click. Defer optimisation
 //     until we see one in the wild.
+//   * RAR: O(entries before target) — solid-archive mode makes
+//     random access unreliable so streaming is the only safe path.
 //
 // MIME inference reuses the same extension table other media
 // surfaces use (DocView opens text/code inline; ImageView opens
@@ -126,7 +129,8 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	var rc io.ReadCloser
 	var size int64
 	switch {
-	case format == "zip":
+	case format == "zip" || format == "7z":
+		// Both need io.ReaderAt + total size — slurp into memory.
 		raw, err := io.ReadAll(io.LimitReader(body, h.MaxArchiveBytes+1))
 		if err != nil {
 			http.Error(w, `{"error":"archive read failed"}`, http.StatusInternalServerError)
@@ -136,19 +140,41 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, `{"error":"archive exceeds size cap"}`, http.StatusRequestEntityTooLarge)
 			return
 		}
-		var entryRC io.ReadCloser
-		entryRC, zf, err := archive.OpenZIPEntry(bytes.NewReader(raw), int64(len(raw)), entryPath)
+		if format == "zip" {
+			entryRC, zf, err := archive.OpenZIPEntry(bytes.NewReader(raw), int64(len(raw)), entryPath)
+			if err != nil {
+				http.Error(w, `{"error":"entry not found"}`, http.StatusNotFound)
+				return
+			}
+			if entryRC == nil {
+				http.Error(w, `{"error":"entry is a directory"}`, http.StatusBadRequest)
+				return
+			}
+			rc = entryRC
+			size = int64(zf.UncompressedSize64)
+		} else {
+			entryRC, zf, err := archive.OpenSevenZipEntry(bytes.NewReader(raw), int64(len(raw)), entryPath)
+			if err != nil {
+				http.Error(w, `{"error":"entry not found"}`, http.StatusNotFound)
+				return
+			}
+			if entryRC == nil {
+				http.Error(w, `{"error":"entry is a directory"}`, http.StatusBadRequest)
+				return
+			}
+			rc = entryRC
+			size = int64(zf.UncompressedSize)
+		}
+	case format == "rar":
+		// Streaming — walks from byte 0 each call. Solid-mode
+		// archives can't seek so this is the only safe baseline.
+		entryRC, hdr, err := archive.OpenRARStreamEntry(body, entryPath)
 		if err != nil {
 			http.Error(w, `{"error":"entry not found"}`, http.StatusNotFound)
 			return
 		}
-		if entryRC == nil {
-			// Directory entry — nothing to stream.
-			http.Error(w, `{"error":"entry is a directory"}`, http.StatusBadRequest)
-			return
-		}
 		rc = entryRC
-		size = int64(zf.UncompressedSize64)
+		size = hdr.UnPackedSize
 	case strings.HasPrefix(format, "tar"):
 		compressed := ""
 		if format != "tar" {

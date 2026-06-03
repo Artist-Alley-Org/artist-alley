@@ -18,6 +18,7 @@
   import type { DocSessionInstance, DocOutlineEntry } from '$lib/doc/session.svelte';
   import { persistDocScroll } from '$lib/doc/session.svelte';
   import { annotationField, annotationTheme, setDocAnnotations } from '$lib/doc/annotation-deco';
+  import { EXT_LANG, loadLanguage } from '$lib/codemirror/lang';
 
   type Asset = import('./controller').ViewAsset;
 
@@ -46,81 +47,10 @@
   /** Annotation the panel asked the editor to scroll into view. */
   let focusedAnnotationId = $state<string | null>(null);
 
-  // ── Language detection ────────────────────────────────────────
-  // Mapping from file extension to CodeMirror language id. Used for
-  // grammar loading + the Stats badge.
-  const EXT_LANG: Record<string, string> = {
-    md: 'markdown', markdown: 'markdown', mdx: 'markdown',
-    py: 'python', pyi: 'python',
-    js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-    jsx: 'javascript-jsx',
-    ts: 'typescript', tsx: 'typescript-jsx',
-    json: 'json', jsonc: 'json',
-    yaml: 'yaml', yml: 'yaml',
-    html: 'html', htm: 'html', vue: 'html', svelte: 'html',
-    css: 'css', scss: 'css', sass: 'css', less: 'css',
-    sql: 'sql',
-    go: 'go',
-    rs: 'rust',
-    c: 'cpp', h: 'cpp', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp',
-    xml: 'xml', plist: 'xml', svg: 'xml',
-    // legacy-modes set (loaded via @codemirror/legacy-modes when picked)
-    lua: 'lua',
-    sh: 'shell', bash: 'shell', zsh: 'shell',
-    rb: 'ruby',
-    pl: 'perl', pm: 'perl',
-    toml: 'toml',
-    ini: 'properties', cfg: 'properties', conf: 'properties', env: 'properties', properties: 'properties',
-    diff: 'diff', patch: 'diff',
-    dockerfile: 'dockerfile',
-    makefile: 'cmake',
-    mk: 'cmake',
-  };
+  // Extension → CodeMirror language id + dynamic grammar loader live
+  // in $lib/codemirror/lang so ArchiveView's in-archive preview shares
+  // the same pack inventory.
   const languageId = $derived(EXT_LANG[ext] ?? 'plain');
-
-  async function loadLanguage(id: string) {
-    // First-party lang packs.
-    try {
-      switch (id) {
-        case 'markdown': { const m = await import('@codemirror/lang-markdown'); return m.markdown(); }
-        case 'python':   { const m = await import('@codemirror/lang-python');   return m.python(); }
-        case 'javascript': { const m = await import('@codemirror/lang-javascript'); return m.javascript(); }
-        case 'javascript-jsx': { const m = await import('@codemirror/lang-javascript'); return m.javascript({ jsx: true }); }
-        case 'typescript': { const m = await import('@codemirror/lang-javascript'); return m.javascript({ typescript: true }); }
-        case 'typescript-jsx': { const m = await import('@codemirror/lang-javascript'); return m.javascript({ typescript: true, jsx: true }); }
-        case 'json': { const m = await import('@codemirror/lang-json'); return m.json(); }
-        case 'yaml': { const m = await import('@codemirror/lang-yaml'); return m.yaml(); }
-        case 'html': { const m = await import('@codemirror/lang-html'); return m.html(); }
-        case 'css':  { const m = await import('@codemirror/lang-css');  return m.css(); }
-        case 'sql':  { const m = await import('@codemirror/lang-sql');  return m.sql(); }
-        case 'go':   { const m = await import('@codemirror/lang-go');   return m.go(); }
-        case 'rust': { const m = await import('@codemirror/lang-rust'); return m.rust(); }
-        case 'cpp':  { const m = await import('@codemirror/lang-cpp');  return m.cpp(); }
-        case 'xml':  { const m = await import('@codemirror/lang-xml');  return m.xml(); }
-      }
-      // Legacy-modes — stream-language wrapped grammars for the
-      // dialects without a first-party pack. Imports are cheap; one
-      // module per language family.
-      const legacy = await import('@codemirror/legacy-modes/mode/lua');
-      const stream = await import('@codemirror/language');
-      switch (id) {
-        case 'lua':        return stream.StreamLanguage.define(legacy.lua);
-        case 'shell':      { const m = await import('@codemirror/legacy-modes/mode/shell');      return stream.StreamLanguage.define(m.shell); }
-        case 'ruby':       { const m = await import('@codemirror/legacy-modes/mode/ruby');       return stream.StreamLanguage.define(m.ruby); }
-        case 'perl':       { const m = await import('@codemirror/legacy-modes/mode/perl');       return stream.StreamLanguage.define(m.perl); }
-        case 'toml':       { const m = await import('@codemirror/legacy-modes/mode/toml');       return stream.StreamLanguage.define(m.toml); }
-        case 'properties': { const m = await import('@codemirror/legacy-modes/mode/properties'); return stream.StreamLanguage.define(m.properties); }
-        case 'diff':       { const m = await import('@codemirror/legacy-modes/mode/diff');       return stream.StreamLanguage.define(m.diff); }
-        case 'dockerfile': { const m = await import('@codemirror/legacy-modes/mode/dockerfile'); return stream.StreamLanguage.define(m.dockerFile); }
-        case 'cmake':      { const m = await import('@codemirror/legacy-modes/mode/cmake');      return stream.StreamLanguage.define(m.cmake); }
-      }
-    } catch (e) {
-      // Grammar import failure isn't fatal — fall through to plain.
-      // eslint-disable-next-line no-console
-      console.warn('doc: language pack load failed', id, e);
-    }
-    return null;
-  }
 
   // ── Outline builders ──────────────────────────────────────────
   function buildMarkdownOutline(text: string): DocOutlineEntry[] {

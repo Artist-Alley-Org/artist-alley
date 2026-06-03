@@ -14,6 +14,7 @@
   import type { ViewController } from './controller';
   import type { ArchiveSessionInstance, ArchiveManifest, TreeNode } from '$lib/archive/session.svelte';
   import { buildTree, fmtBytes } from '$lib/archive/session.svelte';
+  import { languageIdForExt, loadLanguage } from '$lib/codemirror/lang';
 
   type Asset = import('./controller').ViewAsset;
 
@@ -53,7 +54,6 @@
     if (fromProp) applyManifest(fromProp);
     else void fetchManifest();
   });
-  onDestroy(() => { /* nothing to dispose */ });
 
   // ── Manifest plumbing ──────────────────────────────────────
   interface Wire {
@@ -170,6 +170,80 @@
       }
     })();
   });
+
+  // ── CodeMirror mount ──────────────────────────────────────
+  // The text preview pane lazy-mounts a read-only CodeMirror 6
+  // editor when previewText lands so we get syntax highlighting,
+  // line numbers, and search without dragging in the full DocView
+  // chrome. Each time the selected entry changes we rebuild the
+  // editor (cheap — most entries are < 1 MB and the grammar pack
+  // is already cached).
+  let codeContainer: HTMLDivElement | undefined = $state();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cmView: any = null;
+  $effect(() => {
+    const text = session.previewText;
+    const path = session.selectedPath;
+    const el = codeContainer;
+    if (!el || !path || previewKind(path) !== 'text' || session.previewLoading || session.previewError) {
+      if (cmView) { cmView.destroy(); cmView = null; }
+      return;
+    }
+    const ext = (() => {
+      const dot = path.lastIndexOf('.');
+      return dot >= 0 ? path.slice(dot + 1) : '';
+    })();
+    let cancelled = false;
+    void (async () => {
+      const [
+        { EditorState },
+        { EditorView, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, keymap },
+        { defaultKeymap, history, historyKeymap },
+        { searchKeymap, search },
+        { syntaxHighlighting, defaultHighlightStyle, foldGutter, foldKeymap, bracketMatching },
+        { oneDark },
+      ] = await Promise.all([
+        import('@codemirror/state'),
+        import('@codemirror/view'),
+        import('@codemirror/commands'),
+        import('@codemirror/search'),
+        import('@codemirror/language'),
+        import('@codemirror/theme-one-dark'),
+      ]);
+      const lang = await loadLanguage(languageIdForExt(ext));
+      if (cancelled || !codeContainer) return;
+      if (cmView) cmView.destroy();
+      const state = EditorState.create({
+        doc: text,
+        extensions: [
+          history(),
+          drawSelection(),
+          lineNumbers(),
+          highlightActiveLine(),
+          highlightActiveLineGutter(),
+          bracketMatching(),
+          foldGutter(),
+          search({ top: true }),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap]),
+          oneDark,
+          EditorView.lineWrapping,
+          EditorState.readOnly.of(true),
+          EditorView.theme({
+            '&': { height: '100%', fontSize: '12px' },
+            '.cm-scroller': {
+              fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace',
+              lineHeight: '1.45',
+            },
+          }),
+          lang ? [lang] : [],
+        ],
+      });
+      cmView = new EditorView({ state, parent: codeContainer });
+    })();
+    return () => { cancelled = true; };
+  });
+  onDestroy(() => { if (cmView) { cmView.destroy(); cmView = null; } });
 </script>
 
 <div class="flex h-full w-full overflow-hidden bg-surface text-fg">
@@ -256,7 +330,7 @@
           {:else if session.previewError}
             <p class="m-3 rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[10px] text-danger">{session.previewError}</p>
           {:else}
-            <pre class="m-0 whitespace-pre p-3 font-mono text-[11px] leading-snug text-fg">{session.previewText}</pre>
+            <div bind:this={codeContainer} class="h-full w-full"></div>
           {/if}
         {:else}
           <div class="flex h-full w-full flex-col items-center justify-center gap-3 p-8 text-center text-sm text-fg-muted">

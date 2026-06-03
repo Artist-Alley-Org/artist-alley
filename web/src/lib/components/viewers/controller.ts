@@ -330,7 +330,8 @@ const AUDIOBOOK_EXTS = new Set(['m4b', 'aax']);
 // better fit for sequential image-page browsing.
 const ARCHIVE_EXTS = new Set([
   'zip', 'jar', 'war', 'ear', 'apk', 'ipa',
-  'tar', 'tgz',
+  '7z', 'rar',
+  'tar', 'tgz', 'tbz2', 'txz',
 ]);
 const PDF_EXTS = new Set(['pdf']);
 // Kept in sync with app/internal/preview/font.go::fontExts.
