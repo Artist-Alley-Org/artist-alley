@@ -805,15 +805,15 @@ func (metaShim) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestO
 func (metaShim) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
 	panic("GetBrushPackStamp called from metaShim test shim")
 }
-func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+func (metaShim)ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
 	panic("ListAssetTextAnnotations called from metadata_test test shim")
 }
-func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+func (metaShim)CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
 	panic("CreateAssetTextAnnotation called from metadata_test test shim")
 }
-func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+func (metaShim)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
 	panic("UpdateTextAnnotation called from metadata_test test shim")
 }
-func (shimImpl) LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+func (metaShim)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	panic("LintAsset called from metadata_test test shim")
 }

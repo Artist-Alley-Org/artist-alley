@@ -525,15 +525,15 @@ func (rtOnly) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObj
 func (rtOnly) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
 	panic("GetBrushPackStamp called from rtOnly test shim")
 }
-func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
-	panic("ListAssetTextAnnotations called from assettype_test test shim")
+func (rtOnly)ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from assettype rtOnly test shim")
 }
-func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
-	panic("CreateAssetTextAnnotation called from assettype_test test shim")
+func (rtOnly)CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from assettype rtOnly test shim")
 }
-func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
-	panic("UpdateTextAnnotation called from assettype_test test shim")
+func (rtOnly)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from assettype rtOnly test shim")
 }
-func (shimImpl) LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
-	panic("LintAsset called from assettype_test test shim")
+func (rtOnly)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	panic("LintAsset called from assettype rtOnly test shim")
 }
