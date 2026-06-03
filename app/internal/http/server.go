@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/audiobook"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -112,6 +113,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewPSDHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewComicHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewTextHandler(pool, storageSvc, sysCfg, logger))
+	// Audiobook post-processing — Phase B-2 stubs. Registered so
+	// the dispatcher knows the type names + the admin queue page
+	// renders them; the actual ffmpeg work is a TODO in
+	// app/internal/audiobook/jobs.go.
+	jobRegistry.Register(audiobook.NewMergeHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(audiobook.NewDecryptHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
