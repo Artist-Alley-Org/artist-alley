@@ -1,8 +1,9 @@
 <script lang="ts">
-  // Standalone post page. Renders the same PostModal component that
+  // Standalone post page. Renders the same PostHost component that
   // the browse-feed overlay uses; the difference is the close
   // behavior (back to / if there's no in-app history, otherwise
-  // history.back()).
+  // history.back()) + standalone=true to swap the close button for a
+  // back-arrow affordance.
   //
   // This route is hit by:
   //   - Shared / bookmarked URLs
@@ -15,7 +16,7 @@
 
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import PostModal from '$components/PostModal.svelte';
+  import PostHost from '$components/PostHost.svelte';
 
   const postId = $derived(page.params.id ?? '');
 
@@ -35,4 +36,4 @@
   <title>Post — artist-alley</title>
 </svelte:head>
 
-<PostModal {postId} onClose={handleClose} standalone />
+<PostHost {postId} onClose={handleClose} standalone />

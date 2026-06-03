@@ -15,9 +15,9 @@ FROM field_definition
 WHERE (sqlc.narg('status')::TEXT IS NULL OR status = sqlc.narg('status')::TEXT)
 ORDER BY display_group, display_order, code;
 
--- name: ListFieldDefinitionsForResourceType :many
+-- name: ListFieldDefinitionsForAssetType :many
 -- Like ListFieldDefinitions but only fields whose applies_to is
--- empty (applies to all) OR contains the given resource_type ref.
+-- empty (applies to all) OR contains the given asset_type ref.
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,

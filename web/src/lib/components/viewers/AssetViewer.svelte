@@ -11,14 +11,29 @@
 
   import { onMount, onDestroy, type Snippet } from 'svelte';
   import type { ViewController } from './controller';
-  import { defaultController, kindForExtension } from './controller';
+  import { defaultController, kindForAsset } from './controller';
   import ImageView from './ImageView.svelte';
-  import VideoView from './VideoView.svelte';
+  import MediaView from './MediaView.svelte';
   import ModelView from './ModelView.svelte';
-  import AudioView from './AudioView.svelte';
   import PDFView from './PDFView.svelte';
   import FontView from './FontView.svelte';
+  import EpubView from './EpubView.svelte';
+  import DocView from './DocView.svelte';
+  import AudiobookView from './AudiobookView.svelte';
+  import ArchiveView from './ArchiveView.svelte';
+  import SpriteCanvas from './SpriteCanvas.svelte';
+  import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
+  import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
+  import { createModelSession, type ModelSessionInstance } from '$lib/3d/session.svelte';
+  import { createDocSession, type DocSessionInstance } from '$lib/doc/session.svelte';
+  import { createAudiobookSession, type AudiobookSessionInstance } from '$lib/audiobook/session.svelte';
+  import { createArchiveSession, type ArchiveSessionInstance } from '$lib/archive/session.svelte';
+  import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
+  import ViewerMenuBar from './ViewerMenuBar.svelte';
+  import ToolPanelShell from './ToolPanelShell.svelte';
+  import { TOOLS } from './tools/registry';
+  import type { ToolContext, ToolDef } from './tools/contract';
 
   // Native + three-loader 3D paths we ship today. Other 3D
   // extensions (mview, blend, mb, ma, max, usd*) fall through to
@@ -37,51 +52,254 @@
         only fire for the focused viewer so two carousel slides don't
         fight for the keyboard. */
     active?: boolean;
-    /** True once the host (e.g. PostModal) has explicitly entered
-        review mode. Outside review mode the viewer is "display only":
-        wheel + drag bubble up to the parent (so the modal scroll-snap
-        still works), hotkeys are inert, and the 3D bodies don't grab
-        the pointer. The Review button or a double-click flips this on. */
-    reviewMode?: boolean;
-    /** Host-provided content for the right pane when NOT in review
-        mode. PostModal injects its post metadata snippet here; the
-        standalone /assets/[id] page can pass asset-only info; an
-        embedded viewer can pass anything. When reviewMode flips on
-        the pane swaps to the kind-aware tools panel the viewer owns. */
-    metadataSlot?: Snippet;
+    /** Centered title bar content. Threaded to ViewerMenuBar to
+        replace the default filename strip in the title bar (post
+        hosts use this for "title — by author"). */
+    titleSlot?: Snippet;
+    /** Extra Tips rows rendered below the active tool's Tips in
+        the shell footer. Hosts use this for nav shortcuts (A/D
+        within-playlist, ←/→ sibling-nav) that aren't owned by any
+        specific tool. */
+    extraTips?: Snippet;
+    /** Host-injected tools that merge into the registry at shell
+        mount. Hosts that own richer surfaces (PostHost has post
+        details with likes / comments / cover-picker) register
+        their own ToolDef with the appropriate order. The built-in
+        Details tool stays in the dropdown alongside — the user
+        picks which surface they want from the dropdown. */
+    customTools?: ToolDef[];
+    /** Whiteboard session — wired by hosts that mount a whiteboard
+        surface (post-anchored today; any asset eventually). Passed
+        through into the ToolContext so the WhiteboardTool body
+        picks it up. */
+    whiteboardSession?: WhiteboardSession;
+    /** Host hook bag forwarded to every tool via ToolContext.
+        Conventions:
+          - `hostHooks.whiteboard`: { saving, saveError, onSave,
+            onClose, compact, onToggleCompact } consumed by
+            WhiteboardTool.
+          - `hostHooks.details`: free-form host-specific surface
+            for custom DetailsTool bodies.
+        Other tools that want host integration claim their own
+        namespace key. */
+    hostHooks?: Record<string, unknown>;
+    /** Overlay rendered ABOVE the asset canvas (between the asset
+        and the annotation layer) so tool surfaces — whiteboard,
+        annotations — can paint over the asset without hiding the
+        sidebar or top toolbar. The host gets a positioned canvas
+        area to fill. Rendered inside the same container the asset
+        sits in; absolute-position it to `inset-0` to take the
+        whole canvas region. */
+    canvasOverlay?: Snippet;
+    /** Window-chrome state. When true the host's dialog covers the
+        whole viewport; when false it sits inside the host's chrome.
+        The shell owns the dialog mode — the viewer just renders the
+        restore / maximize icon and fires onToggleMaximize. */
+    maximized?: boolean;
+    onToggleMaximize?: () => void;
     /** Bindable pane open/closed state so the host can persist the
-        user's preference in its own localStorage. Default open when
-        there's something to show. */
+        user's preference in its own localStorage. Default open. */
     paneCollapsed?: boolean;
-    /** Optional callback the host wires up to cycle between sibling
-        assets via the wheel (when not in review mode). Defining this
-        flips on a debounced wheel handler that calls back with the
-        intended direction; undefined leaves wheel alone so the parent
-        page can scroll normally. */
-    onWheelNavigate?: (dir: 'prev' | 'next') => void;
+    /** Bindable compact-rail state for tools that opt in
+        (Whiteboard). Shell shrinks the aside to ~3.5rem and the
+        tool body switches to its icon-rail layout. */
+    paneCompact?: boolean;
+    /** Optional close handler. When set, ViewerMenuBar shows a close
+        button in the window-controls zone *and* a "Close" entry in
+        the File menu. Hosts that own their own close affordance
+        (a fullscreen non-dialog page, e.g.) omit this. */
+    onClose?: () => void;
+    /** Optional per-asset action hooks. Each enables the
+        corresponding ViewerMenuBar item; without a hook the item
+        stays disabled / hidden depending on the menu. Host typically
+        opens its own modal (CollectionPicker / TagsEditor / etc.)
+        for the assetId the cursor is on. */
+    onAddToCollection?: () => void;
+    onRecreatePreviews?: () => void;
+    onEditTags?: () => void;
+    onEditMetadata?: () => void;
+    onDownloadVariant?: () => void;
+    onShareAsset?: () => void;
+    onDeleteAsset?: () => void;
   }
 
   let {
     asset,
     active = true,
-    reviewMode = false,
-    metadataSlot,
+    titleSlot,
+    extraTips,
+    customTools = [],
+    whiteboardSession,
+    hostHooks,
+    canvasOverlay,
+    maximized = false,
+    onToggleMaximize,
     paneCollapsed = $bindable(false),
-    onWheelNavigate,
+    paneCompact = $bindable(false),
+    onClose,
+    onAddToCollection,
+    onRecreatePreviews,
+    onEditTags,
+    onEditMetadata,
+    onDownloadVariant,
+    onShareAsset,
+    onDeleteAsset,
   }: Props = $props();
 
-  // The right pane is shown when there's something to put in it:
-  // review tools are always available for an active viewer; the
-  // metadata slot is host-provided. No slot + no review = no pane
-  // (so a small card preview doesn't grow an empty sidebar).
-  const paneEnabled = $derived(reviewMode || !!metadataSlot);
+  // Derived: is whiteboard mode currently active? Source-of-truth
+  // is the session existing. The selection-orchestration effect
+  // below uses this to decide whether to fire onActivate / onClose.
+  const whiteboardOpen = $derived(!!whiteboardSession);
+
+  // User-driven "treat this as a sprite" override. Lets the user
+  // open SpriteCanvas's slicer + playback tools on any raster
+  // image, not just assets explicitly classified as Sprite. Resets
+  // when the mounted asset changes — the override is per-view-
+  // session, not persisted on the asset.
+  let spriteOverride = $state(false);
+  let lastAssetIdForSprite = '';
+  $effect(() => {
+    if (asset.id !== lastAssetIdForSprite) {
+      lastAssetIdForSprite = asset.id;
+      spriteOverride = false;
+    }
+  });
+  const detectedKind = $derived(kindForAsset(asset));
+  const kind = $derived(spriteOverride && detectedKind === 'image' ? 'sprite' : detectedKind);
+
+  // The pane shows whenever the registry + host-injected tools
+  // have at least one available entry for this asset. Built-in
+  // tools (Details) are always available, so the pane shows for
+  // every non-placeholder kind. The shell handles the collapse-
+  // to-rail state internally.
+  // Side panel always shows — Details tool is unconditionally
+  // available, so even placeholder-kind assets (formats with no
+  // viewer body, formats whose preview pipeline hasn't run yet)
+  // get the metadata + download link surface. Hiding the panel
+  // left those assets with no chrome to act on.
+  const paneEnabled = true;
+  // Auto-expand once when a sprite or 3D kind comes into view so
+  // the user sees the dedicated tool immediately. Only force-open
+  // on the transition INTO a tools kind; the user can re-collapse.
+  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook' || kind === 'audiobook' || kind === 'archive');
+  let hadRichToolsKind = false;
+  $effect(() => {
+    if (kindHasRichTools && !hadRichToolsKind && paneCollapsed) {
+      paneCollapsed = false;
+    }
+    hadRichToolsKind = kindHasRichTools;
+  });
   const paneOpen = $derived(paneEnabled && !paneCollapsed);
 
   function togglePane() {
     paneCollapsed = !paneCollapsed;
   }
+  // A fresh sprite session per mounted asset. Both SpriteCanvas
+  // (in the canvas area) and SpriteToolPanel (in the outer right
+  // pane) read + write through this same object — change cell
+  // width in the panel and the canvas re-slices instantly. The
+  // session is rebuilt whenever the asset changes so navigating
+  // between sprites doesn't bleed slicer / playhead state.
+  let spriteSession = $state<SpriteSessionInstance | null>(null);
+  let lastAssetIdForSession = '';
+  $effect(() => {
+    if (kind === 'sprite' && asset.id !== lastAssetIdForSession) {
+      lastAssetIdForSession = asset.id;
+      spriteSession = createSpriteSession({ assetId: asset.id });
+    } else if (kind !== 'sprite' && spriteSession) {
+      spriteSession = null;
+      lastAssetIdForSession = '';
+    }
+  });
 
-  const kind = $derived(kindForExtension(asset.file_extension));
+  // Ebook session — same per-asset rebuild pattern. EpubView reads
+  // / writes currentIdx + chapter state; the EbookTool's side-panel
+  // body binds the same instance for TOC / search / bookmarks /
+  // reading settings.
+  let ebookSession = $state<EbookSessionInstance | null>(null);
+  let lastAssetIdForEbook = '';
+  $effect(() => {
+    if (kind === 'ebook' && asset.id !== lastAssetIdForEbook) {
+      lastAssetIdForEbook = asset.id;
+      ebookSession = createEbookSession({ assetId: asset.id });
+    } else if (kind !== 'ebook' && ebookSession) {
+      ebookSession = null;
+      lastAssetIdForEbook = '';
+    }
+  });
+
+  // Model session — same per-asset rebuild pattern. ModelView reads
+  // / writes camera + env + lighting state; the ModelTool side panel
+  // binds the same instance for the rich 3D viewer surface.
+  let modelSession = $state<ModelSessionInstance | null>(null);
+  let lastAssetIdForModel = '';
+  $effect(() => {
+    if (kind === '3d' && asset.id !== lastAssetIdForModel) {
+      lastAssetIdForModel = asset.id;
+      modelSession = createModelSession({ assetId: asset.id });
+    } else if (kind !== '3d' && modelSession) {
+      modelSession = null;
+      lastAssetIdForModel = '';
+    }
+  });
+
+  // Doc session — same per-asset rebuild for txt / md / code files.
+  // DocView reads + writes through it for CodeMirror state; the
+  // DocTool side panel binds the same instance for reading prefs /
+  // outline / find / bookmarks / stats.
+  let docSession = $state<DocSessionInstance | null>(null);
+  let lastAssetIdForDoc = '';
+  $effect(() => {
+    if (kind === 'doc' && asset.id !== lastAssetIdForDoc) {
+      lastAssetIdForDoc = asset.id;
+      docSession = createDocSession({ assetId: asset.id });
+    } else if (kind !== 'doc' && docSession) {
+      docSession = null;
+      lastAssetIdForDoc = '';
+    }
+  });
+
+  // Audiobook session — per-asset rebuild for .m4b / asset_type=11.
+  // AudiobookView reads + writes through it for playback state;
+  // the AudiobookTool side panel binds the same instance for the
+  // chapter list / speed / sleep timer / bookmarks.
+  let audiobookSession = $state<AudiobookSessionInstance | null>(null);
+  let lastAssetIdForAudiobook = '';
+  $effect(() => {
+    if (kind === 'audiobook' && asset.id !== lastAssetIdForAudiobook) {
+      lastAssetIdForAudiobook = asset.id;
+      audiobookSession = createAudiobookSession({ assetId: asset.id });
+    } else if (kind !== 'audiobook' && audiobookSession) {
+      audiobookSession = null;
+      lastAssetIdForAudiobook = '';
+    }
+  });
+
+  // Archive session — per-asset rebuild for .zip / .tar / .tar.gz
+  // and the rest of the archive family. ArchiveView renders the
+  // file tree + entry preview; the ArchiveTool side panel reads
+  // the same instance for Stats / filter helpers.
+  let archiveSession = $state<ArchiveSessionInstance | null>(null);
+  let lastAssetIdForArchive = '';
+  $effect(() => {
+    if (kind === 'archive' && asset.id !== lastAssetIdForArchive) {
+      lastAssetIdForArchive = asset.id;
+      archiveSession = createArchiveSession({ assetId: asset.id });
+    } else if (kind !== 'archive' && archiveSession) {
+      archiveSession = null;
+      lastAssetIdForArchive = '';
+    }
+  });
+  // The Tools-menu "Slice as sprite" entry only makes sense for
+  // PNGs. Sprite sheets in the wild are essentially all PNG (lossless
+  // + alpha); JPG/WEBP/etc. images may be photos / illustrations
+  // where treating them as a sliced grid would be nonsense. Locking
+  // to .png keeps the menu item out of users' way except where it
+  // actually applies.
+  const canOverrideToSprite = $derived(
+    detectedKind === 'image'
+    && (asset.file_extension?.toLowerCase().replace(/^\./, '') === 'png'),
+  );
   let controller = $state(defaultController());
 
   // ---- pan + zoom (shell-owned) -----------------------------------------
@@ -93,43 +311,41 @@
   let panY = $state(0);
   let dragging = $state(false);
 
-  // Debounce wheel-navigate so a trackpad's continuous wheel events
-  // don't skip past N assets in one swipe. ~250ms feels right: fast
-  // enough to spam, slow enough that a single intentional flick
-  // doesn't double-fire.
-  let lastWheelNavAt = 0;
-
   function onCanvasWheel(e: WheelEvent) {
-    // Outside review mode: optionally cycle assets on wheel (host opts
-    // in via the onWheelNavigate prop — when there's only one sibling
-    // to scroll to, the host just doesn't pass the prop). Otherwise
-    // let the wheel bubble so the page can scroll normally.
-    if (!reviewMode) {
-      if (onWheelNavigate && Math.abs(e.deltaY) > 0) {
-        const now = Date.now();
-        if (now - lastWheelNavAt > 250) {
-          lastWheelNavAt = now;
-          e.preventDefault();
-          onWheelNavigate(e.deltaY > 0 ? 'next' : 'prev');
-        } else {
-          e.preventDefault();
-        }
-      }
-      return;
-    }
-    // 3D bodies own all input (orbit controls + model-viewer's camera
-    // wheel-zoom). The outer pan/zoom layer doesn't make sense in a
-    // 3D world and would fight the orbit. Let the event reach the body.
+    // 3D bodies own all input (orbit controls handle wheel-as-dolly
+    // natively — the camera moves toward the model rather than the
+    // viewport canvas scaling, which is the per-kind "pan/zoom on the
+    // object, not the viewer" semantics 3D needs). Skip our outer
+    // transform entirely.
     if (kind === '3d') return;
-    // Plain wheel = scrub a frame (when there's a timeline);
-    // ctrl/⌘ + wheel = zoom.
-    if (!e.ctrlKey && !e.metaKey) {
-      if (controller.hasTimeline) {
-        e.preventDefault();
-        controller.stepFrames(e.deltaY > 0 ? 1 : -1);
-      }
+    // Font view has its own scroll + size-slider UX. Wheel-zooming
+    // the whole pane would fight the user's scroll through the
+    // specimen page and the in-view size control. Let the inner
+    // overflow-auto handle the wheel.
+    if (kind === 'font') return;
+    // Sprite view owns its own integer-step zoom + scroll for the
+    // canvas; outer wheel-zoom would smush the pixel-perfect rendering.
+    if (kind === 'sprite') return;
+    // Doc view (CodeMirror) owns wheel/select for scroll + drag-to-
+    // mark and Cmd+wheel-zoom comes from the editor's own keymap.
+    // Skip the shell's outer transform entirely.
+    if (kind === 'doc') return;
+    // Archive view (file tree + entry preview) scrolls inside both
+    // panes — outer wheel-zoom would fight it.
+    if (kind === 'archive') return;
+    // Timeline kinds (video, audio, paged PDF later) treat plain wheel
+    // as one frame's worth of scrub — the muscle memory for review
+    // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
+    // single frame without losing the scrub gesture.
+    if (controller.hasTimeline && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      controller.stepFrames(e.deltaY > 0 ? 1 : -1);
       return;
     }
+    // Static kinds (image, font, PDF when we drop scroll-paged in a
+    // later commit): wheel always zooms. No modifier required, no
+    // "enter review mode first" gate — the user expects to inspect
+    // the asset the moment it loads.
     e.preventDefault();
     const next = Math.max(1, Math.min(20, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
     if (canvasEl) {
@@ -143,14 +359,44 @@
     zoom = next;
   }
 
+  // Pending single-click toggle. We delay timeline-kind togglePlay()
+  // by ~220ms so a quick second click resolves as a dblclick (review-
+  // mode toggle) without also flipping play state. 220ms is the
+  // browser-default dblclick interval on most platforms.
+  let pendingClickTimer: ReturnType<typeof setTimeout> | undefined;
+
   function onCanvasMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
-    // Outside review mode: don't engage pan/drag, and skip the
-    // click-to-toggle-play affordance. Single-click is a no-op so
-    // we don't fight with double-click-to-enter-review.
-    if (!reviewMode) return;
     // 3D bodies own all drag (orbit). Leave the outer transform alone.
     if (kind === '3d') return;
+    // Font view is a scrollable specimen page, not a draggable
+    // raster. Drag-to-pan would slide the whole page around like
+    // an image, which reads as broken UX. Skip.
+    if (kind === 'font') return;
+    // Sprite view: scrollable canvas centred in the viewport;
+    // drag-to-pan doesn't apply. Same reasoning as font.
+    if (kind === 'sprite') return;
+    // Doc view (CodeMirror) handles its own selection / drag-to-
+    // select gestures. Outer pan/drag would fight the text-select
+    // behaviour users expect from an editor surface.
+    if (kind === 'doc') return;
+    // Archive view owns its tree + preview pane click/drag.
+    if (kind === 'archive') return;
+    // Timeline kinds (video, audio) don't need pan/zoom — the wheel
+    // already specialises to scrub frames, and the canvas surface is
+    // a video frame or a waveform-with-cover, neither of which is a
+    // scrollable / panable image. Dragging would slide the cover art
+    // around like it's a static image, which reads as broken UX. We
+    // still need the click-to-toggle-play gesture, so do that here
+    // directly (no need to track movement when there's no pan to
+    // arm); the 220 ms defer keeps double-click-to-review working.
+    if (controller.hasTimeline) {
+      pendingClickTimer = setTimeout(() => {
+        controller.togglePlay();
+        pendingClickTimer = undefined;
+      }, 220);
+      return;
+    }
     const startX = e.clientX;
     const startY = e.clientY;
     const initialPanX = panX;
@@ -168,10 +414,6 @@
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
-      if (!dragging && controller.hasTimeline) {
-        // Treat a non-drag click as a play/pause toggle for media.
-        controller.togglePlay();
-      }
       setTimeout(() => { dragging = false; }, 0);
     };
     window.addEventListener('mousemove', move);
@@ -182,6 +424,185 @@
     zoom = 1;
     panX = 0;
     panY = 0;
+  }
+
+  // ── Tile mode (image / texture only) ───────────────────────────
+  // Two states: off (single pan-zoomable image, default) and
+  // tile (repeat across the full canvas, both directions, so the
+  // user can preview seamless tileability). Driven by the 't'
+  // hotkey + a small menubar button. Persisted per-tab in
+  // localStorage so navigating to the next texture keeps the
+  // user's last preference — they probably want to review a
+  // batch of textures the same way. Only the 'image' kind exposes
+  // it; for other kinds the menubar button is hidden and the
+  // hotkey is a no-op (the stored state still survives so the
+  // next image asset picks it up).
+  type TileMode = 'off' | 'tile';
+  const TILE_KEY = 'aa.viewer.tileMode';
+  let tileMode = $state<TileMode>('off');
+  const canTile = $derived(kind === 'image');
+  onMount(() => {
+    try {
+      if (localStorage.getItem(TILE_KEY) === 'tile') tileMode = 'tile';
+    } catch { /* ignore */ }
+  });
+  $effect(() => {
+    try {
+      localStorage.setItem(TILE_KEY, tileMode);
+    } catch { /* ignore */ }
+  });
+  function toggleTileMode() {
+    if (!canTile) return;
+    tileMode = tileMode === 'off' ? 'tile' : 'off';
+  }
+
+  // setZoom keeps the visual centre stable while changing scale —
+  // same arithmetic the wheel handler uses, factored out so the
+  // tools panel's zoom-preset buttons land consistently with the
+  // wheel gesture (no jump-to-corner surprises).
+  function setZoom(next: number) {
+    const clamped = Math.max(0.05, Math.min(20, next));
+    if (canvasEl) {
+      const factor = clamped / zoom;
+      panX = panX * factor;
+      panY = panY * factor;
+    }
+    zoom = clamped;
+  }
+
+  // Zoom presets the Tools panel renders for any 2D kind. Fit is just
+  // an alias for resetView (the canvas already centres + scales-to-fit
+  // its contents at zoom=1 via the absolute inset-0 wrapper).
+  const zoomPresets = [
+    { label: 'Fit', factor: null as number | null },
+    { label: '50%', factor: 0.5 },
+    { label: '100%', factor: 1 },
+    { label: '200%', factor: 2 },
+    { label: '400%', factor: 4 },
+  ];
+
+  // ToolPanelShell consumes this. Built fresh on every reactive
+  // change so the shell's $derived(isAvailable) fires when sessions
+  // come / go (sprite spin-up, whiteboard open). zoomPresets is
+  // declared above so this $derived can reference it without
+  // tripping TDZ during initial evaluation.
+  const toolCtx = $derived<ToolContext>({
+    asset,
+    controller,
+    spriteSession: spriteSession ?? undefined,
+    ebookSession: ebookSession ?? undefined,
+    modelSession: modelSession ?? undefined,
+    docSession: docSession ?? undefined,
+    audiobookSession: audiobookSession ?? undefined,
+    archiveSession: archiveSession ?? undefined,
+    whiteboardSession,
+    hostHooks,
+    shellState: {
+      zoom,
+      setZoom,
+      resetView,
+      zoomPresets,
+      // paneCompact is a placeholder here — the shell overrides
+      // it with the resolved (and tool-gated) value before
+      // mounting the active Body so tools don't have to know
+      // about supportsCompact.
+      paneCompact: false,
+    },
+  });
+  // Built-in registry + host-injected tools. Hosts REPLACE built-in
+  // tools by id (PostHost overrides Details so the body renders
+  // post info instead of the generic asset-info stub). Unmatched
+  // host tools simply append.
+  const mergedTools = $derived.by<ToolDef[]>(() => {
+    const customIds = new Set(customTools.map((t) => t.id));
+    return [...TOOLS.filter((t) => !customIds.has(t.id)), ...customTools];
+  });
+  // Filter to what's available for the current asset, sorted in
+  // dropdown order. Shared by the menubar (picker items) + the
+  // shell (Body / Tips mounter) so both ends agree on what the
+  // user can switch to.
+  const availableTools = $derived(
+    mergedTools.filter((t) => t.isAvailable(toolCtx)).sort((a, b) => a.order - b.order),
+  );
+  // Active tool id — persisted per-tab in localStorage and shared
+  // with the menubar's Tools menu. Auto-falls-back when the
+  // persisted id isn't valid for the current asset (shell does
+  // the write-back).
+  const ACTIVE_TOOL_KEY = 'aa.viewer.activeTool';
+  let activeToolId = $state<string>('details');
+  onMount(() => {
+    try {
+      const stored = localStorage.getItem(ACTIVE_TOOL_KEY);
+      if (stored) activeToolId = stored;
+    } catch { /* ignore — private browsing */ }
+  });
+  $effect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TOOL_KEY, activeToolId);
+    } catch { /* ignore */ }
+  });
+  function selectTool(id: string) {
+    activeToolId = id;
+  }
+  // Resolved label for the active tool — labelFn overrides label
+  // when present so the menubar trigger ("Tools • Details" / "Tools
+  // • Sprite Viewer" / etc.) reflects what the panel header shows.
+  const activeToolLabel = $derived.by(() => {
+    const t = availableTools.find((x) => x.id === activeToolId);
+    if (!t) return '';
+    return t.labelFn ? t.labelFn(toolCtx) : t.label;
+  });
+
+  // Tool-selection orchestration. Two tools need side effects on
+  // becoming active (or going inactive):
+  //
+  //   Sprite Viewer — flips spriteOverride so the canvas re-mounts
+  //   as SpriteCanvas and a session spawns. Reverts on deselection
+  //   so picking Details / Whiteboard restores the original kind.
+  //
+  //   Whiteboard — calls the host's onActivate hook to open the
+  //   canvas overlay + create the WhiteboardSession. Calls onClose
+  //   on deselection so picking Details / Sprite Viewer also exits
+  //   whiteboard mode.
+  //
+  // Effect reads activeToolId reactively + the previous value via a
+  // closure so we only fire on transitions, not on every reactive
+  // tick.
+  let lastActiveTool: string | null = null;
+  $effect(() => {
+    const next = activeToolId;
+    const prev = lastActiveTool;
+    if (next === prev) return;
+    lastActiveTool = next;
+    // Sprite Viewer transitions
+    if (next === 'sprite' && detectedKind === 'image' && !spriteOverride) {
+      spriteOverride = true;
+    } else if (prev === 'sprite' && spriteOverride) {
+      spriteOverride = false;
+    }
+    // Whiteboard transitions
+    const wb = hostHooks?.whiteboard as { onActivate?: () => void; onClose?: () => void } | undefined;
+    if (next === 'whiteboard' && wb?.onActivate && !whiteboardOpen) {
+      wb.onActivate();
+    } else if (prev === 'whiteboard' && wb?.onClose && whiteboardOpen) {
+      wb.onClose();
+    }
+  });
+
+  // Canvas double-click as a review-mode toggle was retired —
+  // users kept landing on it accidentally (panel swap mid-scroll,
+  // sprite-slice override flipped under them, etc.) and the
+  // Tools-menu "Review" entry plus its hotkey already cover the
+  // gesture. The handler binding below is left wired so timeline
+  // kinds can still cancel their pending-click before a dblclick
+  // resolves as something else; it no longer touches review mode.
+  function onCanvasDoubleClick(e: MouseEvent) {
+    if (kind === '3d') return;
+    if (pendingClickTimer !== undefined) {
+      clearTimeout(pendingClickTimer);
+      pendingClickTimer = undefined;
+    }
+    e.preventDefault();
   }
 
   // ---- fullscreen --------------------------------------------------------
@@ -267,13 +688,73 @@
 
   // ---- loop region ------------------------------------------------------
 
-  let loopIn = $state<number | null>(null);
-  let loopOut = $state<number | null>(null);
+  // Loop state lives on the controller now so view bodies (MediaView's
+  // waveform with shift-drag region) can read + write the same range
+  // the shell's transport bar shows. Local aliases keep the existing
+  // template + hotkey + button bindings concise.
+  const loopIn = $derived(controller.loopIn);
+  const loopOut = $derived(controller.loopOut);
+
+  // Scrubber zoom — same idiom as MediaView's waveform zoom, but on
+  // the shell's narrow timeline bar so video gets the zoom-into-a-
+  // section affordance too. Ctrl/Cmd + wheel on the scrubber zooms;
+  // bare wheel falls through to the canvas wheel handler (which
+  // step-scrubs one frame for timeline kinds). Container becomes
+  // overflow-x-auto when zoomed > 1×; an auto-scroll keeps the
+  // playhead in the visible band.
+  let scrubberScrollEl: HTMLDivElement | undefined = $state();
+  let scrubberZoom = $state(1);
+  const SCRUBBER_ZOOM_MIN = 1;
+  const SCRUBBER_ZOOM_MAX = 16;
+
+  function onScrubberWheel(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!scrubberScrollEl) return;
+    const inner = e.currentTarget as HTMLElement;
+    const innerRect = inner.getBoundingClientRect();
+    const pointerRatio = Math.max(0, Math.min(1,
+      (e.clientX - innerRect.left) / innerRect.width));
+    const prev = scrubberZoom;
+    const next = Math.max(SCRUBBER_ZOOM_MIN,
+      Math.min(SCRUBBER_ZOOM_MAX,
+        scrubberZoom * (e.deltaY > 0 ? 0.8 : 1.25)));
+    scrubberZoom = next;
+    if (prev === next) return;
+    requestAnimationFrame(() => {
+      if (!scrubberScrollEl) return;
+      const containerW = scrubberScrollEl.clientWidth;
+      const newInnerW = containerW * next;
+      const pointerLocal = e.clientX - scrubberScrollEl.getBoundingClientRect().left;
+      scrubberScrollEl.scrollLeft = (pointerRatio * newInnerW) - pointerLocal;
+    });
+  }
+
+  $effect(() => {
+    if (!scrubberScrollEl || scrubberZoom <= 1) return;
+    const viewportW = scrubberScrollEl.clientWidth;
+    const innerW = viewportW * scrubberZoom;
+    const playheadX = (playheadPct / 100) * innerW;
+    const left = scrubberScrollEl.scrollLeft;
+    const right = left + viewportW;
+    const margin = viewportW * 0.15;
+    if (playheadX < left + margin) {
+      scrubberScrollEl.scrollLeft = Math.max(0, playheadX - margin);
+    } else if (playheadX > right - margin) {
+      scrubberScrollEl.scrollLeft = Math.min(innerW - viewportW, playheadX - viewportW + margin);
+    }
+  });
+
+  function resetScrubberZoom() {
+    scrubberZoom = 1;
+    if (scrubberScrollEl) scrubberScrollEl.scrollLeft = 0;
+  }
 
   function enforceLoop() {
     if (!controller.hasTimeline) return;
-    if (loopIn === null || loopOut === null || loopOut <= loopIn) return;
-    if (controller.currentFrame > loopOut) controller.seekToFrame(loopIn);
+    if (controller.loopIn === null || controller.loopOut === null || controller.loopOut <= controller.loopIn) return;
+    if (controller.currentFrame > controller.loopOut) controller.seekToFrame(controller.loopIn);
   }
   $effect(enforceLoop);
 
@@ -311,10 +792,6 @@
 
   function handleKey(e: KeyboardEvent) {
     if (!active) return;
-    // Hotkeys are review-mode-only. Outside review the asset is just
-    // chrome and the host owns the keyboard (modal nav, sidebar
-    // toggle, ESC-to-close).
-    if (!reviewMode) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
@@ -327,9 +804,9 @@
       case 'arrowleft': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? -10 : -1); } break;
       case '.':
       case 'arrowright': if (controller.hasTimeline) { e.preventDefault(); controller.stepFrames(e.shiftKey ? 10 : 1); } break;
-      case 'i': if (controller.hasTimeline) { e.preventDefault(); loopIn = controller.currentFrame; } break;
-      case 'o': if (controller.hasTimeline) { e.preventDefault(); loopOut = controller.currentFrame; } break;
-      case 'backspace': e.preventDefault(); loopIn = null; loopOut = null; break;
+      case 'i': if (controller.hasTimeline) { e.preventDefault(); controller.loopIn = controller.currentFrame; } break;
+      case 'o': if (controller.hasTimeline) { e.preventDefault(); controller.loopOut = controller.currentFrame; } break;
+      case 'backspace': e.preventDefault(); controller.loopIn = null; controller.loopOut = null; break;
       case '1': if (controller.hasTimeline) controller.setRate(0.25); break;
       case '2': if (controller.hasTimeline) controller.setRate(0.5); break;
       case '3': if (controller.hasTimeline) controller.setRate(1); break;
@@ -338,6 +815,7 @@
       case 'f': e.preventDefault(); toggleFullscreen(); break;
       case 'r': e.preventDefault(); resetView(); break;
       case 'g': if (controller.hasTimeline) { e.preventDefault(); goToOpen = true; } break;
+      case 't': if (canTile) { e.preventDefault(); toggleTileMode(); } break;
     }
   }
 
@@ -358,19 +836,129 @@
 </script>
 
 <div bind:this={containerEl} class="flex h-full w-full flex-col bg-black text-white">
+  <!-- Top toolbar — File / Edit / About menus + asset info strip +
+       Review toggle + reset/fullscreen/pane quick-actions. Replaces
+       the old floating top-right button column (which overlaid the
+       asset and had no home for non-icon actions). -->
+  <ViewerMenuBar
+    {asset}
+    {controller}
+    {paneCollapsed}
+    {paneEnabled}
+    {isFullscreen}
+    {titleSlot}
+    {maximized}
+    {onToggleMaximize}
+    onResetView={resetView}
+    onToggleFullscreen={toggleFullscreen}
+    onTogglePane={togglePane}
+    {onClose}
+    {onAddToCollection}
+    {onRecreatePreviews}
+    {onEditTags}
+    {onEditMetadata}
+    {onDownloadVariant}
+    {onShareAsset}
+    {onDeleteAsset}
+    sidePanelTools={availableTools}
+    sidePanelToolCtx={toolCtx}
+    sidePanelActiveTool={activeToolId}
+    sidePanelActiveToolLabel={activeToolLabel}
+    onSelectSidePanelTool={selectTool}
+    {canTile}
+    {tileMode}
+    onToggleTileMode={toggleTileMode}
+  />
+
+  <!-- Canvas + pane row. The pane is a flex sibling so it pushes the
+       canvas's width rather than overlaying part of it — otherwise the
+       asset visually drifts off-center every time the user opens the
+       pane. Width-animated slide-in keeps the smooth transition the
+       overlay version had. -->
+  <div class="flex min-h-0 flex-1">
+
   <!-- Canvas (pan + zoom transform wraps the view body) -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     bind:this={canvasEl}
-    class="relative flex-1 overflow-hidden bg-black"
+    class="relative min-w-0 flex-1 overflow-hidden bg-black"
     class:cursor-grabbing={dragging}
     class:cursor-grab={!dragging && zoom > 1}
     onwheel={onCanvasWheel}
     onmousedown={onCanvasMouseDown}
+    ondblclick={onCanvasDoubleClick}
   >
+    <!-- Font + Sprite views bypass the pan/zoom transform wrapper.
+         Both own their own zoom semantics (the font has a size
+         slider; the sprite uses integer-step pixel-perfect zoom),
+         and both render scrollable bodies that want the full canvas
+         area, not a centred raster behind the viewer's outer
+         translate/scale. Each lives as an absolute sibling layer
+         to the transform; on those kinds the transform layer is
+         empty. -->
+    {#if kind === 'font'}
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <FontView {asset} bind:controller />
+        </div>
+      {/key}
+    {:else if kind === 'ebook' && ebookSession}
+      <!-- Ebook reader bypasses pan/zoom — the body owns its own
+           page-by-page layout (chapter iframe + TOC popdown).
+           Session is shared with the side-panel EbookTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <EpubView {asset} bind:controller bind:session={ebookSession} />
+        </div>
+      {/key}
+    {:else if kind === 'doc' && docSession}
+      <!-- Document viewer (CodeMirror) bypasses pan/zoom — the
+           editor owns wheel/drag/select for find/replace etc.
+           Session shared with the side-panel DocTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <DocView {asset} bind:controller bind:session={docSession} />
+        </div>
+      {/key}
+    {:else if kind === 'audiobook' && audiobookSession}
+      <!-- Audiobook reader (large cover + chapter strip + big skip
+           buttons) bypasses pan/zoom — the surface is its own
+           Audiobookshelf-style chrome. Session shared with the
+           side-panel AudiobookTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <AudiobookView {asset} bind:controller bind:session={audiobookSession} />
+        </div>
+      {/key}
+    {:else if kind === 'archive' && archiveSession}
+      <!-- Archive browser (file tree + entry preview) bypasses
+           pan/zoom — owns its own scrollable layout. Session shared
+           with the side-panel ArchiveTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <ArchiveView {asset} bind:controller bind:session={archiveSession} />
+        </div>
+      {/key}
+    {:else if kind === 'sprite' && spriteSession}
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <SpriteCanvas {asset} bind:session={spriteSession} bind:controller />
+        </div>
+      {/key}
+    {:else if kind === 'image' && tileMode !== 'off'}
+      <!-- Tile mode bypasses the pan/zoom transform — a repeating
+           texture wrapped in translate/scale would have edges
+           flying around as the user panned. The tile fills the
+           full canvas area so the user can preview seamless
+           tileability at a real on-screen size. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <ImageView {asset} bind:controller {tileMode} />
+        </div>
+      {/key}
+    {:else}
     <div
       class="absolute inset-0 flex items-center justify-center"
-      class:pointer-events-none={!reviewMode}
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
     >
       <!-- {#key} forces a fresh view-body mount when the asset id
@@ -380,65 +968,63 @@
            Side-effect: pan/zoom resets per asset, which is what users
            expect when navigating to a new image anyway. -->
       {#key asset.id}
-        {#if kind === 'video'}
-          <VideoView {asset} bind:controller />
+        {#if kind === 'video' || kind === 'audio'}
+          <MediaView {asset} bind:controller />
         {:else if kind === 'image'}
-          <ImageView {asset} bind:controller />
-        {:else if kind === 'audio'}
-          <AudioView {asset} bind:controller />
+          <ImageView {asset} bind:controller {tileMode} />
         {:else if kind === 'pdf'}
           <PDFView {asset} bind:controller />
-        {:else if kind === 'font'}
-          <FontView {asset} bind:controller />
-        {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, ''))}
-          <ModelView {asset} bind:controller {reviewMode} />
+        {:else if kind === '3d' && SUPPORTED_3D.has((asset.file_extension || '').toLowerCase().replace(/^\./, '')) && modelSession}
+          <ModelView {asset} bind:controller bind:session={modelSession} />
         {:else}
           <PlaceholderView {asset} bind:controller />
         {/if}
       {/key}
     </div>
+    {/if}
 
-    <!-- HUD: anchor display + extra metadata. Shifts left when the
-         right pane is open so the pane doesn't cover it. -->
-    <div
-      class="pointer-events-none absolute top-3 rounded bg-black/70 px-2 py-1 font-mono text-xs transition-[right] duration-200"
-      class:right-3={!paneOpen}
-      class:right-[25rem]={paneOpen}
-    >
-      {#if controller.hasTimeline}
-        {controller.formatAnchor(controller.currentFrame)} · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
-      {/if}
-      {#if controller.hudExtra}
-        {controller.hasTimeline ? ' · ' : ''}{controller.hudExtra}
-      {/if}
-      {#if zoom !== 1}
-        {(controller.hasTimeline || controller.hudExtra) ? ' · ' : ''}{Math.round(zoom * 100)}%
-      {/if}
-    </div>
-
-    <!-- Top-right buttons. Same shift as the HUD so the pane doesn't
-         cover them when open. -->
-    <div
-      class="absolute top-12 flex flex-col gap-2 transition-[right] duration-200"
-      class:right-3={!paneOpen}
-      class:right-[25rem]={paneOpen}
-    >
-      {#if controller.hasTimeline}
-        <button type="button" onclick={() => (goToOpen = !goToOpen)} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" title="Jump to frame (G)" aria-label="Jump to frame">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
-        </button>
-      {/if}
-      <button type="button" onclick={resetView} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" class:opacity-40={zoom === 1 && panX === 0 && panY === 0} title="Reset view (R)" aria-label="Reset view">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
-      </button>
-      <button type="button" onclick={toggleFullscreen} class="rounded bg-black/70 p-1.5 text-xs hover:bg-black/90" title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Fullscreen">
-        {#if isFullscreen}
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
-        {:else}
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V3h4" /><path d="M21 7V3h-4" /><path d="M3 17v4h4" /><path d="M21 17v4h-4" /></svg>
+    <!-- HUD: live frame counter / zoom %. The static asset info
+         (filename, dimensions, codec) is in the toolbar above; the
+         HUD here only shows values that change as the user
+         interacts — frame position on timeline kinds, zoom % when
+         it's not 100%. Bottom-left so it doesn't fight the toolbar
+         or the pane. -->
+    {#if controller.hasTimeline || zoom !== 1}
+      <div
+        class="pointer-events-none absolute bottom-3 left-3 rounded bg-black/70 px-2 py-1 font-mono text-xs"
+      >
+        {#if controller.hasTimeline}
+          {controller.formatAnchor(controller.currentFrame)}
+          {#if controller.kind !== 'audio' && controller.kind !== 'audiobook'}
+            <!-- Frame counter — only meaningful for video / pdf / etc.
+                 Audio + audiobook run at 1000 fps (1 ms per "frame")
+                 so "f95000" reads as noise; the M:SS.mmm timecode
+                 already carries the precise position. -->
+            · f{controller.currentFrame}{controller.totalFrames > 0 ? `/${controller.totalFrames}` : ''}
+          {/if}
         {/if}
+        {#if zoom !== 1}
+          {controller.hasTimeline ? ' · ' : ''}{Math.round(zoom * 100)}%
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Jump-to-frame quick-action — only visible on timeline kinds.
+         Floated top-right of the canvas (under the toolbar). Reset
+         and fullscreen used to live here too; they moved into the
+         toolbar's quick-action group. -->
+    {#if controller.hasTimeline}
+      <button
+        type="button"
+        onclick={() => (goToOpen = !goToOpen)}
+        class="absolute top-3 right-3 rounded bg-black/70 p-1.5 text-xs hover:bg-black/90"
+        class:right-[25rem]={paneOpen}
+        title="Jump to frame (G)"
+        aria-label="Jump to frame"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></svg>
       </button>
-    </div>
+    {/if}
 
     <!-- Jump-to-frame input -->
     {#if goToOpen}
@@ -464,259 +1050,87 @@
          annotations land on content, not letterboxing. -->
     <div class="pointer-events-none absolute inset-0 z-20" data-role="annotation-layer"></div>
 
-    <!-- Right pane: overlay (not a flex sibling) so the asset
-         underneath cycles independently when the host swaps assets,
-         while the pane stays put. Content swaps on reviewMode: tools
-         in review, host's metadataSlot otherwise. Slide in/out via
-         translate-x — keeps the asset full-width visually when closed
-         and gives a nice transition either way. -->
-    {#if paneEnabled}
-      <aside
-        class="absolute right-0 top-0 bottom-0 z-30 flex w-96 max-w-[40vw] flex-col border-l border-border bg-surface text-fg shadow-2xl transition-transform duration-200 ease-out"
-        class:translate-x-full={paneCollapsed}
-        aria-label={reviewMode ? 'Review tools' : 'Asset details'}
+    <!-- Host-provided canvas overlay (whiteboard, annotations).
+         Renders OVER the asset but BELOW the pane-re-open tab, so
+         the sidebar's tool panel stays reachable. The host is
+         responsible for the overlay's own positioning + pointer-
+         event handling. -->
+    {#if canvasOverlay}
+      <div class="absolute inset-0 z-25">
+        {@render canvasOverlay()}
+      </div>
+    {/if}
+
+    {#if paneEnabled && paneCollapsed}
+      <!-- Re-open tab on the right edge so the user can recover the
+           pane after collapsing it. Lives inside the canvas (not the
+           aside) because the aside collapses to width=0. -->
+      <button
+        type="button"
+        onclick={togglePane}
+        class="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-md bg-black/60 px-2 py-3 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+        aria-label="Show panel"
+        title="Show panel (i)"
       >
-        <header class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-          <h2 class="text-sm font-medium">
-            {#if reviewMode}Review tools{:else}Details{/if}
-          </h2>
-          <button
-            type="button"
-            onclick={togglePane}
-            class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-surface-elevated hover:text-fg"
-            aria-label="Collapse panel"
-            title="Collapse (i)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
-        </header>
-        <div class="min-h-0 flex-1 overflow-y-auto">
-          {#if reviewMode}
-            <!-- Kind-aware tools, read from controller.tools that the
-                 mounted view body populated. Each section renders only
-                 if the view body exposed that tool group — wireframe
-                 has no meaning for model-viewer glb, exposure works
-                 for both 3D paths, etc. -->
-            {#if controller.tools}
-              {@const tools = controller.tools}
-              <div class="space-y-1 p-3">
-                <!-- ── Camera section ───────────────────────────────── -->
-                {#if tools.frameAll || tools.resetCamera || tools.cameraPreset}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Camera</header>
-                    <div class="flex flex-wrap gap-1.5 p-3">
-                      {#if tools.frameAll}
-                        <button type="button" onclick={tools.frameAll} class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated">
-                          Frame all
-                        </button>
-                      {/if}
-                      {#if tools.resetCamera}
-                        <button type="button" onclick={tools.resetCamera} class="rounded-md border border-border bg-surface px-2 py-1 text-xs hover:border-fg-muted/60 hover:bg-surface-elevated">
-                          Reset
-                        </button>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+    {/if}
+  </div><!-- /canvas -->
 
-                <!-- ── Display section ──────────────────────────────── -->
-                {#if tools.grid || tools.axes || tools.wireframe || tools.groundShadow}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Display</header>
-                    <div class="space-y-2 p-3">
-                      {#if tools.grid}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Grid</span>
-                          <button
-                            type="button"
-                            onclick={tools.grid.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.grid.enabled}
-                            class:bg-border={!tools.grid.enabled}
-                            role="switch"
-                            aria-checked={tools.grid.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.grid.enabled} class:translate-x-0.5={!tools.grid.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.axes}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Axes</span>
-                          <button
-                            type="button"
-                            onclick={tools.axes.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.axes.enabled}
-                            class:bg-border={!tools.axes.enabled}
-                            role="switch"
-                            aria-checked={tools.axes.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.axes.enabled} class:translate-x-0.5={!tools.axes.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.groundShadow}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Ground shadow</span>
-                          <button
-                            type="button"
-                            onclick={tools.groundShadow.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.groundShadow.enabled}
-                            class:bg-border={!tools.groundShadow.enabled}
-                            role="switch"
-                            aria-checked={tools.groundShadow.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.groundShadow.enabled} class:translate-x-0.5={!tools.groundShadow.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.wireframe}
-                        <div class="flex items-center justify-between text-xs">
-                          <span>Wireframe</span>
-                          <button
-                            type="button"
-                            onclick={tools.wireframe.cycle}
-                            class="rounded-md border border-border bg-surface px-2 py-0.5 text-xs capitalize hover:border-fg-muted/60 hover:bg-surface-elevated"
-                            title="Cycle: {tools.wireframe.options.join(' → ')}"
-                          >
-                            {tools.wireframe.mode}
-                          </button>
-                        </div>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
+    <!-- Right pane: flex sibling of the canvas so opening it shrinks
+         the canvas (asset stays centred in the visible region rather
+         than drifting behind an overlay). Width-animates between
+         w-96 (open) and w-0 (collapsed) for the same smooth slide the
+         old translate-based overlay gave us. -->
+    {#if paneEnabled}
+      <ToolPanelShell
+        ctx={toolCtx}
+        tools={mergedTools}
+        bind:activeToolId
+        bind:paneCollapsed
+        bind:paneCompact
+        onTogglePane={togglePane}
+        {extraTips}
+      />
+    {/if}
+  </div><!-- /canvas+pane row -->
 
-                <!-- ── Lighting section ─────────────────────────────── -->
-                {#if tools.exposure || tools.envIntensity}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Lighting</header>
-                    <div class="space-y-3 p-3">
-                      {#if tools.exposure}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.exposure.label ?? 'Exposure'}</span>
-                            <span class="font-mono text-fg-muted">{tools.exposure.value.toFixed(2)}</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.exposure.min}
-                            max={tools.exposure.max}
-                            step={tools.exposure.step ?? 0.01}
-                            value={tools.exposure.value}
-                            oninput={(e) => tools.exposure!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                      {#if tools.envIntensity}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.envIntensity.label ?? 'Env intensity'}</span>
-                            <span class="font-mono text-fg-muted">{tools.envIntensity.value.toFixed(2)}</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.envIntensity.min}
-                            max={tools.envIntensity.max}
-                            step={tools.envIntensity.step ?? 0.01}
-                            value={tools.envIntensity.value}
-                            oninput={(e) => tools.envIntensity!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
+  <!-- Transport rail (only when the body has a timeline). Wrapped in
+       a horizontally-scrollable container so Ctrl/Cmd + wheel can
+       zoom the scrubber into a section of the timeline — same idiom
+       MediaView uses on its waveform. The reset chip appears only
+       when zoomed > 1×.
 
-                <!-- ── Auto-rotate section ──────────────────────────── -->
-                {#if tools.autoRotate || tools.autoRotateSpeed}
-                  <section class="rounded-md border border-border bg-surface-elevated">
-                    <header class="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-fg-muted">Auto-rotate</header>
-                    <div class="space-y-3 p-3">
-                      {#if tools.autoRotate}
-                        <label class="flex items-center justify-between text-xs">
-                          <span>Enabled</span>
-                          <button
-                            type="button"
-                            onclick={tools.autoRotate.toggle}
-                            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                            class:bg-accent={tools.autoRotate.enabled}
-                            class:bg-border={!tools.autoRotate.enabled}
-                            role="switch"
-                            aria-checked={tools.autoRotate.enabled}
-                          >
-                            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={tools.autoRotate.enabled} class:translate-x-0.5={!tools.autoRotate.enabled}></span>
-                          </button>
-                        </label>
-                      {/if}
-                      {#if tools.autoRotateSpeed && tools.autoRotate?.enabled}
-                        <label class="block text-xs">
-                          <span class="mb-1 flex items-center justify-between">
-                            <span>{tools.autoRotateSpeed.label ?? 'Speed'}</span>
-                            <span class="font-mono text-fg-muted">{tools.autoRotateSpeed.value.toFixed(1)}×</span>
-                          </span>
-                          <input
-                            type="range"
-                            min={tools.autoRotateSpeed.min}
-                            max={tools.autoRotateSpeed.max}
-                            step={tools.autoRotateSpeed.step ?? 0.1}
-                            value={tools.autoRotateSpeed.value}
-                            oninput={(e) => tools.autoRotateSpeed!.set(+(e.currentTarget as HTMLInputElement).value)}
-                            class="w-full accent-accent"
-                          />
-                        </label>
-                      {/if}
-                    </div>
-                  </section>
-                {/if}
-              </div>
-            {:else}
-              <!-- No tools registered (kind doesn't have any yet OR
-                   the view body hasn't mounted yet). -->
-              <div class="p-4 text-sm text-fg-muted">
-                <p>No review tools available for this asset kind yet.</p>
-              </div>
-            {/if}
-          {:else if metadataSlot}
-            {@render metadataSlot()}
-          {/if}
-        </div>
-      </aside>
-
-      {#if paneCollapsed}
-        <!-- Re-open tab on the right edge so the user can recover the
-             pane after collapsing it. -->
+       Audiobook routes the same rail too — AudiobookView delegates
+       transport to the shell so users get one consistent set of
+       controls across video / audio / audiobook. The view itself
+       just renders cover + meta + chapter-strip context. -->
+  {#if controller.hasTimeline}
+    <div
+      bind:this={scrubberScrollEl}
+      class="relative h-3 overflow-x-auto overflow-y-hidden bg-zinc-900"
+    >
+      {#if scrubberZoom > 1}
         <button
           type="button"
-          onclick={togglePane}
-          class="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-md bg-black/60 px-2 py-3 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
-          aria-label="Show panel"
-          title="Show panel (i)"
+          onclick={resetScrubberZoom}
+          class="sticky left-2 top-0 z-30 -mt-0.5 inline-flex h-3 items-center gap-1 rounded-b bg-black/80 px-1.5 text-[10px] font-mono leading-none text-white/90 hover:bg-black"
+          title="Reset scrubber zoom (Ctrl/Cmd + Wheel to zoom)"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m15 18-6-6 6-6" />
-          </svg>
+          {scrubberZoom.toFixed(1)}× — reset
         </button>
       {/if}
-    {/if}
-  </div>
-
-  <!-- Transport rail (only when the body has a timeline) -->
-  {#if controller.hasTimeline}
-    <div class="relative h-3 bg-zinc-900">
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         bind:this={scrubberEl}
-        class="absolute inset-0 cursor-crosshair"
+        class="relative h-full cursor-crosshair"
+        style:width={`${100 * scrubberZoom}%`}
         onmouseenter={() => (scrubberHovering = true)}
         onmousemove={onScrubberMove}
         onmouseleave={onScrubberLeave}
+        onwheel={onScrubberWheel}
         onclick={onScrubberClick}
         role="slider"
         aria-valuenow={controller.currentFrame}
@@ -728,6 +1142,35 @@
         <div class="absolute inset-y-0 left-0 bg-accent/60" style="width: {playheadPct}%"></div>
         {#if loopIn !== null && loopOut !== null && loopOut > loopIn}
           <div class="absolute inset-y-0 bg-yellow-500/30" style="left: {loopInPct}%; width: {loopOutPct - loopInPct}%"></div>
+        {/if}
+        <!-- Chapter ticks (audiobook only) — thin vertical lines at
+             each chapter boundary so the user can visually orient
+             "I'm 2/3 through chapter 4" without scrubbing. The
+             dedicated AudiobookView used to ship its own scrubber
+             with these ticks; we moved them onto the shell's rail
+             so there's exactly one progress bar. -->
+        {#if kind === 'audiobook' && audiobookSession && audiobookSession.chapters.length > 1 && audiobookSession.durationS > 0}
+          {#each audiobookSession.chapters as ch, i (i)}
+            {#if i > 0}
+              <span
+                class="pointer-events-none absolute inset-y-0 w-px bg-white/40"
+                style="left: {(ch.start / audiobookSession.durationS) * 100}%"
+              ></span>
+            {/if}
+          {/each}
+        {/if}
+        <!-- Bookmark diamonds (audiobook only). Click to jump back. -->
+        {#if kind === 'audiobook' && audiobookSession && audiobookSession.durationS > 0}
+          {#each audiobookSession.bookmarks as bm (bm.createdAt)}
+            <button
+              type="button"
+              onclick={(ev) => { ev.stopPropagation(); audiobookSession?.seekTo?.(bm.time); }}
+              class="absolute top-[-3px] h-[9px] w-[9px] -translate-x-1/2 rotate-45 cursor-pointer rounded-sm bg-yellow-400 shadow hover:scale-150"
+              style="left: {(bm.time / audiobookSession.durationS) * 100}%"
+              title={bm.note ? `${Math.round(bm.time)}s — ${bm.note}` : `Bookmark at ${Math.round(bm.time)}s`}
+              aria-label="Jump to bookmark"
+            ></button>
+          {/each}
         {/if}
         <div class="absolute inset-y-0 w-px bg-white" style="left: {playheadPct}%"></div>
       </div>
@@ -751,14 +1194,14 @@
         <button type="button" onclick={() => controller.setRate(r)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" class:bg-zinc-800={controller.rate === r} title="Speed {r}×">{r}×</button>
       {/each}
       <span class="mx-2 h-4 w-px bg-zinc-800"></span>
-      <button type="button" onclick={() => (loopIn = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop in (I)">
+      <button type="button" onclick={() => (controller.loopIn = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop in (I)">
         Loop in {loopIn !== null ? `(f${loopIn})` : ''}
       </button>
-      <button type="button" onclick={() => (loopOut = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop out (O)">
+      <button type="button" onclick={() => (controller.loopOut = controller.currentFrame)} class="px-1.5 py-0.5 text-xs hover:bg-zinc-800" title="Mark loop out (O)">
         Loop out {loopOut !== null ? `(f${loopOut})` : ''}
       </button>
       {#if loopIn !== null || loopOut !== null}
-        <button type="button" onclick={() => { loopIn = null; loopOut = null; }} class="px-1.5 py-0.5 text-xs text-zinc-400 hover:text-white" title="Clear loop (⌫)">clear</button>
+        <button type="button" onclick={() => { controller.loopIn = null; controller.loopOut = null; }} class="px-1.5 py-0.5 text-xs text-zinc-400 hover:text-white" title="Clear loop (⌫)">clear</button>
       {/if}
       <span class="ml-auto font-mono text-xs text-zinc-400">
         JKL · ⇧← → · I/O loop · 1-5 speed · G goto · F fullscreen · ⌘wheel zoom

@@ -9,6 +9,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/brushpacks"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -16,7 +17,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
-	"github.com/mscrnt/artist-alley/app/internal/resourcetype"
+	"github.com/mscrnt/artist-alley/app/internal/assettype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
@@ -36,7 +37,7 @@ import (
 // `Handler` type, and we prefer explicit dispatch over magic anyway.
 type apiServer struct {
 	auth         *auth.Handler
-	resourceType *resourcetype.Handler
+	resourceType *assettype.Handler
 	storage      *storage.Handler
 	assets       *assets.Handler
 	metadata     *metadata.Handler
@@ -50,12 +51,13 @@ type apiServer struct {
 	sysconfigH   *sysconfig.Handler
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
+	brushpacks   *brushpacks.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
 	return &apiServer{
 		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
-		resourceType: resourcetype.NewHandler(pool, logger),
+		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
@@ -69,6 +71,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
+		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 	}
 }
 
@@ -132,10 +135,10 @@ func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequ
 	return s.auth.SetUserRole(ctx, req)
 }
 
-// --- resource_types --------------------------------------------------------
+// --- asset_types --------------------------------------------------------
 
-func (s *apiServer) ListResourceTypes(ctx context.Context, req openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	return s.resourceType.ListResourceTypes(ctx, req)
+func (s *apiServer) ListAssetTypes(ctx context.Context, req openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	return s.resourceType.ListAssetTypes(ctx, req)
 }
 
 // --- storage (raw byte plane) ----------------------------------------------
@@ -186,6 +189,10 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 	return s.assets.AddAssetTags(ctx, req)
 }
 
+func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	return s.assets.RecreateAssetPreview(ctx, req)
+}
+
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
 }
@@ -201,6 +208,32 @@ func (s *apiServer) DownloadAssetCompanion(ctx context.Context, req openapi.Down
 }
 func (s *apiServer) RemoveAssetCompanion(ctx context.Context, req openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	return s.assets.RemoveAssetCompanion(ctx, req)
+}
+
+func (s *apiServer) ListAssetAlternates(ctx context.Context, req openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	return s.assets.ListAssetAlternates(ctx, req)
+}
+func (s *apiServer) AddAssetAlternate(ctx context.Context, req openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	return s.assets.AddAssetAlternate(ctx, req)
+}
+func (s *apiServer) DownloadAssetAlternate(ctx context.Context, req openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	return s.assets.DownloadAssetAlternate(ctx, req)
+}
+func (s *apiServer) RemoveAssetAlternate(ctx context.Context, req openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	return s.assets.RemoveAssetAlternate(ctx, req)
+}
+
+func (s *apiServer) GetEpubSpine(ctx context.Context, req openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	return s.assets.GetEpubSpine(ctx, req)
+}
+func (s *apiServer) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	return s.assets.GetEpubChapter(ctx, req)
+}
+func (s *apiServer) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	return s.assets.GetEpubResource(ctx, req)
+}
+func (s *apiServer) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	return s.assets.SearchEpub(ctx, req)
 }
 
 // --- metadata --------------------------------------------------------------
@@ -288,6 +321,24 @@ func (s *apiServer) CreatePostComment(ctx context.Context, req openapi.CreatePos
 }
 func (s *apiServer) DeleteComment(ctx context.Context, req openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
 	return s.social.DeleteComment(ctx, req)
+}
+func (s *apiServer) ListPostWhiteboards(ctx context.Context, req openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	return s.social.ListPostWhiteboards(ctx, req)
+}
+func (s *apiServer) CreatePostWhiteboard(ctx context.Context, req openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	return s.social.CreatePostWhiteboard(ctx, req)
+}
+func (s *apiServer) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	return s.assets.LintAsset(ctx, req)
+}
+func (s *apiServer) ListAssetTextAnnotations(ctx context.Context, req openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	return s.social.ListAssetTextAnnotations(ctx, req)
+}
+func (s *apiServer) CreateAssetTextAnnotation(ctx context.Context, req openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	return s.social.CreateAssetTextAnnotation(ctx, req)
+}
+func (s *apiServer) UpdateTextAnnotation(ctx context.Context, req openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	return s.social.UpdateTextAnnotation(ctx, req)
 }
 
 // --- posts -----------------------------------------------------------------
@@ -430,4 +481,22 @@ func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPubl
 
 func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	return s.i18n.ListLocales(ctx, req)
+}
+
+// --- brush packs (Phase 1.21) ---------------------------------------------
+
+func (s *apiServer) ListBrushPacks(ctx context.Context, req openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	return s.brushpacks.ListBrushPacks(ctx, req)
+}
+func (s *apiServer) ImportBrushPack(ctx context.Context, req openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	return s.brushpacks.ImportBrushPack(ctx, req)
+}
+func (s *apiServer) GetBrushPack(ctx context.Context, req openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	return s.brushpacks.GetBrushPack(ctx, req)
+}
+func (s *apiServer) DeleteBrushPack(ctx context.Context, req openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	return s.brushpacks.DeleteBrushPack(ctx, req)
+}
+func (s *apiServer) GetBrushPackStamp(ctx context.Context, req openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	return s.brushpacks.GetBrushPackStamp(ctx, req)
 }

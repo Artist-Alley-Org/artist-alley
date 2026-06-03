@@ -841,7 +841,7 @@ func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResour
 		Pinned:       r.Pinned,
 		AddedAt:      r.AddedAt.Time,
 		Title:        r.Title,
-		ResourceType: r.ResourceType,
+		AssetType: r.AssetType,
 		Status:       openapi.CollectionResourceStatus(r.Status),
 		FileHash:     r.FileHash,
 	}

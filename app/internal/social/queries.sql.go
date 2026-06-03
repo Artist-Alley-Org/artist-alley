@@ -328,6 +328,64 @@ func (q *Queries) ListLikersOfTarget(ctx context.Context, arg ListLikersOfTarget
 	return items, nil
 }
 
+const listTextAnnotationsForAsset = `-- name: ListTextAnnotationsForAsset :many
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'asset'
+  AND target_id = $1
+  AND annotation_type = 'text-range'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at ASC
+`
+
+// Doc-viewer review panel: every text-range annotation on an asset,
+// newest first. Backed by the comments_text_annotations_idx partial
+// index (migration 00036). Replies to an annotation thread under it
+// via parent_id and surface through the normal thread query; this
+// list returns only the top-level anchors.
+func (q *Queries) ListTextAnnotationsForAsset(ctx context.Context, targetID pgtype.UUID) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listTextAnnotationsForAsset, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Comment
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.ParentID,
+			&i.RootID,
+			&i.Depth,
+			&i.AuthorUserRef,
+			&i.Body,
+			&i.BodyHtml,
+			&i.AnnotationType,
+			&i.AnnotationData,
+			&i.LikeCount,
+			&i.EditedAt,
+			&i.DeletedAt,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listThreadForTarget = `-- name: ListThreadForTarget :many
 WITH thread_roots AS (
     SELECT cr.id, cr.created_at
@@ -409,6 +467,66 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 	return items, nil
 }
 
+const listWhiteboardsForPost = `-- name: ListWhiteboardsForPost :many
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'post'
+  AND target_id = $1
+  AND annotation_type = 'whiteboard'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+`
+
+// Sidebar "Whiteboards" surface — every whiteboard sketch on a post,
+// newest first. Whiteboards are top-level comments
+// (parent_id IS NULL) with annotation_type='whiteboard'; reply
+// comments to a whiteboard show up via the existing thread query, not
+// here. The comments_whiteboards_idx partial index (migration 00029)
+// covers this exactly: (target_kind, target_id, created_at DESC)
+// WHERE annotation_type='whiteboard' AND deleted_at IS NULL.
+func (q *Queries) ListWhiteboardsForPost(ctx context.Context, targetID pgtype.UUID) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listWhiteboardsForPost, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Comment
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.ParentID,
+			&i.RootID,
+			&i.Depth,
+			&i.AuthorUserRef,
+			&i.Body,
+			&i.BodyHtml,
+			&i.AnnotationType,
+			&i.AnnotationData,
+			&i.LikeCount,
+			&i.EditedAt,
+			&i.DeletedAt,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteComment = `-- name: SoftDeleteComment :execrows
 UPDATE comments
    SET deleted_at = NOW(),
@@ -449,6 +567,57 @@ func (q *Queries) UnlikeTarget(ctx context.Context, arg UnlikeTargetParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateAnnotationData = `-- name: UpdateAnnotationData :one
+UPDATE comments SET
+    body            = COALESCE($1, body),
+    annotation_data = $2,
+    edited_at       = CASE WHEN $1 IS NOT NULL THEN NOW() ELSE edited_at END,
+    updated_at      = NOW()
+WHERE id = $3 AND deleted_at IS NULL
+RETURNING id, target_kind, target_id, parent_id, root_id, depth,
+          author_user_ref, body, body_html,
+          annotation_type, annotation_data,
+          like_count, edited_at, deleted_at,
+          origin_server_id, created_at, updated_at
+`
+
+type UpdateAnnotationDataParams struct {
+	Body           *string
+	AnnotationData []byte
+	ID             pgtype.UUID
+}
+
+// Narrow update for the doc-viewer's "change color / change style /
+// toggle resolved / edit comment body" actions. Replaces the full
+// annotation_data blob (the panel sends the merged shape it wants)
+// and optionally updates the body text. Caller must guarantee the
+// comment is an annotation; we don't enforce annotation_type here so
+// the same query serves whiteboard PATCH too if needed later.
+func (q *Queries) UpdateAnnotationData(ctx context.Context, arg UpdateAnnotationDataParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, updateAnnotationData, arg.Body, arg.AnnotationData, arg.ID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.ParentID,
+		&i.RootID,
+		&i.Depth,
+		&i.AuthorUserRef,
+		&i.Body,
+		&i.BodyHtml,
+		&i.AnnotationType,
+		&i.AnnotationData,
+		&i.LikeCount,
+		&i.EditedAt,
+		&i.DeletedAt,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateComment = `-- name: UpdateComment :one

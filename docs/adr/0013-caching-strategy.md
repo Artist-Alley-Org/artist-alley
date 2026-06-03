@@ -1,8 +1,23 @@
-# ADR 0013: Caching strategy — in-process LRU + Postgres LISTEN/NOTIFY, no Redis
-
-- Date: 2026-05-26
-- Status: Accepted
-
+---
+id: "0013"
+title: Caching strategy — in-process LRU + Postgres LISTEN/NOTIFY, no Redis
+status: accepted
+date: 2026-05-26
+area: infrastructure
+phases: 
+  - "1.5"
+  - "1.9"
+  - "1.10"
+supersedes: []
+related: 
+  - "0010"
+  - "0012"
+tags:
+  - infrastructure
+  - ai
+excerpt: >-
+  At 2M+ assets per server, every hot read path needs to avoid hitting Postgres for unchanged data. Specific pain points the metadata work (ADR 0012) is about to make worse:
+---
 ## Context
 
 At 2M+ assets per server, every hot read path needs to avoid hitting
@@ -69,7 +84,7 @@ Writes:
 |---|---|---|---|
 | `field_definition` (by id, by code) | 5000 | none | invalidate on field upsert |
 | `field_set` | 100 | none | invalidate on field_set upsert |
-| `resource_type` | 100 | none | invalidate on resource_type change |
+| `asset_type` | 100 | none | invalidate on asset_type change |
 | `role` (by id, by name) | 500 | none | invalidate on role / role_capabilities change |
 | `user_capabilities` (by user_ref) | 10000 | 5 min | TTL because grants/revokes happen ad-hoc |
 | `asset_by_id` | 50000 | 1 min | hot read; invalidates on asset update |

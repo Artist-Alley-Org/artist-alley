@@ -36,7 +36,7 @@
   interface MemberRow {
     asset_id: string;
     title: string;
-    resource_type: number;
+    asset_type: number;
     file_hash: string | null;
     sort_order: number;
     added_at: string;
@@ -299,7 +299,7 @@
               id: m.asset_id,
               title: m.title,
               file_hash: m.file_hash,
-              resource_type: m.resource_type,
+              asset_type: m.asset_type,
               created_at: m.asset_created_at ?? m.added_at,
             }}
           />

@@ -48,7 +48,7 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 	h := &Handler{Pool: pool, Logger: logger}
 	if registry != nil {
 		// 64 entries is more than enough; we have one domain for
-		// posts and one per resource_type for assets (a handful in
+		// posts and one per asset_type for assets (a handful in
 		// practice).
 		h.byDomain = cache.Register[[]openapi.WorkflowState](registry, CacheDomain, 64)
 	}

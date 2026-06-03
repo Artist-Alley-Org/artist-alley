@@ -109,6 +109,7 @@ LABEL org.opencontainers.image.source="https://github.com/mscrnt/artist-alley"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tzdata curl libwebp7 \
+        ffmpeg librsvg2-bin poppler-utils ghostscript imagemagick unar \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system app && useradd --system --gid app --no-create-home app \
  && mkdir -p /var/lib/aa-storage \

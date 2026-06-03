@@ -1,0 +1,126 @@
+---
+title: Sprite-tool batch API
+description: How to drive the sprite tool's review / brainstorm / manipulate operations from an external CLI without going through the in-browser panel.
+---
+
+The browser-side **SpriteToolPanel** is the primary surface for the
+sprite tool, but every persistent operation it performs is reachable
+over HTTP. External CLIs, federation peers, and batch jobs can drive
+the same flows without instantiating the frontend.
+
+This page is the contract.
+
+## What lives where
+
+| Operation                                                        | HTTP surface                                       |
+|------------------------------------------------------------------|----------------------------------------------------|
+| Frame layout (reorder / delete / duplicate / retime / mirror / flip / rotate / trim / note) | `POST /assets/{id}/companions` — companion JSON   |
+| Tags (named frame ranges) + slices (Aseprite regions)            | Same companion JSON                                |
+| Palette swap (and any future "sibling-variant" output)           | `POST /assets/{id}/alternates`                     |
+| Export GIF / packed sheet PNG / PNG zip                          | **Client-side only** — runs in the browser via `OffscreenCanvas` + `gifenc` + `fflate`. Replicate locally with any equivalent encoder. |
+
+The export encoders deliberately don't have a server endpoint —
+keeping them client-side keeps federation simple (any node that can
+read the source PNG + companion JSON can produce the export
+locally) and avoids server-side image work for what is fundamentally
+a per-user view of the data.
+
+## Companion JSON shape
+
+The sprite tool reads + writes one companion per asset, conventionally
+named `sprites.json`. TexturePacker JSON Hash form with our own
+sidecar fields on each frame entry:
+
+```json
+{
+  "frames": {
+    "frame_000.png": {
+      "frame": { "x": 0, "y": 0, "w": 32, "h": 32 },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+      "sourceSize": { "w": 32, "h": 32 },
+      "duration": 100,
+      "transform": { "flipH": true, "rotate": 90 },
+      "note": "experimenting with mirror"
+    }
+  },
+  "meta": {
+    "app": "artist-alley sprite tools",
+    "version": "1",
+    "image": "<asset_id>.png",
+    "size": { "w": 160, "h": 96 },
+    "scale": "1",
+    "frameTags": [
+      { "name": "walk", "from": 2, "to": 5, "direction": "forward" }
+    ],
+    "slices": [
+      { "name": "hitbox", "color": "#00ff00ff",
+        "keys": [{ "frame": 0, "bounds": { "x": 4, "y": 8, "w": 16, "h": 20 } }] }
+    ]
+  }
+}
+```
+
+Per-frame extras (all optional):
+
+- **`transform.flipH` / `flipV`** — mirror the source rect on draw.
+- **`transform.rotate`** — 0 / 90 / 180 / 270 around the frame
+  centre. Applied at render + export time; source pixels untouched.
+  TexturePacker's `rotated` is a **packing** concept (this rect is
+  stored rotated to fit better) — intentionally separate.
+- **`duration`** — per-frame ms. Falls back to the session FPS when
+  absent.
+- **`note`** — short brainstorm annotation. Surfaced as a hover
+  marker on the timeline tile.
+
+A reorder / delete / duplicate operation just shifts the order of
+keys in the `frames` object. Tag ranges (`from`, `to`) reference
+positions in the resulting list — any frame manipulation that
+changes positions must remap the tag ranges (the in-app session
+does this best-effort; CLI clients should follow the same model).
+
+## Adding a palette swap (or any sibling variant)
+
+Alternates are sibling-version variants of the asset itself — where
+companions are sidecars the primary asset references, alternates
+stand on their own.
+
+```sh
+curl -X POST "$BASE/api/v1/assets/$ID/alternates" \
+  -H "X-Alternate-Label: walk — team-green palette" \
+  -H "X-Alternate-Kind: palette_swap" \
+  -H 'X-Alternate-Metadata: {"remap":[{"from":"#aabbcc","to":"#112233"}]}' \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @walk-green.png
+```
+
+`X-Alternate-Kind` is open-ended (the schema only validates length).
+Conventional values that the in-browser UI groups by:
+
+- `palette_swap` — sprite tool palette remap
+- `thumbnail` — image pipeline thumbnail
+- `low_res` — image pipeline web-res
+- `transcode` — codec / container swap
+- `authored` — human-authored variant (paint-track Phase 13+)
+
+`X-Alternate-Metadata` is opaque per-kind JSON. The palette swap
+records its `remap` array so a future regeneration can read back
+the parameters that produced the variant.
+
+Label uniqueness per asset is enforced; uploading with the same
+label replaces the previous variant (and unpins the old bytes).
+
+## Smoke verification
+
+`scripts/sprite-batch-smoke.sh` exercises the full surface end-to-
+end (login → list / write / delete companion → list / write /
+download / delete alternate) and exits 0 only when every operation
+returns the expected status. Run it after any change to the
+companions or alternates handlers.
+
+```sh
+./scripts/sprite-batch-smoke.sh
+# defaults to http://localhost:8088 + first sprite asset returned
+./scripts/sprite-batch-smoke.sh http://example.com $UUID
+```

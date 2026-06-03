@@ -1,2 +1,0 @@
-resource_type_field,int(11),NO,PRI,,
-resource_type,int(11),NO,PRI,,

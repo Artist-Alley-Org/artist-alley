@@ -1,13 +1,21 @@
-# ADR 0004: Adjunct Postgres data model
-
-- Date: 2026-05-23
-- Status: **Superseded by ADR 0005** (the "adjunct" framing was retired
-  when the user opted to migrate RS to Postgres rather than run two
-  databases). The table sketches in this ADR remain useful starting
-  points and will return in a future ADR once we begin designing
-  artist-alley-specific tables, but the dual-database architecture they
-  assume is no longer current.
-
+---
+id: "0004"
+title: Adjunct Postgres data model
+status: superseded
+date: 2026-05-23
+area: infrastructure
+phases: []
+supersedes: []
+superseded_by: "0005"
+related: 
+  - "0003"
+tags:
+  - infrastructure
+  - ai
+  - 3d
+excerpt: >-
+  ADR 0003 established that we keep RS's MySQL untouched and run a Postgres + pgvector adjunct database for new-feature data, linked to RS by rs_resource_id / rs_user_id. Phase 0 brings up the Postgres container but the database is empty.
+---
 ## Context
 
 ADR 0003 established that we keep RS's MySQL untouched and run a Postgres +

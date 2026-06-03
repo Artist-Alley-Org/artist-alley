@@ -153,3 +153,62 @@ WHERE target_kind = 'asset'
   AND annotation_type IS NOT NULL
   AND deleted_at IS NULL
 ORDER BY created_at ASC;
+
+-- name: ListTextAnnotationsForAsset :many
+-- Doc-viewer review panel: every text-range annotation on an asset,
+-- newest first. Backed by the comments_text_annotations_idx partial
+-- index (migration 00036). Replies to an annotation thread under it
+-- via parent_id and surface through the normal thread query; this
+-- list returns only the top-level anchors.
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'asset'
+  AND target_id = $1
+  AND annotation_type = 'text-range'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at ASC;
+
+-- name: UpdateAnnotationData :one
+-- Narrow update for the doc-viewer's "change color / change style /
+-- toggle resolved / edit comment body" actions. Replaces the full
+-- annotation_data blob (the panel sends the merged shape it wants)
+-- and optionally updates the body text. Caller must guarantee the
+-- comment is an annotation; we don't enforce annotation_type here so
+-- the same query serves whiteboard PATCH too if needed later.
+UPDATE comments SET
+    body            = COALESCE(sqlc.narg('body'), body),
+    annotation_data = sqlc.arg('annotation_data'),
+    edited_at       = CASE WHEN sqlc.narg('body') IS NOT NULL THEN NOW() ELSE edited_at END,
+    updated_at      = NOW()
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL
+RETURNING id, target_kind, target_id, parent_id, root_id, depth,
+          author_user_ref, body, body_html,
+          annotation_type, annotation_data,
+          like_count, edited_at, deleted_at,
+          origin_server_id, created_at, updated_at;
+
+-- name: ListWhiteboardsForPost :many
+-- Sidebar "Whiteboards" surface — every whiteboard sketch on a post,
+-- newest first. Whiteboards are top-level comments
+-- (parent_id IS NULL) with annotation_type='whiteboard'; reply
+-- comments to a whiteboard show up via the existing thread query, not
+-- here. The comments_whiteboards_idx partial index (migration 00029)
+-- covers this exactly: (target_kind, target_id, created_at DESC)
+-- WHERE annotation_type='whiteboard' AND deleted_at IS NULL.
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       annotation_type, annotation_data,
+       like_count, edited_at, deleted_at,
+       origin_server_id, created_at, updated_at
+FROM comments
+WHERE target_kind = 'post'
+  AND target_id = $1
+  AND annotation_type = 'whiteboard'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+ORDER BY created_at DESC;

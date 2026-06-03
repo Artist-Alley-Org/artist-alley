@@ -139,11 +139,11 @@ interface OpenContext {
 
 const CONCURRENCY = 3;
 
-// Default resource_type. RS Photo = 1; we don't have a smarter
-// MIME-to-resource_type mapping yet, so everything goes in as Photo
+// Default asset_type. RS Photo = 1; we don't have a smarter
+// MIME-to-asset_type mapping yet, so everything goes in as Photo
 // for the MVP. The processing pipeline will set the right one once
 // it lands.
-const DEFAULT_RESOURCE_TYPE = 1;
+const DEFAULT_ASSET_TYPE = 1;
 
 // ---- The store ------------------------------------------------------------
 
@@ -460,7 +460,7 @@ class UploadState {
 
       const body: AssetCreate = {
         title: row.title || row.file.name,
-        resource_type: DEFAULT_RESOURCE_TYPE,
+        asset_type: DEFAULT_ASSET_TYPE,
         status: 'draft',
         file_hash: row.hash,
         file_extension: extensionOf(row.file.name),
@@ -710,7 +710,7 @@ export const upload = new UploadState();
 // ---- Field-definition cache ----------------------------------------------
 //
 // Shared by every UploadFileRow's metadata editor. The field list
-// changes rarely; a per-resource_type in-memory cache for the
+// changes rarely; a per-asset_type in-memory cache for the
 // session is fine — no need to thread through the cache.Registry
 // equivalent on the frontend.
 
@@ -730,14 +730,14 @@ export interface FieldDef {
 
 /**
  * Returns the field definitions visible to the upload form for a
- * given resource_type. Cached for the session.
+ * given asset_type. Cached for the session.
  */
-export function fieldsForResourceType(resourceType: number): Promise<FieldDef[]> {
+export function fieldsForAssetType(resourceType: number): Promise<FieldDef[]> {
   const cached = fieldsCache.get(resourceType);
   if (cached) return cached;
   const p = (async () => {
     const { data, error } = await api.GET('/fields', {
-      params: { query: { status: 'active', resource_type: resourceType } },
+      params: { query: { status: 'active', asset_type: resourceType } },
     });
     if (error || !data) {
       throw new Error(extractError(error) ?? 'Failed to load fields.');

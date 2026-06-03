@@ -59,6 +59,20 @@ const maxListLimit = 200
 // invalidation through cache.Registry.Emit.
 const CacheDomainAssetCompanions = "asset.companions"
 
+// CacheDomainAssetAlternates keys the per-asset alternate-list cache.
+// Mirrors the companions domain — sprite-tool palette swaps, future
+// painting-track variants, and the thumbnail pipeline all mutate the
+// alternate list and need to broadcast invalidations through this key.
+const CacheDomainAssetAlternates = "asset.alternates"
+
+// CacheDomainEPUBSpine + CacheDomainEPUBChapter — EPUB reader caches.
+// Spine is small (chapter index per asset); chapter HTML is bigger
+// (post-rewrite XHTML body). Both are invalidated only on asset re-
+// upload (which generates a new asset id, so cold-key churn handles
+// itself naturally).
+const CacheDomainEPUBSpine = "asset.epub.spine"
+const CacheDomainEPUBChapter = "asset.epub.chapter"
+
 // Handler implements the asset-entity slice of
 // openapi.StrictServerInterface.
 type Handler struct {
@@ -76,6 +90,16 @@ type Handler struct {
 	// high once a session settles on a working set of assets).
 	// nil-safe — tests can pass a nil registry.
 	companions *cache.Cache[[]openapi.AssetCompanion]
+	// alternates caches the per-asset list of sibling variants.
+	// Mostly hit by the sprite-tool palette swap UI + the future
+	// authored-variant track.
+	alternates *cache.Cache[[]openapi.AssetAlternate]
+	// EPUB reader caches — spine list per asset, rendered chapter
+	// HTML per (assetId, idx). Sized assuming a typical browsing
+	// session hits a handful of books deep but only reads through
+	// a few hundred chapters total.
+	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
+	epubChapters *cache.Cache[[]byte]
 }
 
 // NewHandler binds an entity handler to the DB pool and the storage
@@ -87,6 +111,9 @@ func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Lo
 		// is "active assets being reviewed" which is well under that
 		// for a single host.
 		h.companions = cache.Register[[]openapi.AssetCompanion](registry, CacheDomainAssetCompanions, 5_000)
+		h.alternates = cache.Register[[]openapi.AssetAlternate](registry, CacheDomainAssetAlternates, 5_000)
+		h.epubSpine = cache.Register[[]openapi.EpubSpineEntry](registry, CacheDomainEPUBSpine, 5_000)
+		h.epubChapters = cache.Register[[]byte](registry, CacheDomainEPUBChapter, 2_000)
 	}
 	return h
 }
@@ -149,7 +176,7 @@ func (h *Handler) CreateAsset(
 
 	// Workflow state: caller-supplied UUID is taken verbatim; the DB
 	// FK guards against unknown values. We don't validate that the
-	// state belongs to the matching `asset:<resource_type>` domain
+	// state belongs to the matching `asset:<asset_type>` domain
 	// here — that check kicks in on Transition() later. Tradeoff:
 	// permits a typo in the upload modal that would only surface on
 	// the first transition attempt; not worth a domain-lookup
@@ -167,7 +194,7 @@ func (h *Handler) CreateAsset(
 		processingStatus = "pending"
 	}
 
-	// Auto-promote resource_type when the file extension implies a
+	// Auto-promote asset_type when the file extension implies a
 	// stronger category than the caller chose. Frontends that send a
 	// generic Photo (1) for a .glb get bumped to 3D Object (5); a
 	// caller who explicitly picked Audio (4) for a model would stay
@@ -175,9 +202,9 @@ func (h *Handler) CreateAsset(
 	// only from the generic defaults (1, 2)" so explicit picks are
 	// always respected.
 	if in.FileExtension != nil {
-		if want := resourceTypeFor(*in.FileExtension); want > 0 {
-			if in.ResourceType == 1 || in.ResourceType == 2 {
-				in.ResourceType = want
+		if want := assetTypeFor(*in.FileExtension); want > 0 {
+			if in.AssetType == 1 || in.AssetType == 2 {
+				in.AssetType = want
 			}
 		}
 	}
@@ -204,7 +231,7 @@ func (h *Handler) CreateAsset(
 	row, err := q.CreateAsset(ctx, CreateAssetParams{
 		Title:            title,
 		Description:      strDefault(in.Description, ""),
-		ResourceType:     in.ResourceType,
+		AssetType:     in.AssetType,
 		OwnerUserRef:     &id.UserRef,
 		Status:           status,
 		FileHash:         fileHashPtr,
@@ -328,12 +355,60 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	if _, ok := fontExtsHandler[e]; ok {
 		return jobs.TypePreviewFont
 	}
+	if _, ok := ebookExtsHandler[e]; ok {
+		return jobs.TypePreviewEbook
+	}
+	if _, ok := epsExtsHandler[e]; ok {
+		return jobs.TypePreviewEPS
+	}
+	if _, ok := psdExtsHandler[e]; ok {
+		return jobs.TypePreviewPSD
+	}
+	if _, ok := comicExtsHandler[e]; ok {
+		return jobs.TypePreviewComic
+	}
+	if _, ok := textExtsHandler[e]; ok {
+		return jobs.TypePreviewText
+	}
+	if _, ok := archiveExtsHandler[e]; ok {
+		return jobs.TypePreviewArchive
+	}
 	return jobs.TypePreviewRaster
 }
 
 var pdfExtsHandler = map[string]struct{}{"pdf": {}}
 var fontExtsHandler = map[string]struct{}{
 	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
+}
+// ebookExtsHandler mirrors preview.ebookExts. Duplicated to avoid
+// the assets→preview import cycle (same pattern as audioExtsHandler).
+var ebookExtsHandler = map[string]struct{}{
+	"epub": {},
+}
+// epsExtsHandler mirrors preview.epsExts.
+var epsExtsHandler = map[string]struct{}{
+	"eps": {}, "ps": {},
+}
+// psdExtsHandler mirrors preview.psdExts.
+var psdExtsHandler = map[string]struct{}{
+	"psd": {}, "psb": {},
+}
+// comicExtsHandler mirrors preview.comicExts.
+var comicExtsHandler = map[string]struct{}{
+	"cbz": {}, "cbr": {}, "cb7": {},
+}
+// textExtsHandler mirrors preview.textExts.
+var textExtsHandler = map[string]struct{}{
+	"txt": {},
+}
+// archiveExtsHandler mirrors preview.archive.SupportedExtensions.
+// Routes uploads through the archive preview type so the manifest
+// is extracted + cached on metadata.archive.
+var archiveExtsHandler = map[string]struct{}{
+	"zip": {}, "jar": {}, "war": {}, "ear": {}, "apk": {}, "ipa": {},
+	"7z": {}, "rar": {},
+	"tar": {}, "tgz": {}, "tbz2": {}, "txz": {},
+	"tar.gz": {}, "tar.bz2": {}, "tar.xz": {},
 }
 
 // audioExtsHandler mirrors preview.audioExts. Duplicated here so the
@@ -342,6 +417,10 @@ var fontExtsHandler = map[string]struct{}{
 var audioExtsHandler = map[string]struct{}{
 	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
 	"m4a": {}, "aac": {}, "opus": {},
+	// Audiobook containers — see preview.audio.audioExts for the
+	// rationale. Routes through the same handler so we get cover
+	// extraction, duration probing, and chapter atoms.
+	"m4b": {}, "aax": {},
 }
 
 // ---------------------------------------------------------------------------
@@ -573,8 +652,8 @@ func (h *Handler) ListAssets(
 		ownerRef = req.Params.OwnerRef
 	}
 	var resType *int64
-	if req.Params.ResourceType != nil {
-		resType = req.Params.ResourceType
+	if req.Params.AssetType != nil {
+		resType = req.Params.AssetType
 	}
 	var statusPtr *string
 	if req.Params.Status != nil {
@@ -606,7 +685,7 @@ func (h *Handler) ListAssets(
 		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
 			Tag:             *req.Params.Tag,
 			OwnerUserRef:    ownerRef,
-			ResourceType:    resType,
+			AssetType:    resType,
 			Status:          statusPtr,
 			CursorCreatedAt: cursorTs,
 			CursorID:        cursorID,
@@ -632,7 +711,7 @@ func (h *Handler) ListAssets(
 	} else {
 		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
 			OwnerUserRef:    ownerRef,
-			ResourceType:    resType,
+			AssetType:    resType,
 			Status:          statusPtr,
 			Q:               qText,
 			CursorCreatedAt: cursorTs,
@@ -742,6 +821,64 @@ func (h *Handler) DownloadAssetVariant(
 // ---------------------------------------------------------------------------
 // Tag management
 // ---------------------------------------------------------------------------
+
+// RecreateAssetPreview re-enqueues this asset's preview job at
+// PriorityHigh. Used by the AssetViewer's Edit-menu "Recreate
+// previews" item, and by the preview-pipeline ops surface when a
+// worker bug-fix lands and the user wants existing renders
+// regenerated against the new code.
+//
+// The worker's idempotency-skip logic (variant exists → skip)
+// usually short-circuits a no-op re-enqueue; explicit per-worker
+// flags (isoDone in preview.3d, etc.) decide whether the
+// re-render actually writes new bytes. Failure to enqueue is loud:
+// the caller gets a 500 rather than a silent no-op.
+func (h *Handler) RecreateAssetPreview(
+	ctx context.Context,
+	req openapi.RecreateAssetPreviewRequestObject,
+) (openapi.RecreateAssetPreviewResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.RecreateAssetPreview401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if h.Jobs == nil {
+		// Test contexts that don't wire a Jobs service get a clean
+		// 500 rather than a nil-deref panic.
+		return nil, fmt.Errorf("assets: jobs service not configured")
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := New(h.Pool).GetAsset(ctx, pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.RecreateAssetPreview404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: get for recreate: %w", err)
+	}
+	if row.FileHash == nil || *row.FileHash == "" {
+		return openapi.RecreateAssetPreview400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "asset has no file_hash; nothing to preview"},
+		}, nil
+	}
+
+	jobType := jobTypeForExt(row.FileExtension)
+	payload := map[string]string{
+		"asset_id":       req.Id.String(),
+		"file_hash":      *row.FileHash,
+		"file_extension": strDefault(row.FileExtension, ""),
+	}
+	priority := jobs.PriorityHigh
+	jobID, err := h.Jobs.Enqueue(ctx, jobType, payload, jobs.EnqueueOpts{Priority: &priority})
+	if err != nil {
+		return nil, fmt.Errorf("assets: enqueue preview re-render: %w", err)
+	}
+	return openapi.RecreateAssetPreview202JSONResponse{
+		JobId:   openapi_types.UUID(jobID),
+		JobType: string(jobType),
+	}, nil
+}
 
 func (h *Handler) AddAssetTags(
 	ctx context.Context,
@@ -886,7 +1023,7 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
 		Title:            row.Title,
-		ResourceType:     row.ResourceType,
+		AssetType:     row.AssetType,
 		Status:           openapi.AssetStatus(row.Status),
 		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
 		CreatedAt:        row.CreatedAt.Time,
@@ -933,7 +1070,7 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -954,7 +1091,7 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -975,7 +1112,7 @@ func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -996,7 +1133,7 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		ResourceType:     r.ResourceType,
+		AssetType:     r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1037,9 +1174,18 @@ func isImageExt(ext *string) bool {
 // videoExts: same role for video. Coverage is "anything we'd want
 // to spin up a video.probe job for" — the actual transcode list
 // lives in the (future) video pipeline.
+//
+// Camera + broadcast formats included so uploads from a GoPro
+// (.lrv proxy), Insta360 (.insv), AVCHD camcorder (.mts / .m2ts),
+// DVD rip (.vob), broadcast workflow (.mxf), Flash (.f4v), or
+// MPEG-4 variant (.m4v / .ts) land as Video instead of Photo /
+// unknown. RED / ARRI / ProRes RAW deferred — those need a paid
+// codec license to even probe metadata.
 var videoExts = map[string]struct{}{
 	"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
 	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
+	"m4v": {}, "ts": {}, "lrv": {}, "insv": {}, "mts": {},
+	"m2ts": {}, "vob": {}, "f4v": {}, "mxf": {},
 }
 
 // modelExts: formats the preview.3d handler can ingest.
@@ -1062,15 +1208,50 @@ var modelExts = map[string]struct{}{
 	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
 }
 
-// resourceTypeFor returns the canonical resource_type ref for a file
+// assetTypeFor returns the canonical asset_type ref for a file
 // extension, used by createAsset to auto-promote uploads to the right
 // category. Returns 0 (unset) when we don't have a strong opinion —
 // the caller's explicit choice still wins.
-func resourceTypeFor(ext string) int64 {
+//
+// Type refs (seeded in migrations 00027 + 00031 + 00033 + 00034):
+//   1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
+//   7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture
+//   13 Sprite · 14 Code
+//
+// Editor-source files (psd / ai / eps / sketch / etc.) land in Image
+// alongside finished raster outputs. Texture / sprite / audiobook
+// recognised only by dedicated file extensions — generic png / mp3
+// stay Image / Audio because the extension can't tell them apart.
+func assetTypeFor(ext string) int64 {
 	if ext == "" {
 		return 0
 	}
 	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+	switch e {
+	case "ttf", "otf", "ttc", "otc", "woff", "woff2":
+		return 7 // Font
+	case "cbr", "cbz", "cb7":
+		return 8 // Comic
+	case "epub", "mobi", "azw", "azw3", "fb2", "lit", "prc", "pdb":
+		return 10 // Ebook
+	case "m4b", "aax":
+		return 11 // Audiobook
+	case "dds", "ktx", "ktx2", "basis", "sbsar", "sbs":
+		return 12 // Texture
+	case "aseprite", "ase", "pyxel":
+		return 13 // Sprite
+	case "py", "js", "jsx", "ts", "tsx", "mjs", "cjs",
+		"c", "cpp", "cc", "cxx", "h", "hpp", "hh",
+		"cs", "java", "go", "rs", "rb", "php", "swift", "kt", "kts", "scala",
+		"sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+		"lua", "gd", "tres", "tscn",
+		"mel", "ms", "mxs", "hda", "vex",
+		"hlsl", "glsl", "vert", "frag", "shader", "cginc", "usf":
+		return 14 // Code
+	case "psd", "psb", "ai", "sketch", "fig", "xd", "eps", "cdr",
+		"afdesign", "afphoto", "afpub", "clip", "ora", "kra":
+		return 1 // Image (editor-source files belong with finished raster)
+	}
 	if _, ok := modelExts[e]; ok {
 		return 5 // 3D Object
 	}
@@ -1078,15 +1259,15 @@ func resourceTypeFor(ext string) int64 {
 		return 3 // Video
 	}
 	if _, ok := imageExts[e]; ok {
-		return 1 // Photo
+		return 1 // Image
 	}
 	switch e {
 	case "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "txz":
 		return 6 // Archive
 	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma":
 		return 4 // Audio
-	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt", "ttf", "otf", "ttc", "otc", "woff", "woff2":
-		return 2 // Document (fonts → Document for now; no dedicated Font type yet)
+	case "pdf", "doc", "docx", "txt", "md", "rtf", "odt":
+		return 2 // Document
 	}
 	return 0
 }
@@ -1112,6 +1293,24 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := fontExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := ebookExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := epsExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := psdExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := comicExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := textExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := archiveExtsHandler[e]; ok {
 		return true
 	}
 	return false

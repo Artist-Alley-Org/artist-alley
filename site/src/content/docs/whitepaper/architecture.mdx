@@ -25,7 +25,7 @@ flowchart LR
   `go:embed`. One artifact. One process. Same binary supports the
   `embed_web` build tag for production (frontend baked in) and a
   dev mode that proxies the Vite dev server.
-- **Postgres** holds every record artist-alley owns — assets,
+- **Postgres** holds every record Artist Alley owns — assets,
   metadata fields + values, posts, members, collections, comments,
   likes, sessions, audit, system_config. Migrations live in
   `app/internal/db/migrations/` and run on boot.

@@ -108,7 +108,7 @@ DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2;
 -- the title/thumb/type the front-end needs without an N+1.
 SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.resource_type, a.status, a.file_hash, a.created_at AS asset_created_at
+       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1

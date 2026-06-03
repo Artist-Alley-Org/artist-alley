@@ -1,10 +1,14 @@
 <script lang="ts">
   // FontView — live specimen page rendered IN the uploaded typeface
-  // via the browser FontFace API. Three sections:
+  // via the browser FontFace API. Sections, top-to-bottom:
   //
-  //   1. Display row — full name at 96 pt
-  //   2. Pangram + a weight ladder
-  //   3. ASCII grid — visible glyph table for quick coverage check
+  //   1. **Try it** — textarea + size slider + bg toggle; the right
+  //      half live-renders whatever the user types in the font.
+  //      The headline interaction; specimens below back it up.
+  //   2. Display row — full name set big
+  //   3. Pangram + a weight ladder
+  //   4. ASCII grid — glyph coverage at a glance
+  //   5. Metadata strip
   //
   // Compared to the col thumbnail (a single static specimen card
   // baked by preview.font), this view interactively renders the
@@ -61,6 +65,30 @@
     '!@#$%^&*()-_=+[]{}<>?/',
   ];
 
+  // ── "Try it" interactive state ──────────────────────────────────
+  // User types on the left, the right side renders in the loaded
+  // typeface. Size + bg toggle + a few preset strings give a quick
+  // way to evaluate the font without typing from scratch.
+  const TRY_IT_PRESETS: { label: string; text: string }[] = [
+    { label: 'Display',  text: 'Hamburgefonstiv' },
+    { label: 'Pangram',  text: 'The quick brown fox jumps over the lazy dog' },
+    { label: 'Numerals', text: '0123456789 \u00a3$\u20ac\u00a5 +-\u00d7\u00f7 (12.5%)' },
+    { label: 'Lorem',    text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.' },
+  ];
+  let tryText = $state('Hamburgefonstiv');
+  let trySize = $state(96);
+  let tryBg = $state<'dark' | 'light'>('dark');
+  // Reset textarea on asset change (otherwise typing on font A is
+  // still visible when navigating to font B).
+  let lastAssetId = '';
+  $effect(() => {
+    if (asset.id !== lastAssetId) {
+      lastAssetId = asset.id;
+      tryText = 'Hamburgefonstiv';
+      trySize = 96;
+    }
+  });
+
   onMount(async () => {
     try {
       const face = new FontFace(familyId, `url(${fileUrl})`);
@@ -92,7 +120,7 @@
   );
 </script>
 
-<div class="h-full w-full overflow-y-auto bg-[#16181f] px-8 py-10 text-[#e6e7ec]">
+<div class="h-full w-full overflow-y-auto bg-[#16181f] px-6 py-6 text-[#e6e7ec] lg:px-10 lg:py-8">
   {#if loadError}
     <div class="mx-auto max-w-3xl text-center">
       <p class="text-sm text-danger">Couldn't load font</p>
@@ -108,7 +136,78 @@
       Loading font…
     </div>
   {:else}
-    <div class="mx-auto max-w-4xl space-y-10">
+    <div class="space-y-8">
+      <!-- ── Try it — interactive specimen ─────────────────────────
+           Left half: textarea + size + bg toggle + preset strings.
+           Right half: the typed text rendered in the loaded font,
+           scrollable if the user picks a huge size + long string.
+           Collapses to a stack on narrow viewports. -->
+      <section class="rounded-lg border border-white/10 bg-white/5 p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h2 class="text-xs uppercase tracking-wider text-white/40">Try it</h2>
+          <div class="flex items-center gap-1">
+            {#each TRY_IT_PRESETS as p (p.label)}
+              <button
+                type="button"
+                onclick={() => (tryText = p.text)}
+                class="rounded border border-white/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/60 hover:border-white/30 hover:text-white"
+                title={`Load: ${p.text.slice(0, 60)}${p.text.length > 60 ? '\u2026' : ''}`}
+              >{p.label}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="grid gap-3 lg:grid-cols-2">
+          <!-- Editor side -->
+          <div class="flex flex-col gap-2">
+            <textarea
+              bind:value={tryText}
+              rows="6"
+              spellcheck="false"
+              class="min-h-[8rem] w-full resize-y rounded border border-white/10 bg-[#0f1117] px-3 py-2 font-mono text-sm text-white/90 focus:border-accent focus:outline-none"
+              placeholder="Type something to see it in the font\u2026"
+            ></textarea>
+            <div class="flex items-center gap-3 text-xs text-white/60">
+              <label class="flex flex-1 items-center gap-2">
+                <span class="w-10 text-white/40">Size</span>
+                <input
+                  type="range"
+                  min="12"
+                  max="240"
+                  step="1"
+                  bind:value={trySize}
+                  class="flex-1 accent-accent"
+                />
+                <span class="w-10 text-right font-mono text-white/70">{trySize}px</span>
+              </label>
+              <div class="flex items-center overflow-hidden rounded border border-white/15">
+                <button
+                  type="button"
+                  onclick={() => (tryBg = 'dark')}
+                  class={`px-2 py-1 text-[10px] uppercase tracking-wide ${tryBg === 'dark' ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/80'}`}
+                  title="Dark background"
+                >Dark</button>
+                <button
+                  type="button"
+                  onclick={() => (tryBg = 'light')}
+                  class={`px-2 py-1 text-[10px] uppercase tracking-wide ${tryBg === 'light' ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/80'}`}
+                  title="Light background"
+                >Light</button>
+              </div>
+            </div>
+          </div>
+          <!-- Render side -->
+          <div
+            class={`min-h-[8rem] overflow-auto rounded border p-4 ${tryBg === 'dark' ? 'border-white/10 bg-[#0f1117] text-white/90' : 'border-black/10 bg-white text-black'}`}
+          >
+            <div
+              class="whitespace-pre-wrap break-words leading-tight"
+              style:font-family={`"${familyId}", sans-serif`}
+              style:font-size={`${trySize}px`}
+            >{tryText || '\u00a0'}</div>
+          </div>
+        </div>
+      </section>
+
       <!-- Display row -->
       <header class="border-b border-white/10 pb-6">
         <h1

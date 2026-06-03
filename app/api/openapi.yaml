@@ -35,7 +35,7 @@ tags:
       content-addressed: every blob is keyed by sha256(contents), so
       identical uploads dedup automatically and federated peers can
       verify transfers by hash. See ADR 0008.
-  - name: resource_types
+  - name: asset_types
     description: Configurable categories applied to every uploaded asset
       (Photo, Document, Video, Audio, custom types, etc.)
   - name: posts
@@ -643,7 +643,7 @@ paths:
           required: false
           description: Filter to a single owner's assets.
           schema: { type: integer, format: int64 }
-        - name: resource_type
+        - name: asset_type
           in: query
           required: false
           schema: { type: integer, format: int64 }
@@ -915,6 +915,300 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /assets/{id}/alternates:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetAlternates
+      summary: List variant files (palette swaps, transcodes, thumbnails) for an asset
+      description: |
+        Returns the sibling-version variants attached to this asset,
+        most-recently-created first. Where companions are sidecars the
+        primary asset references, alternates are variants of the asset
+        itself — a palette-swapped sprite sheet, a web-res thumbnail,
+        a transcoded proxy. Each alternate stands on its own and can
+        be downloaded directly.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of alternates (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AssetAlternate" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addAssetAlternate
+      summary: Attach a variant file to an asset
+      description: |
+        Streams the variant body content-addressed into storage, then
+        attaches it as a sibling alternate. Replaces any existing
+        alternate with the same label (the old pin is removed). Pass
+        the kind tag in X-Alternate-Kind so the UI can group + filter;
+        kind-specific metadata travels as JSON in X-Alternate-Metadata.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: X-Alternate-Label
+          in: header
+          required: true
+          description: |
+            Human label shown in alt-file lists. Unique per asset; an
+            upload with an existing label replaces the previous variant.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: X-Alternate-Kind
+          in: header
+          required: false
+          description: |
+            Provenance tag — palette_swap | thumbnail | low_res |
+            authored | transcode. Free-form so new generators don't
+            need a backend change; defaults to "authored".
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: X-Alternate-Metadata
+          in: header
+          required: false
+          description: |
+            JSON-encoded per-kind metadata. The sprite tool's palette
+            swap encodes its "from → to" colour map here; thumbnail
+            workers encode dimensions. Opaque to the backend.
+          schema: { type: string, maxLength: 8192 }
+        - name: X-Content-Type
+          in: header
+          required: false
+          description: MIME type of the alternate bytes.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Alternate attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetAlternate" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/alternates/{alternate_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: alternate_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: downloadAssetAlternate
+      summary: Download an alternate's bytes
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Alternate body
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeAssetAlternate
+      summary: Detach an alternate from an asset
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Alternate removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/epub/spine:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getEpubSpine
+      summary: List the chapters of an EPUB asset (reading order)
+      description: |
+        Returns the ordered list of chapters from the default
+        rendition's spine. Each entry carries the chapter's
+        manifest id, a display label (NCX/TOC label when
+        available, else the manifest id, else "Chapter N"), and
+        the original href + media type for debugging. The
+        frontend reader uses this to populate the table of
+        contents + chapter picker.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ordered spine entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EpubSpineEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/epub/chapters/{idx}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: idx
+        in: path
+        required: true
+        description: Zero-based spine index.
+        schema: { type: integer, minimum: 0 }
+    get:
+      operationId: getEpubChapter
+      summary: Read one EPUB chapter as HTML with rewritten resource refs
+      description: |
+        Streams the chapter's XHTML body with every relative
+        href / src / srcset rewritten to point at
+        /assets/{id}/epub/resources/{path}. The frontend reader
+        injects this directly into an iframe srcdoc; resources
+        resolve through us so auth cookies travel + CORS isn't
+        a concern.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Chapter HTML
+          content:
+            text/html:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/epub/search:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: q
+        in: query
+        required: true
+        description: |
+          Query string. Case-insensitive substring match against
+          each chapter's stripped-text body. Queries shorter than
+          two characters return an empty list (avoids degenerate
+          single-character spam).
+        schema: { type: string, minLength: 1 }
+    get:
+      operationId: searchEpub
+      summary: Full-text search across an EPUB's chapters
+      description: |
+        Scans every spine chapter for the query (case-insensitive),
+        returning up to 5 hits per chapter and 200 hits total.
+        Each hit carries the chapter idx (jump target), a label
+        (display), a snippet (~60 chars on each side of the match),
+        and the character offset inside the plain-text chapter
+        body (future use when EpubView grows in-page anchor jump).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Search hits (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EpubSearchHit" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets/{id}/epub/resources/{path}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: path
+        in: path
+        required: true
+        description: |
+          Zip-internal absolute path of the resource (image, CSS,
+          font, etc.). Resolved from the chapter's relative ref
+          during chapter rewriting; the frontend never constructs
+          these by hand.
+        schema: { type: string }
+    get:
+      operationId: getEpubResource
+      summary: Stream an EPUB-internal resource (image, CSS, font, …)
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Resource bytes
+          headers:
+            Content-Type:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/companions/{companion_id}:
     parameters:
       - name: id
@@ -995,6 +1289,55 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: recreateAssetPreview
+      summary: Re-enqueue this asset's preview job
+      description: |
+        Inserts a fresh job of the preview kind that matches the
+        asset's file extension (preview.raster / preview.video /
+        preview.3d / preview.audio / preview.pdf / preview.font /
+        preview.ebook / preview.eps / preview.psd / preview.comic /
+        preview.text) at PriorityHigh. The worker picks it up within
+        a tick and overwrites the existing variants when its
+        idempotency-skip logic doesn't bail.
+
+        Useful after attaching new companions (so a 3D model can
+        re-render with its textures) or after a worker bug-fix
+        landed and the user wants the existing rendered output
+        regenerated against the new code.
+
+        Returns the freshly-enqueued job id so callers can poll
+        /jobs/{id}/status if they want a progress UI.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "202":
+          description: Job enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, job_type]
+                properties:
+                  job_id:   { type: string, format: uuid }
+                  job_type: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /assets/{id}/tags/{tag}:
     parameters:
       - name: id
@@ -1039,12 +1382,12 @@ paths:
           schema:
             type: string
             enum: [active, deprecated, archived]
-        - name: resource_type
+        - name: asset_type
           in: query
           required: false
           description: |
             When set, only fields whose `applies_to` is empty (=all)
-            or contains this resource_type ref are returned. Used by
+            or contains this asset_type ref are returned. Used by
             the asset edit form to figure out which fields to show.
           schema: { type: integer, format: int64 }
       responses:
@@ -1664,6 +2007,234 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /posts/{id}/whiteboards:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listPostWhiteboards
+      summary: List whiteboard sketches on a post
+      description: |
+        Whiteboards are free-form brush sketches anchored to a post —
+        brainstorm sessions, sketch passes, off-asset notes.
+        Storage-wise they're top-level `comments` rows with
+        `annotation_type='whiteboard'`; the partial index
+        `comments_whiteboards_idx` makes this query cheap.
+
+        Replies to a whiteboard are normal comments threaded under it
+        and surface via the regular comment thread query, not this
+        list.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Whiteboards for the post (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createPostWhiteboard
+      summary: Save a whiteboard sketch on a post
+      description: |
+        Persists a brush-sketch as a top-level comment with
+        `annotation_type='whiteboard'`. The `content` payload carries
+        the strokes (vector source of truth — perfect-freehand input
+        points + per-layer arrangement) plus the source canvas
+        dimensions so the viewer can re-render proportionally
+        regardless of viewport size.
+
+        Requires `posts.comment` capability (Base default) — same
+        gate as posting a regular comment, since whiteboards ARE
+        comments at the storage layer. Future phases can split the
+        capability if finer governance is needed.
+
+        `title` is optional. If omitted the sidebar list shows
+        "Untitled sketch" with the author + timestamp.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WhiteboardCreate" }
+      responses:
+        "201":
+          description: Whiteboard saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/lint:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: lintAsset
+      summary: Run syntax checks against a doc asset's source
+      description: |
+        Dispatches to a language-aware syntax checker based on the
+        asset's file extension and returns a flat diagnostic list.
+
+        First cut ships three Go-native checkers (JSON / YAML /
+        Markdown). For any other extension the response carries
+        `skipped: true` so the UI can render "no linter configured
+        for this language" instead of "0 issues".
+
+        Future iterations slot in subprocess-based linters
+        (`py_compile`, `node --check`, `luac -p`, `shellcheck`, ...)
+        behind the same shape; the client doesn't need to know which
+        producer generated a diagnostic — it just renders the line /
+        col / severity / message.
+
+        Synchronous: every Go-native checker runs in single-digit
+        milliseconds on a typical doc.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Lint result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LintResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /assets/{id}/text-annotations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listAssetTextAnnotations
+      summary: List text-range annotations on a doc asset
+      description: |
+        Doc-viewer review tools (Phase 1.18.D-B). Each entry is a
+        top-level `comments` row with `annotation_type='text-range'`;
+        its `annotation_data` carries `{style, color, start_line,
+        start_col, end_line, end_col, resolved}`. `body` is the
+        user's commentary text (empty for pure highlights).
+
+        Replies on annotations live in the regular comment thread
+        and surface via `GET /assets/{id}/comments`, not here.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Annotations on the asset
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createAssetTextAnnotation
+      summary: Create a text-range annotation on a doc asset
+      description: |
+        Persists a highlight / strikethrough / underline / comment /
+        note as a top-level `comments` row with
+        `annotation_type='text-range'`. `body` carries the user's
+        commentary (empty string is fine for a pure highlight).
+
+        Requires `posts.comment` capability — annotations are
+        comments at the storage layer, so the same gate applies.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TextAnnotationCreate" }
+      responses:
+        "201":
+          description: Annotation created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /text-annotations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateTextAnnotation
+      summary: Update a text-range annotation
+      description: |
+        Mutates `body` (the commentary text) and/or `annotation_data`
+        (style / color / range / resolved). The annotation must
+        already exist with `annotation_type='text-range'`. Only the
+        annotation's author or a moderator can update.
+
+        For deletion, use `DELETE /comments/{id}` — annotations are
+        comments at the storage layer.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TextAnnotationPatch" }
+      responses:
+        "200":
+          description: Updated annotation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /comments/{id}:
     parameters:
       - name: id
@@ -2110,23 +2681,23 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /resource_types:
+  /asset_types:
     get:
-      operationId: listResourceTypes
-      summary: List all resource types
+      operationId: listAssetTypes
+      summary: List all asset types
       description: |
-        Returns every resource type configured in the system, ordered by
+        Returns every asset type configured in the system, ordered by
         display order (`order_by`) then by primary key. Anonymous access.
-      tags: [resource_types]
+      tags: [asset_types]
       responses:
         "200":
-          description: List of resource types
+          description: List of asset types
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ResourceType"
+                  $ref: "#/components/schemas/AssetType"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -2952,6 +3523,136 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppearanceConfig" }
 
+  /brush-packs:
+    get:
+      operationId: listBrushPacks
+      summary: List the caller's imported brush packs
+      description: |
+        Returns every brush pack owned by the authenticated user,
+        most-recent first. Each pack carries its stamp manifest
+        (id, dimensions, dynamics) — the actual stamp bitmaps are
+        fetched on demand via `/brush-packs/stamps/{stampId}`.
+        Built-in stamps shipped with the frontend are NOT listed
+        here; the frontend registers those locally.
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Brush pack list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [packs]
+                properties:
+                  packs:
+                    type: array
+                    items: { $ref: "#/components/schemas/BrushPack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: importBrushPack
+      summary: Import a Photoshop .abr brush pack
+      description: |
+        Accepts a binary `.abr` upload, parses it, writes every
+        decoded brush stamp to object storage, and registers the
+        pack under the caller's ownership. Returns the freshly
+        created pack manifest so the frontend can immediately add
+        the stamps to its brush picker.
+      tags: [brushpacks]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                name:
+                  type: string
+                  description: Display name; defaults to the filename when omitted.
+                file:
+                  type: string
+                  format: binary
+                  description: The .abr pack bytes.
+      responses:
+        "201":
+          description: Pack imported
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrushPack" }
+        "400":
+          description: Malformed file or unsupported ABR version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /brush-packs/{packId}:
+    parameters:
+      - name: packId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getBrushPack
+      summary: Get a brush pack + stamp manifest
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Pack manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrushPack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteBrushPack
+      summary: Delete a brush pack
+      description: |
+        Drops the pack + stamp manifest rows. The stamp bitmaps in
+        object storage are NOT immediately deleted — content-
+        addressed storage means the same bitmap may be referenced
+        by other packs. A future GC pass cleans orphans.
+      tags: [brushpacks]
+      responses:
+        "204":
+          description: Pack deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /brush-packs/stamps/{stampId}:
+    parameters:
+      - name: stampId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getBrushPackStamp
+      summary: Stream a brush stamp bitmap
+      description: |
+        Returns the raw PNG bytes of one stamp. The frontend renderer
+        fetches this URL on first use of the stamp + caches the
+        decoded Image element in memory. Owner-scoped — stamps in
+        another user's pack 404 (no existence-leak).
+      tags: [brushpacks]
+      responses:
+        "200":
+          description: Stamp PNG bytes
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -2971,7 +3672,7 @@ components:
         Personal Access Token, format `aa_pat_<32 chars>`. Issued via
         `POST /auth/tokens`. Send as `Authorization: Bearer aa_pat_...`.
   schemas:
-    ResourceType:
+    AssetType:
       type: object
       required: [ref]
       properties:
@@ -3018,6 +3719,78 @@ components:
           type: string
           description: Human-readable error summary
           example: could not list resource types
+    BrushPackStamp:
+      type: object
+      required: [id, width, height, spacing, align_to_path]
+      description: |
+        One brush stamp in a pack. The bitmap itself is fetched via
+        `/brush-packs/stamps/{id}` — this schema is the metadata the
+        frontend renderer needs to know how to draw with it.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable per-stamp identifier.
+        label:
+          type: string
+          nullable: true
+          description: Optional human-readable name (from the ABR descriptor).
+        width:
+          type: integer
+          description: Stamp bitmap width in source pixels.
+        height:
+          type: integer
+          description: Stamp bitmap height in source pixels.
+        spacing:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 10
+          description: |
+            Step between successive stamps as a fraction of the
+            effective stamp diameter. GIMP / Photoshop convention:
+            0.1 = smooth (default), 1.0 = stamps just touch, >1 =
+            sparse stippling.
+        align_to_path:
+          type: boolean
+          description: When true, the stamp rotates to follow the stroke tangent.
+        size_jitter:
+          type: number
+          format: double
+          nullable: true
+          description: 0..1 random size perturbation per stamp.
+        opacity_jitter:
+          type: number
+          format: double
+          nullable: true
+        angle_jitter:
+          type: number
+          format: double
+          nullable: true
+          description: 0..360 degrees random angle perturbation.
+    BrushPack:
+      type: object
+      required: [id, name, created_at, stamps]
+      description: |
+        Imported or authored brush pack owned by the caller. Includes
+        the full stamp manifest so the frontend has everything it
+        needs in one request.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        source_file:
+          type: string
+          nullable: true
+          description: Original .abr filename, when imported.
+        created_at:
+          type: string
+          format: date-time
+        stamps:
+          type: array
+          items: { $ref: "#/components/schemas/BrushPackStamp" }
     LoginRequest:
       type: object
       required: [username, password]
@@ -3678,7 +4451,7 @@ components:
         follow-up fetch.
       required:
         [collection_id, asset_id, sort_order, pinned, added_at,
-         title, resource_type, status]
+         title, asset_type, status]
       properties:
         collection_id: { type: string, format: uuid }
         asset_id:      { type: string, format: uuid }
@@ -3690,7 +4463,7 @@ components:
           nullable: true
         added_at:      { type: string, format: date-time }
         title:         { type: string }
-        resource_type: { type: integer, format: int64 }
+        asset_type: { type: integer, format: int64 }
         status:        { type: string, enum: [draft, active, archived] }
         file_hash:
           type: string
@@ -3719,12 +4492,12 @@ components:
           nullable: true
     Asset:
       type: object
-      required: [id, title, resource_type, status, processing_status, created_at, updated_at, tags]
+      required: [id, title, asset_type, status, processing_status, created_at, updated_at, tags]
       properties:
         id:             { type: string, format: uuid }
         title:          { type: string }
         description:    { type: string }
-        resource_type:  { type: integer, format: int64 }
+        asset_type:  { type: integer, format: int64 }
         owner_user_ref: { type: integer, format: int64, nullable: true }
         status:         { type: string, enum: [draft, active, archived] }
         file_hash:      { type: string, nullable: true, description: sha256 of the linked storage object }
@@ -3764,11 +4537,11 @@ components:
         updated_at:     { type: string, format: date-time }
     AssetCreate:
       type: object
-      required: [title, resource_type]
+      required: [title, asset_type]
       properties:
         title:          { type: string, minLength: 1, maxLength: 500 }
         description:    { type: string }
-        resource_type:  { type: integer, format: int64 }
+        asset_type:  { type: integer, format: int64 }
         status:
           type: string
           enum: [draft, active, archived]
@@ -4350,7 +5123,7 @@ components:
           description: Server-rendered safe HTML; clients should render this rather than reformatting `body`.
         annotation_type:
           type: string
-          enum: [point, rect, timestamp, frame]
+          enum: [point, rect, timestamp, frame, whiteboard, text-range]
           nullable: true
         annotation_data:
           type: object
@@ -4391,6 +5164,243 @@ components:
             When set, the new comment is a reply to this parent.
             Depth and root_id are computed server-side from the
             parent row.
+
+    WhiteboardContent:
+      type: object
+      required: [layers, source_w, source_h]
+      description: |
+        Vector source of truth for a whiteboard / annotation sketch.
+        The frontend renders from this; OCR / AI ingestion later can
+        consume it directly without going through the raster snapshot.
+      properties:
+        source_w:
+          type: integer
+          minimum: 1
+          description: |
+            Width of the source canvas in CSS pixels at save time.
+            Used to scale the drawing proportionally when re-rendered
+            in a different viewport size — strokes are stored in
+            source-canvas coordinates, not viewport pixels.
+        source_h:
+          type: integer
+          minimum: 1
+        image_hash:
+          type: string
+          nullable: true
+          description: |
+            Optional content-addressed hash of a rasterized PNG
+            snapshot in object storage. Convenience output for OCR /
+            AI / PDF export later. Null on save means strokes are
+            authoritative and the snapshot will be lazily rendered.
+        canvas_color:
+          type: string
+          description: |
+            Canvas background color (C-1.18). Hex string painted
+            behind every layer before items render. Defaults to
+            '#ffffff' when missing so saves from C-1.0..C-1.17
+            render identically.
+        layers:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: |
+            Ordered bottom-to-top. Each layer carries its own visible
+            / opacity / lock / items payload — same shape Photoshop /
+            Procreate use. Capped at 32 to keep payloads bounded.
+          items:
+            type: object
+            required: [id, items]
+            properties:
+              id: { type: string, description: "Stable per-layer identifier (UUIDv4 from the client)." }
+              name: { type: string }
+              visible: { type: boolean, default: true }
+              opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
+              locked:
+                type: boolean
+                default: false
+                description: "When true the layer is read-only; visibility stays toggleable."
+              items:
+                type: array
+                description: |
+                  Polymorphic items on this layer. `kind` is the
+                  discriminator: stroke (free-form brush), shape
+                  (line / arrow / rect / ellipse), text (inline
+                  label), or image (pasted/dropped bitmap, stored
+                  inline as a base64 data: URL for now).
+                items:
+                  type: object
+                  required: [kind]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [stroke, shape, text, image]
+                    # Stroke fields
+                    tool:
+                      type: string
+                      enum: [pen, marker, highlighter, eraser, line, arrow, rect, rounded-rect, ellipse, triangle, right-triangle, diamond, pentagon, hexagon, star, heart, callout-rect, callout-oval]
+                    color: { type: string, description: "Legacy single color (still set on shape items for back-compat). Stroke + text items use this exclusively; shape items prefer strokeColor / fillColor when present." }
+                    strokeColor: { type: string, description: "Shape outline color (C-1.17). Falls back to `color` when missing." }
+                    fillColor: { type: string, description: "Shape fill color (C-1.17). Falls back to `color` when missing." }
+                    width: { type: number, minimum: 0, maximum: 200 }
+                    opacity: { type: number, minimum: 0, maximum: 1, default: 1 }
+                    points:
+                      type: array
+                      items:
+                        type: array
+                        minItems: 2
+                        maxItems: 3
+                        items: { type: number }
+                    # Shape / Text / Image bbox
+                    x: { type: number }
+                    y: { type: number }
+                    w: { type: number }
+                    h: { type: number }
+                    fill: { type: number, minimum: 0, maximum: 1, description: "Shape fill opacity. 0 = outline only, 1 = solid fill." }
+                    # Text fields
+                    body: { type: string, maxLength: 10000 }
+                    fontSize: { type: number, minimum: 8, maximum: 256 }
+                    align: { type: string, enum: [left, center, right], default: left }
+                    bold: { type: boolean, default: false }
+                    italic: { type: boolean, default: false }
+                    # Image fields
+                    src:
+                      type: string
+                      description: |
+                        Base64 data: URL OR remote URL. Pasted images
+                        are embedded as data URLs (5 MB cap enforced
+                        client-side); content-addressed `image_hash`
+                        reference lands in a later phase.
+                    rotation: { type: number, default: 0 }
+
+    LintDiagnostic:
+      type: object
+      required: [line, col, severity, message, source]
+      properties:
+        line:
+          type: integer
+          minimum: 1
+          description: 1-based line number.
+        col:
+          type: integer
+          minimum: 1
+          description: 1-based column.
+        end_line:
+          type: integer
+          minimum: 1
+          nullable: true
+        end_col:
+          type: integer
+          minimum: 1
+          nullable: true
+        severity:
+          type: string
+          enum: [info, warning, error]
+        message:
+          type: string
+        source:
+          type: string
+          description: |
+            The linter that produced this diagnostic
+            (`json` / `yaml` / `markdown` for the first cut).
+            Frontend renders it as a small badge next to each row.
+
+    LintResult:
+      type: object
+      required: [linter, skipped]
+      properties:
+        linter:
+          type: string
+          description: |
+            Producer name, or `"none"` when no linter is wired for
+            the asset's extension.
+        skipped:
+          type: boolean
+          description: |
+            `true` when no linter ran (unsupported extension or
+            empty source). The diagnostics array is omitted or
+            empty in that case.
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/LintDiagnostic" }
+
+    WhiteboardCreate:
+      type: object
+      required: [content]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          description: Optional title for the sidebar list.
+        content:
+          $ref: "#/components/schemas/WhiteboardContent"
+
+    TextAnnotationAnchor:
+      type: object
+      description: |
+        Range anchor for a doc-viewer annotation. Lines are 1-based;
+        columns are 0-based (CodeMirror convention). The range may
+        be empty (`start == end`) for a sticky note at a position.
+      required: [style, color, start_line, start_col, end_line, end_col]
+      properties:
+        style:
+          type: string
+          enum: [highlight, strikethrough, underline, comment, note]
+          description: |
+            Visual treatment the editor's decoration extension applies.
+            `comment` + `note` carry user text in the parent comment's
+            `body`; `highlight` / `strikethrough` / `underline` typically
+            have empty bodies but the field is free to set.
+        color:
+          type: string
+          description: |
+            Hex color (`#fef08a` etc.). The default swatch palette is
+            five highlighter colors, but any hex string is accepted so
+            the future "custom color" picker works without a schema
+            change.
+          maxLength: 16
+        start_line:
+          type: integer
+          minimum: 1
+        start_col:
+          type: integer
+          minimum: 0
+        end_line:
+          type: integer
+          minimum: 1
+        end_col:
+          type: integer
+          minimum: 0
+        resolved:
+          type: boolean
+          default: false
+          description: |
+            Review-flow flag — the panel can filter resolved annotations
+            out of the active list. Resolution does not delete; the
+            anchor stays anchored for audit.
+
+    TextAnnotationCreate:
+      type: object
+      required: [anchor]
+      properties:
+        body:
+          type: string
+          description: User commentary (Markdown later; plain text now).
+          maxLength: 8000
+        anchor:
+          $ref: "#/components/schemas/TextAnnotationAnchor"
+
+    TextAnnotationPatch:
+      type: object
+      description: |
+        Field-by-field PATCH. Pass only what changed. Pass the full
+        `anchor` when changing any range/style/color field — the
+        server replaces the whole anchor blob (no partial JSON merge).
+      properties:
+        body:
+          type: string
+          maxLength: 8000
+        anchor:
+          $ref: "#/components/schemas/TextAnnotationAnchor"
 
     AclEntry:
       type: object
@@ -4451,6 +5461,47 @@ components:
           format: int64
           nullable: true
 
+    EpubSpineEntry:
+      type: object
+      description: |
+        One chapter entry from an EPUB's spine (reading order).
+        Returned by GET /assets/{id}/epub/spine; consumed by the
+        frontend reader to render the TOC + chapter picker.
+      required: [idx, label, href, media_type]
+      properties:
+        idx:
+          type: integer
+          minimum: 0
+          description: Zero-based spine position; pass to /chapters/{idx}.
+        label:
+          type: string
+          description: Display label — NCX/TOC label, else manifest id, else "Chapter N".
+        href:
+          type: string
+          description: Original manifest href (debugging / federation parity).
+        media_type:
+          type: string
+          example: application/xhtml+xml
+
+    EpubSearchHit:
+      type: object
+      description: |
+        One match returned by the EPUB full-text search endpoint.
+        Multiple hits per chapter are possible (capped at 5).
+      required: [chapter_idx, chapter_label, snippet, char_offset]
+      properties:
+        chapter_idx:
+          type: integer
+          minimum: 0
+        chapter_label:
+          type: string
+        snippet:
+          type: string
+          description: ~120 char excerpt centred on the match.
+        char_offset:
+          type: integer
+          description: Char offset of the match in the plain-text chapter body.
+
     AssetCompanion:
       type: object
       description: |
@@ -4483,6 +5534,53 @@ components:
         created_at:
           type: string
           format: date-time
+
+    AssetAlternate:
+      type: object
+      description: |
+        A sibling-version variant of an asset (palette swap, transcode,
+        thumbnail, authored variant). Where companions are sidecars the
+        primary asset references, alternates stand on their own and can
+        be downloaded individually.
+      required: [id, asset_id, label, kind, content_type, size_bytes, created_at, metadata, created_by_user_ref]
+      properties:
+        id:
+          type: string
+          format: uuid
+        asset_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          description: Human label shown in alt-file lists; unique per asset.
+          example: walk — team-green palette
+        kind:
+          type: string
+          description: |
+            Provenance tag — palette_swap | thumbnail | low_res |
+            authored | transcode. Open-ended.
+          example: palette_swap
+        content_type:
+          type: string
+          example: image/png
+        size_bytes:
+          type: integer
+          format: int64
+        origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Kind-specific JSON. Sprite tool palette swaps store the colour remap here.
 
     UploadResult:
       type: object

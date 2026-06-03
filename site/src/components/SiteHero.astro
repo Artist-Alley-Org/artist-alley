@@ -288,10 +288,14 @@ const latestTag = gh?.releases?.[0]?.tag_name;
     /* ----- Headline + tagline ----- */
     .hero-x-title {
       margin: 0;
-      font-size: clamp(2.25rem, calc(1.25rem + 4.5vw), 4.5rem);
-      line-height: 1.05;
-      font-weight: 700;
-      letter-spacing: -0.03em;
+      /* Brand title gets the Limelight display face — theatrical, marquee-
+         lettering vibe that suits "Artist Alley" as a wordmark. Sized larger
+         than the prior Inter headline because Limelight reads heavier per em. */
+      font-family: var(--aa-brand-font);
+      font-size: clamp(2.4rem, calc(1.25rem + 5vw), 5rem);
+      line-height: 1.0;
+      font-weight: 400; /* Limelight ships only the single weight */
+      letter-spacing: -0.01em;
       color: var(--sl-color-white, #fff);
       text-wrap: balance;
       background: linear-gradient(180deg, var(--aa-hero-text-from) 0%, var(--aa-hero-text-to) 100%);

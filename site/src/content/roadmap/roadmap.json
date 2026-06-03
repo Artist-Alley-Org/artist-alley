@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "version": "1",
-  "lastUpdated": "2026-05-30",
+  "lastUpdated": "2026-05-31",
   "intro": "A snapshot of what's shipped, what's in flight, and what's on the map. Subject to change as we learn what teams actually need.",
   "canonicalOrderNote": "This roadmap is the canonical order — the labelled phase tags inside the admin menu (the muted 'Phase 1.X' pills on future tiles) reference these same numbers. When the order changes, this file moves first.",
   "sections": [
@@ -65,6 +65,21 @@
           "id": "i18n",
           "title": "i18n",
           "description": "Per-user language preference, locale catalogue endpoint, hand-rolled flat-key dictionary store; English shipped, Spanish + French stubs for the picker."
+        },
+        {
+          "id": "universal-asset-viewer",
+          "title": "Universal asset viewer",
+          "description": "A single Svelte shell hosts per-kind view bodies (image, video, audio, PDF, font, 3D) with a shared anchor model — frame for video, page for PDF, camera + time-on-track for 3D — so future annotation overlays and presentation rooms wire to the shell once and every kind inherits them. Universal pan + zoom (⌘-wheel zoom-toward-cursor), click-to-pause, fullscreen + `F`, jump-to-frame (`G`), and per-kind transport bars all sit on the shell. Phase 1.18.B-2 + 1.18.E-6."
+        },
+        {
+          "id": "format-coverage",
+          "title": "Format coverage",
+          "description": "Images: PNG, JPEG, WebP, plus HDR / EXR / Radiance `.pic` via ffmpeg tonemap and a pure-Go RGBE decoder. Video: HLS adaptive ladder with frame-accurate scrubbing. Audio: waveform PNG + click-to-seek scrub. PDF: multi-page navigator + raster. Fonts: specimen render with interactive Try-it. 3D: native viewers for glTF / GLB / OBJ / FBX / Marmoset `.mview`, Blender-rendered turntable thumbnails for heavy formats, pure-Go importers for legacy game formats (MD2 / MD3 / MDL / MS3D). Ebooks: in-app EPUB reader with typography + scroll memory. Comics: cover-extraction thumbnails for CBZ / CBR / CB7. Audiobooks: m4b chapter probe with `.nfo` / `.cue` companion fold and multi-file playlist auto-advance. Archives: zip / tar / 7z / rar / tar.xz browser with in-place file tree + CodeMirror-syntax-highlighted entry preview + Extract-all bundle. Docs: CodeMirror 6 reader for text/code with syntax highlighting + text-range annotations (highlight / strike / underline / comment / note) + lint-style diagnostics. Sprite sheets: auto-detect + per-frame tools + onion-skin + export. Asset companion files (textures, `.mtl`, `.bin`) resolved per-asset. Phase 1.18.A / 1.18.B-1 / 1.18.B-10 / 1.18.B-12 / 1.18.B-15 / 1.18.C / 1.18.D / 1.18.E."
+        },
+        {
+          "id": "whiteboard-brush-surface",
+          "title": "Whiteboard / brush surface",
+          "description": "Post-anchored brush canvas with pen / marker / highlighter / eraser, stamp-based brush renderer (built-in soft + hard round) + ABR (Adobe Photoshop Brush) parser with owner-scoped pack upload + storage. MS-Paint-style sectioned sidebar with shapes (rect / ellipse / triangle / line / arrow + nine more), text with Google Fonts, custom HSL+RGB+Hex+Eyedropper color picker, Color 1 / Color 2 split, shape outline + fill, image transforms, rect-select + lasso + Select All + Invert + crop, copy / cut / paste, layers, infinite canvas with pan + zoom-toward-cursor + minimap. Element-typed model (strokes / shapes / text / images / connectors with auto-reroute / frames / sticky notes / mindmap nodes) with element comments as the annotation foundation."
         }
       ]
     },
@@ -99,7 +114,7 @@
           "title": "AI auto-tagging",
           "phase": "1.14",
           "status": "in-flight",
-          "description": "Use the configured AI providers for tag inference on upload + reverse-image search via embeddings."
+          "description": "Use the configured AI providers for tag inference on upload + reverse-image search via embeddings. Provider list is open: cloud-API providers (OpenAI / Anthropic / Google) plus **locally-installed capability add-ons** (Phase 1.42) — CLIP for embeddings, custom classifiers for studio-specific taxonomies. Operator picks the active provider per slot; the runtime resolves through the precedence chain (local add-on → cloud-bridge add-on → external cloud)."
         }
       ]
     },
@@ -139,13 +154,14 @@
         },
         {
           "id": "1.18.B-3",
-          "title": "Subtitles + multi-format captions",
+          "title": "Subtitle viewer integration",
           "status": "planned",
           "bullets": [
-            "Native WebVTT track support (`<track>` elements).",
-            "Worker-side conversion of SRT / SSA / ASS / SUB / IDX → WebVTT at preview time; tracks stored as `subs/{lang}.vtt` variants.",
-            "Burned-subtitle option for export.",
-            "Per-user subtitle preferences (default language, font size, position)."
+            "Native WebVTT `<track>` element attachment for every `final` caption track on the asset (one per language).",
+            "Track picker in the player chrome — language label + kind badge (`captions` / `subtitles` / `descriptions`).",
+            "Per-user subtitle preferences (default language, font size, position, background opacity); persisted on the account row.",
+            "Auto-attach also on the share-link viewer (ADR 0018) and the public-portal embed.",
+            "Caption track production, editing, translation, and download bundling — including the Whisper auto-transcribe loop — live in Phase 1.44 (ADR 0037). This subphase is the viewer-side consumer only."
           ]
         },
         {
@@ -178,11 +194,12 @@
           "bullets": [
             "Annotations are a global capability too — they live in their own package and any asset host (image, video, 3D, PDF) surfaces them.",
             "Anchor model: an annotation binds to an asset_id PLUS an asset-type-specific anchor — a frame number for video, a camera+target for 3D, a page+x/y for PDF, a coord+zoom for images. The same `annotations` table stores them all; the host package owns rendering.",
-            "Brush engine: pen, highlighter, eraser, shapes, text, arrows.",
+            "Brush engine: pen, highlighter, eraser, shapes, text, arrows. Drawing tool UX patterns borrowed from `barts_annotations` (RS reference plugin) but built clean-room in Svelte.",
             "Foreground + background layers; background transparency.",
             "Laser pointer for live review (broadcasts via the presentation room when one is active).",
             "Ghosting / onion-skin between adjacent anchors (video frames, 3D camera takes, PDF pages).",
             "Annotation bookmarks; cycle hotkeys.",
+            "PDF page annotations (the `annotate_pdf` RS pattern): anchored to `(asset_id, page, x, y, w, h)`; rendered against the PDF raster preview.",
             "PDF summary export with comment thread + screenshots per anchor."
           ]
         },
@@ -222,7 +239,7 @@
         {
           "id": "1.18.B-10",
           "title": "3D viewer (native)",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "`<model-viewer>` for glTF / GLB native — instant load, AR, animations.",
             "three.js loader fallbacks for OBJ (+ .mtl + texture set) and FBX.",
@@ -234,7 +251,7 @@
         {
           "id": "1.18.B-11",
           "title": "3D heavy converters (worker side)",
-          "status": "planned",
+          "status": "in-flight",
           "bullets": [
             "Blender headless → glTF for `.blend`.",
             "FBX2glTF for cached glTF when the source format is heavy.",
@@ -245,7 +262,7 @@
         {
           "id": "1.18.B-12",
           "title": "Audio / SVG / PDF / fonts",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "Audio waveform PNG + scrub.",
             "SVG → rasterized variant set.",
@@ -276,13 +293,13 @@
         {
           "id": "1.18.B-15",
           "title": "Sprite-sheet viewer",
-          "status": "planned",
+          "status": "shipped",
           "bullets": [
             "Auto-slice by uniform grid (rows × cols, configurable cell size) and by edge-detection (find tightest bounding box per visible region) — operator picks the strategy per asset.",
             "Frame index panel with thumbnails; reorder, name, and group frames into named action sequences (idle / walk / attack).",
             "Animation timeline + scrubber that plays the slices in order with configurable FPS, ping-pong, hold-frame, and onion-skin between adjacent frames. Reuses the existing video HUD primitives.",
-            "Per-frame metadata stored as anchor-tagged annotations: action name, duration, hitbox region, anchor point. Same anchor model as 1.18.B-6 so the annotation overlay works on sprite slices for free.",
-            "Export individual cels as PNG / WebP, or export the action set as a packed sprite sheet for engine import."
+            "Per-frame metadata persisted as a sidecar companion JSON (action ranges, per-frame notes, slices, alt-files). Anchor-tagged annotation integration with 1.18.B-6 deferred — the companion format is forward-compatible.",
+            "Export individual cels as PNG / WebP, or export the action set as a packed sprite sheet (PNG + JSON) or a per-frame zip; client-side GIF export via gifenc."
           ]
         },
         {
@@ -339,25 +356,60 @@
       "summary": "The phases queued behind the current focus.",
       "items": [
         {
-          "id": "search-2",
-          "title": "Search 2.0",
-          "phase": "1.12",
-          "status": "planned",
-          "description": "Advanced search builder with field-level filters, saved searches, smart collections, synonyms + boosts, search analytics."
-        },
-        {
           "id": "identity-teams",
           "title": "Identity & teams",
           "phase": "1.17",
           "status": "planned",
-          "description": "Groups + team hierarchy, active session management, audit log, capability grants."
+          "description": "Groups + team hierarchy, active session management, capability grants. Extended for RS feature parity: table-level change tracking with before / after diffs in the audit log, user approval states (pending / approved / disabled) with admin approval flow, resource request workflow (user asks → capability-holder approves → notification fires → lifecycle tracked + auto-expiry)."
+        },
+        {
+          "id": "audit-log-change-tracking",
+          "title": "Audit log & change tracking",
+          "phase": "1.40",
+          "status": "planned",
+          "description": "The central event log consolidating the audit-trail story currently scattered across Phases 1.17 / 1.20 / 1.21 / 1.24 / 1.26-1.28 / 1.32. Owns the event schema (actor + action + target + outcome + changeset before/after + metadata + correlation_id + license_kid), the dotted event taxonomy (`auth.*` / `user.*` / `asset.*` / `share.*` / `commerce.*` / `platform.*` / `system.*` / etc.), the capture API (`audit.Record(ctx, ...)` with buffered async writes — failure to record never fails the originating operation), the admin filter + search + detail + export surface at `/admin/audit`, retention policy (default 7 years, per-category overrides at Enterprise, enforced via the Phase 1.28 scheduled-action engine), and signed Enterprise export (Ed25519 over the JSONL payload, public key at `/.well-known/audit-signing-key` per ADR 0017). The `correlation_id` field links every event from a single request / job so cascade effects are reconstructable. Same features at Community + Pro; Enterprise adds the signed export, per-category retention overrides, and multi-instance audit-log federation. See ADR 0032."
+        },
+        {
+          "id": "observability-telemetry",
+          "title": "Observability & operator telemetry",
+          "phase": "1.41",
+          "status": "planned",
+          "description": "Production-readiness layer: `/metrics` Prometheus endpoint with HTTP / DB / job-queue / storage / cache / session / license / federation / audit families; OpenTelemetry tracing via OTLP with auto-instrumented HTTP / DB / job / external-API spans (10% sampling default, errors 100%, W3C Trace Context propagation); structured-log shipping via opt-in forwarder providers (Loki / Datadog / Cloudwatch / Vector / Promtail / syslog); per-subsystem log levels hot-reloaded from admin + a `?log_level=debug` per-request escape hatch; admin live-tail log viewer at `/admin/logs/tail` via WebSocket; pre-baked Grafana dashboards in `infra/grafana/dashboards/` for HTTP / job queue / storage / federation / license / audit. Health endpoints stay at `/healthz` + `/readyz` with detailed per-subsystem status at `/admin/system/health`. Same features at Community + Pro; Enterprise adds priority ops support, vendor-specific OTLP exporter configs (New Relic / Honeycomb / etc.), and an SLA on production incident resolution. See ADR 0033."
+        },
+        {
+          "id": "capability-add-ons",
+          "title": "Capability add-ons — registry + installer",
+          "phase": "1.42",
+          "status": "planned",
+          "description": "Out-of-band heavy components (CLIP / Whisper / Tesseract / Stable Diffusion / ComfyUI / Flux / future ML runtimes) ship as first-party add-ons pulled from a curated registry at `add-ons.artist-alley.org` — NOT baked into the binary. Sits between integrations (in-process Go) and future plugins (WASM): add-ons are heavy artefacts (Docker containers + model weights), optional, lifecycle-managed from a `/admin/capabilities` surface. Capability-slot model formalises the existing provider abstractions (image-embedding, transcription, OCR, image-classification, image-generation, image-inpaint, NSFW classification); multiple add-ons can satisfy a slot; operator picks the active provider. **No GPU gating** — operator hardware is operator hardware regardless of license tier; cloud-bridged add-ons (we host the inference) are the only tier-gated mode. YAML manifest borrowed from RS's `pluginname.yaml` pattern. Digest-verified pulls; air-gapped operators mirror the registry. Resource requirements are advisory, not enforcing. Audit hooks fire `addon.*` into Phase 1.40; metrics expose under `addon_` prefix in Phase 1.41. Phase 1.42 ships the registry + installer + first three add-ons (CLIP for image embeddings, Whisper for transcription, Tesseract for OCR) so the surface is meaningful at v1. See ADR 0034."
         },
         {
           "id": "integrations",
           "title": "Integrations",
           "phase": "1.18",
           "status": "planned",
-          "description": "Real LDAP / SAML / OAuth login flows, OAuth applications surface, outbound webhooks, notification rules + delivery channels (in-app + email)."
+          "description": "Real LDAP / SAML / OAuth login flows, OAuth applications surface, outbound webhooks, notification rules + delivery channels. Extended for RS feature parity: email template engine + send queue with operator-editable templates, timezone-aware delivery (digest at 8 AM in the recipient's TZ), event-scoped notifications that link to a triggering record and auto-resolve when it resolves, conditional download terms (per-resource terms page based on metadata), and a dedicated webhook delivery worker — outbound webhooks are queued through the existing job system with exponential-backoff retries, per-endpoint signing secrets, delivery-log admin surface for inspection + manual re-send, dead-letter handling after N failures, and a `webhook.*` audit category (Phase 1.40). Chat platforms (Phase 1.30) plug in as one of the delivery channels."
+        },
+        {
+          "id": "search-2",
+          "title": "Search 2.0",
+          "phase": "1.12",
+          "status": "planned",
+          "description": "Advanced search builder with field-level filters, saved searches, smart collections, synonyms + boosts, search analytics. Extended for RS feature parity: saved-search alerts (notify when results change), endless scrolling in result views, categorical / faceted refinement with suggested-keyword refinements derived from the result set, customizable keyboard shortcuts for power-user tagging and review."
+        },
+        {
+          "id": "licensing-monetization",
+          "title": "Licensing & monetization",
+          "phase": "1.24",
+          "status": "planned",
+          "description": "Ed25519-signed `.lic` files with three tiers: Community (15 active seats / 50k assets, free, full features), Pro (50 / 500k, paid, full features), Enterprise (unlimited + SAML/OIDC SSO + audit log export + multi-tenant + federation + HA + priority support). Active-seats counted as `last_active_at` in the trailing 30 days. Enforcement uses tangled value derivation across consumers (search quota, upload concurrency, cache sizing, plugin gating, federation gating) — no single `if valid` gate to strip. Cloudflare Workers for signing (private key in Worker Secrets), customer portal on Cloudflare Pages. Gated on Phase 1.17 (Identity & teams). See ADR 0016 + ADR 0017."
+        },
+        {
+          "id": "rs-migration-tool",
+          "title": "RS migration tool",
+          "phase": "1.25",
+          "status": "planned",
+          "description": "Turnkey path from an existing ResourceSpace install to artist-alley — the largest natural conversion audience. Two halves: a BSD-3-licensed companion PHP plugin installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo) that exposes a read-only HTTP API surfacing RS's schema (resource types, metadata fields, workflow states), the resource catalog with metadata + collections + relationships, the resource_log audit history, the user/group/permission graph, and streams original binaries + preview variants; and an admin-side wizard in artist-alley that connects to it, analyses the source server, offers field-level mapping with auto-suggestion (RS field → AA field by name + type heuristics), and drives the transfer as resumable job-queue work with content-addressed dedup. Sub-phases: 1.25.A RS companion plugin (PHP, distributable via RS plugin manager, bearer-scoped read-only endpoints, per-resource fingerprint for resumability), 1.25.B migration wizard (admin UI for connect / analyze / map / plan preview, plan saved as JSON for review and replay), 1.25.C migration engine (job-queue-backed transfer, license-bounded concurrency consistent with 1.24, dedup against content-addressed storage), 1.25.D validation + cutover (count match, sample hash check, missing-asset report, optional RS read-only lock, URL-rewrite mapping doc for the operator's reverse proxy). Shares the resource-pull plumbing (`origin_server_id`, HTTP claim API) with Phase 1.22 Federation. Gated on Phase 1.16 (Resource types) and Phase 1.17 (Identity & teams)."
         }
       ]
     },
@@ -368,25 +420,109 @@
       "summary": "Larger arcs that will land but aren't the current focus.",
       "items": [
         {
+          "id": "privacy-consent",
+          "title": "Privacy & consent management",
+          "phase": "1.32",
+          "status": "planned",
+          "description": "Cookie / tracker banner that renders ONLY when a non-essential category is in use on the current instance (a bare studio install with no analytics shows no banner at all). Categories: essential, functional, analytics, third-party embeds. Data Subject Access Request (DSAR) tooling: machine-readable JSON export of all personal data, soft-then-hard deletion via the scheduled-action engine, reassignment of authored content to a `deleted-user` tombstone so collaborative content survives. Per-resource-type retention policies executed via the same scheduled-action engine. Editable `/legal/privacy` and `/legal/terms` markdown surfaces with a usable starting template (not legal advice). Privacy is not a paid differentiator — Community and Pro both get every feature; Enterprise adds non-repudiation signing on the audit-log export. See ADR 0024."
+        },
+        {
+          "id": "share-links",
+          "title": "Share links",
+          "phase": "1.26",
+          "status": "planned",
+          "description": "Signed, expiring resource + collection + post share URLs for external collaborators (contractors, publishers, agencies, festival juries) who do not have accounts. `GET /share/{token}` with the token as a 32-byte random ID and the share-link row as the source of truth — no HMAC signing, so revocation is single-click. Each link binds a target (asset / post / collection), a scope (`view` / `comment` / `annotate` / `download`), optional `nbf` / `exp`, optional Argon2id password, optional max-use ceiling. Per-fetch audit trail records IP + user-agent + password result + scope satisfied. Downloads stream via presigned URLs on S3-style backends. See ADR 0018."
+        },
+        {
+          "id": "bulk-operations",
+          "title": "Bulk operations",
+          "phase": "1.27",
+          "status": "planned",
+          "description": "Multi-select edit / tag / delete / move-to-collection / state-transition across browse + search results. Floating action bar with persistent selection across pagination + `select all in filter` expansion. Destructive actions show preview counts and require typed-count confirmation. CSV export of search results with operator-picked columns. Contact-sheet PDF generation with configurable grid + per-thumb metadata footer. All bulk actions submit as a single job-queue job (cancellable, resumable, progress streamed) with audit entries preserving selection IDs for batch undo where reversible. See ADR 0019."
+        },
+        {
+          "id": "asset-gating-nda",
+          "title": "Asset gating & NDA workflow",
+          "phase": "1.28",
+          "status": "planned",
+          "description": "Per-asset sensitivity tier (`public` / `team` / `restricted` / `embargo`). Restricted and embargo assets are **server-baked blurred** in browse views — the blur is a real preview variant so even a network-tap leak is blurred. A `Reveal` button lifts the blur for the session and logs the reveal. Pairs with a generic scheduled-action engine (`change_sensitivity`, `restrict`, `delete`, `change_state`, `notify` actions on assets / posts / collections / users at a future timestamp), executed via the existing job queue. Common recipes: NDA expiry on a contractor auto-restricts every asset they uploaded; embargo → public flips at a marketing-supplied timestamp; trash auto-purges at 30 days. See ADR 0020."
+        },
+        {
           "id": "storage-tooling",
           "title": "Storage tooling",
           "phase": "1.19",
           "status": "planned",
-          "description": "Storage usage dashboard, orphan cleanup, checksum verification, dedupe UI, bulk re-import, backup + restore, database tools."
+          "description": "Storage usage dashboard, orphan cleanup, checksum verification, dedupe UI, bulk re-import, backup + restore, database tools. Extended for RS feature parity: scheduled integrity checks with off-peak windows, tiered storage / offline archive (S3 Glacier / tape with fetch-on-demand surfaces), per-download bandwidth tracking attributed to teams + users."
         },
         {
           "id": "reports-analytics",
           "title": "Reports & analytics",
           "phase": "1.20",
           "status": "planned",
-          "description": "Asset usage, user activity, storage trends, job performance, custom dashboards, scheduled reports, drafts, trash, activity log surfaces."
+          "description": "Asset usage, user activity, storage trends, job performance, custom dashboards, scheduled reports, drafts, trash, activity log surfaces. Extended for RS feature parity: custom SQL report builder with placeholder variables (date range / team / user), CSV / Excel / PDF export per report, server-rendered report thumbnails, per-collection download analytics, scheduled email delivery of any report on a cron expression."
         },
         {
           "id": "community-moderation",
           "title": "Community & moderation",
           "phase": "1.21",
           "status": "planned",
-          "description": "Reports queue, comment moderation, banned users / IPs, anonymous browse policy, rate limits, bookmarks."
+          "description": "Reports queue, comment moderation, banned users / IPs, anonymous browse policy, rate limits, bookmarks. Extended for RS feature parity: comment flagging with reason tracking, email escalation to admins on flagged content, per-comment hide / restore with audit trail, activity stream surfaced as a structured comments thread (`barts_log_to_comments` pattern), structured support intake — `/contact` form with categorization (bug / feature / abuse / account help / other) feeds into the same moderation queue with assignment, status tracking, and SLA timers; replaces the loose `email the admin` pattern with a queryable surface, and a personal activity feed on the user dashboard surfacing followed posts, recently viewed assets, bookmarks, pending notifications, and the user's own recent uploads + comments — pulled from the audit log (Phase 1.40) filtered to the user's visibility scope."
+        },
+        {
+          "id": "announcements-widget",
+          "title": "Announcements home widget",
+          "phase": "1.37",
+          "status": "planned",
+          "description": "Operator-authored announcements with audience scoping (`org` / `team:{name}` / `role:{name}`), severity tiers (info / notice / warning / critical), optional schedule (`nbf` / `exp`), pinning, and per-user read state. Homepage hero strip shows the top three active for the user; account dashboard tile shows the full list with read state. Auto-fed from system events — planned maintenance, license upgrade, failed scheduled jobs, federation peer offline — become announcements automatically. Chat platforms (Phase 1.30) mirror new announcements to the configured Slack channel. See ADR 0029."
+        },
+        {
+          "id": "chat-integrations",
+          "title": "Chat platform integrations",
+          "phase": "1.30",
+          "status": "planned",
+          "description": "Slack first, then Teams + Discord via the same provider abstraction. Outbound: rich Block-Kit-style messages for every notifiable event with deep-link buttons back into the post-detail modal. Inbound: `/aa search <query>`, `/aa post <id>`, `/aa upload` slash commands. Unfurl: Artist Alley URLs in chat get rich previews with blur respect for sensitive content. DM notifications opt-in via per-user Slack account connect. Admin surface defines per-event channel routing rules (`event:upload.completed in team:Concept Art → #concept-art-feed`). Chat is a delivery channel within the existing notification-rule subsystem from Phase 1.18 — not a separate engine. See ADR 0022."
+        },
+        {
+          "id": "platform-integrations",
+          "title": "External platform integrations",
+          "phase": "1.29",
+          "status": "planned",
+          "description": "Provider-abstraction layer for outbound publishing and inbound asset ingestion against Vimeo, YouTube, Adobe Creative Cloud Libraries, and Falcon.io. Each provider is a Go package in `app/internal/platforms/<name>/` implementing a common interface (publish / pull / sync / embed / webhook). Linked-asset model stores `platform_links[]` on the resource row so the post-detail modal shows `Published to Vimeo (in sync)` and flags drift / deletion. Pull-as-asset uses the same `origin_*` row flag that federation does — the storage layer doesn't care whether content came from a peer AA or an external platform. OAuth client secrets in Cloudflare Worker Secrets; per-studio refresh tokens encrypted at rest. License tier caps concurrent platform connections via the tangled-derivation model. See ADR 0021."
+        },
+        {
+          "id": "rss-atom-feeds",
+          "title": "RSS / Atom feeds",
+          "phase": "1.31",
+          "status": "planned",
+          "description": "Standard syndication for collections, saved searches, user uploads, and tags so studios can wire Artist Alley into feed readers, Slack / Teams / Discord RSS connectors, and Zapier / n8n / Make / IFTTT triggers with no custom integration. URLs: `/feed/collection/{slug}.atom`, `/feed/search/{id}.atom`, `/feed/user/{handle}/uploads.atom`, `/feed/tag/{slug}.atom`. Atom primary, RSS 2.0 for compatibility. Per-user feed token in the URL for non-public content; revocable in account settings. Embargo + restricted items filter out of feeds entirely. Server-side cache 5 min with ETag + If-Modified-Since. See ADR 0023."
+        },
+        {
+          "id": "ai-creative-editing",
+          "title": "AI creative editing",
+          "phase": "1.34",
+          "status": "planned",
+          "description": "Provider-abstracted in-paint, out-paint, variations, and remove-background tools in the asset viewer's Creative tools panel. Backed by the **capability add-on layer** from Phase 1.42 (ADR 0034) — the `image-inpaint` and `image-generation` capability slots resolve to whichever add-on the operator installed: locally-hosted **ComfyUI / Stable Diffusion / Flux add-ons** (open to every tier; operator brings the GPU) OR cloud-bridged **OpenAI / Stability AI add-ons** (Pro+ for the cloud bridge, with token budgets). Generated images are new assets that share a `creative_lineage` relationship with the source — the source is never overwritten. The new asset's metadata records add-on, version, prompt, seed, and parameters for both licensing and audit. Bring-your-own API keys at Enterprise; metered cloud-bridge at Pro. See ADR 0026 + ADR 0034."
+        },
+        {
+          "id": "featured-collections",
+          "title": "Featured collections & homepage curation",
+          "phase": "1.35",
+          "status": "planned",
+          "description": "Tree edges on the collection model (`collection_parent_id`, capped at depth 5) + a `featured` boolean with `team` / `org` / `public` scope. The same tree powers the team dashboard, the global signed-in homepage, and the anonymous public landing — one model, three audiences. Each featured node has an optional `hero_asset_id` (the card cover) and a `featured_order` integer for sibling sort. Cascade-publish flips a parent + children at once. Public featured collections respect per-asset sensitivity from ADR 0020 — an `embargo` asset shows only its title until embargo lifts. See ADR 0027."
+        },
+        {
+          "id": "brand-workspace",
+          "title": "Brand workspace",
+          "phase": "1.33",
+          "status": "planned",
+          "description": "Curated overlay on the collection + theme model: a `brand_kit` binds a set of canonical collections, an editable design-token export (CSS / Tailwind / JSON / Figma tokens v3), a markdown guidelines doc with inline asset blocks, per-asset usage rules (`internal-only` / `partner` / `press` / `public`), and a publish state. Public portal at `/brand/{slug}`. Token export at `/brand/{slug}/tokens.json` for automated pipelines. Brand-steward role is Pro+; everyone can read. Usage rules enforced through the Phase 1.18 conditional download terms. See ADR 0025."
+        },
+        {
+          "id": "pbr-3d-viewer-polish",
+          "title": "PBR 3D viewer polish",
+          "phase": "1.36",
+          "status": "planned",
+          "description": "Right-side inspector in `ModelView.svelte` review mode: per-material list with hide / solo toggles, editable live PBR params (base color, metallic, roughness, normal strength, emissive) with the source asset never written, per-map texture preview that hand-offs to the texture inspector (Phase 1.18.B-16), curated 8-pack of IBL HDR environments + a project-HDR picker, A / B wipe between two materials on the same mesh (reusing the 1.18.B-8 A/B compare primitives). Override sets export as a structured `material_review.json` attached to the post — engineers ingesting reviews don't have to parse prose. See ADR 0028."
         },
         {
           "id": "federation",
@@ -403,18 +539,53 @@
           "description": "WASM extension model via Extism. In-tree Go packages until external authors arrive."
         },
         {
-          "id": "licensing-monetization",
-          "title": "Licensing & monetization",
-          "phase": "1.24",
+          "id": "operator-ad-slots",
+          "title": "Operator-configurable ad slots",
+          "phase": "1.38",
           "status": "planned",
-          "description": "Ed25519-signed `.lic` files with three tiers: Community (15 active seats / 50k assets, free, full features), Pro (50 / 500k, paid, full features), Enterprise (unlimited + SAML/OIDC SSO + audit log export + multi-tenant + federation + HA + priority support). Active-seats counted as `last_active_at` in the trailing 30 days. Enforcement uses tangled value derivation across consumers (search quota, upload concurrency, cache sizing, plugin gating, federation gating) — no single `if valid` gate to strip. Cloudflare Workers for signing (private key in Worker Secrets), customer portal on Cloudflare Pages. Gated on Phase 1.17 (Identity & teams). See ADR 0016 + ADR 0017."
+          "description": "Opt-in surface for operators running public-facing community instances (fan sites, festival hubs, art-school portfolios) to monetize hosting via ads. Defined zones across feed top / between-every-Nth feed item / sidebar top + bottom / post-modal sidebar / footer; each zone is toggled and provider-bound per instance. Providers ship for Google AdSense, Meta Audience Network, Carbon Ads, EthicalAds, and a custom-HTML option. Default off everywhere; AAA-internal studios see zero ad markup. Operator allow-lists categories (block gambling / adult / political / whatever) + sets frequency rules. Privacy compliance: ad slots auto-enable the third-party-embeds category in the cookie banner (ADR 0024) and do NOT load until consent. Per-user opt-out in account settings; Pro / Enterprise tiers may auto-suppress ads for paid users at the operator's option. No revenue share — operator ad income is theirs. No anti-AdBlock measures. Ad slots are sandboxed iframes with reserved dimensions to avoid CLS. **Distribution: premium add-on** (`aa-ads`) per ADR 0038 — the admin Ad Slots surface is in core but shows an `Install aa-ads to enable` empty state until the add-on is licensed; payment / serving / consent-routing code paths live in the proprietary add-on artifact. Available to all license tiers; orthogonal to Community / Pro / Enterprise. See ADR 0030 + ADR 0038."
         },
         {
-          "id": "rs-migration-tool",
-          "title": "RS migration tool",
-          "phase": "1.25",
+          "id": "commerce-stripe-shopify",
+          "title": "Commerce — Stripe + Shopify",
+          "phase": "1.39",
           "status": "planned",
-          "description": "Turnkey path from an existing ResourceSpace install to artist-alley — the largest natural conversion audience. Two halves: a BSD-3-licensed companion PHP plugin installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo) that exposes a read-only HTTP API surfacing RS's schema (resource types, metadata fields, workflow states), the resource catalog with metadata + collections + relationships, the resource_log audit history, the user/group/permission graph, and streams original binaries + preview variants; and an admin-side wizard in artist-alley that connects to it, analyses the source server, offers field-level mapping with auto-suggestion (RS field → AA field by name + type heuristics), and drives the transfer as resumable job-queue work with content-addressed dedup. Sub-phases: 1.25.A RS companion plugin (PHP, distributable via RS plugin manager, bearer-scoped read-only endpoints, per-resource fingerprint for resumability), 1.25.B migration wizard (admin UI for connect / analyze / map / plan preview, plan saved as JSON for review and replay), 1.25.C migration engine (job-queue-backed transfer, license-bounded concurrency consistent with 1.24, dedup against content-addressed storage), 1.25.D validation + cutover (count match, sample hash check, missing-asset report, optional RS read-only lock, URL-rewrite mapping doc for the operator's reverse proxy). Shares the resource-pull plumbing (`origin_server_id`, HTTP claim API) with Phase 1.22 Federation. Gated on Phase 1.16 (Resource types) and Phase 1.17 (Identity & teams)."
+          "description": "Operator-side commerce for selling content directly: digital downloads (concept-art packs, asset bundles, soundtracks), print-on-demand merchandise, physical originals, subscription access to WIP / patron tiers. Provider-abstracted with Stripe (digital + physical + subscription), Shopify (full storefront for physical + tax + shipping), Gumroad (lightweight digital + subscription) at launch. Listings attach to assets / posts / collections / brand-kit items with pricing, delivery type, license-grant clause. Digital fulfillment reuses Phase 1.26 share links — buyer gets a single-use signed link with 90-day expiry after payment. Subscription access expires via the Phase 1.28 scheduled-action engine. Tax + refunds + disputes defer to the payment processor. Active-listing caps (Community 5, Pro 500, Enterprise unlimited + organization-level Stripe / Shopify accounts) stack on top of the add-on subscription. Per-instance public storefront at `/shop/{slug}`. No revenue share on operator sales — operator's bank gets the proceeds. Federated peers can surface remote listings read-only with a `buy on origin` CTA. **Distribution: premium add-on** (`aa-commerce`) per ADR 0038 — the admin Commerce surface and storefront route are in core but show an `Install aa-commerce to enable` empty state until licensed; payment processing, webhook signing, storefront rendering, and license-grant emission live in the proprietary add-on. The add-on subscription is the lever for monetizing operators who themselves monetize via the platform; tier caps are orthogonal. See ADR 0031 + ADR 0038."
+        },
+        {
+          "id": "native-dcc-format-viewers",
+          "title": "Native viewers for proprietary DCC formats",
+          "phase": "1.47",
+          "status": "planned",
+          "description": "Inventory + thumbnail + interactive in-browser viewing for proprietary DCC scene files (`.max`, `.mb`, `.ma`, and follow-on formats — `.hip`, `.zpr`, `.spp`) that today have no first-class home anywhere outside their authoring DCC. The architecture splits across three deliberate layers — two free, one premium — so the AGPL core gives immediate value without exposing the proprietary work. **Layer 1 (free, in-tree): `dcc-fileinfo` Go metadata reader.** Parses the OLE2 / CFBF container of `.max` files via the open Microsoft spec; enumerates `FileAssetMetaData2/3`, `SummaryInformation`, `DllDirectory` streams; lists texture / XRef references, embedded thumbnail (if present), plugin manifest, modified-by-user, last-saved-version. No chunk semantics, no GPL exposure — CFBF container is public, asset-metadata streams are documented by Autodesk in KB articles. `.ma` (ASCII MEL) parses as a tokenizer. `.mb` (binary IFF) parses via the documented chunked structure. Powers the upload-time \"what's in this file?\" answer without paying Blender's cold-boot cost. **Layer 2 (free, in-tree): Blender worker pipeline for thumbnails + conversion.** Existing Phase 1.18 thumbnail-worker pattern, extended to `.max` via `nrgsille76/io_scene_max` (Blender 4.2+ extension, GPL-2.0+), to `.ma` via Blender's MEL-bridge add-ons, and to `.mb` deferred until paid-customer demand. The worker is a subprocess from the Go core; GPL stays inside the Blender container. Output is glTF / USD / a rendered preview — universal, fork-safe, no contamination of the AGPL core or of premium add-ons. **Layer 3 (premium add-on `aa-dcc-viewer`, ADR 0038): the interactive live viewer + proprietary routing algorithm.** Native parser for the common-case scene shape (geometry / transforms / basic materials / cameras / lights) gives instant interactive scrubbing without a Blender round-trip; the proprietary part is the routing intelligence + chunk-ID heuristic database that decides per-chunk whether to handle natively or fall back to the cached Blender-glTF for that chunk. Web-optimised intermediate streaming format. Material translation layer (V-Ray / Corona / Arch & Design → glTF PBR). Closed-source artifact, EULA-licensed, Ed25519 `.lic`-gated per ADR 0038. **Clean-room posture is load-bearing**: no GPL-licensed reverse-engineered code lands in `aa-dcc-viewer`. The Kaetemi blog series + Autodesk public KB are the spec; existing GPL implementations (`io_scene_max`, `Importer3D`) are read for what they document, never lifted from. Sub-phases: 1.47.A `dcc-fileinfo` metadata reader (free, in-tree); 1.47.B Blender worker extension for `.max` + `.ma` (free, in-tree, extends Phase 1.18 thumbnail pipeline); 1.47.C `aa-dcc-viewer` premium add-on with native parser + routing algorithm + material translation (paid, proprietary); 1.47.D extended format coverage (`.hip` / `.spp` / `.zpr`, demand-driven; same three-layer pattern). See ADR 0039 + ADR 0038."
+        },
+        {
+          "id": "premium-dcc-integrations",
+          "title": "Premium DCC integrations",
+          "phase": "1.45",
+          "status": "planned",
+          "description": "First-party plugins for commercial DCCs that push assets, scene thumbnails, and version-up workflows from inside the artist's tool of choice — Maya, 3ds Max, Houdini, ZBrush, Substance Painter, Substance Designer, Marvelous Designer, Marmoset Toolbag, Unity, Unreal. Plugins live in their respective DCCs' native plugin systems (Maya scripted-plugin + MEL/Python panel, ZScript for ZBrush, HDA + Python panel for Houdini, etc.) and talk to a stable HTTP/WebSocket contract on the AA side that any DCC plugin can target. **Distribution: premium add-ons** per ADR 0038 — one paid add-on per DCC (`aa-maya`, `aa-3dsmax`, `aa-zbrush`, `aa-houdini`, `aa-substance`, `aa-marvelous`, `aa-marmoset`, `aa-unity`, `aa-unreal`). Pricing is per-seat per-year, matching DCC vendor conventions. **Free DCC integrations stay free** — Blender add-on, Krita / Inkscape / GIMP / FreeCAD ship as in-tree integrations under the AGPL core, no license required, because the open-source DCC ecosystem is foundational to the audience and we don't paywall artists who use free tools. v1 ships Maya + Substance Painter + Unreal (broadest game-studio reach); subsequent DCCs follow demand. Plugin auto-update channels live on the same Cloudflare-Pages-hosted registry as the capability add-on registry from Phase 1.42. See ADR 0038."
+        },
+        {
+          "id": "cloud-bridge-addons",
+          "title": "Cloud-bridge add-ons (AI / translation / transcription)",
+          "phase": "1.46",
+          "status": "planned",
+          "description": "Operator-pays-us-metered alternative to running local AI add-ons — for studios who don't want to provision GPU infrastructure but want to use Phase 1.42 capability slots (image-embedding / transcription / OCR / image-generation / image-inpaint) and Phase 1.44 translation. We host the inference on Cloudflare Workers AI / a managed inference backend; the operator's instance calls our cloud-bridge endpoint, signed with their Ed25519 `.lic` (ADR 0017), and we bill per token / per minute / per image with monthly statements. **Distribution: premium add-ons** per ADR 0038 — `aa-cloud-ai` (OpenAI / Anthropic / Stability bridge for image-generation + inpaint slots), `aa-cloud-translation` (DeepL / OpenAI bridge for the Phase 1.44 text-translation slot), `aa-cloud-transcription` (managed Whisper for the transcription slot). **Locally-hosted equivalents always remain free** — `ai-clip`, `ai-whisper`, `ai-tesseract` (Phase 1.42) and a future `ai-translation` local add-on stay free under the curated registry. The cloud bridge is opt-in operational convenience, not a GPU-gating end-run. Air-gapped operators are unaffected — they pick the local add-ons. Per-add-on usage caps + budgets in `/admin/billing`; operators set their own ceilings. See ADR 0038 + ADR 0034 + ADR 0017."
+        },
+        {
+          "id": "caption-subtitle-artifacts",
+          "title": "Caption & subtitle artifacts",
+          "phase": "1.44",
+          "status": "planned",
+          "description": "Caption and subtitle tracks as first-class artifacts on audio / video assets — produced by the Whisper transcription add-on (Phase 1.42 / ADR 0034), edited by humans through a timeline + cue-list UI, stored as canonical WebVTT, served on-the-fly as VTT / SRT / TTML / IMSC, and auto-attached to every distribution channel (viewer, share link, download bundle, commerce delivery, federation peer, RSS enclosure). Three-state lifecycle (raw → draft → final → archived) and explicit producer attribution (`ai-whisper` / `ai-translation` / `manual` / `imported` / `derived`) protect users from shipping unreviewed AI output to viewers. Multi-language native — one track per language per asset, no schema gymnastics. Translation is a second AI hop via a new `text-translation` capability slot (satisfied by future add-ons — OpenAI / Anthropic / DeepL / Argos local), always landing as `raw` for human review. Editor lives in the asset viewer right-rail with waveform + cue list + cue editor + Aegisub-shaped keyboard shortcuts (Enter = next, Ctrl-K = split, Ctrl-M = merge). External imports (ADR 0036) recognise sidecar `.srt` / `.vtt` / `.ass` files and attach them as caption tracks instead of orphan text assets. Phase 1.18.B-3 is the viewer-side consumer; this phase owns production + editing + serving + reuse. Sub-phases: 1.44.A data model + auto-caption pipeline + serving + viewer attachment (raw → served, no editor); 1.44.B editor (timeline + cue list + draft/final lifecycle + version history); 1.44.C translation slot + dispatcher + bilingual cue editor view; 1.44.D reuse hooks + extra formats (download bundles, share links, commerce bundles, TTML/IMSC, import-connector sidecar attachment); 1.44.E (deferred) burn-in subtitle variants for delivery. See ADR 0037."
+        },
+        {
+          "id": "external-imports",
+          "title": "External imports framework",
+          "phase": "1.43",
+          "status": "planned",
+          "description": "First-class subsystem for pulling assets out of external systems — network shares, S3 / R2 / B2 buckets, single HTTP archives, git / git LFS repos, Perforce depots, ShotGrid (Flow Production Tracking) sites, OneDrive / SharePoint document libraries, Google Drive team folders — through a single connector contract. Three primitives (Source / Run / Item) and a pluggable Connector interface in `internal/imports/` cover the entire matrix; the admin surface at `/admin/imports` ships the source list, per-source detail with mapping rules, run history, and a per-item review queue for conflicts. Two storage modes per source: `ingest` copies bytes into the Artist Alley filestore; `reference` leaves them on the source and dispatches reads through the connector (`import-ref` storage backend), trading storage cost against source-availability coupling — the operator picks per source. Lifecycle inherits the strong parts of RS's `staticsync` (path-as-metadata via mapping rules, mtime / hash change detection, delete → archive → revive policy, per-source process lock) and fixes the pain points on purpose: multi-source instead of one filesystem; UI-managed instead of `config.php`-only; explicit conflict policies (`source_wins` / `local_wins` / `review`) plus a user-edit-locked flag so source overwrites never trample a field a person changed by hand; per-item review queue with side-by-side diff for `review` resolutions; per-source attribution instead of one global importer user. Push support where the source offers it (Drive watch channels, Graph subscriptions, ShotGrid event log) cuts the every-hour-scan-the-tree pattern for sources that bleed money on it. Audit hooks fire `import.*` into Phase 1.40; metrics expose under `import_` prefix in Phase 1.41. Sub-phases: 1.43.A framework (data model + scheduler + admin surface + audit/metrics, no connectors), 1.43.B foundation connectors that share ~80% implementation (fs / s3 / http / git), 1.43.C ShotGrid, 1.43.D Perforce, 1.43.E Microsoft 365 (OneDrive + SharePoint via Graph), 1.43.F Google Drive. Order of C / D / E / F is demand-driven. See ADR 0036."
         }
       ]
     },
@@ -438,6 +609,16 @@
           "id": "no-hosted-only",
           "title": "A hosted-only SaaS product",
           "description": "Self-hostable by design. A managed hosted Pro offering is on the table for indie studios without IT capacity, but the product remains fully self-hostable, and Enterprise customers always self-host."
+        },
+        {
+          "id": "no-blockchain",
+          "title": "NFTs, crypto-payment rails, or blockchain anything",
+          "description": "Different audience, polluting brand, opens reputational risk around rugpull-adjacent projects. Operators who want crypto can build it as a third-party plugin once the WASM plugin ecosystem (Phase 1.23) lands; we will not ship one."
+        },
+        {
+          "id": "no-feature-clawback",
+          "title": "Pulling features into paywalls retroactively",
+          "description": "Features promised at a given license tier do not move out of it. Premium add-ons (ADR 0038) are an orthogonal axis on top of the Community / Pro / Enterprise tiers — they add capabilities operators use to monetize third parties or that carry operational burden we operate on their behalf. They never reach back into features the tier already includes."
         }
       ]
     }

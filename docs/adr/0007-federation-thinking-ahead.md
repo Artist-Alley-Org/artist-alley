@@ -1,8 +1,19 @@
-# ADR 0007: Federation — thinking ahead
-
-- Date: 2026-05-24
-- Status: Accepted (design-level; no implementation in this ADR)
-
+---
+id: "0007"
+title: Federation — thinking ahead
+status: accepted
+date: 2026-05-24
+area: infrastructure
+phases: 
+  - "1.3"
+supersedes: []
+related: []
+tags:
+  - infrastructure
+  - ai
+excerpt: >-
+  artist-alley targets game studios. Studios above a certain size have multiple game teams (Blizzard alone has WoW, Overwatch, Diablo, Hearthstone, Hearthstone, etc.) and an archives function that sits above the per-game work. Two real-world topologies came up while discussing t…
+---
 ## Context
 
 artist-alley targets game studios. Studios above a certain size have

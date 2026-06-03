@@ -241,7 +241,7 @@ func (q *Queries) ListCollectionAcls(ctx context.Context, collectionID pgtype.UU
 const listCollectionResourcesPage = `-- name: ListCollectionResourcesPage :many
 SELECT cr.collection_id, cr.asset_id, cr.sort_order, cr.pinned,
        cr.expires_at, cr.added_at,
-       a.title, a.resource_type, a.status, a.file_hash, a.created_at AS asset_created_at
+       a.title, a.asset_type, a.status, a.file_hash, a.created_at AS asset_created_at
 FROM collection_resources cr
 JOIN assets a ON a.id = cr.asset_id
 WHERE cr.collection_id = $1
@@ -271,7 +271,7 @@ type ListCollectionResourcesPageRow struct {
 	ExpiresAt      pgtype.Timestamptz
 	AddedAt        pgtype.Timestamptz
 	Title          string
-	ResourceType   int64
+	AssetType      int64
 	Status         string
 	FileHash       *string
 	AssetCreatedAt pgtype.Timestamptz
@@ -302,7 +302,7 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 			&i.ExpiresAt,
 			&i.AddedAt,
 			&i.Title,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.Status,
 			&i.FileHash,
 			&i.AssetCreatedAt,

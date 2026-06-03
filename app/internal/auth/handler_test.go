@@ -444,8 +444,8 @@ func (a authOnlyImpl) GetMyCapabilities(ctx context.Context, req openapi.GetMyCa
 func (a authOnlyImpl) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	return a.h.SetUserRole(ctx, req)
 }
-func (a authOnlyImpl) ListResourceTypes(_ context.Context, _ openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from auth test shim")
+func (a authOnlyImpl) ListAssetTypes(_ context.Context, _ openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from auth test shim")
 }
 func (a authOnlyImpl) UploadStorageObject(_ context.Context, _ openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("UploadStorageObject called from auth test shim")
@@ -480,6 +480,9 @@ func (a authOnlyImpl) DownloadAssetVariant(_ context.Context, _ openapi.Download
 func (a authOnlyImpl) AddAssetTags(_ context.Context, _ openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from auth test shim")
 }
+func (a authOnlyImpl) RecreateAssetPreview(_ context.Context, _ openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from auth test shim")
+}
 func (a authOnlyImpl) RemoveAssetTag(_ context.Context, _ openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from auth test shim")
 }
@@ -491,6 +494,30 @@ func (a authOnlyImpl) AddAssetCompanion(_ context.Context, _ openapi.AddAssetCom
 }
 func (a authOnlyImpl) DownloadAssetCompanion(_ context.Context, _ openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
 	panic("DownloadAssetCompanion called from auth test shim")
+}
+func (a authOnlyImpl) ListAssetAlternates(_ context.Context, _ openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	panic("ListAssetAlternates called from auth test shim")
+}
+func (a authOnlyImpl) AddAssetAlternate(_ context.Context, _ openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	panic("AddAssetAlternate called from auth test shim")
+}
+func (a authOnlyImpl) DownloadAssetAlternate(_ context.Context, _ openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	panic("DownloadAssetAlternate called from auth test shim")
+}
+func (a authOnlyImpl) RemoveAssetAlternate(_ context.Context, _ openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	panic("RemoveAssetAlternate called from auth test shim")
+}
+func (a authOnlyImpl) GetEpubSpine(_ context.Context, _ openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from auth test shim")
+}
+func (a authOnlyImpl) GetEpubChapter(_ context.Context, _ openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from auth test shim")
+}
+func (a authOnlyImpl) GetEpubResource(_ context.Context, _ openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from auth test shim")
+}
+func (a authOnlyImpl) SearchEpub(_ context.Context, _ openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from auth test shim")
 }
 func (a authOnlyImpl) RemoveAssetCompanion(_ context.Context, _ openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from auth test shim")
@@ -827,4 +854,41 @@ func (authOnlyImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObjec
 }
 func (authOnlyImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
+}
+
+func (authOnlyImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from auth test shim")
+}
+
+func (authOnlyImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from auth test shim")
+}
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (authOnlyImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from authOnlyImpl test shim")
+}
+func (authOnlyImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from authOnlyImpl test shim")
+}
+func (authOnlyImpl)ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from auth_test test shim")
+}
+func (authOnlyImpl)CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from auth_test test shim")
+}
+func (authOnlyImpl)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from auth_test test shim")
+}
+func (authOnlyImpl)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	panic("LintAsset called from auth_test test shim")
 }

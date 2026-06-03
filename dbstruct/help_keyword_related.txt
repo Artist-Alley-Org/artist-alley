@@ -1,3 +1,0 @@
-Defines related keywords. When a keyword is searched for, related keywords are also searched for.
-keyword,int(11),
-related,int(11),The ID of the related keyword.

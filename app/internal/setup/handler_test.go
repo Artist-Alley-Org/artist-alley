@@ -247,6 +247,16 @@ type fixture struct {
 	cfg           config.Config
 	adminUsername string
 	dbName        string
+	// Snapshot of every system.admin-granting user_roles row that
+	// existed before the test wiped them. Repopulated post-test so
+	// the dev environment's interactive admin keeps working without
+	// a manual re-INSERT after every Go test run.
+	savedAdmins []savedUserRole
+}
+
+type savedUserRole struct {
+	rsUserID int64
+	roleID   string
 }
 
 func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
@@ -259,6 +269,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	defer cancel()
 
 	pool := openPool(t, pwd)
+	// Defers run LIFO: pool.Close() is registered FIRST so it runs
+	// LAST, ensuring the admin snapshot-restore (registered after)
+	// still has a live pool to talk to. t.Cleanup runs even later
+	// than function defers, so it can't be used here.
 	defer pool.Close()
 
 	fx := &fixture{
@@ -279,9 +293,23 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 		},
 	}
 
-	// Pre-clean — a previous killed run could have left this user.
+	// Snapshot any pre-existing admins BEFORE we wipe them, then
+	// restore at function exit so the dev environment's interactive
+	// admin survives unchanged. Pre-clean still has to drop everything
+	// to satisfy the test's needs_setup=true gate.
+	//
+	// Use defer (not t.Cleanup): t.Cleanup runs after function defers,
+	// by which time `defer pool.Close()` above has shut the pool. Our
+	// restore needs a live pool, so it has to ride a defer that fires
+	// BEFORE pool close — which means registering it AFTER pool.Close's
+	// defer so LIFO order works in our favor.
+	fx.snapshotAdmins(ctx)
 	fx.cleanupAdmin(ctx)
-	t.Cleanup(func() { fx.cleanupAdmin(context.Background()) })
+	defer func() {
+		bgCtx := context.Background()
+		fx.cleanupAdmin(bgCtx)
+		fx.restoreAdmins(bgCtx)
+	}()
 
 	fx.installHandler()
 	fn(ctx, fx)
@@ -295,14 +323,53 @@ func (f *fixture) installHandler() {
 	f.router = router
 }
 
+// snapshotAdmins records every system.admin-granting user_roles row
+// that currently exists so restoreAdmins can put them back at the
+// end of the test. Without this, every run of `./scripts/test.sh
+// --go` left the developer's interactive admin demoted.
+func (f *fixture) snapshotAdmins(ctx context.Context) {
+	rows, err := f.pool.Query(ctx, `
+		SELECT ur.rs_user_id, ur.role_id::text
+		FROM user_roles ur
+		WHERE ur.role_id IN (
+		    SELECT DISTINCT rc.role_id FROM role_capabilities rc
+		    WHERE rc.capability_code = 'system.admin'
+		)
+	`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r savedUserRole
+		if err := rows.Scan(&r.rsUserID, &r.roleID); err != nil {
+			continue
+		}
+		f.savedAdmins = append(f.savedAdmins, r)
+	}
+}
+
+// restoreAdmins re-INSERTs the rows captured by snapshotAdmins. Run
+// AFTER cleanupAdmin so the test's own admin doesn't get spared.
+// Tolerates rows that were since deleted (e.g. user removed in the
+// test) — ON CONFLICT DO NOTHING and ignoring errors keeps the test
+// teardown best-effort.
+func (f *fixture) restoreAdmins(ctx context.Context) {
+	for _, r := range f.savedAdmins {
+		_, _ = f.pool.Exec(ctx, `
+			INSERT INTO user_roles (rs_user_id, role_id)
+			VALUES ($1, $2::uuid)
+			ON CONFLICT DO NOTHING
+		`, r.rsUserID, r.roleID)
+	}
+}
+
 // cleanupAdmin returns the DB to needs_setup=true: removes every
 // user_role row that grants system.admin (so CountSystemAdmins drops
-// to zero) plus this fixture's specific test user. This is by design
-// destructive of any *interactively* created admin — the setup-flow
-// test inherently requires a clean "no admin" state, and the
-// integration test environment (docker-compose live DB) is shared
-// with the interactive user. Re-run the setup wizard from the
-// browser after the test suite if you need a real admin back.
+// to zero) plus this fixture's specific test user. The destruction
+// is paired with snapshotAdmins / restoreAdmins above so the dev
+// admin gets re-INSERTed at the very end — Go test runs no longer
+// require a manual user_roles re-INSERT to log back in.
 func (f *fixture) cleanupAdmin(ctx context.Context) {
 	// Drop the role assignment from every admin so needs_setup flips
 	// back to true. We leave the user rows alone (the user could
@@ -381,8 +448,8 @@ func (shimImpl) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from setup test shim")
 }
-func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from setup test shim")
+func (shimImpl) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from setup test shim")
 }
 func (shimImpl) UploadStorageObject(context.Context, openapi.UploadStorageObjectRequestObject) (openapi.UploadStorageObjectResponseObject, error) {
 	panic("UploadStorageObject called from setup test shim")
@@ -417,6 +484,9 @@ func (shimImpl) DownloadAssetVariant(context.Context, openapi.DownloadAssetVaria
 func (shimImpl) AddAssetTags(context.Context, openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	panic("AddAssetTags called from setup test shim")
 }
+func (shimImpl) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from setup test shim")
+}
 func (shimImpl) RemoveAssetTag(context.Context, openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	panic("RemoveAssetTag called from setup test shim")
 }
@@ -431,6 +501,31 @@ func (shimImpl) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCom
 }
 func (shimImpl) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	panic("RemoveAssetCompanion called from setup test shim")
+}
+func (shimImpl) ListAssetAlternates(context.Context, openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	panic("ListAssetAlternates called from setup test shim")
+}
+func (shimImpl) AddAssetAlternate(context.Context, openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	panic("AddAssetAlternate called from setup test shim")
+}
+func (shimImpl) DownloadAssetAlternate(context.Context, openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	panic("DownloadAssetAlternate called from setup test shim")
+}
+func (shimImpl) RemoveAssetAlternate(context.Context, openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	panic("RemoveAssetAlternate called from setup test shim")
+}
+func (shimImpl) GetEpubSpine(context.Context, openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	panic("GetEpubSpine called from setup test shim")
+}
+func (shimImpl) GetEpubChapter(context.Context, openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	panic("GetEpubChapter called from setup test shim")
+}
+func (shimImpl) GetEpubResource(context.Context, openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	panic("GetEpubResource called from setup test shim")
+}
+
+func (shimImpl) SearchEpub(context.Context, openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	panic("SearchEpub called from setup test shim")
 }
 func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
 	panic("ListFields called from setup test shim")
@@ -693,4 +788,41 @@ func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (
 }
 func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
+}
+
+func (shimImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from setup_test test shim")
+}
+
+func (shimImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from setup_test test shim")
+}
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (shimImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from shimImpl test shim")
+}
+func (shimImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from shimImpl test shim")
+}
+func (shimImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from shimImpl test shim")
+}
+func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from setup_test test shim")
+}
+func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from setup_test test shim")
+}
+func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from setup_test test shim")
+}
+func (shimImpl) LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	panic("LintAsset called from setup_test test shim")
 }

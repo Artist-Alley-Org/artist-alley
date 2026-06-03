@@ -13,6 +13,12 @@
    any network round-trip to Google Fonts. */
 @import "@fontsource-variable/inter";
 
+/* Limelight — the brand mark display face. Single-weight retro display font
+   from Google Fonts, self-hosted via @fontsource/limelight. Applied via the
+   `.aa-brand` utility class and to the Starlight site title; do NOT use for
+   body prose — Limelight is theatrical, not readable at small sizes. */
+@import "@fontsource/limelight";
+
 :root {
   /* Sans stack — Inter Variable first (self-hosted), then OS fallbacks. */
   --sl-font-system:
@@ -36,6 +42,12 @@
      Data-heavy pages disable the right TOC instead of widening further,
      since the TOC column was the actual bottleneck. */
   --sl-content-width: 72rem;
+
+  /* Brand mark font — Limelight, the theatrical display face used for the
+     product name. Applied to the site header title and to anything wrapped
+     in `<span class="aa-brand">Artist Alley</span>`. NOT for body prose. */
+  --aa-brand-font: "Limelight", "Inter Variable", "Inter", system-ui,
+    sans-serif;
 
   /* Brand accents — used by VisualRoadmap and EngineeringDashboard. Same hue
      on both themes; the surfaces around them switch. */
@@ -183,6 +195,30 @@
 /* Image rendering: crisper SVG diagrams (Mermaid output) and pixel art previews. */
 :root .sl-markdown-content img[src$=".svg"] { image-rendering: auto; }
 :root .sl-markdown-content img[alt*="pixel"] { image-rendering: pixelated; }
+
+/* ----------------------------------------------------------------------------
+ * Brand mark — Artist Alley in Limelight
+ * ----------------------------------------------------------------------------
+ * `.aa-brand` is the universal class for displaying the product name in the
+ * theatrical Limelight face. Used by Starlight's site title (top-left header)
+ * and by any MDX that wraps the brand name explicitly. Letter-spacing nudged
+ * a touch tight because Limelight's default tracking reads loose at this
+ * size on light backgrounds.
+ */
+.aa-brand,
+:root .site-title > span:not(:has(img)) {
+  font-family: var(--aa-brand-font);
+  letter-spacing: -0.005em;
+  font-weight: 400; /* Limelight ships only the single weight */
+}
+
+/* Starlight's site title — apply brand font to the text span, keep the
+   logo image untouched. The selector targets the text content next to the
+   logo without touching the SVG/img element. */
+:root .site-title {
+  font-family: var(--aa-brand-font);
+  letter-spacing: -0.005em;
+}
 
 /* ----------------------------------------------------------------------------
  * Scroll reveals

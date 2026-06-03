@@ -105,7 +105,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	createBody := map[string]any{
 		"title":         "Test Asset",
 		"description":   "Round-trip integration test",
-		"resource_type": int64(1),
+		"asset_type": int64(1),
 		"file_hash":     hashHex,
 		"tags":          []string{"smoke", "test"},
 		"metadata":      map[string]any{"width": 4096, "format": "png"},
@@ -254,7 +254,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	bareRouter := chi.NewRouter()
 	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), bareRouter)
 	anonRR := postJSON(t, bareRouter, "/assets", map[string]any{
-		"title": "Anon", "resource_type": int64(1),
+		"title": "Anon", "asset_type": int64(1),
 	})
 	if anonRR.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous create: status=%d want 401", anonRR.Code)
@@ -299,7 +299,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 
 	rr := postJSON(t, router, "/assets", map[string]any{
 		"title":         "Draft without file",
-		"resource_type": int64(1),
+		"asset_type": int64(1),
 		"status":        "draft",
 	})
 	if rr.Code != http.StatusCreated {
@@ -353,17 +353,17 @@ func TestCreateAssetInputValidation(t *testing.T) {
 	}{
 		{
 			name: "empty title",
-			body: map[string]any{"title": "  ", "resource_type": int64(1)},
+			body: map[string]any{"title": "  ", "asset_type": int64(1)},
 			want: "title",
 		},
 		{
 			name: "bad status",
-			body: map[string]any{"title": "x", "resource_type": int64(1), "status": "weird"},
+			body: map[string]any{"title": "x", "asset_type": int64(1), "status": "weird"},
 			want: "status",
 		},
 		{
 			name: "bad file_hash",
-			body: map[string]any{"title": "x", "resource_type": int64(1), "file_hash": "not-a-sha"},
+			body: map[string]any{"title": "x", "asset_type": int64(1), "file_hash": "not-a-sha"},
 			want: "file_hash",
 		},
 	}
@@ -464,6 +464,9 @@ func (s shimImpl) DownloadAssetVariant(ctx context.Context, req openapi.Download
 func (s shimImpl) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRequestObject) (openapi.AddAssetTagsResponseObject, error) {
 	return s.assets.AddAssetTags(ctx, req)
 }
+func (s shimImpl) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
+	panic("RecreateAssetPreview called from assets test shim")
+}
 func (s shimImpl) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
 	return s.assets.RemoveAssetTag(ctx, req)
 }
@@ -478,6 +481,30 @@ func (s shimImpl) DownloadAssetCompanion(ctx context.Context, req openapi.Downlo
 }
 func (s shimImpl) RemoveAssetCompanion(ctx context.Context, req openapi.RemoveAssetCompanionRequestObject) (openapi.RemoveAssetCompanionResponseObject, error) {
 	return s.assets.RemoveAssetCompanion(ctx, req)
+}
+func (s shimImpl) ListAssetAlternates(ctx context.Context, req openapi.ListAssetAlternatesRequestObject) (openapi.ListAssetAlternatesResponseObject, error) {
+	return s.assets.ListAssetAlternates(ctx, req)
+}
+func (s shimImpl) AddAssetAlternate(ctx context.Context, req openapi.AddAssetAlternateRequestObject) (openapi.AddAssetAlternateResponseObject, error) {
+	return s.assets.AddAssetAlternate(ctx, req)
+}
+func (s shimImpl) DownloadAssetAlternate(ctx context.Context, req openapi.DownloadAssetAlternateRequestObject) (openapi.DownloadAssetAlternateResponseObject, error) {
+	return s.assets.DownloadAssetAlternate(ctx, req)
+}
+func (s shimImpl) RemoveAssetAlternate(ctx context.Context, req openapi.RemoveAssetAlternateRequestObject) (openapi.RemoveAssetAlternateResponseObject, error) {
+	return s.assets.RemoveAssetAlternate(ctx, req)
+}
+func (s shimImpl) GetEpubSpine(ctx context.Context, req openapi.GetEpubSpineRequestObject) (openapi.GetEpubSpineResponseObject, error) {
+	return s.assets.GetEpubSpine(ctx, req)
+}
+func (s shimImpl) GetEpubChapter(ctx context.Context, req openapi.GetEpubChapterRequestObject) (openapi.GetEpubChapterResponseObject, error) {
+	return s.assets.GetEpubChapter(ctx, req)
+}
+func (s shimImpl) GetEpubResource(ctx context.Context, req openapi.GetEpubResourceRequestObject) (openapi.GetEpubResourceResponseObject, error) {
+	return s.assets.GetEpubResource(ctx, req)
+}
+func (s shimImpl) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestObject) (openapi.SearchEpubResponseObject, error) {
+	return s.assets.SearchEpub(ctx, req)
 }
 
 func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
@@ -510,8 +537,8 @@ func (shimImpl) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequ
 func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("SetUserRole called from assets test shim")
 }
-func (shimImpl) ListResourceTypes(context.Context, openapi.ListResourceTypesRequestObject) (openapi.ListResourceTypesResponseObject, error) {
-	panic("ListResourceTypes called from assets test shim")
+func (shimImpl) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
+	panic("ListAssetTypes called from assets test shim")
 }
 func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
 	panic("GetSetupStatus called from assets test shim")
@@ -757,4 +784,41 @@ func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (
 }
 func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
 	panic("FailJob called from test shim")
+}
+
+func (shimImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
+	panic("ListPostWhiteboards called from assets_test test shim")
+}
+
+func (shimImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
+	panic("CreatePostWhiteboard called from assets_test test shim")
+}
+
+// --- brush packs stubs (Phase 1.21c) -------------------------------------
+func (shimImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
+	panic("ListBrushPacks called from shimImpl test shim")
+}
+func (shimImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
+	panic("ImportBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
+	panic("GetBrushPack called from shimImpl test shim")
+}
+func (shimImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
+	panic("DeleteBrushPack called from shimImpl test shim")
+}
+func (shimImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
+	panic("GetBrushPackStamp called from shimImpl test shim")
+}
+func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
+	panic("ListAssetTextAnnotations called from assets_test test shim")
+}
+func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
+	panic("CreateAssetTextAnnotation called from assets_test test shim")
+}
+func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
+	panic("UpdateTextAnnotation called from assets_test test shim")
+}
+func (s shimImpl) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
+	return s.assets.LintAsset(ctx, req)
 }

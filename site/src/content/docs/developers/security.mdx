@@ -1,0 +1,96 @@
+---
+title: Security in Artist Alley
+description: Threat model, sensitive surfaces, secrets handling, and the rules every contribution touching a security-sensitive path follows.
+sidebar:
+  order: 2
+---
+
+Artist Alley holds three classes of valuable data: **artists' creative work** (often confidential, often NDA-bound), **studio metadata** (project names, internal review comments, unannounced IP), and **operator credentials** (auth, third-party API keys, license signing material). The security posture is built around protecting all three from accidental exposure and from determined attackers with credentialed access.
+
+This page documents the load-bearing rules. Any PR that touches an authentication path, a credentials store, a permissions check, an asset-bytes path, or an external integration follows them.
+
+## Threat model
+
+Three concrete adversaries shape the design:
+
+- **The credentialed but unprivileged user.** A user with a valid login but no business reading restricted assets. The attacker the permission system is built against.
+- **The leaked credential.** A stolen session, a published API token, a misplaced license file. Mitigation is short-lived tokens, revocation surfaces, and audit trails that surface anomalous behaviour quickly.
+- **The compromised peer / connector / add-on.** A federated peer, an import source, a third-party plugin running malicious code. Mitigation is per-surface trust boundaries — no surface trusts another by default.
+
+Not in scope:
+
+- **Nation-state targeting.** Out of scope for the project's threat model; operators with that risk profile run their instance behind air-gapped infrastructure.
+- **Physical access to the server.** If the attacker can read disk, all bets on data confidentiality are off — disk-level encryption is the operator's responsibility, not ours.
+- **Side-channel attacks against the host OS.** Speculative execution, hardware-level RNG bias, etc. — out of scope.
+
+## Authentication
+
+- **Sessions** are stored server-side in the `sessions` table; the client carries an opaque session cookie. No client-readable session payload.
+- **API tokens** are scoped — each token grants a defined set of capabilities, not unrestricted access. Tokens are stored hashed (Argon2id) so the database compromise alone does not yield usable tokens.
+- **Password storage** is Argon2id with project-default parameters. Plaintext passwords never enter logs, never enter audit events, never enter response bodies.
+- **SSO** (LDAP / SAML / OAuth) lands in Phase 1.18. Generic SAML / OIDC stays in core; provider-specific bridges (Okta / Auth0 / WorkOS) are premium add-ons per ADR 0038.
+
+## Authorisation
+
+- **Capability codes** are the unit of permission, not role names. Code that checks "is this user an admin" is wrong — code that checks "does this user have the `assets.delete` capability" is right.
+- **Capabilities live in the `capabilities` table**; roles bundle capabilities via `role_capabilities`; users get roles via `user_roles`. Per-user overrides — `user_capability_grants` and `user_capability_revokes` — let an admin grant or revoke a specific capability without inventing a one-off role.
+- **The capability check happens at the handler entry, not deeper.** A repository method does not check capabilities; the handler that calls it does. This keeps the trust boundary visible.
+
+## Asset sensitivity
+
+- **Per-asset sensitivity tier** (`public` / `team` / `restricted` / `embargo`, per ADR 0020). The tier is set per-asset and gates access at the storage-fetch layer — not just the UI.
+- **Server-side blur for restricted and embargo assets.** Blur is a real preview variant generated server-side; even an unauthenticated network-tap leak shows blurred bytes. A `Reveal` action lifts the blur for the session and writes an audit event.
+- **Embargo lift via the scheduled-action engine** (Phase 1.28). The lift is a timed action, audit-logged when it fires.
+
+## Secrets handling
+
+- **Encrypted credentials store** for third-party API keys, OAuth refresh tokens, SMTP passwords, federation peer auth, import-source credentials, license-signing material. Encryption uses a master key on the host; the broker decrypts in memory and zeroes after the consumer finishes.
+- **Connectors / add-ons never see raw credentials at rest.** They receive an opaque `Credentials` blob from the broker that decrypts on demand. No connector logs credentials, no connector writes them.
+- **Master key rotation** is a documented operator-side procedure; the rotation re-encrypts the credentials table under the new key without changing connector code.
+- **Cloudflare Worker Secrets** hold the Ed25519 signing key for license `.lic` issuance. The signing key never leaves the Worker.
+
+## Audit trail
+
+- **Every state change** that crosses the security boundary writes an `audit_events` row: auth login / logout / failure, capability grant / revoke, asset sensitivity change, share-link creation / consumption, license issuance, add-on install / start / stop, import-source create / sync.
+- **`correlation_id`** ties every event from a single request or job together — cascade effects are reconstructable from the audit log.
+- **Audit retention** defaults to 7 years. Enterprise tier supports signed audit export (Ed25519 over JSONL); the signing key's public half is published at `/.well-known/audit-signing-key` per ADR 0017.
+
+## Share links
+
+Signed, expiring share URLs for external collaborators (per ADR 0018):
+
+- **Token is a 32-byte random ID**, not a JWT. Revocation is a single-row delete — no key rotation, no token-blacklist surface.
+- **Per-link scope** — `view` / `comment` / `annotate` / `download`. Scope is enforced at the handler; bypassing the link viewer to hit the canonical endpoint still requires the matching capability.
+- **Optional Argon2id password** on the link. Failed-password attempts are rate-limited and audited.
+- **Per-fetch audit trail** — IP, user-agent, password-result, scope satisfied. The operator can see who's used a link without contacting the recipient.
+
+## Input handling
+
+- **Every HTTP entry point validates inputs** at the OpenAPI layer. The strict-server generator rejects malformed requests before the handler runs.
+- **No SQL string concatenation.** sqlc enforces parameterised queries at compile time; raw `db.Exec(fmt.Sprintf(...))` is a code-review block.
+- **No HTML concatenation in templates.** Svelte's auto-escaping is the default; `{@html ...}` is a code-review block requiring justification.
+- **Path traversal** — every filesystem path derived from user input is canonicalised and verified to live under the expected root. The storage abstraction does this once; handlers don't.
+
+## Privacy and consent
+
+Per ADR 0024:
+
+- **Cookie / tracker banner** renders only when a non-essential category is in use. A bare studio install with no analytics shows no banner.
+- **DSAR tooling** — every user can export their personal data as JSON and request deletion. Soft delete first (recoverable for 30 days); hard delete reassigns authored content to a `deleted-user` tombstone so collaborative work survives.
+- **Audit-log access** is itself capability-gated. Reading the audit log writes an audit event.
+
+## Reporting a vulnerability
+
+If you believe you've found a security issue:
+
+- **Do not open a public GitHub issue.** Use the security contact at `security@artist-alley.org` (or open a private security advisory on GitHub, which routes to the same place).
+- Include reproduction steps, the version affected, and the impact you observed.
+- Expect an acknowledgement within 72 hours and a fix or mitigation plan within 14 days for confirmed issues.
+
+We don't run a bug bounty programme yet. Public credit for the report (your choice, opt-in) lands in the release notes for the fix.
+
+## Things that look like security features but aren't
+
+- **Anti-AdBlock.** The `aa-ads` add-on respects user-agent ad-blocking. We don't arms-race against it from the AGPL core.
+- **DRM on asset bytes.** We do not encrypt asset bytes at rest within the storage backend beyond what the backend itself provides (S3 server-side encryption is an operator-configured option, not an Artist Alley feature). DRM-protected delivery is out of scope.
+- **Anti-account-sharing.** Active seats are counted (ADR 0017) but the count is for licensing, not surveillance. The seat count is purely "how many distinct users have been active in the last 30 days"; we don't fingerprint sessions, don't device-bind logins.

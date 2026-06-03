@@ -1,8 +1,29 @@
-# ADR 0017: Monetization model + technical license enforcement
-
-- Date: 2026-05-29
-- Status: Accepted
-
+---
+id: "0017"
+title: Monetization model + technical license enforcement
+status: accepted
+date: 2026-05-29
+area: monetization
+phases: 
+  - "1.17"
+  - "1.24"
+  - "1.24.A"
+  - "1.24.B"
+  - "1.24.C"
+  - "1.24.D"
+supersedes: []
+related: 
+  - "0016"
+  - "0018"
+tags:
+  - monetization
+  - ai
+  - infrastructure
+  - auth
+  - 3d
+excerpt: >-
+  ADR 0016 establishes the legal license direction (AGPL + commercial dual-license). This ADR specifies the runtime monetization model: the tier shape, the .lic file format, the enforcement architecture, and what we explicitly are not doing.
+---
 ## Context
 
 ADR 0016 establishes the legal license direction (AGPL + commercial
@@ -10,10 +31,11 @@ dual-license). This ADR specifies the runtime monetization model: the
 tier shape, the `.lic` file format, the enforcement architecture, and
 what we explicitly are not doing.
 
-The model is adapted from `mscrnt/adne`'s existing license system
-(Ed25519-signed `.lic` files, tier-based feature flags, optional host
-binding), with tier limits adjusted for artist-alley's audience and a
-"same features at every tier" stance for the open-source story.
+The model uses Ed25519-signed `.lic` files with tier-based feature
+flags and optional host binding — a well-trodden pattern for
+self-hostable commercial software — with tier limits sized for the
+studio audience and a "same features at every tier" stance to
+preserve the open-source community story.
 
 ## Decision
 
@@ -213,8 +235,6 @@ needs `last_active_at` per user.
 
 ## Reference
 
-- `mscrnt/adne` license system: `api/app/licensing/{verify,models,
-  state,hostid}.py` — pattern source.
 - ADR 0016 — license direction (AGPL + commercial dual-license).
 - ADR 0018 (planned) — Blender as optional worker container.
 - Phase 1.24 in [`docs/roadmap.md`](../roadmap.md) — implementation

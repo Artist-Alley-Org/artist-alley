@@ -21,14 +21,15 @@
     title: string;
     file_hash?: string | null;
     file_extension?: string | null;
-    resource_type: number;
+    asset_type: number;
     created_at: string;
     thumbhash?: string | null;
   }
 
-  import { isVideoExt, is3DExt } from './viewers/controller';
+  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
   const isVideo = isVideoExt;
   const is3D = is3DExt;
+  const isDoc = isDocExt;
 
   interface Props {
     asset: Asset;
@@ -64,7 +65,9 @@
   const BACKOFF_MS = [800, 1500, 3000, 6000, 12000, 30000];
 
   $effect(() => {
-    if (!colUrl) {
+    // Doc assets render a typed card (see template) so we skip the
+    // col fetch entirely — no thumbnail variant exists for text.
+    if (!colUrl || assetIsDoc) {
       imgSrc = '';
       return;
     }
@@ -112,6 +115,7 @@
   // Both serve from the same sprites.jpg variant.
   const assetIsVideo = $derived(isVideo(asset.file_extension));
   const assetIs3D = $derived(is3D(asset.file_extension));
+  const assetIsDoc = $derived(isDoc(asset.file_extension));
   const assetHasSpriteScrub = $derived(assetIsVideo || assetIs3D);
   const spriteUrl = $derived(`/api/v1/assets/${asset.id}/variants/sprites.jpg`);
   const spriteCols = $derived(assetIs3D ? 6 : 10);
@@ -149,7 +153,24 @@
     class="relative aspect-square bg-surface bg-cover bg-center"
     style={placeholder ? `background-image: url(${placeholder})` : undefined}
   >
-    {#if asset.file_hash && !imgError}
+    {#if assetIsDoc}
+      <!-- Typed doc card — text/code don't get a rasterised preview
+           variant, so we render a file-shape with the extension. -->
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-surface-elevated to-surface text-fg-muted/80">
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="8" y1="13" x2="16" y2="13" />
+          <line x1="8" y1="17" x2="16" y2="17" />
+          <line x1="8" y1="9" x2="12" y2="9" />
+        </svg>
+        {#if asset.file_extension}
+          <span class="rounded bg-black/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg">
+            {asset.file_extension.replace(/^\./, '')}
+          </span>
+        {/if}
+      </div>
+    {:else if asset.file_hash && !imgError}
       <img
         src={imgSrc}
         alt={asset.title}

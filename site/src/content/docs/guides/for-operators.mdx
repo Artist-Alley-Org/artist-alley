@@ -3,7 +3,7 @@ title: For operators
 description: Production deployment, configuration, and operational notes.
 ---
 
-artist-alley is deliberately boring to operate. **One binary, one
+Artist Alley is deliberately boring to operate. **One binary, one
 database, one volume.** No microservices, no message bus, no sidecars.
 
 ## The shape
@@ -49,7 +49,7 @@ Docker images are signed via Sigstore — see the
 
 ## Postgres
 
-Any Postgres 14+ works. artist-alley creates its schema on first run
+Any Postgres 14+ works. Artist Alley creates its schema on first run
 via embedded `goose` migrations — there's no separate "migrate
 container" or "create database" step beyond the initial role + db.
 
@@ -126,7 +126,7 @@ adjunct-Postgres reasoning.
 
 ## Federation
 
-artist-alley is built to federate (multi-instance peering with
+Artist Alley is built to federate (multi-instance peering with
 content sync) — see the in-tree [federation roadmap][federation].
 Per-user prefs (theme, language, AI provider override) ride on
 `user_profiles` which carries `origin_server_id`. Per-instance

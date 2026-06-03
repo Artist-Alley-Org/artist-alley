@@ -57,6 +57,19 @@ def parse_args() -> argparse.Namespace:
                          "views.")
     ap.add_argument("--poster-res", type=int, default=384,
                     help="poster render resolution (square)")
+    ap.add_argument("--iso-output", required=False, default="",
+                    help="if set, render a single CYCLES isometric shot "
+                         "(azimuth 45°, elevation 30°) to this path and exit. "
+                         "Used as the col/preview/screen thumbnail for 3D "
+                         "assets — workbench poster paints textured Kenney "
+                         "models magenta because it can't bind texture nodes "
+                         "the same way Cycles does, so the iso pass replaces "
+                         "the workbench poster once the rest of the turntable "
+                         "has staged companions.")
+    ap.add_argument("--iso-res", type=int, default=512,
+                    help="iso render resolution (square)")
+    ap.add_argument("--iso-samples", type=int, default=32,
+                    help="cycles samples for the iso shot")
     ap.add_argument("--frames", type=int, default=36)
     ap.add_argument("--res", type=int, default=512)
     ap.add_argument("--engine", default="cycles",
@@ -579,6 +592,38 @@ def main() -> None:
         cam.rotation_euler = (math.radians(70), 0, 0)
         pivot.rotation_euler = (0, 0, math.radians(-90))
         render_to(args.poster_output)
+        return
+
+    # Isometric thumbnail mode — single Cycles frame at azimuth 45°,
+    # elevation 30° (classic isometric / 3-quarter view). Replaces
+    # the workbench poster's col/preview/screen output once the rest
+    # of the pipeline has staged companions. Workbench renders these
+    # same models magenta-pink for textured Kenney assets because its
+    # texture-node binding behaves differently from Cycles; the iso
+    # pass shares the Cycles path the turntable already uses, so it
+    # picks up textures correctly when companions are in place.
+    if args.iso_output:
+        configure_render(args.iso_res, args.iso_samples)
+        scene = bpy.context.scene
+        aspect = scene.render.resolution_x / scene.render.resolution_y
+        cam_data = cam.data
+        fov_h = 2 * math.atan(cam_data.sensor_width / (2 * cam_data.lens))
+        fov_v = fov_h / aspect
+        w, d, hgt = dimensions.x, dimensions.y, dimensions.z
+        padding = 1.20  # iso view ends up corner-to-corner; extra margin
+        elev = math.radians(30)
+        # Fit using the orbital extent at 30° tilt (taller silhouette
+        # than the 20° turntable, so a bit more distance).
+        v_ext = abs(hgt) * math.cos(elev) + abs(d) * math.sin(elev)
+        h_ext = max(abs(w), abs(d))
+        d_v = (v_ext * padding) / (2 * math.tan(fov_v / 2)) if v_ext > 0 else 0
+        d_h = (h_ext * padding) / (2 * math.tan(fov_h / 2)) if h_ext > 0 else 0
+        distance = max(d_v, d_h, 0.1)
+        cam.parent = pivot
+        cam.location = (0, -distance, distance * math.tan(elev))
+        cam.rotation_euler = (math.radians(90) - elev, 0, 0)
+        pivot.rotation_euler = (0, 0, math.radians(-90 + 45))  # azimuth 45°
+        render_to(args.iso_output)
         return
 
     if args.engine == "workbench":

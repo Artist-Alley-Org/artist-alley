@@ -15,7 +15,7 @@
     "advanced_search": "Advanced search"
   },
   "search": {
-    "intro": "Build a precise query — filter by tag, resource type, field value, date range, and more.",
+    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
     "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search."
   },
   "blogs": {
@@ -94,7 +94,7 @@
     "roles": "Roles & capabilities",
     "workflow": "Workflow states",
     "fields": "Fields & metadata",
-    "resource_types": "Resource types",
+    "asset_types": "Asset types",
     "system": "System config",
     "system_log": "System log"
   },
@@ -234,9 +234,9 @@
       },
       "content": {
         "title": "Content & metadata",
-        "intro": "Resource types, fields, taxonomies, and the text that wraps them.",
+        "intro": "Asset types, fields, taxonomies, and the text that wraps them.",
         "tiles": {
-          "resource_types":  { "title": "Resource types",   "blurb": "Resource type registry and the fields each applies." },
+          "asset_types":  { "title": "Asset types",   "blurb": "Asset type registry and the fields each applies." },
           "fields":          { "title": "Field definitions","blurb": "Metadata schema across every domain." },
           "field_options":   { "title": "Field options",   "blurb": "Controlled vocabularies for select / multiselect fields." },
           "field_sets":      { "title": "Field sets",      "blurb": "Bundle related fields for reuse across types." },
@@ -400,7 +400,7 @@
       "roles": "View roles and the capabilities each one grants.",
       "workflow": "Review the seeded workflow state machines.",
       "fields": "Browse the metadata field schema.",
-      "resource_types": "Browse the resource type registry.",
+      "asset_types": "Browse the asset type registry.",
       "system": "Site, SMTP, authentication, AI providers, and logs."
     },
     "users": {
@@ -435,8 +435,8 @@
       "type": "Type",
       "applies_to": "Applies to"
     },
-    "resource_types": {
-      "title": "Resource types",
+    "asset_types": {
+      "title": "Asset types",
       "coming_soon": "Resource-type editing lands in a follow-up phase."
     },
     "system": {
@@ -607,5 +607,127 @@
   },
   "errors": {
     "save_failed": "Couldn't save changes."
+  },
+  "viewer_menu": {
+    "file": "File",
+    "edit": "Edit",
+    "about": "About",
+    "download_original": "Download original",
+    "copy_link": "Copy link",
+    "open_in_new_tab": "Open in new tab",
+    "close": "Close",
+    "edit_tags": "Edit tags…",
+    "edit_metadata": "Edit metadata…",
+    "add_to_collection": "Add to collection…",
+    "coming_soon": "Coming soon",
+    "about_type": "Type",
+    "about_dimensions": "Dimensions",
+    "about_frames": "Frames",
+    "about_fps": "FPS",
+    "about_sha256": "SHA256",
+    "untitled": "Untitled",
+    "review": "Review",
+    "review_enter": "Enter review mode (or double-click asset)",
+    "review_exit": "Exit review mode (or double-click asset)",
+    "reset_view": "Reset view (R)",
+    "fullscreen_enter": "Fullscreen (F)",
+    "fullscreen_exit": "Exit fullscreen (F)",
+    "pane_show": "Show panel (I)",
+    "pane_hide": "Hide panel (I)",
+    "recreate_previews": "Recreate previews",
+    "download_variant": "Download variant…",
+    "share_asset": "Share…",
+    "delete_asset": "Delete asset…",
+    "window_close": "Close (Esc)",
+    "window_maximize": "Maximize",
+    "window_restore": "Restore",
+    "tools": "Tools",
+    "side_panel": "Side panel",
+    "whiteboard": "Whiteboard…",
+    "annotate": "Annotate… (soon)",
+    "compare": "Compare versions… (soon)"
+  },
+  "collection_picker": {
+    "title_single": "Add to collection",
+    "title_bulk": "Add {n} assets to collection",
+    "search_placeholder": "Search your collections…",
+    "loading": "Loading collections…",
+    "empty": "You don't have any collections yet. Create one below.",
+    "no_match": "No collections match.",
+    "new_placeholder": "New collection name…",
+    "create_and_add": "Create + add",
+    "creating": "Creating…",
+    "add_failed_all": "Couldn't add to that collection.",
+    "add_failed_partial": "Added {added} of {total}; some failed."
+  },
+  "playlist_actions": {
+    "add_all_to_collection": "Add all to collection",
+    "download_all_zip": "Download all as ZIP",
+    "bulk_tag": "Tag all",
+    "share_playlist": "Share playlist"
+  },
+  "post_menu": {
+    "edit_post": "Edit post…",
+    "delete_post": "Delete post…"
+  },
+  "viewer_hotkeys": {
+    "title": "Shortcuts",
+    "title_tips": "Tips",
+    "prev_asset": "Prev asset",
+    "next_asset": "Next asset",
+    "prev_post": "Prev post",
+    "next_post": "Next post",
+    "toggle_panel": "Toggle panel",
+    "fullscreen": "Fullscreen",
+    "reset_view": "Reset view",
+    "review": "Toggle review",
+    "close": "Close",
+    "section_playback": "Playback",
+    "play_pause": "Play / Pause",
+    "rewind_forward": "Rewind · Forward",
+    "step_back_forward": "Step ±1 frame",
+    "step_back_forward_10": "Step ±10 frames",
+    "speed_range": "Playback speed (0.25× – 4×)",
+    "goto_frame": "Jump to frame / time",
+    "loop_in_out": "Mark loop in / out",
+    "loop_clear": "Clear loop",
+    "zoom_scrubber": "Zoom scrubber",
+    "section_waveform": "Waveform",
+    "wave_seek": "Seek to position",
+    "wave_select_loop": "Set loop region",
+    "wave_zoom": "Zoom waveform"
+  },
+  "archive": {
+    "filter_placeholder": "Filter entries…",
+    "hide_dotfiles": "Hide dotfiles",
+    "entry_count": "{count} entries",
+    "loading_manifest": "Loading manifest…",
+    "no_entries_match": "No entries match the current filter.",
+    "manifest_truncated": "Manifest truncated at {count} entries.",
+    "select_entry": "Select an entry on the left to preview its contents.",
+    "download_entry_title": "Download this entry",
+    "download": "Download",
+    "loading_entry": "Loading entry…",
+    "no_inline_preview": "Inline preview not available for this entry — use Download to fetch it.",
+    "tool_loading": "Archive viewer is loading…",
+    "stats": "Stats",
+    "no_manifest_yet": "No manifest yet.",
+    "stat_format": "Format",
+    "stat_files": "Files",
+    "stat_folders": "Folders",
+    "stat_total_size": "Total size",
+    "stat_truncated": "Truncated",
+    "stat_truncated_hint": "Manifest hit the entry cap",
+    "selected": "Selected",
+    "download_entry_button": "Download entry",
+    "tree": "Tree",
+    "expand_all": "Expand all",
+    "collapse_all": "Collapse all",
+    "extract": "Extract",
+    "extract_all_button": "Extract all as .zip",
+    "extract_all_title": "Repackage every entry as a single ZIP and download",
+    "extract_all_blurb": "Streams a fresh ZIP of every entry — convenient for sources the OS can't open natively (.7z / .rar / .tar.xz). The original archive is still available via the asset's Download button.",
+    "by_extension": "By extension",
+    "filter_to_ext": "Filter the tree to .{ext} entries"
   }
 }

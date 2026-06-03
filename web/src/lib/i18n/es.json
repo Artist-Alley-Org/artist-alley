@@ -21,7 +21,7 @@
     "roles": "Roles y permisos",
     "workflow": "Estados de flujo",
     "fields": "Campos y metadatos",
-    "resource_types": "Tipos de recurso",
+    "asset_types": "Tipos de asset",
     "system": "Configuración del sistema",
     "system_log": "Registro del sistema"
   },

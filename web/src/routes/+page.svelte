@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import PostCard from '$components/PostCard.svelte';
-  import PostModal from '$components/PostModal.svelte';
+  import PostHost from '$components/PostHost.svelte';
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import { browseView } from '$stores/browseView.svelte';
@@ -157,6 +157,38 @@
       noScroll: true,
     });
   }
+
+  // ← / → inside an open post overlay jumps to the prev / next post
+  // in the current feed page. Two corners of UX nuance:
+  //   1. If the current post id isn't in items (deep-linked from
+  //      somewhere outside this feed), we no-op rather than guess.
+  //   2. At the end of the feed, if there's a next cursor, we kick
+  //      off a fetchPage() so navigation can spill into the next
+  //      page — the user sees the new post as soon as it arrives.
+  //      We don't await it; the keypress is fire-and-forget.
+  async function navigateToSibling(dir: 'prev' | 'next') {
+    if (!modalPostId) return;
+    const idx = items.findIndex((p) => p.id === modalPostId);
+    if (idx < 0) return;
+    const targetIdx = dir === 'next' ? idx + 1 : idx - 1;
+    if (targetIdx < 0) return;
+    if (targetIdx >= items.length) {
+      // Past the end — fetch the next page if we can; the new post
+      // doesn't auto-open (we don't know which id is "next" until
+      // the fetch resolves), so this only matters when the user
+      // presses → again after the page lands.
+      if (nextCursor && !loading) {
+        void fetchPage(query, nextCursor, false);
+      }
+      return;
+    }
+    const target = new URL(page.url);
+    target.searchParams.set('post', items[targetIdx].id);
+    await goto(target.pathname + target.search, {
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
 </script>
 
 <svelte:head>
@@ -240,7 +272,11 @@
 </div>
 
 {#if modalPostId}
-  <PostModal postId={modalPostId} onClose={closeModal} />
+  <PostHost
+    postId={modalPostId}
+    onClose={closeModal}
+    onNavigateSibling={navigateToSibling}
+  />
 {/if}
 
 <!-- Floating browse controls: view switcher + back-to-top. Stays

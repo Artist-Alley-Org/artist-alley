@@ -27,12 +27,15 @@
     asset: AssetSummary;
   }
 
-  import { isVideoExt, is3DExt } from './viewers/controller';
+  import { isVideoExt, is3DExt, isDocExt } from './viewers/controller';
   function isVideoAsset(a: AssetSummary | undefined | null): boolean {
     return isVideoExt(a?.file_extension);
   }
   function is3DAsset(a: AssetSummary | undefined | null): boolean {
     return is3DExt(a?.file_extension);
+  }
+  function isDocAsset(a: AssetSummary | undefined | null): boolean {
+    return isDocExt(a?.file_extension);
   }
   interface Post {
     id: string;
@@ -89,7 +92,9 @@
   const BACKOFF_MS = [800, 1500, 3000, 6000, 12000, 30000];
 
   $effect(() => {
-    if (!colUrl || !hasFile) {
+    // Doc covers render a typed card (see template) — don't waste a
+    // network round-trip on the col variant that doesn't exist yet.
+    if (!colUrl || !hasFile || coverIsDoc) {
       imgSrc = '';
       return;
     }
@@ -128,6 +133,7 @@
   const coverAsset = $derived(post.members.find((m) => m.asset_id === coverAssetId)?.asset);
   const coverIsVideo = $derived(!!coverAsset && isVideoAsset(coverAsset));
   const coverIs3D = $derived(!!coverAsset && is3DAsset(coverAsset));
+  const coverIsDoc = $derived(!!coverAsset && isDocAsset(coverAsset));
   const coverHasSpriteScrub = $derived(coverIsVideo || coverIs3D);
   const spriteUrl = $derived(coverAssetId ? `/api/v1/assets/${coverAssetId}/variants/sprites.jpg` : '');
 
@@ -192,7 +198,26 @@
     class="relative aspect-square bg-surface bg-cover bg-center"
     style={placeholder ? `background-image: url(${placeholder})` : undefined}
   >
-    {#if hasFile && !imgError}
+    {#if coverIsDoc}
+      <!-- Doc cards have no rasterised thumbnail (text → pixels would
+           need a per-format renderer). Render a typed card with the
+           extension prominently displayed so the user can recognise
+           the format at-a-glance instead of seeing a broken image. -->
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-surface-elevated to-surface text-fg-muted/80">
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="8" y1="13" x2="16" y2="13" />
+          <line x1="8" y1="17" x2="16" y2="17" />
+          <line x1="8" y1="9" x2="12" y2="9" />
+        </svg>
+        {#if coverAsset?.file_extension}
+          <span class="rounded bg-black/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg">
+            {coverAsset.file_extension.replace(/^\./, '')}
+          </span>
+        {/if}
+      </div>
+    {:else if hasFile && !imgError}
       <img
         src={imgSrc}
         alt={post.title}

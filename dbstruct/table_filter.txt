@@ -1,3 +1,0 @@
-ref,int(11),NO,PRI,,auto_increment
-name,varchar(200),NO,,NULL,
-filter_condition,int(11),NO,,1,

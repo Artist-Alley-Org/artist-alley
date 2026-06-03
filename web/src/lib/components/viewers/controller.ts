@@ -26,7 +26,12 @@ export type ViewKind =
   | 'audio'
   | 'sequence'
   | 'font'
+  | 'sprite'
   | '3d'
+  | 'ebook'
+  | 'doc'
+  | 'audiobook'
+  | 'archive'
   | 'placeholder';
 
 // ViewAsset is the trimmed asset shape every view body accepts as
@@ -47,6 +52,12 @@ export interface ViewAsset {
   title?: string | null;
   file_extension?: string | null;
   file_hash?: string | null;
+  /** Numeric ref into the asset_types table. Overrides the
+      extension-based kind detection when set — important for
+      kinds whose extensions overlap with another bucket (a
+      sprite atlas is a PNG; a texture is a PNG; only the
+      asset_type can tell them apart at the viewer layer). */
+  asset_type?: number | null;
   /** Asset-level JSONB. Per-kind view bodies read their own
       namespaced keys (audio, pdf, font, video, etc). */
   metadata?: Record<string, unknown> | null;
@@ -143,6 +154,16 @@ export interface ViewController {
   spritesUrl: string | null;
   spritesVttUrl: string | null;
 
+  // Loop region in `currentFrame` units. Both null = no loop. Set
+  // via the shell's I/O hotkeys, the transport bar's Loop in/out
+  // buttons, or — for audio — a shift-drag on the waveform. The
+  // shell's loop enforcer reads them every frame and seeks back to
+  // loopIn when currentFrame passes loopOut. View bodies (MediaView)
+  // can also write them so per-kind UIs stay in sync with the shell
+  // (e.g. the audio waveform's drag-to-set-region gesture).
+  loopIn: number | null;
+  loopOut: number | null;
+
   // Transport — view bodies install real implementations on mount.
   play: () => void;
   pause: () => void;
@@ -174,6 +195,8 @@ export function defaultController(): ViewController {
     rate: 1,
     spritesUrl: null,
     spritesVttUrl: null,
+    loopIn: null,
+    loopOut: null,
     play: noop,
     pause: noop,
     togglePlay: noop,
@@ -197,17 +220,118 @@ function noop() { /* default impl */ }
 // in here so it routes to ImageView (rendered natively by the
 // browser via <img>) and gets a rasterized variant ladder produced by
 // the backend SVG decoder (oksvg).
+// "Image" kind covers anything ImageView can mount via its hires-
+// variant fallback. Native browser-renderable formats (jpg/png/gif/
+// webp/avif) sit alongside formats that require the backend preview
+// pipeline — ImageView fetches /variants/hires which the backend
+// rasterises to WEBP for every format a worker handles. The
+// Download original link in Details still gives the user the
+// source bytes.
+//
+// Routing groups:
+//   raster (native)     : jpg / jpeg / png / gif / webp / bmp / avif
+//   raster (heavy)      : tiff / heic / heif / hdr / exr / pic
+//   vector              : svg (oksvg), eps / ps (Ghostscript)
+//   authoring           : psd / psb (preview/psd.go)
+//   document / ebook    : epub / mobi (preview/epub.go) — cover only
+//   comic               : cbz / cbr / cb7 (preview/comic.go) — cover only
+//
+// For ebook + comic the hires variant is the cover page only. A
+// proper multi-page reader is its own future view body; for now
+// the cover + Details metadata is the same user experience the
+// browse-card already provides.
 const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'avif', 'heic', 'heif', 'svg',
   'hdr', 'exr', 'pic',
+  // Vector + Photoshop sources — backend preview workers
+  // rasterise these to a WEBP hires variant.
+  'eps', 'ps', 'psd', 'psb',
+  // Comic + MOBI — cover thumbnail only for now. ComicView
+  // (page-by-page reader) is its own future view body. MOBI is
+  // included optimistically — backend support lands when the
+  // ebook worker grows it; until then the viewer falls back to
+  // the source file + ImageView's friendly placeholder.
+  'mobi',
+  'cbz', 'cbr', 'cb7',
+  // EPUB used to live here for cover-only display. It now lives
+  // under the 'ebook' kind below + routes to EpubView, a real
+  // page-by-page reader. Kept this comment as routing-history.
 ]);
+
+// 'ebook' is the semantic kind for any page-by-page document.
+// The view body is picked by extension inside AssetViewer:
+//   epub → EpubView (the goreader-backed reader)
+//   mobi → future MobiView when backend support lands
+// Both share the kind so panel tools / shortcuts can live on the
+// kind level without each format duplicating chrome.
+const EBOOK_EXTS = new Set(['epub']);
+
+// 'doc' is the semantic kind for any plaintext / code / structured-
+// text document. Routes to DocView (CodeMirror 6 — read-only first
+// cut, edit later). One kind covers every text-shaped format so the
+// reading prefs, find/replace, annotations, and bookmarks live in
+// one place and don't need to be wired per-extension.
+//
+// Kept deliberately broad — anything a text editor would open is
+// fair game here. Office documents (.docx / .odt / .rtf) need a
+// backend converter so they sit out for now; a future Phase D will
+// route them through the doc kind via server-side text extraction.
+const DOC_EXTS = new Set([
+  // plain
+  'txt', 'log', 'csv', 'tsv',
+  // markdown / docs
+  'md', 'markdown', 'mdx', 'rst', 'adoc', 'org',
+  // config / data
+  'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf',
+  'env', 'properties',
+  // shell / build
+  'sh', 'bash', 'zsh', 'fish', 'ps1',
+  'makefile', 'mk', 'dockerfile', 'gitignore', 'gitattributes',
+  // programming languages
+  'py', 'pyi', 'rb', 'lua', 'pl', 'pm',
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
+  'go', 'rs', 'java', 'kt', 'kts', 'scala', 'swift', 'dart',
+  'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'm', 'mm', 'cs',
+  'php', 'hs', 'erl', 'ex', 'exs', 'clj', 'cljs', 'edn',
+  // web (svg lives in IMAGE_EXTS — it renders natively as an
+  // image. Users wanting to see svg source can flip the asset
+  // type via the metadata panel; future "view as text" override
+  // will surface here.)
+  'html', 'htm', 'css', 'scss', 'sass', 'less',
+  'vue', 'svelte',
+  // data + queries
+  'sql', 'graphql', 'gql', 'xml', 'plist',
+  // patches / diffs
+  'patch', 'diff',
+]);
+// Kept in sync with app/internal/assets/handler.go::videoExts. Camera-
+// proxy + broadcast formats included so a GoPro .lrv / Insta360 .insv
+// / AVCHD .mts / .m2ts / DVD .vob / broadcast .mxf / Flash .f4v
+// upload lands as Video instead of Photo or placeholder.
 const VIDEO_EXTS = new Set([
   'mp4', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'mpg', 'mpeg', '3gp',
-  'flv', 'm4v', 'ts',
+  'flv', 'm4v', 'ts', 'lrv', 'insv', 'mts', 'm2ts', 'vob', 'f4v',
+  'mxf',
 ]);
 const AUDIO_EXTS = new Set([
   'mp3', 'wav', 'flac', 'ogg', 'oga', 'm4a', 'aac', 'opus',
+]);
+// 'audiobook' is the semantic kind for spoken-word long-form audio.
+// .m4b is the de-facto container (AAC inside MP4 with chapter atoms);
+// .aax is Audible's encrypted variant — currently a placeholder since
+// decryption needs activation bytes per Amazon account.
+const AUDIOBOOK_EXTS = new Set(['m4b', 'aax']);
+// 'archive' kind covers every container the ArchiveView can browse
+// without extraction. Mirrors preview.archive.SupportedExtensions
+// + the assets/handler.go archiveExtsHandler dispatcher.
+// .cbz / .cbr / .cb7 stay on 'image' (comic-cover preview path);
+// the archive viewer ignores them since the comic reader is a
+// better fit for sequential image-page browsing.
+const ARCHIVE_EXTS = new Set([
+  'zip', 'jar', 'war', 'ear', 'apk', 'ipa',
+  '7z', 'rar',
+  'tar', 'tgz', 'tbz2', 'txz',
 ]);
 const PDF_EXTS = new Set(['pdf']);
 // Kept in sync with app/internal/preview/font.go::fontExts.
@@ -231,13 +355,39 @@ const MODEL_EXTS = new Set([
 export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (!ext) return 'placeholder';
   const e = ext.toLowerCase().replace(/^\./, '');
+  if (EBOOK_EXTS.has(e)) return 'ebook';
+  if (AUDIOBOOK_EXTS.has(e)) return 'audiobook';
   if (IMAGE_EXTS.has(e)) return 'image';
   if (VIDEO_EXTS.has(e)) return 'video';
   if (AUDIO_EXTS.has(e)) return 'audio';
   if (PDF_EXTS.has(e)) return 'pdf';
   if (FONT_EXTS.has(e)) return 'font';
   if (MODEL_EXTS.has(e)) return '3d';
+  if (DOC_EXTS.has(e)) return 'doc';
+  if (ARCHIVE_EXTS.has(e)) return 'archive';
   return 'placeholder';
+}
+
+// Asset-type refs that override the extension-based kind. A PNG
+// uploaded as a Sprite (ref=13) routes to SpriteView even though
+// `.png` would otherwise resolve to `image`. Mirror of the
+// asset_types table seeded by migrations 00031 / 00033 / 00034.
+const ASSET_TYPE_KIND: Record<number, ViewKind> = {
+  6: 'archive',
+  11: 'audiobook',
+  13: 'sprite',
+};
+
+/** Resolve the view kind from an asset's full shape. Prefers
+ *  asset_type when set (so a sprite atlas PNG opens in SpriteView
+ *  even though its extension says image); falls back to the
+ *  extension-based detector. */
+export function kindForAsset(asset: { asset_type?: number | null; file_extension?: string | null }): ViewKind {
+  if (asset.asset_type != null) {
+    const k = ASSET_TYPE_KIND[asset.asset_type];
+    if (k) return k;
+  }
+  return kindForExtension(asset.file_extension);
 }
 
 export function isImageExt(ext: string | null | undefined): boolean {
@@ -248,4 +398,13 @@ export function isVideoExt(ext: string | null | undefined): boolean {
 }
 export function is3DExt(ext: string | null | undefined): boolean {
   return kindForExtension(ext) === '3d';
+}
+export function isDocExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'doc';
+}
+export function isAudiobookExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'audiobook';
+}
+export function isArchiveExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'archive';
 }

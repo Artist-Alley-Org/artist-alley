@@ -27,7 +27,7 @@ type Asset struct {
 	ID                   pgtype.UUID
 	Title                string
 	Description          string
-	ResourceType         int64
+	AssetType            int64
 	OwnerUserRef         *int64
 	Status               string
 	FileHash             *string
@@ -64,6 +64,20 @@ type Asset struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	DeletedAt            pgtype.Timestamptz
+}
+
+type AssetAlternate struct {
+	ID               pgtype.UUID
+	AssetID          pgtype.UUID
+	Label            string
+	Kind             string
+	ObjectHash       string
+	ContentType      string
+	SizeBytes        int64
+	OriginServerID   pgtype.UUID
+	CreatedByUserRef *int64
+	CreatedAt        pgtype.Timestamptz
+	Metadata         []byte
 }
 
 type AssetCompanion struct {
@@ -106,6 +120,19 @@ type AssetTag struct {
 	AddedAt pgtype.Timestamptz
 }
 
+type AssetType struct {
+	Ref               int64
+	Name              *string
+	AllowedExtensions *string
+	OrderBy           *int64
+	ConfigOptions     *string
+	PushMetadata      *int64
+	Colour            *int64
+	Icon              *string
+	Tab               *int64
+	PullImages        *int64
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID
 	EventType      string
@@ -115,6 +142,31 @@ type AuditEvent struct {
 	Ip             *netip.Addr
 	UserAgent      *string
 	Metadata       []byte
+}
+
+type BrushPack struct {
+	ID             pgtype.UUID
+	OwnerRef       int64
+	Name           string
+	SourceFile     *string
+	CreatedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+}
+
+type BrushPackStamp struct {
+	ID            pgtype.UUID
+	PackID        pgtype.UUID
+	AbrID         *string
+	Label         *string
+	Width         int32
+	Height        int32
+	StorageKey    string
+	Spacing       float64
+	AlignToPath   bool
+	SizeJitter    *float64
+	OpacityJitter *float64
+	AngleJitter   *float64
+	CreatedAt     pgtype.Timestamptz
 }
 
 type Capability struct {
@@ -278,19 +330,6 @@ type PostAsset struct {
 type PostTag struct {
 	PostID pgtype.UUID
 	Tag    string
-}
-
-type ResourceType struct {
-	Ref               int64
-	Name              *string
-	AllowedExtensions *string
-	OrderBy           *int64
-	ConfigOptions     *string
-	PushMetadata      *int64
-	Colour            *int64
-	Icon              *string
-	Tab               *int64
-	PullImages        *int64
 }
 
 type Role struct {

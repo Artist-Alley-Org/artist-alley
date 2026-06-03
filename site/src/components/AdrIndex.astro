@@ -1,0 +1,728 @@
+---
+// Filterable catalogue of every ADR. Server-rendered table + a small
+// vanilla-JS facet filter (no framework, no fetch). Data comes from
+// the build-time catalogue produced by sync-adrs.mjs.
+//
+// Facets:
+//   - status (accepted / proposed / superseded / deprecated / rejected)
+//   - area (architecture / security / ... — see ADR 0035)
+//   - phase (any phase ID mentioned across the catalogue)
+//   - free-text search over ID + title + excerpt + tags
+//
+// Filters are inclusive within a facet (clicking two areas = either),
+// and intersected across facets. State lives only in the DOM — no
+// query-string mirroring yet.
+
+import adrCatalogue from "../data/adrs.json";
+
+type AdrEntry = {
+  id: string;
+  title: string;
+  slug: string;
+  status: "proposed" | "accepted" | "superseded" | "deprecated" | "rejected";
+  date: string;
+  area: string;
+  phases: string[];
+  supersedes: string[];
+  superseded_by: string | null;
+  related: string[];
+  back_links: string[];
+  tags: string[];
+  excerpt: string;
+};
+
+const adrs = (adrCatalogue.adrs ?? []) as AdrEntry[];
+
+const statusOrder: AdrEntry["status"][] = [
+  "accepted", "proposed", "superseded", "deprecated", "rejected",
+];
+const statusLabel: Record<AdrEntry["status"], string> = {
+  accepted: "Accepted",
+  proposed: "Proposed",
+  superseded: "Superseded",
+  deprecated: "Deprecated",
+  rejected: "Rejected",
+};
+
+const areaSet = new Set<string>();
+const phaseSet = new Set<string>();
+const statusCount: Record<string, number> = {};
+const areaCount: Record<string, number> = {};
+const phaseCount: Record<string, number> = {};
+
+for (const a of adrs) {
+  areaSet.add(a.area);
+  for (const p of a.phases) phaseSet.add(p);
+  statusCount[a.status] = (statusCount[a.status] ?? 0) + 1;
+  areaCount[a.area] = (areaCount[a.area] ?? 0) + 1;
+  for (const p of a.phases) phaseCount[p] = (phaseCount[p] ?? 0) + 1;
+}
+
+const areas = [...areaSet].sort();
+const phases = [...phaseSet].sort((a, b) => {
+  const numericA = a.split(/[^\d]/).map(Number);
+  const numericB = b.split(/[^\d]/).map(Number);
+  for (let i = 0; i < Math.max(numericA.length, numericB.length); i++) {
+    const x = numericA[i] ?? 0;
+    const y = numericB[i] ?? 0;
+    if (x !== y) return x - y;
+  }
+  return a.localeCompare(b);
+});
+
+const rows = [...adrs].sort((a, b) => {
+  const sa = statusOrder.indexOf(a.status);
+  const sb = statusOrder.indexOf(b.status);
+  if (sa !== sb) return sa - sb;
+  return b.id.localeCompare(a.id);
+});
+
+const dateFmt = (d: string) =>
+  new Date(d).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+
+const totalAccepted = statusCount["accepted"] ?? 0;
+const totalProposed = statusCount["proposed"] ?? 0;
+const totalSuperseded = statusCount["superseded"] ?? 0;
+const totalOther =
+  (statusCount["deprecated"] ?? 0) + (statusCount["rejected"] ?? 0);
+---
+
+<section class="adr-index" data-adr-index>
+  <header class="adr-index-summary">
+    <div class="adr-index-stat">
+      <span class="adr-index-stat-num">{adrs.length}</span>
+      <span class="adr-index-stat-label">ADRs total</span>
+    </div>
+    <div class="adr-index-stat adr-index-stat--accepted">
+      <span class="adr-index-stat-num">{totalAccepted}</span>
+      <span class="adr-index-stat-label">accepted</span>
+    </div>
+    <div class="adr-index-stat adr-index-stat--proposed">
+      <span class="adr-index-stat-num">{totalProposed}</span>
+      <span class="adr-index-stat-label">proposed</span>
+    </div>
+    <div class="adr-index-stat adr-index-stat--superseded">
+      <span class="adr-index-stat-num">{totalSuperseded}</span>
+      <span class="adr-index-stat-label">superseded</span>
+    </div>
+    {totalOther > 0 && (
+      <div class="adr-index-stat adr-index-stat--other">
+        <span class="adr-index-stat-num">{totalOther}</span>
+        <span class="adr-index-stat-label">deprecated / rejected</span>
+      </div>
+    )}
+  </header>
+
+  <div class="adr-index-controls">
+    <label class="adr-index-search">
+      <span class="adr-index-search-label">Search</span>
+      <input
+        type="search"
+        placeholder="Search by ID, title, excerpt, tag…"
+        data-adr-search
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+
+    <div class="adr-index-facet" data-facet="status">
+      <span class="adr-index-facet-label">Status</span>
+      <div class="adr-index-facet-buttons">
+        {statusOrder
+          .filter((s) => statusCount[s])
+          .map((s) => (
+            <button
+              type="button"
+              class={`adr-index-facet-btn adr-index-facet-btn--status-${s}`}
+              data-value={s}
+              aria-pressed="false"
+            >
+              {statusLabel[s]}
+              <span class="adr-index-facet-count">{statusCount[s]}</span>
+            </button>
+          ))}
+      </div>
+    </div>
+
+    <div class="adr-index-facet" data-facet="area">
+      <span class="adr-index-facet-label">Area</span>
+      <div class="adr-index-facet-buttons">
+        {areas.map((a) => (
+          <button
+            type="button"
+            class="adr-index-facet-btn"
+            data-value={a}
+            aria-pressed="false"
+          >
+            {a}
+            <span class="adr-index-facet-count">{areaCount[a]}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+
+    {phases.length > 0 && (
+      <div class="adr-index-facet" data-facet="phase">
+        <span class="adr-index-facet-label">Phase</span>
+        <div class="adr-index-facet-buttons">
+          {phases.map((p) => (
+            <button
+              type="button"
+              class="adr-index-facet-btn adr-index-facet-btn--phase"
+              data-value={p}
+              aria-pressed="false"
+            >
+              Phase {p}
+              <span class="adr-index-facet-count">{phaseCount[p]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <button
+      type="button"
+      class="adr-index-clear"
+      data-adr-clear
+      hidden
+    >
+      Clear filters
+    </button>
+  </div>
+
+  <div class="adr-index-meta" data-adr-meta aria-live="polite">
+    Showing <strong data-adr-shown>{rows.length}</strong> of {rows.length} ADRs.
+  </div>
+
+  <div class="adr-index-table-wrap">
+    <table class="adr-index-table">
+      <thead>
+        <tr>
+          <th scope="col" class="adr-index-th-id">ID</th>
+          <th scope="col">Title</th>
+          <th scope="col" class="adr-index-th-status">Status</th>
+          <th scope="col" class="adr-index-th-area">Area</th>
+          <th scope="col" class="adr-index-th-date">Date</th>
+          <th scope="col" class="adr-index-th-phases">Phases</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr
+            class="adr-index-row"
+            data-adr-row
+            data-status={r.status}
+            data-area={r.area}
+            data-phases={r.phases.join(" ")}
+            data-search={[
+              r.id,
+              r.title,
+              r.excerpt,
+              ...r.tags,
+              ...r.phases.map((p) => `phase ${p}`),
+            ]
+              .join(" ")
+              .toLowerCase()}
+          >
+            <td class="adr-index-cell-id">
+              <a href={`/adr/${r.slug}/`} class="adr-index-id-link">
+                {r.id}
+              </a>
+            </td>
+            <td class="adr-index-cell-title">
+              <a href={`/adr/${r.slug}/`} class="adr-index-title-link">
+                {r.title}
+              </a>
+              {r.excerpt && (
+                <p class="adr-index-excerpt">{r.excerpt}</p>
+              )}
+              {r.tags.length > 0 && (
+                <ul class="adr-index-row-tags">
+                  {r.tags.map((t) => (
+                    <li class="adr-index-row-tag">{t}</li>
+                  ))}
+                </ul>
+              )}
+            </td>
+            <td class="adr-index-cell-status">
+              <span class={`adr-index-badge adr-index-badge--${r.status}`}>
+                {statusLabel[r.status]}
+              </span>
+              {r.superseded_by && (
+                <div class="adr-index-superseded-by">
+                  → ADR {r.superseded_by}
+                </div>
+              )}
+            </td>
+            <td class="adr-index-cell-area">{r.area}</td>
+            <td class="adr-index-cell-date">
+              <time datetime={r.date}>{dateFmt(r.date)}</time>
+            </td>
+            <td class="adr-index-cell-phases">
+              {r.phases.length > 0 ? (
+                <ul class="adr-index-phase-chips">
+                  {r.phases.map((p) => (
+                    <li>
+                      <a
+                        href={`/roadmap/#phase-${p}`}
+                        class="adr-index-phase-chip"
+                      >
+                        {p}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span class="adr-index-phase-empty">—</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    <div class="adr-index-empty" data-adr-empty hidden>
+      No ADRs match the current filters.
+      <button type="button" data-adr-clear-empty class="adr-index-clear-inline">
+        Clear filters
+      </button>
+    </div>
+  </div>
+</section>
+
+<script>
+  type FacetName = "status" | "area" | "phase";
+
+  const root = document.querySelector<HTMLElement>("[data-adr-index]");
+  if (root) {
+    const rows = root.querySelectorAll<HTMLTableRowElement>("[data-adr-row]");
+    const searchInput = root.querySelector<HTMLInputElement>("[data-adr-search]");
+    const clearBtn = root.querySelector<HTMLButtonElement>("[data-adr-clear]");
+    const clearBtnInline = root.querySelector<HTMLButtonElement>(
+      "[data-adr-clear-empty]",
+    );
+    const shownEl = root.querySelector<HTMLElement>("[data-adr-shown]");
+    const emptyEl = root.querySelector<HTMLElement>("[data-adr-empty]");
+
+    const selected: Record<FacetName, Set<string>> = {
+      status: new Set(),
+      area: new Set(),
+      phase: new Set(),
+    };
+
+    const facetBtns = root.querySelectorAll<HTMLButtonElement>(
+      ".adr-index-facet-btn",
+    );
+    facetBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const facet = btn.closest<HTMLElement>("[data-facet]")?.dataset
+          .facet as FacetName | undefined;
+        if (!facet) return;
+        const value = btn.dataset.value;
+        if (!value) return;
+        if (selected[facet].has(value)) {
+          selected[facet].delete(value);
+          btn.setAttribute("aria-pressed", "false");
+        } else {
+          selected[facet].add(value);
+          btn.setAttribute("aria-pressed", "true");
+        }
+        apply();
+      });
+    });
+
+    searchInput?.addEventListener("input", apply);
+
+    function clear() {
+      (Object.keys(selected) as FacetName[]).forEach((k) => selected[k].clear());
+      facetBtns.forEach((b) => b.setAttribute("aria-pressed", "false"));
+      if (searchInput) searchInput.value = "";
+      apply();
+    }
+    clearBtn?.addEventListener("click", clear);
+    clearBtnInline?.addEventListener("click", clear);
+
+    function apply() {
+      const q = searchInput?.value.trim().toLowerCase() ?? "";
+      let shown = 0;
+      rows.forEach((row) => {
+        const status = row.dataset.status ?? "";
+        const area = row.dataset.area ?? "";
+        const phases = (row.dataset.phases ?? "").split(/\s+/).filter(Boolean);
+        const search = row.dataset.search ?? "";
+
+        const matchStatus =
+          selected.status.size === 0 || selected.status.has(status);
+        const matchArea =
+          selected.area.size === 0 || selected.area.has(area);
+        const matchPhase =
+          selected.phase.size === 0 ||
+          phases.some((p) => selected.phase.has(p));
+        const matchSearch = q === "" || search.includes(q);
+
+        const visible = matchStatus && matchArea && matchPhase && matchSearch;
+        row.hidden = !visible;
+        if (visible) shown++;
+      });
+
+      if (shownEl) shownEl.textContent = String(shown);
+      if (emptyEl) emptyEl.hidden = shown !== 0;
+
+      const anyActive =
+        selected.status.size +
+          selected.area.size +
+          selected.phase.size >
+          0 || q !== "";
+      if (clearBtn) clearBtn.hidden = !anyActive;
+    }
+  }
+</script>
+
+<style>
+  .adr-index {
+    margin: 1.5rem 0 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* Summary strip */
+  .adr-index-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 10px;
+    background: var(--sl-color-bg-nav, #161b22);
+  }
+  .adr-index-stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    padding: 0.15rem 0.65rem;
+    border-radius: 6px;
+    background: rgba(110, 118, 129, 0.12);
+  }
+  .adr-index-stat-num {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-index-stat-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-index-stat--accepted .adr-index-stat-num   { color: var(--aa-shipped, #2ea043); }
+  .adr-index-stat--proposed .adr-index-stat-num   { color: var(--aa-inflight, #d29922); }
+  .adr-index-stat--superseded .adr-index-stat-num,
+  .adr-index-stat--other .adr-index-stat-num      { color: var(--aa-planned, #6e7681); }
+
+  /* Controls */
+  .adr-index-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 10px;
+    background: var(--sl-color-bg-nav, #161b22);
+  }
+  .adr-index-search {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .adr-index-search-label,
+  .adr-index-facet-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-index-search input {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    font: inherit;
+    color: var(--sl-color-white, #e6edf3);
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 6px;
+  }
+  .adr-index-search input:focus-visible {
+    outline: 2px solid var(--aa-feature, #7c3aed);
+    outline-offset: 1px;
+  }
+  .adr-index-facet {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .adr-index-facet-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .adr-index-facet-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.78rem;
+    font-family: inherit;
+    color: var(--sl-color-gray-2, #c9d1d9);
+    background: var(--sl-color-bg, #0d1117);
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 999px;
+    cursor: pointer;
+    text-transform: capitalize;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  }
+  .adr-index-facet-btn:hover {
+    border-color: var(--aa-feature, #7c3aed);
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-index-facet-btn[aria-pressed="true"] {
+    border-color: var(--aa-feature, #7c3aed);
+    color: var(--sl-color-white, #e6edf3);
+    background: rgba(124, 58, 237, 0.18);
+  }
+  .adr-index-facet-btn--phase {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    text-transform: none;
+  }
+  .adr-index-facet-btn--status-accepted[aria-pressed="true"]   { background: rgba(46, 160, 67, 0.18);  border-color: var(--aa-shipped, #2ea043); }
+  .adr-index-facet-btn--status-proposed[aria-pressed="true"]   { background: rgba(210, 153, 34, 0.18); border-color: var(--aa-inflight, #d29922); }
+  .adr-index-facet-btn--status-superseded[aria-pressed="true"],
+  .adr-index-facet-btn--status-deprecated[aria-pressed="true"],
+  .adr-index-facet-btn--status-rejected[aria-pressed="true"]   { background: rgba(110, 118, 129, 0.18); border-color: var(--aa-planned, #6e7681); }
+  .adr-index-facet-count {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-size: 0.7rem;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-index-facet-btn[aria-pressed="true"] .adr-index-facet-count {
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-index-clear {
+    align-self: flex-start;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-2, #c9d1d9);
+    background: transparent;
+    border: 1px dashed var(--sl-color-hairline, #30363d);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .adr-index-clear:hover { border-color: var(--aa-feature, #7c3aed); color: var(--sl-color-white, #e6edf3); }
+
+  /* Meta line */
+  .adr-index-meta {
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-index-meta strong {
+    color: var(--sl-color-white, #e6edf3);
+    font-weight: 600;
+  }
+
+  /* Table */
+  .adr-index-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 10px;
+    background: var(--sl-color-bg-nav, #161b22);
+  }
+  .adr-index-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    color: var(--sl-color-gray-2, #c9d1d9);
+  }
+  .adr-index-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--sl-color-bg-nav, #161b22);
+    text-align: left;
+    padding: 0.65rem 0.85rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--sl-color-gray-3, #8b949e);
+    border-bottom: 1px solid var(--sl-color-hairline, #30363d);
+    z-index: 1;
+  }
+  .adr-index-table tbody tr {
+    border-bottom: 1px solid rgba(110, 118, 129, 0.18);
+    transition: background-color 120ms ease;
+  }
+  .adr-index-table tbody tr:last-child { border-bottom: none; }
+  .adr-index-table tbody tr:hover {
+    background: rgba(124, 58, 237, 0.06);
+  }
+  .adr-index-table td {
+    padding: 0.7rem 0.85rem;
+    vertical-align: top;
+  }
+
+  .adr-index-th-id      { width: 4.5rem; }
+  .adr-index-th-status  { width: 7.5rem; }
+  .adr-index-th-area    { width: 8rem; }
+  .adr-index-th-date    { width: 7.5rem; }
+  .adr-index-th-phases  { width: 9rem; }
+
+  .adr-index-id-link {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-weight: 700;
+    color: var(--sl-color-white, #e6edf3);
+    text-decoration: none;
+  }
+  .adr-index-id-link:hover { color: var(--aa-feature, #7c3aed); }
+
+  .adr-index-title-link {
+    font-weight: 600;
+    color: var(--sl-color-white, #e6edf3);
+    text-decoration: none;
+    line-height: 1.35;
+  }
+  .adr-index-title-link:hover { color: var(--aa-feature, #7c3aed); }
+  .adr-index-excerpt {
+    margin: 0.3rem 0 0;
+    font-size: 0.82rem;
+    color: var(--sl-color-gray-3, #8b949e);
+    line-height: 1.45;
+  }
+  .adr-index-row-tags {
+    list-style: none;
+    padding: 0;
+    margin: 0.4rem 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .adr-index-row-tag {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-size: 0.68rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: rgba(110, 118, 129, 0.16);
+    color: var(--sl-color-gray-2, #c9d1d9);
+    text-transform: lowercase;
+  }
+
+  .adr-index-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.08rem 0.5rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .adr-index-badge--accepted    { color: var(--aa-shipped, #2ea043);  background: rgba(46, 160, 67, 0.12); }
+  .adr-index-badge--proposed    { color: var(--aa-inflight, #d29922); background: rgba(210, 153, 34, 0.12); }
+  .adr-index-badge--superseded,
+  .adr-index-badge--deprecated,
+  .adr-index-badge--rejected    { color: var(--aa-planned, #6e7681); background: rgba(110, 118, 129, 0.16); }
+
+  .adr-index-superseded-by {
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+
+  .adr-index-cell-area { text-transform: capitalize; }
+  .adr-index-cell-date {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-3, #8b949e);
+    white-space: nowrap;
+  }
+
+  .adr-index-phase-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .adr-index-phase-chip {
+    display: inline-flex;
+    padding: 0.08rem 0.45rem;
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-size: 0.72rem;
+    border-radius: 4px;
+    border: 1px solid rgba(124, 58, 237, 0.4);
+    color: var(--aa-feature, #7c3aed);
+    text-decoration: none;
+    background: rgba(124, 58, 237, 0.06);
+  }
+  .adr-index-phase-chip:hover {
+    background: rgba(124, 58, 237, 0.18);
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-index-phase-empty {
+    color: var(--sl-color-gray-3, #8b949e);
+    opacity: 0.6;
+  }
+
+  /* Empty state */
+  .adr-index-empty {
+    padding: 1.5rem 1rem;
+    text-align: center;
+    color: var(--sl-color-gray-3, #8b949e);
+    font-size: 0.9rem;
+  }
+  .adr-index-clear-inline {
+    margin-left: 0.5rem;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-2, #c9d1d9);
+    background: transparent;
+    border: 1px dashed var(--sl-color-hairline, #30363d);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .adr-index-clear-inline:hover {
+    border-color: var(--aa-feature, #7c3aed);
+    color: var(--sl-color-white, #e6edf3);
+  }
+
+  /* Light theme */
+  :root[data-theme="light"] .adr-index-summary,
+  :root[data-theme="light"] .adr-index-controls,
+  :root[data-theme="light"] .adr-index-table-wrap {
+    background: #ffffff;
+  }
+  :root[data-theme="light"] .adr-index-search input,
+  :root[data-theme="light"] .adr-index-facet-btn {
+    background: #f6f8fa;
+  }
+  :root[data-theme="light"] .adr-index-table thead th {
+    background: #ffffff;
+  }
+
+  /* Narrow viewports: collapse columns we don't want to scroll. */
+  @media (max-width: 720px) {
+    .adr-index-th-area,
+    .adr-index-cell-area,
+    .adr-index-th-date,
+    .adr-index-cell-date,
+    .adr-index-th-phases,
+    .adr-index-cell-phases {
+      display: none;
+    }
+  }
+</style>

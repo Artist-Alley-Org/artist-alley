@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/audiobook"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
@@ -107,6 +108,18 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewAudioHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewPDFHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewFontHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewEPUBHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewEPSHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewPSDHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewComicHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewTextHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewArchiveHandler(pool, storageSvc, sysCfg, logger))
+	// Audiobook post-processing — Phase B-2 stubs. Registered so
+	// the dispatcher knows the type names + the admin queue page
+	// renders them; the actual ffmpeg work is a TODO in
+	// app/internal/audiobook/jobs.go.
+	jobRegistry.Register(audiobook.NewMergeHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(audiobook.NewDecryptHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
@@ -138,6 +151,33 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
+
+		// /assets/{id}/file with Range support so <audio>/<video>
+		// can seek into the middle of a large media asset. The
+		// openapi-derived handler streams the whole body in one
+		// shot; that's fine for downloads but kills seeking on
+		// audiobook .m4b / video .mp4. Registered AFTER the
+		// HandlerFromMux call so chi's last-write-wins semantics
+		// route GET (and the new HEAD) through this handler instead.
+		fileH := handlers.NewAssetFileHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/file", fileH.ServeHTTP)
+		r.Head("/assets/{id}/file", fileH.ServeHTTP)
+
+		// /assets/{id}/archive/entry?path=... — stream a single
+		// entry out of a ZIP / TAR archive without extracting the
+		// whole thing. The manifest already lives on
+		// metadata.archive (populated by the preview.archive job);
+		// this handler is the per-click data-plane.
+		archEntryH := handlers.NewArchiveEntryHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/archive/entry", archEntryH.ServeHTTP)
+
+		// /assets/{id}/archive/bundle.zip — re-package every entry of
+		// the source archive into a single ZIP the browser downloads.
+		// Powers the "Extract all" button in ArchiveView's panel; lets
+		// the user grab the contents of a TAR / 7z / RAR / tar.xz in
+		// a format every OS opens natively.
+		archBundleH := handlers.NewArchiveBundleHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/archive/bundle.zip", archBundleH.ServeHTTP)
 	})
 
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request

@@ -110,6 +110,36 @@ async function main() {
         ghStats(`/repos/${REPO}/stats/commit_activity`),
       ]);
 
+    // Multi-branch commit fetch.
+    //   The default /commits endpoint only returns commits on the repo's
+    //   default branch (main). That's near-empty most of the time — the
+    //   real work lives on dev + feat/* branches. We enumerate active
+    //   branches, fetch the last ~15 commits from each, dedupe by SHA,
+    //   and merge into one chronological feed. The engineering dashboard
+    //   then shows real activity with a branch badge per commit.
+    //
+    //   Skip rules: ignore the default branch (already in commitsRaw),
+    //   gh-pages, and dependabot/* branches (high-churn, low-signal).
+    const branchesRaw = await gh(`/repos/${REPO}/branches?per_page=100`).catch(() => []);
+    const skipBranch = (name) =>
+      name === "gh-pages" ||
+      name.startsWith("dependabot/") ||
+      name.startsWith("renovate/");
+    const trackedBranches = branchesRaw.filter((b) => !skipBranch(b.name));
+    const branchCommitFetches = await Promise.all(
+      trackedBranches.map(async (b) => {
+        try {
+          const list = await gh(
+            `/repos/${REPO}/commits?sha=${encodeURIComponent(b.name)}&per_page=15`,
+          );
+          return list.map((c) => ({ raw: c, branch: b.name }));
+        } catch {
+          return [];
+        }
+      }),
+    );
+    const allBranchCommits = branchCommitFetches.flat();
+
     // The /issues endpoint returns PRs intermixed; filter them out for issues.
     const realIssues = (raw) =>
       raw.filter((i) => !i.pull_request).map(normalizeIssueOrPR);
@@ -148,13 +178,49 @@ async function main() {
         open: openPullsRaw.map(normalizeIssueOrPR),
         recentlyMerged: closedPullsRaw.filter((p) => p.merged_at).map(normalizeIssueOrPR),
       },
-      commits: commitsRaw.map((c) => ({
-        sha: c.sha,
-        message: (c.commit?.message ?? "").split("\n")[0].slice(0, 200),
-        author: c.commit?.author?.name ?? c.author?.login ?? null,
-        date: c.commit?.author?.date ?? c.commit?.committer?.date ?? "",
-        url: c.html_url,
-      })),
+      commits: (() => {
+        // Merge default-branch commits (no `branch` annotation — they're on
+        // main by definition) with per-branch commits, dedupe by SHA, sort
+        // newest-first, cap at 50.
+        const defaultName = repo.default_branch;
+        const merged = [
+          ...commitsRaw.map((c) => ({ raw: c, branch: defaultName })),
+          ...allBranchCommits,
+        ];
+        const seen = new Set();
+        const out = [];
+        for (const { raw, branch } of merged.sort((a, b) => {
+          const ad = a.raw.commit?.author?.date ?? "";
+          const bd = b.raw.commit?.author?.date ?? "";
+          return bd.localeCompare(ad);
+        })) {
+          if (seen.has(raw.sha)) continue;
+          seen.add(raw.sha);
+          out.push({
+            sha: raw.sha,
+            message: (raw.commit?.message ?? "").split("\n")[0].slice(0, 200),
+            author: raw.commit?.author?.name ?? raw.author?.login ?? null,
+            date: raw.commit?.author?.date ?? raw.commit?.committer?.date ?? "",
+            url: raw.html_url,
+            branch,
+          });
+          if (out.length >= 50) break;
+        }
+        return out;
+      })(),
+      branches: trackedBranches.map((b) => ({
+        name: b.name,
+        sha: b.commit?.sha ?? null,
+        protected: b.protected ?? false,
+        // Commits this branch contributed to the merged feed above.
+        recent_commits: allBranchCommits.filter((c) => c.branch === b.name).length,
+        is_default: b.name === repo.default_branch,
+      })).sort((a, b) => {
+        // Default branch first, then by recent activity desc.
+        if (a.is_default) return -1;
+        if (b.is_default) return 1;
+        return b.recent_commits - a.recent_commits;
+      }),
       releases: releases.map((r) => ({
         tag_name: r.tag_name,
         name: r.name,

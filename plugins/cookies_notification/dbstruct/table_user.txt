@@ -1,1 +1,0 @@
-accepted_cookies,tinyint(1),YES,,NULL,

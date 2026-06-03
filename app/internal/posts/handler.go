@@ -944,7 +944,7 @@ func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 		Id:            openapi_types.UUID(m.AssetID.Bytes),
 		Title:         m.Title,
 		Description:   &m.Description,
-		ResourceType:  m.ResourceType,
+		AssetType:  m.AssetType,
 		Status:        openapi.AssetStatus(m.Status),
 		FileHash:      m.FileHash,
 		FileExtension: m.FileExtension,

@@ -241,8 +241,14 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 	spritesDone := h.variantExists(jobCtx, p.FileHash, "sprites.jpg")
 	framesDone := h.variantExists(jobCtx, p.FileHash, "turntable/0000.png")
 	viewsDone := h.variantExists(jobCtx, p.FileHash, "views/top.png")
-	if posterDone && spritesDone && framesDone && viewsDone {
-		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views")
+	// isoDone tracks the isometric Cycles re-fan over the col/preview/
+	// screen ladder. The workbench poster always succeeds (fast & cheap)
+	// so posterDone alone isn't enough to skip the whole job — a textured
+	// Kenney model can be poster-done with a magenta-pink col, and we'd
+	// never run the iso pass that fixes it.
+	isoDone := h.variantExists(jobCtx, p.FileHash, "iso/source.png")
+	if posterDone && spritesDone && framesDone && viewsDone && isoDone {
+		result.Skipped = append(result.Skipped, "col", "sprites", "frames", "views", "iso")
 		h.markReady(jobCtx, p.AssetID)
 		result.WorkS = time.Since(started).Seconds()
 		return json.Marshal(result)
@@ -321,6 +327,42 @@ func (h *ModelHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 		return nil, fmt.Errorf("preview.model: sprites: %w", err)
 	} else {
 		result.Variants = append(result.Variants, "sprites")
+	}
+
+	// --- isometric thumbnail overwrite -----------------------------------
+	// The workbench poster fanned at the top of this function paints
+	// textured Kenney models magenta because workbench's image-texture
+	// binding behaves differently from Cycles. Now that the Cycles
+	// turntable has completed (with companions staged in the work-dir),
+	// we know textures bind correctly through Cycles — so render one
+	// extra Cycles frame at the 45°/30° isometric angle and re-fan
+	// the col/preview/screen ladder from it. Costs ~3-5s per asset on
+	// top of the turntable, but turns "pink thumbnail forever" into
+	// "real textured thumbnail once the turntable finishes". Best-
+	// effort: any failure logs and leaves the workbench poster in
+	// place (no regression for assets where workbench was already
+	// correct, e.g. untextured / single-color models).
+	//
+	// Also persists the iso shot itself as the `iso/source.png` variant
+	// so the early-exit guard above can skip rerunning the iso pass
+	// on a re-enqueue.
+	if isoDone {
+		result.Skipped = append(result.Skipped, "iso")
+	} else {
+		isoPath := filepath.Join(work.dir, "iso.png")
+		if err := h.renderIsometric(jobCtx, work.sourcePath, isoPath); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_render_failed",
+				slog.String("asset_id", p.AssetID.String()),
+				slog.String("err", err.Error()))
+		} else if err := h.fanRasterLadderOpts(jobCtx, p.FileHash, isoPath, true); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_fan_failed",
+				slog.String("err", err.Error()))
+		} else if err := h.uploadFile(jobCtx, p.FileHash, "iso/source.png", isoPath, "image/png"); err != nil {
+			h.Logger.LogAttrs(jobCtx, slog.LevelWarn, "preview.model.iso_persist_failed",
+				slog.String("err", err.Error()))
+		} else {
+			result.Variants = append(result.Variants, "iso")
+		}
 	}
 
 	h.markReady(jobCtx, p.AssetID)
@@ -733,6 +775,41 @@ func (h *ModelHandler) renderPoster(ctx context.Context, src, posterPath string)
 	return nil
 }
 
+// renderIsometric shells out to Blender for a single Cycles frame at
+// the 45°/30° isometric angle. Used to overwrite the workbench poster's
+// col/preview/screen variants once the rest of the pipeline has staged
+// companions — workbench paints textured Kenney models magenta because
+// of how it binds image-texture nodes, whereas Cycles handles them the
+// same way the live three.js viewer does. The iso render shares that
+// Cycles path, so it picks up textures correctly when companions are
+// in place.
+func (h *ModelHandler) renderIsometric(ctx context.Context, src, isoPath string) error {
+	if err := os.MkdirAll(filepath.Dir(isoPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir iso: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, h.blenderBin(),
+		"--background",
+		"--factory-startup",
+		"--disable-autoexec",
+		"--python-exit-code", "1",
+		"--python", h.scriptPath(),
+		"--",
+		"--input", src,
+		"--iso-output", isoPath,
+	)
+	var stderr, stdout bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		tail := strings.TrimSpace(stderr.String())
+		if len(tail) > 800 {
+			tail = "..." + tail[len(tail)-800:]
+		}
+		return fmt.Errorf("blender iso: %w: %s", err, tail)
+	}
+	return nil
+}
+
 // engineForExt picks the best-looking Blender render engine for a
 // given 3D source extension, determined by the A/B sweep at
 // scripts/blender/ab_engine_test.py against a textured torus.
@@ -773,6 +850,15 @@ func (h *ModelHandler) scriptPath() string {
 // ---------------------------------------------------------------------------
 
 func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath string) error {
+	return h.fanRasterLadderOpts(ctx, hash, framePath, false)
+}
+
+// fanRasterLadderOpts is the overwrite-aware variant. The iso pass
+// calls this with overwrite=true so it can paint over the workbench
+// poster's stale col/preview/screen variants (workbench paints
+// textured models magenta-pink and the existence check would
+// otherwise refuse to replace those bytes).
+func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath string, overwrite bool) error {
 	if h.SysConfig == nil {
 		return nil
 	}
@@ -793,7 +879,7 @@ func (h *ModelHandler) fanRasterLadder(ctx context.Context, hash, framePath stri
 		if v.Key == storage.VariantOriginal {
 			continue
 		}
-		if h.variantExists(ctx, hash, v.Key) {
+		if !overwrite && h.variantExists(ctx, hash, v.Key) {
 			continue
 		}
 		dst := resizeFor(src, v)

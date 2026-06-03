@@ -1,0 +1,96 @@
+---
+title: Coding standards
+description: The conventions every contribution to Artist Alley follows — branching, commits, Go style, frontend style, testing, comments.
+sidebar:
+  order: 1
+---
+
+Artist Alley aims at a "gold-standard engineering bar" for an open-source DAM. The conventions below exist so contributors don't have to re-derive them each PR, and so the codebase stays readable at the 50k-line mark.
+
+## Branching
+
+- **`main`** is stable-only. Every commit on `main` is a tested, working checkpoint that can ship. Force-pushing to `main` is forbidden. Pushing to `main` directly without prior reviewed merge from `dev` is forbidden.
+- **`dev`** is the integration branch. Feature branches merge into `dev`; `dev` flows into `main` at release boundaries.
+- **`feat/<scope>`**, **`fix/<scope>`**, **`chore/<scope>`** for working branches. Delete them immediately after merge — only `dev` and `main` are long-lived.
+
+## Commits
+
+- Format: `<area>: <imperative summary>` — e.g. `assets: handle 0-byte uploads`, `web: fix viewer crash on EXR with no exif`.
+- One logical change per commit. If a refactor and a fix landed together, split them.
+- No Claude / AI co-authorship lines. The change is the contributor's.
+- Reference the issue/PR number in the body, not the subject.
+- HEREDOC commit messages when multi-line — preserves formatting through shells.
+
+## Pull requests
+
+- Target `dev`, never `main`.
+- The PR description explains **why**, not what. The diff already shows what.
+- Reference any relevant ADR (`See ADR 0036`) and any related issue.
+- `./scripts/test.sh` must be green locally before the PR opens. CI re-runs it; CI red is a blocker.
+- Squash-merge for feature branches; merge-commit for the `dev → main` release path.
+
+## Go style
+
+The non-obvious rules. The obvious ones (gofmt, golint, `go vet`) are enforced by CI.
+
+- **Errors return out.** No silent swallows, no `_ = err`. If an error is genuinely safe to ignore, write a comment saying why.
+- **Trust internal code, validate at boundaries.** Don't re-validate inputs your own callers already validated. Do validate at HTTP entry points (handler functions) and at external-system entry points (storage backends, connectors).
+- **No defensive nil checks on guaranteed-non-nil values.** If the type system or the framework guarantees a value is non-nil, don't add a check that "can't fire" — it makes the reader doubt the guarantee.
+- **Comments explain why, not what.** Code that reads as code doesn't need narration; code that has a hidden constraint, a workaround, a non-obvious invariant, does.
+- **No multi-paragraph docstrings.** One short line max per exported symbol; the godoc reader is engineers who already know Go.
+- **Per-domain layout.** Each domain owns its `internal/<domain>/` directory. Cross-domain calls go through the handler layer or through small dependency-injected interfaces, never via grabbing another domain's repository directly.
+
+### sqlc + pgx
+
+- **DOUBLE PRECISION over NUMERIC** for floats. NUMERIC maps to `pgtype.Numeric` in pgx, which is a pain to work with from Go.
+- **COALESCE PATCH pattern** for partial updates: `UPDATE foo SET col = COALESCE(sqlc.narg('col'), col)` and pass `nil` to leave the column alone.
+- **Regenerate with `sqlc generate`** after every `queries.sql` change. Don't hand-edit `queries.sql.go`.
+- **Embed-rebuild quirk** — if you add a query that uses a struct embed, sometimes `sqlc generate` needs a clean rebuild (`rm -rf app/internal/*/queries.sql.go && sqlc generate`).
+
+### Testing
+
+- **Integration tests hit a real Postgres.** No DB mocks. The mock/prod divergence has bitten us before; the test script (`./scripts/test.sh --go`) spins up a real disposable database against which every test runs.
+- **`./scripts/test.sh --go` wipes admin user_roles** after running. Re-INSERT the admin's `user_roles` row to log in again; don't re-run setup.
+- **OpenAPI strict-server shim pattern** — every domain's test shim needs a stub for every new operation, or `go vet` will surface the gap.
+- **No mocks for "is this even called" assertions.** If you want to assert a function was called, refactor so the side effect is observable (a row in a table, a job in a queue), then test the side effect.
+
+## Frontend style (Svelte 5)
+
+- **Runes in `.svelte.ts` files only.** `$state`, `$derived`, `$effect` outside of a `.svelte` component must live in a `.svelte.ts` extension or they error at runtime (not compile time — surprise gotcha).
+- **`web/src/lib/components/`** is the shared component pool. Per-route components live next to the route they belong to.
+- **Type-check before push** via `docker compose exec -T web sh -c 'cd /app && npm run check'`. Host `node_modules` is empty; check runs in the container.
+- **Regen the API schema after `openapi.yaml` changes**: `npm run generate:api`. The schema is gitignored; CI doesn't catch staleness because CI doesn't type-check the frontend.
+- **i18n strings** live in `web/src/lib/i18n/<locale>.json`. New surfaces add the English key; locale stubs follow.
+- **No `console.log` in committed code.** Console statements are debugger noise.
+
+## Comments
+
+The default is **no comment**. Add one only when the WHY is non-obvious — a hidden constraint, a subtle invariant, a workaround for a specific bug, behaviour that would surprise a reader.
+
+What not to write:
+
+- **What the code does** — well-named identifiers already do that.
+- **References to current task / fix / callers** ("used by X", "added for the Y flow", "handles the case from issue #123") — belongs in the PR description and rots in the codebase.
+- **Multi-paragraph commentary** — if a thing needs three paragraphs to explain, it probably needs an ADR.
+
+## Test locally before pushing
+
+Run `./scripts/test.sh` and ensure green before any push. The script:
+
+- Brings up the full Docker Compose stack (Postgres, app, web).
+- Runs the Go integration tests against the real DB.
+- Runs the frontend type-check via the web container.
+- Cleans up.
+
+A pre-merge build failure on CI almost always reflects a step skipped locally; the local script is faster than waiting for CI and shows the same failures.
+
+## Things we don't do
+
+- **Backwards-compatibility shims** for code that no real caller depends on. If you rename a function and nothing real consumed the old name, delete the old name. Don't keep "for compat" zombies.
+- **Speculative abstractions.** Three similar lines beats a premature abstraction for two. The third caller motivates the helper; the second doesn't.
+- **`--no-verify` on commits.** Pre-commit hooks exist for a reason. If a hook fails, fix the underlying problem.
+- **`--force-recreate` workarounds for stale containers in production paths.** It's fine for local dev when Go binary changes don't pick up; production has different lifecycle rules.
+
+## When in doubt
+
+Read recently-merged PRs to see how the current contributor base writes code. Reference the conventions ADR ([0035](/adr/0035-adr-conventions/)) for documentation patterns. If the answer's still unclear, ask in the PR or in an issue — the project lead would rather answer once than untangle ten divergent patterns later.

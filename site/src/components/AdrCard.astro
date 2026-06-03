@@ -1,0 +1,316 @@
+---
+// Metadata card rendered at the top of every ADR page.
+//
+// Props come from sync-adrs.mjs at build time — they encode every field
+// the convention (ADR 0035) defines, plus derived inverse-map fields
+// (supersededBy, backLinks). The component looks up titles for any
+// referenced ADRs from the build-time `adrs.json` catalogue so the
+// reader gets clickable links with human-readable text.
+
+import adrCatalogue from "../data/adrs.json";
+
+interface Props {
+  id: string;
+  status: "proposed" | "accepted" | "superseded" | "deprecated" | "rejected";
+  date: string;
+  area: string;
+  phases: string[];
+  supersedes: string[];
+  supersededBy: string | null;
+  related: string[];
+  backLinks: string[];
+  tags: string[];
+}
+
+const { id, status, date, area, phases, supersedes, supersededBy, related, backLinks, tags } =
+  Astro.props as Props;
+
+const adrById = Object.fromEntries(
+  (adrCatalogue.adrs ?? []).map((a: { id: string; title: string; slug: string }) => [a.id, a]),
+);
+
+const adrLink = (otherId: string) => {
+  const adr = adrById[otherId];
+  if (!adr) return { href: "#", label: `ADR ${otherId}` };
+  return {
+    href: `/adr/${adr.slug}/`,
+    label: `ADR ${otherId} — ${adr.title}`,
+  };
+};
+
+const phaseLink = (phase: string) => `/roadmap/#phase-${phase}`;
+
+const statusCopy: Record<string, string> = {
+  proposed: "Proposed",
+  accepted: "Accepted",
+  superseded: "Superseded",
+  deprecated: "Deprecated",
+  rejected: "Rejected",
+};
+
+const dateDisplay = new Date(date).toLocaleDateString(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+const hasAnyCrossRefs =
+  phases.length + supersedes.length + related.length + backLinks.length > 0 ||
+  Boolean(supersededBy);
+---
+
+<aside class="adr-card" data-status={status}>
+  <header class="adr-card-header">
+    <span class="adr-card-id">ADR {id}</span>
+    <span class={`adr-card-status adr-card-status--${status}`}>
+      {statusCopy[status] ?? status}
+    </span>
+    <span class="adr-card-meta">
+      <span class="adr-card-meta-item"><strong>{area}</strong></span>
+      <span class="adr-card-meta-sep">·</span>
+      <time datetime={date}>{dateDisplay}</time>
+    </span>
+  </header>
+
+  {supersededBy && (
+    <div class="adr-card-callout adr-card-callout--superseded">
+      <strong>Superseded by</strong>{" "}
+      <a href={adrLink(supersededBy).href}>{adrLink(supersededBy).label}</a>.
+      This ADR is retained as historical record; its decisions are no longer
+      the current guidance.
+    </div>
+  )}
+
+  {status === "deprecated" && (
+    <div class="adr-card-callout adr-card-callout--deprecated">
+      <strong>Deprecated.</strong> The thing this ADR governs no longer
+      exists or no longer applies.
+    </div>
+  )}
+
+  {status === "rejected" && (
+    <div class="adr-card-callout adr-card-callout--rejected">
+      <strong>Rejected.</strong> This decision was drafted but not adopted;
+      kept as historical record.
+    </div>
+  )}
+
+  {hasAnyCrossRefs && (
+    <div class="adr-card-grid">
+      {supersedes.length > 0 && (
+        <div class="adr-card-cell">
+          <h4>Supersedes</h4>
+          <ul class="adr-card-chips">
+            {supersedes.map((sid) => (
+              <li>
+                <a href={adrLink(sid).href} class="adr-card-chip">{adrLink(sid).label}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {related.length > 0 && (
+        <div class="adr-card-cell">
+          <h4>Related ADRs</h4>
+          <ul class="adr-card-chips">
+            {related.map((rid) => (
+              <li>
+                <a href={adrLink(rid).href} class="adr-card-chip">{adrLink(rid).label}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {backLinks.length > 0 && (
+        <div class="adr-card-cell">
+          <h4>Referenced by</h4>
+          <ul class="adr-card-chips">
+            {backLinks.map((bid) => (
+              <li>
+                <a href={adrLink(bid).href} class="adr-card-chip adr-card-chip--backlink">
+                  {adrLink(bid).label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {phases.length > 0 && (
+        <div class="adr-card-cell">
+          <h4>Related roadmap phases</h4>
+          <ul class="adr-card-chips">
+            {phases.map((p) => (
+              <li>
+                <a href={phaseLink(p)} class="adr-card-chip adr-card-chip--phase">Phase {p}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {tags.length > 0 && (
+        <div class="adr-card-cell">
+          <h4>Tags</h4>
+          <ul class="adr-card-chips">
+            {tags.map((t) => (
+              <li><span class="adr-card-chip adr-card-chip--tag">{t}</span></li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )}
+</aside>
+
+<style>
+  .adr-card {
+    margin: 1.5rem 0 2rem;
+    padding: 1.1rem 1.25rem;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 60%),
+      var(--sl-color-bg-nav, #161b22);
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    border-radius: 12px;
+    border-left: 3px solid var(--aa-feature, #7c3aed);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .adr-card[data-status="superseded"],
+  .adr-card[data-status="deprecated"],
+  .adr-card[data-status="rejected"] {
+    border-left-color: var(--aa-planned, #6e7681);
+    opacity: 0.96;
+  }
+  .adr-card[data-status="proposed"] {
+    border-left-color: var(--aa-inflight, #d29922);
+  }
+
+  .adr-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 0.85rem;
+  }
+  .adr-card-id {
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-card-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .adr-card-status--accepted  { color: var(--aa-shipped, #2ea043);  background: rgba(46, 160, 67, 0.12); }
+  .adr-card-status--proposed  { color: var(--aa-inflight, #d29922); background: rgba(210, 153, 34, 0.12); }
+  .adr-card-status--superseded,
+  .adr-card-status--deprecated,
+  .adr-card-status--rejected   { color: var(--aa-planned, #6e7681); background: rgba(110, 118, 129, 0.16); }
+
+  .adr-card-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-card-meta strong { color: var(--sl-color-white, #e6edf3); font-weight: 600; text-transform: capitalize; }
+  .adr-card-meta-sep { opacity: 0.5; }
+
+  .adr-card-callout {
+    padding: 0.65rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    border: 1px solid;
+  }
+  .adr-card-callout--superseded {
+    background: rgba(110, 118, 129, 0.12);
+    border-color: rgba(110, 118, 129, 0.4);
+    color: var(--sl-color-gray-2, #c9d1d9);
+  }
+  .adr-card-callout--deprecated {
+    background: rgba(210, 153, 34, 0.10);
+    border-color: rgba(210, 153, 34, 0.35);
+    color: var(--sl-color-gray-1, #e6edf3);
+  }
+  .adr-card-callout--rejected {
+    background: rgba(110, 118, 129, 0.12);
+    border-color: rgba(110, 118, 129, 0.4);
+    color: var(--sl-color-gray-2, #c9d1d9);
+  }
+  .adr-card-callout a { font-weight: 600; }
+
+  .adr-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.85rem 1.25rem;
+  }
+  .adr-card-cell h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+    color: var(--sl-color-gray-3, #8b949e);
+  }
+  .adr-card-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .adr-card-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.78rem;
+    border-radius: 6px;
+    border: 1px solid var(--sl-color-hairline, #30363d);
+    background: var(--sl-color-bg, #0d1117);
+    color: var(--sl-color-gray-2, #c9d1d9);
+    text-decoration: none;
+    transition: border-color 120ms ease, color 120ms ease;
+  }
+  .adr-card-chip:hover {
+    border-color: var(--aa-feature, #7c3aed);
+    color: var(--sl-color-white, #e6edf3);
+  }
+  .adr-card-chip--backlink { border-style: dashed; }
+  .adr-card-chip--phase {
+    border-color: rgba(124, 58, 237, 0.4);
+    color: var(--aa-feature, #7c3aed);
+  }
+  .adr-card-chip--tag {
+    text-transform: lowercase;
+    font-family: var(--sl-font-mono, ui-monospace, monospace);
+    font-size: 0.7rem;
+    border: none;
+    background: rgba(110, 118, 129, 0.16);
+    color: var(--sl-color-gray-2, #c9d1d9);
+    cursor: default;
+  }
+
+  /* Light theme overrides — keep contrast on white backgrounds. */
+  :root[data-theme="light"] .adr-card {
+    background: linear-gradient(180deg, rgba(0,0,0,0.02) 0%, transparent 60%), #ffffff;
+  }
+  :root[data-theme="light"] .adr-card-chip {
+    background: #f6f8fa;
+  }
+</style>

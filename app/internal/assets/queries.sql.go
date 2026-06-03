@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addAssetAlternate = `-- name: AddAssetAlternate :one
+
+INSERT INTO asset_alternates (
+    asset_id, label, kind, object_hash, content_type, size_bytes,
+    origin_server_id, created_by_user_ref, metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING id, asset_id, label, kind, object_hash, content_type,
+          size_bytes, origin_server_id, created_by_user_ref, created_at,
+          metadata
+`
+
+type AddAssetAlternateParams struct {
+	AssetID          pgtype.UUID
+	Label            string
+	Kind             string
+	ObjectHash       string
+	ContentType      string
+	SizeBytes        int64
+	OriginServerID   pgtype.UUID
+	CreatedByUserRef *int64
+	Metadata         []byte
+}
+
+// ─── Asset alternates (Phase 9 + paint-track Phase 13+) ─────────
+// Variants of the asset itself (palette swap, transcode, thumbnail,
+// authored). Mirrors the companions shape but adds a label, a kind
+// tag, and free-form per-kind JSONB metadata.
+func (q *Queries) AddAssetAlternate(ctx context.Context, arg AddAssetAlternateParams) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, addAssetAlternate,
+		arg.AssetID,
+		arg.Label,
+		arg.Kind,
+		arg.ObjectHash,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.OriginServerID,
+		arg.CreatedByUserRef,
+		arg.Metadata,
+	)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const addAssetCompanion = `-- name: AddAssetCompanion :one
 INSERT INTO asset_companions (
     asset_id, companion_path, object_hash, content_type, size_bytes
@@ -74,14 +132,14 @@ func (q *Queries) AddAssetTag(ctx context.Context, arg AddAssetTagParams) error 
 
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
-    title, description, resource_type, owner_user_ref, status,
+    title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
     state_id, processing_status, thumbhash
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13
 )
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at
@@ -90,7 +148,7 @@ RETURNING id, title, description, resource_type, owner_user_ref, status,
 type CreateAssetParams struct {
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -107,7 +165,7 @@ type CreateAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -126,7 +184,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	row := q.db.QueryRow(ctx, createAsset,
 		arg.Title,
 		arg.Description,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.OwnerUserRef,
 		arg.Status,
 		arg.FileHash,
@@ -143,7 +201,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,
@@ -160,6 +218,17 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 	return i, err
 }
 
+const deleteAssetAlternate = `-- name: DeleteAssetAlternate :exec
+DELETE FROM asset_alternates
+ WHERE id = $1
+`
+
+// Remove an alternate by id. Caller unpins the underlying blob.
+func (q *Queries) DeleteAssetAlternate(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAssetAlternate, id)
+	return err
+}
+
 const deleteAssetCompanion = `-- name: DeleteAssetCompanion :exec
 DELETE FROM asset_companions
  WHERE id = $1
@@ -174,7 +243,7 @@ func (q *Queries) DeleteAssetCompanion(ctx context.Context, id pgtype.UUID) erro
 }
 
 const getAsset = `-- name: GetAsset :one
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
@@ -186,7 +255,7 @@ type GetAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -208,7 +277,7 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,
@@ -221,6 +290,65 @@ func (q *Queries) GetAsset(ctx context.Context, id pgtype.UUID) (GetAssetRow, er
 		&i.Thumbhash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getAssetAlternate = `-- name: GetAssetAlternate :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE id = $1
+`
+
+func (q *Queries) GetAssetAlternate(ctx context.Context, id pgtype.UUID) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, getAssetAlternate, id)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
+	)
+	return i, err
+}
+
+const getAssetAlternateByLabel = `-- name: GetAssetAlternateByLabel :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1 AND label = $2
+`
+
+type GetAssetAlternateByLabelParams struct {
+	AssetID pgtype.UUID
+	Label   string
+}
+
+// Resolve one alternate by label — used by the upload path to
+// replace an existing variant with the same label.
+func (q *Queries) GetAssetAlternateByLabel(ctx context.Context, arg GetAssetAlternateByLabelParams) (AssetAlternate, error) {
+	row := q.db.QueryRow(ctx, getAssetAlternateByLabel, arg.AssetID, arg.Label)
+	var i AssetAlternate
+	err := row.Scan(
+		&i.ID,
+		&i.AssetID,
+		&i.Label,
+		&i.Kind,
+		&i.ObjectHash,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.OriginServerID,
+		&i.CreatedByUserRef,
+		&i.CreatedAt,
+		&i.Metadata,
 	)
 	return i, err
 }
@@ -277,6 +405,48 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listAssetAlternates = `-- name: ListAssetAlternates :many
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1
+ ORDER BY created_at DESC
+`
+
+// All alternates for one asset, ordered by created_at desc so the
+// most recent variant lands at the top of the UI list.
+func (q *Queries) ListAssetAlternates(ctx context.Context, assetID pgtype.UUID) ([]AssetAlternate, error) {
+	rows, err := q.db.Query(ctx, listAssetAlternates, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssetAlternate
+	for rows.Next() {
+		var i AssetAlternate
+		if err := rows.Scan(
+			&i.ID,
+			&i.AssetID,
+			&i.Label,
+			&i.Kind,
+			&i.ObjectHash,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.OriginServerID,
+			&i.CreatedByUserRef,
+			&i.CreatedAt,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAssetCompanions = `-- name: ListAssetCompanions :many
@@ -342,7 +512,7 @@ func (q *Queries) ListAssetTags(ctx context.Context, assetID pgtype.UUID) ([]str
 }
 
 const listAssetsByTagPage = `-- name: ListAssetsByTagPage :many
-SELECT a.id, a.title, a.description, a.resource_type, a.owner_user_ref, a.status,
+SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
        a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
        a.created_at, a.updated_at
@@ -351,7 +521,7 @@ JOIN asset_tag t ON t.asset_id = a.id
 WHERE a.deleted_at IS NULL
   AND t.tag = $1::TEXT
   AND ($2::BIGINT IS NULL OR a.owner_user_ref = $2::BIGINT)
-  AND ($3::BIGINT  IS NULL OR a.resource_type  = $3::BIGINT)
+  AND ($3::BIGINT  IS NULL OR a.asset_type  = $3::BIGINT)
   AND ($4::TEXT           IS NULL OR a.status          = $4::TEXT)
   AND ($5::TIMESTAMPTZ IS NULL
        OR a.created_at < $5::TIMESTAMPTZ
@@ -364,7 +534,7 @@ LIMIT $7::INTEGER
 type ListAssetsByTagPageParams struct {
 	Tag             string
 	OwnerUserRef    *int64
-	ResourceType    *int64
+	AssetType       *int64
 	Status          *string
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        pgtype.UUID
@@ -375,7 +545,7 @@ type ListAssetsByTagPageRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -396,7 +566,7 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 	rows, err := q.db.Query(ctx, listAssetsByTagPage,
 		arg.Tag,
 		arg.OwnerUserRef,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.Status,
 		arg.CursorCreatedAt,
 		arg.CursorID,
@@ -413,7 +583,7 @@ func (q *Queries) ListAssetsByTagPage(ctx context.Context, arg ListAssetsByTagPa
 			&i.ID,
 			&i.Title,
 			&i.Description,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.OwnerUserRef,
 			&i.Status,
 			&i.FileHash,
@@ -484,14 +654,14 @@ func (q *Queries) ListAssetsForBackfill(ctx context.Context, arg ListAssetsForBa
 }
 
 const listAssetsPage = `-- name: ListAssetsPage :many
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
 FROM assets
 WHERE deleted_at IS NULL
   AND ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
-  AND ($2::BIGINT  IS NULL OR resource_type  = $2::BIGINT)
+  AND ($2::BIGINT  IS NULL OR asset_type  = $2::BIGINT)
   AND ($3::TEXT           IS NULL OR status          = $3::TEXT)
   AND ($4::TEXT                IS NULL
        OR search_text @@ plainto_tsquery('english', $4::TEXT))
@@ -505,7 +675,7 @@ LIMIT $7::INTEGER
 
 type ListAssetsPageParams struct {
 	OwnerUserRef    *int64
-	ResourceType    *int64
+	AssetType       *int64
 	Status          *string
 	Q               *string
 	CursorCreatedAt pgtype.Timestamptz
@@ -517,7 +687,7 @@ type ListAssetsPageRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -545,7 +715,7 @@ type ListAssetsPageRow struct {
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
 		arg.OwnerUserRef,
-		arg.ResourceType,
+		arg.AssetType,
 		arg.Status,
 		arg.Q,
 		arg.CursorCreatedAt,
@@ -563,7 +733,7 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.ID,
 			&i.Title,
 			&i.Description,
-			&i.ResourceType,
+			&i.AssetType,
 			&i.OwnerUserRef,
 			&i.Status,
 			&i.FileHash,
@@ -741,7 +911,7 @@ UPDATE assets SET
     metadata    = COALESCE($4,    metadata),
     updated_at  = NOW()
 WHERE id = $5 AND deleted_at IS NULL
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at
@@ -759,7 +929,7 @@ type UpdateAssetRow struct {
 	ID               pgtype.UUID
 	Title            string
 	Description      string
-	ResourceType     int64
+	AssetType        int64
 	OwnerUserRef     *int64
 	Status           string
 	FileHash         *string
@@ -789,7 +959,7 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.ID,
 		&i.Title,
 		&i.Description,
-		&i.ResourceType,
+		&i.AssetType,
 		&i.OwnerUserRef,
 		&i.Status,
 		&i.FileHash,

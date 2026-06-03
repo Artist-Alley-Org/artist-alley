@@ -61,6 +61,22 @@ const (
 	TypePreviewPDF    JobType = "preview.pdf"
 	TypePreviewFont   JobType = "preview.font"
 	TypePreview3D     JobType = "preview.3d"
+	TypePreviewEbook  JobType = "preview.ebook"
+	TypePreviewEPS    JobType = "preview.eps"
+	TypePreviewPSD    JobType = "preview.psd"
+	TypePreviewComic  JobType = "preview.comic"
+	TypePreviewText   JobType = "preview.text"
+	TypePreviewArchive JobType = "preview.archive"
+
+	// Audiobook background work — async because ffmpeg concat /
+	// AAX decryption are minutes-per-hour-of-audio operations
+	// that have no business blocking the upload response. Both
+	// handlers are stubbed today (Phase B-2 placeholder); the
+	// types exist so callers can enqueue + the admin queue page
+	// renders the right labels when the implementations land.
+	TypeAudiobookMerge   JobType = "audiobook.merge"   // concat N audio files → single .m4b
+	TypeAudiobookDecrypt JobType = "audiobook.decrypt" // .aax (Audible) → .m4b using .key
+
 )
 
 // Priority defaults. Lower numbers run sooner. Handlers can override.

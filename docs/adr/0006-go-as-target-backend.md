@@ -1,10 +1,27 @@
-# ADR 0006: Go as the target backend; no sidecars
-
-- Date: 2026-05-24
-- Status: Accepted
-- Supersedes the sidecar-heavy architecture in ADR 0003 (which is
-  amended in this commit).
-
+---
+id: "0006"
+title: Go as the target backend; no sidecars
+status: accepted
+date: 2026-05-24
+area: architecture
+phases: 
+  - "0.5"
+  - "1.0"
+supersedes: 
+  - "0003"
+related: 
+  - "0001"
+  - "0003"
+  - "0005"
+tags:
+  - architecture
+  - ai
+  - infrastructure
+  - auth
+  - 3d
+excerpt: >-
+  ADR 0001 established a hard fork from RS. ADR 0003 proposed a Strangler Fig pattern with multiple Go *sidecar* services (ai-gateway, review-sessions, video-pipeline, embeddings) talking to a forever- PHP RS backbone over HTTP. The PHP-side glue was to be an artist_alley RS plu…
+---
 ## Context
 
 ADR 0001 established a hard fork from RS. ADR 0003 proposed a Strangler

@@ -1,8 +1,22 @@
-# ADR 0015: PHP as legacy backend — `aa_api/` JSON wrappers behind `/api/v1/legacy/*`
-
-- Date: 2026-05-26
-- Status: Accepted
-
+---
+id: "0015"
+title: PHP as legacy backend — `aa_api/` JSON wrappers behind `/api/v1/legacy/*`
+status: accepted
+date: 2026-05-26
+area: architecture
+phases: 
+  - "1.13.H"
+supersedes: []
+related: 
+  - "0003"
+  - "0006"
+  - "0014"
+tags:
+  - architecture
+  - ai
+excerpt: >-
+  ADR 0014 retires RS PHP as the user-facing frontend in favour of the new SvelteKit app. But RS still owns a large body of business logic the Go side hasn't ported yet (asset search variants, resource-share URL generation, plugin hooks, the upload pipeline, etc.). Porting every…
+---
 ## Context
 
 ADR 0014 retires RS PHP as the user-facing frontend in favour of the

@@ -1,11 +1,11 @@
 ---
-title: Installing artist-alley
+title: Installing Artist Alley
 description: Pick your install channel — Docker, Debian/Ubuntu, RPM, binary, Homebrew.
 ---
 
 import ConfigTable from "../../_partials/install-config-table.mdx";
 
-artist-alley is a **single Go binary** with the SvelteKit frontend
+Artist Alley is a **single Go binary** with the SvelteKit frontend
 embedded via `go:embed`. There's nothing else to deploy — bring your
 own Postgres and a writable storage directory.
 
@@ -29,7 +29,7 @@ Docker images are **signed via Sigstore** (`cosign verify`); binaries
 
 ## Prerequisites
 
-- **PostgreSQL 14+** — bring your own; artist-alley creates its own
+- **PostgreSQL 14+** — bring your own; Artist Alley creates its own
   schema on first run via embedded migrations.
 - A directory for **storage** (binary blobs + generated thumbnails)
   *or* an S3-compatible bucket (MinIO, Backblaze B2, Cloudflare R2,

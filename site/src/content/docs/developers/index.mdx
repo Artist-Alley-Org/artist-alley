@@ -1,0 +1,52 @@
+---
+title: Developers
+description: Start here if you want to read, modify, or extend Artist Alley.
+sidebar:
+  order: 0
+  label: Overview
+---
+
+Artist Alley is an open-source project written primarily in **Go** (backend, single-binary deploy) and **Svelte 5** (frontend SPA, embedded via `go:embed` at release time). The source is freely available at [github.com/mscrnt/artist-alley](https://github.com/mscrnt/artist-alley).
+
+- For a breakdown of folders within the project see the [developer reference](/developers/reference/).
+- For an overview of the database tables see the [database schema](/developers/database/).
+- All contributors must follow the [coding standards](/developers/coding-standards/).
+- Security-sensitive surfaces and the project's threat model are documented in [Security in Artist Alley](/developers/security/).
+
+## What's in the binary
+
+The Go binary is the runtime. It owns:
+
+- **HTTP server** at `/api/v1/...` (OpenAPI-first; spec at `app/api/openapi.yaml`).
+- **Postgres-backed persistent state** via [sqlc](https://sqlc.dev/) (queries in `app/internal/<domain>/queries.sql`, generated Go in `queries.sql.go`).
+- **Job queue** for previews, ingest, federation, scheduled actions.
+- **Storage abstraction** with pluggable backends (filesystem default; S3-compatible bucket via the `storage-s3` compose profile).
+- **The embedded frontend** — at release time the SvelteKit build output is bundled with `go:embed` and served from the same binary; at dev time the Go server proxies to a live Vite dev server on `localhost:5173`.
+
+Heavier capabilities — image embeddings (CLIP), transcription (Whisper), OCR (Tesseract), Blender-rendered thumbnails — ship as **out-of-band add-ons** that operators install separately. See [ADR 0034](/adr/0034-capability-add-ons/).
+
+## How the code is shaped
+
+The backend follows a per-domain layout under `app/internal/<domain>/`. Each domain typically has:
+
+- `handler.go` — HTTP handlers + struct adapters between the OpenAPI generated types and the domain model.
+- `queries.sql` — sqlc-managed SQL queries.
+- `queries.sql.go` — generated Go (do not edit by hand; regenerate with `sqlc generate`).
+- `handler_test.go` — integration tests against a real Postgres (no DB mocking; see [coding standards](/developers/coding-standards/)).
+
+The frontend follows a per-route layout under `web/src/` with shared components in `web/src/lib/components/`. Svelte 5 [runes](https://svelte.dev/docs/svelte/what-are-runes) (`$state`, `$derived`, `$effect`) are the state-management primitive; files using runes have a `.svelte.ts` extension.
+
+## Contributing
+
+The short version:
+
+1. Branch from `dev` (the integration branch — `main` is stable-only). Branch names use the `feat/...`, `fix/...`, or `chore/...` prefix.
+2. Run `./scripts/test.sh` green before opening a PR (full Go integration tests against a real Postgres + the frontend type-check).
+3. PRs target `dev`. `main` is fast-forward-only and is the source of releases.
+4. Commit messages: `<area>: <imperative summary>` (e.g. `assets: handle 0-byte uploads`). No Claude/AI co-authorship.
+
+The full version is in [coding standards](/developers/coding-standards/).
+
+## Architectural decisions
+
+When a decision is significant enough to need explaining months later — backend topology, license model, security stance, monetization shape — it goes into an [Architecture Decision Record](/adr/). The ADR catalogue is the canonical answer to "why is the project shaped this way?"; the convention itself is [ADR 0035](/adr/0035-adr-conventions/).

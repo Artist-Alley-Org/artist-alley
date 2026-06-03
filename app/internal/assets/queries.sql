@@ -1,19 +1,19 @@
 -- name: CreateAsset :one
 INSERT INTO assets (
-    title, description, resource_type, owner_user_ref, status,
+    title, description, asset_type, owner_user_ref, status,
     file_hash, file_extension, file_size_bytes, metadata, origin_server_id,
     state_id, processing_status, thumbhash
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     $11, $12, $13
 )
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at;
 
 -- name: GetAsset :one
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
@@ -30,7 +30,7 @@ UPDATE assets SET
     metadata    = COALESCE(sqlc.narg('metadata'),    metadata),
     updated_at  = NOW()
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
-RETURNING id, title, description, resource_type, owner_user_ref, status,
+RETURNING id, title, description, asset_type, owner_user_ref, status,
           file_hash, file_extension, file_size_bytes, metadata,
           origin_server_id, state_id, processing_status, thumbhash,
           created_at, updated_at;
@@ -61,14 +61,14 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- by the assets_search_text_gin index. Phase 1.12 will replace this
 -- with the proper search DSL (ADR 0010), but for the browse page MVP
 -- a plain tsquery match is enough.
-SELECT id, title, description, resource_type, owner_user_ref, status,
+SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
        created_at, updated_at
 FROM assets
 WHERE deleted_at IS NULL
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
-  AND (sqlc.narg('resource_type')::BIGINT  IS NULL OR resource_type  = sqlc.narg('resource_type')::BIGINT)
+  AND (sqlc.narg('asset_type')::BIGINT  IS NULL OR asset_type  = sqlc.narg('asset_type')::BIGINT)
   AND (sqlc.narg('status')::TEXT           IS NULL OR status          = sqlc.narg('status')::TEXT)
   AND (sqlc.narg('q')::TEXT                IS NULL
        OR search_text @@ plainto_tsquery('english', sqlc.narg('q')::TEXT))
@@ -82,7 +82,7 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- name: ListAssetsByTagPage :many
 -- Same paginated list but constrained to a single tag. Separate
 -- query because the join breaks the COALESCE pattern.
-SELECT a.id, a.title, a.description, a.resource_type, a.owner_user_ref, a.status,
+SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,
        a.origin_server_id, a.state_id, a.processing_status, a.thumbhash,
        a.created_at, a.updated_at
@@ -91,7 +91,7 @@ JOIN asset_tag t ON t.asset_id = a.id
 WHERE a.deleted_at IS NULL
   AND t.tag = sqlc.arg('tag')::TEXT
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR a.owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
-  AND (sqlc.narg('resource_type')::BIGINT  IS NULL OR a.resource_type  = sqlc.narg('resource_type')::BIGINT)
+  AND (sqlc.narg('asset_type')::BIGINT  IS NULL OR a.asset_type  = sqlc.narg('asset_type')::BIGINT)
   AND (sqlc.narg('status')::TEXT           IS NULL OR a.status          = sqlc.narg('status')::TEXT)
   AND (sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
        OR a.created_at < sqlc.narg('cursor_created_at')::TIMESTAMPTZ
@@ -226,4 +226,48 @@ SELECT id, asset_id, companion_path, object_hash,
 -- storage object so the GC can claim the bytes back when no other
 -- pin remains.
 DELETE FROM asset_companions
+ WHERE id = $1;
+
+-- ─── Asset alternates (Phase 9 + paint-track Phase 13+) ─────────
+-- Variants of the asset itself (palette swap, transcode, thumbnail,
+-- authored). Mirrors the companions shape but adds a label, a kind
+-- tag, and free-form per-kind JSONB metadata.
+
+-- name: AddAssetAlternate :one
+INSERT INTO asset_alternates (
+    asset_id, label, kind, object_hash, content_type, size_bytes,
+    origin_server_id, created_by_user_ref, metadata
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+RETURNING id, asset_id, label, kind, object_hash, content_type,
+          size_bytes, origin_server_id, created_by_user_ref, created_at,
+          metadata;
+
+-- name: ListAssetAlternates :many
+-- All alternates for one asset, ordered by created_at desc so the
+-- most recent variant lands at the top of the UI list.
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1
+ ORDER BY created_at DESC;
+
+-- name: GetAssetAlternateByLabel :one
+-- Resolve one alternate by label — used by the upload path to
+-- replace an existing variant with the same label.
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE asset_id = $1 AND label = $2;
+
+-- name: GetAssetAlternate :one
+SELECT id, asset_id, label, kind, object_hash, content_type,
+       size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
+  FROM asset_alternates
+ WHERE id = $1;
+
+-- name: DeleteAssetAlternate :exec
+-- Remove an alternate by id. Caller unpins the underlying blob.
+DELETE FROM asset_alternates
  WHERE id = $1;
