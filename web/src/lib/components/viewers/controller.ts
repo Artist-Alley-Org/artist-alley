@@ -31,6 +31,7 @@ export type ViewKind =
   | 'ebook'
   | 'doc'
   | 'audiobook'
+  | 'archive'
   | 'placeholder';
 
 // ViewAsset is the trimmed asset shape every view body accepts as
@@ -321,6 +322,16 @@ const AUDIO_EXTS = new Set([
 // .aax is Audible's encrypted variant — currently a placeholder since
 // decryption needs activation bytes per Amazon account.
 const AUDIOBOOK_EXTS = new Set(['m4b', 'aax']);
+// 'archive' kind covers every container the ArchiveView can browse
+// without extraction. Mirrors preview.archive.SupportedExtensions
+// + the assets/handler.go archiveExtsHandler dispatcher.
+// .cbz / .cbr / .cb7 stay on 'image' (comic-cover preview path);
+// the archive viewer ignores them since the comic reader is a
+// better fit for sequential image-page browsing.
+const ARCHIVE_EXTS = new Set([
+  'zip', 'jar', 'war', 'ear', 'apk', 'ipa',
+  'tar', 'tgz',
+]);
 const PDF_EXTS = new Set(['pdf']);
 // Kept in sync with app/internal/preview/font.go::fontExts.
 const FONT_EXTS = new Set(['ttf', 'otf', 'ttc', 'otc', 'woff', 'woff2']);
@@ -352,6 +363,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
   if (FONT_EXTS.has(e)) return 'font';
   if (MODEL_EXTS.has(e)) return '3d';
   if (DOC_EXTS.has(e)) return 'doc';
+  if (ARCHIVE_EXTS.has(e)) return 'archive';
   return 'placeholder';
 }
 
@@ -360,6 +372,7 @@ export function kindForExtension(ext: string | null | undefined): ViewKind {
 // `.png` would otherwise resolve to `image`. Mirror of the
 // asset_types table seeded by migrations 00031 / 00033 / 00034.
 const ASSET_TYPE_KIND: Record<number, ViewKind> = {
+  6: 'archive',
   11: 'audiobook',
   13: 'sprite',
 };
@@ -390,4 +403,7 @@ export function isDocExt(ext: string | null | undefined): boolean {
 }
 export function isAudiobookExt(ext: string | null | undefined): boolean {
   return kindForExtension(ext) === 'audiobook';
+}
+export function isArchiveExt(ext: string | null | undefined): boolean {
+  return kindForExtension(ext) === 'archive';
 }

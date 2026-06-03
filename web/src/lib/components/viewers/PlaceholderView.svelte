@@ -56,6 +56,7 @@
     ebook: { title: 'Ebook reader', phase: '', icon: 'file-text' },
     doc: { title: 'Document viewer', phase: '', icon: 'file-text' },
     audiobook: { title: 'Audiobook reader', phase: '', icon: 'audio' },
+    archive: { title: 'Archive viewer', phase: '', icon: 'placeholder' },
   };
   const label = $derived(labels[kind]);
 </script>

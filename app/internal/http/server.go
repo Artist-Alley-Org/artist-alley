@@ -113,6 +113,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	jobRegistry.Register(preview.NewPSDHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewComicHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewTextHandler(pool, storageSvc, sysCfg, logger))
+	jobRegistry.Register(preview.NewArchiveHandler(pool, storageSvc, sysCfg, logger))
 	// Audiobook post-processing — Phase B-2 stubs. Registered so
 	// the dispatcher knows the type names + the admin queue page
 	// renders them; the actual ffmpeg work is a TODO in
@@ -161,6 +162,14 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		fileH := handlers.NewAssetFileHandler(pool, storageSvc, logger)
 		r.Get("/assets/{id}/file", fileH.ServeHTTP)
 		r.Head("/assets/{id}/file", fileH.ServeHTTP)
+
+		// /assets/{id}/archive/entry?path=... — stream a single
+		// entry out of a ZIP / TAR archive without extracting the
+		// whole thing. The manifest already lives on
+		// metadata.archive (populated by the preview.archive job);
+		// this handler is the per-click data-plane.
+		archEntryH := handlers.NewArchiveEntryHandler(pool, storageSvc, logger)
+		r.Get("/assets/{id}/archive/entry", archEntryH.ServeHTTP)
 	})
 
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request

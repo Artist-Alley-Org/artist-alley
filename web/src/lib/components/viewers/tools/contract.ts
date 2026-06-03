@@ -18,6 +18,7 @@ import type { EbookSessionInstance } from '$lib/ebook/session.svelte';
 import type { ModelSessionInstance } from '$lib/3d/session.svelte';
 import type { DocSessionInstance } from '$lib/doc/session.svelte';
 import type { AudiobookSessionInstance } from '$lib/audiobook/session.svelte';
+import type { ArchiveSessionInstance } from '$lib/archive/session.svelte';
 import type { ViewAsset, ViewController } from '../controller';
 
 /** Everything a tool body needs to do its job. Threaded through
@@ -53,6 +54,11 @@ export interface ToolContext {
    *  same instance so the chapter list, playback speed, sleep
    *  timer, and bookmarks stay in sync. */
   audiobookSession?: AudiobookSessionInstance;
+  /** Archive session — present when kind === 'archive' (.zip /
+   *  .tar / .tar.gz / .jar / ...). The ArchiveView file tree and
+   *  the ArchiveTool side panel bind the same instance so
+   *  filtering / selection / expand-state stay in sync. */
+  archiveSession?: ArchiveSessionInstance;
   /** Free-form bag of host-provided callbacks. Hosts that own
    *  details (e.g. PostHost has likes / comments / cover-picker)
    *  pass their handlers in; the matching tool reads them. Kept

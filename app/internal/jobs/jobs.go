@@ -66,6 +66,7 @@ const (
 	TypePreviewPSD    JobType = "preview.psd"
 	TypePreviewComic  JobType = "preview.comic"
 	TypePreviewText   JobType = "preview.text"
+	TypePreviewArchive JobType = "preview.archive"
 
 	// Audiobook background work — async because ffmpeg concat /
 	// AAX decryption are minutes-per-hour-of-audio operations

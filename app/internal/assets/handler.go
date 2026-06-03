@@ -370,6 +370,9 @@ func jobTypeForExt(ext *string) jobs.JobType {
 	if _, ok := textExtsHandler[e]; ok {
 		return jobs.TypePreviewText
 	}
+	if _, ok := archiveExtsHandler[e]; ok {
+		return jobs.TypePreviewArchive
+	}
 	return jobs.TypePreviewRaster
 }
 
@@ -397,6 +400,13 @@ var comicExtsHandler = map[string]struct{}{
 // textExtsHandler mirrors preview.textExts.
 var textExtsHandler = map[string]struct{}{
 	"txt": {},
+}
+// archiveExtsHandler mirrors preview.archive.SupportedExtensions.
+// Routes uploads through the archive preview type so the manifest
+// is extracted + cached on metadata.archive.
+var archiveExtsHandler = map[string]struct{}{
+	"zip": {}, "jar": {}, "war": {}, "ear": {}, "apk": {}, "ipa": {},
+	"tar": {}, "tgz": {}, "tar.gz": {}, "tar.bz2": {},
 }
 
 // audioExtsHandler mirrors preview.audioExts. Duplicated here so the
@@ -1281,6 +1291,24 @@ func needsProcessing(ext *string) bool {
 		return true
 	}
 	if _, ok := fontExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := ebookExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := epsExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := psdExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := comicExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := textExtsHandler[e]; ok {
+		return true
+	}
+	if _, ok := archiveExtsHandler[e]; ok {
 		return true
 	}
 	return false

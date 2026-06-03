@@ -20,12 +20,14 @@
   import EpubView from './EpubView.svelte';
   import DocView from './DocView.svelte';
   import AudiobookView from './AudiobookView.svelte';
+  import ArchiveView from './ArchiveView.svelte';
   import SpriteCanvas from './SpriteCanvas.svelte';
   import { createSpriteSession, type SpriteSessionInstance } from '$lib/sprite/session.svelte';
   import { createEbookSession, type EbookSessionInstance } from '$lib/ebook/session.svelte';
   import { createModelSession, type ModelSessionInstance } from '$lib/3d/session.svelte';
   import { createDocSession, type DocSessionInstance } from '$lib/doc/session.svelte';
   import { createAudiobookSession, type AudiobookSessionInstance } from '$lib/audiobook/session.svelte';
+  import { createArchiveSession, type ArchiveSessionInstance } from '$lib/archive/session.svelte';
   import type { WhiteboardSession } from '$lib/whiteboard/session.svelte';
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
@@ -179,7 +181,7 @@
   // Auto-expand once when a sprite or 3D kind comes into view so
   // the user sees the dedicated tool immediately. Only force-open
   // on the transition INTO a tools kind; the user can re-collapse.
-  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook' || kind === 'audiobook');
+  const kindHasRichTools = $derived(kind === 'sprite' || kind === '3d' || kind === 'doc' || kind === 'ebook' || kind === 'audiobook' || kind === 'archive');
   let hadRichToolsKind = false;
   $effect(() => {
     if (kindHasRichTools && !hadRichToolsKind && paneCollapsed) {
@@ -272,6 +274,22 @@
       lastAssetIdForAudiobook = '';
     }
   });
+
+  // Archive session — per-asset rebuild for .zip / .tar / .tar.gz
+  // and the rest of the archive family. ArchiveView renders the
+  // file tree + entry preview; the ArchiveTool side panel reads
+  // the same instance for Stats / filter helpers.
+  let archiveSession = $state<ArchiveSessionInstance | null>(null);
+  let lastAssetIdForArchive = '';
+  $effect(() => {
+    if (kind === 'archive' && asset.id !== lastAssetIdForArchive) {
+      lastAssetIdForArchive = asset.id;
+      archiveSession = createArchiveSession({ assetId: asset.id });
+    } else if (kind !== 'archive' && archiveSession) {
+      archiveSession = null;
+      lastAssetIdForArchive = '';
+    }
+  });
   // The Tools-menu "Slice as sprite" entry only makes sense for
   // PNGs. Sprite sheets in the wild are essentially all PNG (lossless
   // + alpha); JPG/WEBP/etc. images may be photos / illustrations
@@ -312,6 +330,9 @@
     // mark and Cmd+wheel-zoom comes from the editor's own keymap.
     // Skip the shell's outer transform entirely.
     if (kind === 'doc') return;
+    // Archive view (file tree + entry preview) scrolls inside both
+    // panes — outer wheel-zoom would fight it.
+    if (kind === 'archive') return;
     // Timeline kinds (video, audio, paged PDF later) treat plain wheel
     // as one frame's worth of scrub — the muscle memory for review
     // work. Ctrl/⌘ + wheel still zooms so the user can inspect a
@@ -359,6 +380,8 @@
     // select gestures. Outer pan/drag would fight the text-select
     // behaviour users expect from an editor surface.
     if (kind === 'doc') return;
+    // Archive view owns its tree + preview pane click/drag.
+    if (kind === 'archive') return;
     // Timeline kinds (video, audio) don't need pan/zoom — the wheel
     // already specialises to scrub frames, and the canvas surface is
     // a video frame or a waveform-with-cover, neither of which is a
@@ -471,6 +494,7 @@
     modelSession: modelSession ?? undefined,
     docSession: docSession ?? undefined,
     audiobookSession: audiobookSession ?? undefined,
+    archiveSession: archiveSession ?? undefined,
     whiteboardSession,
     hostHooks,
     shellState: {
@@ -904,6 +928,15 @@
       {#key asset.id}
         <div class="absolute inset-0">
           <AudiobookView {asset} bind:controller bind:session={audiobookSession} />
+        </div>
+      {/key}
+    {:else if kind === 'archive' && archiveSession}
+      <!-- Archive browser (file tree + entry preview) bypasses
+           pan/zoom — owns its own scrollable layout. Session shared
+           with the side-panel ArchiveTool. -->
+      {#key asset.id}
+        <div class="absolute inset-0">
+          <ArchiveView {asset} bind:controller bind:session={archiveSession} />
         </div>
       {/key}
     {:else if kind === 'sprite' && spriteSession}
