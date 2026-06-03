@@ -940,6 +940,33 @@ func (q *Queries) RevokeSessionByToken(ctx context.Context, tokenHash []byte) er
 	return err
 }
 
+const revokeSessionForUser = `-- name: RevokeSessionForUser :execrows
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_ref = $2
+  AND revoked_at IS NULL
+`
+
+type RevokeSessionForUserParams struct {
+	ID      pgtype.UUID
+	UserRef int64
+}
+
+// Ownership-checked soft-delete. Same as RevokeSession but the
+// WHERE includes user_ref so a caller can't revoke someone else's
+// session by ID-guessing. Used by the self-service
+// DELETE /account/sessions/{id} endpoint. Returns rows-affected so
+// the handler can distinguish "revoked" (1) from "not yours / not
+// found / already revoked" (0).
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSessionForUser, arg.ID, arg.UserRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUserGlobalRole = `-- name: SetUserGlobalRole :exec
 WITH _del AS (
     DELETE FROM user_roles

@@ -67,6 +67,7 @@ type auditRecorder interface {
 	LoginFailed(ctx context.Context, req *http.Request, attemptedUsername string, userRef *int64, reason string)
 	LoginRateLimited(ctx context.Context, req *http.Request, attemptedUsername, key string)
 	Logout(ctx context.Context, req *http.Request, userRef int64, sessionID string)
+	SessionRevoked(ctx context.Context, req *http.Request, userRef, actorUserRef int64, sessionID, reason string)
 }
 
 // nopAudit is the default Audit when none is wired up — useful in
@@ -77,6 +78,8 @@ func (nopAudit) LoginSucceeded(context.Context, *http.Request, int64, string)   
 func (nopAudit) LoginFailed(context.Context, *http.Request, string, *int64, string)      {}
 func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)         {}
 func (nopAudit) Logout(context.Context, *http.Request, int64, string)                    {}
+func (nopAudit) SessionRevoked(context.Context, *http.Request, int64, int64, string, string) {
+}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching RS's rs_setcookie default) is used. The

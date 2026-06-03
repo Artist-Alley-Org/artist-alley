@@ -290,6 +290,115 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /account/sessions:
+    get:
+      operationId: listMySessions
+      summary: List my active sessions (multi-device)
+      description: |
+        Phase 1.17.C — surfaces the caller's own active sessions for
+        the /account/sessions self-service page. The row that's
+        authenticating this request carries `current: true` so the
+        UI can hide its own revoke button.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of the caller's active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeMySession
+      summary: Revoke one of my sessions
+      description: |
+        Ownership-checked: revokes only when the session id belongs
+        to the caller. 404 covers both "wrong owner" and "no such
+        session" so existence can't be probed.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/sessions:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAdminUserSessions
+      summary: List a user's active sessions (admin)
+      description: |
+        Phase 1.17.C — admin view of a specific user's sessions for
+        the per-user admin detail page. Same row shape as the
+        self-service endpoint; `current` is omitted (admins are
+        viewing someone else's sessions, not their own).
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      responses:
+        "200":
+          description: The user's active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/sessions/{id}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeAdminUserSession
+      summary: Revoke a user's session (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -5131,6 +5240,48 @@ components:
           description: |
             Federation origin (when the profile row came from a peer
             instance). Null = home instance. See ADR 0007.
+
+    SessionRow:
+      type: object
+      description: |
+        One active session (Phase 1.17.C). The IP + user-agent are
+        best-effort observability captured at login; both can be null
+        when behind a proxy that strips them. `current` is true only
+        on the self-service endpoint for the row that's authenticating
+        the request — the UI uses it to hide its own revoke button.
+      required: [id, created_at, last_used_at]
+      properties:
+        id: { type: string, format: uuid }
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        current:
+          type: boolean
+          description: |
+            True only on /account/sessions for the session that
+            authenticated the request. Omitted on the admin
+            equivalent.
+
+    SessionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SessionRow" }
 
     AdminUserStatusUpdate:
       type: object

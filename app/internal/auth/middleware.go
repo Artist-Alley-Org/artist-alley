@@ -41,7 +41,12 @@ type Identity struct {
 	Usergroup    *int64
 	AuthMethod   string     // "session" or "token"
 	TokenID      *uuid.UUID // populated when AuthMethod=="token"
-	Capabilities []string   // GLOBAL capability codes (closure-expanded, NULL team_id)
+	SessionID    *uuid.UUID // populated when AuthMethod=="session" — lets
+	// the /account/sessions endpoint mark the row that's
+	// authenticating this request as "current" so the UI can
+	// hide its own revoke button (revoking your own current
+	// session is a footgun — the next request 401s).
+	Capabilities []string // GLOBAL capability codes (closure-expanded, NULL team_id)
 
 	scopedCaps map[string]map[uuid.UUID]struct{} // code -> set of effective team IDs
 }
@@ -421,6 +426,8 @@ func (r *Resolver) resolveBySession(ctx context.Context, q *Queries, sessionToke
 		return nil, err
 	}
 	id.AuthMethod = "session"
+	sessID := info.ID
+	id.SessionID = &sessID
 	// Best-effort: bump last_used_at so the session keeps living and
 	// the next idle-timeout check uses now as the baseline. Done in a
 	// goroutine so it never blocks the request.

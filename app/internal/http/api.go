@@ -129,6 +129,18 @@ func (s *apiServer) CreateApiToken(ctx context.Context, req openapi.CreateApiTok
 func (s *apiServer) RevokeApiToken(ctx context.Context, req openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
 	return s.auth.RevokeApiToken(ctx, req)
 }
+func (s *apiServer) ListMySessions(ctx context.Context, req openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	return s.auth.ListMySessions(ctx, req)
+}
+func (s *apiServer) RevokeMySession(ctx context.Context, req openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	return s.auth.RevokeMySession(ctx, req)
+}
+func (s *apiServer) ListAdminUserSessions(ctx context.Context, req openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	return s.auth.ListAdminUserSessions(ctx, req)
+}
+func (s *apiServer) RevokeAdminUserSession(ctx context.Context, req openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	return s.auth.RevokeAdminUserSession(ctx, req)
+}
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	return s.auth.ListCapabilities(ctx, req)

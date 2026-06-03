@@ -193,6 +193,22 @@
     "messages": {
       "title": "Messages",
       "coming_soon": "Inbox lands in a follow-up phase."
+    },
+    "sessions": {
+      "title": "Sessions",
+      "intro": "Every device you've signed in from. Sign out of a session here to revoke its cookie immediately — your other sessions are unaffected.",
+      "loading": "Loading sessions\u2026",
+      "none": "No active sessions besides this one.",
+      "current_badge": "This device",
+      "ip_label": "IP",
+      "ua_label": "Device",
+      "last_used": "Last used",
+      "created": "Signed in",
+      "expires": "Expires",
+      "never_expires": "No hard expiry",
+      "revoke": "Sign out",
+      "revoking": "Signing out\u2026",
+      "revoked": "Session revoked."
     }
   },
   "admin": {

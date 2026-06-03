@@ -94,6 +94,19 @@ SET revoked_at = NOW()
 WHERE id = $1
   AND revoked_at IS NULL;
 
+-- name: RevokeSessionForUser :execrows
+-- Ownership-checked soft-delete. Same as RevokeSession but the
+-- WHERE includes user_ref so a caller can't revoke someone else's
+-- session by ID-guessing. Used by the self-service
+-- DELETE /account/sessions/{id} endpoint. Returns rows-affected so
+-- the handler can distinguish "revoked" (1) from "not yours / not
+-- found / already revoked" (0).
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_ref = $2
+  AND revoked_at IS NULL;
+
 -- name: RevokeSessionByToken :exec
 -- Revoke by cookie hash. Used by /auth/logout when we have the cookie
 -- but no session id loaded.

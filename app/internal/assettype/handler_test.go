@@ -382,6 +382,18 @@ func (rtOnly) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObjec
 func (rtOnly) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
 	panic("SetAdminUserStatus called from assettype rtOnly test shim")
 }
+func (rtOnly) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from assettype rtOnly test shim")
+}
+func (rtOnly) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from assettype rtOnly test shim")
+}
+func (rtOnly) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from assettype rtOnly test shim")
+}
+func (rtOnly) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from assettype rtOnly test shim")
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }

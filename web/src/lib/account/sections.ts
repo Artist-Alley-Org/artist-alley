@@ -40,7 +40,7 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'ai',          group: 'identity', status: 'stub', phase: '1.14', href: '/account/preferences/ai' },
   { slug: 'password',    group: 'identity', status: 'stub', phase: '1.17', href: '/account/password' },
   { slug: 'security',    group: 'identity', status: 'stub', phase: '1.17', href: '/account/security' },
-  { slug: 'sessions',    group: 'identity', status: 'stub', phase: '1.17', href: '/account/sessions' },
+  { slug: 'sessions',    group: 'identity', status: 'live', phase: '1.17', href: '/account/sessions' },
   { slug: 'connected',   group: 'identity', status: 'stub', phase: '1.18', href: '/account/connected' },
 
   // Communication
