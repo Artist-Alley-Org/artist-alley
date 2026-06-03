@@ -170,6 +170,21 @@
 
   const currentItem = $derived(source.items[source.cursor] ?? null);
   const hasMultipleItems = $derived(source.items.length > 1);
+  // When every member of the playlist is an audiobook (.m4b /
+  // asset_type=11), the AudiobookTool's Tracks section in the side
+  // panel becomes the canonical navigator and the strip below
+  // duplicates it (every MP3 gets its own waveform thumb). Hide
+  // the strip in that case; ↑/↓ + the Tracks list both still
+  // navigate so the user loses no muscle memory.
+  const allAudiobook = $derived(
+    source.items.length > 0
+    && source.items.every((it) => {
+      const a = it.asset;
+      if (a?.asset_type === 11) return true;
+      const ext = (a?.file_extension ?? '').toLowerCase().replace(/^\./, '');
+      return ext === 'm4b' || ext === 'aax';
+    }),
+  );
   // Current asset's kind drives the contextual hotkey legend below —
   // we surface different shortcut sections for video/audio (timeline
   // playback + loop) vs static kinds. Falls back to 'placeholder'
@@ -203,6 +218,22 @@
     navbarObserver.observe(header);
   }
 
+  // Audiobook auto-advance bridge — AudiobookView fires this when
+  // the current track ends and there's a next sibling. We translate
+  // the asset id into a cursor jump so the playlist swaps to the
+  // next member; the {#key asset.id} on AssetViewer remounts the
+  // body so the new track loads + plays its resume position.
+  function onAudiobookAdvance(e: Event) {
+    const ce = e as CustomEvent<{ assetId: string }>;
+    const id = ce.detail?.assetId;
+    if (!id) return;
+    const idx = source.items.findIndex((it) => it.id === id);
+    if (idx >= 0) {
+      e.preventDefault?.();
+      goTo(idx);
+    }
+  }
+
   onMount(() => {
     // Restore pane + strip prefs first so the initial open matches
     // last session.
@@ -227,6 +258,11 @@
     // viewport — windowed mode leaves the navbar interactive so the
     // body scroll behaviour should stay normal.
     if (maximized) document.body.classList.add('overflow-hidden');
+    window.addEventListener('aa-audiobook-advance', onAudiobookAdvance as EventListener);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('aa-audiobook-advance', onAudiobookAdvance as EventListener);
   });
 
   // Open the dialog in the right mode. showModal() blocks page
@@ -532,7 +568,7 @@
              - The chevron row toggles collapsed (no thumbs at all);
              - The handle above it resizes the expanded strip.
            Both persist independently in localStorage. -->
-      {#if hasMultipleItems}
+      {#if hasMultipleItems && !allAudiobook}
         <div
           class="flex shrink-0 flex-col border-t border-border bg-surface-elevated"
           style={stripCollapsed ? '' : `height: ${stripHeight}px`}

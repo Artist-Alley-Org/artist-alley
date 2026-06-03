@@ -22,7 +22,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
+	"github.com/mscrnt/artist-alley/app/internal/cue"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/nfo"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -74,6 +76,20 @@ type AudioMetadata struct {
 	// single-chapter rendering for chapterless audio.
 	Chapters []AudioChapter `json:"chapters,omitempty"`
 
+	// Album metadata folded from a Kodi/Jellyfin album.nfo companion
+	// when one is attached to the asset. Carries the canonical
+	// audiobook info (book title / author / runtime / sibling
+	// track titles + durations / MusicBrainz IDs) so the player can
+	// show "Track 3 of 6 · The Dark Tower V" even when individual
+	// MP3 ID3 tags are sparse. Empty when no companion exists.
+	Album *AlbumInfo `json:"album,omitempty"`
+
+	// ChapterSource is a single-word label the frontend can render
+	// in the stats panel. "container" = atoms from the source file
+	// itself, "cue" = parsed from a .cue companion. Empty when no
+	// chapters were extracted.
+	ChapterSource string `json:"chapter_source,omitempty"`
+
 	// SubtitleTracks is a list of subtitle / caption tracks the file
 	// ships (rare in audio, common in video — but we surface it on
 	// both since the field is shared via the metadata JSONB). Currently
@@ -93,6 +109,32 @@ type AudioChapter struct {
 	StartS  float64 `json:"start_s"`
 	EndS    float64 `json:"end_s"`
 	Title   string  `json:"title,omitempty"`
+}
+
+// AlbumInfo is the projected album metadata for an audiobook —
+// folded from a Kodi-style album.nfo companion or, in a future
+// commit, fetched from an online catalogue (Audible / OpenLibrary /
+// MusicBrainz). All fields optional.
+type AlbumInfo struct {
+	Title         string       `json:"title,omitempty"`
+	Artist        string       `json:"artist,omitempty"`
+	AlbumArtist   string       `json:"album_artist,omitempty"`
+	Genre         string       `json:"genre,omitempty"`
+	Year          string       `json:"year,omitempty"`
+	Summary       string       `json:"summary,omitempty"`
+	RuntimeS      float64      `json:"runtime_s,omitempty"`
+	MBAlbumID     string       `json:"mb_album_id,omitempty"`
+	MBArtistID    string       `json:"mb_artist_id,omitempty"`
+	MBReleaseID   string       `json:"mb_release_id,omitempty"`
+	Tracks        []AlbumTrack `json:"tracks,omitempty"`
+}
+
+// AlbumTrack is one entry in an album's track listing. Position
+// is 1-based.
+type AlbumTrack struct {
+	Position  int     `json:"position"`
+	Title     string  `json:"title,omitempty"`
+	DurationS float64 `json:"duration_s,omitempty"`
 }
 
 // SubtitleTrack describes one subtitle / caption stream available
@@ -225,6 +267,14 @@ func (h *AudioHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMes
 			slog.String("asset_id", p.AssetID.String()),
 			slog.String("err", err.Error()))
 	}
+	if len(meta.Chapters) > 0 {
+		meta.ChapterSource = "container"
+	}
+
+	// Companion fold — when the asset has a .nfo / .cue sidecar
+	// attached, parse it and stamp the additional metadata. Best-
+	// effort: a bad sidecar logs a warning but never aborts the job.
+	h.foldCompanions(jobCtx, p.AssetID, &meta)
 	result.Metadata = meta
 
 	// Cheap re-queue path: if every variant already exists, skip
@@ -696,4 +746,124 @@ var audioExts = map[string]struct{}{
 func isAudioExt(ext string) bool {
 	_, ok := audioExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
+}
+
+// foldCompanions pulls the asset's companion files, looks for a
+// .nfo / .cue sidecar, and folds parsed values into meta. Errors
+// at any step are logged + ignored — the asset is still usable
+// without the sidecar info.
+func (h *AudioHandler) foldCompanions(ctx context.Context, assetID uuid.UUID, meta *AudioMetadata) {
+	pgID := pgtype.UUID{Bytes: assetID, Valid: true}
+	rows, err := assets.New(h.Pool).ListAssetCompanions(ctx, pgID)
+	if err != nil {
+		h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.companions_list_failed",
+			slog.String("asset_id", assetID.String()),
+			slog.String("err", err.Error()))
+		return
+	}
+	for _, c := range rows {
+		path := strings.ToLower(c.CompanionPath)
+		switch {
+		case strings.HasSuffix(path, ".nfo"):
+			data, err := h.downloadCompanion(ctx, c.ObjectHash)
+			if err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.companion_download_failed",
+					slog.String("path", c.CompanionPath), slog.String("err", err.Error()))
+				continue
+			}
+			album, err := nfo.ParseAlbum(data)
+			if err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.nfo_parse_failed",
+					slog.String("path", c.CompanionPath), slog.String("err", err.Error()))
+				continue
+			}
+			meta.Album = nfoToAlbum(album)
+		case strings.HasSuffix(path, ".cue"):
+			// Only fall back to .cue when the container didn't ship
+			// chapters of its own. Audible m4b exports usually do; the
+			// .cue is redundant + the timecodes can disagree by a
+			// fraction of a second.
+			if len(meta.Chapters) > 0 {
+				continue
+			}
+			data, err := h.downloadCompanion(ctx, c.ObjectHash)
+			if err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.companion_download_failed",
+					slog.String("path", c.CompanionPath), slog.String("err", err.Error()))
+				continue
+			}
+			sheet, err := cue.Parse(data)
+			if err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "preview.audio.cue_parse_failed",
+					slog.String("path", c.CompanionPath), slog.String("err", err.Error()))
+				continue
+			}
+			meta.Chapters = cueToChapters(sheet, meta.DurationS)
+			meta.ChapterSource = "cue"
+		}
+	}
+}
+
+func (h *AudioHandler) downloadCompanion(ctx context.Context, hash string) ([]byte, error) {
+	body, _, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	const maxCompanion = 2 * 1024 * 1024 // 2 MB cap — .nfo / .cue are tiny
+	return io.ReadAll(io.LimitReader(body, maxCompanion))
+}
+
+func nfoToAlbum(a *nfo.Album) *AlbumInfo {
+	if a == nil {
+		return nil
+	}
+	out := &AlbumInfo{
+		Title:       a.Title,
+		Artist:      a.Artist,
+		AlbumArtist: a.AlbumArtist,
+		Genre:       a.Genre,
+		Year:        a.Year,
+		Summary:     a.Outline,
+		MBAlbumID:   a.MBAlbumID,
+		MBArtistID:  a.MBArtistID,
+		MBReleaseID: a.MBReleaseID,
+		// Kodi convention: <runtime> is minutes. Persist as seconds
+		// so the frontend doesn't need to know the source format.
+		RuntimeS: a.Runtime * 60,
+	}
+	if out.Summary == "" {
+		out.Summary = a.Review
+	}
+	for _, t := range a.Tracks {
+		out.Tracks = append(out.Tracks, AlbumTrack{
+			Position:  t.Position,
+			Title:     t.Title,
+			DurationS: t.DurationS,
+		})
+	}
+	return out
+}
+
+// cueToChapters projects a parsed CUE sheet onto our AudioChapter
+// shape. End is the next track's start (or the audio's full
+// duration for the last track when we have it).
+func cueToChapters(sheet *cue.Sheet, durationS float64) []AudioChapter {
+	if sheet == nil || len(sheet.Tracks) == 0 {
+		return nil
+	}
+	out := make([]AudioChapter, 0, len(sheet.Tracks))
+	for i, t := range sheet.Tracks {
+		end := durationS
+		if i+1 < len(sheet.Tracks) {
+			end = sheet.Tracks[i+1].StartS
+		}
+		out = append(out, AudioChapter{
+			ID:     t.Number,
+			StartS: t.StartS,
+			EndS:   end,
+			Title:  t.Title,
+		})
+	}
+	return out
 }

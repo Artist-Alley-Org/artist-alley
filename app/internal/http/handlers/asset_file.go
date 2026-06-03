@@ -58,7 +58,7 @@ func (h *AssetFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid asset id"}`, http.StatusBadRequest)
 		return
 	}
-	hash, ok, err := h.resolveHash(r.Context(), assetID)
+	hash, ext, ok, err := h.resolveHashExt(r.Context(), assetID)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
@@ -84,8 +84,18 @@ func (h *AssetFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	size := info.Size
 	ct := info.ContentType
-	if ct == "" {
-		ct = "application/octet-stream"
+	if ct == "" || ct == "application/octet-stream" {
+		// Storage didn't capture a meaningful MIME (the upload
+		// either omitted X-Content-Type or used the generic octet-
+		// stream content type). Browsers refuse to play audio /
+		// video sources advertised as octet-stream even when the
+		// <source type=> hint matches — fall back to an
+		// extension-based table for the media kinds we care about.
+		if mapped := mimeForExt(ext); mapped != "" {
+			ct = mapped
+		} else if ct == "" {
+			ct = "application/octet-stream"
+		}
 	}
 
 	// Common headers — Accept-Ranges advertises seek support to the
@@ -142,18 +152,57 @@ func (h *AssetFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, rangeBody)
 }
 
-func (h *AssetFileHandler) resolveHash(ctx context.Context, id uuid.UUID) (string, bool, error) {
+func (h *AssetFileHandler) resolveHashExt(ctx context.Context, id uuid.UUID) (string, string, bool, error) {
 	row, err := assets.New(h.Pool).GetAsset(ctx, pgtype.UUID{Bytes: id, Valid: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", false, nil
+			return "", "", false, nil
 		}
-		return "", false, err
+		return "", "", false, err
 	}
 	if row.FileHash == nil || *row.FileHash == "" {
-		return "", false, nil
+		return "", "", false, nil
 	}
-	return *row.FileHash, true, nil
+	ext := ""
+	if row.FileExtension != nil {
+		ext = strings.ToLower(strings.TrimPrefix(*row.FileExtension, "."))
+	}
+	return *row.FileHash, ext, true, nil
+}
+
+// mimeForExt is a tiny extension→MIME table covering the media
+// kinds the viewer plays directly (browsers gate audio/video
+// playback on Content-Type even when the <source type> hint
+// matches — falling back to an extension lookup avoids the
+// "decode failed" path for storage that didn't capture MIME).
+func mimeForExt(ext string) string {
+	switch ext {
+	case "mp3":
+		return "audio/mpeg"
+	case "wav":
+		return "audio/wav"
+	case "flac":
+		return "audio/flac"
+	case "ogg", "oga":
+		return "audio/ogg"
+	case "opus":
+		return "audio/opus"
+	case "m4a", "m4b", "aac":
+		return "audio/mp4"
+	case "aax":
+		// Audible source; the browser can't play it, but a
+		// real MIME is still better than octet-stream.
+		return "audio/vnd.audible.aax"
+	case "mp4", "m4v":
+		return "video/mp4"
+	case "webm":
+		return "video/webm"
+	case "mov":
+		return "video/quicktime"
+	case "mkv":
+		return "video/x-matroska"
+	}
+	return ""
 }
 
 // parseSingleByteRange parses the first range in a "bytes=START-END"

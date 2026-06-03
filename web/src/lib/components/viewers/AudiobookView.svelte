@@ -33,6 +33,14 @@
   const fileUrl = $derived(`/api/v1/assets/${asset.id}/file`);
   const ext = $derived((asset.file_extension || '').toLowerCase().replace(/^\./, ''));
 
+  // sessionStorage key for the sibling-jump autoplay handoff. When
+  // the user clicks a track in the panel (or auto-advance fires at
+  // end-of-audio), the OUTGOING view stamps this with the incoming
+  // asset id; the INCOMING view checks it on loaded-metadata and
+  // calls play() so the audiobook reader keeps going without
+  // requiring a manual play press on every track.
+  const SIBLING_AUTOPLAY_KEY = 'aa.audiobook.autoplay.next';
+
   let audioEl: HTMLAudioElement | undefined = $state();
 
   // Audio source: for .m4b we send Content-Type audio/mp4 from the
@@ -59,8 +67,25 @@
   interface AudioMetaWire {
     duration_s?: number;
     chapters?: { id: number; start_s: number; end_s: number; title?: string }[];
+    chapter_source?: string;
     tags?: Record<string, string>;
     has_cover?: boolean;
+    album?: {
+      title?: string;
+      artist?: string;
+      album_artist?: string;
+      genre?: string;
+      year?: string;
+      summary?: string;
+      runtime_s?: number;
+      mb_album_id?: string;
+      tracks?: { position: number; title?: string; duration_s?: number }[];
+    };
+  }
+  interface SiblingWire {
+    asset_id: string;
+    asset: { id: string; title?: string };
+    sort_order?: number;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const audioMeta = $derived<AudioMetaWire>((asset.metadata?.audio as any) ?? {});
@@ -147,12 +172,35 @@
       const c = session.chapters[idx];
       if (c && audioEl) audioEl.currentTime = c.start;
     };
+    session.goToSibling = (assetId) => {
+      // Stash a handoff token in sessionStorage so the next track's
+      // AudiobookView mount knows to auto-play (continuous-listen
+      // expectation — clicking a track or hitting end-of-audio
+      // should pour straight into the next file without the user
+      // having to hit play again).
+      try { sessionStorage.setItem(SIBLING_AUTOPLAY_KEY, assetId); } catch { /* ignore */ }
+      // Custom event the AssetPlaylist host listens for to mutate
+      // its cursor. Falls back to a URL hop when no listener
+      // intercepts (e.g. a future standalone /assets/{id} route).
+      const ev = new CustomEvent('aa-audiobook-advance', {
+        detail: { assetId },
+        bubbles: true,
+        cancelable: true,
+      });
+      const accepted = !window.dispatchEvent(ev) || ev.defaultPrevented;
+      if (!accepted) {
+        const u = new URL(window.location.href);
+        u.searchParams.set('asset', assetId);
+        window.history.replaceState({}, '', u.toString());
+      }
+    };
 
     // Pour any prop-side metadata in first (rare — most hosts pass
     // thin asset summaries without `metadata`), then go fetch the
     // full asset row so we get chapter + tags + has_cover.
     applyAudioMeta(audioMeta);
     void fetchFullMetadata();
+    void fetchSiblings();
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,9 +215,36 @@
         title: c.title ?? '',
       }));
     }
+    if (typeof m.chapter_source === 'string') session.chapterSource = m.chapter_source;
     const tags: Record<string, string> = m.tags ?? {};
-    session.title = tags['title'] || tags['album'] || asset.title || '';
-    session.author = tags['artist'] || tags['album_artist'] || tags['author'] || '';
+    // Album-level info from a .nfo companion wins over per-file
+    // tags — it's the canonical "this is what this audiobook is"
+    // pulled from a curated metadata source. We still fall back
+    // through the ID3 chain for files without a companion.
+    const al: AudioMetaWire['album'] = m.album;
+    if (al) {
+      session.album = {
+        title: al.title ?? '',
+        artist: al.artist ?? '',
+        albumArtist: al.album_artist ?? '',
+        genre: al.genre ?? '',
+        year: al.year ?? '',
+        summary: al.summary ?? '',
+        runtimeS: al.runtime_s ?? 0,
+        mbAlbumId: al.mb_album_id ?? '',
+        tracks: (al.tracks ?? []).map((t) => ({
+          position: t.position,
+          title: t.title ?? '',
+          durationS: t.duration_s ?? 0,
+        })),
+      };
+    }
+    session.title = (session.album?.title)
+      || tags['title'] || tags['album']
+      || asset.title || '';
+    session.author = (session.album?.albumArtist || session.album?.artist)
+      || tags['artist'] || tags['album_artist'] || tags['author']
+      || '';
     session.narrator = tags['composer'] || tags['narrator'] || '';
     session.coverUrl = m.has_cover ? coverUrl : null;
   }
@@ -184,6 +259,35 @@
     } catch { /* ignore — keep whatever we had from prop / browser */ }
   }
 
+  // Sibling-track discovery — when the URL carries ?post=ID and the
+  // post has multiple audio members (Dark Tower style: one MP3 per
+  // disk), populate session.siblings so the panel + autoplay-on-end
+  // can hop between tracks.
+  async function fetchSiblings() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const postId = params.get('post');
+      if (!postId) return;
+      const r = await fetch(`/api/v1/posts/${postId}`, { credentials: 'include' });
+      if (!r.ok) return;
+      const post = await r.json();
+      const members: SiblingWire[] = post.members ?? [];
+      // Treat all post members as a play queue when the host post
+      // has > 1 member. For per-member kind gating we'd need
+      // asset_type but the post member shape doesn't carry it
+      // reliably; the audio kind filter that gated AudiobookView's
+      // mount is good enough.
+      const sorted = [...members].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      if (sorted.length < 2) return;
+      session.siblings = sorted.map((m, i) => ({
+        assetId: m.asset?.id ?? m.asset_id,
+        title: (m.asset?.title ?? '').trim() || `Track ${i + 1}`,
+        position: i + 1,
+      }));
+      session.currentSiblingIndex = session.siblings.findIndex((s) => s.assetId === asset.id);
+    } catch { /* ignore — single-file audiobook fallback is fine */ }
+  }
+
   onDestroy(() => {
     if (resumePersistTimer) clearTimeout(resumePersistTimer);
     if (sleepInterval) clearInterval(sleepInterval);
@@ -191,6 +295,7 @@
     session.togglePlay = undefined;
     session.skipRelative = undefined;
     session.goToChapter = undefined;
+    session.goToSibling = undefined;
   });
 
   // ── Audio event handlers ───────────────────────────────────
@@ -208,6 +313,19 @@
       audioEl.currentTime = restore;
     }
     session.loading = false;
+
+    // If we arrived here from a sibling jump (user clicked the next
+    // track or auto-advance fired), the outgoing view stamped our
+    // asset id in sessionStorage; auto-play so the listen is
+    // continuous. Clear the flag immediately so a page reload
+    // doesn't autoplay surprise-style.
+    try {
+      const want = sessionStorage.getItem(SIBLING_AUTOPLAY_KEY);
+      if (want === asset.id) {
+        sessionStorage.removeItem(SIBLING_AUTOPLAY_KEY);
+        audioEl.play().catch(() => { /* user-gesture block — fine */ });
+      }
+    } catch { /* private mode — ignore */ }
   }
 
   function onTimeUpdate() {
@@ -261,6 +379,18 @@
       : 'Audio failed to load';
     session.loading = false;
   }
+  function onEnded() {
+    // Multi-file auto-advance — when the user has set autoAdvance
+    // and the current asset is a member of a larger playlist (e.g.
+    // Dark Tower's 6-MP3 set), jump to the next member. The host
+    // playlist (AssetPlaylist) listens for aa-audiobook-advance
+    // and bumps its cursor.
+    if (!session.autoAdvance) return;
+    const next = session.currentSiblingIndex + 1;
+    if (next < 0 || next >= session.siblings.length) return;
+    const nextId = session.siblings[next].assetId;
+    if (nextId) session.goToSibling?.(nextId);
+  }
 
   // Apply speed live when the session changes.
   $effect(() => {
@@ -299,6 +429,7 @@
     onplay={onPlay}
     onpause={onPause}
     onerror={onError}
+    onended={onEnded}
   >
     <source src={fileUrl} type={srcType} />
   </audio>

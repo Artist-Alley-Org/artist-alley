@@ -101,6 +101,11 @@
           <div class="truncate font-medium text-fg">{session.title || ctx.asset.title || 'Untitled'}</div>
           {#if session.author}<div class="truncate text-fg-muted">by {session.author}</div>{/if}
           {#if session.narrator}<div class="truncate text-fg-muted">narrated by {session.narrator}</div>{/if}
+          {#if session.siblings.length > 1}
+            <div class="mt-0.5 truncate text-fg-muted/80">
+              Track {session.currentSiblingIndex + 1} of {session.siblings.length}
+            </div>
+          {/if}
           <div class="mt-1 flex items-center gap-1.5 font-mono text-fg-muted/80">
             <span>{fmtClock(session.currentTime)}</span>
             <span class="text-fg-muted/40">/</span>
@@ -112,6 +117,81 @@
         </div>
       </div>
     </section>
+
+    {#if session.album && (session.album.title || session.album.summary || session.album.year || session.album.genre)}
+      <!-- ── Album / Series (from .nfo) ─────────────────────────── -->
+      <section class="border-b border-border p-3 text-xs">
+        <h3 class="mb-2 text-[10px] font-medium uppercase tracking-wider text-fg-muted">Album · Series</h3>
+        <dl class="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-[10px]">
+          {#if session.album.title}
+            <dt class="text-fg-muted">Title</dt>
+            <dd class="text-fg">{session.album.title}</dd>
+          {/if}
+          {#if session.album.albumArtist || session.album.artist}
+            <dt class="text-fg-muted">Author</dt>
+            <dd class="text-fg">{session.album.albumArtist || session.album.artist}</dd>
+          {/if}
+          {#if session.album.genre}
+            <dt class="text-fg-muted">Genre</dt>
+            <dd class="text-fg">{session.album.genre}</dd>
+          {/if}
+          {#if session.album.year}
+            <dt class="text-fg-muted">Year</dt>
+            <dd class="text-fg">{session.album.year}</dd>
+          {/if}
+          {#if session.album.runtimeS > 0}
+            <dt class="text-fg-muted">Runtime</dt>
+            <dd class="font-mono text-fg">{fmtSpan(session.album.runtimeS)}</dd>
+          {/if}
+        </dl>
+        {#if session.album.summary}
+          <p class="mt-2 text-[10px] leading-snug text-fg-muted">{session.album.summary}</p>
+        {/if}
+      </section>
+    {/if}
+
+    {#if session.siblings.length > 1}
+      <!-- ── Tracks (multi-file audiobook) ──────────────────────── -->
+      <section class="border-b border-border p-3 text-xs">
+        <div class="mb-2 flex items-center justify-between">
+          <h3 class="text-[10px] font-medium uppercase tracking-wider text-fg-muted">Tracks</h3>
+          <span class="font-mono text-[10px] text-fg-muted">{session.currentSiblingIndex + 1} / {session.siblings.length}</span>
+        </div>
+        <label class="mb-2 flex items-center justify-between text-fg-muted">
+          <span>Auto-advance on end</span>
+          <button
+            type="button"
+            onclick={() => session.toggleAutoAdvance()}
+            class="inline-flex h-5 w-9 items-center rounded-full transition-colors"
+            class:bg-accent={session.autoAdvance}
+            class:bg-border={!session.autoAdvance}
+            role="switch"
+            aria-checked={session.autoAdvance}
+            aria-label="Auto-advance to next track at end"
+          >
+            <span class="block h-4 w-4 transform rounded-full bg-white shadow transition-transform" class:translate-x-4={session.autoAdvance} class:translate-x-0.5={!session.autoAdvance}></span>
+          </button>
+        </label>
+        <div class="max-h-60 space-y-0.5 overflow-y-auto pr-1">
+          {#each session.siblings as s, i (s.assetId)}
+            <button
+              type="button"
+              onclick={() => session.goToSibling?.(s.assetId)}
+              class={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-[10px] ${i === session.currentSiblingIndex ? 'bg-accent/20 text-accent' : 'text-fg hover:bg-surface-elevated'}`}
+              title={s.title}
+            >
+              <span class="truncate">
+                <span class="font-mono text-fg-muted/70">{String(s.position).padStart(2, '0')}</span>
+                <span class="ml-2">{s.title}</span>
+              </span>
+              {#if i === session.currentSiblingIndex}
+                <span class="shrink-0 font-mono text-[9px] uppercase text-accent">now</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <!-- ── 2. Chapters ───────────────────────────────────────── -->
     {#if session.chapters.length > 0}
