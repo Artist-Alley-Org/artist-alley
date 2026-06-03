@@ -1,2 +1,0 @@
-openai_gpt_prompt,text,YES,,,
-openai_gpt_input_field,int(11),YES,,,

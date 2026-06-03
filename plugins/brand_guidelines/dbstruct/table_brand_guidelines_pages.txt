@@ -1,4 +1,0 @@
-ref,int,NO,PRI,,auto_increment
-name,varchar(255),NO,,,
-parent,int,NO,MUL,0,
-order_by,int,NO,,,

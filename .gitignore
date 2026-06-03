@@ -8,13 +8,46 @@ _docker_reference/
 *.zip
 *.mview
 
-# --- ResourceSpace local state ---
-# RS writes per-install secrets into include/config.php
-include/config.php
+# --- ResourceSpace upstream code (kept on disk as reference, not tracked) ---
+# We forked from RS r28830 (ADR 0001) and reverse-engineered a clean-room
+# Go rewrite (ADR 0006). The strangler-fig porting layer was abandoned
+# (ADR 0003 historical); RS is now blueprint / reference only. Local copies
+# stay so we can compare against upstream when designing replacements;
+# `./scripts/rs-diff.sh` syncs them to current RS HEAD. Never tracked again.
+/batch/
+/css/
+/dbstruct/
+/documentation/
+/gfx/
+/iccprofiles/
+/include/
+/js/
+/languages/
+/lib/
+/pages/
+/plugins/
+/upgrade/
+/tests/
+/templates/
+/api/
+/.well-known/
+/composer.json
+/composer.lock
+/index.php
+/login.php
+/license.txt
+/manifest.json
+/package.json
+/pnpm-lock.yaml
+/phpcs.xml.dist
+/phpstan-baseline.neon
+/phpstan.neon.dist
+/rector.php
+/robots.txt
+/.svnignore
+
 # Local asset storage. Bind-mounted into containers; never committed.
 filestore/
-# RS-generated cache and log dirs
-gfx/homeanim/
 /logs/
 *.log
 
@@ -79,3 +112,22 @@ web/static/ab/
 _abr-test-out/
 app/aa-abr-extract
 *.abr
+
+# Test-source media kept under the project root — never commit. Used
+# by ingest scripts (Dresden Files .m4b, Dark Tower MP3 folders,
+# .mview models, etc).
+/Book ?*/
+/The Dresden Files *
+/*.m4b
+/*.mview
+/*.aax
+/*.key
+/*.cue
+
+# Smoke-test screenshots captured by Playwright during dev.
+/audiobook-*.png
+/doc-*.png
+/model-*.png
+/epub-tool-*.png
+/test-*.png
+/firing_squad/

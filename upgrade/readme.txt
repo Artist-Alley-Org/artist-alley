@@ -1,1 +1,0 @@
-Always use the "upgrade.php" to run these scripts - do not run directly or out of sequence.
