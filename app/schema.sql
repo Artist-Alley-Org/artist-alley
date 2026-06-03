@@ -60,6 +60,15 @@ CREATE TABLE "user" (
 -- migrations/00008_user_username_unique.sql
 CREATE UNIQUE INDEX user_username_uniq_idx ON "user" (username);
 
+-- migrations/00037_admin_user_list_indexes.sql — supports the admin
+-- user list cursor pagination + case-insensitive search across
+-- username / fullname / email used by GET /admin/users.
+CREATE INDEX user_created_ref_desc_idx ON "user" (created DESC NULLS LAST, ref DESC);
+CREATE INDEX user_username_lower_idx ON "user" (LOWER(username));
+CREATE INDEX user_fullname_lower_idx ON "user" (LOWER(fullname));
+CREATE INDEX user_email_lower_idx ON "user" (LOWER(email));
+CREATE INDEX user_approved_idx ON "user" (approved);
+
 -- migrations/00009_system_config.sql — runtime-tunable admin settings
 -- (site name, base URL, SMTP, etc.). Boot-time concerns stay in env.
 CREATE TABLE system_config (

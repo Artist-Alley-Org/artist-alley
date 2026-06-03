@@ -290,6 +290,58 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      summary: List users (admin)
+      description: |
+        Paginated admin user list (Phase 1.17.A). Newest accounts first.
+        Filters: `q` runs a case-insensitive substring match across
+        username / fullname / email; `status` narrows to active /
+        pending / disabled (mapping to the underlying user.approved
+        flag, see 1.17.B for the lifecycle state machine). Cursor
+        pagination via opaque `cursor` token; `total` is the
+        unfiltered-by-cursor count for the badge in the chrome.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring match across username, fullname, email.
+          schema: { type: string, maxLength: 200 }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, pending, disabled]
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of admin user rows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /auth/tokens/{id}:
     delete:
       operationId: revokeApiToken
@@ -4976,6 +5028,86 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    AdminUser:
+      type: object
+      description: |
+        Admin-projection of a user row. Carries everything the
+        admin list table needs — username, email, status, last
+        activity, primary role — without surfacing password-bearing
+        columns. `status` maps to the underlying user.approved
+        column (1=active, 0=pending, 2=disabled per Phase 1.17.B's
+        lifecycle state machine). `primary_role` is the user's
+        alphabetically-first global role assignment; per-team
+        assignments live on the user detail page.
+      required: [ref, username, display_name, status, created_at]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        fullname:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        display_name:
+          type: string
+          description: Resolved display string (profile.display_name → fullname → username).
+        avatar_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        primary_role:
+          type: string
+          description: Empty when the user has no global role assigned.
+        created_at:
+          type: string
+          format: date-time
+        last_active:
+          type: string
+          format: date-time
+          nullable: true
+        account_expires:
+          type: string
+          format: date-time
+          nullable: true
+          description: Hard expiry enforced at login; null = no expiry.
+        auth_origin:
+          type: string
+          nullable: true
+          description: |
+            Login provider for this user — empty / null = native, else
+            'simpleldap' / 'simplesaml' / etc. once Phase 1.17.O wires
+            the enterprise SSO surfaces. Surfaced here so the admin
+            list can show the auth-source badge.
+        profile_origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Federation origin (when the profile row came from a peer
+            instance). Null = home instance. See ADR 0007.
+
+    AdminUserList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUser" }
+        total:
+          type: integer
+          format: int64
+          description: Total rows matching the q + status filter (cursor-independent).
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque pagination token. Pass back as the next request's
+            `cursor` param to fetch the following page. Null when this
+            response is the final page.
 
     UserPublic:
       type: object

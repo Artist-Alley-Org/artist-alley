@@ -424,6 +424,9 @@ func (s *apiServer) GetUserPublicByUsername(ctx context.Context, req openapi.Get
 func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	return s.users.UpdateUserProfile(ctx, req)
 }
+func (s *apiServer) ListAdminUsers(ctx context.Context, req openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	return s.users.ListAdminUsers(ctx, req)
+}
 
 // --- setup -----------------------------------------------------------------
 
