@@ -253,6 +253,18 @@ CREATE TABLE role_capabilities (
     PRIMARY KEY (role_id, capability_code)
 );
 
+-- migrations/00039_password_history.sql — reuse-prevention storage
+-- for self-service + admin-forced password changes.
+CREATE TABLE user_password_history (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rs_user_id       BIGINT NOT NULL,
+    password_hash    VARCHAR(255) NOT NULL,
+    changed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    origin_server_id UUID NULL
+);
+CREATE INDEX user_password_history_user_changed_idx
+    ON user_password_history (rs_user_id, changed_at DESC);
+
 -- teams (00015) is loaded before user_roles (00016) so the FK lands.
 CREATE TABLE teams (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),

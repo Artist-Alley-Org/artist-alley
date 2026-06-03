@@ -125,6 +125,42 @@
     if (s === 'pending') return t('admin.users.status_pending');
     return t('admin.users.status_disabled');
   }
+
+  // Password reset (Phase 1.17.D).
+  let resetReason = $state('');
+  let resetting = $state(false);
+  let resetResult = $state<{ password: string; copied: boolean } | null>(null);
+
+  async function resetPassword() {
+    if (resetting) return;
+    resetting = true;
+    try {
+      const r = await api.POST('/admin/users/{ref}/password-reset', {
+        params: { path: { ref } },
+        body: { reason: resetReason || undefined },
+      });
+      if (r.error || !r.data) {
+        error = (r.error as { error?: string } | undefined)?.error ?? 'Failed to reset password.';
+        return;
+      }
+      const result = r.data as unknown as { temporary_password: string };
+      resetResult = { password: result.temporary_password, copied: false };
+      resetReason = '';
+    } finally {
+      resetting = false;
+    }
+  }
+
+  async function copyReset() {
+    if (!resetResult) return;
+    try {
+      await navigator.clipboard.writeText(resetResult.password);
+      resetResult.copied = true;
+    } catch {
+      // clipboard write blocked (insecure context, etc.) — leave the
+      // password visible so the admin can copy it manually.
+    }
+  }
 </script>
 
 <svelte:head><title>User {ref} — artist-alley</title></svelte:head>
@@ -216,6 +252,46 @@
 
     {#if statusMessage}
       <p class={statusMessage.kind === 'ok' ? 'text-sm text-success' : 'text-sm text-fg-muted'}>{statusMessage.text}</p>
+    {/if}
+  </section>
+
+  <section class="mt-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+    <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.reset_section')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.reset_intro')}</p>
+
+    <label class="block text-xs">
+      <span class="mb-1 block text-fg-muted">{t('admin.user_detail.reset_reason')}</span>
+      <input
+        type="text"
+        bind:value={resetReason}
+        maxlength="500"
+        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+      />
+    </label>
+
+    <button
+      type="button"
+      onclick={resetPassword}
+      disabled={resetting}
+      class="rounded border border-warning bg-warning/10 px-3 py-1 text-xs font-medium text-warning hover:bg-warning/20 disabled:opacity-50"
+    >
+      {resetting ? t('admin.user_detail.resetting') : t('admin.user_detail.reset_button')}
+    </button>
+
+    {#if resetResult}
+      <div class="mt-2 rounded border border-warning/40 bg-warning/5 p-3">
+        <p class="text-xs text-fg-muted">{t('admin.user_detail.reset_result_label')}</p>
+        <div class="mt-1 flex items-center gap-2">
+          <code class="flex-1 break-all rounded bg-surface px-2 py-1 font-mono text-sm">{resetResult.password}</code>
+          <button
+            type="button"
+            onclick={copyReset}
+            class="rounded border border-border bg-surface px-2 py-1 text-xs hover:border-accent"
+          >
+            {resetResult.copied ? t('admin.user_detail.reset_copied') : t('admin.user_detail.reset_copy')}
+          </button>
+        </div>
+      </div>
     {/if}
   </section>
 {/if}

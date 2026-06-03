@@ -55,7 +55,20 @@ type Handler struct {
 	// the stale entry via LRU pressure.
 	CacheReg *cache.Registry
 
+	// Policy is the password complexity source (Phase 1.17.D). Nil-
+	// safe — handler falls back to the zero policy (no min length,
+	// no complexity), which means "anything goes" for installs that
+	// haven't configured one.
+	Policy passwordPolicySource
+
 	tokenPrefix string // overridable in tests
+}
+
+// SetPasswordPolicySource attaches the policy lookup post-
+// construction so api.go's existing NewHandler call signature
+// stays stable. Same pattern as users.Handler.SetAuditRecorder.
+func (h *Handler) SetPasswordPolicySource(p passwordPolicySource) {
+	h.Policy = p
 }
 
 // auditRecorder is the subset of audit.Recorder that the auth handler
@@ -68,6 +81,28 @@ type auditRecorder interface {
 	LoginRateLimited(ctx context.Context, req *http.Request, attemptedUsername, key string)
 	Logout(ctx context.Context, req *http.Request, userRef int64, sessionID string)
 	SessionRevoked(ctx context.Context, req *http.Request, userRef, actorUserRef int64, sessionID, reason string)
+	PasswordChanged(ctx context.Context, req *http.Request, userRef int64, sessionsRevoked int)
+	PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string)
+}
+
+// passwordPolicySource is the minimal interface the password
+// handlers need to enforce complexity. Implemented by
+// *sysconfig.Store; the interface form keeps auth from importing
+// the sysconfig package directly so tests can stub it cheaply.
+type passwordPolicySource interface {
+	GetPasswordPolicy(ctx context.Context) (PasswordPolicy, error)
+}
+
+// PasswordPolicy mirrors sysconfig.PasswordPolicy without the
+// import. Fields kept in lockstep — when sysconfig grows a knob,
+// add it here too.
+type PasswordPolicy struct {
+	MinLength      int
+	RequireUpper   bool
+	RequireNumber  bool
+	RequireSymbol  bool
+	DisallowCommon bool
+	MaxAgeDays     int
 }
 
 // nopAudit is the default Audit when none is wired up — useful in
@@ -80,6 +115,8 @@ func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)
 func (nopAudit) Logout(context.Context, *http.Request, int64, string)                    {}
 func (nopAudit) SessionRevoked(context.Context, *http.Request, int64, int64, string, string) {
 }
+func (nopAudit) PasswordChanged(context.Context, *http.Request, int64, int)            {}
+func (nopAudit) PasswordReset(context.Context, *http.Request, int64, int64, string)     {}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching RS's rs_setcookie default) is used. The

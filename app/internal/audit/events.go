@@ -33,6 +33,8 @@ const (
 	EventSessionRevoked   = "session.revoked"
 	EventSessionExpired   = "session.expired"
 	EventUserStatusChanged = "user.status_changed"
+	EventPasswordChanged   = "user.password_changed"
+	EventPasswordReset     = "user.password_reset"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -133,6 +135,25 @@ func (r *Recorder) UserStatusChanged(ctx context.Context, req *http.Request, sub
 		"previous": previous,
 		"next":     next,
 		"reason":   reason,
+	})
+}
+
+// PasswordChanged records a self-service password change.
+// `sessionsRevoked` is the count of OTHER sessions terminated as
+// part of the change (the caller may opt into "sign out
+// everywhere else" defensively).
+func (r *Recorder) PasswordChanged(ctx context.Context, req *http.Request, userRef int64, sessionsRevoked int) {
+	r.write(ctx, EventPasswordChanged, &userRef, &userRef, ctxFromRequest(req), map[string]any{
+		"sessions_revoked": sessionsRevoked,
+	})
+}
+
+// PasswordReset records an admin-initiated force-reset. `actor` is
+// the admin who fired the action; `subject` is the user whose
+// password was reset. `reason` is the admin-supplied free-text note.
+func (r *Recorder) PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string) {
+	r.write(ctx, EventPasswordReset, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"reason": reason,
 	})
 }
 

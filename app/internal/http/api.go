@@ -56,7 +56,7 @@ type apiServer struct {
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
 	return &apiServer{
-		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
+		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
@@ -84,6 +84,35 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 	h := users.NewHandler(pool, logger, cacheReg)
 	h.SetAuditRecorder(auditRec)
 	return h
+}
+
+// authHandlerWithPolicy mirrors usersHandlerWithAudit — composes the
+// post-construction setters so the existing positional NewHandler
+// signature doesn't need to grow another arg.
+func authHandlerWithPolicy(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, cacheReg *cache.Registry, sysCfg *sysconfig.Store) *auth.Handler {
+	h := auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg)
+	h.SetPasswordPolicySource(passwordPolicyAdapter{store: sysCfg})
+	return h
+}
+
+// passwordPolicyAdapter bridges *sysconfig.Store → the auth handler's
+// passwordPolicySource interface. Lives here (not in auth or sysconfig)
+// to keep the package dependency graph unidirectional.
+type passwordPolicyAdapter struct{ store *sysconfig.Store }
+
+func (a passwordPolicyAdapter) GetPasswordPolicy(ctx context.Context) (auth.PasswordPolicy, error) {
+	cfg, err := a.store.GetAuth(ctx)
+	if err != nil {
+		return auth.PasswordPolicy{}, err
+	}
+	return auth.PasswordPolicy{
+		MinLength:      cfg.PasswordPolicy.MinLength,
+		RequireUpper:   cfg.PasswordPolicy.RequireUpper,
+		RequireNumber:  cfg.PasswordPolicy.RequireNumber,
+		RequireSymbol:  cfg.PasswordPolicy.RequireSymbol,
+		DisallowCommon: cfg.PasswordPolicy.DisallowCommon,
+		MaxAgeDays:     cfg.PasswordPolicy.MaxAgeDays,
+	}, nil
 }
 
 // --- jobs ------------------------------------------------------------------
@@ -140,6 +169,12 @@ func (s *apiServer) ListAdminUserSessions(ctx context.Context, req openapi.ListA
 }
 func (s *apiServer) RevokeAdminUserSession(ctx context.Context, req openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
 	return s.auth.RevokeAdminUserSession(ctx, req)
+}
+func (s *apiServer) ChangeMyPassword(ctx context.Context, req openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	return s.auth.ChangeMyPassword(ctx, req)
+}
+func (s *apiServer) AdminResetUserPassword(ctx context.Context, req openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	return s.auth.AdminResetUserPassword(ctx, req)
 }
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {

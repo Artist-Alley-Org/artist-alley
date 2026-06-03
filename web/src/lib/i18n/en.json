@@ -177,6 +177,16 @@
     },
     "password": {
       "title": "Change password",
+      "intro": "Change your sign-in password. We recommend signing out of other devices after a successful change.",
+      "current_label": "Current password",
+      "new_label": "New password",
+      "confirm_label": "Confirm new password",
+      "revoke_others_label": "Sign out of every other device",
+      "submit": "Change password",
+      "submitting": "Changing\u2026",
+      "success": "Password changed.",
+      "success_with_revokes": "Password changed. {count} other sessions ended.",
+      "mismatch": "New password and confirmation don't match.",
       "coming_soon": "Password changes land in a follow-up phase."
     },
     "tokens": {
@@ -462,7 +472,15 @@
       "status_save_disabled": "Disable",
       "status_save_active_again": "Restore",
       "status_no_change": "No change \u2014 user is already in that state.",
-      "status_updated": "Status updated to {status}."
+      "status_updated": "Status updated to {status}.",
+      "reset_section": "Password reset",
+      "reset_intro": "Generate a one-shot password for this user. Share it with them over a trusted channel; they'll be signed out of every device and must use this password on their next sign-in.",
+      "reset_reason": "Reason (optional)",
+      "reset_button": "Generate temporary password",
+      "resetting": "Generating\u2026",
+      "reset_result_label": "Temporary password — copy now; this won't be shown again:",
+      "reset_copy": "Copy",
+      "reset_copied": "Copied."
     },
     "roles": {
       "title": "Roles & capabilities",

@@ -115,6 +115,55 @@ SET revoked_at = NOW()
 WHERE token_hash = $1
   AND revoked_at IS NULL;
 
+-- name: RevokeOtherSessionsForUser :execrows
+-- Revokes every session belonging to a user EXCEPT the one passed
+-- as $2. Used by the self-service password-change endpoint when the
+-- caller opts to "sign out everywhere else" — defensive default for
+-- "I think someone got my password" recovery flows. Returns count
+-- so the audit row + UI can report how many sessions ended.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND id <> $2
+  AND revoked_at IS NULL;
+
+-- name: GetUserPasswordHashByRef :one
+-- Returns just the username + stored hash for a user. Used by the
+-- self-service password change endpoint to verify the caller knows
+-- their CURRENT password before accepting a new one.
+SELECT ref AS rs_user_id, username, password
+FROM "user"
+WHERE ref = $1;
+
+-- name: UpdateUserPassword :exec
+-- Atomic password change: sets user.password + bumps
+-- password_last_change. The handler is responsible for the policy
+-- check + the history-reuse check + the history insert; this query
+-- is the leaf write.
+UPDATE "user"
+SET password = $2,
+    password_last_change = NOW(),
+    password_reset_hash = NULL
+WHERE ref = $1;
+
+-- name: InsertPasswordHistory :exec
+-- Append-only history row. The handler calls this after every
+-- successful UpdateUserPassword (whether self-service or admin
+-- reset) so the reuse-prevention check has the data it needs.
+INSERT INTO user_password_history (rs_user_id, password_hash)
+VALUES ($1, $2);
+
+-- name: ListRecentPasswordHashes :many
+-- Most recent N hashes for reuse-prevention. The handler iterates +
+-- VerifyPasswords against each — we can't WHERE on the hash directly
+-- because RS-style hashing has a per-call HMAC step (the candidate
+-- plaintext needs to be re-hashed and compared in code).
+SELECT password_hash
+FROM user_password_history
+WHERE rs_user_id = $1
+ORDER BY changed_at DESC
+LIMIT $2;
+
 -- name: ListSessionsForUser :many
 -- Powers /auth/me/sessions. Returns active sessions ordered most recently
 -- used first.

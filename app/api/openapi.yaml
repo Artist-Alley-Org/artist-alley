@@ -290,6 +290,85 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /account/password:
+    put:
+      operationId: changeMyPassword
+      summary: Change my password
+      description: |
+        Phase 1.17.D — self-service password change. Verifies the
+        current password, applies the policy (min length / complexity
+        from system_config.auth.password_policy), rejects reuse of
+        the last 5 passwords, and (optionally) revokes every other
+        session belonging to the caller as a defensive default.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangePasswordResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /admin/users/{ref}/password-reset:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: adminResetUserPassword
+      summary: Issue a one-shot password for a user (admin helpdesk)
+      description: |
+        Phase 1.17.D — admin/helpdesk password reset. Generates a
+        cryptographically random temporary password, stores its hash,
+        and returns the plaintext ONCE in the response so the admin
+        can share it with the user out-of-band (chat / SMS / call).
+        The user is expected to change it on next login; enforcement
+        of "must change on first login" lands with the email-token
+        reset flow in a follow-up phase. Audit captures the actor +
+        reason; the plaintext password is never logged.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.password.reset"]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPasswordResetRequest"
+      responses:
+        "200":
+          description: One-shot password generated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPasswordResetResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /account/sessions:
     get:
       operationId: listMySessions
@@ -5240,6 +5319,64 @@ components:
           description: |
             Federation origin (when the profile row came from a peer
             instance). Null = home instance. See ADR 0007.
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          description: The caller's current password — verified before the change is accepted.
+        new_password:
+          type: string
+          description: The new password. Must satisfy the system password policy.
+        revoke_other_sessions:
+          type: boolean
+          description: |
+            When true, every session belonging to the caller EXCEPT
+            the one authenticating this request is revoked. Defensive
+            default for "I think someone got my password" recovery
+            flows. Defaults to true client-side; the server doesn't
+            assume either way (omitting the field = false).
+
+    ChangePasswordResult:
+      type: object
+      required: [changed_at]
+      properties:
+        changed_at:
+          type: string
+          format: date-time
+        sessions_revoked:
+          type: integer
+          description: Count of other sessions ended as part of this change.
+
+    AdminPasswordResetRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Admin-supplied justification recorded in the audit log.
+            Encouraged but not required — an empty reason still
+            produces an audit row.
+
+    AdminPasswordResetResult:
+      type: object
+      required: [temporary_password, generated_at]
+      properties:
+        temporary_password:
+          type: string
+          description: |
+            Plaintext one-shot password — returned ONCE so the admin
+            can share it with the user. The server stores only the
+            hash; this value is never reachable again from any API.
+            Generators must use a cryptographically strong RNG; this
+            response should be considered as sensitive as the
+            hash-bearing original.
+        generated_at:
+          type: string
+          format: date-time
 
     SessionRow:
       type: object

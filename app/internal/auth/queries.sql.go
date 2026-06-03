@@ -638,6 +638,46 @@ func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, erro
 	return i, err
 }
 
+const getUserPasswordHashByRef = `-- name: GetUserPasswordHashByRef :one
+SELECT ref AS rs_user_id, username, password
+FROM "user"
+WHERE ref = $1
+`
+
+type GetUserPasswordHashByRefRow struct {
+	RsUserID int64
+	Username *string
+	Password *string
+}
+
+// Returns just the username + stored hash for a user. Used by the
+// self-service password change endpoint to verify the caller knows
+// their CURRENT password before accepting a new one.
+func (q *Queries) GetUserPasswordHashByRef(ctx context.Context, ref int64) (GetUserPasswordHashByRefRow, error) {
+	row := q.db.QueryRow(ctx, getUserPasswordHashByRef, ref)
+	var i GetUserPasswordHashByRefRow
+	err := row.Scan(&i.RsUserID, &i.Username, &i.Password)
+	return i, err
+}
+
+const insertPasswordHistory = `-- name: InsertPasswordHistory :exec
+INSERT INTO user_password_history (rs_user_id, password_hash)
+VALUES ($1, $2)
+`
+
+type InsertPasswordHistoryParams struct {
+	RsUserID     int64
+	PasswordHash string
+}
+
+// Append-only history row. The handler calls this after every
+// successful UpdateUserPassword (whether self-service or admin
+// reset) so the reuse-prevention check has the data it needs.
+func (q *Queries) InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordHistory, arg.RsUserID, arg.PasswordHash)
+	return err
+}
+
 const insertSession = `-- name: InsertSession :one
 
 INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
@@ -761,6 +801,43 @@ func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPasswordHashes = `-- name: ListRecentPasswordHashes :many
+SELECT password_hash
+FROM user_password_history
+WHERE rs_user_id = $1
+ORDER BY changed_at DESC
+LIMIT $2
+`
+
+type ListRecentPasswordHashesParams struct {
+	RsUserID int64
+	Limit    int32
+}
+
+// Most recent N hashes for reuse-prevention. The handler iterates +
+// VerifyPasswords against each — we can't WHERE on the hash directly
+// because RS-style hashing has a per-call HMAC step (the candidate
+// plaintext needs to be re-hashed and compared in code).
+func (q *Queries) ListRecentPasswordHashes(ctx context.Context, arg ListRecentPasswordHashesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRecentPasswordHashes, arg.RsUserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var password_hash string
+		if err := rows.Scan(&password_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, password_hash)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -913,6 +990,32 @@ func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) 
 	return result.RowsAffected(), nil
 }
 
+const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND id <> $2
+  AND revoked_at IS NULL
+`
+
+type RevokeOtherSessionsForUserParams struct {
+	UserRef int64
+	ID      pgtype.UUID
+}
+
+// Revokes every session belonging to a user EXCEPT the one passed
+// as $2. Used by the self-service password-change endpoint when the
+// caller opts to "sign out everywhere else" — defensive default for
+// "I think someone got my password" recovery flows. Returns count
+// so the audit row + UI can report how many sessions ended.
+func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOtherSessionsForUser, arg.UserRef, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions
 SET revoked_at = NOW()
@@ -1043,5 +1146,27 @@ WHERE id = $1
 // to call on every hit; the index on last_used_at is partial-on-active.
 func (q *Queries) TouchSession(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchSession, id)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE "user"
+SET password = $2,
+    password_last_change = NOW(),
+    password_reset_hash = NULL
+WHERE ref = $1
+`
+
+type UpdateUserPasswordParams struct {
+	Ref      int64
+	Password *string
+}
+
+// Atomic password change: sets user.password + bumps
+// password_last_change. The handler is responsible for the policy
+// check + the history-reuse check + the history insert; this query
+// is the leaf write.
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.Ref, arg.Password)
 	return err
 }

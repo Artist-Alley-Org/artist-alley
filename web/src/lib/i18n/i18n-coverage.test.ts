@@ -27,6 +27,7 @@ const TRACKED_FILES = [
   'src/routes/admin/users/+page.svelte',
   'src/routes/admin/users/[ref]/+page.svelte',
   'src/routes/account/sessions/+page.svelte',
+  'src/routes/account/password/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":
