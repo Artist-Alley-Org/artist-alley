@@ -161,6 +161,159 @@
       // password visible so the admin can copy it manually.
     }
   }
+
+  // Capability grants + revokes (Phase 1.17.F).
+  interface CapabilityOverride {
+    capability: string;
+    team_id?: string | null;
+    note?: string;
+    granted_by?: number | null;
+    granted_at: string;
+  }
+  interface Capability {
+    code: string;
+    description: string;
+  }
+
+  let allCaps = $state<Capability[]>([]);
+  let grants = $state<CapabilityOverride[]>([]);
+  let revokes = $state<CapabilityOverride[]>([]);
+  let overridesLoading = $state(false);
+  let overridesError = $state<string | null>(null);
+
+  let newGrantCap = $state('');
+  let newGrantTeam = $state('');
+  let newGrantNote = $state('');
+  let grantBusy = $state(false);
+
+  let newRevokeCap = $state('');
+  let newRevokeTeam = $state('');
+  let newRevokeNote = $state('');
+  let revokeBusy = $state(false);
+
+  async function loadOverrides() {
+    overridesLoading = true;
+    overridesError = null;
+    try {
+      const [caps, overrides] = await Promise.all([
+        api.GET('/auth/capabilities'),
+        api.GET('/admin/users/{ref}/capabilities', { params: { path: { ref } } }),
+      ]);
+      if (caps.data) {
+        const payload = caps.data as unknown as { items?: Capability[] } | Capability[];
+        allCaps = Array.isArray(payload) ? payload : (payload.items ?? []);
+      }
+      if (overrides.error || !overrides.data) {
+        overridesError = (overrides.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_load_error');
+        return;
+      }
+      const o = overrides.data as unknown as { grants: CapabilityOverride[]; revokes: CapabilityOverride[] };
+      grants = o.grants ?? [];
+      revokes = o.revokes ?? [];
+    } finally {
+      overridesLoading = false;
+    }
+  }
+
+  async function addGrant() {
+    if (grantBusy || !newGrantCap) return;
+    grantBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/grants', {
+        params: { path: { ref } },
+        body: {
+          capability: newGrantCap,
+          team_id: newGrantTeam || undefined,
+          note: newGrantNote || undefined,
+        },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_add_grant_error');
+        return;
+      }
+      newGrantCap = '';
+      newGrantTeam = '';
+      newGrantNote = '';
+      await loadOverrides();
+    } finally {
+      grantBusy = false;
+    }
+  }
+
+  async function removeGrant(capability: string, teamID: string | null | undefined) {
+    if (grantBusy) return;
+    grantBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.DELETE('/admin/users/{ref}/grants/{capability}', {
+        params: { path: { ref, capability }, query: teamID ? { team_id: teamID } : {} },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_remove_grant_error');
+        return;
+      }
+      await loadOverrides();
+    } finally {
+      grantBusy = false;
+    }
+  }
+
+  async function addRevoke() {
+    if (revokeBusy || !newRevokeCap) return;
+    revokeBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/revokes', {
+        params: { path: { ref } },
+        body: {
+          capability: newRevokeCap,
+          team_id: newRevokeTeam || undefined,
+          note: newRevokeNote || undefined,
+        },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_add_revoke_error');
+        return;
+      }
+      newRevokeCap = '';
+      newRevokeTeam = '';
+      newRevokeNote = '';
+      await loadOverrides();
+    } finally {
+      revokeBusy = false;
+    }
+  }
+
+  async function removeRevoke(capability: string, teamID: string | null | undefined) {
+    if (revokeBusy) return;
+    revokeBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.DELETE('/admin/users/{ref}/revokes/{capability}', {
+        params: { path: { ref, capability }, query: teamID ? { team_id: teamID } : {} },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_remove_revoke_error');
+        return;
+      }
+      await loadOverrides();
+    } finally {
+      revokeBusy = false;
+    }
+  }
+
+  function shortTeam(id: string | null | undefined): string {
+    if (!id) return t('admin.user_detail.overrides_global');
+    return id.slice(0, 8);
+  }
+
+  onMount(() => { void loadOverrides(); });
 </script>
 
 <svelte:head><title>User {ref} — artist-alley</title></svelte:head>
@@ -290,6 +443,157 @@
           >
             {resetResult.copied ? t('admin.user_detail.reset_copied') : t('admin.user_detail.reset_copy')}
           </button>
+        </div>
+      </div>
+    {/if}
+  </section>
+
+  <section class="mt-6 max-w-2xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+    <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.overrides_section')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_intro')}</p>
+
+    {#if overridesError}
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{overridesError}</p>
+    {/if}
+
+    {#if overridesLoading}
+      <p class="text-xs text-fg-muted">{t('common.loading')}</p>
+    {:else}
+      <div class="grid gap-4 md:grid-cols-2">
+        <div>
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-success">{t('admin.user_detail.overrides_grants_label')}</h4>
+          {#if grants.length === 0}
+            <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_no_grants')}</p>
+          {:else}
+            <ul class="space-y-1">
+              {#each grants as g, i (g.capability + (g.team_id ?? '') + i)}
+                <li class="flex items-start gap-2 rounded border border-success/30 bg-success/5 px-2 py-1.5 text-xs">
+                  <div class="flex-1">
+                    <code class="font-mono">{g.capability}</code>
+                    <span class="ml-1 text-fg-muted">· {shortTeam(g.team_id)}</span>
+                    {#if g.note}<p class="mt-0.5 text-[11px] text-fg-muted italic">{g.note}</p>{/if}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => removeGrant(g.capability, g.team_id)}
+                    disabled={grantBusy}
+                    class="rounded border border-border bg-surface px-2 py-0.5 text-[11px] hover:border-danger hover:text-danger disabled:opacity-50"
+                  >
+                    {t('admin.user_detail.overrides_remove_button')}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <div class="mt-3 space-y-1.5 rounded border border-border bg-surface p-2">
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
+              <select
+                bind:value={newGrantCap}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              >
+                <option value="">—</option>
+                {#each allCaps as c (c.code)}
+                  <option value={c.code}>{c.code}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_team_label')}</span>
+              <input
+                type="text"
+                bind:value={newGrantTeam}
+                placeholder={t('admin.user_detail.overrides_team_placeholder')}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+              />
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_note_label')}</span>
+              <input
+                type="text"
+                bind:value={newGrantNote}
+                maxlength="500"
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={addGrant}
+              disabled={grantBusy || !newGrantCap}
+              class="w-full rounded border border-success bg-success/10 px-2 py-1 text-xs font-medium text-success hover:bg-success/20 disabled:opacity-50"
+            >
+              {t('admin.user_detail.overrides_add_grant_button')}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-danger">{t('admin.user_detail.overrides_revokes_label')}</h4>
+          {#if revokes.length === 0}
+            <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_no_revokes')}</p>
+          {:else}
+            <ul class="space-y-1">
+              {#each revokes as r, i (r.capability + (r.team_id ?? '') + i)}
+                <li class="flex items-start gap-2 rounded border border-danger/30 bg-danger/5 px-2 py-1.5 text-xs">
+                  <div class="flex-1">
+                    <code class="font-mono">{r.capability}</code>
+                    <span class="ml-1 text-fg-muted">· {shortTeam(r.team_id)}</span>
+                    {#if r.note}<p class="mt-0.5 text-[11px] text-fg-muted italic">{r.note}</p>{/if}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => removeRevoke(r.capability, r.team_id)}
+                    disabled={revokeBusy}
+                    class="rounded border border-border bg-surface px-2 py-0.5 text-[11px] hover:border-danger hover:text-danger disabled:opacity-50"
+                  >
+                    {t('admin.user_detail.overrides_remove_button')}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <div class="mt-3 space-y-1.5 rounded border border-border bg-surface p-2">
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
+              <select
+                bind:value={newRevokeCap}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              >
+                <option value="">—</option>
+                {#each allCaps as c (c.code)}
+                  <option value={c.code}>{c.code}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_team_label')}</span>
+              <input
+                type="text"
+                bind:value={newRevokeTeam}
+                placeholder={t('admin.user_detail.overrides_team_placeholder')}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+              />
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_note_label')}</span>
+              <input
+                type="text"
+                bind:value={newRevokeNote}
+                maxlength="500"
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={addRevoke}
+              disabled={revokeBusy || !newRevokeCap}
+              class="w-full rounded border border-danger bg-danger/10 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/20 disabled:opacity-50"
+            >
+              {t('admin.user_detail.overrides_add_revoke_button')}
+            </button>
+          </div>
         </div>
       </div>
     {/if}

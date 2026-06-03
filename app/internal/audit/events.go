@@ -35,6 +35,10 @@ const (
 	EventUserStatusChanged = "user.status_changed"
 	EventPasswordChanged   = "user.password_changed"
 	EventPasswordReset     = "user.password_reset"
+	EventCapabilityGranted = "user.capability_granted"
+	EventCapabilityRevoked = "user.capability_revoked"
+	EventCapabilityGrantRemoved = "user.capability_grant_removed"
+	EventCapabilityRevokeRemoved = "user.capability_revoke_removed"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -154,6 +158,48 @@ func (r *Recorder) PasswordChanged(ctx context.Context, req *http.Request, userR
 func (r *Recorder) PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string) {
 	r.write(ctx, EventPasswordReset, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"reason": reason,
+	})
+}
+
+// CapabilityGranted records an explicit grant being added to a
+// user. `teamID` is empty for global grants.
+func (r *Recorder) CapabilityGranted(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string) {
+	r.write(ctx, EventCapabilityGranted, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"note":       note,
+	})
+}
+
+// CapabilityRevoked records an explicit revoke being added to a
+// user. Symmetric to CapabilityGranted.
+func (r *Recorder) CapabilityRevoked(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string) {
+	r.write(ctx, EventCapabilityRevoked, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"note":       note,
+	})
+}
+
+// CapabilityGrantRemoved records a previously-issued grant being
+// withdrawn. Distinct event type from CapabilityRevoked so the
+// audit viewer can distinguish "removed an additive grant" from
+// "added a subtractive revoke" — they look identical from the
+// user-effect perspective (they both reduce caps) but the
+// intent + reversal path are different.
+func (r *Recorder) CapabilityGrantRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string) {
+	r.write(ctx, EventCapabilityGrantRemoved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+	})
+}
+
+// CapabilityRevokeRemoved records a previously-issued revoke being
+// withdrawn (the cap re-enables, modulo the rest of the resolution).
+func (r *Recorder) CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string) {
+	r.write(ctx, EventCapabilityRevokeRemoved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
 	})
 }
 

@@ -83,6 +83,10 @@ type auditRecorder interface {
 	SessionRevoked(ctx context.Context, req *http.Request, userRef, actorUserRef int64, sessionID, reason string)
 	PasswordChanged(ctx context.Context, req *http.Request, userRef int64, sessionsRevoked int)
 	PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string)
+	CapabilityGranted(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string)
+	CapabilityRevoked(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string)
+	CapabilityGrantRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
+	CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
 }
 
 // passwordPolicySource is the minimal interface the password
@@ -117,6 +121,14 @@ func (nopAudit) SessionRevoked(context.Context, *http.Request, int64, int64, str
 }
 func (nopAudit) PasswordChanged(context.Context, *http.Request, int64, int)            {}
 func (nopAudit) PasswordReset(context.Context, *http.Request, int64, int64, string)     {}
+func (nopAudit) CapabilityGranted(context.Context, *http.Request, int64, int64, string, string, string) {
+}
+func (nopAudit) CapabilityRevoked(context.Context, *http.Request, int64, int64, string, string, string) {
+}
+func (nopAudit) CapabilityGrantRemoved(context.Context, *http.Request, int64, int64, string, string) {
+}
+func (nopAudit) CapabilityRevokeRemoved(context.Context, *http.Request, int64, int64, string, string) {
+}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching RS's rs_setcookie default) is used. The

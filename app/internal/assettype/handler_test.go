@@ -400,6 +400,21 @@ func (rtOnly) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestO
 func (rtOnly) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	panic("AdminResetUserPassword called from assettype rtOnly test shim")
 }
+func (rtOnly) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from assettype rtOnly test shim")
+}
+func (rtOnly) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from assettype rtOnly test shim")
+}
+func (rtOnly) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from assettype rtOnly test shim")
+}
+func (rtOnly) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from assettype rtOnly test shim")
+}
+func (rtOnly) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from assettype rtOnly test shim")
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }

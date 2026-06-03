@@ -726,6 +726,21 @@ func (collShim) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordReques
 func (collShim) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	panic("AdminResetUserPassword called from collections test shim")
 }
+func (collShim) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from collections test shim")
+}
+func (collShim) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from collections test shim")
+}
+func (collShim) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from collections test shim")
+}
+func (collShim) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from collections test shim")
+}
+func (collShim) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from collections test shim")
+}
 func (collShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from collections_test test shim")
 }

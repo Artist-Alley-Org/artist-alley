@@ -731,6 +731,21 @@ func (metaShim) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordReques
 func (metaShim) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	panic("AdminResetUserPassword called from metadata test shim")
 }
+func (metaShim) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from metadata test shim")
+}
+func (metaShim) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from metadata test shim")
+}
+func (metaShim) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from metadata test shim")
+}
+func (metaShim) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from metadata test shim")
+}
+func (metaShim) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from metadata test shim")
+}
 func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from metadata_test test shim")
 }

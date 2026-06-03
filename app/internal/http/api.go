@@ -193,6 +193,22 @@ func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequ
 	return s.auth.SetUserRole(ctx, req)
 }
 
+func (s *apiServer) ListAdminUserCapabilities(ctx context.Context, req openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	return s.auth.ListAdminUserCapabilities(ctx, req)
+}
+func (s *apiServer) AddAdminUserGrant(ctx context.Context, req openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	return s.auth.AddAdminUserGrant(ctx, req)
+}
+func (s *apiServer) RemoveAdminUserGrant(ctx context.Context, req openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	return s.auth.RemoveAdminUserGrant(ctx, req)
+}
+func (s *apiServer) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	return s.auth.AddAdminUserRevoke(ctx, req)
+}
+func (s *apiServer) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	return s.auth.RemoveAdminUserRevoke(ctx, req)
+}
+
 // --- asset_types --------------------------------------------------------
 
 func (s *apiServer) ListAssetTypes(ctx context.Context, req openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {

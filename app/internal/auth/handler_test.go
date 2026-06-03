@@ -690,6 +690,21 @@ func (a authOnlyImpl) ChangeMyPassword(context.Context, openapi.ChangeMyPassword
 func (a authOnlyImpl) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	panic("AdminResetUserPassword called from auth test shim")
 }
+func (a authOnlyImpl) ListAdminUserCapabilities(ctx context.Context, req openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	return a.h.ListAdminUserCapabilities(ctx, req)
+}
+func (a authOnlyImpl) AddAdminUserGrant(ctx context.Context, req openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	return a.h.AddAdminUserGrant(ctx, req)
+}
+func (a authOnlyImpl) RemoveAdminUserGrant(ctx context.Context, req openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	return a.h.RemoveAdminUserGrant(ctx, req)
+}
+func (a authOnlyImpl) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	return a.h.AddAdminUserRevoke(ctx, req)
+}
+func (a authOnlyImpl) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	return a.h.RemoveAdminUserRevoke(ctx, req)
+}
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
 }

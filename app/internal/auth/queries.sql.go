@@ -209,6 +209,51 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteUserGrant = `-- name: DeleteUserGrant :execrows
+DELETE FROM user_capability_grants
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3
+`
+
+type DeleteUserGrantParams struct {
+	RsUserID       int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+}
+
+// Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+// the natural key — team_id may be NULL (global grant). Returns
+// rows-affected so the handler can 404 cleanly.
+func (q *Queries) DeleteUserGrant(ctx context.Context, arg DeleteUserGrantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserGrant, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteUserRevoke = `-- name: DeleteUserRevoke :execrows
+DELETE FROM user_capability_revokes
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3
+`
+
+type DeleteUserRevokeParams struct {
+	RsUserID       int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+}
+
+func (q *Queries) DeleteUserRevoke(ctx context.Context, arg DeleteUserRevokeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserRevoke, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const effectiveCapabilitiesForRoleName = `-- name: EffectiveCapabilitiesForRoleName :many
 WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
@@ -725,6 +770,68 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 	return i, err
 }
 
+const insertUserGrant = `-- name: InsertUserGrant :exec
+INSERT INTO user_capability_grants (
+    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    granted_at = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    note = EXCLUDED.note
+`
+
+type InsertUserGrantParams struct {
+	RsUserID          int64
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	GrantedByRsUserID *int64
+	Note              string
+}
+
+// Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+// team_id) means re-granting the same (cap, team_id) is a no-op
+// update of granted_at + note + granter — useful when an admin
+// refreshes a stale grant.
+func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams) error {
+	_, err := q.db.Exec(ctx, insertUserGrant,
+		arg.RsUserID,
+		arg.CapabilityCode,
+		arg.TeamID,
+		arg.GrantedByRsUserID,
+		arg.Note,
+	)
+	return err
+}
+
+const insertUserRevoke = `-- name: InsertUserRevoke :exec
+INSERT INTO user_capability_revokes (
+    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    revoked_at = NOW(),
+    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    note = EXCLUDED.note
+`
+
+type InsertUserRevokeParams struct {
+	RsUserID          int64
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	RevokedByRsUserID *int64
+	Note              string
+}
+
+func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokeParams) error {
+	_, err := q.db.Exec(ctx, insertUserRevoke,
+		arg.RsUserID,
+		arg.CapabilityCode,
+		arg.TeamID,
+		arg.RevokedByRsUserID,
+		arg.Note,
+	)
+	return err
+}
+
 const listApiTokensForUser = `-- name: ListApiTokensForUser :many
 SELECT id,
        rs_user_id,
@@ -956,6 +1063,108 @@ func (q *Queries) ListSessionsForUser(ctx context.Context, userRef int64) ([]Lis
 			&i.ExpiresAt,
 			&i.Ip,
 			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserGrants = `-- name: ListUserGrants :many
+SELECT g.capability_code,
+       g.team_id,
+       g.granted_at,
+       g.granted_by_rs_user_id,
+       g.note,
+       t.name AS team_name
+FROM user_capability_grants g
+LEFT JOIN teams t ON t.id = g.team_id
+WHERE g.rs_user_id = $1
+ORDER BY g.capability_code, g.team_id NULLS FIRST
+`
+
+type ListUserGrantsRow struct {
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	Note              string
+	TeamName          *string
+}
+
+// Per-user capability grants (Phase 1.17.F). Returns rows ordered
+// by (cap, team_id) so the UI displays a stable list across reloads.
+func (q *Queries) ListUserGrants(ctx context.Context, rsUserID int64) ([]ListUserGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listUserGrants, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserGrantsRow
+	for rows.Next() {
+		var i ListUserGrantsRow
+		if err := rows.Scan(
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.Note,
+			&i.TeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserRevokes = `-- name: ListUserRevokes :many
+SELECT r.capability_code,
+       r.team_id,
+       r.revoked_at,
+       r.revoked_by_rs_user_id,
+       r.note,
+       t.name AS team_name
+FROM user_capability_revokes r
+LEFT JOIN teams t ON t.id = r.team_id
+WHERE r.rs_user_id = $1
+ORDER BY r.capability_code, r.team_id NULLS FIRST
+`
+
+type ListUserRevokesRow struct {
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	RevokedAt         pgtype.Timestamptz
+	RevokedByRsUserID *int64
+	Note              string
+	TeamName          *string
+}
+
+// Per-user capability revokes (subtractive overrides). Same shape
+// as ListUserGrants — front-end renders both lists in one section.
+func (q *Queries) ListUserRevokes(ctx context.Context, rsUserID int64) ([]ListUserRevokesRow, error) {
+	rows, err := q.db.Query(ctx, listUserRevokes, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserRevokesRow
+	for rows.Next() {
+		var i ListUserRevokesRow
+		if err := rows.Scan(
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.RevokedAt,
+			&i.RevokedByRsUserID,
+			&i.Note,
+			&i.TeamName,
 		); err != nil {
 			return nil, err
 		}

@@ -115,6 +115,71 @@ SET revoked_at = NOW()
 WHERE token_hash = $1
   AND revoked_at IS NULL;
 
+-- name: ListUserGrants :many
+-- Per-user capability grants (Phase 1.17.F). Returns rows ordered
+-- by (cap, team_id) so the UI displays a stable list across reloads.
+SELECT g.capability_code,
+       g.team_id,
+       g.granted_at,
+       g.granted_by_rs_user_id,
+       g.note,
+       t.name AS team_name
+FROM user_capability_grants g
+LEFT JOIN teams t ON t.id = g.team_id
+WHERE g.rs_user_id = $1
+ORDER BY g.capability_code, g.team_id NULLS FIRST;
+
+-- name: ListUserRevokes :many
+-- Per-user capability revokes (subtractive overrides). Same shape
+-- as ListUserGrants — front-end renders both lists in one section.
+SELECT r.capability_code,
+       r.team_id,
+       r.revoked_at,
+       r.revoked_by_rs_user_id,
+       r.note,
+       t.name AS team_name
+FROM user_capability_revokes r
+LEFT JOIN teams t ON t.id = r.team_id
+WHERE r.rs_user_id = $1
+ORDER BY r.capability_code, r.team_id NULLS FIRST;
+
+-- name: InsertUserGrant :exec
+-- Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+-- team_id) means re-granting the same (cap, team_id) is a no-op
+-- update of granted_at + note + granter — useful when an admin
+-- refreshes a stale grant.
+INSERT INTO user_capability_grants (
+    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    granted_at = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    note = EXCLUDED.note;
+
+-- name: DeleteUserGrant :execrows
+-- Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+-- the natural key — team_id may be NULL (global grant). Returns
+-- rows-affected so the handler can 404 cleanly.
+DELETE FROM user_capability_grants
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3;
+
+-- name: InsertUserRevoke :exec
+INSERT INTO user_capability_revokes (
+    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    revoked_at = NOW(),
+    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    note = EXCLUDED.note;
+
+-- name: DeleteUserRevoke :execrows
+DELETE FROM user_capability_revokes
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3;
+
 -- name: RevokeOtherSessionsForUser :execrows
 -- Revokes every session belonging to a user EXCEPT the one passed
 -- as $2. Used by the self-service password-change endpoint when the

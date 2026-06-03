@@ -290,6 +290,174 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/users/{ref}/capabilities:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAdminUserCapabilities
+      summary: List a user's explicit grants + revokes (admin)
+      description: |
+        Phase 1.17.F — returns the per-user GRANT and REVOKE override
+        lists. Role-derived capabilities are not included (they're
+        already returned by GET /auth/me/capabilities and the role
+        editor surface). This list is the additive/subtractive
+        delta admins manage by hand.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      responses:
+        "200":
+          description: Per-user grant + revoke override lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCapabilityOverrides"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/grants:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: addAdminUserGrant
+      summary: Add a capability grant to a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCapabilityOverrideRequest"
+      responses:
+        "204":
+          description: Grant inserted (or refreshed if it already existed).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/grants/{capability}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: capability
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: removeAdminUserGrant
+      summary: Remove a capability grant from a user (admin)
+      description: |
+        Pass `team_id` query param to scope to a team-scoped grant;
+        omit for the global grant. Returns 404 when no matching grant
+        exists (composite key, not by ID — there is no ID).
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Grant removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/revokes:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: addAdminUserRevoke
+      summary: Add a capability revoke to a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCapabilityOverrideRequest"
+      responses:
+        "204":
+          description: Revoke inserted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/revokes/{capability}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: capability
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: removeAdminUserRevoke
+      summary: Remove a capability revoke from a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Revoke removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /account/password:
     put:
       operationId: changeMyPassword
@@ -5473,6 +5641,72 @@ components:
             Opaque pagination token. Pass back as the next request's
             `cursor` param to fetch the following page. Null when this
             response is the final page.
+
+    UserCapabilityOverride:
+      type: object
+      description: |
+        One row from either `user_capability_grants` or
+        `user_capability_revokes` (Phase 1.17.F). `team_id` is null
+        for global overrides, set for team-scoped ones. `note` is the
+        admin-supplied justification recorded at grant/revoke time.
+      required: [capability, granted_at]
+      properties:
+        capability:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        note:
+          type: string
+          description: Free-text justification — empty when none was supplied.
+        granted_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Acting admin's rs_user_id at time of grant/revoke. Null
+            when the row predates Phase 1.17.F or was inserted by
+            seed migration.
+        granted_at:
+          type: string
+          format: date-time
+
+    UserCapabilityOverrides:
+      type: object
+      description: |
+        Per-user explicit GRANT + REVOKE override lists. Role-derived
+        capabilities are NOT included — admins manage those through
+        the role editor; this surface only exposes the additive /
+        subtractive deltas attached directly to the user.
+      required: [grants, revokes]
+      properties:
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/UserCapabilityOverride" }
+        revokes:
+          type: array
+          items: { $ref: "#/components/schemas/UserCapabilityOverride" }
+
+    UserCapabilityOverrideRequest:
+      type: object
+      description: |
+        Body shared by POST /admin/users/{ref}/grants and POST
+        /admin/users/{ref}/revokes. Pass `team_id` to scope the
+        override to a team — omit / null for a global override.
+      required: [capability]
+      properties:
+        capability:
+          type: string
+          description: Capability code (e.g. `assets.read`, `users.write`).
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        note:
+          type: string
+          maxLength: 500
+          description: Optional admin-supplied justification recorded with the row.
 
     UserPublic:
       type: object
