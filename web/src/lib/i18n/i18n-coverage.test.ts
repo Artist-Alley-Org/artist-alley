@@ -24,6 +24,7 @@ const repoRoot = resolve(here, '../../..'); // .../web
 const TRACKED_FILES = [
   'src/lib/components/viewers/ArchiveView.svelte',
   'src/lib/components/viewers/tools/ArchiveTool/Body.svelte',
+  'src/routes/admin/users/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":
