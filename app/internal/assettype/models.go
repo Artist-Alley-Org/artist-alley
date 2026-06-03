@@ -462,6 +462,14 @@ type UserCapabilityRevoke struct {
 	Note              string             `json:"note"`
 }
 
+type UserPasswordHistory struct {
+	ID             pgtype.UUID        `json:"id"`
+	RsUserID       int64              `json:"rs_user_id"`
+	PasswordHash   string             `json:"password_hash"`
+	ChangedAt      pgtype.Timestamptz `json:"changed_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+}
+
 type UserProfile struct {
 	RsUserID       int64              `json:"rs_user_id"`
 	DisplayName    *string            `json:"display_name"`

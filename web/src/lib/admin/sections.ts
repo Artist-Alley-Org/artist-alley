@@ -36,7 +36,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     tiles: [
       { key: 'users',      status: 'live',   href: '/admin/users' },
       { key: 'roles',      status: 'live',   href: '/admin/roles' },
-      { key: 'groups',     status: 'future', phase: '1.17' },
+      { key: 'groups',     status: 'live',   href: '/admin/teams' },
       { key: 'sessions',   status: 'future', phase: '1.17' },
       { key: 'audit',      status: 'future', phase: '1.20' },
       { key: 'workflow',   status: 'live',   href: '/admin/workflow' },

@@ -462,6 +462,14 @@ type UserCapabilityRevoke struct {
 	Note              string
 }
 
+type UserPasswordHistory struct {
+	ID             pgtype.UUID
+	RsUserID       int64
+	PasswordHash   string
+	ChangedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+}
+
 type UserProfile struct {
 	RsUserID       int64
 	DisplayName    *string
