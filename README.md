@@ -36,7 +36,7 @@ Three production containers: `nginx`, `app`, `postgres`. No microservices, no me
 
 Storage is pluggable — filesystem by default, S3-compatible (S3 / R2 / Backblaze / MinIO) optional. Heavier capabilities (CLIP embeddings, Whisper transcription, Tesseract OCR, Blender-rendered thumbnails, Stable Diffusion / Flux / ComfyUI runtimes) ship as out-of-band **capability add-ons** that operators install separately — never baked into the binary. The plugin model for third-party extensions is WASM via [Extism](https://extism.org/), deferred until external authors arrive.
 
-ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model).
+ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0017](docs/adr/0017-monetization-and-licensing.md) (licensing + enterprise gates), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model).
 
 ---
 
@@ -106,9 +106,9 @@ artist-alley/
 
 The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`site/src/content/roadmap/roadmap.json`](site/src/content/roadmap/roadmap.json). Highlights:
 
-- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth, upload pipeline, posts + collections, browse feed, post-detail modal, admin shell, theming, i18n, universal asset viewer with format coverage across image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets, whiteboard / brush surface.
-- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging, the load-bearing review tool arc (Phase 1.18.B) — video player → polish → captions → image sequences → presentation rooms → annotation system → timeline assembly → A/B compare → DCC integrations → native 3D viewer.
-- **On the map:** advanced search, teams + audit, real LDAP/SAML/OAuth, storage tooling, reports, moderation, brand workspace, AI creative editing, federation, plugin ecosystem, audit log, observability, capability add-ons, premium add-on layer (commerce / ads / DCC plugins / cloud-bridge AI), external imports framework, caption / subtitle artifacts, native viewers for proprietary DCC formats.
+- **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth (full admin surface — paginated user list, lifecycle states, multi-device session management, password change/reset/history, teams admin UI, per-user capability grants/revokes, per-asset-type ACLs, audit-log viewer), upload pipeline, posts + collections, browse feed, post-detail modal, admin shell, theming, i18n, universal asset viewer with format coverage across image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets, whiteboard / brush surface, **license verifier + admin upload UI + capability-level enterprise-feature gating + identity-provider registry** (Phase 1.17.O/P — see [ADR 0017 § Status](docs/adr/0017-monetization-and-licensing.md)).
+- **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging, the load-bearing review tool arc (Phase 1.18.B) — video player → polish → captions → image sequences → presentation rooms → annotation system → timeline assembly → A/B compare → DCC integrations → native 3D viewer. Real LDAP / SAML impls plug into the existing provider registry slots.
+- **On the map:** advanced search, real LDAP/SAML/OAuth impls (foundation in place), tenant CRUD + per-tenant routing, storage tooling, reports, moderation, brand workspace, AI creative editing, federation, plugin ecosystem, observability, capability add-ons, premium add-on layer (commerce / ads / DCC plugins / cloud-bridge AI), external imports framework, caption / subtitle artifacts, native viewers for proprietary DCC formats.
 
 ---
 

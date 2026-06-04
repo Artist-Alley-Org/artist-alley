@@ -144,9 +144,35 @@ When the audit confirms a clean tree:
   Rejected per ADR 0017 — breaks studio source-audit requirements for
   AAA procurement.
 
+## Status (2026-06-04)
+
+**Phase 1 (audit + excise) is now structurally complete.** The
+strangler-fig porting layer (ADR 0003) was abandoned, the legacy PHP
+backend (ADR 0015) was removed from the repo in 2026-06, and the
+remaining tracked source under `app/`, `web/`, `site/`, and
+`infra/` is clean-room original work. There is no surviving
+BSD-3-obligated code in the runtime tree.
+
+What's still pending before the **Phase 2 relicense** can land:
+
+- The `LICENSE` file swap to AGPL-3.0.
+- Adding `LICENSE.commercial.md` describing the dual-license offer.
+- The CLA clause in `CONTRIBUTING.md`.
+- One last sweep of the tree to confirm no stray BSD-3-headers
+  survive in source files (a `find . -name '*.go' -exec grep -l
+  'BSD' {}` pass).
+
+These are scheduled together as a single mechanical commit once the
+operator decides to flip the switch — there is no longer a
+code-structural blocker.
+
 ## Reference
 
 - ADR 0002 — original BSD-3 decision (superseded by this ADR).
+- ADR 0003 — Strangler fig (now superseded; the abandonment is what
+  unblocked this ADR's Phase 1).
+- ADR 0015 — PHP as legacy backend (deprecated 2026-06; removal
+  cleared the last BSD-3 obligation surface).
 - ADR 0017 — monetization model & technical license enforcement (consumes
   this ADR's license direction).
 - ADR 0018 (planned) — Blender packaging as optional worker container.

@@ -189,6 +189,49 @@ needs `last_active_at` per user.
   database + admin minting flow.
 - **Phase 1.24.D** — Customer portal on Cloudflare Pages.
 
+### Status (2026-06-04)
+
+The initial verification + admin surface from this ADR shipped earlier
+than planned — folded into Phase 1.17 as the **O / P-foundation**
+series on `feat/identity-teams`, since enterprise SSO providers needed
+the gate baked in from the start. What's live in `main` once the
+branch lands:
+
+- **1.17.O-1** — Go verifier package + embedded publisher key catalog
+  + `GET /admin/license/status` + admin status UI. Replaces the
+  "1.24.A admin status surface" deliverable.
+- **1.17.O-2** — `POST /admin/license/{validate,upload}` + the
+  `capabilities.required_license_feature` column + the
+  `auth.Identity.Can` license-bridge that runs **before** the
+  SuperAdmin shortcut. Replaces the "1.24.A verification" deliverable
+  and starts the tangled-derivation work (1.24.B) via the
+  capability-system seam.
+- **1.17.O-3** — Layer-1 cross-binding: customer-held `org.key` seed,
+  verified against the `org_pubkey` claim at boot, on every upload,
+  and on the 24h re-verify ticker. Defeats license sharing without
+  any phone-home.
+- **1.17.P-foundation** — `auth.IdentityProvider` interface +
+  registry. Enterprise providers (`ldapauth`, `samlauth`) refuse
+  registration without their feature flag and detach hot when the
+  license downgrades; the multi-tenant manager (`tenancy.Manager`)
+  follows the same construction-site gate pattern. Federation is
+  explicitly **not** gated (per user direction — small communities
+  self-organize freely).
+
+The Cloudflare side (1.24.C/D — signing service, customer portal)
+lives in the sibling `artist-alley-license-server` repo and is
+deployed; the artist-alley app embeds only the public verification
+catalog. The remaining work captured by this ADR is the broader
+tangled-value derivation across more consumers (search quota, upload
+concurrency, etc.) — still queued as Phase 1.24.B.
+
+Public references for the as-built shape:
+
+- [`app/internal/licensing/`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/licensing) — verifier + state + admin handler.
+- [`app/internal/auth/identity_provider.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/identity_provider.go) — provider registry + license-gated `Register` / `Replace`.
+- [`app/internal/auth/license_bridge.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/license_bridge.go) — install-level capability gate consumed by `Identity.Can()`.
+- [`app/internal/db/migrations/00042_capabilities_license_feature.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/db/migrations/00042_capabilities_license_feature.sql) + [`00043_enterprise_capability_seeds.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/db/migrations/00043_enterprise_capability_seeds.sql) — the feature-flag column + seed rows.
+
 ## Consequences
 
 **Positive**
