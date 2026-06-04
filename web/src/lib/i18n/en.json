@@ -606,6 +606,45 @@
       "permission_write": "Write",
       "permission_admin": "Admin"
     },
+    "audit": {
+      "title": "System audit log",
+      "intro": "Append-only record of security- and policy-relevant events. Filter by event type, actor (the admin who did it), subject (the user it happened to), and a time window.",
+      "load_error": "Failed to load audit log.",
+      "load_more_error": "Failed to load more audit events.",
+      "empty": "No audit events match the current filter.",
+      "matched": "{total} event(s) matched",
+      "filter_event_type": "Event type",
+      "filter_event_type_any": "Any event type",
+      "filter_event_type_placeholder": "e.g. user.status_changed",
+      "filter_actor": "Actor user ref",
+      "filter_subject": "Subject user ref",
+      "filter_user_ref_placeholder": "rs_user_id",
+      "filter_since": "Since",
+      "filter_until": "Until",
+      "apply_filters": "Apply filters",
+      "clear_filters": "Clear",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "load_more": "Load more",
+      "loading_more": "Loading…",
+      "actor_to_subject": "actor user {actor} → subject user {subject}",
+      "subject_only": "subject user {subject}",
+      "actor_only": "actor user {actor}",
+      "no_principal": "no user principal",
+      "raw_metadata": "Raw metadata",
+      "user_agent": "User agent",
+      "field_previous": "Previous",
+      "field_next": "Next",
+      "field_reason": "Reason",
+      "field_sessions_revoked": "Sessions revoked",
+      "field_capability": "Capability",
+      "field_team_id": "Team",
+      "field_team_global": "global (no team scope)",
+      "field_note": "Note",
+      "field_session_id": "Session ID",
+      "field_attempted_username": "Attempted username",
+      "field_key": "Rate-limit key"
+    },
     "system": {
       "title": "System configuration",
       "intro": "Per-install settings. Persisted in the system_config table.",
@@ -672,8 +711,7 @@
         "saved": "AI providers saved."
       },
       "log": {
-        "title": "System log",
-        "coming_soon": "Unified audit log lands in a follow-up phase."
+        "title": "System log"
       },
       "themes": {
         "title": "Themes & branding",

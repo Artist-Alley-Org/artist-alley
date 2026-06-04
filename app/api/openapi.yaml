@@ -458,6 +458,99 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/audit:
+    get:
+      operationId: listAdminAuditEvents
+      summary: Admin audit log viewer (Phase 1.17.K)
+      description: |
+        Cursor-paginated read of the system-wide audit event log.
+        Every filter is optional; combining them narrows the result.
+        Returns the rows ordered newest-first along with the total
+        count (cursor-independent) so the UI can render a "X events
+        matched" header and a next-page button.
+
+        `next_cursor` is an opaque base64-url token wrapping the last
+        row's (occurred_at, id) pair. Pass it back as the `cursor`
+        query param to fetch the next page. Null when the response
+        is the final page.
+      tags: [audit]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.audit.read"]
+      parameters:
+        - name: event_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: actor_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: subject_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: since
+          in: query
+          required: false
+          description: ISO-8601 lower bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: ISO-8601 upper bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Page of audit events + total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/audit/event_types:
+    get:
+      operationId: listAdminAuditEventTypes
+      summary: Distinct event_type values present in the audit log
+      description: |
+        Used to populate the type-filter dropdown in the audit viewer
+        — distinct event_type values from the audit_events table,
+        alphabetically. Cheap query (small result set, indexed).
+      tags: [audit]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.audit.read"]
+      responses:
+        "200":
+          description: Distinct event_type values.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /account/password:
     put:
       operationId: changeMyPassword
@@ -5822,6 +5915,59 @@ components:
           type: string
           maxLength: 500
           description: Optional admin-supplied justification recorded with the row.
+
+    AuditEvent:
+      type: object
+      description: |
+        One row from audit_events (Phase 1.17.K). `metadata` is the
+        typed JSONB blob whose shape varies per event_type — see
+        app/internal/audit/events.go for the per-type schemas. The
+        UI renders well-known event types as structured changesets
+        ("active → disabled", etc.) and falls back to JSON dump for
+        the rest.
+      required: [id, event_type, occurred_at, metadata]
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        subject_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Typed per event_type — see audit/events.go.
+
+    AuditEventList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEvent" }
+        total:
+          type: integer
+          format: int64
+          description: Total rows matching the filter (cursor-independent).
+        next_cursor:
+          type: string
+          nullable: true
 
     UserPublic:
       type: object

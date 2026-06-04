@@ -52,6 +52,7 @@ type apiServer struct {
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
 	brushpacks   *brushpacks.Handler
+	audit        *audit.HTTPHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
@@ -72,6 +73,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
+		audit:        audit.NewHTTPHandler(pool, logger),
 	}
 }
 
@@ -570,6 +572,15 @@ func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPubl
 
 func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	return s.i18n.ListLocales(ctx, req)
+}
+
+// --- audit viewer (Phase 1.17.K) ------------------------------------------
+
+func (s *apiServer) ListAdminAuditEvents(ctx context.Context, req openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	return s.audit.ListAdminAuditEvents(ctx, req)
+}
+func (s *apiServer) ListAdminAuditEventTypes(ctx context.Context, req openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	return s.audit.ListAdminAuditEventTypes(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------
