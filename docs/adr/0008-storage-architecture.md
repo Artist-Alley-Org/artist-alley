@@ -26,12 +26,11 @@ The Phase 1.4 work depends on getting this layer right; every later
 feature — upload UX, browse, video review, archive tiering,
 federation — sits on top.
 
-ResourceSpace stores files at scrambled paths inside `filestore/`,
-keyed by sequential `resource.ref` and including the variant size in
-the filename (e.g., `filestore/<scramble>/3/8/3829/3829_pre.jpg`).
-That layout has real problems for our goals:
+A typical DAM stores files at scrambled paths inside a filestore,
+keyed by sequential resource IDs and encoding the variant size in
+the filename. That layout has real problems for our goals:
 
-- Sequential RS refs collide across federated peers (ADR 0007).
+- Sequential numeric refs collide across federated peers (ADR 0007).
 - Filename-encoded variants make adding new sizes invasive.
 - Same bytes uploaded twice = two copies on disk (no dedup).
 - Path scrambling is security-through-obscurity, not real access
@@ -173,10 +172,9 @@ CREATE TABLE storage_pins (
 
 The split is deliberate. `storage_objects` is the bytes. `storage_pins`
 is who's keeping them alive. `storage_variants` is what derived forms
-have been generated. The user-facing `resource` row (RS-owned for now,
-artist-alley-owned eventually) is yet another layer above — it owns
-the title, tags, permissions, comments. One resource maps to one or
-more pins.
+have been generated. The user-facing `resource` row is yet another
+layer above — it owns the title, tags, permissions, comments. One
+resource maps to one or more pins.
 
 ### Lifecycle / dedup semantics
 
@@ -262,7 +260,7 @@ we don't forget when multi-tenancy lands.
   Modest cost, easily within Postgres scale.
 - GC complexity: pin-counted bytes plus a grace period plus a sweeper.
   Worth it for the safety it gives accidental-delete users.
-- Initial migration of RS's existing filestore is one-shot work
+- Initial migration of any existing filestore is one-shot work
   (Phase 1.4.E) — must hash every existing file.
 
 **Mitigations**
@@ -270,7 +268,7 @@ we don't forget when multi-tenancy lands.
 - The 24h GC grace period catches accidental deletes (matches S3
   lifecycle behaviour).
 - The sweeper is idempotent; safe to re-run.
-- The RS importer can leave symlinks for PHP compatibility so the
+- The legacy importer can leave symlinks for PHP compatibility so the
   legacy code continues to find files at the old paths during the
   transition.
 
@@ -282,7 +280,7 @@ we don't forget when multi-tenancy lands.
 | **1.4.B** | `s3` implementation using AWS SDK Go v2; tests against MinIO container in docker-compose. |
 | **1.4.C** | `POST /api/v1/assets` (TUS-resumable) and `GET /api/v1/assets/{hash}/{variant}` (range-supporting). |
 | **1.4.D** | Variant generator: goroutine pool reading from a `storage_variant_jobs` table. First kind: image thumbnails using libvips or pure-Go alternatives. |
-| **1.4.E** | RS filestore importer: one-shot Go binary that walks `filestore/`, computes sha256 per file, populates the new tables, and optionally writes symlinks at the old paths so RS PHP keeps working. |
+| **1.4.E** | Legacy filestore importer: one-shot Go binary that walks `filestore/`, computes sha256 per file, populates the new tables, and optionally writes symlinks at the old paths so the legacy PHP keeps working. |
 
 **MVP for Phase 1.4** = A + C. B (S3) and the importer can land in
 follow-up commits without blocking the frontend.
@@ -299,7 +297,7 @@ follow-up commits without blocking the frontend.
 
 ## Alternatives considered
 
-- **Stay on RS's scrambled-filename layout, modernise behind the
+- **Stay on a scrambled-filename layout, modernise behind the
   scenes.** Rejected: keeps the dedup blocker, the federation
   blocker, and the variant-management blocker.
 - **One file per resource at a stable path (e.g., `assets/<ref>/...`).**

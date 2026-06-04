@@ -56,6 +56,111 @@ SELECT COUNT(*)::BIGINT AS value
 FROM posts
 WHERE author_user_ref = $1 AND deleted_at IS NULL;
 
+-- name: ListAdminUsers :many
+-- Admin user list (Phase 1.17.A). Joins `user` + user_profiles + the
+-- user's primary role for the display row. Filters: `status` mirrors
+-- the RS `approved` column (1=active, 0=pending, 2=disabled — see
+-- Phase 1.17.B), `q` runs case-insensitive prefix-ish match against
+-- username / fullname / email. Cursor pagination keys on
+-- (created_at DESC, ref DESC) — newest accounts first; admins
+-- typically want recent signups front-and-centre.
+--
+-- The "first role" projection is the alphabetically-first global
+-- assignment (team_id IS NULL). Per-team role assignments don't
+-- show on this list; they live on the user detail page where the
+-- team picker can scope them.
+SELECT u.ref                                            AS rs_user_id,
+       u.username,
+       u.fullname,
+       u.email,
+       u.approved,
+       u.created                                        AS created_at,
+       u.last_active,
+       u.origin                                         AS auth_origin,
+       u.account_expires,
+       COALESCE(p.display_name, '')                     AS display_name,
+       p.avatar_url,
+       p.origin_server_id                               AS profile_origin_server_id,
+       COALESCE((
+         SELECT r.name
+         FROM user_roles ur
+         JOIN roles r ON r.id = ur.role_id
+         WHERE ur.rs_user_id = u.ref AND ur.team_id IS NULL
+         ORDER BY r.name
+         LIMIT 1
+       ), '')::TEXT                                     AS primary_role
+FROM "user" u
+LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+WHERE
+  -- status filter: 'active' = approved=1, 'pending' = approved=0,
+  -- 'disabled' = approved=2. NULL filter = any.
+  (sqlc.narg('status_value')::BIGINT IS NULL OR u.approved = sqlc.narg('status_value')::BIGINT)
+  AND
+  -- text search: case-insensitive across username, fullname, email.
+  -- Empty / NULL = no filter.
+  (
+    sqlc.narg('search')::TEXT IS NULL OR sqlc.narg('search')::TEXT = ''
+    OR LOWER(u.username) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+    OR LOWER(COALESCE(u.fullname, '')) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+    OR LOWER(COALESCE(u.email, '')) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+  )
+  AND
+  -- cursor: pages after (cursor_created_at, cursor_ref) in (created DESC, ref DESC) order.
+  -- Lexicographic comparison handles the tiebreak when two users share a created timestamp.
+  (
+    sqlc.narg('cursor_created_at')::TIMESTAMPTZ IS NULL
+    OR (u.created, u.ref) < (sqlc.narg('cursor_created_at')::TIMESTAMPTZ, sqlc.narg('cursor_ref')::BIGINT)
+  )
+ORDER BY u.created DESC NULLS LAST, u.ref DESC
+LIMIT sqlc.arg('limit_n')::BIGINT;
+
+-- name: CountAdminUsers :one
+-- Total matching rows (no cursor). Returned alongside the page so
+-- the UI can render an "N users" badge without fetching every row.
+SELECT COUNT(*)::BIGINT AS value
+FROM "user" u
+WHERE
+  (sqlc.narg('status_value')::BIGINT IS NULL OR u.approved = sqlc.narg('status_value')::BIGINT)
+  AND (
+    sqlc.narg('search')::TEXT IS NULL OR sqlc.narg('search')::TEXT = ''
+    OR LOWER(u.username) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+    OR LOWER(COALESCE(u.fullname, '')) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+    OR LOWER(COALESCE(u.email, '')) LIKE '%' || LOWER(sqlc.narg('search')::TEXT) || '%'
+  );
+
+-- name: UpdateUserStatus :one
+-- Lifecycle mutation (Phase 1.17.B). Atomically swaps the user's
+-- approved column to $1 and returns the prior value alongside the
+-- new one + the user's username so the audit row can carry the
+-- before/after pair without a second SELECT.
+--
+-- Returns no rows when the user doesn't exist; handler turns that
+-- into a 404 rather than silently no-opping.
+WITH prior AS (
+  SELECT ref, username, approved FROM "user" WHERE ref = sqlc.arg('user_ref')::BIGINT
+),
+updated AS (
+  UPDATE "user"
+     SET approved = sqlc.arg('new_status')::BIGINT
+   WHERE ref = sqlc.arg('user_ref')::BIGINT
+     AND (SELECT approved FROM prior) <> sqlc.arg('new_status')::BIGINT
+  RETURNING ref
+)
+SELECT prior.ref       AS rs_user_id,
+       prior.username,
+       prior.approved  AS prev_status,
+       sqlc.arg('new_status')::BIGINT AS new_status,
+       (SELECT COUNT(*) FROM updated)::BIGINT > 0 AS changed
+FROM prior;
+
+-- name: GetUserStatusByRef :one
+-- Lightweight status-only read used by the handler's pre-write
+-- short-circuit + the per-user cache invalidation. Doesn't touch
+-- user_profiles.
+SELECT ref AS rs_user_id, username, approved
+FROM "user"
+WHERE ref = $1;
+
 -- name: UpsertUserProfile :one
 -- Caller's own profile edit. Idempotent — overwrites existing fields.
 -- The handler picks whether COALESCE-style PATCH or full overwrite

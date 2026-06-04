@@ -96,8 +96,43 @@ paths:
                 $ref: "#/components/schemas/CurrentUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: |
+            Identity provider was registered (license includes its
+            feature flag) but the credential-verification impl has
+            not yet landed in this binary. Distinct from 401 so the
+            admin UI can render "build pending" vs "wrong password".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /auth/providers:
+    get:
+      operationId: listIdentityProviders
+      summary: Enumerate the identity providers active on this install
+      description: |
+        Returns the set of identity providers the login surface can
+        dispatch to. The built-in password provider is always
+        present. Enterprise providers (LDAP, SAML, etc.) appear only
+        when the install's license includes the matching feature
+        flag (`sso_ldap`, `sso_saml`).
+
+        Used by the login page to render the right buttons + by the
+        admin UI to surface which enterprise gates have been
+        activated. Anonymous endpoint — the list is intentionally
+        public so unauthenticated users see the SSO buttons they
+        need to click.
+      tags: [auth]
+      responses:
+        "200":
+          description: Active provider list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProviderList"
 
   /auth/logout:
     post:
@@ -289,6 +324,686 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/capabilities:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAdminUserCapabilities
+      summary: List a user's explicit grants + revokes (admin)
+      description: |
+        Phase 1.17.F — returns the per-user GRANT and REVOKE override
+        lists. Role-derived capabilities are not included (they're
+        already returned by GET /auth/me/capabilities and the role
+        editor surface). This list is the additive/subtractive
+        delta admins manage by hand.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      responses:
+        "200":
+          description: Per-user grant + revoke override lists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCapabilityOverrides"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/grants:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: addAdminUserGrant
+      summary: Add a capability grant to a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCapabilityOverrideRequest"
+      responses:
+        "204":
+          description: Grant inserted (or refreshed if it already existed).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/grants/{capability}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: capability
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: removeAdminUserGrant
+      summary: Remove a capability grant from a user (admin)
+      description: |
+        Pass `team_id` query param to scope to a team-scoped grant;
+        omit for the global grant. Returns 404 when no matching grant
+        exists (composite key, not by ID — there is no ID).
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Grant removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/revokes:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: addAdminUserRevoke
+      summary: Add a capability revoke to a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCapabilityOverrideRequest"
+      responses:
+        "204":
+          description: Revoke inserted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/revokes/{capability}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: capability
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: removeAdminUserRevoke
+      summary: Remove a capability revoke from a user (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      parameters:
+        - name: team_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Revoke removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/license/status:
+    get:
+      operationId: getAdminLicenseStatus
+      summary: Current license status (Phase 1.17.O)
+      description: |
+        Returns the cached, verified-at-boot snapshot of this
+        install's license — tier, features, caps, expiry, etc. When
+        no `.lic` file is installed, returns a synthetic
+        "community" status (tier: community, features: community
+        defaults, days_until_expiry: 0).
+
+        The artist-alley app NEVER calls the license server at
+        verification time. This endpoint just reads the in-memory
+        cache populated at startup (and refreshed on
+        POST /admin/license/upload — Phase 1.17.O-2).
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      responses:
+        "200":
+          description: License snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/license/validate:
+    post:
+      operationId: validateAdminLicense
+      summary: Dry-run verify a license envelope (Phase 1.17.O-2)
+      description: |
+        Verifies the supplied `.lic` text against the embedded
+        publisher catalog without persisting anything. Used by the
+        admin UI to preview a license before clicking "Install".
+
+        On success the response carries the same `LicenseStatus`
+        shape the GET endpoint returns, with `loaded: true` and the
+        Status fields populated from the candidate envelope. The
+        currently installed license is NOT touched.
+
+        On verifier failure (`bad signature`, `expired`, `unknown
+        publisher key`, etc.) the response is a structured
+        `LicenseValidateError` describing the failure so the UI can
+        render an actionable message instead of a generic 400.
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicenseUploadRequest"
+      responses:
+        "200":
+          description: Envelope verified successfully (not installed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "400":
+          description: Envelope rejected by the verifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseValidateError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/license/upload:
+    post:
+      operationId: uploadAdminLicense
+      summary: Install a new license envelope (Phase 1.17.O-2)
+      description: |
+        Verifies the supplied `.lic` text and, on success, writes it
+        to the configured `LicensePath` and atomically swaps the
+        cached license state. The new status is returned in the
+        same shape as `GET /admin/license/status`.
+
+        Verification runs BEFORE the write — a bad envelope can never
+        overwrite a working file on disk. On verifier failure the
+        on-disk file and cached state are unchanged and the response
+        is a structured `LicenseValidateError`.
+
+        Returns 409 when the server has no LicensePath configured
+        (the admin must set `AA_LICENSE_PATH` before uploading).
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicenseUploadRequest"
+      responses:
+        "200":
+          description: License installed; new status returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "400":
+          description: Envelope rejected by the verifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseValidateError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Server has no LicensePath configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Verified but write-to-disk failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/audit:
+    get:
+      operationId: listAdminAuditEvents
+      summary: Admin audit log viewer (Phase 1.17.K)
+      description: |
+        Cursor-paginated read of the system-wide audit event log.
+        Every filter is optional; combining them narrows the result.
+        Returns the rows ordered newest-first along with the total
+        count (cursor-independent) so the UI can render a "X events
+        matched" header and a next-page button.
+
+        `next_cursor` is an opaque base64-url token wrapping the last
+        row's (occurred_at, id) pair. Pass it back as the `cursor`
+        query param to fetch the next page. Null when the response
+        is the final page.
+      tags: [audit]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.audit.read"]
+      parameters:
+        - name: event_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: actor_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: subject_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: since
+          in: query
+          required: false
+          description: ISO-8601 lower bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: ISO-8601 upper bound on occurred_at (inclusive).
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Page of audit events + total count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/audit/event_types:
+    get:
+      operationId: listAdminAuditEventTypes
+      summary: Distinct event_type values present in the audit log
+      description: |
+        Used to populate the type-filter dropdown in the audit viewer
+        — distinct event_type values from the audit_events table,
+        alphabetically. Cheap query (small result set, indexed).
+      tags: [audit]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.audit.read"]
+      responses:
+        "200":
+          description: Distinct event_type values.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /account/password:
+    put:
+      operationId: changeMyPassword
+      summary: Change my password
+      description: |
+        Phase 1.17.D — self-service password change. Verifies the
+        current password, applies the policy (min length / complexity
+        from system_config.auth.password_policy), rejects reuse of
+        the last 5 passwords, and (optionally) revokes every other
+        session belonging to the caller as a defensive default.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangePasswordResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /admin/users/{ref}/password-reset:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: adminResetUserPassword
+      summary: Issue a one-shot password for a user (admin helpdesk)
+      description: |
+        Phase 1.17.D — admin/helpdesk password reset. Generates a
+        cryptographically random temporary password, stores its hash,
+        and returns the plaintext ONCE in the response so the admin
+        can share it with the user out-of-band (chat / SMS / call).
+        The user is expected to change it on next login; enforcement
+        of "must change on first login" lands with the email-token
+        reset flow in a follow-up phase. Audit captures the actor +
+        reason; the plaintext password is never logged.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.password.reset"]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPasswordResetRequest"
+      responses:
+        "200":
+          description: One-shot password generated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPasswordResetResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /account/sessions:
+    get:
+      operationId: listMySessions
+      summary: List my active sessions (multi-device)
+      description: |
+        Phase 1.17.C — surfaces the caller's own active sessions for
+        the /account/sessions self-service page. The row that's
+        authenticating this request carries `current: true` so the
+        UI can hide its own revoke button.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of the caller's active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeMySession
+      summary: Revoke one of my sessions
+      description: |
+        Ownership-checked: revokes only when the session id belongs
+        to the caller. 404 covers both "wrong owner" and "no such
+        session" so existence can't be probed.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/sessions:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAdminUserSessions
+      summary: List a user's active sessions (admin)
+      description: |
+        Phase 1.17.C — admin view of a specific user's sessions for
+        the per-user admin detail page. Same row shape as the
+        self-service endpoint; `current` is omitted (admins are
+        viewing someone else's sessions, not their own).
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      responses:
+        "200":
+          description: The user's active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{ref}/sessions/{id}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeAdminUserSession
+      summary: Revoke a user's session (admin)
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.write"]
+      responses:
+        "204":
+          description: Session revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      summary: List users (admin)
+      description: |
+        Paginated admin user list (Phase 1.17.A). Newest accounts first.
+        Filters: `q` runs a case-insensitive substring match across
+        username / fullname / email; `status` narrows to active /
+        pending / disabled (mapping to the underlying user.approved
+        flag, see 1.17.B for the lifecycle state machine). Cursor
+        pagination via opaque `cursor` token; `total` is the
+        unfiltered-by-cursor count for the badge in the chrome.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.read"]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring match across username, fullname, email.
+          schema: { type: string, maxLength: 200 }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, pending, disabled]
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque token from a previous response's `next_cursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of admin user rows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /admin/users/{ref}/status:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    put:
+      operationId: setAdminUserStatus
+      summary: Change a user's lifecycle status (admin)
+      description: |
+        Phase 1.17.B — admin-only lifecycle transition. Moves a user
+        through pending / active / disabled. The audit log records
+        the before / after / reason tuple.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["users.approve"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserStatusUpdate"
+      responses:
+        "200":
+          description: New status (after the transition).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserStatusResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /auth/tokens/{id}:
     delete:
@@ -2687,8 +3402,15 @@ paths:
       summary: List all asset types
       description: |
         Returns every asset type configured in the system, ordered by
-        display order (`order_by`) then by primary key. Anonymous access.
+        display order (`order_by`) then by primary key. Anonymous
+        callers see every unrestricted type; authenticated callers
+        additionally see restricted types they hold a `read` (or
+        higher) ACL row on. Admins (system.admin) see everything.
       tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+        - {}
       responses:
         "200":
           description: List of asset types
@@ -2700,6 +3422,114 @@ paths:
                   $ref: "#/components/schemas/AssetType"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /asset_types/{ref}/acls:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAssetTypeAcls
+      summary: List ACL rows attached to an asset_type (admin)
+      description: |
+        Returns every ACL row attached to this asset_type (Phase
+        1.17.F-bis). When the response is empty the type is
+        unrestricted — every caller can access it. When at least one
+        row is present the type is restricted to its grantees + admins.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      responses:
+        "200":
+          description: ACL entries (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AclEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addAssetTypeAcl
+      summary: Grant a permission on an asset_type to a principal
+      description: |
+        Inserts one ACL row. Re-granting the same tuple refreshes
+        granted_at / granted_by / expires_at — idempotent. The first
+        row inserted flips the type from "open" to "restricted" for
+        non-admin callers.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AclCreate" }
+      responses:
+        "204":
+          description: ACL row added.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /asset_types/{ref}/acls/{principal_type}/{principal_id}/{permission}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: principal_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, role, team]
+      - name: principal_id
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+      - name: permission
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [read, write, admin]
+    delete:
+      operationId: removeAssetTypeAcl
+      summary: Revoke a specific permission row from a principal
+      description: |
+        Removes the exact (principal_type, principal_id, permission)
+        tuple. Other permission levels for the same principal stay
+        intact. Removing the last row on a type flips it back to
+        "open" for every caller. 404 if the row doesn't exist.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /teams:
     get:
@@ -3801,6 +4631,52 @@ components:
         password:
           type: string
           format: password
+        provider:
+          type: string
+          description: |
+            Name of the identity provider to authenticate against.
+            Defaults to "password" (the built-in flow). Enterprise
+            installs can name a registered LDAP provider ("ldap" or
+            a per-server alias like "ldap-engineering"). Requests
+            naming an unregistered provider get 401 — same shape as
+            a bad password, so a probing client can't enumerate
+            which enterprise providers are active.
+          example: password
+    IdentityProviderSummary:
+      type: object
+      description: |
+        Public projection of a registered identity provider — what
+        the login screen renders. No license-feature flag is
+        surfaced here; the mere presence of an entry implies the
+        install holds the matching feature.
+      required: [name, display_name, kind, supports_password]
+      properties:
+        name:
+          type: string
+          description: Stable registry identifier (POST /auth/login `provider` field).
+        display_name:
+          type: string
+          description: Human-readable label rendered on the login screen.
+        kind:
+          type: string
+          description: |
+            Provider kind — "password", "ldap", or "saml". Determines
+            which login UI the frontend renders (form vs. redirect
+            button).
+          enum: [password, ldap, saml]
+        supports_password:
+          type: boolean
+          description: |
+            True when the provider accepts username + password via
+            POST /auth/login. False for redirect-flow providers
+            (SAML) — those use kind-specific endpoints.
+    IdentityProviderList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityProviderSummary" }
     SetupStatus:
       type: object
       required: [needs_setup, deployment, defaults]
@@ -4973,6 +5849,497 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Team" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    AdminUser:
+      type: object
+      description: |
+        Admin-projection of a user row. Carries everything the
+        admin list table needs — username, email, status, last
+        activity, primary role — without surfacing password-bearing
+        columns. `status` maps to the underlying user.approved
+        column (1=active, 0=pending, 2=disabled per Phase 1.17.B's
+        lifecycle state machine). `primary_role` is the user's
+        alphabetically-first global role assignment; per-team
+        assignments live on the user detail page.
+      required: [ref, username, display_name, status, created_at]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        fullname:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        display_name:
+          type: string
+          description: Resolved display string (profile.display_name → fullname → username).
+        avatar_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        primary_role:
+          type: string
+          description: Empty when the user has no global role assigned.
+        created_at:
+          type: string
+          format: date-time
+        last_active:
+          type: string
+          format: date-time
+          nullable: true
+        account_expires:
+          type: string
+          format: date-time
+          nullable: true
+          description: Hard expiry enforced at login; null = no expiry.
+        auth_origin:
+          type: string
+          nullable: true
+          description: |
+            Login provider for this user — empty / null = native, else
+            'simpleldap' / 'simplesaml' / etc. once Phase 1.17.O wires
+            the enterprise SSO surfaces. Surfaced here so the admin
+            list can show the auth-source badge.
+        profile_origin_server_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Federation origin (when the profile row came from a peer
+            instance). Null = home instance. See ADR 0007.
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          description: The caller's current password — verified before the change is accepted.
+        new_password:
+          type: string
+          description: The new password. Must satisfy the system password policy.
+        revoke_other_sessions:
+          type: boolean
+          description: |
+            When true, every session belonging to the caller EXCEPT
+            the one authenticating this request is revoked. Defensive
+            default for "I think someone got my password" recovery
+            flows. Defaults to true client-side; the server doesn't
+            assume either way (omitting the field = false).
+
+    ChangePasswordResult:
+      type: object
+      required: [changed_at]
+      properties:
+        changed_at:
+          type: string
+          format: date-time
+        sessions_revoked:
+          type: integer
+          description: Count of other sessions ended as part of this change.
+
+    AdminPasswordResetRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Admin-supplied justification recorded in the audit log.
+            Encouraged but not required — an empty reason still
+            produces an audit row.
+
+    AdminPasswordResetResult:
+      type: object
+      required: [temporary_password, generated_at]
+      properties:
+        temporary_password:
+          type: string
+          description: |
+            Plaintext one-shot password — returned ONCE so the admin
+            can share it with the user. The server stores only the
+            hash; this value is never reachable again from any API.
+            Generators must use a cryptographically strong RNG; this
+            response should be considered as sensitive as the
+            hash-bearing original.
+        generated_at:
+          type: string
+          format: date-time
+
+    SessionRow:
+      type: object
+      description: |
+        One active session (Phase 1.17.C). The IP + user-agent are
+        best-effort observability captured at login; both can be null
+        when behind a proxy that strips them. `current` is true only
+        on the self-service endpoint for the row that's authenticating
+        the request — the UI uses it to hide its own revoke button.
+      required: [id, created_at, last_used_at]
+      properties:
+        id: { type: string, format: uuid }
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        current:
+          type: boolean
+          description: |
+            True only on /account/sessions for the session that
+            authenticated the request. Omitted on the admin
+            equivalent.
+
+    SessionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SessionRow" }
+
+    AdminUserStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Free-text justification recorded in the audit log alongside
+            the before/after pair. Encouraged but not required — an
+            empty reason still produces an audit row.
+
+    AdminUserStatusResult:
+      type: object
+      required: [ref, status, changed]
+      properties:
+        ref:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [active, pending, disabled]
+        previous_status:
+          type: string
+          enum: [active, pending, disabled]
+        changed:
+          type: boolean
+          description: |
+            False when the target status equals the current status (the
+            handler short-circuits the write but still returns 200 so
+            idempotent automation doesn't trip on a no-op).
+
+    AdminUserList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUser" }
+        total:
+          type: integer
+          format: int64
+          description: Total rows matching the q + status filter (cursor-independent).
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque pagination token. Pass back as the next request's
+            `cursor` param to fetch the following page. Null when this
+            response is the final page.
+
+    UserCapabilityOverride:
+      type: object
+      description: |
+        One row from either `user_capability_grants` or
+        `user_capability_revokes` (Phase 1.17.F). `team_id` is null
+        for global overrides, set for team-scoped ones. `note` is the
+        admin-supplied justification recorded at grant/revoke time.
+      required: [capability, granted_at]
+      properties:
+        capability:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        note:
+          type: string
+          description: Free-text justification — empty when none was supplied.
+        granted_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Acting admin's rs_user_id at time of grant/revoke. Null
+            when the row predates Phase 1.17.F or was inserted by
+            seed migration.
+        granted_at:
+          type: string
+          format: date-time
+
+    UserCapabilityOverrides:
+      type: object
+      description: |
+        Per-user explicit GRANT + REVOKE override lists. Role-derived
+        capabilities are NOT included — admins manage those through
+        the role editor; this surface only exposes the additive /
+        subtractive deltas attached directly to the user.
+      required: [grants, revokes]
+      properties:
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/UserCapabilityOverride" }
+        revokes:
+          type: array
+          items: { $ref: "#/components/schemas/UserCapabilityOverride" }
+
+    UserCapabilityOverrideRequest:
+      type: object
+      description: |
+        Body shared by POST /admin/users/{ref}/grants and POST
+        /admin/users/{ref}/revokes. Pass `team_id` to scope the
+        override to a team — omit / null for a global override.
+      required: [capability]
+      properties:
+        capability:
+          type: string
+          description: Capability code (e.g. `assets.read`, `users.write`).
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        note:
+          type: string
+          maxLength: 500
+          description: Optional admin-supplied justification recorded with the row.
+
+    LicenseStatus:
+      type: object
+      description: |
+        License snapshot returned by GET /admin/license/status
+        (Phase 1.17.O). `loaded: false` means no .lic file is
+        installed and the artist-alley app is running in community
+        mode — community defaults apply, no license-server
+        interaction needed.
+
+        `days_until_expiry` is derived (0 in community mode;
+        negative when expired). Nullable cap fields (`seats`,
+        `asset_cap`) → null = unlimited. Nullable temporal /
+        identity fields are simply omitted in community mode.
+      required: [loaded, tier, features, days_until_expiry, org_binding_required, org_bound]
+      properties:
+        loaded:
+          type: boolean
+          description: True when a real .lic file is mounted + verified. False = community mode.
+        tier:
+          type: string
+          description: |
+            "community" (unlicensed default) | "pro" | "enterprise" |
+            "complementary" | "plugin" | "custom".
+        features:
+          type: array
+          items: { type: string }
+        owner:
+          type: string
+          description: License owner email — surfaced for support routing.
+        org:
+          type: string
+          description: Organization slug — same value across federated peers.
+        lid:
+          type: string
+          description: License id (ULID); surface in support tickets.
+        seats:
+          type: integer
+          format: int64
+          nullable: true
+          description: Max concurrent active seats; null = unlimited.
+        seat_window_days:
+          type: integer
+          description: Rolling window for "active seat" counting.
+        asset_cap:
+          type: integer
+          format: int64
+          nullable: true
+          description: Asset cap (primary assets only); null = unlimited.
+        nbf:
+          type: string
+          format: date-time
+          description: Not-before timestamp (RFC3339).
+        exp:
+          type: string
+          format: date-time
+          description: Expiry timestamp.
+        iat:
+          type: string
+          format: date-time
+          description: Issued-at timestamp.
+        days_until_expiry:
+          type: integer
+          description: |
+            Whole days until license expires. Negative when expired.
+            Zero in community mode (no expiry).
+        last_error:
+          type: string
+          description: |
+            Last verification error if the loaded license failed
+            (e.g. expired, wrong issuer). Surfaced verbatim in the
+            admin UI so operators can react.
+        iss:
+          type: string
+          description: |
+            Issuer string baked into the license — admins can
+            confirm the .lic came from the canonical authority.
+        path:
+          type: string
+          description: |
+            Filesystem path the verifier loaded the .lic from.
+            Useful for diagnostics + support.
+        org_binding_required:
+          type: boolean
+          description: |
+            True when the loaded license declares an `org_pubkey`
+            claim — the customer must hold the matching org.key
+            seed file on disk for the license to activate. False for
+            community / trial / dev licenses that opted out of
+            cross-binding at issuance time.
+        org_bound:
+          type: boolean
+          description: |
+            True when the install satisfies cross-binding — either
+            because `org_binding_required` is false (no binding to
+            satisfy), or because the on-disk org.key derives to a
+            public key matching the license's `org_pubkey`. The
+            cap-enforcement layer only treats the license as active
+            when this is true.
+        org_binding_error:
+          type: string
+          description: |
+            Human-readable reason cross-binding failed when
+            `org_binding_required` is true and `org_bound` is false.
+            One of: "org.key missing", "org.key malformed", "org.key
+            does not match license org_pubkey".
+        org_key_path:
+          type: string
+          description: |
+            Filesystem path the verifier consults for the org.key
+            seed. Echoed back to the admin UI so operators see
+            exactly where to drop the file when cross-binding fails.
+
+    LicenseUploadRequest:
+      type: object
+      description: |
+        Payload for POST /admin/license/validate and
+        POST /admin/license/upload (Phase 1.17.O-2). Carries the
+        verbatim .lic envelope text — BEGIN/END markers, key:
+        value fields, signature field — exactly as the customer
+        downloaded it.
+      required: [license_text]
+      properties:
+        license_text:
+          type: string
+          minLength: 32
+          maxLength: 65536
+          description: |
+            Full .lic file body including the BEGIN/END markers.
+            Whitespace + line wrapping are tolerated by the
+            verifier.
+
+    LicenseValidateError:
+      type: object
+      description: |
+        Structured 400 response from /admin/license/validate +
+        /admin/license/upload. `code` is a stable machine-readable
+        token the UI can switch on for i18n; `message` is the raw
+        verifier error string for diagnostics.
+      required: [error, code, message]
+      properties:
+        error:
+          type: string
+          description: Human-readable summary (constant "license validation failed").
+        code:
+          type: string
+          description: |
+            Stable token for UI branching. One of:
+            `bad_envelope`, `bad_signature`, `expired`,
+            `not_yet_valid`, `unknown_publisher_key`,
+            `wrong_issuer`, `chain_expired`, `chain_bad_signature`,
+            `chain_scope`, `chain_kid_mismatch`,
+            `org_key_missing`, `org_key_bad_format`,
+            `org_key_mismatch`, `unknown`.
+        message:
+          type: string
+          description: Raw verifier error string for diagnostics.
+
+    AuditEvent:
+      type: object
+      description: |
+        One row from audit_events (Phase 1.17.K). `metadata` is the
+        typed JSONB blob whose shape varies per event_type — see
+        app/internal/audit/events.go for the per-type schemas. The
+        UI renders well-known event types as structured changesets
+        ("active → disabled", etc.) and falls back to JSON dump for
+        the rest.
+      required: [id, event_type, occurred_at, metadata]
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        subject_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Typed per event_type — see audit/events.go.
+
+    AuditEventList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEvent" }
+        total:
+          type: integer
+          format: int64
+          description: Total rows matching the filter (cursor-independent).
         next_cursor:
           type: string
           nullable: true

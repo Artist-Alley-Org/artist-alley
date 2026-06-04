@@ -15,13 +15,13 @@ tags:
   - ai
   - 3d
 excerpt: >-
-  The current homepage and account dashboards show "recent uploads" / "unreviewed" / "team feed" as flat lists. RS supports nested featured collection trees as the front-page curation primitive — "Concept Art > Characters > 2026 Pitches > Hero Shots" — with each node having its…
+  The current homepage and account dashboards show "recent uploads" / "unreviewed" / "team feed" as flat lists. Nested featured collection trees — "Concept Art > Characters > 2026 Pitches > Hero Shots" — are a standard front-page curation primitive, with each node having its own thumbnail + description + access scope.
 ---
 ## Context
 
 The current homepage and account dashboards show "recent uploads" /
-"unreviewed" / "team feed" as flat lists. RS supports nested
-**featured collection trees** as the front-page curation primitive —
+"unreviewed" / "team feed" as flat lists. A nested **featured
+collection tree** is the standard front-page curation primitive —
 "Concept Art > Characters > 2026 Pitches > Hero Shots" — with each
 node having its own thumbnail + description + access scope. Studios
 with a marketing org need this depth to maintain discoverable curated

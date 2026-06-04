@@ -24,6 +24,16 @@ const repoRoot = resolve(here, '../../..'); // .../web
 const TRACKED_FILES = [
   'src/lib/components/viewers/ArchiveView.svelte',
   'src/lib/components/viewers/tools/ArchiveTool/Body.svelte',
+  'src/routes/admin/users/+page.svelte',
+  'src/routes/admin/users/[ref]/+page.svelte',
+  'src/routes/account/sessions/+page.svelte',
+  'src/routes/account/password/+page.svelte',
+  'src/routes/admin/teams/+page.svelte',
+  'src/routes/admin/teams/[id]/+page.svelte',
+  'src/routes/admin/asset-types/+page.svelte',
+  'src/routes/admin/asset-types/[ref]/+page.svelte',
+  'src/routes/admin/system/log/+page.svelte',
+  'src/routes/admin/system/license/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":

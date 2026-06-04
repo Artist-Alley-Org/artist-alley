@@ -24,11 +24,15 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/ldapauth"
+	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
+	"github.com/mscrnt/artist-alley/app/internal/samlauth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/tenancy"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -39,13 +43,26 @@ type Server struct {
 	pool    *pgxpool.Pool
 	srv     *http.Server
 	workers *jobs.Pool // background worker pool; nil if disabled
+
+	// lifecycleCtx bounds background goroutines (licensing re-verify
+	// ticker, etc.) to the server's lifetime. Cancelled by Run() at
+	// shutdown so the goroutines exit cleanly rather than leaking
+	// past process tear-down (or test cleanup).
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
 }
 
 // New builds a Server with routes wired up but not yet listening.
 // Call [Server.Run] to start serving.
 func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version string) (*Server, error) {
+	// Bound long-lived background goroutines to a single lifecycle
+	// context cancelled at shutdown. Stash on the Server so Run() can
+	// cancel it after the HTTP listener stops accepting.
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+
 	backend, err := buildStorageBackend(cfg)
 	if err != nil {
+		serverCancel()
 		return nil, fmt.Errorf("storage backend: %w", err)
 	}
 	storageSvc := storage.NewService(backend, pool)
@@ -77,6 +94,71 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	auditRec := audit.NewRecorder(pool, logger)
 	sysCfg := sysconfig.NewStore(pool)
 
+	// License state — verifies the .lic file at cfg.LicensePath (if
+	// any), caches the resulting Status, and exposes a Source
+	// interface every dependent package consults to check feature
+	// flags. Community mode (no file) is non-error; status surfaces
+	// "loaded: false" + the built-in community defaults.
+	licState := licensing.NewState(cfg.LicensePath, cfg.OrgKeyPath, logger)
+
+	// Wire the licensing.State into auth.Identity.Can() so capability
+	// checks consult the install's licensed feature set. Without this
+	// bridge, caps gated by required_license_feature would deny under
+	// every install (the "no source installed" failsafe in
+	// capLicenseAllows). The map of cap → feature is loaded from the
+	// capabilities table on the next line.
+	auth.SetLicenseSource(licState)
+	if features, err := loadCapLicenseFeatures(context.Background(), pool); err != nil {
+		// Non-fatal: degrade to "no license-gated caps" rather than
+		// failing the whole API server. Identity.Can() will allow
+		// every cap on the license axis (RBAC still enforced). Logged
+		// loudly so the misconfiguration surfaces.
+		logger.Error("load capability license features", "err", err)
+	} else {
+		auth.SetCapLicenseFeatures(features)
+	}
+
+	// 24h re-verify ticker. Defense-in-depth: a runtime patch that
+	// freezes the cached Status has to also kill this goroutine, or
+	// the next tick re-reads the .lic + org.key and overwrites the
+	// cache. Bound to the server's shutdown context — graceful Stop()
+	// cancels it cleanly.
+	licState.StartReverify(serverCtx, 24*time.Hour)
+
+	// Identity-provider registry. Built-in PasswordProvider is
+	// unconditional; enterprise providers (LDAP, SAML, ...) attach
+	// only when the install's license declares the matching feature.
+	//
+	// The registry is HOT-SWAPPABLE: licState.OnReload below registers
+	// a callback that re-runs buildProviders on every successful .lic
+	// upload / re-verify, so an admin who buys an enterprise upgrade
+	// can install the new .lic and immediately use LDAP without
+	// bouncing the process. Existing user sessions stay live.
+	//
+	// SAML routes are mounted unconditionally below — the handlers
+	// look the provider up from the registry at request time, so the
+	// route 404s cleanly when SAML isn't licensed and starts serving
+	// the moment a license-with-sso_saml lands.
+	providers := auth.NewRegistry()
+	if err := providers.Replace(buildProviders(pool, cfg, licState, logger), licState); err != nil {
+		logger.Error("identity provider initial build failed", "err", err)
+	}
+	licState.OnReload(func(_ licensing.Status) {
+		if err := providers.Replace(buildProviders(pool, cfg, licState, logger), licState); err != nil {
+			logger.Error("identity provider hot-rebuild failed", "err", err)
+		} else {
+			logger.Info("identity provider registry rebuilt after license reload")
+		}
+	})
+
+	// Multi-tenant manager. Returns nil when the install lacks
+	// multi_tenant; that nil is the canonical "feature unavailable"
+	// state every consumer checks for. Federation stays free (per
+	// user direction — small communities can self-organize), so we
+	// don't construct anything for it here.
+	tenantMgr := tenancy.NewManager(licState, logger)
+	_ = tenantMgr // 1.18 work — the admin handlers + middleware land then
+
 	// Cross-domain cache registry. Subscribes to Postgres NOTIFY
 	// on channel "cache_invalidate" so peer instances (and DB
 	// triggers like the asset_field_value rebuild) can drop our
@@ -84,6 +166,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// when their handlers are constructed below.
 	cacheReg := cache.NewRegistry(pool, logger)
 	if err := cacheReg.Start(context.Background()); err != nil {
+		serverCancel()
 		return nil, fmt.Errorf("cache registry: %w", err)
 	}
 
@@ -148,9 +231,28 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Get("/assets/{id}/variants/views/*",
 			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
-		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
+		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
+		// Hand the provider registry to the auth handler now that
+		// both exist. Done out-of-band rather than threading through
+		// newAPIServer's positional args — same shape as the
+		// password-policy + audit-recorder setters above.
+		impl.auth.SetProviderRegistry(providers)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
+
+		// SAML redirect-flow routes. Always mounted, but the handlers
+		// look the provider up from the (hot-swappable) registry at
+		// request time — unlicensed installs get a clean 404, and the
+		// moment a license-with-sso_saml lands via /admin/license/upload
+		// they start serving without a process restart. Trade against
+		// the strict "no-route-on-Community" pattern was deliberate:
+		// the cap-bridge + chain-of-trust + re-verify ticker remain
+		// the load-bearing defense lines, and hot-swap is worth more
+		// to operators than a one-byte-harder patcher target here.
+		samlRouter := newSAMLRouter(providers)
+		r.Get("/auth/saml/login", samlRouter.BeginLogin)
+		r.Post("/auth/saml/acs", samlRouter.ConsumeAssertion)
+		r.Get("/auth/saml/metadata", samlRouter.Metadata)
 
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
@@ -211,7 +313,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
-		workers: workers,
+		workers:         workers,
+		lifecycleCtx:    serverCtx,
+		lifecycleCancel: serverCancel,
 	}, nil
 }
 
@@ -294,9 +398,105 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.start", slog.Any("cause", ctx.Err()))
 		if err := s.srv.Shutdown(shutdownCtx); err != nil {
 			s.logger.LogAttrs(ctx, slog.LevelError, "http.shutdown.error", slog.Any("err", err))
+			s.lifecycleCancel()
 			return err
 		}
+		s.lifecycleCancel()
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.done")
 		return nil
 	}
+}
+
+// buildProviders constructs the full identity-provider list for the
+// current license state. Called once at boot and again on every
+// licensing.State swap (via OnReload) so enterprise providers attach
+// + detach as licenses are uploaded / expire without a process
+// restart.
+//
+// Order matters only for logging output; sorting happens in
+// Registry.List for read-side stability.
+func buildProviders(pool *pgxpool.Pool, cfg config.Config, licState *licensing.State, logger *slog.Logger) []auth.IdentityProvider {
+	out := []auth.IdentityProvider{
+		auth.NewPasswordProvider(pool, cfg.ScrambleKey),
+	}
+	if licState.HasFeature(ldapauth.LicenseFeature) {
+		out = append(out, ldapauth.New("ldap", "LDAP / Active Directory"))
+		logger.Info("identity provider: ldap registered (stub impl)")
+	} else {
+		logger.Info("identity provider: ldap absent (sso_ldap feature not in license)")
+	}
+	if licState.HasFeature(samlauth.LicenseFeature) {
+		out = append(out, samlauth.New("saml", "SAML 2.0 SSO"))
+		logger.Info("identity provider: saml registered (stub impl)")
+	} else {
+		logger.Info("identity provider: saml absent (sso_saml feature not in license)")
+	}
+	return out
+}
+
+// samlRouter wires the SAML redirect-flow HTTP routes to a
+// per-request lookup against the (hot-swappable) provider registry.
+// When the SAML provider isn't currently registered (Community
+// install, or .lic doesn't declare sso_saml), each handler 404s —
+// no client distinguishes that from a route that was never mounted
+// in the first place. The moment an admin uploads a license that
+// includes sso_saml, the OnReload callback rebuilds the registry and
+// these routes start serving without any process intervention.
+type samlRouter struct {
+	providers *auth.Registry
+}
+
+func newSAMLRouter(r *auth.Registry) *samlRouter { return &samlRouter{providers: r} }
+
+func (s *samlRouter) resolve() (samlauth.RedirectFlowHandler, bool) {
+	p, ok := s.providers.Get("saml")
+	if !ok {
+		return nil, false
+	}
+	rfh, ok := p.(samlauth.RedirectFlowHandler)
+	return rfh, ok
+}
+
+func (s *samlRouter) BeginLogin(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.BeginLogin(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *samlRouter) ConsumeAssertion(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.ConsumeAssertion(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *samlRouter) Metadata(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.Metadata(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// loadCapLicenseFeatures fetches the cap → required_license_feature
+// map from the capabilities table for handoff to auth.SetCapLicenseFeatures.
+// Only caps with a non-NULL required_license_feature are returned, so
+// the in-memory map is tight even on a large cap table.
+func loadCapLicenseFeatures(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	q := auth.New(pool)
+	rows, err := q.LoadCapabilityLicenseFeatures(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.RequiredLicenseFeature == nil {
+			continue // defensive: SQL filters NULLs but the type is pointer
+		}
+		out[r.Code] = *r.RequiredLicenseFeature
+	}
+	return out, nil
 }

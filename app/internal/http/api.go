@@ -21,6 +21,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
@@ -52,11 +53,13 @@ type apiServer struct {
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
 	brushpacks   *brushpacks.Handler
+	audit        *audit.HTTPHandler
+	licensing    *licensing.Handler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
 	return &apiServer{
-		auth:         auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg),
+		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
@@ -64,7 +67,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
-		users:        users.NewHandler(pool, logger, cacheReg),
+		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
 		social:       social.NewHandler(pool, logger),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
@@ -72,7 +75,49 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
+		audit:        audit.NewHTTPHandler(pool, logger),
+		licensing:    licensing.NewHandler(licState, logger),
 	}
+}
+
+// usersHandlerWithAudit constructs the users handler + attaches the
+// audit recorder. Split out so api.go's struct literal stays
+// expression-shaped without an inline statement block (gofmt
+// rejects that), and so a future "users handler needs LDAP-bind
+// hook too" addition lands in one spot.
+func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, auditRec *audit.Recorder) *users.Handler {
+	h := users.NewHandler(pool, logger, cacheReg)
+	h.SetAuditRecorder(auditRec)
+	return h
+}
+
+// authHandlerWithPolicy mirrors usersHandlerWithAudit — composes the
+// post-construction setters so the existing positional NewHandler
+// signature doesn't need to grow another arg.
+func authHandlerWithPolicy(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, cacheReg *cache.Registry, sysCfg *sysconfig.Store) *auth.Handler {
+	h := auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg)
+	h.SetPasswordPolicySource(passwordPolicyAdapter{store: sysCfg})
+	return h
+}
+
+// passwordPolicyAdapter bridges *sysconfig.Store → the auth handler's
+// passwordPolicySource interface. Lives here (not in auth or sysconfig)
+// to keep the package dependency graph unidirectional.
+type passwordPolicyAdapter struct{ store *sysconfig.Store }
+
+func (a passwordPolicyAdapter) GetPasswordPolicy(ctx context.Context) (auth.PasswordPolicy, error) {
+	cfg, err := a.store.GetAuth(ctx)
+	if err != nil {
+		return auth.PasswordPolicy{}, err
+	}
+	return auth.PasswordPolicy{
+		MinLength:      cfg.PasswordPolicy.MinLength,
+		RequireUpper:   cfg.PasswordPolicy.RequireUpper,
+		RequireNumber:  cfg.PasswordPolicy.RequireNumber,
+		RequireSymbol:  cfg.PasswordPolicy.RequireSymbol,
+		DisallowCommon: cfg.PasswordPolicy.DisallowCommon,
+		MaxAgeDays:     cfg.PasswordPolicy.MaxAgeDays,
+	}, nil
 }
 
 // --- jobs ------------------------------------------------------------------
@@ -99,6 +144,10 @@ func (s *apiServer) Login(ctx context.Context, req openapi.LoginRequestObject) (
 	return s.auth.Login(ctx, req)
 }
 
+func (s *apiServer) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	return s.auth.ListIdentityProviders(ctx, req)
+}
+
 func (s *apiServer) Logout(ctx context.Context, req openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
 	return s.auth.Logout(ctx, req)
 }
@@ -118,6 +167,24 @@ func (s *apiServer) CreateApiToken(ctx context.Context, req openapi.CreateApiTok
 func (s *apiServer) RevokeApiToken(ctx context.Context, req openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
 	return s.auth.RevokeApiToken(ctx, req)
 }
+func (s *apiServer) ListMySessions(ctx context.Context, req openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	return s.auth.ListMySessions(ctx, req)
+}
+func (s *apiServer) RevokeMySession(ctx context.Context, req openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	return s.auth.RevokeMySession(ctx, req)
+}
+func (s *apiServer) ListAdminUserSessions(ctx context.Context, req openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	return s.auth.ListAdminUserSessions(ctx, req)
+}
+func (s *apiServer) RevokeAdminUserSession(ctx context.Context, req openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	return s.auth.RevokeAdminUserSession(ctx, req)
+}
+func (s *apiServer) ChangeMyPassword(ctx context.Context, req openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	return s.auth.ChangeMyPassword(ctx, req)
+}
+func (s *apiServer) AdminResetUserPassword(ctx context.Context, req openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	return s.auth.AdminResetUserPassword(ctx, req)
+}
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	return s.auth.ListCapabilities(ctx, req)
@@ -135,10 +202,35 @@ func (s *apiServer) SetUserRole(ctx context.Context, req openapi.SetUserRoleRequ
 	return s.auth.SetUserRole(ctx, req)
 }
 
+func (s *apiServer) ListAdminUserCapabilities(ctx context.Context, req openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	return s.auth.ListAdminUserCapabilities(ctx, req)
+}
+func (s *apiServer) AddAdminUserGrant(ctx context.Context, req openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	return s.auth.AddAdminUserGrant(ctx, req)
+}
+func (s *apiServer) RemoveAdminUserGrant(ctx context.Context, req openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	return s.auth.RemoveAdminUserGrant(ctx, req)
+}
+func (s *apiServer) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	return s.auth.AddAdminUserRevoke(ctx, req)
+}
+func (s *apiServer) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	return s.auth.RemoveAdminUserRevoke(ctx, req)
+}
+
 // --- asset_types --------------------------------------------------------
 
 func (s *apiServer) ListAssetTypes(ctx context.Context, req openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
 	return s.resourceType.ListAssetTypes(ctx, req)
+}
+func (s *apiServer) ListAssetTypeAcls(ctx context.Context, req openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	return s.resourceType.ListAssetTypeAcls(ctx, req)
+}
+func (s *apiServer) AddAssetTypeAcl(ctx context.Context, req openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	return s.resourceType.AddAssetTypeAcl(ctx, req)
+}
+func (s *apiServer) RemoveAssetTypeAcl(ctx context.Context, req openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	return s.resourceType.RemoveAssetTypeAcl(ctx, req)
 }
 
 // --- storage (raw byte plane) ----------------------------------------------
@@ -424,6 +516,12 @@ func (s *apiServer) GetUserPublicByUsername(ctx context.Context, req openapi.Get
 func (s *apiServer) UpdateUserProfile(ctx context.Context, req openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	return s.users.UpdateUserProfile(ctx, req)
 }
+func (s *apiServer) ListAdminUsers(ctx context.Context, req openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	return s.users.ListAdminUsers(ctx, req)
+}
+func (s *apiServer) SetAdminUserStatus(ctx context.Context, req openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	return s.users.SetAdminUserStatus(ctx, req)
+}
 
 // --- setup -----------------------------------------------------------------
 
@@ -481,6 +579,29 @@ func (s *apiServer) GetPublicAppearance(ctx context.Context, req openapi.GetPubl
 
 func (s *apiServer) ListLocales(ctx context.Context, req openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	return s.i18n.ListLocales(ctx, req)
+}
+
+// --- audit viewer (Phase 1.17.K) ------------------------------------------
+
+func (s *apiServer) ListAdminAuditEvents(ctx context.Context, req openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	return s.audit.ListAdminAuditEvents(ctx, req)
+}
+func (s *apiServer) ListAdminAuditEventTypes(ctx context.Context, req openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	return s.audit.ListAdminAuditEventTypes(ctx, req)
+}
+
+// --- licensing (Phase 1.17.O) ---------------------------------------------
+
+func (s *apiServer) GetAdminLicenseStatus(ctx context.Context, req openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	return s.licensing.GetAdminLicenseStatus(ctx, req)
+}
+
+func (s *apiServer) ValidateAdminLicense(ctx context.Context, req openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	return s.licensing.ValidateAdminLicense(ctx, req)
+}
+
+func (s *apiServer) UploadAdminLicense(ctx context.Context, req openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	return s.licensing.UploadAdminLicense(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

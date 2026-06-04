@@ -1,13 +1,13 @@
 # artist-alley — local development stack
 #
-# Phase 1.0 topology:
-#   nginx --routes prefix-by-prefix-->  app (Go)          [/healthz, /readyz, ...]
-#                                       php-fpm (RS PHP)  [everything else, for now]
-#                                       postgres (pgvector)
+# Production topology (and what compose runs by default):
+#   nginx --proxies all-paths--> app (Go)          [REST + embedded SPA]
+#                                postgres (pgvector)
 #
-# As Go ports more endpoints, nginx routes shift to `app`. When the last
-# PHP route is ported, the `php` service is deleted. Container count
-# stays bounded at three (nginx, app, postgres) forever.
+# The legacy PHP-FPM service has been removed — the strangler-fig
+# migration is complete and ResourceSpace is now reference-only. The
+# Go binary serves both /api/v1/* and the embedded SvelteKit bundle
+# in prod; in dev, the `web` profile exposes Vite HMR on :5173.
 
 services:
   nginx:
@@ -15,12 +15,9 @@ services:
     ports:
       - "${NGINX_HTTP_PORT:-8080}:80"
     volumes:
-      - .:/var/www/html
       - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - filestore:/var/www/html/filestore
     depends_on:
       - app
-      - php
     restart: unless-stopped
 
   app:
@@ -44,10 +41,10 @@ services:
       AA_DB_SSLMODE: disable
       AA_LOG_LEVEL: ${AA_LOG_LEVEL:-info}
       AA_LOG_FORMAT: ${AA_LOG_FORMAT:-json}
-      AA_LEGACY_PHP_ADDR: php:9000
-      # Must match RS's scramble_key in include/config.php so
-      # password hashes and PAT comparisons are byte-compatible.
-      AA_SCRAMBLE_KEY: ${AA_SCRAMBLE_KEY:?AA_SCRAMBLE_KEY is required; copy scramble_key out of include/config.php into .env}
+      # Required for compatibility with any password hashes that
+      # carried over from an old ResourceSpace install. Fresh installs
+      # can generate a random value via ./scripts/bootstrap.sh.
+      AA_SCRAMBLE_KEY: ${AA_SCRAMBLE_KEY:?AA_SCRAMBLE_KEY is required; see scripts/bootstrap.sh}
       # Storage root for the fs backend. Mounted as a named volume below
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.
@@ -64,25 +61,6 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
-
-  php:
-    build:
-      context: .
-      dockerfile: infra/docker/php-fpm/Dockerfile
-      args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
-        TZ: ${TZ:-UTC}
-    expose:
-      - "9000"
-    volumes:
-      - .:/var/www/html
-      - filestore:/var/www/html/filestore
-    environment:
-      TZ: ${TZ:-UTC}
-    depends_on:
-      - postgres
     restart: unless-stopped
 
   # SvelteKit frontend, dev-only (Vite HMR on :5173).
@@ -117,9 +95,9 @@ services:
       # the bind-mounted web/ on the host.
       - ./app/api/openapi.yaml:/opt/openapi.yaml:ro
     environment:
-      # Vite proxies /api/* to nginx so the FastCGI split between
-      # /api/v1/legacy/* (PHP) and /api/v1/* (Go) is handled in one
-      # place. Override when running Vite outside Docker.
+      # Vite proxies /api/* to nginx, which forwards to the Go app.
+      # Override when running Vite outside Docker (e.g. pointing
+      # straight at an `aa` binary on localhost:8080).
       AA_API_PROXY_TARGET: http://nginx:80
       AA_OPENAPI_SPEC: /opt/openapi.yaml
     profiles: ["web"]
@@ -170,6 +148,5 @@ services:
 
 volumes:
   postgres-data:
-  filestore:
   aa-storage:
   minio-data:

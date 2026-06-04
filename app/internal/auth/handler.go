@@ -55,7 +55,35 @@ type Handler struct {
 	// the stale entry via LRU pressure.
 	CacheReg *cache.Registry
 
+	// Policy is the password complexity source (Phase 1.17.D). Nil-
+	// safe — handler falls back to the zero policy (no min length,
+	// no complexity), which means "anything goes" for installs that
+	// haven't configured one.
+	Policy passwordPolicySource
+
+	// Providers is the identity-provider registry consulted by Login()
+	// to dispatch credentials to the right backend (password vs LDAP
+	// vs ...). Nil-safe — when nil, Login falls back to the legacy
+	// in-handler password flow so tests that pre-date the registry
+	// keep working without explicit wiring. Production boot always
+	// attaches a non-nil registry.
+	Providers *Registry
+
 	tokenPrefix string // overridable in tests
+}
+
+// SetPasswordPolicySource attaches the policy lookup post-
+// construction so api.go's existing NewHandler call signature
+// stays stable. Same pattern as users.Handler.SetAuditRecorder.
+func (h *Handler) SetPasswordPolicySource(p passwordPolicySource) {
+	h.Policy = p
+}
+
+// SetProviderRegistry attaches the identity-provider registry. Same
+// post-construction pattern as SetPasswordPolicySource so api.go's
+// NewHandler signature stays stable.
+func (h *Handler) SetProviderRegistry(r *Registry) {
+	h.Providers = r
 }
 
 // auditRecorder is the subset of audit.Recorder that the auth handler
@@ -67,6 +95,33 @@ type auditRecorder interface {
 	LoginFailed(ctx context.Context, req *http.Request, attemptedUsername string, userRef *int64, reason string)
 	LoginRateLimited(ctx context.Context, req *http.Request, attemptedUsername, key string)
 	Logout(ctx context.Context, req *http.Request, userRef int64, sessionID string)
+	SessionRevoked(ctx context.Context, req *http.Request, userRef, actorUserRef int64, sessionID, reason string)
+	PasswordChanged(ctx context.Context, req *http.Request, userRef int64, sessionsRevoked int)
+	PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string)
+	CapabilityGranted(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string)
+	CapabilityRevoked(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string)
+	CapabilityGrantRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
+	CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
+}
+
+// passwordPolicySource is the minimal interface the password
+// handlers need to enforce complexity. Implemented by
+// *sysconfig.Store; the interface form keeps auth from importing
+// the sysconfig package directly so tests can stub it cheaply.
+type passwordPolicySource interface {
+	GetPasswordPolicy(ctx context.Context) (PasswordPolicy, error)
+}
+
+// PasswordPolicy mirrors sysconfig.PasswordPolicy without the
+// import. Fields kept in lockstep — when sysconfig grows a knob,
+// add it here too.
+type PasswordPolicy struct {
+	MinLength      int
+	RequireUpper   bool
+	RequireNumber  bool
+	RequireSymbol  bool
+	DisallowCommon bool
+	MaxAgeDays     int
 }
 
 // nopAudit is the default Audit when none is wired up — useful in
@@ -77,6 +132,18 @@ func (nopAudit) LoginSucceeded(context.Context, *http.Request, int64, string)   
 func (nopAudit) LoginFailed(context.Context, *http.Request, string, *int64, string)      {}
 func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)         {}
 func (nopAudit) Logout(context.Context, *http.Request, int64, string)                    {}
+func (nopAudit) SessionRevoked(context.Context, *http.Request, int64, int64, string, string) {
+}
+func (nopAudit) PasswordChanged(context.Context, *http.Request, int64, int)            {}
+func (nopAudit) PasswordReset(context.Context, *http.Request, int64, int64, string)     {}
+func (nopAudit) CapabilityGranted(context.Context, *http.Request, int64, int64, string, string, string) {
+}
+func (nopAudit) CapabilityRevoked(context.Context, *http.Request, int64, int64, string, string, string) {
+}
+func (nopAudit) CapabilityGrantRemoved(context.Context, *http.Request, int64, int64, string, string) {
+}
+func (nopAudit) CapabilityRevokeRemoved(context.Context, *http.Request, int64, int64, string, string) {
+}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching RS's rs_setcookie default) is used. The
@@ -133,6 +200,16 @@ func (h *Handler) Login(
 		}, nil
 	}
 
+	// Provider selection: explicit name from the request, defaulting to
+	// "password". An unknown provider name returns 401 with the same
+	// "invalid credentials" body as a bad password — a probing client
+	// can't enumerate which enterprise providers (LDAP, SAML aliases)
+	// are registered on this install.
+	providerName := "password"
+	if req.Body.Provider != nil && strings.TrimSpace(*req.Body.Provider) != "" {
+		providerName = strings.TrimSpace(*req.Body.Provider)
+	}
+
 	// Rate limit: two buckets, by IP and by attempted username. Either
 	// trip rejects the attempt. The IP key isolates a noisy network
 	// from drowning out other users; the username key isolates a
@@ -149,36 +226,84 @@ func (h *Handler) Login(
 		return loginRateLimitedResponse{}, nil
 	}
 
-	q := New(h.Pool)
-	user, err := q.FindUserByUsername(ctx, &username)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			h.Audit.LoginFailed(ctx, httpReq, username, nil, "unknown_user")
-			// Same response shape as bad-password so we don't leak
-			// which usernames exist.
-			return openapi.Login401JSONResponse{
-				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
-			}, nil
-		}
-		return nil, err
+	// Dispatch to the identity-provider registry when wired. The
+	// registry handles the credential check; the handler stays in
+	// charge of session minting, account-state gating, and audit.
+	if h.Providers != nil {
+		return h.loginViaRegistry(ctx, providerName, username, password, httpReq, ipKey, userKey)
 	}
-	if user.Password == nil {
-		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "no_password_set")
+
+	// Legacy path: no registry attached (tests). Inline password flow,
+	// equivalent to the pre-registry behaviour. New code MUST attach a
+	// registry; this branch is preserved for the auth package's own
+	// tests which construct Handler directly.
+	return h.loginInlinePassword(ctx, username, password, httpReq, ipKey, userKey)
+}
+
+// loginViaRegistry runs the registry-dispatched login path. Provider
+// is looked up by name; password-style providers are invoked via
+// Authenticate. Unknown providers + redirect-only providers map to
+// 401 with the canonical "invalid credentials" body so we don't leak
+// which enterprise providers are configured.
+func (h *Handler) loginViaRegistry(
+	ctx context.Context,
+	providerName, username, password string,
+	httpReq *http.Request,
+	ipKey, userKey string,
+) (openapi.LoginResponseObject, error) {
+	p, ok := h.Providers.Get(providerName)
+	if !ok {
+		h.Audit.LoginFailed(ctx, httpReq, username, nil, "unknown_provider:"+providerName)
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+		}, nil
+	}
+	if !p.SupportsPassword() {
+		// SAML/OIDC etc. — don't expose the provider kind to the
+		// caller; same 401 shape as bad credentials.
+		h.Audit.LoginFailed(ctx, httpReq, username, nil, "provider_unsupported_method:"+providerName)
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
 		}, nil
 	}
 
-	if err := VerifyPassword(password, *user.Password, h.ScrambleKey); err != nil {
-		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "bad_password")
-			return openapi.Login401JSONResponse{
-				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
-			}, nil
-		}
+	result, err := p.Authenticate(ctx, username, password)
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
+		h.Audit.LoginFailed(ctx, httpReq, username, nil, "bad_credentials:"+providerName)
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+		}, nil
+	case errors.Is(err, ErrProviderUnsupportedMethod):
+		h.Audit.LoginFailed(ctx, httpReq, username, nil, "provider_unsupported_method:"+providerName)
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+		}, nil
+	case errors.Is(err, ErrProviderUnimplemented):
+		// Distinct from 401: the provider IS registered (license has the
+		// feature) but the binary doesn't yet ship the impl. Surfaces in
+		// the admin UI as "build pending" rather than "wrong password".
+		h.Audit.LoginFailed(ctx, httpReq, username, nil, "provider_unimplemented:"+providerName)
+		return openapi.Login501JSONResponse{
+			Error: "identity provider " + providerName + " is licensed but not yet implemented in this binary",
+		}, nil
+	case err != nil:
 		return nil, err
 	}
 
+	// JIT provisioning hook reserved for 1.18 — when the result asks
+	// for it, the handler will create a local user row before issuing
+	// the session. For now the stubs never return JIT, so a
+	// programming error (UserRef==0 && JIT==nil) deserves a loud 500.
+	if result.UserRef == 0 {
+		return nil, errors.New("auth: provider returned zero UserRef without JIT request")
+	}
+
+	q := New(h.Pool)
+	user, err := q.FindUserByRef(ctx, result.UserRef)
+	if err != nil {
+		return nil, err
+	}
 	if user.Approved != 1 {
 		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "not_approved")
 		return openapi.Login401JSONResponse{
@@ -196,10 +321,6 @@ func (h *Handler) Login(
 	if err != nil {
 		return nil, err
 	}
-
-	// A successful login should drain both rate-limit buckets so an
-	// earlier failed-then-recovered attempt doesn't penalise the
-	// legitimate user.
 	h.Limiter.Forget(ipKey)
 	h.Limiter.Forget(userKey)
 	h.Audit.LoginSucceeded(ctx, httpReq, user.Ref, sessionInfo.ID.String())
@@ -217,6 +338,108 @@ func (h *Handler) Login(
 		sessionDays: h.SessionDays,
 		body:        current,
 	}, nil
+}
+
+// loginInlinePassword is the pre-registry password flow, kept for
+// tests that construct Handler directly without a registry. Production
+// boot always attaches a registry, so this path is dead code in
+// normal operation.
+func (h *Handler) loginInlinePassword(
+	ctx context.Context,
+	username, password string,
+	httpReq *http.Request,
+	ipKey, userKey string,
+) (openapi.LoginResponseObject, error) {
+	q := New(h.Pool)
+	user, err := q.FindUserByUsername(ctx, &username)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			h.Audit.LoginFailed(ctx, httpReq, username, nil, "unknown_user")
+			return openapi.Login401JSONResponse{
+				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+			}, nil
+		}
+		return nil, err
+	}
+	if user.Password == nil {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "no_password_set")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+		}, nil
+	}
+	if err := VerifyPassword(password, *user.Password, h.ScrambleKey); err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "bad_password")
+			return openapi.Login401JSONResponse{
+				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+			}, nil
+		}
+		return nil, err
+	}
+	if user.Approved != 1 {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "not_approved")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account is not approved"},
+		}, nil
+	}
+	if user.AccountExpires.Valid && user.AccountExpires.Time.Before(time.Now()) {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "account_expired")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account has expired"},
+		}, nil
+	}
+	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
+	if err != nil {
+		return nil, err
+	}
+	h.Limiter.Forget(ipKey)
+	h.Limiter.Forget(userKey)
+	h.Audit.LoginSucceeded(ctx, httpReq, user.Ref, sessionInfo.ID.String())
+	current := identityToCurrentUser(&Identity{
+		UserRef:    user.Ref,
+		Username:   strFromPtr(user.Username),
+		Fullname:   user.Fullname,
+		Email:      user.Email,
+		Usergroup:  user.Usergroup,
+		AuthMethod: "session",
+	})
+	return loginSetCookieResponse{
+		token:       token,
+		sessionDays: h.SessionDays,
+		body:        current,
+	}, nil
+}
+
+// ListIdentityProviders implements GET /auth/providers. Anonymous —
+// the list is intentionally public so the login screen renders the
+// SSO buttons even before authentication. Stable JSON shape: name +
+// display_name + kind + supports_password.
+func (h *Handler) ListIdentityProviders(
+	_ context.Context,
+	_ openapi.ListIdentityProvidersRequestObject,
+) (openapi.ListIdentityProvidersResponseObject, error) {
+	var items []openapi.IdentityProviderSummary
+	if h.Providers != nil {
+		for _, p := range h.Providers.List() {
+			items = append(items, openapi.IdentityProviderSummary{
+				Name:             p.Name(),
+				DisplayName:      p.DisplayName(),
+				Kind:             openapi.IdentityProviderSummaryKind(p.Kind()),
+				SupportsPassword: p.SupportsPassword(),
+			})
+		}
+	}
+	if items == nil {
+		// Even legacy/test setups that don't attach a registry should
+		// see at least the password row so the login UI renders.
+		items = []openapi.IdentityProviderSummary{{
+			Name:             "password",
+			DisplayName:      "Password",
+			Kind:             openapi.IdentityProviderSummaryKind(KindPassword),
+			SupportsPassword: true,
+		}}
+	}
+	return openapi.ListIdentityProviders200JSONResponse{Providers: items}, nil
 }
 
 // clientIPKey returns the request's best-guess client IP as a string,

@@ -418,6 +418,72 @@ func (shimImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from storage_test test shim")
 }
+func (shimImpl) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	panic("ListAdminUsers called from storage test shim")
+}
+func (shimImpl) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from storage test shim")
+}
+func (shimImpl) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from storage test shim")
+}
+func (shimImpl) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from storage test shim")
+}
+func (shimImpl) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from storage test shim")
+}
+func (shimImpl) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from storage test shim")
+}
+func (shimImpl) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	panic("ChangeMyPassword called from storage test shim")
+}
+func (shimImpl) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	panic("AdminResetUserPassword called from storage test shim")
+}
+func (shimImpl) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from storage test shim")
+}
+func (shimImpl) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from storage test shim")
+}
+func (shimImpl) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from storage test shim")
+}
+func (shimImpl) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from storage test shim")
+}
+func (shimImpl) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from storage test shim")
+}
+func (shimImpl) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	panic("ListAssetTypeAcls called from storage test shim")
+}
+func (shimImpl) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	panic("AddAssetTypeAcl called from storage test shim")
+}
+func (shimImpl) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	panic("RemoveAssetTypeAcl called from storage test shim")
+}
+func (shimImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	panic("ListAdminAuditEvents called from storage test shim")
+}
+func (shimImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	panic("ListAdminAuditEventTypes called from storage test shim")
+}
+func (shimImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from storage test shim")
+}
+func (shimImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from storage test shim")
+}
+func (shimImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from storage test shim")
+}
+func (shimImpl) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	panic("ListIdentityProviders called from storage test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from storage_test test shim")
 }

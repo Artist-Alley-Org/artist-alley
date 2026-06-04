@@ -152,12 +152,11 @@ asset that can be shown. The player / viewer is a host; the
 ### 1.18.B-6 — Annotation system (global, frame/anchor-aware)
 Annotations are a global capability too — they live in their own
 package and any asset host (image, video, 3D, PDF) surfaces them.
-Extends to **PDF page annotations** (the `annotate_pdf` RS pattern):
-anchored to `(asset_id, page, x, y, w, h)`; rendered against the PDF
-raster preview; exported in the PDF summary with comment thread +
-screenshots per anchor. Drawing tool UX patterns borrowed from
-`barts_annotations` (pen / highlighter / arrow / text / eraser)
-but built clean-room in Svelte.
+Extends to **PDF page annotations**: anchored to `(asset_id, page,
+x, y, w, h)`; rendered against the PDF raster preview; exported in
+the PDF summary with comment thread + screenshots per anchor. Clean-room
+Svelte implementation of pen / highlighter / arrow / text / eraser
+tools.
 
 - Anchor model: an annotation binds to an asset_id PLUS an
   asset-type-specific anchor — a frame number for video, a
@@ -416,8 +415,7 @@ The phases queued behind the current focus, in build order:
 
 
 - **Identity & teams** (Phase 1.17). Groups + team hierarchy,
-  active session management, capability grants. Extended for RS
-  feature parity: **table-level change tracking** with before / after
+  active session management, capability grants. Extended with: **table-level change tracking** with before / after
   diffs in the audit log (not just event-level), **user approval
   states** (pending / approved / disabled) with admin approval flow,
   **resource request workflow** (user asks for an asset →
@@ -478,7 +476,7 @@ The phases queued behind the current focus, in build order:
   picks the active provider. **No GPU gating** — operator hardware
   is operator hardware regardless of license tier; cloud-bridged
   add-ons (we host the inference) are the only tier-gated mode.
-  YAML manifest borrowed from RS's `pluginname.yaml` pattern, plus
+  Plugin-style YAML manifest format, plus
   artifact / resource / hosting / config fields. Digest-verified
   pulls; air-gapped operators mirror the registry. Resource
   requirements are advisory, not enforcing. Audit hooks fire
@@ -490,7 +488,7 @@ The phases queued behind the current focus, in build order:
 
 - **Integrations** (Phase 1.18). Real LDAP / SAML / OAuth login
   flows, OAuth applications surface, outbound webhooks, notification
-  rules + delivery channels. Extended for RS feature parity:
+  rules + delivery channels. Extended with:
   **email template engine + send queue** with operator-editable
   templates, **timezone-aware delivery** (digest at 8 AM in the
   recipient's TZ), **event-scoped notifications** that link to a
@@ -509,7 +507,7 @@ The phases queued behind the current focus, in build order:
 
 - **Search 2.0** (Phase 1.12). Advanced search builder with
   field-level filters, saved searches, smart collections, synonyms +
-  boosts, search analytics. Extended for RS feature parity:
+  boosts, search analytics. Extended with:
   **saved-search alerts** (notify when results change), **endless
   scrolling** in result views as an alternative to pagination,
   **categorical / faceted refinement** with suggested-keyword
@@ -530,52 +528,6 @@ The phases queued behind the current focus, in build order:
   & teams) because seat counting needs `last_active_at`. See ADR 0016
   + ADR 0017.
 
-- **RS migration tool** (Phase 1.25). Turnkey path from an existing
-  ResourceSpace install to Artist Alley — the largest natural
-  conversion audience, especially with Pro / Enterprise scale tiers
-  on the table. Two halves: a BSD-3-licensed companion PHP plugin
-  installed on the source RS (`mscrnt/aa-rs-migrator`, separate repo)
-  that exposes a read-only HTTP API, and an admin-side wizard in
-  artist-alley that connects to it, analyses the source server, and
-  drives the transfer. The plugin surfaces RS's schema (resource
-  types, metadata fields, field definitions, workflow states), the
-  resource catalog with metadata + relationships + collections, the
-  resource_log audit history, the user / group / permission graph,
-  and streams original binaries + preview variants on demand. The AA
-  wizard offers field-level mapping with auto-suggestion (RS field →
-  AA field, with name + type heuristics), resource-type and
-  user-group mapping, and a reviewable plan before execution.
-  Sub-phases:
-    - **1.25.A — RS companion plugin.** Single-package PHP plugin
-      distributed via the standard RS plugin manager. Read-only
-      endpoints. Plugin-issued bearer tokens scoped to the
-      migrator's read-paths only. Resumable / incremental — the
-      plugin exposes a per-resource fingerprint (mtime + size +
-      partial hash) so the AA side can skip already-transferred
-      content and resume on failure.
-    - **1.25.B — Migration wizard.** Admin UI in AA: connect-to-RS
-      form, schema analysis, field-mapping table, type / user / group
-      mapping, plan preview with expected counts and total transfer
-      size. Plan is saved as JSON so it can be reviewed, edited,
-      versioned, and replayed.
-    - **1.25.C — Migration engine.** Job queue jobs (reusing 1.18.A
-      infrastructure) for resource transfer, with worker concurrency
-      bounded by license-derived value (consistent with 1.24's
-      tangled enforcement). Resumable per-resource. Progress
-      surfaced live in the wizard. Dedup against AA's
-      content-addressed storage so re-running over the same source
-      is cheap.
-    - **1.25.D — Validation + cutover.** Post-migration verification
-      (counts match, sample hash checks, missing-asset report). Plugin
-      can optionally lock the source RS into read-only mode during
-      the final cutover window. Generated mapping doc for the
-      operator so the URL-rewrite step on their reverse proxy is
-      paint-by-number.
-  Federation (Phase 1.22) and this share most of the resource-pull
-  plumbing — `origin_server_id` on the resource table, the HTTP
-  claim API on the job queue, etc. — so 1.25's engine is partly a
-  warm-up for federation. Gated on Phase 1.16 (Resource types) and
-  Phase 1.17 (Identity & teams) for clean mapping targets.
 
 ## On the map
 
@@ -638,7 +590,7 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
 
 - **Storage tooling** (Phase 1.19). Storage usage dashboard, orphan
   cleanup, checksum verification, dedupe UI, bulk re-import,
-  backup + restore, database tools. Extended for RS feature parity:
+  backup + restore, database tools. Extended with:
   **scheduled integrity checks** with off-peak windows (verify the
   bytes on disk match the recorded hash, batched against a
   configurable nightly window), **tiered storage / offline archive**
@@ -648,8 +600,7 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
 
 - **Reports & analytics** (Phase 1.20). Asset usage, user activity,
   storage trends, job performance, custom dashboards, scheduled
-  reports, drafts, trash, activity log surfaces. Extended for RS
-  feature parity: **custom SQL report builder** with placeholder
+  reports, drafts, trash, activity log surfaces. Extended with: **custom SQL report builder** with placeholder
   variables (date range, team, user), **CSV / Excel / PDF export**
   per report, **report thumbnails** rendered server-side for the
   reports list, **per-collection download analytics**, **scheduled
@@ -657,13 +608,13 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
 
 - **Community & moderation** (Phase 1.21). Reports queue, comment
   moderation, banned users / IPs, anonymous browse policy, rate
-  limits, bookmarks. Extended for RS feature parity: **comment
+  limits, bookmarks. Extended with: **comment
   flagging with reason tracking** (spam, abuse, sensitive content,
   off-topic — configurable list), **email escalation to admins** on
   flagged content, **per-comment hide / restore** with audit trail,
   **activity stream surfaced as a structured comments thread** on
   the post-detail modal (system events become quoted-style entries
-  alongside human comments — the `barts_log_to_comments` pattern),
+  alongside human comments — an activity-log-to-comments pattern),
   **structured support intake** — `/contact` form with
   categorization (bug / feature / abuse / account help / other) feeds
   into the same moderation queue with assignment, status tracking,

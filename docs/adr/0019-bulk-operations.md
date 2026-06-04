@@ -17,17 +17,17 @@ tags:
   - ai
   - 3d
 excerpt: >-
-  Game studios manage 10k–500k+ assets. The current Artist Alley post detail flow assumes you act on one post or one asset at a time. RS ships deep bulk-operation surfaces: multi-select edit, batch tag, batch delete, multi-row metadata import via CSV, configurable CSV export of…
+  Game studios manage 10k–500k+ assets. The current Artist Alley post detail flow assumes you act on one post or one asset at a time. Existing DAM tooling ships deep bulk-operation surfaces: multi-select edit, batch tag, batch delete, multi-row metadata import via CSV, configurable CSV export of search results, and printable contact-sheet generation.
 ---
 ## Context
 
 Game studios manage 10k–500k+ assets. The current Artist Alley post
-detail flow assumes you act on one post or one asset at a time. RS ships
-deep bulk-operation surfaces: multi-select edit, batch tag, batch
-delete, multi-row metadata import via CSV, configurable CSV export of
-search results, and printable contact-sheet generation. The audit
-(2026-05-30) flagged these as the second-highest impact gap — anyone
-with > ~1k assets discovers it inside a week.
+detail flow assumes you act on one post or one asset at a time. Existing
+DAM tooling ships deep bulk-operation surfaces: multi-select edit, batch
+tag, batch delete, multi-row metadata import via CSV, configurable CSV
+export of search results, and printable contact-sheet generation. The
+audit (2026-05-30) flagged these as the second-highest impact gap —
+anyone with > ~1k assets discovers it inside a week.
 
 ## Decision
 
@@ -108,9 +108,9 @@ button without a strong confirmation).
   audience. Rejected.
 - **Reuse search export only, no UI selection.** Doesn't solve bulk
   *edit*, only bulk *export*. Rejected — incomplete.
-- **Per-action separate pages.** RS does this; the UX is dated. The
-  modern pattern is one floating action bar over the existing browse
-  view. Adopted.
+- **Per-action separate pages.** The older DAM pattern; the UX is
+  dated. The modern pattern is one floating action bar over the existing
+  browse view. Adopted.
 
 ## Reference
 

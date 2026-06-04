@@ -209,6 +209,51 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteUserGrant = `-- name: DeleteUserGrant :execrows
+DELETE FROM user_capability_grants
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3
+`
+
+type DeleteUserGrantParams struct {
+	RsUserID       int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+}
+
+// Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+// the natural key — team_id may be NULL (global grant). Returns
+// rows-affected so the handler can 404 cleanly.
+func (q *Queries) DeleteUserGrant(ctx context.Context, arg DeleteUserGrantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserGrant, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteUserRevoke = `-- name: DeleteUserRevoke :execrows
+DELETE FROM user_capability_revokes
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3
+`
+
+type DeleteUserRevokeParams struct {
+	RsUserID       int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+}
+
+func (q *Queries) DeleteUserRevoke(ctx context.Context, arg DeleteUserRevokeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserRevoke, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const effectiveCapabilitiesForRoleName = `-- name: EffectiveCapabilitiesForRoleName :many
 WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
@@ -534,6 +579,48 @@ func (q *Queries) FindRoleByName(ctx context.Context, name string) (Role, error)
 	return i, err
 }
 
+const findUserByRef = `-- name: FindUserByRef :one
+SELECT ref,
+       username,
+       fullname,
+       email,
+       usergroup,
+       approved,
+       account_expires
+FROM "user"
+WHERE ref = $1
+LIMIT 1
+`
+
+type FindUserByRefRow struct {
+	Ref            int64
+	Username       *string
+	Fullname       *string
+	Email          *string
+	Usergroup      *int64
+	Approved       int64
+	AccountExpires pgtype.Timestamptz
+}
+
+// Used by the registry-dispatched login flow after a provider has
+// resolved credentials to a local user ref. Same shape as the
+// username + session lookups so the handler's downstream code
+// (approval gate, session minting) is provider-agnostic.
+func (q *Queries) FindUserByRef(ctx context.Context, ref int64) (FindUserByRefRow, error) {
+	row := q.db.QueryRow(ctx, findUserByRef, ref)
+	var i FindUserByRefRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Approved,
+		&i.AccountExpires,
+	)
+	return i, err
+}
+
 const findUserBySession = `-- name: FindUserBySession :one
 SELECT ref,
        username,
@@ -638,6 +725,46 @@ func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, erro
 	return i, err
 }
 
+const getUserPasswordHashByRef = `-- name: GetUserPasswordHashByRef :one
+SELECT ref AS rs_user_id, username, password
+FROM "user"
+WHERE ref = $1
+`
+
+type GetUserPasswordHashByRefRow struct {
+	RsUserID int64
+	Username *string
+	Password *string
+}
+
+// Returns just the username + stored hash for a user. Used by the
+// self-service password change endpoint to verify the caller knows
+// their CURRENT password before accepting a new one.
+func (q *Queries) GetUserPasswordHashByRef(ctx context.Context, ref int64) (GetUserPasswordHashByRefRow, error) {
+	row := q.db.QueryRow(ctx, getUserPasswordHashByRef, ref)
+	var i GetUserPasswordHashByRefRow
+	err := row.Scan(&i.RsUserID, &i.Username, &i.Password)
+	return i, err
+}
+
+const insertPasswordHistory = `-- name: InsertPasswordHistory :exec
+INSERT INTO user_password_history (rs_user_id, password_hash)
+VALUES ($1, $2)
+`
+
+type InsertPasswordHistoryParams struct {
+	RsUserID     int64
+	PasswordHash string
+}
+
+// Append-only history row. The handler calls this after every
+// successful UpdateUserPassword (whether self-service or admin
+// reset) so the reuse-prevention check has the data it needs.
+func (q *Queries) InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordHistory, arg.RsUserID, arg.PasswordHash)
+	return err
+}
+
 const insertSession = `-- name: InsertSession :one
 
 INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
@@ -683,6 +810,68 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const insertUserGrant = `-- name: InsertUserGrant :exec
+INSERT INTO user_capability_grants (
+    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    granted_at = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    note = EXCLUDED.note
+`
+
+type InsertUserGrantParams struct {
+	RsUserID          int64
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	GrantedByRsUserID *int64
+	Note              string
+}
+
+// Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+// team_id) means re-granting the same (cap, team_id) is a no-op
+// update of granted_at + note + granter — useful when an admin
+// refreshes a stale grant.
+func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams) error {
+	_, err := q.db.Exec(ctx, insertUserGrant,
+		arg.RsUserID,
+		arg.CapabilityCode,
+		arg.TeamID,
+		arg.GrantedByRsUserID,
+		arg.Note,
+	)
+	return err
+}
+
+const insertUserRevoke = `-- name: InsertUserRevoke :exec
+INSERT INTO user_capability_revokes (
+    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    revoked_at = NOW(),
+    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    note = EXCLUDED.note
+`
+
+type InsertUserRevokeParams struct {
+	RsUserID          int64
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	RevokedByRsUserID *int64
+	Note              string
+}
+
+func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokeParams) error {
+	_, err := q.db.Exec(ctx, insertUserRevoke,
+		arg.RsUserID,
+		arg.CapabilityCode,
+		arg.TeamID,
+		arg.RevokedByRsUserID,
+		arg.Note,
+	)
+	return err
 }
 
 const listApiTokensForUser = `-- name: ListApiTokensForUser :many
@@ -761,6 +950,43 @@ func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPasswordHashes = `-- name: ListRecentPasswordHashes :many
+SELECT password_hash
+FROM user_password_history
+WHERE rs_user_id = $1
+ORDER BY changed_at DESC
+LIMIT $2
+`
+
+type ListRecentPasswordHashesParams struct {
+	RsUserID int64
+	Limit    int32
+}
+
+// Most recent N hashes for reuse-prevention. The handler iterates +
+// VerifyPasswords against each — we can't WHERE on the hash directly
+// because RS-style hashing has a per-call HMAC step (the candidate
+// plaintext needs to be re-hashed and compared in code).
+func (q *Queries) ListRecentPasswordHashes(ctx context.Context, arg ListRecentPasswordHashesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listRecentPasswordHashes, arg.RsUserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var password_hash string
+		if err := rows.Scan(&password_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, password_hash)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -890,6 +1116,145 @@ func (q *Queries) ListSessionsForUser(ctx context.Context, userRef int64) ([]Lis
 	return items, nil
 }
 
+const listUserGrants = `-- name: ListUserGrants :many
+SELECT g.capability_code,
+       g.team_id,
+       g.granted_at,
+       g.granted_by_rs_user_id,
+       g.note,
+       t.name AS team_name
+FROM user_capability_grants g
+LEFT JOIN teams t ON t.id = g.team_id
+WHERE g.rs_user_id = $1
+ORDER BY g.capability_code, g.team_id NULLS FIRST
+`
+
+type ListUserGrantsRow struct {
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	Note              string
+	TeamName          *string
+}
+
+// Per-user capability grants (Phase 1.17.F). Returns rows ordered
+// by (cap, team_id) so the UI displays a stable list across reloads.
+func (q *Queries) ListUserGrants(ctx context.Context, rsUserID int64) ([]ListUserGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listUserGrants, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserGrantsRow
+	for rows.Next() {
+		var i ListUserGrantsRow
+		if err := rows.Scan(
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.Note,
+			&i.TeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserRevokes = `-- name: ListUserRevokes :many
+SELECT r.capability_code,
+       r.team_id,
+       r.revoked_at,
+       r.revoked_by_rs_user_id,
+       r.note,
+       t.name AS team_name
+FROM user_capability_revokes r
+LEFT JOIN teams t ON t.id = r.team_id
+WHERE r.rs_user_id = $1
+ORDER BY r.capability_code, r.team_id NULLS FIRST
+`
+
+type ListUserRevokesRow struct {
+	CapabilityCode    string
+	TeamID            pgtype.UUID
+	RevokedAt         pgtype.Timestamptz
+	RevokedByRsUserID *int64
+	Note              string
+	TeamName          *string
+}
+
+// Per-user capability revokes (subtractive overrides). Same shape
+// as ListUserGrants — front-end renders both lists in one section.
+func (q *Queries) ListUserRevokes(ctx context.Context, rsUserID int64) ([]ListUserRevokesRow, error) {
+	rows, err := q.db.Query(ctx, listUserRevokes, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserRevokesRow
+	for rows.Next() {
+		var i ListUserRevokesRow
+		if err := rows.Scan(
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.RevokedAt,
+			&i.RevokedByRsUserID,
+			&i.Note,
+			&i.TeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const loadCapabilityLicenseFeatures = `-- name: LoadCapabilityLicenseFeatures :many
+SELECT code, required_license_feature
+FROM capabilities
+WHERE required_license_feature IS NOT NULL
+ORDER BY code
+`
+
+type LoadCapabilityLicenseFeaturesRow struct {
+	Code                   string
+	RequiredLicenseFeature *string
+}
+
+// Returns the (code, required_license_feature) pairs for every cap that
+// has a license-feature gate. Rows where the column is NULL are skipped
+// entirely — they don't need to live in the in-process map. The result
+// feeds auth.SetCapLicenseFeatures at boot, so Identity.Can() can check
+// the install's license without a per-call DB hit.
+func (q *Queries) LoadCapabilityLicenseFeatures(ctx context.Context) ([]LoadCapabilityLicenseFeaturesRow, error) {
+	rows, err := q.db.Query(ctx, loadCapabilityLicenseFeatures)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LoadCapabilityLicenseFeaturesRow
+	for rows.Next() {
+		var i LoadCapabilityLicenseFeaturesRow
+		if err := rows.Scan(&i.Code, &i.RequiredLicenseFeature); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()
@@ -907,6 +1272,32 @@ type RevokeApiTokenParams struct {
 // success without a separate SELECT.
 func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) (int64, error) {
 	result, err := q.db.Exec(ctx, revokeApiToken, arg.ID, arg.RsUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND id <> $2
+  AND revoked_at IS NULL
+`
+
+type RevokeOtherSessionsForUserParams struct {
+	UserRef int64
+	ID      pgtype.UUID
+}
+
+// Revokes every session belonging to a user EXCEPT the one passed
+// as $2. Used by the self-service password-change endpoint when the
+// caller opts to "sign out everywhere else" — defensive default for
+// "I think someone got my password" recovery flows. Returns count
+// so the audit row + UI can report how many sessions ended.
+func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOtherSessionsForUser, arg.UserRef, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -938,6 +1329,33 @@ WHERE token_hash = $1
 func (q *Queries) RevokeSessionByToken(ctx context.Context, tokenHash []byte) error {
 	_, err := q.db.Exec(ctx, revokeSessionByToken, tokenHash)
 	return err
+}
+
+const revokeSessionForUser = `-- name: RevokeSessionForUser :execrows
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_ref = $2
+  AND revoked_at IS NULL
+`
+
+type RevokeSessionForUserParams struct {
+	ID      pgtype.UUID
+	UserRef int64
+}
+
+// Ownership-checked soft-delete. Same as RevokeSession but the
+// WHERE includes user_ref so a caller can't revoke someone else's
+// session by ID-guessing. Used by the self-service
+// DELETE /account/sessions/{id} endpoint. Returns rows-affected so
+// the handler can distinguish "revoked" (1) from "not yours / not
+// found / already revoked" (0).
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeSessionForUser, arg.ID, arg.UserRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setUserGlobalRole = `-- name: SetUserGlobalRole :exec
@@ -1016,5 +1434,27 @@ WHERE id = $1
 // to call on every hit; the index on last_used_at is partial-on-active.
 func (q *Queries) TouchSession(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchSession, id)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE "user"
+SET password = $2,
+    password_last_change = NOW(),
+    password_reset_hash = NULL
+WHERE ref = $1
+`
+
+type UpdateUserPasswordParams struct {
+	Ref      int64
+	Password *string
+}
+
+// Atomic password change: sets user.password + bumps
+// password_last_change. The handler is responsible for the policy
+// check + the history-reuse check + the history insert; this query
+// is the leaf write.
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.Ref, arg.Password)
 	return err
 }

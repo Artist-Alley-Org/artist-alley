@@ -133,6 +133,16 @@ type AssetType struct {
 	PullImages        *int64
 }
 
+type AssetTypeAcl struct {
+	AssetTypeRef      int64
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID
 	EventType      string
@@ -170,9 +180,10 @@ type BrushPackStamp struct {
 }
 
 type Capability struct {
-	Code        string
-	Description string
-	CreatedAt   pgtype.Timestamptz
+	Code                   string
+	Description            string
+	RequiredLicenseFeature *string
+	CreatedAt              pgtype.Timestamptz
 }
 
 type Collection struct {
@@ -460,6 +471,14 @@ type UserCapabilityRevoke struct {
 	RevokedAt         pgtype.Timestamptz
 	RevokedByRsUserID *int64
 	Note              string
+}
+
+type UserPasswordHistory struct {
+	ID             pgtype.UUID
+	RsUserID       int64
+	PasswordHash   string
+	ChangedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
 }
 
 type UserProfile struct {

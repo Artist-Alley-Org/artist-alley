@@ -39,13 +39,9 @@ Two facts make a relicense newly tractable:
 
 1. **The Strangler Fig pattern was abandoned in favour of clean-room
    greenfield Go** (see memory `project_strangler_fig_abandoned`). Almost
-   all production code in `app/`, `web/`, and `site/` is original work,
-   not RS-derived. The ResourceSpace codebase is now used only as a
-   *blueprint* — a reference implementation we audit when designing
-   feature parity, not a substrate we extend.
-2. **The ResourceSpace fork lives at the repo root in `api/`, `batch/`,
-   `include/`, `lib/`, `pages/`, etc.** It is being removed, not
-   extended. Once it is gone, no BSD-3 obligation constrains the
+   all production code in `app/`, `web/`, and `site/` is original work.
+2. **Any residual legacy PHP at the repo root is being removed, not
+   extended.** Once it is gone, no BSD-3 obligation constrains the
    replacement code.
 
 ## Decision
@@ -60,23 +56,23 @@ The project will move to a **dual-license model**:
 
 The relicense will happen in two phases:
 
-### Phase 1 — Audit and excise RS-derived code (pre-relicense)
+### Phase 1 — Audit and excise legacy-derived code (pre-relicense)
 
 Before any relicense, complete an audit that establishes:
 
-- Which files in the working tree are RS-derived (still under BSD-3 by
-  the original license contract).
+- Which files in the working tree are legacy-derived (still under BSD-3
+  by the original license contract).
 - Which files are clean-room original work we can relicense unilaterally.
 
 Files in the second bucket are safe to relicense. Files in the first
 bucket must either be removed (preferred, since the strangler approach is
-already abandoned) or kept under BSD-3 with a clear `// rs-derived`
-marker if we choose to retain them.
+already abandoned) or kept under BSD-3 with a clear marker if we choose
+to retain them.
 
-Practically, this means the audit and the deletion of the residual RS
-fork in `api/`, `batch/`, `include/`, `lib/`, `pages/`, etc. happen
-together. Once those directories are gone, the audit is the simple "all
-remaining tracked files are clean-room" check.
+Practically, this means the audit and the deletion of any residual
+legacy PHP at the repo root happen together. Once those directories are
+gone, the audit is the simple "all remaining tracked files are
+clean-room" check.
 
 ### Phase 2 — Relicense
 
@@ -89,8 +85,6 @@ When the audit confirms a clean tree:
   assigns to us (or grants us joint rights to) the contributor's work,
   which is what makes dual-licensing legally possible — we cannot offer a
   proprietary license for code we don't have the right to relicense.
-- The ResourceSpace `license.txt` and `documentation/licenses/` directory
-  remain for historical attribution of the *removed* upstream code.
 
 ## Constraints and compatibilities
 
@@ -128,8 +122,8 @@ When the audit confirms a clean tree:
 
 - A CLA is friction for external contributors. We must accept this.
   Mitigation: clear, short CLA modelled on the Apache CLA.
-- An RS-derived file audit is real work. Mitigation: pair it with the
-  already-planned removal of the residual RS fork.
+- A legacy-derived file audit is real work. Mitigation: pair it with the
+  already-planned removal of any residual legacy code.
 - Until the audit completes and relicense lands, we remain BSD-3 and
   technically vulnerable to the fork-as-SaaS risk. This is acceptable
   given pre-MVP status — there is nothing yet worth forking.
@@ -150,9 +144,35 @@ When the audit confirms a clean tree:
   Rejected per ADR 0017 — breaks studio source-audit requirements for
   AAA procurement.
 
+## Status (2026-06-04)
+
+**Phase 1 (audit + excise) is now structurally complete.** The
+strangler-fig porting layer (ADR 0003) was abandoned, the legacy PHP
+backend (ADR 0015) was removed from the repo in 2026-06, and the
+remaining tracked source under `app/`, `web/`, `site/`, and
+`infra/` is clean-room original work. There is no surviving
+BSD-3-obligated code in the runtime tree.
+
+What's still pending before the **Phase 2 relicense** can land:
+
+- The `LICENSE` file swap to AGPL-3.0.
+- Adding `LICENSE.commercial.md` describing the dual-license offer.
+- The CLA clause in `CONTRIBUTING.md`.
+- One last sweep of the tree to confirm no stray BSD-3-headers
+  survive in source files (a `find . -name '*.go' -exec grep -l
+  'BSD' {}` pass).
+
+These are scheduled together as a single mechanical commit once the
+operator decides to flip the switch — there is no longer a
+code-structural blocker.
+
 ## Reference
 
 - ADR 0002 — original BSD-3 decision (superseded by this ADR).
+- ADR 0003 — Strangler fig (now superseded; the abandonment is what
+  unblocked this ADR's Phase 1).
+- ADR 0015 — PHP as legacy backend (deprecated 2026-06; removal
+  cleared the last BSD-3 obligation surface).
 - ADR 0017 — monetization model & technical license enforcement (consumes
   this ADR's license direction).
 - ADR 0018 (planned) — Blender packaging as optional worker container.

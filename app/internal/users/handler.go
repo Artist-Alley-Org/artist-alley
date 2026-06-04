@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
@@ -44,6 +45,20 @@ type Handler struct {
 	// hits the DB. The by-username path doesn't cache (rare URL,
 	// not worth the second-key bookkeeping); it always queries.
 	byRef *cache.Cache[openapi.UserPublic]
+
+	// Audit is the typed audit recorder for lifecycle mutations
+	// (Phase 1.17.B + onward — status changes, role assignments,
+	// password resets). Nil-safe — tests that construct a bare
+	// Handler can leave it unset and the audit calls degrade to
+	// no-ops.
+	Audit auditRecorder
+}
+
+// auditRecorder is the subset of *audit.Recorder this package needs.
+// Interface form so tests can substitute a fake without dragging
+// the full audit package's DB dependency in.
+type auditRecorder interface {
+	UserStatusChanged(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next int64, reason string)
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
@@ -55,6 +70,14 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		h.byRef = cache.Register[openapi.UserPublic](registry, CacheDomain, 5_000)
 	}
 	return h
+}
+
+// SetAuditRecorder wires the audit pipeline post-construction so the
+// api.go composition can keep its existing NewHandler call without
+// growing a positional argument every time we add an audit-emitting
+// surface. Safe to call once at startup.
+func (h *Handler) SetAuditRecorder(rec auditRecorder) {
+	h.Audit = rec
 }
 
 // InvalidateProfile broadcasts a cache invalidation for the given

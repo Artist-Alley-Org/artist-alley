@@ -25,6 +25,22 @@ FROM "user"
 WHERE session = $1
 LIMIT 1;
 
+-- name: FindUserByRef :one
+-- Used by the registry-dispatched login flow after a provider has
+-- resolved credentials to a local user ref. Same shape as the
+-- username + session lookups so the handler's downstream code
+-- (approval gate, session minting) is provider-agnostic.
+SELECT ref,
+       username,
+       fullname,
+       email,
+       usergroup,
+       approved,
+       account_expires
+FROM "user"
+WHERE ref = $1
+LIMIT 1;
+
 -- name: SetUserSession :exec
 -- Writes a freshly minted session token to the user's row. Also
 -- bumps last_active so RS-side "active users" lists notice. Used at
@@ -94,6 +110,19 @@ SET revoked_at = NOW()
 WHERE id = $1
   AND revoked_at IS NULL;
 
+-- name: RevokeSessionForUser :execrows
+-- Ownership-checked soft-delete. Same as RevokeSession but the
+-- WHERE includes user_ref so a caller can't revoke someone else's
+-- session by ID-guessing. Used by the self-service
+-- DELETE /account/sessions/{id} endpoint. Returns rows-affected so
+-- the handler can distinguish "revoked" (1) from "not yours / not
+-- found / already revoked" (0).
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE id = $1
+  AND user_ref = $2
+  AND revoked_at IS NULL;
+
 -- name: RevokeSessionByToken :exec
 -- Revoke by cookie hash. Used by /auth/logout when we have the cookie
 -- but no session id loaded.
@@ -101,6 +130,120 @@ UPDATE sessions
 SET revoked_at = NOW()
 WHERE token_hash = $1
   AND revoked_at IS NULL;
+
+-- name: ListUserGrants :many
+-- Per-user capability grants (Phase 1.17.F). Returns rows ordered
+-- by (cap, team_id) so the UI displays a stable list across reloads.
+SELECT g.capability_code,
+       g.team_id,
+       g.granted_at,
+       g.granted_by_rs_user_id,
+       g.note,
+       t.name AS team_name
+FROM user_capability_grants g
+LEFT JOIN teams t ON t.id = g.team_id
+WHERE g.rs_user_id = $1
+ORDER BY g.capability_code, g.team_id NULLS FIRST;
+
+-- name: ListUserRevokes :many
+-- Per-user capability revokes (subtractive overrides). Same shape
+-- as ListUserGrants — front-end renders both lists in one section.
+SELECT r.capability_code,
+       r.team_id,
+       r.revoked_at,
+       r.revoked_by_rs_user_id,
+       r.note,
+       t.name AS team_name
+FROM user_capability_revokes r
+LEFT JOIN teams t ON t.id = r.team_id
+WHERE r.rs_user_id = $1
+ORDER BY r.capability_code, r.team_id NULLS FIRST;
+
+-- name: InsertUserGrant :exec
+-- Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+-- team_id) means re-granting the same (cap, team_id) is a no-op
+-- update of granted_at + note + granter — useful when an admin
+-- refreshes a stale grant.
+INSERT INTO user_capability_grants (
+    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    granted_at = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    note = EXCLUDED.note;
+
+-- name: DeleteUserGrant :execrows
+-- Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+-- the natural key — team_id may be NULL (global grant). Returns
+-- rows-affected so the handler can 404 cleanly.
+DELETE FROM user_capability_grants
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3;
+
+-- name: InsertUserRevoke :exec
+INSERT INTO user_capability_revokes (
+    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+    revoked_at = NOW(),
+    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    note = EXCLUDED.note;
+
+-- name: DeleteUserRevoke :execrows
+DELETE FROM user_capability_revokes
+WHERE rs_user_id = $1
+  AND capability_code = $2
+  AND team_id IS NOT DISTINCT FROM $3;
+
+-- name: RevokeOtherSessionsForUser :execrows
+-- Revokes every session belonging to a user EXCEPT the one passed
+-- as $2. Used by the self-service password-change endpoint when the
+-- caller opts to "sign out everywhere else" — defensive default for
+-- "I think someone got my password" recovery flows. Returns count
+-- so the audit row + UI can report how many sessions ended.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND id <> $2
+  AND revoked_at IS NULL;
+
+-- name: GetUserPasswordHashByRef :one
+-- Returns just the username + stored hash for a user. Used by the
+-- self-service password change endpoint to verify the caller knows
+-- their CURRENT password before accepting a new one.
+SELECT ref AS rs_user_id, username, password
+FROM "user"
+WHERE ref = $1;
+
+-- name: UpdateUserPassword :exec
+-- Atomic password change: sets user.password + bumps
+-- password_last_change. The handler is responsible for the policy
+-- check + the history-reuse check + the history insert; this query
+-- is the leaf write.
+UPDATE "user"
+SET password = $2,
+    password_last_change = NOW(),
+    password_reset_hash = NULL
+WHERE ref = $1;
+
+-- name: InsertPasswordHistory :exec
+-- Append-only history row. The handler calls this after every
+-- successful UpdateUserPassword (whether self-service or admin
+-- reset) so the reuse-prevention check has the data it needs.
+INSERT INTO user_password_history (rs_user_id, password_hash)
+VALUES ($1, $2);
+
+-- name: ListRecentPasswordHashes :many
+-- Most recent N hashes for reuse-prevention. The handler iterates +
+-- VerifyPasswords against each — we can't WHERE on the hash directly
+-- because RS-style hashing has a per-call HMAC step (the candidate
+-- plaintext needs to be re-hashed and compared in code).
+SELECT password_hash
+FROM user_password_history
+WHERE rs_user_id = $1
+ORDER BY changed_at DESC
+LIMIT $2;
 
 -- name: ListSessionsForUser :many
 -- Powers /auth/me/sessions. Returns active sessions ordered most recently
@@ -388,6 +531,17 @@ ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
 
 -- name: ListCapabilities :many
 SELECT code, description FROM capabilities ORDER BY code;
+
+-- name: LoadCapabilityLicenseFeatures :many
+-- Returns the (code, required_license_feature) pairs for every cap that
+-- has a license-feature gate. Rows where the column is NULL are skipped
+-- entirely — they don't need to live in the in-process map. The result
+-- feeds auth.SetCapLicenseFeatures at boot, so Identity.Can() can check
+-- the install's license without a per-call DB hit.
+SELECT code, required_license_feature
+FROM capabilities
+WHERE required_license_feature IS NOT NULL
+ORDER BY code;
 
 -- name: ListRoles :many
 -- Returns every role with its parent_id; the handler enriches each

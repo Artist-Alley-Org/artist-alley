@@ -702,6 +702,72 @@ func (collShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (collShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from collections_test test shim")
 }
+func (collShim) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	panic("ListAdminUsers called from collections test shim")
+}
+func (collShim) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from collections test shim")
+}
+func (collShim) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from collections test shim")
+}
+func (collShim) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from collections test shim")
+}
+func (collShim) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from collections test shim")
+}
+func (collShim) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from collections test shim")
+}
+func (collShim) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	panic("ChangeMyPassword called from collections test shim")
+}
+func (collShim) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	panic("AdminResetUserPassword called from collections test shim")
+}
+func (collShim) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from collections test shim")
+}
+func (collShim) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from collections test shim")
+}
+func (collShim) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from collections test shim")
+}
+func (collShim) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from collections test shim")
+}
+func (collShim) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from collections test shim")
+}
+func (collShim) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	panic("ListAssetTypeAcls called from collections test shim")
+}
+func (collShim) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	panic("AddAssetTypeAcl called from collections test shim")
+}
+func (collShim) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	panic("RemoveAssetTypeAcl called from collections test shim")
+}
+func (collShim) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	panic("ListAdminAuditEvents called from collections test shim")
+}
+func (collShim) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	panic("ListAdminAuditEventTypes called from collections test shim")
+}
+func (collShim) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from collections test shim")
+}
+func (collShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from collections test shim")
+}
+func (collShim) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from collections test shim")
+}
+func (collShim) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	panic("ListIdentityProviders called from collections test shim")
+}
 func (collShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from collections_test test shim")
 }

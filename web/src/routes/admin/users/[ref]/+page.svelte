@@ -1,11 +1,17 @@
 <script lang="ts">
-  // Per-user admin detail — show profile + role assignment.
+  // Per-user admin detail — profile + role assignment + lifecycle
+  // status (Phase 1.17.B).
 
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import Avatar from '$components/Avatar.svelte';
+  import {
+    type AdminUser,
+    type AdminUserStatus,
+    statusBadgeClass,
+  } from '$lib/admin/users';
 
   interface UserPublic {
     ref: number;
@@ -30,6 +36,16 @@
   let saved = $state(false);
   let error = $state<string | null>(null);
 
+  // Lifecycle state (1.17.B). We try to read the user's current
+  // status from the admin list (one-off scoped fetch keyed by ref);
+  // falls back to "active" if the API doesn't return the row (the
+  // public profile doesn't expose status, so we have to ask the
+  // admin list).
+  let status = $state<AdminUserStatus>('active');
+  let statusReason = $state('');
+  let statusSaving = $state(false);
+  let statusMessage = $state<{ kind: 'ok' | 'noop'; text: string } | null>(null);
+
   onMount(() => {
     void load();
   });
@@ -38,9 +54,13 @@
     loading = true;
     error = null;
     try {
-      const [u, rs] = await Promise.all([
+      const [u, rs, adminRow] = await Promise.all([
         api.GET('/users/{ref}', { params: { path: { ref } } }),
         api.GET('/auth/roles'),
+        // Fetch only this user via the admin list with a precise
+        // search query; the API returns AdminUser which carries
+        // status. Limit=1 because we already know the row.
+        api.GET('/admin/users', { params: { query: { q: '', limit: 200 } } }),
       ]);
       if (u.error || !u.data) {
         error = (u.error as { error?: string } | undefined)?.error ?? 'User not found.';
@@ -48,6 +68,12 @@
       }
       user = u.data as UserPublic;
       if (rs.data) roles = (rs.data as { items?: Role[] }).items ?? (rs.data as unknown as Role[]);
+
+      if (adminRow.data) {
+        const page = adminRow.data as unknown as { items: AdminUser[] };
+        const me = page.items.find((u) => u.ref === ref);
+        if (me) status = me.status;
+      }
     } finally {
       loading = false;
     }
@@ -69,6 +95,225 @@
       saving = false;
     }
   }
+
+  async function saveStatus(next: AdminUserStatus) {
+    if (statusSaving) return;
+    statusSaving = true;
+    statusMessage = null;
+    try {
+      const r = await api.PUT('/admin/users/{ref}/status', {
+        params: { path: { ref } },
+        body: { status: next, reason: statusReason || undefined },
+      });
+      if (r.error || !r.data) {
+        error = (r.error as { error?: string } | undefined)?.error ?? 'Failed to update status.';
+        return;
+      }
+      const result = r.data as unknown as { status: AdminUserStatus; changed: boolean };
+      status = result.status;
+      statusReason = '';
+      statusMessage = result.changed
+        ? { kind: 'ok', text: t('admin.user_detail.status_updated', { status: statusLabel(result.status) }) }
+        : { kind: 'noop', text: t('admin.user_detail.status_no_change') };
+    } finally {
+      statusSaving = false;
+    }
+  }
+
+  function statusLabel(s: AdminUserStatus): string {
+    if (s === 'active') return t('admin.users.status_active');
+    if (s === 'pending') return t('admin.users.status_pending');
+    return t('admin.users.status_disabled');
+  }
+
+  // Password reset (Phase 1.17.D).
+  let resetReason = $state('');
+  let resetting = $state(false);
+  let resetResult = $state<{ password: string; copied: boolean } | null>(null);
+
+  async function resetPassword() {
+    if (resetting) return;
+    resetting = true;
+    try {
+      const r = await api.POST('/admin/users/{ref}/password-reset', {
+        params: { path: { ref } },
+        body: { reason: resetReason || undefined },
+      });
+      if (r.error || !r.data) {
+        error = (r.error as { error?: string } | undefined)?.error ?? 'Failed to reset password.';
+        return;
+      }
+      const result = r.data as unknown as { temporary_password: string };
+      resetResult = { password: result.temporary_password, copied: false };
+      resetReason = '';
+    } finally {
+      resetting = false;
+    }
+  }
+
+  async function copyReset() {
+    if (!resetResult) return;
+    try {
+      await navigator.clipboard.writeText(resetResult.password);
+      resetResult.copied = true;
+    } catch {
+      // clipboard write blocked (insecure context, etc.) — leave the
+      // password visible so the admin can copy it manually.
+    }
+  }
+
+  // Capability grants + revokes (Phase 1.17.F).
+  interface CapabilityOverride {
+    capability: string;
+    team_id?: string | null;
+    note?: string;
+    granted_by?: number | null;
+    granted_at: string;
+  }
+  interface Capability {
+    code: string;
+    description: string;
+  }
+
+  let allCaps = $state<Capability[]>([]);
+  let grants = $state<CapabilityOverride[]>([]);
+  let revokes = $state<CapabilityOverride[]>([]);
+  let overridesLoading = $state(false);
+  let overridesError = $state<string | null>(null);
+
+  let newGrantCap = $state('');
+  let newGrantTeam = $state('');
+  let newGrantNote = $state('');
+  let grantBusy = $state(false);
+
+  let newRevokeCap = $state('');
+  let newRevokeTeam = $state('');
+  let newRevokeNote = $state('');
+  let revokeBusy = $state(false);
+
+  async function loadOverrides() {
+    overridesLoading = true;
+    overridesError = null;
+    try {
+      const [caps, overrides] = await Promise.all([
+        api.GET('/auth/capabilities'),
+        api.GET('/admin/users/{ref}/capabilities', { params: { path: { ref } } }),
+      ]);
+      if (caps.data) {
+        const payload = caps.data as unknown as { items?: Capability[] } | Capability[];
+        allCaps = Array.isArray(payload) ? payload : (payload.items ?? []);
+      }
+      if (overrides.error || !overrides.data) {
+        overridesError = (overrides.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_load_error');
+        return;
+      }
+      const o = overrides.data as unknown as { grants: CapabilityOverride[]; revokes: CapabilityOverride[] };
+      grants = o.grants ?? [];
+      revokes = o.revokes ?? [];
+    } finally {
+      overridesLoading = false;
+    }
+  }
+
+  async function addGrant() {
+    if (grantBusy || !newGrantCap) return;
+    grantBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/grants', {
+        params: { path: { ref } },
+        body: {
+          capability: newGrantCap,
+          team_id: newGrantTeam || undefined,
+          note: newGrantNote || undefined,
+        },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_add_grant_error');
+        return;
+      }
+      newGrantCap = '';
+      newGrantTeam = '';
+      newGrantNote = '';
+      await loadOverrides();
+    } finally {
+      grantBusy = false;
+    }
+  }
+
+  async function removeGrant(capability: string, teamID: string | null | undefined) {
+    if (grantBusy) return;
+    grantBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.DELETE('/admin/users/{ref}/grants/{capability}', {
+        params: { path: { ref, capability }, query: teamID ? { team_id: teamID } : {} },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_remove_grant_error');
+        return;
+      }
+      await loadOverrides();
+    } finally {
+      grantBusy = false;
+    }
+  }
+
+  async function addRevoke() {
+    if (revokeBusy || !newRevokeCap) return;
+    revokeBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/revokes', {
+        params: { path: { ref } },
+        body: {
+          capability: newRevokeCap,
+          team_id: newRevokeTeam || undefined,
+          note: newRevokeNote || undefined,
+        },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_add_revoke_error');
+        return;
+      }
+      newRevokeCap = '';
+      newRevokeTeam = '';
+      newRevokeNote = '';
+      await loadOverrides();
+    } finally {
+      revokeBusy = false;
+    }
+  }
+
+  async function removeRevoke(capability: string, teamID: string | null | undefined) {
+    if (revokeBusy) return;
+    revokeBusy = true;
+    overridesError = null;
+    try {
+      const r = await api.DELETE('/admin/users/{ref}/revokes/{capability}', {
+        params: { path: { ref, capability }, query: teamID ? { team_id: teamID } : {} },
+      });
+      if (r.error) {
+        overridesError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.overrides_remove_revoke_error');
+        return;
+      }
+      await loadOverrides();
+    } finally {
+      revokeBusy = false;
+    }
+  }
+
+  function shortTeam(id: string | null | undefined): string {
+    if (!id) return t('admin.user_detail.overrides_global');
+    return id.slice(0, 8);
+  }
+
+  onMount(() => { void loadOverrides(); });
 </script>
 
 <svelte:head><title>User {ref} — artist-alley</title></svelte:head>
@@ -82,11 +327,16 @@
     <Avatar name={user.display_name} src={user.avatar_url} sizeClass="h-12 w-12" />
     <div>
       <h2 class="text-xl font-semibold">{t('admin.user_detail.title', { username: user.username })}</h2>
-      <p class="text-xs text-fg-muted">ref {user.ref} · member since {new Date(user.member_since).toLocaleDateString()}</p>
+      <p class="text-xs text-fg-muted">
+        ref {user.ref} · member since {new Date(user.member_since).toLocaleDateString()}
+      </p>
     </div>
+    <span class={`ml-auto inline-block rounded px-2 py-0.5 text-[10px] uppercase tracking-wider ${statusBadgeClass(status)}`}>
+      {statusLabel(status)}
+    </span>
   </header>
 
-  <section class="max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+  <section class="mb-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
     <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.role_label')}</h3>
     <select
       bind:value={selectedRole}
@@ -107,6 +357,245 @@
     </button>
     {#if saved}
       <p class="text-sm text-success">{t('admin.user_detail.role_saved')}</p>
+    {/if}
+  </section>
+
+  <section class="max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+    <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.status_section')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.status_intro')}</p>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.status_current', { status: statusLabel(status) })}</p>
+
+    <label class="block text-xs">
+      <span class="mb-1 block text-fg-muted">{t('admin.user_detail.status_reason')}</span>
+      <input
+        type="text"
+        bind:value={statusReason}
+        placeholder={t('admin.user_detail.status_reason_placeholder')}
+        maxlength="500"
+        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+      />
+    </label>
+
+    <div class="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onclick={() => saveStatus('active')}
+        disabled={statusSaving}
+        class="rounded border border-success bg-success/10 px-3 py-1 text-xs font-medium text-success hover:bg-success/20 disabled:opacity-50"
+      >
+        {status === 'disabled' ? t('admin.user_detail.status_save_active_again') : t('admin.user_detail.status_save_active')}
+      </button>
+      <button
+        type="button"
+        onclick={() => saveStatus('pending')}
+        disabled={statusSaving}
+        class="rounded border border-warning bg-warning/10 px-3 py-1 text-xs font-medium text-warning hover:bg-warning/20 disabled:opacity-50"
+      >
+        {t('admin.user_detail.status_save_pending')}
+      </button>
+      <button
+        type="button"
+        onclick={() => saveStatus('disabled')}
+        disabled={statusSaving}
+        class="rounded border border-danger bg-danger/10 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/20 disabled:opacity-50"
+      >
+        {t('admin.user_detail.status_save_disabled')}
+      </button>
+    </div>
+
+    {#if statusMessage}
+      <p class={statusMessage.kind === 'ok' ? 'text-sm text-success' : 'text-sm text-fg-muted'}>{statusMessage.text}</p>
+    {/if}
+  </section>
+
+  <section class="mt-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+    <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.reset_section')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.reset_intro')}</p>
+
+    <label class="block text-xs">
+      <span class="mb-1 block text-fg-muted">{t('admin.user_detail.reset_reason')}</span>
+      <input
+        type="text"
+        bind:value={resetReason}
+        maxlength="500"
+        class="w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+      />
+    </label>
+
+    <button
+      type="button"
+      onclick={resetPassword}
+      disabled={resetting}
+      class="rounded border border-warning bg-warning/10 px-3 py-1 text-xs font-medium text-warning hover:bg-warning/20 disabled:opacity-50"
+    >
+      {resetting ? t('admin.user_detail.resetting') : t('admin.user_detail.reset_button')}
+    </button>
+
+    {#if resetResult}
+      <div class="mt-2 rounded border border-warning/40 bg-warning/5 p-3">
+        <p class="text-xs text-fg-muted">{t('admin.user_detail.reset_result_label')}</p>
+        <div class="mt-1 flex items-center gap-2">
+          <code class="flex-1 break-all rounded bg-surface px-2 py-1 font-mono text-sm">{resetResult.password}</code>
+          <button
+            type="button"
+            onclick={copyReset}
+            class="rounded border border-border bg-surface px-2 py-1 text-xs hover:border-accent"
+          >
+            {resetResult.copied ? t('admin.user_detail.reset_copied') : t('admin.user_detail.reset_copy')}
+          </button>
+        </div>
+      </div>
+    {/if}
+  </section>
+
+  <section class="mt-6 max-w-2xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+    <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.overrides_section')}</h3>
+    <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_intro')}</p>
+
+    {#if overridesError}
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{overridesError}</p>
+    {/if}
+
+    {#if overridesLoading}
+      <p class="text-xs text-fg-muted">{t('common.loading')}</p>
+    {:else}
+      <div class="grid gap-4 md:grid-cols-2">
+        <div>
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-success">{t('admin.user_detail.overrides_grants_label')}</h4>
+          {#if grants.length === 0}
+            <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_no_grants')}</p>
+          {:else}
+            <ul class="space-y-1">
+              {#each grants as g, i (g.capability + (g.team_id ?? '') + i)}
+                <li class="flex items-start gap-2 rounded border border-success/30 bg-success/5 px-2 py-1.5 text-xs">
+                  <div class="flex-1">
+                    <code class="font-mono">{g.capability}</code>
+                    <span class="ml-1 text-fg-muted">· {shortTeam(g.team_id)}</span>
+                    {#if g.note}<p class="mt-0.5 text-[11px] text-fg-muted italic">{g.note}</p>{/if}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => removeGrant(g.capability, g.team_id)}
+                    disabled={grantBusy}
+                    class="rounded border border-border bg-surface px-2 py-0.5 text-[11px] hover:border-danger hover:text-danger disabled:opacity-50"
+                  >
+                    {t('admin.user_detail.overrides_remove_button')}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <div class="mt-3 space-y-1.5 rounded border border-border bg-surface p-2">
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
+              <select
+                bind:value={newGrantCap}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              >
+                <option value="">—</option>
+                {#each allCaps as c (c.code)}
+                  <option value={c.code}>{c.code}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_team_label')}</span>
+              <input
+                type="text"
+                bind:value={newGrantTeam}
+                placeholder={t('admin.user_detail.overrides_team_placeholder')}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+              />
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_note_label')}</span>
+              <input
+                type="text"
+                bind:value={newGrantNote}
+                maxlength="500"
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={addGrant}
+              disabled={grantBusy || !newGrantCap}
+              class="w-full rounded border border-success bg-success/10 px-2 py-1 text-xs font-medium text-success hover:bg-success/20 disabled:opacity-50"
+            >
+              {t('admin.user_detail.overrides_add_grant_button')}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <h4 class="mb-2 text-xs font-semibold uppercase tracking-wider text-danger">{t('admin.user_detail.overrides_revokes_label')}</h4>
+          {#if revokes.length === 0}
+            <p class="text-xs text-fg-muted">{t('admin.user_detail.overrides_no_revokes')}</p>
+          {:else}
+            <ul class="space-y-1">
+              {#each revokes as r, i (r.capability + (r.team_id ?? '') + i)}
+                <li class="flex items-start gap-2 rounded border border-danger/30 bg-danger/5 px-2 py-1.5 text-xs">
+                  <div class="flex-1">
+                    <code class="font-mono">{r.capability}</code>
+                    <span class="ml-1 text-fg-muted">· {shortTeam(r.team_id)}</span>
+                    {#if r.note}<p class="mt-0.5 text-[11px] text-fg-muted italic">{r.note}</p>{/if}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => removeRevoke(r.capability, r.team_id)}
+                    disabled={revokeBusy}
+                    class="rounded border border-border bg-surface px-2 py-0.5 text-[11px] hover:border-danger hover:text-danger disabled:opacity-50"
+                  >
+                    {t('admin.user_detail.overrides_remove_button')}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <div class="mt-3 space-y-1.5 rounded border border-border bg-surface p-2">
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_capability_label')}</span>
+              <select
+                bind:value={newRevokeCap}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              >
+                <option value="">—</option>
+                {#each allCaps as c (c.code)}
+                  <option value={c.code}>{c.code}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_team_label')}</span>
+              <input
+                type="text"
+                bind:value={newRevokeTeam}
+                placeholder={t('admin.user_detail.overrides_team_placeholder')}
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 font-mono text-[11px] focus:border-accent focus:outline-none"
+              />
+            </label>
+            <label class="block text-[11px]">
+              <span class="mb-0.5 block text-fg-muted">{t('admin.user_detail.overrides_note_label')}</span>
+              <input
+                type="text"
+                bind:value={newRevokeNote}
+                maxlength="500"
+                class="w-full rounded border border-border bg-surface-elevated px-1.5 py-1 text-xs focus:border-accent focus:outline-none"
+              />
+            </label>
+            <button
+              type="button"
+              onclick={addRevoke}
+              disabled={revokeBusy || !newRevokeCap}
+              class="w-full rounded border border-danger bg-danger/10 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/20 disabled:opacity-50"
+            >
+              {t('admin.user_detail.overrides_add_revoke_button')}
+            </button>
+          </div>
+        </div>
+      </div>
     {/if}
   </section>
 {/if}

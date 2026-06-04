@@ -1,6 +1,6 @@
 ---
 id: "0011"
-title: Asset entity — UUID-keyed, fork-not-port from RS's resource
+title: Asset entity — UUID-keyed, clean-room design
 status: accepted
 date: 2026-05-25
 area: architecture
@@ -28,8 +28,8 @@ artist-alley's storage layer (ADR 0008, implemented in Phase 1.4)
 sits below the user-facing entity. `storage_objects` deduplicates
 byte streams by sha256; `storage_variants` records renditions;
 `storage_pins` reference-counts ownership. None of these are the
-*thing a user uploads, titles, tags, and shares*. That layer was
-called "resource" in ResourceSpace and is the next port.
+*thing a user uploads, titles, tags, and shares*. That layer needs
+its own entity.
 
 Two earlier ADRs frame what we want:
 
@@ -37,19 +37,19 @@ Two earlier ADRs frame what we want:
   membership target. Collections can't land before this entity does.
 - **ADR 0007 (federation thinking ahead)** locks in UUIDs and
   `origin_server_id` on every entity that might cross peer
-  boundaries. RS's `resource.ref BIGINT auto_increment` is the
-  opposite of that.
+  boundaries. A typical DAM's `resource.ref BIGINT auto_increment`
+  is the opposite of that.
 
 Per memory rule `feedback_pre_mvp_everything_is_volatile.md`, the DB
-is throwaway until MVP — so we **fork the schema cleanly** instead of
-trying to bend the RS table into a federation-ready shape.
+is throwaway until MVP — so we **design the schema cleanly** for
+federation rather than retrofitting a legacy table.
 
 ## Decision
 
 ### Name: `assets`
 
 The entity is called `assets` (table name) and lives under
-`/api/v1/assets`. RS's `resource` table stays in the baseline
+`/api/v1/assets`. The legacy `resource` table stays in the baseline
 migration for PHP coexistence and is gradually retired as PHP pages
 move to Go.
 
@@ -60,9 +60,9 @@ the low-level byte plane and the name now reflects that.
 
 ### Schema
 
-The new `assets` table carries most of RS's `resource` columns (per
-user guidance: keep what we haven't replaced yet, drop later as
-porting reveals what's actually used), with three structural
+The new `assets` table carries most of the typical legacy `resource`
+columns (per user guidance: keep what we haven't replaced yet, drop
+later as porting reveals what's actually used), with three structural
 additions: UUID primary key, file-hash link to the storage layer,
 and federation-ready origin tracking.
 
@@ -78,14 +78,14 @@ CREATE TABLE assets (
     file_hash          TEXT         NULL REFERENCES storage_objects(hash) ON DELETE SET NULL,
     file_extension     TEXT         NULL,                     -- 'jpg', 'mp4', 'glb', ...
     file_size_bytes    BIGINT       NULL,                     -- denormalized from storage_objects for fast filter
-    -- RS columns we keep until the porting reveals whether they're needed:
+    -- Legacy columns we keep until porting reveals whether they're needed:
     rating             INTEGER      NULL,
     user_rating        REAL         NULL,
     hit_count          BIGINT       NOT NULL DEFAULT 0,
     new_hit_count      BIGINT       NOT NULL DEFAULT 0,
     request_count      BIGINT       NOT NULL DEFAULT 0,
-    archive_state      INTEGER      NOT NULL DEFAULT 0,        -- RS "archive" enum; status above is the new layer
-    access             INTEGER      NOT NULL DEFAULT 0,        -- RS "access" enum (0 open, 1 restricted, 2 confidential)
+    archive_state      INTEGER      NOT NULL DEFAULT 0,        -- legacy "archive" enum; status above is the new layer
+    access             INTEGER      NOT NULL DEFAULT 0,        -- legacy "access" enum (0 open, 1 restricted, 2 confidential)
     thumb_width        INTEGER      NULL,
     thumb_height       INTEGER      NULL,
     image_red          SMALLINT     NULL,                      -- dominant-colour theming
@@ -127,9 +127,9 @@ CREATE INDEX asset_tag_tag_idx ON asset_tag (tag);
 Notes on the column choices:
 
 - **`status`** is artist-alley's new vocabulary (`draft / active /
-  archived`). RS's `archive_state` enum (0..5 with site-specific
+  archived`). The legacy `archive_state` enum (0..5 with site-specific
   semantics) lives alongside as an integer; mapping happens at the
-  PHP/Go boundary until RS pages retire.
+  PHP/Go boundary until legacy pages retire.
 - **`file_hash`** ties the asset to the byte plane (`storage_objects`).
   Multiple assets pointing at the same hash is fine and intentional —
   that's the whole reason content-addressed storage exists.
@@ -174,12 +174,12 @@ asset removes the pin; the storage GC sweeper later removes the
 bytes if no other pin remains. The existing `user:` pin from upload
 gets removed when the asset is created (its work is done).
 
-### Migration from RS data
+### Migration from legacy data
 
 **Explicit non-goal** for Phase 1.8. The DB is volatile until MVP;
 fresh installs start with the new model. If we ever need to import
-RS data (and we may, for the maintainer's own RS instances), it
-lands as a separate Phase later under `scripts/import-rs-resources.go`.
+legacy data, it lands as a separate Phase later under
+`scripts/import-rs-resources.go`.
 
 ## Consequences
 
@@ -189,17 +189,17 @@ lands as a separate Phase later under `scripts/import-rs-resources.go`.
   plane from the user-facing record.
 - Soft-delete + JSONB metadata + tag join table cover the
   extensibility cases without re-architecting later.
-- RS coexistence preserved — `resource` table untouched; PHP keeps
+- Legacy coexistence preserved — `resource` table untouched; PHP keeps
   rendering through the translator.
 
 **Negative:**
 - Breaking rename of Phase 1.4 endpoints (`/assets` → `/storage/objects`).
   Acceptable per volatility rule; will be a single-commit change with
   test-shim updates.
-- Two tables (`assets` + RS's `resource`) describe overlapping things
-  during the transition. Operators with no RS data installed can
-  ignore `resource` entirely; we drop it from the baseline when no PHP
-  page on the served route table needs it.
+- Two tables (`assets` + the legacy `resource`) describe overlapping
+  things during the transition. Operators with no legacy data installed
+  can ignore `resource` entirely; we drop it from the baseline when no
+  PHP page on the served route table needs it.
 
 **Deferred:**
 - Search / filter DSL (ADR 0010) is what powers `GET /assets?...`
@@ -223,5 +223,5 @@ lands as a separate Phase later under `scripts/import-rs-resources.go`.
   as separate assets linked via `metadata.parent_asset_id` until
   demand is clear.
 - Whether `owner_user_ref` should be UUID. The user table itself
-  still uses `ref BIGINT` (RS); porting that is its own large phase.
+  still uses `ref BIGINT`; porting that is its own large phase.
   Keep BIGINT for now, swap when users move to UUIDs.

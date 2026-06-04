@@ -50,12 +50,12 @@ rendered turntable thumbnails for everything else. The gap is the
   (Substance Painter), `.zpr` (ZBrush).
 
 None of these can be rendered or even reliably introspected by
-any code that lives outside the originating DCC today. ResourceSpace
-treats them as opaque blobs — operators upload them, RS stores them,
-no thumbnail, no metadata, no preview. The viewer just shows a generic
-"3ds Max file" icon. For a studio whose canonical assets are `.max`
-scenes, that is a wholesale failure of the asset-management value
-proposition.
+any code that lives outside the originating DCC today. Existing DAM
+tooling treats them as opaque blobs — operators upload them, the
+backend stores them, no thumbnail, no metadata, no preview. The viewer
+just shows a generic "3ds Max file" icon. For a studio whose canonical
+assets are `.max` scenes, that is a wholesale failure of the
+asset-management value proposition.
 
 ### What exists in the wild
 
@@ -367,7 +367,7 @@ locally-equivalent free path exists (Layer 1 + Layer 2 thumbnail +
 - Thumbnails work for every `.max` and `.ma` without paid add-ons.
   Layer 2 ships with the AGPL core. The browse grid shows real
   previews of `.max` files; that alone is a wholesale value
-  delivery against RS.
+  delivery against the prior DAM generation.
 - The proprietary work sits in a single, well-bounded artifact
   (Layer 3) that is legally cleanly separable, commercially
   defensible, and operationally upgradeable without touching the
@@ -414,8 +414,8 @@ locally-equivalent free path exists (Layer 1 + Layer 2 thumbnail +
 
 - **Tier A only — metadata reader, no viewer.** Ship the cheap
   win, skip the viewer entirely. Rejected because the viewer is
-  the differentiator; "metadata-only" is RS's current floor and
-  losing on UX value.
+  the differentiator; "metadata-only" is the prior generation's
+  current floor and losing on UX value.
 - **Tier C only — Blender worker for everything, including the
   interactive viewer.** Cold-boot latency makes interactive review
   unusable. Acceptable for thumbnails (Layer 2); unacceptable for

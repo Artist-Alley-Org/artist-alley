@@ -32,6 +32,13 @@ const (
 	EventLogout           = "logout"
 	EventSessionRevoked   = "session.revoked"
 	EventSessionExpired   = "session.expired"
+	EventUserStatusChanged = "user.status_changed"
+	EventPasswordChanged   = "user.password_changed"
+	EventPasswordReset     = "user.password_reset"
+	EventCapabilityGranted = "user.capability_granted"
+	EventCapabilityRevoked = "user.capability_revoked"
+	EventCapabilityGrantRemoved = "user.capability_grant_removed"
+	EventCapabilityRevokeRemoved = "user.capability_revoke_removed"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -119,6 +126,80 @@ func (r *Recorder) SessionRevoked(ctx context.Context, req *http.Request, userRe
 	r.write(ctx, EventSessionRevoked, &userRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"session_id": sessionID,
 		"reason":     reason,
+	})
+}
+
+// UserStatusChanged records an admin moving a user across the
+// lifecycle state machine (Phase 1.17.B). `previous` + `next`
+// are the underlying user.approved values (1=active, 0=pending,
+// 2=disabled); `reason` is the admin-supplied free-text note —
+// surfaced verbatim in the audit viewer.
+func (r *Recorder) UserStatusChanged(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next int64, reason string) {
+	r.write(ctx, EventUserStatusChanged, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
+	})
+}
+
+// PasswordChanged records a self-service password change.
+// `sessionsRevoked` is the count of OTHER sessions terminated as
+// part of the change (the caller may opt into "sign out
+// everywhere else" defensively).
+func (r *Recorder) PasswordChanged(ctx context.Context, req *http.Request, userRef int64, sessionsRevoked int) {
+	r.write(ctx, EventPasswordChanged, &userRef, &userRef, ctxFromRequest(req), map[string]any{
+		"sessions_revoked": sessionsRevoked,
+	})
+}
+
+// PasswordReset records an admin-initiated force-reset. `actor` is
+// the admin who fired the action; `subject` is the user whose
+// password was reset. `reason` is the admin-supplied free-text note.
+func (r *Recorder) PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string) {
+	r.write(ctx, EventPasswordReset, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"reason": reason,
+	})
+}
+
+// CapabilityGranted records an explicit grant being added to a
+// user. `teamID` is empty for global grants.
+func (r *Recorder) CapabilityGranted(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string) {
+	r.write(ctx, EventCapabilityGranted, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"note":       note,
+	})
+}
+
+// CapabilityRevoked records an explicit revoke being added to a
+// user. Symmetric to CapabilityGranted.
+func (r *Recorder) CapabilityRevoked(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string) {
+	r.write(ctx, EventCapabilityRevoked, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"note":       note,
+	})
+}
+
+// CapabilityGrantRemoved records a previously-issued grant being
+// withdrawn. Distinct event type from CapabilityRevoked so the
+// audit viewer can distinguish "removed an additive grant" from
+// "added a subtractive revoke" — they look identical from the
+// user-effect perspective (they both reduce caps) but the
+// intent + reversal path are different.
+func (r *Recorder) CapabilityGrantRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string) {
+	r.write(ctx, EventCapabilityGrantRemoved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+	})
+}
+
+// CapabilityRevokeRemoved records a previously-issued revoke being
+// withdrawn (the cap re-enables, modulo the rest of the resolution).
+func (r *Recorder) CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string) {
+	r.write(ctx, EventCapabilityRevokeRemoved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
 	})
 }
 

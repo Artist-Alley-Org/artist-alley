@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAdminUsers = `-- name: CountAdminUsers :one
+SELECT COUNT(*)::BIGINT AS value
+FROM "user" u
+WHERE
+  ($1::BIGINT IS NULL OR u.approved = $1::BIGINT)
+  AND (
+    $2::TEXT IS NULL OR $2::TEXT = ''
+    OR LOWER(u.username) LIKE '%' || LOWER($2::TEXT) || '%'
+    OR LOWER(COALESCE(u.fullname, '')) LIKE '%' || LOWER($2::TEXT) || '%'
+    OR LOWER(COALESCE(u.email, '')) LIKE '%' || LOWER($2::TEXT) || '%'
+  )
+`
+
+type CountAdminUsersParams struct {
+	StatusValue *int64
+	Search      *string
+}
+
+// Total matching rows (no cursor). Returned alongside the page so
+// the UI can render an "N users" badge without fetching every row.
+func (q *Queries) CountAdminUsers(ctx context.Context, arg CountAdminUsersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAdminUsers, arg.StatusValue, arg.Search)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
 const countPostsByAuthor = `-- name: CountPostsByAuthor :one
 SELECT COUNT(*)::BIGINT AS value
 FROM posts
@@ -149,6 +176,203 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 		&i.Language,
 		&i.Theme,
 		&i.ProfileOriginServerID,
+	)
+	return i, err
+}
+
+const getUserStatusByRef = `-- name: GetUserStatusByRef :one
+SELECT ref AS rs_user_id, username, approved
+FROM "user"
+WHERE ref = $1
+`
+
+type GetUserStatusByRefRow struct {
+	RsUserID int64
+	Username *string
+	Approved int64
+}
+
+// Lightweight status-only read used by the handler's pre-write
+// short-circuit + the per-user cache invalidation. Doesn't touch
+// user_profiles.
+func (q *Queries) GetUserStatusByRef(ctx context.Context, ref int64) (GetUserStatusByRefRow, error) {
+	row := q.db.QueryRow(ctx, getUserStatusByRef, ref)
+	var i GetUserStatusByRefRow
+	err := row.Scan(&i.RsUserID, &i.Username, &i.Approved)
+	return i, err
+}
+
+const listAdminUsers = `-- name: ListAdminUsers :many
+SELECT u.ref                                            AS rs_user_id,
+       u.username,
+       u.fullname,
+       u.email,
+       u.approved,
+       u.created                                        AS created_at,
+       u.last_active,
+       u.origin                                         AS auth_origin,
+       u.account_expires,
+       COALESCE(p.display_name, '')                     AS display_name,
+       p.avatar_url,
+       p.origin_server_id                               AS profile_origin_server_id,
+       COALESCE((
+         SELECT r.name
+         FROM user_roles ur
+         JOIN roles r ON r.id = ur.role_id
+         WHERE ur.rs_user_id = u.ref AND ur.team_id IS NULL
+         ORDER BY r.name
+         LIMIT 1
+       ), '')::TEXT                                     AS primary_role
+FROM "user" u
+LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+WHERE
+  -- status filter: 'active' = approved=1, 'pending' = approved=0,
+  -- 'disabled' = approved=2. NULL filter = any.
+  ($1::BIGINT IS NULL OR u.approved = $1::BIGINT)
+  AND
+  -- text search: case-insensitive across username, fullname, email.
+  -- Empty / NULL = no filter.
+  (
+    $2::TEXT IS NULL OR $2::TEXT = ''
+    OR LOWER(u.username) LIKE '%' || LOWER($2::TEXT) || '%'
+    OR LOWER(COALESCE(u.fullname, '')) LIKE '%' || LOWER($2::TEXT) || '%'
+    OR LOWER(COALESCE(u.email, '')) LIKE '%' || LOWER($2::TEXT) || '%'
+  )
+  AND
+  -- cursor: pages after (cursor_created_at, cursor_ref) in (created DESC, ref DESC) order.
+  -- Lexicographic comparison handles the tiebreak when two users share a created timestamp.
+  (
+    $3::TIMESTAMPTZ IS NULL
+    OR (u.created, u.ref) < ($3::TIMESTAMPTZ, $4::BIGINT)
+  )
+ORDER BY u.created DESC NULLS LAST, u.ref DESC
+LIMIT $5::BIGINT
+`
+
+type ListAdminUsersParams struct {
+	StatusValue     *int64
+	Search          *string
+	CursorCreatedAt pgtype.Timestamptz
+	CursorRef       *int64
+	LimitN          int64
+}
+
+type ListAdminUsersRow struct {
+	RsUserID              int64
+	Username              *string
+	Fullname              *string
+	Email                 *string
+	Approved              int64
+	CreatedAt             pgtype.Timestamptz
+	LastActive            pgtype.Timestamptz
+	AuthOrigin            *string
+	AccountExpires        pgtype.Timestamptz
+	DisplayName           string
+	AvatarUrl             *string
+	ProfileOriginServerID pgtype.UUID
+	PrimaryRole           string
+}
+
+// Admin user list (Phase 1.17.A). Joins `user` + user_profiles + the
+// user's primary role for the display row. Filters: `status` mirrors
+// the RS `approved` column (1=active, 0=pending, 2=disabled — see
+// Phase 1.17.B), `q` runs case-insensitive prefix-ish match against
+// username / fullname / email. Cursor pagination keys on
+// (created_at DESC, ref DESC) — newest accounts first; admins
+// typically want recent signups front-and-centre.
+//
+// The "first role" projection is the alphabetically-first global
+// assignment (team_id IS NULL). Per-team role assignments don't
+// show on this list; they live on the user detail page where the
+// team picker can scope them.
+func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) ([]ListAdminUsersRow, error) {
+	rows, err := q.db.Query(ctx, listAdminUsers,
+		arg.StatusValue,
+		arg.Search,
+		arg.CursorCreatedAt,
+		arg.CursorRef,
+		arg.LimitN,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAdminUsersRow
+	for rows.Next() {
+		var i ListAdminUsersRow
+		if err := rows.Scan(
+			&i.RsUserID,
+			&i.Username,
+			&i.Fullname,
+			&i.Email,
+			&i.Approved,
+			&i.CreatedAt,
+			&i.LastActive,
+			&i.AuthOrigin,
+			&i.AccountExpires,
+			&i.DisplayName,
+			&i.AvatarUrl,
+			&i.ProfileOriginServerID,
+			&i.PrimaryRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateUserStatus = `-- name: UpdateUserStatus :one
+WITH prior AS (
+  SELECT ref, username, approved FROM "user" WHERE ref = $2::BIGINT
+),
+updated AS (
+  UPDATE "user"
+     SET approved = $1::BIGINT
+   WHERE ref = $2::BIGINT
+     AND (SELECT approved FROM prior) <> $1::BIGINT
+  RETURNING ref
+)
+SELECT prior.ref       AS rs_user_id,
+       prior.username,
+       prior.approved  AS prev_status,
+       $1::BIGINT AS new_status,
+       (SELECT COUNT(*) FROM updated)::BIGINT > 0 AS changed
+FROM prior
+`
+
+type UpdateUserStatusParams struct {
+	NewStatus int64
+	UserRef   int64
+}
+
+type UpdateUserStatusRow struct {
+	RsUserID   int64
+	Username   *string
+	PrevStatus int64
+	NewStatus  int64
+	Changed    bool
+}
+
+// Lifecycle mutation (Phase 1.17.B). Atomically swaps the user's
+// approved column to $1 and returns the prior value alongside the
+// new one + the user's username so the audit row can carry the
+// before/after pair without a second SELECT.
+//
+// Returns no rows when the user doesn't exist; handler turns that
+// into a 404 rather than silently no-opping.
+func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (UpdateUserStatusRow, error) {
+	row := q.db.QueryRow(ctx, updateUserStatus, arg.NewStatus, arg.UserRef)
+	var i UpdateUserStatusRow
+	err := row.Scan(
+		&i.RsUserID,
+		&i.Username,
+		&i.PrevStatus,
+		&i.NewStatus,
+		&i.Changed,
 	)
 	return i, err
 }

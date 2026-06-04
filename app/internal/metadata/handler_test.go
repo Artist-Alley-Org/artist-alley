@@ -707,6 +707,72 @@ func (metaShim) GetUserPublicByUsername(context.Context, openapi.GetUserPublicBy
 func (metaShim) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from metadata_test test shim")
 }
+func (metaShim) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	panic("ListAdminUsers called from metadata test shim")
+}
+func (metaShim) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from metadata test shim")
+}
+func (metaShim) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from metadata test shim")
+}
+func (metaShim) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from metadata test shim")
+}
+func (metaShim) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from metadata test shim")
+}
+func (metaShim) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from metadata test shim")
+}
+func (metaShim) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	panic("ChangeMyPassword called from metadata test shim")
+}
+func (metaShim) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	panic("AdminResetUserPassword called from metadata test shim")
+}
+func (metaShim) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from metadata test shim")
+}
+func (metaShim) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from metadata test shim")
+}
+func (metaShim) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from metadata test shim")
+}
+func (metaShim) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from metadata test shim")
+}
+func (metaShim) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from metadata test shim")
+}
+func (metaShim) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	panic("ListAssetTypeAcls called from metadata test shim")
+}
+func (metaShim) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	panic("AddAssetTypeAcl called from metadata test shim")
+}
+func (metaShim) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	panic("RemoveAssetTypeAcl called from metadata test shim")
+}
+func (metaShim) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	panic("ListAdminAuditEvents called from metadata test shim")
+}
+func (metaShim) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	panic("ListAdminAuditEventTypes called from metadata test shim")
+}
+func (metaShim) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from metadata test shim")
+}
+func (metaShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from metadata test shim")
+}
+func (metaShim) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from metadata test shim")
+}
+func (metaShim) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	panic("ListIdentityProviders called from metadata test shim")
+}
 func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from metadata_test test shim")
 }

@@ -56,12 +56,12 @@ layer in between:
   + N translated tracks per asset is the common shape. The data
   model has to support that natively, not as a hack.
 
-ResourceSpace has nothing in this space — captions / subtitles are
-not part of its asset model. The closest precedent in the broader
-ecosystem is YouTube Studio's captions tab (auto + manual + edit +
-download), Frame.io's caption viewer (read-only display only), and
-Aegisub (offline editor, no asset-management context). None of those
-gives us the full shape: AI producer + human editor + portable
+Existing DAM tooling has nothing in this space — captions / subtitles
+are typically not part of the asset model. The closest precedent in
+the broader ecosystem is YouTube Studio's captions tab (auto + manual +
+edit + download), Frame.io's caption viewer (read-only display only),
+and Aegisub (offline editor, no asset-management context). None of
+those gives us the full shape: AI producer + human editor + portable
 artifact + viewer sidecar + federation / commerce / share-link
 distribution.
 

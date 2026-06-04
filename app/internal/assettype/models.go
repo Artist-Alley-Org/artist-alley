@@ -133,6 +133,16 @@ type AssetType struct {
 	PullImages        *int64  `json:"pull_images"`
 }
 
+type AssetTypeAcl struct {
+	AssetTypeRef      int64              `json:"asset_type_ref"`
+	PrincipalType     string             `json:"principal_type"`
+	PrincipalID       string             `json:"principal_id"`
+	Permission        string             `json:"permission"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID        `json:"id"`
 	EventType      string             `json:"event_type"`
@@ -170,9 +180,10 @@ type BrushPackStamp struct {
 }
 
 type Capability struct {
-	Code        string             `json:"code"`
-	Description string             `json:"description"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Code                   string             `json:"code"`
+	Description            string             `json:"description"`
+	RequiredLicenseFeature *string            `json:"required_license_feature"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 type Collection struct {
@@ -460,6 +471,14 @@ type UserCapabilityRevoke struct {
 	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
 	RevokedByRsUserID *int64             `json:"revoked_by_rs_user_id"`
 	Note              string             `json:"note"`
+}
+
+type UserPasswordHistory struct {
+	ID             pgtype.UUID        `json:"id"`
+	RsUserID       int64              `json:"rs_user_id"`
+	PasswordHash   string             `json:"password_hash"`
+	ChangedAt      pgtype.Timestamptz `json:"changed_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
 type UserProfile struct {

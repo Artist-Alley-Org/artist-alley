@@ -32,9 +32,9 @@ The patterns are universal:
 - A contractor's NDA expires; their access to all their referenced
   assets must restrict automatically without an admin remembering.
 
-RS supplies two relevant plugins: `sensitive_images` (blur thumbnails
-until permitted to view) and `action_dates` (scheduled actions on
-resources — delete, restrict, archive at a future date). Neither is
+Two related patterns from existing DAM tooling: sensitive-image
+thumbnail blur until permitted to view, and scheduled actions on
+resources (delete, restrict, archive at a future date). Neither is
 optional for a studio with any meaningful IP discipline.
 
 ## Decision
@@ -109,8 +109,8 @@ export does include scheduled-action history as part of compliance.
 **Positive**
 
 - Two patterns studios already write themselves with admin scripts +
-  cron, now first-class. Replaces ~half of every studio's RS plugin
-  set.
+  cron, now first-class. Replaces a large portion of typical bespoke
+  plugin tooling.
 - The scheduled-action engine is reusable for trash retention,
   notification delivery, federation outbox flushes — one engine,
   many consumers.

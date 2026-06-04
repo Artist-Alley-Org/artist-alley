@@ -666,6 +666,74 @@ func (a authOnlyImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPu
 func (a authOnlyImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from auth test shim")
 }
+func (a authOnlyImpl) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	panic("ListAdminUsers called from auth test shim")
+}
+func (a authOnlyImpl) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from auth test shim")
+}
+func (a authOnlyImpl) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from auth test shim")
+}
+func (a authOnlyImpl) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from auth test shim")
+}
+func (a authOnlyImpl) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from auth test shim")
+}
+func (a authOnlyImpl) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from auth test shim")
+}
+func (a authOnlyImpl) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	panic("ChangeMyPassword called from auth test shim")
+}
+func (a authOnlyImpl) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	panic("AdminResetUserPassword called from auth test shim")
+}
+func (a authOnlyImpl) ListAdminUserCapabilities(ctx context.Context, req openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	return a.h.ListAdminUserCapabilities(ctx, req)
+}
+func (a authOnlyImpl) AddAdminUserGrant(ctx context.Context, req openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	return a.h.AddAdminUserGrant(ctx, req)
+}
+func (a authOnlyImpl) RemoveAdminUserGrant(ctx context.Context, req openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	return a.h.RemoveAdminUserGrant(ctx, req)
+}
+func (a authOnlyImpl) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	return a.h.AddAdminUserRevoke(ctx, req)
+}
+func (a authOnlyImpl) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	return a.h.RemoveAdminUserRevoke(ctx, req)
+}
+func (authOnlyImpl) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	panic("ListAssetTypeAcls called from auth test shim")
+}
+func (authOnlyImpl) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	panic("AddAssetTypeAcl called from auth test shim")
+}
+func (authOnlyImpl) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	panic("RemoveAssetTypeAcl called from auth test shim")
+}
+func (authOnlyImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	panic("ListAdminAuditEvents called from auth test shim")
+}
+func (authOnlyImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	panic("ListAdminAuditEventTypes called from auth test shim")
+}
+func (authOnlyImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from auth test shim")
+}
+func (authOnlyImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from auth test shim")
+}
+func (authOnlyImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from auth test shim")
+}
+func (a authOnlyImpl) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	// Real call — the auth handler IS the unit-under-test in this
+	// package, and the providers endpoint is in scope for its tests.
+	return a.h.ListIdentityProviders(ctx, req)
+}
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
 }

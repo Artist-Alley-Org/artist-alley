@@ -1,20 +1,29 @@
 ---
 id: "0001"
 title: Hard fork from ResourceSpace trunk @ r28830
-status: accepted
+status: deprecated
 date: 2026-05-23
 area: process
 phases: []
 supersedes: []
 related: 
   - "0003"
+  - "0006"
 tags:
   - process
-  - ai
-  - 3d
+  - history
 excerpt: >-
-  artist-alley is a self-hosted art review and archival tool for game studios. ResourceSpace (RS) is a 20-year-old open-source DAM that already solves most of the asset-management substrate we need: permissions, resource types, metadata fields, preview pipelines, plugin architec…
+  Historical. artist-alley was originally bootstrapped as a hard fork of an upstream open-source DAM in May 2026 to reuse permissions, resource types, metadata fields, preview pipelines, and plugin architecture rather than build the substrate from scratch.
 ---
+> **Deprecated — historical record.** The fork-and-port strategy this
+> ADR established was abandoned in 2026-06. The runtime is now a
+> clean-room Go binary with a Svelte 5 frontend; no upstream code
+> remains in the tree. See [ADR 0003](/adr/0003-strangler-fig-internal/)
+> for the abandonment, [ADR 0006](/adr/0006-go-as-target-backend/) for
+> the current architecture, and the project README for current state.
+> This ADR is retained as historical record only.
+
+
 ## Context
 
 artist-alley is a self-hosted art review and archival tool for game studios.

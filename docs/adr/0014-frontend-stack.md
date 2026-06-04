@@ -15,30 +15,29 @@ tags:
   - ai
   - 3d
 excerpt: >-
-  Phases 1.1–1.11 built the Go backend with RS PHP as the temporary frontend (strangler-fig per ADR 0003). The plan was that RS would render against our Postgres + Go API until each feature got its own native UI.
+  Phases 1.1–1.11 built the Go backend with the legacy PHP as the temporary frontend (strangler-fig per ADR 0003). The plan was that the legacy backend would render against our Postgres + Go API until each feature got its own native UI.
 ---
 ## Context
 
-Phases 1.1–1.11 built the Go backend with RS PHP as the temporary
-frontend (strangler-fig per ADR 0003). The plan was that RS would
-render against our Postgres + Go API until each feature got its own
-native UI.
+Phases 1.1–1.11 built the Go backend with the legacy PHP as the
+temporary frontend (strangler-fig per ADR 0003). The plan was that the
+legacy backend would render against our Postgres + Go API until each
+feature got its own native UI.
 
 That plan broke down. The recent Phase 1.11 work surfaced an open-
-ended series of MySQL-vs-Postgres semantic gaps in RS's queries
-(strict GROUP BY, implicit type coercion, DISTINCT + ORDER BY
-rules). Every RS page we exercise costs hours of patching, and
-every RS upgrade we ever do reintroduces the gaps. The locked target
+ended series of MySQL-vs-Postgres semantic gaps in the legacy queries
+(strict GROUP BY, implicit type coercion, DISTINCT + ORDER BY rules).
+Every legacy page we exercise costs hours of patching, and every
+legacy upgrade we ever do reintroduces the gaps. The locked target
 architecture (per memory: "one Go binary, three containers, no
 sidecars, no new PHP") already excludes PHP from prod — but we'd
 never set a hard date for the cutover.
 
-The user's decision: stop building against RS as the frontend. Treat
-RS as a blueprint for *what* features need to exist, build our own
-UI to render them. RS's PHP business-logic functions (`do_search`,
-`save_resource_data`, etc.) remain available as a backend-gap-filler
-via a separate mechanism (ADR 0015) — but the user-facing surface
-is ours.
+The user's decision: stop building against the legacy frontend.
+Build our own UI to render the features we want. The legacy PHP
+business-logic functions (`do_search`, `save_resource_data`, etc.)
+remain available as a backend-gap-filler via a separate mechanism
+(ADR 0015) — but the user-facing surface is ours.
 
 This ADR locks the frontend stack, the integration with the Go
 binary, and the dev / prod build pipeline.
@@ -54,7 +53,7 @@ binary, and the dev / prod build pipeline.
 | Styling | **Tailwind CSS v4** | Image-grid + dark-mode + masonry are straightforward; `@theme` blocks + OKLCH palette gives clean token-driven theming |
 | 3D | **Threlte** | Established Svelte binding for three.js, runes-compatible |
 | Video / audio | **Vidstack** | Modern, framework-agnostic player with Svelte adapter; HLS / DASH support via hls.js when streaming lands |
-| Icons | Lucide (Svelte port) | RS already uses it; visual consistency through the strangler-fig phase |
+| Icons | Lucide (Svelte port) | Already in use; visual consistency through the strangler-fig phase |
 | API client | `openapi-typescript` + `openapi-fetch` | Generated from the same `app/api/openapi.yaml` that drives `oapi-codegen` on the Go side — one contract, two languages |
 | Build | Vite (bundled with SvelteKit) | Standard |
 
@@ -91,7 +90,7 @@ SvelteKit index and the client router takes over.
 │              └── /api/* proxy to ───→ app :8080 → Go handlers          │
 │                                                                        │
 │  Backend-only iterations skip the `web` profile and continue to use    │
-│  RS at :8088 as before.                                                │
+│  the legacy UI at :8088 as before.                                     │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -151,14 +150,14 @@ app/internal/http/
 
 **Wins**
 
-- The strict-GROUP-BY whack-a-mole stops. No more patching RS
-  HTML-rendering pages; we touch RS PHP only for the backend gap-
-  fillers (ADR 0015), which return arrays we shape into JSON.
+- The strict-GROUP-BY whack-a-mole stops. No more patching legacy
+  HTML-rendering pages; we touch the legacy PHP only for the backend
+  gap-fillers (ADR 0015), which return arrays we shape into JSON.
 - Prod stays at one Go binary, three containers — the locked target
   architecture survives intact.
 - Modern frontend stack (SvelteKit, Tailwind v4, Threlte, Vidstack)
   unlocks the multimedia features (3D model viewer, video playback)
-  RS could never offer cleanly.
+  the legacy stack could never offer cleanly.
 - Single contract: the OpenAPI spec drives both Go (`oapi-codegen`)
   and TS (`openapi-typescript`). Drift between server and client is
   caught at compile time on both sides.
@@ -178,9 +177,9 @@ app/internal/http/
 
 ## References
 
-- ADR 0003 — Strangler fig (the original "RS as frontend" plan that
-  this ADR retires)
-- ADR 0015 — PHP as legacy backend (the companion piece — how RS's
-  business logic stays available without RS's UI)
+- ADR 0003 — Strangler fig (the original "legacy backend as frontend"
+  plan that this ADR retires)
+- ADR 0015 — PHP as legacy backend (the companion piece — how the
+  legacy business logic stays available without the legacy UI)
 - Memory: "Target architecture — one Go binary, three containers"
   (locked 2026-05-24)

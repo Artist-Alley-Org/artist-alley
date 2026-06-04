@@ -376,6 +376,72 @@ func (rtOnly) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUs
 func (rtOnly) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
 	panic("UpdateUserProfile called from assettype test shim")
 }
+func (rtOnly) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
+	panic("ListAdminUsers called from assettype rtOnly test shim")
+}
+func (rtOnly) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
+	panic("SetAdminUserStatus called from assettype rtOnly test shim")
+}
+func (rtOnly) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
+	panic("ListMySessions called from assettype rtOnly test shim")
+}
+func (rtOnly) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
+	panic("RevokeMySession called from assettype rtOnly test shim")
+}
+func (rtOnly) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
+	panic("ListAdminUserSessions called from assettype rtOnly test shim")
+}
+func (rtOnly) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
+	panic("RevokeAdminUserSession called from assettype rtOnly test shim")
+}
+func (rtOnly) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
+	panic("ChangeMyPassword called from assettype rtOnly test shim")
+}
+func (rtOnly) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
+	panic("AdminResetUserPassword called from assettype rtOnly test shim")
+}
+func (rtOnly) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
+	panic("ListAdminUserCapabilities called from assettype rtOnly test shim")
+}
+func (rtOnly) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
+	panic("AddAdminUserGrant called from assettype rtOnly test shim")
+}
+func (rtOnly) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
+	panic("RemoveAdminUserGrant called from assettype rtOnly test shim")
+}
+func (rtOnly) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
+	panic("AddAdminUserRevoke called from assettype rtOnly test shim")
+}
+func (rtOnly) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
+	panic("RemoveAdminUserRevoke called from assettype rtOnly test shim")
+}
+func (r rtOnly) ListAssetTypeAcls(ctx context.Context, req openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	return r.h.ListAssetTypeAcls(ctx, req)
+}
+func (r rtOnly) AddAssetTypeAcl(ctx context.Context, req openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	return r.h.AddAssetTypeAcl(ctx, req)
+}
+func (r rtOnly) RemoveAssetTypeAcl(ctx context.Context, req openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	return r.h.RemoveAssetTypeAcl(ctx, req)
+}
+func (rtOnly) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
+	panic("ListAdminAuditEvents called from assettype rtOnly test shim")
+}
+func (rtOnly) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
+	panic("ListAdminAuditEventTypes called from assettype rtOnly test shim")
+}
+func (rtOnly) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from assettype rtOnly test shim")
+}
+func (rtOnly) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from assettype rtOnly test shim")
+}
+func (rtOnly) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from assettype rtOnly test shim")
+}
+func (rtOnly) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	panic("ListIdentityProviders called from assettype rtOnly test shim")
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }

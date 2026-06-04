@@ -17,34 +17,33 @@ tags:
   - commerce
   - 3d
 excerpt: >-
-  ResourceSpace ships a collection system that has accreted features over fifteen years and now presents users with at least six visible "types" — Personal, Public, Featured, Smart, Request, Upload — plus a parallel structure for "featured categories" (a curator-maintained tree)…
+  The prior generation of DAM tooling presents users with at least six visible collection "types" — Personal, Public, Featured, Smart, Request, Upload — plus a parallel structure for "featured categories" (a curator-maintained tree), a separate table for smart collections that pretend to be real ones in the UI, and external access keys grafted on as a sharing mechanism.
 ---
 ## Context
 
-ResourceSpace ships a collection system that has accreted features
-over fifteen years and now presents users with at least six visible
-"types" — Personal, Public, Featured, Smart, Request, Upload — plus a
-parallel structure for "featured categories" (a curator-maintained
-tree), a separate table (`collection_savedsearch`) for smart
-collections that pretend to be real ones in the UI, and external
-access keys grafted on as a sharing mechanism. The result is a model
-where the same underlying concept (an ordered, optionally-shared bag
-of resources) is fragmented across columns, types, and tables, and
+The prior generation of DAM tooling presents users with at least six
+visible collection "types" — Personal, Public, Featured, Smart, Request,
+Upload — plus a parallel structure for "featured categories" (a
+curator-maintained tree), a separate table (`collection_savedsearch`)
+for smart collections that pretend to be real ones in the UI, and
+external access keys grafted on as a sharing mechanism. The result is a
+model where the same underlying concept (an ordered, optionally-shared
+bag of resources) is fragmented across columns, types, and tables, and
 where every new feature requires deciding which enum value it belongs
 to.
 
 For artist-alley we want a single coherent model that:
 
-- Collapses RS's type enum into orthogonal axes that compose freely
-  (a collection is private *and* manually populated *and* permanent;
-  another is shared-by-link *and* query-driven *and* expires in 7
-  days; both are the same primitive).
+- Collapses the typical collection type enum into orthogonal axes that
+  compose freely (a collection is private *and* manually populated *and*
+  permanent; another is shared-by-link *and* query-driven *and* expires
+  in 7 days; both are the same primitive).
 - Treats smart collections as a *membership policy* on a regular
   collection, not a separate entity.
 - Supports temporary collections natively, with per-collection and
   per-membership TTL — useful for ad-hoc review playlists, time-boxed
   shareable links, and "I'm including this in the showcase for a
-  week only" cases that RS can't express.
+  week only" cases the typical DAM can't express.
 - Makes editing genuinely usable: move (not just copy) resources
   between collections, duplicate a collection in one step, bulk
   operations.
@@ -68,11 +67,11 @@ a few optional purpose hints.
 | `purpose` | optional tag string | `review_playlist`, `upload_staging`, etc. — UI hint, not behaviour-gating |
 
 Smart collections become `membership = 'query'`. Personal collections
-become `visibility = 'private', membership = 'manual'`. RS's "Featured
-Categories" (a curator-maintained tree of public collections) is
-*not* re-implemented: any collection can carry `featured = true` and
+become `visibility = 'private', membership = 'manual'`. The legacy
+"Featured Categories" (a curator-maintained tree of public collections)
+is *not* re-implemented: any collection can carry `featured = true` and
 appear on a `/featured` listing. The tree-of-collections concept is
-dropped — three RS users we surveyed informally couldn't tell us when
+dropped — three users we surveyed informally couldn't tell us when
 they last used it.
 
 ### Hybrid membership
@@ -85,8 +84,8 @@ exclude specific resources. The materialized membership is:
 ```
 
 This unlocks "everything tagged 'character art', plus these three
-extras, minus that draft" — a real workflow RS forces users to either
-maintain manually or rebuild a search for.
+extras, minus that draft" — a real workflow the typical DAM forces
+users to either maintain manually or rebuild a search for.
 
 ### Per-membership TTL
 
@@ -228,11 +227,11 @@ DELETE /collections/{id}/links/{id}       — revoke
   the resulting resource set so list-views don't re-execute the
   search on every read.
 
-### Migration from RS
+### Migration from legacy data
 
-RS's existing `collection.type` enum maps onto the new model:
+Any existing `collection.type` enum maps onto the new model:
 
-| RS `type` | New `visibility` | `membership` | `purpose` | `featured` |
+| Legacy `type` | New `visibility` | `membership` | `purpose` | `featured` |
 |---|---|---|---|---|
 | 0 standard, public=0 | private | manual | NULL | false |
 | 0 standard, public=1 | public  | manual | NULL | false |
@@ -244,15 +243,15 @@ RS's existing `collection.type` enum maps onto the new model:
 | 6 selection          | private | manual | session_selection | false |
 | `collection_savedsearch` row exists | inherit | **query** | inherit | inherit |
 
-RS's `external_access_keys` migrate to `collection_access_link` per
-collection. RS's `user_collection` migrates to `collection_grant` with
-`permission='view'` (RS doesn't distinguish view vs edit at the
-share level; we add that here).
+Legacy `external_access_keys` migrate to `collection_access_link` per
+collection. Legacy `user_collection` migrates to `collection_grant` with
+`permission='view'` (the legacy schema doesn't distinguish view vs edit
+at the share level; we add that here).
 
 The migration runs as a one-shot Go command (`aa migrate-collections`)
 that the operator invokes when ready to cut over. The old `collection`
-table stays in place during the transition so PHP pages keep rendering
-until the corresponding Go endpoints land.
+table stays in place during the transition so legacy PHP pages keep
+rendering until the corresponding Go endpoints land.
 
 ## Consequences
 
@@ -260,20 +259,20 @@ until the corresponding Go endpoints land.
 
 - Single primitive instead of six type-enum values, plus a separate
   table for smart collections.
-- Hybrid membership (manual ± query) is a new capability RS doesn't
-  have.
-- Per-membership TTL handles "include for N days" workflows that RS
-  forces users to maintain manually.
+- Hybrid membership (manual ± query) is a new capability the typical
+  DAM doesn't have.
+- Per-membership TTL handles "include for N days" workflows that the
+  typical DAM forces users to maintain manually.
 - Move / duplicate as first-class operations close ergonomic gaps.
 - Schema is federation-ready (`origin_server_id` on collection,
   UUIDs for collection ids).
 
 **Negative:**
 
-- Existing RS data needs the migration step; PHP and Go briefly read
-  the same underlying table differently during cutover. The new
-  schema is a fresh set of tables, so the data lives in both worlds
-  until PHP routes for collections are retired.
+- Any legacy data needs the migration step; the legacy backend and Go
+  briefly read the same underlying table differently during cutover.
+  The new schema is a fresh set of tables, so the data lives in both
+  worlds until legacy routes for collections are retired.
 - "Featured categories tree" use cases (rare but real for some
   installs) are not preserved. If a real user surfaces a need, we
   can re-introduce them later as collections-of-collections without
@@ -283,8 +282,9 @@ until the corresponding Go endpoints land.
 
 - The search DSL stored in `collection_query.search_dsl` is its own
   design problem (out of scope for this ADR). We need it to be
-  expressive enough to replicate RS's saved searches but simple
-  enough for non-engineers to compose. Likely lands as ADR 0010.
+  expressive enough to replicate the typical saved-search surface
+  but simple enough for non-engineers to compose. Likely lands as
+  ADR 0010.
 - Resource entity itself (UUID-keyed, the `resource_id` referenced
   here) lands as Phase 1.8. This ADR assumes it exists; the
   collection migration runs *after* the resource port.

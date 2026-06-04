@@ -1,11 +1,10 @@
 ---
 id: "0015"
-title: PHP as legacy backend — `aa_api/` JSON wrappers behind `/api/v1/legacy/*`
-status: accepted
+title: PHP as legacy backend — historical transitional layer
+status: deprecated
 date: 2026-05-26
 area: architecture
-phases: 
-  - "1.13.H"
+phases: []
 supersedes: []
 related: 
   - "0003"
@@ -13,10 +12,17 @@ related:
   - "0014"
 tags:
   - architecture
-  - ai
+  - history
 excerpt: >-
-  ADR 0014 retires RS PHP as the user-facing frontend in favour of the new SvelteKit app. But RS still owns a large body of business logic the Go side hasn't ported yet (asset search variants, resource-share URL generation, plugin hooks, the upload pipeline, etc.). Porting every…
+  Historical. During the strangler-fig phase, the legacy PHP runtime served a shrinking set of routes via JSON wrappers. The arrangement was retired with the clean-room rewrite in 2026-06; the Go runtime now owns every route.
 ---
+> **Deprecated — historical record.** The PHP-side transitional layer
+> documented here was removed in 2026-06. The Go runtime owns the
+> entire HTTP surface; no legacy routes remain. See
+> [ADR 0006](/adr/0006-go-as-target-backend/) for the current state.
+> Retained as historical record only.
+
+
 ## Context
 
 ADR 0014 retires RS PHP as the user-facing frontend in favour of the

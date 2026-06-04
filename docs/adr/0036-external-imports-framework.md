@@ -52,42 +52,40 @@ It loses the source-side mtime / version / revision / entity-link
 history. And the moment someone updates the original on the source,
 Artist Alley silently goes stale until somebody re-uploads.
 
-ResourceSpace solves this with `staticsync` — `pages/tools/staticsync.php`
-+ a chunk of `include/resource_functions.php`. Its design carries
-genuine lessons:
+A typical filesystem-sync feature in existing DAM tooling captures
+several useful patterns:
 
-- **Path encodes metadata.** `$staticsync_mapfolders` lets the operator
+- **Path encodes metadata.** A mapping config lets the operator
   declare "the second path component is the project field," so a
   folder structure becomes structured tags without manual entry.
-- **Cheap change detection.** `filemtime()` against
-  `resource.file_modified`; full hash only as a duplicate-block fallback.
+- **Cheap change detection.** `filemtime()` against the resource's
+  last-modified column; full hash only as a duplicate-block fallback.
 - **Lifecycle with reversibility.** Missing-from-source moves a
-  resource to `$staticsync_deleted_state` (archived, not gone);
-  `$staticsync_revive_state` flips it back if the file reappears.
-- **Two storage modes.** `$staticsync_ingest=true` copies bytes into
-  the RS filestore; `false` leaves the bytes on the source and
-  references them remotely. The toggle is exactly the tradeoff
-  between storage cost and source-availability coupling.
-- **Per-source process lock.** `set_process_lock("staticsync")` keeps
-  concurrent runs from colliding.
+  resource to a configurable "deleted" state (archived, not gone);
+  a "revive" state flips it back if the file reappears.
+- **Two storage modes.** An ingest mode copies bytes into the filestore;
+  a reference mode leaves the bytes on the source and references them
+  remotely. The toggle is exactly the tradeoff between storage cost
+  and source-availability coupling.
+- **Per-source process lock.** Keeps concurrent runs from colliding.
 
 And carries genuine pain points we should fix on purpose:
 
 - **Single filesystem source per install.** A studio with NAS *and*
-  S3 *and* ShotGrid has to either pick one or run three RS instances.
-- **CLI-only.** Operators edit `config.php` to add a source; there is
+  S3 *and* ShotGrid has to either pick one or run three instances.
+- **CLI-only.** Operators edit a config file to add a source; there is
   no admin surface to view, change, pause, or audit a sync.
 - **Every run scans the whole tree.** No change tokens, no
   webhooks, no event-driven mode — even when the source supports it.
 - **No per-item review.** A conflict (user edited the field in the
   UI, source then reasserted a different EXIF value) silently
   resolves whichever way the code happens to be ordered. No queue,
-  no UI, no audit beyond `resource_log`.
+  no UI, no audit beyond a generic resource log.
 - **No conflict policy choice.** "Source wins" is the only option;
   studios that want "user edits are sacred, log the source delta
   and stop" have no knob.
-- **Hard-coded importer identity.** All resources show
-  `created_by = $staticsync_userref` (default `1`). No attribution
+- **Hard-coded importer identity.** All resources show a single
+  importer user as `created_by` (typically uid 1). No attribution
   to the source, no per-run provenance beyond the timestamp.
 
 The relevant lessons from the rest of Artist Alley's design:
@@ -278,8 +276,8 @@ The framework runs a fixed state machine per item:
 field through the UI, the field write sets `asset_field_value.user_locked = true`.
 Source-wins overwrites do **not** trample user-locked fields — they
 update the file content and re-extract EXIF/IPTC/XMP into *non-locked*
-fields only. This is the explicit fix for RS staticsync's silent
-"EXIF beats user edit" behaviour.
+fields only. This is the explicit fix for the silent "EXIF beats user
+edit" behaviour seen in older sync implementations.
 
 ### Storage modes
 
@@ -301,7 +299,8 @@ The storage abstraction (ADR 0008) gains one new backend kind,
 
 ### Mapping rules — path-as-metadata
 
-Inherited from RS `$staticsync_mapfolders` and made JSON-shaped + per-source:
+Inspired by the standard path-mapping config pattern, made JSON-shaped
+and per-source:
 
 ```json
 [
@@ -327,8 +326,8 @@ Inherited from RS `$staticsync_mapfolders` and made JSON-shaped + per-source:
 
 Rules run top-to-bottom; first match wins. Mapping fires on item
 **creation only** — on update the source content is refreshed but
-mapped fields are not retramped. (Matches RS, fixes the user-edit
-preservation problem on resync.)
+mapped fields are not retramped, which fixes the user-edit preservation
+problem on resync.
 
 ### Scheduling and concurrency
 
@@ -394,8 +393,8 @@ Phase **1.43.B — Foundation connectors** (FS / S3 / HTTP / git): four
 connectors that share ~80% implementation (walk a tree, hash files,
 emit `Item`s):
 
-- **`fs`** — local mount (NFS / SMB / bind-mount). Direct RS staticsync
-  replacement.
+- **`fs`** — local mount (NFS / SMB / bind-mount). Direct filesystem
+  sync.
 - **`s3`** — S3-compatible bucket (AWS, R2, B2, Wasabi, GCS via S3
   compat, MinIO). Configured endpoint + bucket + prefix.
 - **`http`** — single-archive URL (zip / tar / OCI artifact). Fetches,
@@ -426,13 +425,13 @@ arrives first wins the next slot.
 - One conceptual model covers filesystem, blob stores, version
   control, and SaaS sources. Operators learn `Source → Run → Item`
   once.
-- UI-managed configuration replaces RS's `config.php`-only model —
+- UI-managed configuration replaces the older `config.php`-only model —
   non-engineers can wire up new sources and see what they did.
 - Per-item review queue makes conflicts visible and auditable rather
-  than silently dropped — directly addresses the RS pain point.
+  than silently dropped — directly addresses the older pain point.
 - Storage mode (ingest vs reference) lets operators trade storage
-  cost against source-availability coupling — preserves the strongest
-  RS feature while making the choice per-source instead of per-install.
+  cost against source-availability coupling — the choice is per-source
+  instead of per-install.
 - Connector interface is small and round-trippable through a WASM
   plugin host — ADR 0034 plugin path stays open.
 - `external_id` plus `source_id` plus the run/item ledger is a real
@@ -457,7 +456,7 @@ arrives first wins the next slot.
   is real even though the user-visible shape is small.
 - Conflict resolution at scale is genuinely hard. The `review` policy
   adds admin UI surface that has to be good or operators will set
-  every source to `source_wins` and reintroduce RS's silent-trample
+  every source to `source_wins` and reintroduce the silent-trample
   problem.
 - Credentials at rest for many external services is a security
   surface area expansion. The encrypted credentials table is the only
@@ -467,11 +466,10 @@ arrives first wins the next slot.
 
 ## Alternatives considered
 
-- **Port `staticsync` to Go as-is.** One filesystem source, CLI-only,
-  no UI. Smallest possible shippable thing. Rejected because it does
-  not address the multi-source ask, has no UI, no conflict
-  resolution, and would have to be replaced wholesale once the second
-  source kind arrives.
+- **Single-filesystem-source-only, CLI-only.** Smallest possible
+  shippable thing. Rejected because it does not address the
+  multi-source ask, has no UI, no conflict resolution, and would have
+  to be replaced wholesale once the second source kind arrives.
 
 - **Per-source bespoke admin pages.** Skip the framework; ship
   "Connect ShotGrid", "Connect Drive", etc. as one-off admin pages
@@ -567,15 +565,6 @@ issue. Sub-phase A is gating for everything that follows.
 
 ## References
 
-- ResourceSpace `staticsync` — `pages/tools/staticsync.php`,
-  the resource-creation entry points in `include/resource_functions.php`,
-  the `staticsync_*` config keys in `include/config.default.php`,
-  the pre-processing pipeline in `include/image_processing.php`, and
-  the test in `tests/test_list/001240_staticsync.php`. Studied as
-  the closest prior art; lessons inherited (path-as-metadata, two
-  storage modes, delete/revive lifecycle, per-source lock) and pain
-  points fixed on purpose (single source, CLI-only, no review queue,
-  silent overwrites, hard-coded importer identity).
 - ADR 0008 — Storage architecture. Gains the `import-ref` backend
   for reference-mode reads.
 - ADR 0011 — Asset entity. The target of every import.

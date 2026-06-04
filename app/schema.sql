@@ -60,6 +60,15 @@ CREATE TABLE "user" (
 -- migrations/00008_user_username_unique.sql
 CREATE UNIQUE INDEX user_username_uniq_idx ON "user" (username);
 
+-- migrations/00037_admin_user_list_indexes.sql — supports the admin
+-- user list cursor pagination + case-insensitive search across
+-- username / fullname / email used by GET /admin/users.
+CREATE INDEX user_created_ref_desc_idx ON "user" (created DESC NULLS LAST, ref DESC);
+CREATE INDEX user_username_lower_idx ON "user" (LOWER(username));
+CREATE INDEX user_fullname_lower_idx ON "user" (LOWER(fullname));
+CREATE INDEX user_email_lower_idx ON "user" (LOWER(email));
+CREATE INDEX user_approved_idx ON "user" (approved);
+
 -- migrations/00009_system_config.sql — runtime-tunable admin settings
 -- (site name, base URL, SMTP, etc.). Boot-time concerns stay in env.
 CREATE TABLE system_config (
@@ -223,9 +232,10 @@ CREATE TABLE api_tokens (
 
 -- migrations/00002_capabilities_roles.sql — authorization model.
 CREATE TABLE capabilities (
-    code        TEXT PRIMARY KEY,
-    description TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    code                      TEXT PRIMARY KEY,
+    description               TEXT NOT NULL DEFAULT '',
+    required_license_feature  TEXT NULL,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE roles (
@@ -243,6 +253,40 @@ CREATE TABLE role_capabilities (
     capability_code TEXT NOT NULL REFERENCES capabilities(code) ON DELETE CASCADE,
     PRIMARY KEY (role_id, capability_code)
 );
+
+-- migrations/00039_password_history.sql — reuse-prevention storage
+-- for self-service + admin-forced password changes.
+CREATE TABLE user_password_history (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rs_user_id       BIGINT NOT NULL,
+    password_hash    VARCHAR(255) NOT NULL,
+    changed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    origin_server_id UUID NULL
+);
+CREATE INDEX user_password_history_user_changed_idx
+    ON user_password_history (rs_user_id, changed_at DESC);
+
+-- migrations/00040_asset_type_acls.sql — per-asset-type ACLs
+-- (Phase 1.17.F-bis). Mirrors post_acls but the parent FK is the
+-- asset_types catalog row, gating type-level operations instead of
+-- per-instance ones. Defined here BEFORE asset_types CREATE because
+-- schema.sql is sqlc input and the table only needs to exist for
+-- type-checking; the migration runner loads the parent first.
+CREATE TABLE asset_type_acls (
+    asset_type_ref        BIGINT       NOT NULL,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (asset_type_ref, principal_type, principal_id, permission)
+);
+CREATE INDEX asset_type_acls_principal_idx
+    ON asset_type_acls (principal_type, principal_id);
+CREATE INDEX asset_type_acls_expires_idx
+    ON asset_type_acls (expires_at)
+    WHERE expires_at IS NOT NULL;
 
 -- teams (00015) is loaded before user_roles (00016) so the FK lands.
 CREATE TABLE teams (
