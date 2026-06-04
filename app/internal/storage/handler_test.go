@@ -481,6 +481,9 @@ func (shimImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicen
 func (shimImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
 	panic("UploadAdminLicense called from storage test shim")
 }
+func (shimImpl) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	panic("ListIdentityProviders called from storage test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from storage_test test shim")
 }

@@ -38,7 +38,15 @@
     message: string;
   }
 
+  interface ProviderSummary {
+    name: string;
+    display_name: string;
+    kind: 'password' | 'ldap' | 'saml';
+    supports_password: boolean;
+  }
+
   let status = $state<LicenseStatus | null>(null);
+  let providers = $state<ProviderSummary[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
 
@@ -69,10 +77,52 @@
         return;
       }
       status = r.data as unknown as LicenseStatus;
+      // Also pull the live provider list so the admin can see exactly
+      // which enterprise gates were activated at boot — separate
+      // signal from "feature is in the license" (the feature list
+      // above) vs. "the binary has the impl wired up" (the registry).
+      const rp = await api.GET('/auth/providers');
+      if (rp.data?.providers) {
+        providers = rp.data.providers as ProviderSummary[];
+      }
     } finally {
       loading = false;
     }
   }
+
+  // Which enterprise gates are active right now? Cross-references the
+  // license feature list with the live provider registry so the admin
+  // sees whether each enterprise feature is BOTH licensed AND wired
+  // into the running binary. A feature licensed but not registered
+  // means the binary is older than the license — restart needed.
+  const enterpriseGates = $derived(() => {
+    const features = new Set(status?.features ?? []);
+    const providerKinds = new Set(providers.map((p) => p.kind));
+    return [
+      {
+        label: t('admin.system.license.gate_ldap'),
+        feature: 'sso_ldap',
+        licensed: features.has('sso_ldap'),
+        active: providerKinds.has('ldap'),
+      },
+      {
+        label: t('admin.system.license.gate_saml'),
+        feature: 'sso_saml',
+        licensed: features.has('sso_saml'),
+        active: providerKinds.has('saml'),
+      },
+      {
+        label: t('admin.system.license.gate_multi_tenant'),
+        feature: 'multi_tenant',
+        licensed: features.has('multi_tenant'),
+        // Multi-tenant doesn't go through the provider registry —
+        // it's an admin/middleware subsystem. Treat "licensed" as
+        // "active" for display purposes until the future
+        // /admin/tenancy/status endpoint surfaces a richer signal.
+        active: features.has('multi_tenant'),
+      },
+    ];
+  });
 
   async function validateLicense(): Promise<void> {
     if (!licenseText.trim()) return;
@@ -290,6 +340,31 @@
         {/each}
       </div>
     {/if}
+  </section>
+
+  <section class="mb-4 rounded-lg border border-border bg-surface-elevated p-4">
+    <h2 class="mb-1 text-sm font-medium">{t('admin.system.license.section_enterprise_gates')}</h2>
+    <p class="mb-3 text-xs text-fg-muted">{t('admin.system.license.enterprise_gates_explainer')}</p>
+    <ul class="space-y-1.5 text-xs">
+      {#each enterpriseGates() as gate (gate.feature)}
+        <li class="flex items-center gap-2">
+          {#if gate.active}
+            <span class="inline-block h-2 w-2 rounded-full bg-success" aria-hidden="true"></span>
+            <span class="font-medium">{gate.label}</span>
+            <span class="text-fg-muted">— {t('admin.system.license.gate_state_active')}</span>
+          {:else if gate.licensed}
+            <span class="inline-block h-2 w-2 rounded-full bg-warning" aria-hidden="true"></span>
+            <span class="font-medium">{gate.label}</span>
+            <span class="text-fg-muted">— {t('admin.system.license.gate_state_licensed_pending')}</span>
+          {:else}
+            <span class="inline-block h-2 w-2 rounded-full bg-fg-muted/40" aria-hidden="true"></span>
+            <span class="text-fg-muted">{gate.label}</span>
+            <span class="text-fg-muted">— {t('admin.system.license.gate_state_unlicensed')}</span>
+          {/if}
+          <span class="ml-auto font-mono text-[10px] text-fg-muted">{gate.feature}</span>
+        </li>
+      {/each}
+    </ul>
   </section>
 
   {#if status.loaded}

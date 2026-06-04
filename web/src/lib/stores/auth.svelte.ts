@@ -83,10 +83,10 @@ class AuthState {
   }
 
   /** Throws on failure with a user-presentable message. */
-  async login(username: string, password: string): Promise<void> {
-    const { data, error } = await api.POST('/auth/login', {
-      body: { username, password },
-    });
+  async login(username: string, password: string, provider?: string): Promise<void> {
+    const body: { username: string; password: string; provider?: string } = { username, password };
+    if (provider && provider !== 'password') body.provider = provider;
+    const { data, error } = await api.POST('/auth/login', { body });
     if (error || !data) {
       throw new Error(extractError(error) ?? 'Invalid credentials');
     }

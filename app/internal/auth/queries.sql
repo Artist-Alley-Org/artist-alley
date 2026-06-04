@@ -25,6 +25,22 @@ FROM "user"
 WHERE session = $1
 LIMIT 1;
 
+-- name: FindUserByRef :one
+-- Used by the registry-dispatched login flow after a provider has
+-- resolved credentials to a local user ref. Same shape as the
+-- username + session lookups so the handler's downstream code
+-- (approval gate, session minting) is provider-agnostic.
+SELECT ref,
+       username,
+       fullname,
+       email,
+       usergroup,
+       approved,
+       account_expires
+FROM "user"
+WHERE ref = $1
+LIMIT 1;
+
 -- name: SetUserSession :exec
 -- Writes a freshly minted session token to the user's row. Also
 -- bumps last_active so RS-side "active users" lists notice. Used at

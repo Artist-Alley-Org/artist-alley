@@ -769,6 +769,14 @@
         "validate_code_org_key_bad_format": "The org.key file on disk is malformed — expected a base64-encoded 32-byte Ed25519 seed.",
         "validate_code_org_key_mismatch": "The org.key on disk doesn't match this license. Either install the org.key the license was issued against, or request a re-issuance with the org.key currently in place.",
         "validate_code_unknown": "Validation failed for an unknown reason.",
+        "section_enterprise_gates": "Enterprise gates",
+        "enterprise_gates_explainer": "Cross-references the license feature list against the live identity-provider registry + tenancy manager. Green dot = both licensed AND wired up in this binary. Amber dot = feature is licensed but the corresponding subsystem isn't registered (binary likely predates the license — restart after upgrade). Grey dot = feature not in the license.",
+        "gate_ldap": "LDAP / Active Directory SSO",
+        "gate_saml": "SAML 2.0 SSO",
+        "gate_multi_tenant": "Multi-tenant deployments",
+        "gate_state_active": "active",
+        "gate_state_licensed_pending": "licensed (binary not registered)",
+        "gate_state_unlicensed": "not licensed",
         "badge_org_bound": "org-bound",
         "badge_org_unbound": "binding failed",
         "section_org_binding": "Org cross-binding",
@@ -813,6 +821,17 @@
     "coming_soon": "Coming soon",
     "error_generic": "Something went wrong.",
     "no_permission": "You don't have permission to view this page."
+  },
+  "login": {
+    "title": "Sign in",
+    "provider_label": "Sign in with",
+    "username_label": "Username or email",
+    "password_label": "Password",
+    "submit": "Sign in",
+    "or_continue_with": "or continue with",
+    "sign_in_with": "Sign in with {provider}",
+    "self_hosted_note": "Self-hosted. No account creation here — ask an admin.",
+    "error_generic": "Sign-in failed."
   },
   "collections": {
     "title": "Collections",

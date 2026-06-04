@@ -729,6 +729,11 @@ func (authOnlyImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminL
 func (authOnlyImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
 	panic("UploadAdminLicense called from auth test shim")
 }
+func (a authOnlyImpl) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	// Real call — the auth handler IS the unit-under-test in this
+	// package, and the providers endpoint is in scope for its tests.
+	return a.h.ListIdentityProviders(ctx, req)
+}
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
 }

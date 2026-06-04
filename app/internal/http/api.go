@@ -144,6 +144,10 @@ func (s *apiServer) Login(ctx context.Context, req openapi.LoginRequestObject) (
 	return s.auth.Login(ctx, req)
 }
 
+func (s *apiServer) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
+	return s.auth.ListIdentityProviders(ctx, req)
+}
+
 func (s *apiServer) Logout(ctx context.Context, req openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
 	return s.auth.Logout(ctx, req)
 }

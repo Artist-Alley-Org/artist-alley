@@ -96,8 +96,43 @@ paths:
                 $ref: "#/components/schemas/CurrentUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: |
+            Identity provider was registered (license includes its
+            feature flag) but the credential-verification impl has
+            not yet landed in this binary. Distinct from 401 so the
+            admin UI can render "build pending" vs "wrong password".
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /auth/providers:
+    get:
+      operationId: listIdentityProviders
+      summary: Enumerate the identity providers active on this install
+      description: |
+        Returns the set of identity providers the login surface can
+        dispatch to. The built-in password provider is always
+        present. Enterprise providers (LDAP, SAML, etc.) appear only
+        when the install's license includes the matching feature
+        flag (`sso_ldap`, `sso_saml`).
+
+        Used by the login page to render the right buttons + by the
+        admin UI to surface which enterprise gates have been
+        activated. Anonymous endpoint — the list is intentionally
+        public so unauthenticated users see the SSO buttons they
+        need to click.
+      tags: [auth]
+      responses:
+        "200":
+          description: Active provider list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityProviderList"
 
   /auth/logout:
     post:
@@ -4596,6 +4631,52 @@ components:
         password:
           type: string
           format: password
+        provider:
+          type: string
+          description: |
+            Name of the identity provider to authenticate against.
+            Defaults to "password" (the built-in flow). Enterprise
+            installs can name a registered LDAP provider ("ldap" or
+            a per-server alias like "ldap-engineering"). Requests
+            naming an unregistered provider get 401 — same shape as
+            a bad password, so a probing client can't enumerate
+            which enterprise providers are active.
+          example: password
+    IdentityProviderSummary:
+      type: object
+      description: |
+        Public projection of a registered identity provider — what
+        the login screen renders. No license-feature flag is
+        surfaced here; the mere presence of an entry implies the
+        install holds the matching feature.
+      required: [name, display_name, kind, supports_password]
+      properties:
+        name:
+          type: string
+          description: Stable registry identifier (POST /auth/login `provider` field).
+        display_name:
+          type: string
+          description: Human-readable label rendered on the login screen.
+        kind:
+          type: string
+          description: |
+            Provider kind — "password", "ldap", or "saml". Determines
+            which login UI the frontend renders (form vs. redirect
+            button).
+          enum: [password, ldap, saml]
+        supports_password:
+          type: boolean
+          description: |
+            True when the provider accepts username + password via
+            POST /auth/login. False for redirect-flow providers
+            (SAML) — those use kind-specific endpoints.
+    IdentityProviderList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityProviderSummary" }
     SetupStatus:
       type: object
       required: [needs_setup, deployment, defaults]

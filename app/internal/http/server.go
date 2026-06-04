@@ -24,12 +24,15 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/ldapauth"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
+	"github.com/mscrnt/artist-alley/app/internal/samlauth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
+	"github.com/mscrnt/artist-alley/app/internal/tenancy"
 )
 
 // Server bundles the [http.Server] with its dependencies so the
@@ -40,13 +43,26 @@ type Server struct {
 	pool    *pgxpool.Pool
 	srv     *http.Server
 	workers *jobs.Pool // background worker pool; nil if disabled
+
+	// lifecycleCtx bounds background goroutines (licensing re-verify
+	// ticker, etc.) to the server's lifetime. Cancelled by Run() at
+	// shutdown so the goroutines exit cleanly rather than leaking
+	// past process tear-down (or test cleanup).
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
 }
 
 // New builds a Server with routes wired up but not yet listening.
 // Call [Server.Run] to start serving.
 func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version string) (*Server, error) {
+	// Bound long-lived background goroutines to a single lifecycle
+	// context cancelled at shutdown. Stash on the Server so Run() can
+	// cancel it after the HTTP listener stops accepting.
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+
 	backend, err := buildStorageBackend(cfg)
 	if err != nil {
+		serverCancel()
 		return nil, fmt.Errorf("storage backend: %w", err)
 	}
 	storageSvc := storage.NewService(backend, pool)
@@ -102,6 +118,45 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		auth.SetCapLicenseFeatures(features)
 	}
 
+	// 24h re-verify ticker. Defense-in-depth: a runtime patch that
+	// freezes the cached Status has to also kill this goroutine, or
+	// the next tick re-reads the .lic + org.key and overwrites the
+	// cache. Bound to the server's shutdown context — graceful Stop()
+	// cancels it cleanly.
+	licState.StartReverify(serverCtx, 24*time.Hour)
+
+	// Identity-provider registry. Built-in PasswordProvider is
+	// unconditional; enterprise providers (LDAP, SAML, ...) attach
+	// only when the install's license declares the matching feature.
+	// A patcher who flips HasFeature in process memory gets nothing
+	// back here — the registration block already ran, the routes
+	// already mounted (or didn't), the provider state was (or wasn't)
+	// constructed. "Construction-site gating" — described in the
+	// memory `feedback_core_principles` (license_first foundation).
+	providers := auth.NewRegistry()
+	providers.MustRegister(auth.NewPasswordProvider(pool, cfg.ScrambleKey), licState)
+	samlEnabled := false
+	if err := providers.Register(ldapauth.New("ldap", "LDAP / Active Directory"), licState); err != nil {
+		logger.Info("identity provider: ldap not registered", "reason", err.Error())
+	} else {
+		logger.Info("identity provider: ldap registered (stub impl)")
+	}
+	samlProvider := samlauth.New("saml", "SAML 2.0 SSO")
+	if err := providers.Register(samlProvider, licState); err != nil {
+		logger.Info("identity provider: saml not registered", "reason", err.Error())
+	} else {
+		logger.Info("identity provider: saml registered (stub impl)")
+		samlEnabled = true
+	}
+
+	// Multi-tenant manager. Returns nil when the install lacks
+	// multi_tenant; that nil is the canonical "feature unavailable"
+	// state every consumer checks for. Federation stays free (per
+	// user direction — small communities can self-organize), so we
+	// don't construct anything for it here.
+	tenantMgr := tenancy.NewManager(licState, logger)
+	_ = tenantMgr // 1.18 work — the admin handlers + middleware land then
+
 	// Cross-domain cache registry. Subscribes to Postgres NOTIFY
 	// on channel "cache_invalidate" so peer instances (and DB
 	// triggers like the asset_field_value rebuild) can drop our
@@ -109,6 +164,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// when their handlers are constructed below.
 	cacheReg := cache.NewRegistry(pool, logger)
 	if err := cacheReg.Start(context.Background()); err != nil {
+		serverCancel()
 		return nil, fmt.Errorf("cache registry: %w", err)
 	}
 
@@ -174,8 +230,25 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
 		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
+		// Hand the provider registry to the auth handler now that
+		// both exist. Done out-of-band rather than threading through
+		// newAPIServer's positional args — same shape as the
+		// password-policy + audit-recorder setters above.
+		impl.auth.SetProviderRegistry(providers)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
+
+		// Conditionally mount kind-specific SAML routes. They exist
+		// in chi ONLY when the SAML provider is registered; on a
+		// Community install /auth/saml/* gets a chi 404 with no
+		// handler ever constructed for it. That's the "no route"
+		// half of the defense-in-depth — patching HasFeature at
+		// runtime won't conjure these routes into existence.
+		if samlEnabled {
+			r.Get("/auth/saml/login", samlProvider.BeginLogin)
+			r.Post("/auth/saml/acs", samlProvider.ConsumeAssertion)
+			r.Get("/auth/saml/metadata", samlProvider.Metadata)
+		}
 
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
@@ -236,7 +309,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
-		workers: workers,
+		workers:         workers,
+		lifecycleCtx:    serverCtx,
+		lifecycleCancel: serverCancel,
 	}, nil
 }
 
@@ -319,8 +394,10 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.start", slog.Any("cause", ctx.Err()))
 		if err := s.srv.Shutdown(shutdownCtx); err != nil {
 			s.logger.LogAttrs(ctx, slog.LevelError, "http.shutdown.error", slog.Any("err", err))
+			s.lifecycleCancel()
 			return err
 		}
+		s.lifecycleCancel()
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.done")
 		return nil
 	}

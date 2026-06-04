@@ -21,10 +21,12 @@
 package licensing
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 )
 
 // State holds the cached snapshot. Implements Source.
@@ -62,6 +64,71 @@ func NewState(path, orgKeyPath string, logger *slog.Logger) *State {
 // Surfaced so handlers can echo it back to admins ("we looked at X")
 // when a cross-binding fails.
 func (s *State) OrgKeyPath() string { return s.orgKeyPath }
+
+// StartReverify launches a background ticker that re-runs the load +
+// verify pipeline on `interval` and atomically swaps the cached
+// Status when the outcome changes. Returns immediately; the goroutine
+// is bound to `ctx` and exits when ctx is cancelled (the http.Server
+// shutdown context).
+//
+// Why this exists, even though the cap-feature bridge cache is hot
+// and never expires:
+//
+//   - **Defense-in-depth against runtime patches**: a patcher who
+//     freezes the cache (e.g. by stubbing capLicenseAllows to return
+//     true) has to also kill this goroutine, or the next tick will
+//     re-read the .lic from disk and overwrite the cached Status.
+//     The two checks live in different packages, different idioms,
+//     and the goroutine is one of several boot-registered tasks —
+//     finding + neutralising it is meaningfully more work than a
+//     constant-fold.
+//
+//   - **Catches mid-runtime expiry**: a license that's valid at boot
+//     but expires while the process is up surfaces in the admin UI
+//     within `interval` rather than at the next restart.
+//
+//   - **Picks up org.key swaps**: if an admin rotates the customer-
+//     activation key + uploads a re-issued .lic, both files come
+//     into effect without a restart.
+//
+// interval ≤ 0 disables the ticker entirely (returns without
+// launching). Production wiring uses 24 hours; tests use much
+// shorter intervals via the same entry point.
+func (s *State) StartReverify(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	if s.path == "" {
+		// Community mode: nothing to re-verify. Don't burn a goroutine.
+		return
+	}
+	go s.reverifyLoop(ctx, interval)
+}
+
+func (s *State) reverifyLoop(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			if s.logger != nil {
+				s.logger.Info("licensing: re-verify loop stopping",
+					slog.String("path", s.path))
+			}
+			return
+		case <-t.C:
+			_, err := s.loadAndSwap()
+			if err != nil && s.logger != nil {
+				// Don't promote to ERROR — the cached Status now carries
+				// the new LastError, and the admin UI will render it.
+				s.logger.Warn("licensing: re-verify failed",
+					slog.String("path", s.path),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+	}
+}
 
 // Tier implements Source.
 func (s *State) Tier() string {

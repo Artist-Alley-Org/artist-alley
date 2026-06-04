@@ -579,6 +579,48 @@ func (q *Queries) FindRoleByName(ctx context.Context, name string) (Role, error)
 	return i, err
 }
 
+const findUserByRef = `-- name: FindUserByRef :one
+SELECT ref,
+       username,
+       fullname,
+       email,
+       usergroup,
+       approved,
+       account_expires
+FROM "user"
+WHERE ref = $1
+LIMIT 1
+`
+
+type FindUserByRefRow struct {
+	Ref            int64
+	Username       *string
+	Fullname       *string
+	Email          *string
+	Usergroup      *int64
+	Approved       int64
+	AccountExpires pgtype.Timestamptz
+}
+
+// Used by the registry-dispatched login flow after a provider has
+// resolved credentials to a local user ref. Same shape as the
+// username + session lookups so the handler's downstream code
+// (approval gate, session minting) is provider-agnostic.
+func (q *Queries) FindUserByRef(ctx context.Context, ref int64) (FindUserByRefRow, error) {
+	row := q.db.QueryRow(ctx, findUserByRef, ref)
+	var i FindUserByRefRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Approved,
+		&i.AccountExpires,
+	)
+	return i, err
+}
+
 const findUserBySession = `-- name: FindUserBySession :one
 SELECT ref,
        username,
