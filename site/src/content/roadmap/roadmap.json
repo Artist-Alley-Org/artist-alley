@@ -1,7 +1,7 @@
 {
   "$schema": "./_schema.json",
   "version": "1",
-  "lastUpdated": "2026-05-31",
+  "lastUpdated": "2026-06-04",
   "intro": "A snapshot of what's shipped, what's in flight, and what's on the map. Subject to change as we learn what teams actually need.",
   "canonicalOrderNote": "This roadmap is the canonical order — the labelled phase tags inside the admin menu (the muted 'Phase 1.X' pills on future tiles) reference these same numbers. When the order changes, this file moves first.",
   "sections": [
@@ -23,8 +23,15 @@
         },
         {
           "id": "identity-auth",
-          "title": "Identity & auth",
-          "description": "Sessions, API tokens with scopes, roles & capabilities, password policy + SSO provider config UI (real enforcement of LDAP / SAML / OAuth lands with phase 1.18)."
+          "title": "Identity, teams, audit",
+          "phase": "1.17",
+          "description": "Full admin identity surface: paginated user list with search + status filter, user lifecycle states (pending / approved / disabled) with the `users.approve` capability split out for a future User Approver role, multi-device session management + revoke + 'current session' marker, password change + admin reset + bcrypt reuse-history (Phase 1.17.D), teams admin UI on the existing handlers (1.17.E), per-user capability grants + revokes (1.17.F), per-asset-type ACLs (1.17.F-bis), and the admin audit-log viewer with filter facets + per-event changeset rendering (1.17.K). Server-side: `auth.Identity.Can()` consults capability ↔ license-feature mappings BEFORE the SuperAdmin shortcut so install-level licensing trumps any per-user RBAC grant. See [ADR 0010](/adr/0010-permissions-teams-workflow/)."
+        },
+        {
+          "id": "licensing-foundation",
+          "title": "Licensing + enterprise gates",
+          "phase": "1.17.O / 1.17.P-foundation",
+          "description": "Ed25519 license verifier with embedded publisher key catalog + admin `/admin/system/license` status surface + paste-in upload UI with code-keyed i18n for every verifier error (1.17.O-1/2). Layer-1 cross-binding via customer-held `org.key` seed verified against the license's `org_pubkey` claim at boot + on every upload + on a 24h re-verify ticker (1.17.O-3) — a stolen `.lic` alone is useless without the matching key. `auth.IdentityProvider` interface + license-gated `Registry` so `ldapauth` / `samlauth` / `tenancy` enterprise stubs refuse to register without their feature flag and detach hot when a license downgrades (1.17.P-foundation). Hot-swap: `Registry.Replace` + `State.OnReload` callback so Community → Enterprise upgrades activate without a process restart. Federation is deliberately **not** gated (per design, small communities self-organize freely). See [ADR 0017 § Status](/adr/0017-monetization-and-licensing/)."
         },
         {
           "id": "upload-pipeline",
@@ -356,11 +363,11 @@
       "summary": "The phases queued behind the current focus.",
       "items": [
         {
-          "id": "identity-teams",
-          "title": "Identity & teams",
-          "phase": "1.17",
+          "id": "identity-teams-extensions",
+          "title": "Identity & teams — remaining extensions",
+          "phase": "1.18 (feat/user-surfaces)",
           "status": "planned",
-          "description": "Groups + team hierarchy, active session management, capability grants. Extended with: table-level change tracking with before / after diffs in the audit log, user approval states (pending / approved / disabled) with admin approval flow, resource request workflow (user asks → capability-holder approves → notification fires → lifecycle tracked + auto-expiry)."
+          "description": "Core Phase 1.17 identity surface is shipped (see the Shipped section). The remaining pieces from the original epic move to the next branch: resource-request workflow (user asks → capability-holder approves → notification fires → lifecycle tracked + auto-expiry), table-level audit changeset enrichment for the RS-parity items, and the real LDAP / SAML / OIDC bind/search/assertion impls that plug into the existing `auth.IdentityProvider` registry slots."
         },
         {
           "id": "audit-log-change-tracking",
@@ -399,10 +406,10 @@
         },
         {
           "id": "licensing-monetization",
-          "title": "Licensing & monetization",
-          "phase": "1.24",
+          "title": "Licensing & monetization — wider derivation",
+          "phase": "1.24.B-full",
           "status": "planned",
-          "description": "Ed25519-signed `.lic` files with three tiers: Community (15 active seats / 50k assets, free, full features), Pro (50 / 500k, paid, full features), Enterprise (unlimited + SAML/OIDC SSO + audit log export + multi-tenant + federation + HA + priority support). Active-seats counted as `last_active_at` in the trailing 30 days. Enforcement uses tangled value derivation across consumers (search quota, upload concurrency, cache sizing, plugin gating, federation gating) — no single `if valid` gate to strip. Cloudflare Workers for signing (private key in Worker Secrets), customer portal on Cloudflare Pages. Gated on Phase 1.17 (Identity & teams). See ADR 0016 + ADR 0017."
+          "description": "The verifier core, admin upload UI, capability-layer gate, cross-binding, and enterprise-provider registry shipped early as Phase 1.17.O/P-foundation (see Shipped). Cloudflare signing service + customer portal live in the sibling `artist-alley-license-server` repo and are deployed. **Still planned:** the wider tangled-value derivation across non-capability consumers — `searchQuota`, `uploadConcurrency`, `cacheSize`, `thumbnailMaxRes`, `enabledPlugins`, `federationEnabled` — so stripping the verifier produces an obviously-broken install rather than just a misconfigured one. Lands per-subsystem as those code paths get touched. See [ADR 0016](/adr/0016-license-direction/) + [ADR 0017](/adr/0017-monetization-and-licensing/)."
         }
       ]
     },
