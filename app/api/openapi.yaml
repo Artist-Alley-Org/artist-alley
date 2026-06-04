@@ -6066,7 +6066,7 @@ components:
         negative when expired). Nullable cap fields (`seats`,
         `asset_cap`) → null = unlimited. Nullable temporal /
         identity fields are simply omitted in community mode.
-      required: [loaded, tier, features, days_until_expiry]
+      required: [loaded, tier, features, days_until_expiry, org_binding_required, org_bound]
       properties:
         loaded:
           type: boolean
@@ -6134,6 +6134,36 @@ components:
           description: |
             Filesystem path the verifier loaded the .lic from.
             Useful for diagnostics + support.
+        org_binding_required:
+          type: boolean
+          description: |
+            True when the loaded license declares an `org_pubkey`
+            claim — the customer must hold the matching org.key
+            seed file on disk for the license to activate. False for
+            community / trial / dev licenses that opted out of
+            cross-binding at issuance time.
+        org_bound:
+          type: boolean
+          description: |
+            True when the install satisfies cross-binding — either
+            because `org_binding_required` is false (no binding to
+            satisfy), or because the on-disk org.key derives to a
+            public key matching the license's `org_pubkey`. The
+            cap-enforcement layer only treats the license as active
+            when this is true.
+        org_binding_error:
+          type: string
+          description: |
+            Human-readable reason cross-binding failed when
+            `org_binding_required` is true and `org_bound` is false.
+            One of: "org.key missing", "org.key malformed", "org.key
+            does not match license org_pubkey".
+        org_key_path:
+          type: string
+          description: |
+            Filesystem path the verifier consults for the org.key
+            seed. Echoed back to the admin UI so operators see
+            exactly where to drop the file when cross-binding fails.
 
     LicenseUploadRequest:
       type: object
@@ -6173,7 +6203,9 @@ components:
             `bad_envelope`, `bad_signature`, `expired`,
             `not_yet_valid`, `unknown_publisher_key`,
             `wrong_issuer`, `chain_expired`, `chain_bad_signature`,
-            `chain_scope`, `chain_kid_mismatch`, `unknown`.
+            `chain_scope`, `chain_kid_mismatch`,
+            `org_key_missing`, `org_key_bad_format`,
+            `org_key_mismatch`, `unknown`.
         message:
           type: string
           description: Raw verifier error string for diagnostics.

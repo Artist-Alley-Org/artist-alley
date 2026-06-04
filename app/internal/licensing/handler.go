@@ -94,12 +94,22 @@ func (h *Handler) ValidateAdminLicense(
 	if err != nil {
 		return openapi.ValidateAdminLicense400JSONResponse(buildValidateError(err)), nil
 	}
+	// Cross-binding: dry-run check against the install's current
+	// org.key so the operator sees the same outcome the upload would
+	// give. We deliberately return 400 here (not 200 with OrgBound:false)
+	// because UI behaviour matches: a license the install can't activate
+	// is rejected, not previewed-then-broken.
+	if claims.OrgPubkey != nil && *claims.OrgPubkey != "" {
+		if err := VerifyOrgCrossBinding(*claims.OrgPubkey, h.state.OrgKeyPath()); err != nil {
+			return openapi.ValidateAdminLicense400JSONResponse(buildValidateError(err)), nil
+		}
+	}
 	// Reuse the same Status mapper the GET endpoint uses so the preview
 	// renders identically to the post-install snapshot. Path comes from
 	// the configured LicensePath even though we haven't written there
 	// yet — that's the path the upload would target, so showing it is
 	// useful diagnostic context.
-	st := statusFromClaims(claims, h.state.Path())
+	st := statusFromClaims(claims, h.state.Path(), h.state.OrgKeyPath())
 	return openapi.ValidateAdminLicense200JSONResponse(statusToWire(st)), nil
 }
 
@@ -180,7 +190,10 @@ func isVerifierError(err error) bool {
 		errors.Is(err, ErrChainExpired),
 		errors.Is(err, ErrChainBadSig),
 		errors.Is(err, ErrChainScope),
-		errors.Is(err, ErrChainKIDMismatch):
+		errors.Is(err, ErrChainKIDMismatch),
+		errors.Is(err, ErrOrgKeyMissing),
+		errors.Is(err, ErrOrgKeyBadFormat),
+		errors.Is(err, ErrOrgKeyMismatch):
 		return true
 	}
 	return false
@@ -222,6 +235,12 @@ func validateErrorCode(err error) string {
 		return "chain_scope"
 	case errors.Is(err, ErrChainKIDMismatch):
 		return "chain_kid_mismatch"
+	case errors.Is(err, ErrOrgKeyMissing):
+		return "org_key_missing"
+	case errors.Is(err, ErrOrgKeyBadFormat):
+		return "org_key_bad_format"
+	case errors.Is(err, ErrOrgKeyMismatch):
+		return "org_key_mismatch"
 	}
 	return "unknown"
 }
@@ -234,22 +253,26 @@ func validateErrorCode(err error) string {
 // openapi-friendly form.
 func statusToWire(s Status) openapi.LicenseStatus {
 	return openapi.LicenseStatus{
-		Loaded:          s.Loaded,
-		Tier:            s.Tier,
-		Features:        s.Features,
-		Owner:           ptrIfNotEmpty(s.Owner),
-		Org:             ptrIfNotEmpty(s.Org),
-		Lid:             ptrIfNotEmpty(s.LID),
-		Seats:           s.Seats,
-		SeatWindowDays:  ptrIfNotZero(s.SeatWindowDays),
-		AssetCap:        s.AssetCap,
-		Nbf:             parseISOPtr(s.NotBefore),
-		Exp:             parseISOPtr(s.Expires),
-		Iat:             parseISOPtr(s.IssuedAt),
-		DaysUntilExpiry: s.DaysUntilExpiry,
-		LastError:       ptrIfNotEmpty(s.LastError),
-		Iss:             ptrIfNotEmpty(s.Issuer),
-		Path:            ptrIfNotEmpty(s.Path),
+		Loaded:             s.Loaded,
+		Tier:               s.Tier,
+		Features:           s.Features,
+		Owner:              ptrIfNotEmpty(s.Owner),
+		Org:                ptrIfNotEmpty(s.Org),
+		Lid:                ptrIfNotEmpty(s.LID),
+		Seats:              s.Seats,
+		SeatWindowDays:     ptrIfNotZero(s.SeatWindowDays),
+		AssetCap:           s.AssetCap,
+		Nbf:                parseISOPtr(s.NotBefore),
+		Exp:                parseISOPtr(s.Expires),
+		Iat:                parseISOPtr(s.IssuedAt),
+		DaysUntilExpiry:    s.DaysUntilExpiry,
+		LastError:          ptrIfNotEmpty(s.LastError),
+		Iss:                ptrIfNotEmpty(s.Issuer),
+		Path:               ptrIfNotEmpty(s.Path),
+		OrgBindingRequired: s.OrgBindingRequired,
+		OrgBound:           s.OrgBound,
+		OrgBindingError:    ptrIfNotEmpty(s.OrgBindingError),
+		OrgKeyPath:         ptrIfNotEmpty(s.OrgKeyPath),
 	}
 }
 

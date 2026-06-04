@@ -83,7 +83,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// interface every dependent package consults to check feature
 	// flags. Community mode (no file) is non-error; status surfaces
 	// "loaded: false" + the built-in community defaults.
-	licState := licensing.NewState(cfg.LicensePath, logger)
+	licState := licensing.NewState(cfg.LicensePath, cfg.OrgKeyPath, logger)
 
 	// Wire the licensing.State into auth.Identity.Can() so capability
 	// checks consult the install's licensed feature set. Without this

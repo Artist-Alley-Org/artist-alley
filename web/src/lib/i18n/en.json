@@ -765,7 +765,20 @@
         "validate_code_chain_bad_signature": "The publisher certificate's signature is invalid.",
         "validate_code_chain_scope": "The publisher certificate doesn't allow signing this product.",
         "validate_code_chain_kid_mismatch": "The signing-key id on the license doesn't match the publisher certificate.",
-        "validate_code_unknown": "Validation failed for an unknown reason."
+        "validate_code_org_key_missing": "This license requires customer activation but no org.key file was found on the server. Run customer-activation to generate one, then request a license re-issuance against the new public key.",
+        "validate_code_org_key_bad_format": "The org.key file on disk is malformed — expected a base64-encoded 32-byte Ed25519 seed.",
+        "validate_code_org_key_mismatch": "The org.key on disk doesn't match this license. Either install the org.key the license was issued against, or request a re-issuance with the org.key currently in place.",
+        "validate_code_unknown": "Validation failed for an unknown reason.",
+        "badge_org_bound": "org-bound",
+        "badge_org_unbound": "binding failed",
+        "section_org_binding": "Org cross-binding",
+        "org_binding_explainer": "This license is bound to an org.key file the customer holds. The verifier re-checks the public key derived from org.key against the license at boot and on every upload. A stolen .lic without the matching org.key cannot activate.",
+        "field_org_status": "Status",
+        "field_org_key_path": "org.key path",
+        "org_status_bound": "bound — org.key matches license",
+        "org_status_unbound": "unbound — license rejected",
+        "org_binding_error_label": "Cross-binding failed",
+        "org_binding_recovery_hint": "Recovery: copy the original org.key into place (file permissions 0600), or run scripts/customer-activation in the license-server repo to generate a new one and request a license re-issuance against the new public key."
       },
       "themes": {
         "title": "Themes & branding",

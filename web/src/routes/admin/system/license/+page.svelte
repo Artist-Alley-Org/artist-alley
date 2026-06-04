@@ -26,6 +26,10 @@
     last_error?: string;
     iss?: string;
     path?: string;
+    org_binding_required: boolean;
+    org_bound: boolean;
+    org_binding_error?: string;
+    org_key_path?: string;
   }
 
   interface ValidateError {
@@ -237,6 +241,17 @@
       {#if expBadge && status.loaded}
         <span class={'badge ' + expBadge.cls}>{expBadge.label}</span>
       {/if}
+      {#if status.org_binding_required}
+        {#if status.org_bound}
+          <span class="badge border border-success/40 bg-success/10 text-success">
+            {t('admin.system.license.badge_org_bound')}
+          </span>
+        {:else}
+          <span class="badge border border-danger/40 bg-danger/10 text-danger">
+            {t('admin.system.license.badge_org_unbound')}
+          </span>
+        {/if}
+      {/if}
     </div>
     {#if !status.loaded}
       <p class="mt-3 text-sm text-fg-muted">
@@ -294,7 +309,7 @@
       </dl>
     </section>
 
-    <section class="rounded-lg border border-border bg-surface-elevated p-4">
+    <section class="mb-4 rounded-lg border border-border bg-surface-elevated p-4">
       <h2 class="mb-3 text-sm font-medium">{t('admin.system.license.section_validity')}</h2>
       <dl class="grid grid-cols-[10rem,1fr] gap-x-3 gap-y-1.5 text-xs">
         <dt class="text-fg-muted">{t('admin.system.license.field_nbf')}</dt>
@@ -306,6 +321,33 @@
         <dt class="text-fg-muted">{t('admin.system.license.field_days_until_expiry')}</dt>
         <dd>{status.days_until_expiry}</dd>
       </dl>
+    </section>
+  {/if}
+
+  {#if status.org_binding_required}
+    <section class="rounded-lg border border-border bg-surface-elevated p-4">
+      <h2 class="mb-2 text-sm font-medium">{t('admin.system.license.section_org_binding')}</h2>
+      <p class="mb-3 text-xs text-fg-muted">{t('admin.system.license.org_binding_explainer')}</p>
+      <dl class="grid grid-cols-[10rem,1fr] gap-x-3 gap-y-1.5 text-xs">
+        <dt class="text-fg-muted">{t('admin.system.license.field_org_status')}</dt>
+        <dd>
+          {#if status.org_bound}
+            <span class="text-success">{t('admin.system.license.org_status_bound')}</span>
+          {:else}
+            <span class="text-danger">{t('admin.system.license.org_status_unbound')}</span>
+          {/if}
+        </dd>
+        <dt class="text-fg-muted">{t('admin.system.license.field_org_key_path')}</dt>
+        <dd class="break-all font-mono">{status.org_key_path ?? '—'}</dd>
+      </dl>
+      {#if !status.org_bound && status.org_binding_error}
+        <p role="alert" class="mt-3 rounded border border-danger/40 bg-danger/10 p-2 text-xs text-danger">
+          <strong>{t('admin.system.license.org_binding_error_label')}:</strong> {status.org_binding_error}
+        </p>
+        <p class="mt-2 text-xs text-fg-muted">
+          {t('admin.system.license.org_binding_recovery_hint')}
+        </p>
+      {/if}
     </section>
   {/if}
 

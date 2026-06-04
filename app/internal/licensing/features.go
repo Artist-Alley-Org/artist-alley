@@ -99,6 +99,31 @@ type Status struct {
 	// Source path — where the verifier loaded the .lic from.
 	// Useful for diagnostics.
 	Path string `json:"path,omitempty"`
+
+	// OrgBindingRequired is true when the loaded license carries an
+	// `org_pubkey` claim and therefore requires the customer-held
+	// org.key file to activate. Community / trial / dev licenses leave
+	// this false.
+	OrgBindingRequired bool `json:"org_binding_required"`
+
+	// OrgBound is true when OrgBindingRequired AND the on-disk org.key
+	// derives to a public key that matches the license's `org_pubkey`.
+	// When OrgBindingRequired is false, this is also true (no binding
+	// to verify → trivially satisfied) so cap-enforcement logic can
+	// treat "bound" as the green path uniformly.
+	OrgBound bool `json:"org_bound"`
+
+	// OrgBindingError carries the binding failure message when
+	// OrgBindingRequired is true but OrgBound is false. Echoed verbatim
+	// into the admin UI so operators see exactly which step failed
+	// (missing file / bad format / public-key mismatch).
+	OrgBindingError string `json:"org_binding_error,omitempty"`
+
+	// OrgKeyPath is the on-disk path the verifier consults for org.key.
+	// Surfaced so the admin UI can echo it back when the cross-binding
+	// fails ("we looked at <path>"). Empty when the install has no
+	// configured org-key path.
+	OrgKeyPath string `json:"org_key_path,omitempty"`
 }
 
 // communityFeatureSet is the feature list any artist-alley install
@@ -131,13 +156,17 @@ func hasFeatureIn(feature string, features []string) bool {
 
 // communityStatus builds the synthetic Status returned when no
 // license file is loaded. Single source of truth for the
-// community defaults the artist-alley app enforces.
+// community defaults the artist-alley app enforces. Community mode
+// has no cross-binding (OrgBound=true, OrgBindingRequired=false) so
+// every Source consumer can treat OrgBound as the green flag without
+// special-casing community.
 func communityStatus() Status {
 	return Status{
 		Loaded:          false,
 		Tier:            "community",
 		Features:        append([]string(nil), communityFeatureSet...),
 		DaysUntilExpiry: 0,
+		OrgBound:        true,
 	}
 }
 

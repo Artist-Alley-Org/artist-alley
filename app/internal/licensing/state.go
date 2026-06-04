@@ -29,8 +29,9 @@ import (
 
 // State holds the cached snapshot. Implements Source.
 type State struct {
-	path   string
-	logger *slog.Logger
+	path       string
+	orgKeyPath string
+	logger     *slog.Logger
 
 	mu     sync.RWMutex
 	cached Status
@@ -45,11 +46,22 @@ type State struct {
 // exist, State falls into community mode — that's NOT an error.
 // Verification failures (bad signature, expired, etc.) are surfaced
 // via Status.LastError so the admin UI can show them.
-func NewState(path string, logger *slog.Logger) *State {
-	s := &State{path: path, logger: logger}
+//
+// orgKeyPath points at the customer-side org.key seed file used for
+// Layer-1 cross-binding when the loaded license declares an
+// `org_pubkey` claim. Empty disables cross-binding entirely — bound
+// licenses installed on a state with no orgKeyPath will fail closed
+// with ErrOrgKeyMissing.
+func NewState(path, orgKeyPath string, logger *slog.Logger) *State {
+	s := &State{path: path, orgKeyPath: orgKeyPath, logger: logger}
 	s.loadInitial()
 	return s
 }
+
+// OrgKeyPath returns the configured customer-side org.key path.
+// Surfaced so handlers can echo it back to admins ("we looked at X")
+// when a cross-binding fails.
+func (s *State) OrgKeyPath() string { return s.orgKeyPath }
 
 // Tier implements Source.
 func (s *State) Tier() string {
@@ -141,8 +153,19 @@ func (s *State) SaveAndReload(text string) (Status, error) {
 		return s.Status(), ErrStateNil
 	}
 	// Verify FIRST. A bad upload must not clobber a working file.
-	if _, err := Verify(text); err != nil {
+	claims, err := Verify(text)
+	if err != nil {
 		return s.Status(), err
+	}
+	// Also reject envelopes that pass signature but can't activate
+	// against the current org.key — saves the admin a useless restart
+	// loop ("upload, see it broken, upload again"). Same shape as the
+	// signature check above: a license that won't activate must never
+	// overwrite a working file on disk.
+	if claims.OrgPubkey != nil && *claims.OrgPubkey != "" {
+		if err := VerifyOrgCrossBinding(*claims.OrgPubkey, s.orgKeyPath); err != nil {
+			return s.Status(), err
+		}
 	}
 	if err := os.WriteFile(s.path, []byte(text), 0o600); err != nil {
 		return s.Status(), err
@@ -183,6 +206,7 @@ func (s *State) loadAndSwap() (Status, error) {
 	if err != nil {
 		st := communityStatus()
 		st.Path = s.path
+		st.OrgKeyPath = s.orgKeyPath
 		st.LastError = "read: " + err.Error()
 		s.swap(st, nil)
 		return st, err
@@ -191,11 +215,30 @@ func (s *State) loadAndSwap() (Status, error) {
 	if err != nil {
 		st := communityStatus()
 		st.Path = s.path
+		st.OrgKeyPath = s.orgKeyPath
 		st.LastError = "verify: " + err.Error()
 		s.swap(st, nil)
 		return st, err
 	}
-	st := statusFromClaims(claims, s.path)
+	// Layer-1 cross-binding. A license that declares org_pubkey only
+	// activates when org.key on disk derives to that same public key.
+	// On failure we fall to community mode + surface LastError, same
+	// shape as the signature/expiry failure path so the admin UI
+	// renders consistently.
+	if claims.OrgPubkey != nil && *claims.OrgPubkey != "" {
+		if err := VerifyOrgCrossBinding(*claims.OrgPubkey, s.orgKeyPath); err != nil {
+			st := communityStatus()
+			st.Path = s.path
+			st.OrgKeyPath = s.orgKeyPath
+			st.OrgBindingRequired = true
+			st.OrgBound = false
+			st.OrgBindingError = err.Error()
+			st.LastError = "org cross-binding: " + err.Error()
+			s.swap(st, nil)
+			return st, err
+		}
+	}
+	st := statusFromClaims(claims, s.path, s.orgKeyPath)
 	s.swap(st, &claims)
 	return st, nil
 }
@@ -208,24 +251,30 @@ func (s *State) swap(st Status, raw *LicenseClaims) {
 }
 
 // statusFromClaims maps verified claims onto the wire-level Status
-// the admin UI consumes.
-func statusFromClaims(c LicenseClaims, path string) Status {
+// the admin UI consumes. By the time this is called the verifier has
+// accepted the envelope AND (when applicable) the cross-binding has
+// passed — so OrgBound is unconditionally true here.
+func statusFromClaims(c LicenseClaims, path, orgKeyPath string) Status {
+	required := c.OrgPubkey != nil && *c.OrgPubkey != ""
 	return Status{
-		Loaded:          true,
-		Tier:            c.Tier,
-		Features:        append([]string(nil), c.Features...),
-		Owner:           c.Owner,
-		Org:             c.Org,
-		LID:             c.LID,
-		Seats:           copyInt64Ptr(c.Seats),
-		SeatWindowDays:  c.SeatWindowDays,
-		AssetCap:        copyInt64Ptr(c.AssetCap),
-		NotBefore:       epochToISO(c.NotBefore),
-		Expires:         epochToISO(c.Expires),
-		IssuedAt:        epochToISO(c.IssuedAt),
-		DaysUntilExpiry: daysUntil(c.Expires),
-		Issuer:          c.Issuer,
-		Path:            path,
+		Loaded:             true,
+		Tier:               c.Tier,
+		Features:           append([]string(nil), c.Features...),
+		Owner:              c.Owner,
+		Org:                c.Org,
+		LID:                c.LID,
+		Seats:              copyInt64Ptr(c.Seats),
+		SeatWindowDays:     c.SeatWindowDays,
+		AssetCap:           copyInt64Ptr(c.AssetCap),
+		NotBefore:          epochToISO(c.NotBefore),
+		Expires:            epochToISO(c.Expires),
+		IssuedAt:           epochToISO(c.IssuedAt),
+		DaysUntilExpiry:    daysUntil(c.Expires),
+		Issuer:             c.Issuer,
+		Path:               path,
+		OrgBindingRequired: required,
+		OrgBound:           true,
+		OrgKeyPath:         orgKeyPath,
 	}
 }
 
