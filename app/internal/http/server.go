@@ -24,6 +24,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
@@ -76,6 +77,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	limiter := auth.NewLoginLimiter()
 	auditRec := audit.NewRecorder(pool, logger)
 	sysCfg := sysconfig.NewStore(pool)
+
+	// License state — verifies the .lic file at cfg.LicensePath (if
+	// any), caches the resulting Status, and exposes a Source
+	// interface every dependent package consults to check feature
+	// flags. Community mode (no file) is non-error; status surfaces
+	// "loaded: false" + the built-in community defaults.
+	licState := licensing.NewState(cfg.LicensePath, logger)
 
 	// Cross-domain cache registry. Subscribes to Postgres NOTIFY
 	// on channel "cache_invalidate" so peer instances (and DB
@@ -148,7 +156,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Get("/assets/{id}/variants/views/*",
 			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
-		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, backend.Name())
+		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 

@@ -716,6 +716,9 @@ func (shimImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEven
 func (shimImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
 	panic("ListAdminAuditEventTypes called from setup test shim")
 }
+func (shimImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	panic("GetAdminLicenseStatus called from setup test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from setup_test test shim")
 }

@@ -33,6 +33,7 @@ const TRACKED_FILES = [
   'src/routes/admin/asset-types/+page.svelte',
   'src/routes/admin/asset-types/[ref]/+page.svelte',
   'src/routes/admin/system/log/+page.svelte',
+  'src/routes/admin/system/license/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":

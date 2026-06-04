@@ -458,6 +458,38 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/license/status:
+    get:
+      operationId: getAdminLicenseStatus
+      summary: Current license status (Phase 1.17.O)
+      description: |
+        Returns the cached, verified-at-boot snapshot of this
+        install's license — tier, features, caps, expiry, etc. When
+        no `.lic` file is installed, returns a synthetic
+        "community" status (tier: community, features: community
+        defaults, days_until_expiry: 0).
+
+        The artist-alley app NEVER calls the license server at
+        verification time. This endpoint just reads the in-memory
+        cache populated at startup (and refreshed on
+        POST /admin/license/upload — Phase 1.17.O-2).
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      responses:
+        "200":
+          description: License snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/audit:
     get:
       operationId: listAdminAuditEvents
@@ -5915,6 +5947,88 @@ components:
           type: string
           maxLength: 500
           description: Optional admin-supplied justification recorded with the row.
+
+    LicenseStatus:
+      type: object
+      description: |
+        License snapshot returned by GET /admin/license/status
+        (Phase 1.17.O). `loaded: false` means no .lic file is
+        installed and the artist-alley app is running in community
+        mode — community defaults apply, no license-server
+        interaction needed.
+
+        `days_until_expiry` is derived (0 in community mode;
+        negative when expired). Nullable cap fields (`seats`,
+        `asset_cap`) → null = unlimited. Nullable temporal /
+        identity fields are simply omitted in community mode.
+      required: [loaded, tier, features, days_until_expiry]
+      properties:
+        loaded:
+          type: boolean
+          description: True when a real .lic file is mounted + verified. False = community mode.
+        tier:
+          type: string
+          description: |
+            "community" (unlicensed default) | "pro" | "enterprise" |
+            "complementary" | "plugin" | "custom".
+        features:
+          type: array
+          items: { type: string }
+        owner:
+          type: string
+          description: License owner email — surfaced for support routing.
+        org:
+          type: string
+          description: Organization slug — same value across federated peers.
+        lid:
+          type: string
+          description: License id (ULID); surface in support tickets.
+        seats:
+          type: integer
+          format: int64
+          nullable: true
+          description: Max concurrent active seats; null = unlimited.
+        seat_window_days:
+          type: integer
+          description: Rolling window for "active seat" counting.
+        asset_cap:
+          type: integer
+          format: int64
+          nullable: true
+          description: Asset cap (primary assets only); null = unlimited.
+        nbf:
+          type: string
+          format: date-time
+          description: Not-before timestamp (RFC3339).
+        exp:
+          type: string
+          format: date-time
+          description: Expiry timestamp.
+        iat:
+          type: string
+          format: date-time
+          description: Issued-at timestamp.
+        days_until_expiry:
+          type: integer
+          description: |
+            Whole days until license expires. Negative when expired.
+            Zero in community mode (no expiry).
+        last_error:
+          type: string
+          description: |
+            Last verification error if the loaded license failed
+            (e.g. expired, wrong issuer). Surfaced verbatim in the
+            admin UI so operators can react.
+        iss:
+          type: string
+          description: |
+            Issuer string baked into the license — admins can
+            confirm the .lic came from the canonical authority.
+        path:
+          type: string
+          description: |
+            Filesystem path the verifier loaded the .lic from.
+            Useful for diagnostics + support.
 
     AuditEvent:
       type: object

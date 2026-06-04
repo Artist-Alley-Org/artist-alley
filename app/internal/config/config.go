@@ -59,6 +59,13 @@ type Config struct {
 	// value is here so future ports can introspect or rewrite it.
 	LegacyPHPAddr string
 
+	// License file path (Phase 1.17.O). When empty or the file
+	// doesn't exist, the licensing package falls into "community
+	// mode" — the app runs with the built-in community defaults,
+	// no license server is contacted. Set to install a paid
+	// license.
+	LicensePath string
+
 	// Setup-wizard prefills. Pre-populating these via env makes it
 	// possible to script a deployment (Helm chart, Terraform, CI
 	// install test) without anyone typing into the browser form. None
@@ -109,6 +116,7 @@ func Load() (Config, error) {
 		StorageS3SecretKey:    envStr("AA_STORAGE_S3_SECRET_KEY", ""),
 		StorageS3UsePathStyle: envBool("AA_STORAGE_S3_USE_PATH_STYLE", true),
 		LegacyPHPAddr:         envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
+		LicensePath:           envStr("AA_LICENSE_PATH", "/etc/artist-alley/license.lic"),
 		SetupDefaults: SetupDefaults{
 			AdminUsername:  envStr("AA_SETUP_DEFAULT_USERNAME", ""),
 			AdminEmail:     envStr("AA_SETUP_DEFAULT_EMAIL", ""),

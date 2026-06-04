@@ -21,6 +21,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
@@ -53,9 +54,10 @@ type apiServer struct {
 	jobs         *jobs.HTTPHandler
 	brushpacks   *brushpacks.Handler
 	audit        *audit.HTTPHandler
+	licensing    *licensing.Handler
 }
 
-func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, storageBackend string) *apiServer {
+func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
 	return &apiServer{
 		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
@@ -74,6 +76,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:        audit.NewHTTPHandler(pool, logger),
+		licensing:    licensing.NewHandler(licState, logger),
 	}
 }
 
@@ -581,6 +584,12 @@ func (s *apiServer) ListAdminAuditEvents(ctx context.Context, req openapi.ListAd
 }
 func (s *apiServer) ListAdminAuditEventTypes(ctx context.Context, req openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
 	return s.audit.ListAdminAuditEventTypes(ctx, req)
+}
+
+// --- licensing (Phase 1.17.O) ---------------------------------------------
+
+func (s *apiServer) GetAdminLicenseStatus(ctx context.Context, req openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
+	return s.licensing.GetAdminLicenseStatus(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------
