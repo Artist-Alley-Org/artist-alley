@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
@@ -55,6 +56,7 @@ type apiServer struct {
 	brushpacks   *brushpacks.Handler
 	audit        *audit.HTTPHandler
 	licensing    *licensing.Handler
+	userprefs    *userprefs.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -77,6 +79,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:        audit.NewHTTPHandler(pool, logger),
 		licensing:    licensing.NewHandler(licState, logger),
+		userprefs:    userprefs.NewHandler(pool, logger),
 	}
 }
 
@@ -602,6 +605,16 @@ func (s *apiServer) ValidateAdminLicense(ctx context.Context, req openapi.Valida
 
 func (s *apiServer) UploadAdminLicense(ctx context.Context, req openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
 	return s.licensing.UploadAdminLicense(ctx, req)
+}
+
+// --- userprefs (Phase 1.17.G) ----------------------------------------------
+
+func (s *apiServer) GetAccountPreferences(ctx context.Context, req openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	return s.userprefs.GetAccountPreferences(ctx, req)
+}
+
+func (s *apiServer) PatchAccountPreferences(ctx context.Context, req openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	return s.userprefs.PatchAccountPreferences(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

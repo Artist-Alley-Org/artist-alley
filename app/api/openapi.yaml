@@ -757,6 +757,85 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /account/preferences:
+    get:
+      operationId: getAccountPreferences
+      summary: Get my notification + view preferences
+      description: |
+        Phase 1.17.G — per-user application-behavior preferences:
+        which channels (in_app, email) the user wants each notification
+        event delivered through, plus default-view selections (home
+        tab, browse layout, browse sort) that apply to the user's
+        next page load.
+
+        First-visit callers (no row yet) get a zero-value response —
+        empty `notification_channels`, empty `default_views`, but the
+        canonical `known_event_types`, `known_channels`, and per-event
+        `default_channels_by_event` are always populated so the UI can
+        render the toggle grid without hard-coding the catalog.
+
+        Channel resolution at notification-write time falls back to
+        `default_channels_by_event` for any event the user hasn't
+        explicitly set. An explicit empty array MEANS "deliver
+        nothing for this event" and overrides the default.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferencesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      operationId: patchAccountPreferences
+      summary: Replace my notification + view preferences
+      description: |
+        Phase 1.17.G — upserts the caller's preferences. The wire
+        contract is full-object replacement: the client sends the
+        entire resolved object, the server validates against the
+        build's `known_event_types` + `known_channels` catalogs, and
+        rejects unknown values rather than silently persisting them.
+
+        There is no per-field PATCH verb. To "remove a channel from
+        an event," send the full `notification_channels` object with
+        that channel omitted from the array. To "fall back to system
+        default for an event," omit the event key entirely from the
+        map.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPreferencesRequest"
+      responses:
+        "200":
+          description: Preferences saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferencesResponse"
+        "400":
+          description: Validation failure (unknown event / channel / duplicate).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /admin/users/{ref}/password-reset:
     parameters:
       - name: ref
@@ -5943,6 +6022,102 @@ components:
         sessions_revoked:
           type: integer
           description: Count of other sessions ended as part of this change.
+
+    UserPreferencesViews:
+      type: object
+      description: |
+        Default-view selections (Phase 1.17.G). Unset fields fall back
+        to per-route defaults at render time. Adding a new view knob
+        is a string-additive change; the valid value sets grow as new
+        layouts ship in later phases.
+      properties:
+        home_tab:
+          type: string
+          description: |
+            Which tab the home page lands on. Valid values today:
+            `following`, `latest`, `trending`, `for_you`. Empty/unset
+            falls back to `latest`.
+        browse_layout:
+          type: string
+          description: |
+            Default browse-feed layout. Valid values today: `grid`,
+            `masonry`, `thumbnail`, `list`. Empty/unset falls back to
+            the route's default.
+        browse_sort:
+          type: string
+          description: |
+            Default browse-feed sort. Valid values today: `newest`,
+            `oldest`, `popular`, `trending`. Empty/unset falls back
+            to the route's default.
+
+    UserPreferencesRequest:
+      type: object
+      description: |
+        PATCH-time payload for the per-user preferences row. Wire
+        contract is full-object replacement; field-level merge is
+        NOT supported. Both fields are optional — an absent
+        `notification_channels` clears the user's overrides, an
+        absent `default_views` clears the view selections.
+      properties:
+        notification_channels:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: |
+            Map from event-type key to channel list. Unknown event
+            types or unknown channel names trigger a 400. An empty
+            array MEANS "deliver nothing for this event" and
+            overrides the system default; an absent key means
+            "use system default."
+        default_views:
+          $ref: "#/components/schemas/UserPreferencesViews"
+
+    UserPreferencesResponse:
+      type: object
+      description: |
+        GET / PATCH response for per-user preferences (Phase 1.17.G).
+        Includes the build's known event-type + channel catalogs so
+        the UI renders toggle grids without hard-coding the lists
+        client-side. Per-event system defaults are surfaced so the UI
+        can show "follows system default — in_app only" hints
+        alongside each toggle.
+      required:
+        - notification_channels
+        - default_views
+        - known_event_types
+        - known_channels
+        - default_channels_by_event
+      properties:
+        notification_channels:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        default_views:
+          $ref: "#/components/schemas/UserPreferencesViews"
+        known_event_types:
+          type: array
+          items: { type: string }
+          description: |
+            Canonical ordered list of notification event types this
+            build knows about. Order is the recommended rendering
+            order in the UI.
+        known_channels:
+          type: array
+          items: { type: string }
+          description: |
+            Canonical channel names this build supports
+            (`in_app`, `email`, future: `sms`, `push`, `webhook`).
+        default_channels_by_event:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: |
+            Per-event-type system default channel list. Applied at
+            notification-write time when the user's
+            `notification_channels` doesn't have that key.
 
     AdminPasswordResetRequest:
       type: object

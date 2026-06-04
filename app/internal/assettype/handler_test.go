@@ -442,6 +442,12 @@ func (rtOnly) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequ
 func (rtOnly) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	panic("ListIdentityProviders called from assettype rtOnly test shim")
 }
+func (rtOnly) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	panic("GetAccountPreferences called from assettype rtOnly test shim")
+}
+func (rtOnly) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	panic("PatchAccountPreferences called from assettype rtOnly test shim")
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }

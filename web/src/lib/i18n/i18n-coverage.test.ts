@@ -34,6 +34,7 @@ const TRACKED_FILES = [
   'src/routes/admin/asset-types/[ref]/+page.svelte',
   'src/routes/admin/system/log/+page.svelte',
   'src/routes/admin/system/license/+page.svelte',
+  'src/routes/account/preferences/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":
@@ -80,14 +81,24 @@ function isLikelyEnglish(s: string): boolean {
 function collectOffenders(source: string): string[] {
   const found: string[] = [];
 
+  // Strip <script> blocks before scanning — TypeScript return-type
+  // annotations like `): Promise<void>` produce false positives on
+  // the >...< heuristic (the regex sees `>` from one generic and
+  // `<` from the next). The test only inspects the TEMPLATE surface;
+  // script-literal coverage is accepted as a known false negative
+  // per the file's header comment.
+  const templateOnly = source.replace(/<script[\s\S]*?<\/script>/g, '');
+
   // Tag-text matches.
-  for (const m of source.matchAll(TEXT_BETWEEN_TAGS)) {
+  for (const m of templateOnly.matchAll(TEXT_BETWEEN_TAGS)) {
     const candidate = m[1].trim();
     if (isLikelyEnglish(candidate)) found.push(candidate);
   }
 
-  // Quoted attribute literals.
-  for (const m of source.matchAll(QUOTED_ATTR)) {
+  // Quoted attribute literals. Also script-stripped — handlers like
+  // `onclick={() => api.POST('/foo', { body: {...} })}` would
+  // otherwise leak script-literal strings into the attribute regex.
+  for (const m of templateOnly.matchAll(QUOTED_ATTR)) {
     const candidate = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5]).trim();
     if (isLikelyEnglish(candidate)) found.push(candidate);
   }

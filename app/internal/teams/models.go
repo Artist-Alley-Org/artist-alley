@@ -481,6 +481,15 @@ type UserPasswordHistory struct {
 	OriginServerID pgtype.UUID
 }
 
+type UserPreference struct {
+	RsUserID             int64
+	NotificationChannels []byte
+	DefaultViews         []byte
+	OriginServerID       pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type UserProfile struct {
 	RsUserID       int64
 	DisplayName    *string

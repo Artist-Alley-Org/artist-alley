@@ -484,6 +484,12 @@ func (shimImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRe
 func (shimImpl) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	panic("ListIdentityProviders called from storage test shim")
 }
+func (shimImpl) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	panic("GetAccountPreferences called from storage test shim")
+}
+func (shimImpl) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	panic("PatchAccountPreferences called from storage test shim")
+}
 func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from storage_test test shim")
 }

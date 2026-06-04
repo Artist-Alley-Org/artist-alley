@@ -618,6 +618,19 @@ CREATE TABLE user_profiles (
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
+-- migrations/00044_user_preferences.sql — per-user application-
+-- behavior knobs (notification channels + default views). JSONB so
+-- adding new event types in later sub-phases (G2, I2, I, L) is
+-- additive without further schema migrations.
+CREATE TABLE user_preferences (
+    rs_user_id            BIGINT       PRIMARY KEY,
+    notification_channels JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    default_views         JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    origin_server_id      UUID         NULL,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
 -- migrations/00024_preview_queue.sql — generic background-job queue
 -- + preview-pipeline bookkeeping on assets. Workers claim rows via
 -- FOR UPDATE SKIP LOCKED; handlers dispatch on `type`.

@@ -773,6 +773,12 @@ func (metaShim) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRe
 func (metaShim) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	panic("ListIdentityProviders called from metadata test shim")
 }
+func (metaShim) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	panic("GetAccountPreferences called from metadata test shim")
+}
+func (metaShim) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	panic("PatchAccountPreferences called from metadata test shim")
+}
 func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from metadata_test test shim")
 }

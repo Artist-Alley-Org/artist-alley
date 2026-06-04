@@ -768,6 +768,12 @@ func (collShim) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRe
 func (collShim) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	panic("ListIdentityProviders called from collections test shim")
 }
+func (collShim) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	panic("GetAccountPreferences called from collections test shim")
+}
+func (collShim) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	panic("PatchAccountPreferences called from collections test shim")
+}
 func (collShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from collections_test test shim")
 }

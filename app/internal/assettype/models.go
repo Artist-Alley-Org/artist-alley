@@ -481,6 +481,15 @@ type UserPasswordHistory struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
+type UserPreference struct {
+	RsUserID             int64              `json:"rs_user_id"`
+	NotificationChannels []byte             `json:"notification_channels"`
+	DefaultViews         []byte             `json:"default_views"`
+	OriginServerID       pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserProfile struct {
 	RsUserID       int64              `json:"rs_user_id"`
 	DisplayName    *string            `json:"display_name"`

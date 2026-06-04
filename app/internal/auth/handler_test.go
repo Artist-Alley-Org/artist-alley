@@ -734,6 +734,12 @@ func (a authOnlyImpl) ListIdentityProviders(ctx context.Context, req openapi.Lis
 	// package, and the providers endpoint is in scope for its tests.
 	return a.h.ListIdentityProviders(ctx, req)
 }
+func (authOnlyImpl) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	panic("GetAccountPreferences called from auth test shim")
+}
+func (authOnlyImpl) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	panic("PatchAccountPreferences called from auth test shim")
+}
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
 }
