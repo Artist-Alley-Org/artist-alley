@@ -1,19 +1,20 @@
 // HTTP handler for the licensing surface.
 //
-// v1 exposes a single admin-gated endpoint:
+// Endpoints (Phase 1.17.O):
 //
-//	GET /api/v1/admin/license/status   → current license Status snapshot
-//
-// Future endpoints (Phase 1.17.O-2):
-//
+//	GET  /api/v1/admin/license/status     current license Status snapshot
+//	POST /api/v1/admin/license/validate   dry-run verify without installing
 //	POST /api/v1/admin/license/upload     install a new .lic file
-//	POST /api/v1/admin/license/validate   parse + verify without installing
+//
+// Future (Phase 1.17.O-3+):
+//
 //	GET  /api/v1/license/status           limited public view for users
 
 package licensing
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -58,6 +59,171 @@ func (h *Handler) GetAdminLicenseStatus(
 
 	st := h.state.Status()
 	return openapi.GetAdminLicenseStatus200JSONResponse(statusToWire(st)), nil
+}
+
+// ValidateAdminLicense — POST /api/v1/admin/license/validate
+//
+// Dry-run verify: parses the supplied envelope, runs the full verifier
+// chain (envelope → signature → temporal window → issuer match), and
+// returns the resulting Status WITHOUT writing anything to disk or
+// touching the cached State. Lets the admin UI preview a candidate
+// license before clicking "Install".
+func (h *Handler) ValidateAdminLicense(
+	ctx context.Context,
+	req openapi.ValidateAdminLicenseRequestObject,
+) (openapi.ValidateAdminLicenseResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ValidateAdminLicense401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{
+				Error: "authentication required",
+			},
+		}, nil
+	}
+	if !id.Can(auth.SuperAdminCapability) {
+		return openapi.ValidateAdminLicense403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "system.admin capability required",
+			},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.ValidateAdminLicense400JSONResponse(buildValidateError(ErrBadEnvelope)), nil
+	}
+	claims, err := Verify(req.Body.LicenseText)
+	if err != nil {
+		return openapi.ValidateAdminLicense400JSONResponse(buildValidateError(err)), nil
+	}
+	// Reuse the same Status mapper the GET endpoint uses so the preview
+	// renders identically to the post-install snapshot. Path comes from
+	// the configured LicensePath even though we haven't written there
+	// yet — that's the path the upload would target, so showing it is
+	// useful diagnostic context.
+	st := statusFromClaims(claims, h.state.Path())
+	return openapi.ValidateAdminLicense200JSONResponse(statusToWire(st)), nil
+}
+
+// UploadAdminLicense — POST /api/v1/admin/license/upload
+//
+// Verifies the supplied envelope, persists it to LicensePath on
+// success, and swaps the cached State. Verification runs BEFORE the
+// write so a bad envelope can never overwrite a working file.
+//
+// A 409 is returned when the server was started with no LicensePath
+// configured — the operator must set `AA_LICENSE_PATH` and restart
+// before uploading.
+func (h *Handler) UploadAdminLicense(
+	ctx context.Context,
+	req openapi.UploadAdminLicenseRequestObject,
+) (openapi.UploadAdminLicenseResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.UploadAdminLicense401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{
+				Error: "authentication required",
+			},
+		}, nil
+	}
+	if !id.Can(auth.SuperAdminCapability) {
+		return openapi.UploadAdminLicense403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
+				Error: "system.admin capability required",
+			},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.UploadAdminLicense400JSONResponse(buildValidateError(ErrBadEnvelope)), nil
+	}
+	st, err := h.state.SaveAndReload(req.Body.LicenseText)
+	switch {
+	case errors.Is(err, ErrStateNil):
+		return openapi.UploadAdminLicense409JSONResponse{
+			Error: "no license path configured: set AA_LICENSE_PATH and restart",
+		}, nil
+	case isVerifierError(err):
+		return openapi.UploadAdminLicense400JSONResponse(buildValidateError(err)), nil
+	case err != nil:
+		// Verified but the disk write failed — 500 so the admin sees
+		// it as an infrastructure problem, not a bad license.
+		if h.logger != nil {
+			h.logger.Error("license upload write failed",
+				slog.String("path", h.state.Path()),
+				slog.String("err", err.Error()),
+			)
+		}
+		return openapi.UploadAdminLicense500JSONResponse{
+			Error: "license verified but write to disk failed: " + err.Error(),
+		}, nil
+	}
+	if h.logger != nil {
+		h.logger.Info("license uploaded",
+			slog.String("path", h.state.Path()),
+			slog.String("tier", st.Tier),
+			slog.String("lid", st.LID),
+		)
+	}
+	return openapi.UploadAdminLicense200JSONResponse(statusToWire(st)), nil
+}
+
+// isVerifierError reports whether err is one of the typed verifier
+// sentinels — i.e. the envelope itself is bad. Anything else (disk
+// errors, programming bugs) should NOT surface as a 400 to the UI.
+func isVerifierError(err error) bool {
+	switch {
+	case errors.Is(err, ErrBadEnvelope),
+		errors.Is(err, ErrBadSignature),
+		errors.Is(err, ErrExpired),
+		errors.Is(err, ErrNotYetValid),
+		errors.Is(err, ErrNotInWindow),
+		errors.Is(err, ErrUnknownKID),
+		errors.Is(err, ErrWrongIssuer),
+		errors.Is(err, ErrChainExpired),
+		errors.Is(err, ErrChainBadSig),
+		errors.Is(err, ErrChainScope),
+		errors.Is(err, ErrChainKIDMismatch):
+		return true
+	}
+	return false
+}
+
+// buildValidateError maps a verifier error into the wire-level
+// LicenseValidateError. The `code` field is what the frontend
+// switches on for i18n; `message` carries the raw error string so
+// admins have something to grep logs for.
+func buildValidateError(err error) openapi.LicenseValidateError {
+	return openapi.LicenseValidateError{
+		Error:   "license validation failed",
+		Code:    validateErrorCode(err),
+		Message: err.Error(),
+	}
+}
+
+func validateErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrBadEnvelope):
+		return "bad_envelope"
+	case errors.Is(err, ErrBadSignature):
+		return "bad_signature"
+	case errors.Is(err, ErrExpired):
+		return "expired"
+	case errors.Is(err, ErrNotYetValid):
+		return "not_yet_valid"
+	case errors.Is(err, ErrNotInWindow):
+		return "not_yet_valid"
+	case errors.Is(err, ErrUnknownKID):
+		return "unknown_publisher_key"
+	case errors.Is(err, ErrWrongIssuer):
+		return "wrong_issuer"
+	case errors.Is(err, ErrChainExpired):
+		return "chain_expired"
+	case errors.Is(err, ErrChainBadSig):
+		return "chain_bad_signature"
+	case errors.Is(err, ErrChainScope):
+		return "chain_scope"
+	case errors.Is(err, ErrChainKIDMismatch):
+		return "chain_kid_mismatch"
+	}
+	return "unknown"
 }
 
 // statusToWire converts our internal Status to the openapi-generated

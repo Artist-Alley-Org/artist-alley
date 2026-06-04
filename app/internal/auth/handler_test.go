@@ -723,6 +723,12 @@ func (authOnlyImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminA
 func (authOnlyImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
 	panic("GetAdminLicenseStatus called from auth test shim")
 }
+func (authOnlyImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from auth test shim")
+}
+func (authOnlyImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from auth test shim")
+}
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
 }

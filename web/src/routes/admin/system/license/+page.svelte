@@ -28,9 +28,28 @@
     path?: string;
   }
 
+  interface ValidateError {
+    error: string;
+    code: string;
+    message: string;
+  }
+
   let status = $state<LicenseStatus | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  // Upload flow state. `previewStatus` mirrors the candidate license
+  // that the verifier accepted; `previewError` carries a structured
+  // verifier rejection so we can show a code-keyed i18n message.
+  // `installing` covers both validate AND install — the button toggles
+  // between them and we want the spinner consistent.
+  let licenseText = $state('');
+  let validating = $state(false);
+  let installing = $state(false);
+  let previewStatus = $state<LicenseStatus | null>(null);
+  let previewError = $state<ValidateError | null>(null);
+  let installError = $state<string | null>(null);
+  let installSuccess = $state(false);
 
   onMount(() => {
     void load();
@@ -49,6 +68,99 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function validateLicense(): Promise<void> {
+    if (!licenseText.trim()) return;
+    validating = true;
+    previewStatus = null;
+    previewError = null;
+    installError = null;
+    installSuccess = false;
+    try {
+      const r = await api.POST('/admin/license/validate', {
+        body: { license_text: licenseText },
+      });
+      if (r.data) {
+        previewStatus = r.data as unknown as LicenseStatus;
+        return;
+      }
+      // 400 carries LicenseValidateError; other failures fall through.
+      const v = asValidateError(r.error);
+      if (v) {
+        previewError = v;
+      } else {
+        installError = readErrorText(r.error, t('admin.system.license.validate_error_unknown'));
+      }
+    } finally {
+      validating = false;
+    }
+  }
+
+  async function installLicense(): Promise<void> {
+    if (!licenseText.trim()) return;
+    installing = true;
+    installError = null;
+    installSuccess = false;
+    try {
+      const r = await api.POST('/admin/license/upload', {
+        body: { license_text: licenseText },
+      });
+      if (r.data) {
+        status = r.data as unknown as LicenseStatus;
+        installSuccess = true;
+        // Clear the editor so the operator doesn't accidentally
+        // re-submit the same envelope; the new state is now in
+        // `status` above.
+        licenseText = '';
+        previewStatus = null;
+        previewError = null;
+        return;
+      }
+      const v = asValidateError(r.error);
+      if (v) {
+        previewError = v;
+      } else {
+        installError = readErrorText(r.error, t('admin.system.license.install_error_unknown'));
+      }
+    } finally {
+      installing = false;
+    }
+  }
+
+  // The fetch client returns r.error as one of:
+  //   - a structured object (LicenseValidateError, Error, Unauthorized…)
+  //   - a plain string (server fell back to text — happens for 404/500
+  //     before our handler runs)
+  //   - undefined (network failure)
+  // Narrow to ValidateError only when the shape really matches; the
+  // 'in' operator throws on strings, so guard with typeof first.
+  function asValidateError(err: unknown): ValidateError | null {
+    if (err && typeof err === 'object' && 'code' in err && 'message' in err) {
+      const v = err as { code: unknown; message: unknown };
+      if (typeof v.code === 'string' && typeof v.message === 'string') {
+        return err as ValidateError;
+      }
+    }
+    return null;
+  }
+
+  function readErrorText(err: unknown, fallback: string): string {
+    if (typeof err === 'string' && err.trim()) return err;
+    if (err && typeof err === 'object' && 'error' in err) {
+      const e = (err as { error?: unknown }).error;
+      if (typeof e === 'string' && e.trim()) return e;
+    }
+    return fallback;
+  }
+
+  function validateErrorMessage(e: ValidateError): string {
+    const k = `admin.system.license.validate_code_${e.code}`;
+    const translated = t(k);
+    // t() falls back to the key when missing — distinguish "we have a
+    // translation" from "we don't" so we can show the raw verifier
+    // message rather than a key.
+    return translated === k ? e.message : translated;
   }
 
   function formatCap(n: number | null | undefined): string {
@@ -197,7 +309,77 @@
     </section>
   {/if}
 
-  <p class="mt-4 text-xs text-fg-dim">
-    {t('admin.system.license.upload_coming_soon')}
-  </p>
+  <section class="mt-4 rounded-lg border border-border bg-surface-elevated p-4">
+    <h2 class="mb-2 text-sm font-medium">{t('admin.system.license.section_install')}</h2>
+    <p class="mb-3 text-xs text-fg-muted">{t('admin.system.license.install_explainer')}</p>
+
+    <label for="license-text" class="mb-1 block text-xs font-medium">
+      {t('admin.system.license.upload_label')}
+    </label>
+    <textarea
+      id="license-text"
+      bind:value={licenseText}
+      class="mb-3 block w-full rounded border border-border bg-bg p-2 font-mono text-xs"
+      rows="10"
+      placeholder={t('admin.system.license.upload_placeholder')}
+      spellcheck="false"
+      autocomplete="off"
+    ></textarea>
+
+    <div class="flex flex-wrap gap-2">
+      <button
+        type="button"
+        class="btn-secondary text-sm"
+        disabled={validating || installing || !licenseText.trim()}
+        onclick={() => void validateLicense()}
+      >
+        {validating ? t('common.loading') : t('admin.system.license.validate_button')}
+      </button>
+      <button
+        type="button"
+        class="btn-primary text-sm"
+        disabled={validating || installing || !licenseText.trim()}
+        onclick={() => void installLicense()}
+      >
+        {installing ? t('common.loading') : t('admin.system.license.install_button')}
+      </button>
+    </div>
+
+    {#if installSuccess}
+      <p role="status" class="mt-3 rounded border border-success/40 bg-success/10 p-2 text-xs text-success">
+        {t('admin.system.license.install_success')}
+      </p>
+    {/if}
+
+    {#if previewError}
+      <p role="alert" class="mt-3 rounded border border-danger/40 bg-danger/10 p-2 text-xs text-danger">
+        <strong>{t('admin.system.license.validate_error_label')}:</strong>
+        {validateErrorMessage(previewError)}
+      </p>
+    {:else if installError}
+      <p role="alert" class="mt-3 rounded border border-danger/40 bg-danger/10 p-2 text-xs text-danger">
+        {installError}
+      </p>
+    {:else if previewStatus}
+      <div class="mt-3 rounded border border-accent/40 bg-accent/5 p-3 text-xs">
+        <p class="mb-2 font-medium">{t('admin.system.license.validate_preview_label')}</p>
+        <dl class="grid grid-cols-[10rem,1fr] gap-x-3 gap-y-1">
+          <dt class="text-fg-muted">{t('admin.system.license.field_tier')}</dt>
+          <dd>{previewStatus.tier}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_owner')}</dt>
+          <dd class="font-mono">{previewStatus.owner ?? '—'}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_org')}</dt>
+          <dd class="font-mono">{previewStatus.org ?? '—'}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_lid')}</dt>
+          <dd class="break-all font-mono">{previewStatus.lid ?? '—'}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_exp')}</dt>
+          <dd>{formatIso(previewStatus.exp)}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_seats')}</dt>
+          <dd>{formatCap(previewStatus.seats)}</dd>
+          <dt class="text-fg-muted">{t('admin.system.license.field_asset_cap')}</dt>
+          <dd>{formatCap(previewStatus.asset_cap)}</dd>
+        </dl>
+      </div>
+    {/if}
+  </section>
 {/if}

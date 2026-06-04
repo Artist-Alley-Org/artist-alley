@@ -592,6 +592,14 @@ func (s *apiServer) GetAdminLicenseStatus(ctx context.Context, req openapi.GetAd
 	return s.licensing.GetAdminLicenseStatus(ctx, req)
 }
 
+func (s *apiServer) ValidateAdminLicense(ctx context.Context, req openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	return s.licensing.ValidateAdminLicense(ctx, req)
+}
+
+func (s *apiServer) UploadAdminLicense(ctx context.Context, req openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	return s.licensing.UploadAdminLicense(ctx, req)
+}
+
 // --- brush packs (Phase 1.21) ---------------------------------------------
 
 func (s *apiServer) ListBrushPacks(ctx context.Context, req openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {

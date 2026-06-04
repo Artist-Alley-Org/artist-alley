@@ -180,9 +180,10 @@ type BrushPackStamp struct {
 }
 
 type Capability struct {
-	Code        string             `json:"code"`
-	Description string             `json:"description"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Code                   string             `json:"code"`
+	Description            string             `json:"description"`
+	RequiredLicenseFeature *string            `json:"required_license_feature"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 type Collection struct {

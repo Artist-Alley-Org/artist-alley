@@ -232,9 +232,10 @@ CREATE TABLE api_tokens (
 
 -- migrations/00002_capabilities_roles.sql — authorization model.
 CREATE TABLE capabilities (
-    code        TEXT PRIMARY KEY,
-    description TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    code                      TEXT PRIMARY KEY,
+    description               TEXT NOT NULL DEFAULT '',
+    required_license_feature  TEXT NULL,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE roles (

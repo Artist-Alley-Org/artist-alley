@@ -1176,6 +1176,43 @@ func (q *Queries) ListUserRevokes(ctx context.Context, rsUserID int64) ([]ListUs
 	return items, nil
 }
 
+const loadCapabilityLicenseFeatures = `-- name: LoadCapabilityLicenseFeatures :many
+SELECT code, required_license_feature
+FROM capabilities
+WHERE required_license_feature IS NOT NULL
+ORDER BY code
+`
+
+type LoadCapabilityLicenseFeaturesRow struct {
+	Code                   string
+	RequiredLicenseFeature *string
+}
+
+// Returns the (code, required_license_feature) pairs for every cap that
+// has a license-feature gate. Rows where the column is NULL are skipped
+// entirely — they don't need to live in the in-process map. The result
+// feeds auth.SetCapLicenseFeatures at boot, so Identity.Can() can check
+// the install's license without a per-call DB hit.
+func (q *Queries) LoadCapabilityLicenseFeatures(ctx context.Context) ([]LoadCapabilityLicenseFeaturesRow, error) {
+	rows, err := q.db.Query(ctx, loadCapabilityLicenseFeatures)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LoadCapabilityLicenseFeaturesRow
+	for rows.Next() {
+		var i LoadCapabilityLicenseFeaturesRow
+		if err := rows.Scan(&i.Code, &i.RequiredLicenseFeature); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()

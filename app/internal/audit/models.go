@@ -180,9 +180,10 @@ type BrushPackStamp struct {
 }
 
 type Capability struct {
-	Code        string
-	Description string
-	CreatedAt   pgtype.Timestamptz
+	Code                   string
+	Description            string
+	RequiredLicenseFeature *string
+	CreatedAt              pgtype.Timestamptz
 }
 
 type Collection struct {

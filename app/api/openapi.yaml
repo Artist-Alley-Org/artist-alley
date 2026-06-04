@@ -490,6 +490,111 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/license/validate:
+    post:
+      operationId: validateAdminLicense
+      summary: Dry-run verify a license envelope (Phase 1.17.O-2)
+      description: |
+        Verifies the supplied `.lic` text against the embedded
+        publisher catalog without persisting anything. Used by the
+        admin UI to preview a license before clicking "Install".
+
+        On success the response carries the same `LicenseStatus`
+        shape the GET endpoint returns, with `loaded: true` and the
+        Status fields populated from the candidate envelope. The
+        currently installed license is NOT touched.
+
+        On verifier failure (`bad signature`, `expired`, `unknown
+        publisher key`, etc.) the response is a structured
+        `LicenseValidateError` describing the failure so the UI can
+        render an actionable message instead of a generic 400.
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicenseUploadRequest"
+      responses:
+        "200":
+          description: Envelope verified successfully (not installed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "400":
+          description: Envelope rejected by the verifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseValidateError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/license/upload:
+    post:
+      operationId: uploadAdminLicense
+      summary: Install a new license envelope (Phase 1.17.O-2)
+      description: |
+        Verifies the supplied `.lic` text and, on success, writes it
+        to the configured `LicensePath` and atomically swaps the
+        cached license state. The new status is returned in the
+        same shape as `GET /admin/license/status`.
+
+        Verification runs BEFORE the write — a bad envelope can never
+        overwrite a working file on disk. On verifier failure the
+        on-disk file and cached state are unchanged and the response
+        is a structured `LicenseValidateError`.
+
+        Returns 409 when the server has no LicensePath configured
+        (the admin must set `AA_LICENSE_PATH` before uploading).
+      tags: [licensing]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicenseUploadRequest"
+      responses:
+        "200":
+          description: License installed; new status returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseStatus"
+        "400":
+          description: Envelope rejected by the verifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseValidateError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Server has no LicensePath configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Verified but write-to-disk failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /admin/audit:
     get:
       operationId: listAdminAuditEvents
@@ -6029,6 +6134,49 @@ components:
           description: |
             Filesystem path the verifier loaded the .lic from.
             Useful for diagnostics + support.
+
+    LicenseUploadRequest:
+      type: object
+      description: |
+        Payload for POST /admin/license/validate and
+        POST /admin/license/upload (Phase 1.17.O-2). Carries the
+        verbatim .lic envelope text — BEGIN/END markers, key:
+        value fields, signature field — exactly as the customer
+        downloaded it.
+      required: [license_text]
+      properties:
+        license_text:
+          type: string
+          minLength: 32
+          maxLength: 65536
+          description: |
+            Full .lic file body including the BEGIN/END markers.
+            Whitespace + line wrapping are tolerated by the
+            verifier.
+
+    LicenseValidateError:
+      type: object
+      description: |
+        Structured 400 response from /admin/license/validate +
+        /admin/license/upload. `code` is a stable machine-readable
+        token the UI can switch on for i18n; `message` is the raw
+        verifier error string for diagnostics.
+      required: [error, code, message]
+      properties:
+        error:
+          type: string
+          description: Human-readable summary (constant "license validation failed").
+        code:
+          type: string
+          description: |
+            Stable token for UI branching. One of:
+            `bad_envelope`, `bad_signature`, `expired`,
+            `not_yet_valid`, `unknown_publisher_key`,
+            `wrong_issuer`, `chain_expired`, `chain_bad_signature`,
+            `chain_scope`, `chain_kid_mismatch`, `unknown`.
+        message:
+          type: string
+          description: Raw verifier error string for diagnostics.
 
     AuditEvent:
       type: object

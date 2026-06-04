@@ -516,6 +516,17 @@ ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
 -- name: ListCapabilities :many
 SELECT code, description FROM capabilities ORDER BY code;
 
+-- name: LoadCapabilityLicenseFeatures :many
+-- Returns the (code, required_license_feature) pairs for every cap that
+-- has a license-feature gate. Rows where the column is NULL are skipped
+-- entirely — they don't need to live in the in-process map. The result
+-- feeds auth.SetCapLicenseFeatures at boot, so Identity.Can() can check
+-- the install's license without a per-call DB hit.
+SELECT code, required_license_feature
+FROM capabilities
+WHERE required_license_feature IS NOT NULL
+ORDER BY code;
+
 -- name: ListRoles :many
 -- Returns every role with its parent_id; the handler enriches each
 -- with the list of role-attached capabilities via ListRoleCapabilities.

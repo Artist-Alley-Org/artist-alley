@@ -85,6 +85,23 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// "loaded: false" + the built-in community defaults.
 	licState := licensing.NewState(cfg.LicensePath, logger)
 
+	// Wire the licensing.State into auth.Identity.Can() so capability
+	// checks consult the install's licensed feature set. Without this
+	// bridge, caps gated by required_license_feature would deny under
+	// every install (the "no source installed" failsafe in
+	// capLicenseAllows). The map of cap → feature is loaded from the
+	// capabilities table on the next line.
+	auth.SetLicenseSource(licState)
+	if features, err := loadCapLicenseFeatures(context.Background(), pool); err != nil {
+		// Non-fatal: degrade to "no license-gated caps" rather than
+		// failing the whole API server. Identity.Can() will allow
+		// every cap on the license axis (RBAC still enforced). Logged
+		// loudly so the misconfiguration surfaces.
+		logger.Error("load capability license features", "err", err)
+	} else {
+		auth.SetCapLicenseFeatures(features)
+	}
+
 	// Cross-domain cache registry. Subscribes to Postgres NOTIFY
 	// on channel "cache_invalidate" so peer instances (and DB
 	// triggers like the asset_field_value rebuild) can drop our
@@ -307,4 +324,24 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.done")
 		return nil
 	}
+}
+
+// loadCapLicenseFeatures fetches the cap → required_license_feature
+// map from the capabilities table for handoff to auth.SetCapLicenseFeatures.
+// Only caps with a non-NULL required_license_feature are returned, so
+// the in-memory map is tight even on a large cap table.
+func loadCapLicenseFeatures(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	q := auth.New(pool)
+	rows, err := q.LoadCapabilityLicenseFeatures(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.RequiredLicenseFeature == nil {
+			continue // defensive: SQL filters NULLs but the type is pointer
+		}
+		out[r.Code] = *r.RequiredLicenseFeature
+	}
+	return out, nil
 }

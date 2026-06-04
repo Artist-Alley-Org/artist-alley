@@ -87,6 +87,15 @@ func (id *Identity) Can(code string, opts ...CanOption) bool {
 	if id == nil || code == "" {
 		return false
 	}
+	// License gate runs BEFORE the SuperAdmin wildcard. SuperAdmin is
+	// about USER authorisation; license features are about INSTALL
+	// authorisation. A SuperAdmin on a Community install cannot reach
+	// enterprise-only caps (sso_ldap, multi_tenant, etc.) — those are
+	// install-level features the customer hasn't purchased, and no
+	// per-user role can grant them.
+	if !capLicenseAllows(code) {
+		return false
+	}
 	// system.admin global wildcard — short-circuit before any scope work.
 	for _, c := range id.Capabilities {
 		if c == SuperAdminCapability {

@@ -433,6 +433,12 @@ func (rtOnly) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEv
 func (rtOnly) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
 	panic("GetAdminLicenseStatus called from assettype rtOnly test shim")
 }
+func (rtOnly) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
+	panic("ValidateAdminLicense called from assettype rtOnly test shim")
+}
+func (rtOnly) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
+	panic("UploadAdminLicense called from assettype rtOnly test shim")
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }

@@ -118,6 +118,38 @@ func (s *State) Reload() (Status, error) {
 	return s.loadAndSwap()
 }
 
+// SaveAndReload writes the supplied license text to the configured
+// path, atomically swaps the cached Status, and returns the new
+// status. The text is verified BEFORE being persisted — an invalid
+// envelope never overwrites a valid file on disk. This is what the
+// POST /admin/license/upload handler calls after the admin pastes a
+// new .lic body.
+//
+// Errors:
+//   - ErrStateNil — no LicensePath configured (state was constructed
+//     with path == ""). Tests can hit this; production wires a path.
+//   - verifier errors (ErrBadEnvelope, ErrBadSignature, ErrExpired,
+//     ErrNotYetValid, etc.) — wrapped via Verify and returned as-is.
+//   - os.WriteFile errors — surfaced unchanged.
+//
+// Permissions: writes the file with 0600. The .lic carries an Ed25519
+// signature so leakage isn't a forgery risk, but the owner/org/seats
+// inside it are licensee-private; 0600 keeps it out of casual reach
+// on a shared host.
+func (s *State) SaveAndReload(text string) (Status, error) {
+	if s.path == "" {
+		return s.Status(), ErrStateNil
+	}
+	// Verify FIRST. A bad upload must not clobber a working file.
+	if _, err := Verify(text); err != nil {
+		return s.Status(), err
+	}
+	if err := os.WriteFile(s.path, []byte(text), 0o600); err != nil {
+		return s.Status(), err
+	}
+	return s.loadAndSwap()
+}
+
 // --- internals -------------------------------------------------------------
 
 func (s *State) loadInitial() {
