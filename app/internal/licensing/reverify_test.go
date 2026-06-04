@@ -75,6 +75,155 @@ func TestStartReverify_ZeroIntervalNoOp(t *testing.T) {
 	s.StartReverify(ctx, -1*time.Second)
 }
 
+// OnReload callbacks fire after every successful Status swap. The
+// load-bearing use case is the boot wiring in http/server.go — when
+// an admin uploads a new .lic via /admin/license/upload, the
+// callback rebuilds the auth.Registry so enterprise providers
+// (LDAP/SAML) start serving without a process restart.
+func TestOnReload_FiresAfterReload(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	kid := "onreload-kid"
+	withTestKey(t, kid, pub, "lic-test.artist-alley.org", func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "license.lic")
+		// Seed an invalid file so initial load fails; that's still a
+		// "swap" event (community fallback gets cached) so callbacks
+		// registered AFTER NewState fire on the next manual reload.
+		if err := os.WriteFile(path, []byte("garbage"), 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		s := NewState(path, "", nil)
+
+		var fired int
+		var gotFeatures []string
+		s.OnReload(func(st Status) {
+			fired++
+			gotFeatures = append([]string(nil), st.Features...)
+		})
+
+		// Now write a valid envelope + manual Reload. Callback must fire.
+		now := time.Now().Unix()
+		claims := LicenseClaims{
+			V: 1, KID: kid, LID: "01HZOR", Product: "artist-alley:core",
+			Tier: "pro", SeatWindowDays: 30,
+			Owner: "or@test.com", Org: "or",
+			NotBefore: now - 60, Expires: now + 3600, IssuedAt: now,
+			Features: []string{"core", "sso_ldap"},
+			Issuer:   "lic-test.artist-alley.org",
+		}
+		if err := os.WriteFile(path, []byte(mustSignEnvelope(t, priv, claims)), 0o600); err != nil {
+			t.Fatalf("write good envelope: %v", err)
+		}
+		if _, err := s.Reload(); err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if fired == 0 {
+			t.Fatal("OnReload callback never fired after successful Reload")
+		}
+		var sawLdap bool
+		for _, f := range gotFeatures {
+			if f == "sso_ldap" {
+				sawLdap = true
+			}
+		}
+		if !sawLdap {
+			t.Errorf("callback Status missing sso_ldap, got features: %v", gotFeatures)
+		}
+	})
+}
+
+// Nil callback is a no-op — guards against a refactor that drops the
+// nil check inside OnReload and accidentally calls a nil func.
+func TestOnReload_NilCallbackIgnored(t *testing.T) {
+	s := NewState("", "", nil)
+	s.OnReload(nil) // must not panic
+	_, _ = s.Reload()
+}
+
+// Multiple callbacks all fire, in registration order — important
+// because the boot wiring may want both "rebuild registry" + "log
+// the swap" callbacks.
+func TestOnReload_MultipleCallbacksFireInOrder(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	kid := "multi-cb-kid"
+	withTestKey(t, kid, pub, "lic-test.artist-alley.org", func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "license.lic")
+		now := time.Now().Unix()
+		claims := LicenseClaims{
+			V: 1, KID: kid, LID: "01HZMC", Product: "artist-alley:core",
+			Tier: "pro", SeatWindowDays: 30,
+			Owner: "mc@test.com", Org: "mc",
+			NotBefore: now - 60, Expires: now + 3600, IssuedAt: now,
+			Features: []string{"core"},
+			Issuer:   "lic-test.artist-alley.org",
+		}
+		if err := os.WriteFile(path, []byte(mustSignEnvelope(t, priv, claims)), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		s := NewState(path, "", nil)
+
+		var order []string
+		s.OnReload(func(Status) { order = append(order, "a") })
+		s.OnReload(func(Status) { order = append(order, "b") })
+		s.OnReload(func(Status) { order = append(order, "c") })
+
+		if _, err := s.Reload(); err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		want := []string{"a", "b", "c"}
+		if len(order) != len(want) {
+			t.Fatalf("got %d callbacks fired, want %d", len(order), len(want))
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("[%d] = %q, want %q", i, order[i], want[i])
+			}
+		}
+	})
+}
+
+// Callbacks must be able to call back INTO State methods (HasFeature,
+// Status, Features) without deadlocking. The swap() implementation
+// snapshots the callback slice and releases the lock before firing —
+// pin that property here so a refactor that holds the lock through
+// callback invocation breaks loudly.
+func TestOnReload_CallbackCanReadState(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	kid := "cb-readback-kid"
+	withTestKey(t, kid, pub, "lic-test.artist-alley.org", func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "license.lic")
+		now := time.Now().Unix()
+		claims := LicenseClaims{
+			V: 1, KID: kid, LID: "01HZCR", Product: "artist-alley:core",
+			Tier: "pro", SeatWindowDays: 30,
+			Owner: "cr@test.com", Org: "cr",
+			NotBefore: now - 60, Expires: now + 3600, IssuedAt: now,
+			Features: []string{"core", "sso_saml"},
+			Issuer:   "lic-test.artist-alley.org",
+		}
+		if err := os.WriteFile(path, []byte(mustSignEnvelope(t, priv, claims)), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		s := NewState(path, "", nil)
+
+		var sawSaml bool
+		s.OnReload(func(Status) {
+			// Read-back through the State's own method must not
+			// deadlock + must see the newly swapped data.
+			sawSaml = s.HasFeature("sso_saml")
+		})
+
+		if _, err := s.Reload(); err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if !sawSaml {
+			t.Fatal("callback could not read post-swap features via State.HasFeature")
+		}
+	})
+}
+
 // End-to-end: drop a fresh valid envelope on disk between ticks and
 // confirm the cached Status flips from "verify failed" to "loaded".
 func TestStartReverify_PicksUpFileChange(t *testing.T) {

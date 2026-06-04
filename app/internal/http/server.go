@@ -128,26 +128,28 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// Identity-provider registry. Built-in PasswordProvider is
 	// unconditional; enterprise providers (LDAP, SAML, ...) attach
 	// only when the install's license declares the matching feature.
-	// A patcher who flips HasFeature in process memory gets nothing
-	// back here — the registration block already ran, the routes
-	// already mounted (or didn't), the provider state was (or wasn't)
-	// constructed. "Construction-site gating" — described in the
-	// memory `feedback_core_principles` (license_first foundation).
+	//
+	// The registry is HOT-SWAPPABLE: licState.OnReload below registers
+	// a callback that re-runs buildProviders on every successful .lic
+	// upload / re-verify, so an admin who buys an enterprise upgrade
+	// can install the new .lic and immediately use LDAP without
+	// bouncing the process. Existing user sessions stay live.
+	//
+	// SAML routes are mounted unconditionally below — the handlers
+	// look the provider up from the registry at request time, so the
+	// route 404s cleanly when SAML isn't licensed and starts serving
+	// the moment a license-with-sso_saml lands.
 	providers := auth.NewRegistry()
-	providers.MustRegister(auth.NewPasswordProvider(pool, cfg.ScrambleKey), licState)
-	samlEnabled := false
-	if err := providers.Register(ldapauth.New("ldap", "LDAP / Active Directory"), licState); err != nil {
-		logger.Info("identity provider: ldap not registered", "reason", err.Error())
-	} else {
-		logger.Info("identity provider: ldap registered (stub impl)")
+	if err := providers.Replace(buildProviders(pool, cfg, licState, logger), licState); err != nil {
+		logger.Error("identity provider initial build failed", "err", err)
 	}
-	samlProvider := samlauth.New("saml", "SAML 2.0 SSO")
-	if err := providers.Register(samlProvider, licState); err != nil {
-		logger.Info("identity provider: saml not registered", "reason", err.Error())
-	} else {
-		logger.Info("identity provider: saml registered (stub impl)")
-		samlEnabled = true
-	}
+	licState.OnReload(func(_ licensing.Status) {
+		if err := providers.Replace(buildProviders(pool, cfg, licState, logger), licState); err != nil {
+			logger.Error("identity provider hot-rebuild failed", "err", err)
+		} else {
+			logger.Info("identity provider registry rebuilt after license reload")
+		}
+	})
 
 	// Multi-tenant manager. Returns nil when the install lacks
 	// multi_tenant; that nil is the canonical "feature unavailable"
@@ -238,17 +240,19 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 
-		// Conditionally mount kind-specific SAML routes. They exist
-		// in chi ONLY when the SAML provider is registered; on a
-		// Community install /auth/saml/* gets a chi 404 with no
-		// handler ever constructed for it. That's the "no route"
-		// half of the defense-in-depth — patching HasFeature at
-		// runtime won't conjure these routes into existence.
-		if samlEnabled {
-			r.Get("/auth/saml/login", samlProvider.BeginLogin)
-			r.Post("/auth/saml/acs", samlProvider.ConsumeAssertion)
-			r.Get("/auth/saml/metadata", samlProvider.Metadata)
-		}
+		// SAML redirect-flow routes. Always mounted, but the handlers
+		// look the provider up from the (hot-swappable) registry at
+		// request time — unlicensed installs get a clean 404, and the
+		// moment a license-with-sso_saml lands via /admin/license/upload
+		// they start serving without a process restart. Trade against
+		// the strict "no-route-on-Community" pattern was deliberate:
+		// the cap-bridge + chain-of-trust + re-verify ticker remain
+		// the load-bearing defense lines, and hot-swap is worth more
+		// to operators than a one-byte-harder patcher target here.
+		samlRouter := newSAMLRouter(providers)
+		r.Get("/auth/saml/login", samlRouter.BeginLogin)
+		r.Post("/auth/saml/acs", samlRouter.ConsumeAssertion)
+		r.Get("/auth/saml/metadata", samlRouter.Metadata)
 
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
@@ -401,6 +405,80 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.shutdown.done")
 		return nil
 	}
+}
+
+// buildProviders constructs the full identity-provider list for the
+// current license state. Called once at boot and again on every
+// licensing.State swap (via OnReload) so enterprise providers attach
+// + detach as licenses are uploaded / expire without a process
+// restart.
+//
+// Order matters only for logging output; sorting happens in
+// Registry.List for read-side stability.
+func buildProviders(pool *pgxpool.Pool, cfg config.Config, licState *licensing.State, logger *slog.Logger) []auth.IdentityProvider {
+	out := []auth.IdentityProvider{
+		auth.NewPasswordProvider(pool, cfg.ScrambleKey),
+	}
+	if licState.HasFeature(ldapauth.LicenseFeature) {
+		out = append(out, ldapauth.New("ldap", "LDAP / Active Directory"))
+		logger.Info("identity provider: ldap registered (stub impl)")
+	} else {
+		logger.Info("identity provider: ldap absent (sso_ldap feature not in license)")
+	}
+	if licState.HasFeature(samlauth.LicenseFeature) {
+		out = append(out, samlauth.New("saml", "SAML 2.0 SSO"))
+		logger.Info("identity provider: saml registered (stub impl)")
+	} else {
+		logger.Info("identity provider: saml absent (sso_saml feature not in license)")
+	}
+	return out
+}
+
+// samlRouter wires the SAML redirect-flow HTTP routes to a
+// per-request lookup against the (hot-swappable) provider registry.
+// When the SAML provider isn't currently registered (Community
+// install, or .lic doesn't declare sso_saml), each handler 404s —
+// no client distinguishes that from a route that was never mounted
+// in the first place. The moment an admin uploads a license that
+// includes sso_saml, the OnReload callback rebuilds the registry and
+// these routes start serving without any process intervention.
+type samlRouter struct {
+	providers *auth.Registry
+}
+
+func newSAMLRouter(r *auth.Registry) *samlRouter { return &samlRouter{providers: r} }
+
+func (s *samlRouter) resolve() (samlauth.RedirectFlowHandler, bool) {
+	p, ok := s.providers.Get("saml")
+	if !ok {
+		return nil, false
+	}
+	rfh, ok := p.(samlauth.RedirectFlowHandler)
+	return rfh, ok
+}
+
+func (s *samlRouter) BeginLogin(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.BeginLogin(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *samlRouter) ConsumeAssertion(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.ConsumeAssertion(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *samlRouter) Metadata(w http.ResponseWriter, r *http.Request) {
+	if h, ok := s.resolve(); ok {
+		h.Metadata(w, r)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 // loadCapLicenseFeatures fetches the cap → required_license_feature

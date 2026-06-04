@@ -159,3 +159,97 @@ func TestErrProviderUnimplemented_IsSentinel(t *testing.T) {
 		t.Fatal("errors.Is must recognise wrapped ErrProviderUnimplemented")
 	}
 }
+
+// Replace atomically swaps the registry's provider set. Pinning the
+// happy path: a Community-mode registry with only "password" rebuilds
+// into an enterprise-mode registry that also has "ldap" after a
+// hypothetical license upload. This is the hot-swap path that lets
+// admins upgrade from community → enterprise without restarting the
+// process.
+func TestRegistry_ReplaceSwapsProviderSet(t *testing.T) {
+	r := NewRegistry()
+	r.MustRegister(&stubProvider{name: "password", kind: KindPassword, supportsPassword: true}, nil)
+	if _, ok := r.Get("ldap"); ok {
+		t.Fatal("precondition: ldap must not be registered initially")
+	}
+	err := r.Replace([]IdentityProvider{
+		&stubProvider{name: "password", kind: KindPassword, supportsPassword: true},
+		&stubProvider{name: "ldap", kind: KindLDAP, requiredFeature: "sso_ldap", supportsPassword: true},
+	}, licenseStub{"sso_ldap": true})
+	if err != nil {
+		t.Fatalf("Replace returned err: %v", err)
+	}
+	if _, ok := r.Get("ldap"); !ok {
+		t.Fatal("ldap must be registered after Replace")
+	}
+	if _, ok := r.Get("password"); !ok {
+		t.Fatal("password must still be registered after Replace")
+	}
+}
+
+// The reverse direction: downgrade from enterprise → community
+// (license expired or removed) must atomically drop the LDAP slot so
+// subsequent /auth/login requests with provider="ldap" return the
+// canonical 401 anti-enumeration response.
+func TestRegistry_ReplaceCanShrinkRegistry(t *testing.T) {
+	r := NewRegistry()
+	r.MustRegister(&stubProvider{name: "password", kind: KindPassword, supportsPassword: true}, nil)
+	r.MustRegister(&stubProvider{name: "ldap", kind: KindLDAP, requiredFeature: "sso_ldap", supportsPassword: true},
+		licenseStub{"sso_ldap": true})
+
+	// Now "lose" the license — replace with password only.
+	err := r.Replace([]IdentityProvider{
+		&stubProvider{name: "password", kind: KindPassword, supportsPassword: true},
+	}, licenseStub{}) // no features
+	if err != nil {
+		t.Fatalf("Replace returned err: %v", err)
+	}
+	if _, ok := r.Get("ldap"); ok {
+		t.Fatal("ldap must be removed after license downgrade")
+	}
+	if _, ok := r.Get("password"); !ok {
+		t.Fatal("password must survive license downgrade")
+	}
+}
+
+// Replace must re-validate license features against the new source.
+// A test caller that tries to swap in a sso_ldap-gated provider
+// without the feature gets the swap REJECTED entirely — the previous
+// registry stays intact, no partial update.
+func TestRegistry_ReplaceRejectsUnlicensedProvider(t *testing.T) {
+	r := NewRegistry()
+	r.MustRegister(&stubProvider{name: "password", kind: KindPassword, supportsPassword: true}, nil)
+
+	err := r.Replace([]IdentityProvider{
+		&stubProvider{name: "password", kind: KindPassword, supportsPassword: true},
+		&stubProvider{name: "ldap", kind: KindLDAP, requiredFeature: "sso_ldap", supportsPassword: true},
+	}, licenseStub{}) // no sso_ldap
+	if err == nil {
+		t.Fatal("Replace must reject unlicensed enterprise provider")
+	}
+	// Previous registry stays intact.
+	if _, ok := r.Get("password"); !ok {
+		t.Fatal("failed Replace must leave previous registry intact")
+	}
+	if _, ok := r.Get("ldap"); ok {
+		t.Fatal("failed Replace must NOT partially add the rejected provider")
+	}
+}
+
+// Replace with a duplicate-name list fails atomically — same
+// failure-doesn't-corrupt property as the unlicensed case.
+func TestRegistry_ReplaceRejectsDuplicateNames(t *testing.T) {
+	r := NewRegistry()
+	r.MustRegister(&stubProvider{name: "password", kind: KindPassword, supportsPassword: true}, nil)
+
+	err := r.Replace([]IdentityProvider{
+		&stubProvider{name: "password", kind: KindPassword, supportsPassword: true},
+		&stubProvider{name: "password", kind: KindPassword, supportsPassword: true},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for duplicate provider names in Replace list")
+	}
+	if len(r.List()) != 1 {
+		t.Fatalf("previous registry must stay intact, got %d providers", len(r.List()))
+	}
+}

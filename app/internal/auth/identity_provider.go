@@ -227,10 +227,54 @@ func (r *Registry) List() []IdentityProvider {
 }
 
 // Has reports whether the named provider is registered. Convenience
-// for boot wiring that conditionally mounts kind-specific routes
-// (e.g. "register the SAML callback handler iff the SAML provider
-// made it into the registry").
+// for boot wiring + per-request route handlers that look the provider
+// up at request time so registry swaps take effect without a process
+// restart.
 func (r *Registry) Has(name string) bool {
 	_, ok := r.Get(name)
 	return ok
+}
+
+// Replace atomically swaps the registry's contents to the provided
+// set. Used by the license-reload hook in licensing.State: when an
+// admin uploads a new .lic via /admin/license/upload, the bridge in
+// http/server.go rebuilds the provider list from the new feature set
+// and hands it here. Old in-flight requests that captured a provider
+// reference keep working; new requests see the new set.
+//
+// Each provider in `ps` is re-checked against src for its required
+// license feature, so a half-built provider list can't sneak in. Any
+// rejection aborts the entire swap (no partial update) and returns
+// the error so the caller can log it and leave the previous state in
+// place.
+//
+// Registration order is preserved; sorting happens in List() at
+// read time.
+func (r *Registry) Replace(ps []IdentityProvider, src LicenseSource) error {
+	// Validate everything BEFORE touching the registry so a single
+	// bad entry can't poison the swap.
+	byName := make(map[string]IdentityProvider, len(ps))
+	for _, p := range ps {
+		if p == nil {
+			return errors.New("auth: Replace got nil provider in list")
+		}
+		name := p.Name()
+		if name == "" {
+			return errors.New("auth: Replace got provider with empty Name()")
+		}
+		if feat := p.RequiredLicenseFeature(); feat != "" {
+			if src == nil || !src.HasFeature(feat) {
+				return fmt.Errorf("auth: Replace: provider %q requires license feature %q not present", name, feat)
+			}
+		}
+		if _, dup := byName[name]; dup {
+			return fmt.Errorf("auth: Replace: duplicate provider name %q in list", name)
+		}
+		byName[name] = p
+	}
+	r.mu.Lock()
+	r.providers = append([]IdentityProvider(nil), ps...)
+	r.byName = byName
+	r.mu.Unlock()
+	return nil
 }

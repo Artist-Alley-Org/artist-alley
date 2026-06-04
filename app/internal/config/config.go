@@ -54,11 +54,6 @@ type Config struct {
 	StorageS3SecretKey     string // "s3"
 	StorageS3UsePathStyle  bool   // "s3": true for MinIO and similar
 
-	// Legacy PHP-FPM upstream, used by the nginx layer for unported
-	// routes. The Go app currently does not proxy fcgi itself; this
-	// value is here so future ports can introspect or rewrite it.
-	LegacyPHPAddr string
-
 	// License file path (Phase 1.17.O). When empty or the file
 	// doesn't exist, the licensing package falls into "community
 	// mode" — the app runs with the built-in community defaults,
@@ -128,7 +123,6 @@ func Load() (Config, error) {
 		StorageS3AccessKey:    envStr("AA_STORAGE_S3_ACCESS_KEY", ""),
 		StorageS3SecretKey:    envStr("AA_STORAGE_S3_SECRET_KEY", ""),
 		StorageS3UsePathStyle: envBool("AA_STORAGE_S3_USE_PATH_STYLE", true),
-		LegacyPHPAddr:         envStr("AA_LEGACY_PHP_ADDR", "php:9000"),
 		LicensePath:           envStr("AA_LICENSE_PATH", "/etc/artist-alley/license.lic"),
 		OrgKeyPath:            envStr("AA_ORG_KEY_PATH", "/etc/artist-alley/org.key"),
 		SetupDefaults: SetupDefaults{

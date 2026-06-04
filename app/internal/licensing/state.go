@@ -41,6 +41,16 @@ type State struct {
 	// beyond what Status exposes (e.g. the cap-enforcement path
 	// counting active seats) can read them without re-parsing.
 	rawClaims *LicenseClaims
+
+	// onReload is fired after every successful Status swap (boot
+	// load, manual upload, 24h re-verify). Used by http/server.go to
+	// rebuild the auth.Registry so enterprise providers (LDAP, SAML)
+	// register / de-register based on the new feature list without
+	// requiring a process restart. Multiple callbacks supported; they
+	// run in registration order, synchronously, while holding only
+	// the read lock. Callbacks MUST be fast and side-effect-only —
+	// no DB calls, no HTTP work.
+	onReload []func(Status)
 }
 
 // NewState reads the .lic at `path`, verifies it, and returns a
@@ -64,6 +74,31 @@ func NewState(path, orgKeyPath string, logger *slog.Logger) *State {
 // Surfaced so handlers can echo it back to admins ("we looked at X")
 // when a cross-binding fails.
 func (s *State) OrgKeyPath() string { return s.orgKeyPath }
+
+// OnReload registers a callback that fires after every successful
+// Status swap — boot load, /admin/license/upload, 24h re-verify
+// ticker. Used by the boot wiring in http/server.go to rebuild
+// dependent state (identity-provider registry, multi-tenant manager,
+// etc.) when the install's feature list changes without requiring a
+// process restart.
+//
+// Callbacks run synchronously inside swap() under the State's write
+// lock — keep them FAST + non-blocking. The typical body is "ask
+// LicenseSource what features are present, rebuild some structure,
+// hand it back to a setter". DB / HTTP / disk I/O does not belong
+// here.
+//
+// The callback receives the newly-cached Status. Use s.HasFeature
+// against the State if you need the canonical answer; the supplied
+// Status is a snapshot copy and stays valid after the lock releases.
+func (s *State) OnReload(fn func(Status)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.onReload = append(s.onReload, fn)
+	s.mu.Unlock()
+}
 
 // StartReverify launches a background ticker that re-runs the load +
 // verify pipeline on `interval` and atomically swaps the cached
@@ -312,9 +347,17 @@ func (s *State) loadAndSwap() (Status, error) {
 
 func (s *State) swap(st Status, raw *LicenseClaims) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.cached = st
 	s.rawClaims = raw
+	// Snapshot the callback slice so we can release the lock before
+	// firing — callbacks may want to call back into State methods
+	// (HasFeature, Status) which would deadlock against a write lock.
+	cbs := make([]func(Status), len(s.onReload))
+	copy(cbs, s.onReload)
+	s.mu.Unlock()
+	for _, fn := range cbs {
+		fn(st)
+	}
 }
 
 // statusFromClaims maps verified claims onto the wire-level Status
