@@ -265,6 +265,28 @@ CREATE TABLE user_password_history (
 CREATE INDEX user_password_history_user_changed_idx
     ON user_password_history (rs_user_id, changed_at DESC);
 
+-- migrations/00040_asset_type_acls.sql — per-asset-type ACLs
+-- (Phase 1.17.F-bis). Mirrors post_acls but the parent FK is the
+-- asset_types catalog row, gating type-level operations instead of
+-- per-instance ones. Defined here BEFORE asset_types CREATE because
+-- schema.sql is sqlc input and the table only needs to exist for
+-- type-checking; the migration runner loads the parent first.
+CREATE TABLE asset_type_acls (
+    asset_type_ref        BIGINT       NOT NULL,
+    principal_type        TEXT         NOT NULL CHECK (principal_type IN ('user','role','team')),
+    principal_id          TEXT         NOT NULL,
+    permission            TEXT         NOT NULL CHECK (permission IN ('read','write','admin')),
+    granted_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by_rs_user_id BIGINT       NULL,
+    expires_at            TIMESTAMPTZ  NULL,
+    PRIMARY KEY (asset_type_ref, principal_type, principal_id, permission)
+);
+CREATE INDEX asset_type_acls_principal_idx
+    ON asset_type_acls (principal_type, principal_id);
+CREATE INDEX asset_type_acls_expires_idx
+    ON asset_type_acls (expires_at)
+    WHERE expires_at IS NOT NULL;
+
 -- teams (00015) is loaded before user_roles (00016) so the FK lands.
 CREATE TABLE teams (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),

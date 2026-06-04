@@ -746,6 +746,15 @@ func (metaShim) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRe
 func (metaShim) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
 	panic("RemoveAdminUserRevoke called from metadata test shim")
 }
+func (metaShim) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	panic("ListAssetTypeAcls called from metadata test shim")
+}
+func (metaShim) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	panic("AddAssetTypeAcl called from metadata test shim")
+}
+func (metaShim) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	panic("RemoveAssetTypeAcl called from metadata test shim")
+}
 func (metaShim) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from metadata_test test shim")
 }

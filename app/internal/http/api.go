@@ -214,6 +214,15 @@ func (s *apiServer) RemoveAdminUserRevoke(ctx context.Context, req openapi.Remov
 func (s *apiServer) ListAssetTypes(ctx context.Context, req openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
 	return s.resourceType.ListAssetTypes(ctx, req)
 }
+func (s *apiServer) ListAssetTypeAcls(ctx context.Context, req openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	return s.resourceType.ListAssetTypeAcls(ctx, req)
+}
+func (s *apiServer) AddAssetTypeAcl(ctx context.Context, req openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	return s.resourceType.AddAssetTypeAcl(ctx, req)
+}
+func (s *apiServer) RemoveAssetTypeAcl(ctx context.Context, req openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	return s.resourceType.RemoveAssetTypeAcl(ctx, req)
+}
 
 // --- storage (raw byte plane) ----------------------------------------------
 

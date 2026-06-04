@@ -7,7 +7,40 @@ package assettype
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const deleteAcl = `-- name: DeleteAcl :execrows
+DELETE FROM asset_type_acls
+WHERE asset_type_ref = $1
+  AND principal_type = $2
+  AND principal_id   = $3
+  AND permission     = $4
+`
+
+type DeleteAclParams struct {
+	AssetTypeRef  int64  `json:"asset_type_ref"`
+	PrincipalType string `json:"principal_type"`
+	PrincipalID   string `json:"principal_id"`
+	Permission    string `json:"permission"`
+}
+
+// Composite-key delete. The four-tuple is the PK — no surrogate ID
+// exists. Returns rows-affected so the handler can 404 cleanly when
+// the caller asks to remove a grant that isn't there.
+func (q *Queries) DeleteAcl(ctx context.Context, arg DeleteAclParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAcl,
+		arg.AssetTypeRef,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const get = `-- name: Get :one
 SELECT ref,
@@ -46,6 +79,92 @@ func (q *Queries) Get(ctx context.Context, ref int64) (GetRow, error) {
 		&i.Tab,
 	)
 	return i, err
+}
+
+const hasAssetTypeAccess = `-- name: HasAssetTypeAccess :one
+WITH user_role_ids AS (
+    SELECT ur.role_id::text AS rid
+      FROM user_roles ur
+     WHERE ur.rs_user_id = $3::bigint
+),
+user_team_ids AS (
+    SELECT tm.team_id::text AS tid
+      FROM team_memberships tm
+     WHERE tm.rs_user_id = $3::bigint
+)
+SELECT EXISTS (
+    SELECT 1
+    FROM asset_type_acls a
+    WHERE a.asset_type_ref = $1::bigint
+      AND (a.expires_at IS NULL OR a.expires_at > NOW())
+      AND (
+          a.permission = $2::text
+          OR (a.permission = 'admin')
+          OR (a.permission = 'write' AND $2::text = 'read')
+      )
+      AND (
+          (a.principal_type = 'user' AND a.principal_id = $3::bigint::text)
+       OR (a.principal_type = 'role' AND a.principal_id IN (SELECT rid FROM user_role_ids))
+       OR (a.principal_type = 'team' AND a.principal_id IN (SELECT tid FROM user_team_ids))
+      )
+) AS allowed
+`
+
+type HasAssetTypeAccessParams struct {
+	AssetTypeRef int64  `json:"asset_type_ref"`
+	Permission   string `json:"permission"`
+	RsUserID     int64  `json:"rs_user_id"`
+}
+
+// Returns true when the given user holds at least the requested
+// permission on the asset_type. 'admin' implies 'write' and 'read';
+// 'write' implies 'read'. The caller is responsible for short-circuiting
+// the system.admin cap before invoking this — admins bypass the ACL.
+//
+// Used by the upload + asset-list handlers (follow-up commit) to gate
+// per-type operations.
+//
+// Params: @rs_user_id, @asset_type_ref, @permission.
+func (q *Queries) HasAssetTypeAccess(ctx context.Context, arg HasAssetTypeAccessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAssetTypeAccess, arg.AssetTypeRef, arg.Permission, arg.RsUserID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const insertAcl = `-- name: InsertAcl :exec
+INSERT INTO asset_type_acls (
+    asset_type_ref, principal_type, principal_id, permission,
+    granted_by_rs_user_id, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (asset_type_ref, principal_type, principal_id, permission) DO UPDATE SET
+    granted_at            = NOW(),
+    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    expires_at            = EXCLUDED.expires_at
+`
+
+type InsertAclParams struct {
+	AssetTypeRef      int64              `json:"asset_type_ref"`
+	PrincipalType     string             `json:"principal_type"`
+	PrincipalID       string             `json:"principal_id"`
+	Permission        string             `json:"permission"`
+	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+}
+
+// Upsert an ACL row. The PRIMARY KEY (ref, principal_type, principal_id,
+// permission) makes repeats idempotent — re-granting refreshes
+// granted_at + granter + expires_at, mirroring user_capability_grants.
+func (q *Queries) InsertAcl(ctx context.Context, arg InsertAclParams) error {
+	_, err := q.db.Exec(ctx, insertAcl,
+		arg.AssetTypeRef,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.Permission,
+		arg.GrantedByRsUserID,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const list = `-- name: List :many
@@ -94,6 +213,114 @@ func (q *Queries) List(ctx context.Context) ([]ListRow, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAcls = `-- name: ListAcls :many
+
+SELECT asset_type_ref,
+       principal_type,
+       principal_id,
+       permission,
+       granted_at,
+       granted_by_rs_user_id,
+       expires_at
+FROM asset_type_acls
+WHERE asset_type_ref = $1
+ORDER BY principal_type, principal_id, permission
+`
+
+// ---------------------------------------------------------------------------
+// Per-type ACLs (Phase 1.17.F-bis)
+// ---------------------------------------------------------------------------
+// Every ACL row attached to one asset_type, deterministic ordering so
+// the editor UI shows a stable list across reloads.
+func (q *Queries) ListAcls(ctx context.Context, assetTypeRef int64) ([]AssetTypeAcl, error) {
+	rows, err := q.db.Query(ctx, listAcls, assetTypeRef)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AssetTypeAcl
+	for rows.Next() {
+		var i AssetTypeAcl
+		if err := rows.Scan(
+			&i.AssetTypeRef,
+			&i.PrincipalType,
+			&i.PrincipalID,
+			&i.Permission,
+			&i.GrantedAt,
+			&i.GrantedByRsUserID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnauthorisedTypeRefsForUser = `-- name: ListUnauthorisedTypeRefsForUser :many
+WITH user_role_ids AS (
+    SELECT ur.role_id::text AS rid
+      FROM user_roles ur
+     WHERE ur.rs_user_id = $1::bigint
+),
+user_team_ids AS (
+    SELECT tm.team_id::text AS tid
+      FROM team_memberships tm
+     WHERE tm.rs_user_id = $1::bigint
+),
+restricted_types AS (
+    SELECT DISTINCT asset_type_ref FROM asset_type_acls
+),
+allowed_types AS (
+    SELECT DISTINCT a.asset_type_ref
+    FROM asset_type_acls a
+    WHERE (a.expires_at IS NULL OR a.expires_at > NOW())
+      AND (
+            (a.principal_type = 'user' AND a.principal_id = $1::bigint::text)
+         OR (a.principal_type = 'role' AND a.principal_id IN (SELECT rid FROM user_role_ids))
+         OR (a.principal_type = 'team' AND a.principal_id IN (SELECT tid FROM user_team_ids))
+      )
+)
+SELECT asset_type_ref FROM restricted_types
+WHERE asset_type_ref NOT IN (SELECT asset_type_ref FROM allowed_types)
+`
+
+// Returns the set of asset_type_refs the given user does NOT have
+// read access to. Used by ListAssetTypes to filter the catalogue for
+// non-admin callers — admins (system.admin) skip this query entirely.
+//
+// A type appears in the result iff it has at least one ACL row
+// (= "restricted") AND no non-expired ACL row matches the user. The
+// match walks the user's direct user_role assignments and direct
+// team memberships; any of read/write/admin counts as read (higher
+// permissions implicitly include lower).
+//
+// For anonymous callers (no rs_user_id) pass 0 — the join still works
+// because no user_role or team_membership row has rs_user_id=0, so
+// every restricted type ends up in the unauthorised set.
+func (q *Queries) ListUnauthorisedTypeRefsForUser(ctx context.Context, rsUserID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listUnauthorisedTypeRefsForUser, rsUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var asset_type_ref int64
+		if err := rows.Scan(&asset_type_ref); err != nil {
+			return nil, err
+		}
+		items = append(items, asset_type_ref)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

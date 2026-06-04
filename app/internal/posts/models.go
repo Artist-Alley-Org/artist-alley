@@ -133,6 +133,16 @@ type AssetType struct {
 	PullImages        *int64
 }
 
+type AssetTypeAcl struct {
+	AssetTypeRef      int64
+	PrincipalType     string
+	PrincipalID       string
+	Permission        string
+	GrantedAt         pgtype.Timestamptz
+	GrantedByRsUserID *int64
+	ExpiresAt         pgtype.Timestamptz
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID
 	EventType      string

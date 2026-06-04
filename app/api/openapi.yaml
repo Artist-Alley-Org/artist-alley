@@ -3137,8 +3137,15 @@ paths:
       summary: List all asset types
       description: |
         Returns every asset type configured in the system, ordered by
-        display order (`order_by`) then by primary key. Anonymous access.
+        display order (`order_by`) then by primary key. Anonymous
+        callers see every unrestricted type; authenticated callers
+        additionally see restricted types they hold a `read` (or
+        higher) ACL row on. Admins (system.admin) see everything.
       tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+        - {}
       responses:
         "200":
           description: List of asset types
@@ -3150,6 +3157,114 @@ paths:
                   $ref: "#/components/schemas/AssetType"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /asset_types/{ref}/acls:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listAssetTypeAcls
+      summary: List ACL rows attached to an asset_type (admin)
+      description: |
+        Returns every ACL row attached to this asset_type (Phase
+        1.17.F-bis). When the response is empty the type is
+        unrestricted — every caller can access it. When at least one
+        row is present the type is restricted to its grantees + admins.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      responses:
+        "200":
+          description: ACL entries (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AclEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addAssetTypeAcl
+      summary: Grant a permission on an asset_type to a principal
+      description: |
+        Inserts one ACL row. Re-granting the same tuple refreshes
+        granted_at / granted_by / expires_at — idempotent. The first
+        row inserted flips the type from "open" to "restricted" for
+        non-admin callers.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AclCreate" }
+      responses:
+        "204":
+          description: ACL row added.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /asset_types/{ref}/acls/{principal_type}/{principal_id}/{permission}:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: principal_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, role, team]
+      - name: principal_id
+        in: path
+        required: true
+        schema: { type: string, maxLength: 64 }
+      - name: permission
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [read, write, admin]
+    delete:
+      operationId: removeAssetTypeAcl
+      summary: Revoke a specific permission row from a principal
+      description: |
+        Removes the exact (principal_type, principal_id, permission)
+        tuple. Other permission levels for the same principal stay
+        intact. Removing the last row on a type flips it back to
+        "open" for every caller. 404 if the row doesn't exist.
+      tags: [asset_types]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      x-required-capabilities: ["system.asset_types.admin"]
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /teams:
     get:

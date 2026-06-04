@@ -415,6 +415,15 @@ func (rtOnly) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequ
 func (rtOnly) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
 	panic("RemoveAdminUserRevoke called from assettype rtOnly test shim")
 }
+func (r rtOnly) ListAssetTypeAcls(ctx context.Context, req openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
+	return r.h.ListAssetTypeAcls(ctx, req)
+}
+func (r rtOnly) AddAssetTypeAcl(ctx context.Context, req openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
+	return r.h.AddAssetTypeAcl(ctx, req)
+}
+func (r rtOnly) RemoveAssetTypeAcl(ctx context.Context, req openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
+	return r.h.RemoveAssetTypeAcl(ctx, req)
+}
 func (rtOnly) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from assettype test shim")
 }
