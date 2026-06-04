@@ -1,46 +1,66 @@
 ---
 title: Why Artist Alley
-description: The problem we're solving and the principles that shape the product.
+description: The problem we're solving, who we built it for, and the principles that shape the product.
 ---
 
 ## The problem
 
-Game studios review art and archive it across Slack, Miro, Teams, and shared
-drives. Knowledge fragments across tools. Review is inconsistent. Assets
-become hard to find a few years later. No good self-hosted tool fills the
-gap — the open-source DAM space optimizes for archivists, not artists, and
-the polished review tools are all SaaS-only and not aimed at game studios.
+Studios that ship digital art — games, animation, illustration, motion design, VFX — review and archive their work across **Slack, Miro, Teams, Drive, Dropbox, Frame.io, WeTransfer**, and whatever shared folder a producer set up three years ago. Knowledge fragments across tools. Review is inconsistent. Versioning is improvised. Assets become hard to find a few years later, and the institutional memory of a project evaporates when contributors move on.
 
-Artist Alley exists to be the missing piece: a self-hosted art-review and
-archival tool that's pleasant for artists to upload to, fast for reviewers
-to work in, and durable for studios to keep running for years.
+The market has two kinds of tools available:
 
-## Audience
+- **Open-source asset managers** that optimize for archivists. They were built for libraries and museum collections; the artist's workflow is an afterthought, and the review experience hasn't been touched in a decade.
+- **SaaS review platforms** that nail the review loop but lock everything behind a subscription, only ship the slice they sell, and own the storage. None are self-hostable. None speak the production language of game and animation pipelines.
 
-- **Artists** — upload work, see review notes, version their iterations.
-- **Reviewers** — work through unreviewed assets fast, leave async
-  feedback, or run live presenter sessions.
-- **Operators** — stand up a single binary, point it at Postgres, done.
+Neither solves the full problem. Studios end up stitching them together — and paying for several at once.
+
+Artist Alley is built to be the **single self-hostable system** that covers the full loop: upload, organize, review, version, archive, ship. Production tool *and* archive, by the same artists who use it day to day.
+
+## Who it's for
+
+The product was shaped around the **game and animation studio pipeline** — those are the lighthouse customers and the feature set reflects them (review canvas, animator-grade transport, presentation rooms, DCC integrations, NDA gating, brand workspace, native 3D viewers, federation across teams).
+
+Game and animation aren't really separate verticals. A studio's cinematics team reuses the in-game art; the game team pulls finals from cinematics; brand owns the bible both pull from. The asset flow is bidirectional and the tooling is the same. Sub-specialisations follow — concept, modelling, rigging, animation, FX, lighting, comp, brand, cinematic editorial — but the underlying object (asset → review → version → archive → ship) is one model.
+
+The model **generalises beyond production studios**. Anywhere a team catalogs items with associated digital media, Artist Alley works:
+
+- Museums tracking physical artifacts with provenance scans, measurement data, condition reports.
+- Libraries digitising manuscripts, books, periodicals with their derivative metadata.
+- Galleries managing inbound and outbound loans with custody chains and verification photos.
+- Archives keeping document collections with scan provenance.
+- Studios managing physical props, scripts, costumes, set pieces — each with their digital companion files.
+
+The feature set is tuned for production studios first; the foundation is general.
+
+By role:
+
+- **Artists** — upload work, see review notes, version iterations, find the brief.
+- **Reviewers + leads** — work through unreviewed assets fast, leave async feedback Frame.io-style, or run live presenter sessions over SSE.
+- **Producers + studio operators** — stand up a single binary, point it at Postgres, done. Audit, permissions, share links, retention, federation across teams all in one surface.
+
+## How it's licensed and priced
+
+Artist Alley is **open source** (BSD-3-Clause today; AGPL + commercial planned at Phase 1.24). The core ships with no paywall — every feature listed on the roadmap is in the open-source binary an operator can self-host forever.
+
+The commercial path matures alongside the product. The intended shape: **capacity tiers** for studios at scale (seat / asset / project ceilings rise with the tier; the AGPL core stays feature-complete at every tier) and **premium add-ons** for capabilities that either let operators monetize their own users (commerce, ads, memberships, paid storefronts) or carry real operational burden on our behalf (cloud-hosted AI, premium SSO bridges, managed backup, paid DCC plugins). Locally-run alternatives stay free in every case.
+
+Specifics — pricing, seat counts, tier features — get nailed down at **Phase 1.24** when the licensing infrastructure ships. For now: install it, run it, use it. See [ADR 0017](/adr/0017-monetization-and-licensing/) and [ADR 0038](/adr/0038-premium-add-on-layer/) for the architectural posture.
 
 ## What we explicitly aren't
 
-- A general-purpose DAM. We're shaped specifically for studio art-review
-  workflows.
-- A pipeline integration platform. We're a destination for finished and
-  in-progress art, not a Perforce/ShotGrid replacement.
-- A SaaS product. Self-hosted by design.
+- **A general-purpose digital asset management product for archivists.** We're shaped for studios that actively produce art. The archive is a byproduct of the production workflow, not the starting point.
+- **A pipeline integration platform.** We're a destination for finished and in-progress art, not a Perforce / ShotGrid / Houdini replacement. We import from those tools (Phase 1.43), we don't replace them.
+- **A hosted-only SaaS product.** Self-hostable by design. A managed hosted offering may follow for indie studios without IT capacity, but Enterprise customers always self-host.
+- **NFT / crypto / blockchain anything.** Different audience, different value system. Not for us.
 
 ## Non-negotiables
 
-- **Single-binary deploy.** One Go binary. SvelteKit SPA is embedded via
-  `go:embed`.
-- **Three production containers.** `nginx`, `app`, `postgres`. That's it.
-- **Postgres-only.** No MySQL adjunct. See ADR 0005.
-- **Open source.** BSD-3-Clause.
+- **Single-binary deploy.** One Go binary. SvelteKit SPA embedded via `go:embed`. Configure with environment variables; that's the install.
+- **Three production containers.** `nginx`, `app`, `postgres`. Heavier add-ons (Blender worker, AI models) ship as optional companion containers.
+- **Postgres-only.** No MySQL adjunct, no separate search index, no separate vector store. One place to back up.
+- **Open by default.** The AGPL core stays feature-complete. Premium add-ons are *additive*, never clawing back something the tier already includes.
 
 Read on:
 
-- [Architecture](/whitepaper/architecture/) — how the binary, database,
-  and frontend fit together.
-- [Design pillars](/whitepaper/pillars/) — the principles we use to make
-  product decisions.
+- [Architecture](/whitepaper/architecture/) — how the binary, database, and frontend fit together.
+- [Design pillars](/whitepaper/pillars/) — the principles we use to make product decisions.

@@ -1,37 +1,40 @@
 ---
 title: Design pillars
-description: The three principles we use to make product decisions.
+description: The principles we use to make product decisions.
 ---
 
-Artist Alley is built around three pillars. When a design decision is
-ambiguous, we resolve it by asking which pillar the choice serves best.
+Artist Alley is built around two product pillars. When a design decision is ambiguous, we resolve it by asking which pillar the choice serves best.
 
 ## 1. Artist-first, not archive-first
 
-Artists upload and forget. Metadata happens automatically where possible.
+Artists upload and forget. Metadata happens automatically where possible. Friction is the enemy of an archive that gets used.
 
-- File-format defaults: dropping a folder Just Works.
+- File-format defaults: dragging a folder Just Works.
 - EXIF, dimensions, color profile, embedded thumbnails parsed on ingest.
-- Optional automatic tags via embeddings (pgvector).
-- Required fields are kept to an absolute minimum.
+- Optional auto-tagging via image embeddings (pgvector).
+- Required fields kept to an absolute minimum — admin-extensible per studio.
+- Any common action — upload, find, comment, share, approve — reachable in three clicks or fewer. When a workflow takes more than three clicks, the design is wrong, not the user.
 
-**UX target:** [ArtStation](https://www.artstation.com/) levels of
-simplicity for upload.
+**UX target:** [ArtStation](https://www.artstation.com/) levels of simplicity for upload. If a studio wants more metadata, an admin adds the fields. The default is that artists get out of the upload modal in seconds.
 
-## 2. Review mode
+## 2. Review-grade
 
-Reviewers come back to Artist Alley over and over. The tool is shaped
-for that loop.
+Reviewers come back to Artist Alley every day. The tool is shaped for that loop.
 
 - Tracks unreviewed assets since your last session.
-- Remembers your spot — you can leave mid-batch and resume.
-- Async commenting (Frame.io-style on top of each asset).
+- Remembers your spot — leave mid-batch, resume later.
+- Async commenting per asset (Frame.io-style) with timestamp + frame anchors.
 - Live presenter sessions over SSE for sync review meetings.
+- Dedicated review canvas with zoom / pan / tile / fullscreen.
+- Animator-grade video transport (JKL, frame-step, I/O loop region).
 
-## 3. Three-click rule
+The review tool is the centre of gravity. The rest of the product exists so reviewers have something to review.
 
-Any common action — upload, find, comment, share, approve — reachable in
-three clicks or fewer. Friction is the enemy of an archive that gets used.
+---
 
-When a workflow takes more than three clicks, the design is wrong, not
-the user.
+## Underneath the pillars: posture
+
+The pillars describe how the product behaves. Two postures describe how it lives in the world:
+
+- **End-to-end, not glue-code.** A studio shouldn't have to stitch together a DAM, a review tool, a transfer service, a chat bot, and a wiki to do its job. Artist Alley aims to be the one self-hostable system for upload → review → version → archive → ship.
+- **Open by default.** The core is open source. Every feature on the roadmap lives in the AGPL binary an operator can self-host forever. Premium capabilities are *additive*, gated only when an operator is using us to monetize third parties or when we're carrying real operational burden on their behalf.
