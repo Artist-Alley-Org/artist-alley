@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -61,6 +62,7 @@ type apiServer struct {
 	userprefs     *userprefs.Handler
 	notifications *notifications.Handler
 	messages      *messages.Handler
+	activities    *activities.Writer
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -114,7 +116,41 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.messages.SetBlockChecker(socialBlockAdapter{h: s.social})
 	s.messages.SetNotifier(socialNotifyAdapter{w: notifWriter})
 	s.messages.SetUserExister(socialUserExistsAdapter{h: s.social})
+
+	// Activities ledger writer (Phase 1.22.A-bis-1/2 per ADR 0044).
+	// The writer is the cross-package recorder every social
+	// handler calls via WithEmission. Reuses the same notification
+	// adapter so post-commit notification fan-out fires through
+	// the existing notifications.Writer (which already enforces
+	// block + channel-pref gating).
+	s.activities = activities.NewWriter(pool, logger, cacheReg)
+	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	// Handlers that emit need a baseURL to mint actor + activity
+	// URIs. Plumb the sysconfig.Site getter so the URL respects
+	// runtime config changes (admin updates site.base_url → next
+	// emit uses the new value, no restart).
+	s.posts.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	return s
+}
+
+// sysconfigBaseURLFn returns a base-URL resolver closure that
+// reads the current Site.BaseURL from sysconfig on each call.
+// Cheap because sysconfig itself is cached; ensures emits pick
+// up admin-time URL changes without a restart. Empty string
+// fallback when sysconfig hasn't been initialized (tests).
+func sysconfigBaseURLFn(sysCfg *sysconfig.Store) func(ctx context.Context) string {
+	return func(ctx context.Context) string {
+		if sysCfg == nil {
+			return ""
+		}
+		site, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return ""
+		}
+		return site.BaseURL
+	}
 }
 
 // socialUserExistsAdapter satisfies messages' userExister via

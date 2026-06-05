@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -40,6 +41,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -83,6 +86,14 @@ type Handler struct {
 	users  userExister
 
 	unreadCount *cache.Cache[int64]
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
+	// per ADR 0044). When wired, SendDirectMessage routes through
+	// h.activities.WithEmission so the DM row + Create(Note) activity
+	// commit atomically and the direct_message_received notification
+	// fires after commit. nil-safe pre-ADR-0044 fallback for tests.
+	activities  *activities.Writer
+	baseURLFn   func(ctx context.Context) string
 }
 
 // NewHandler wires the handler + the per-recipient unread cache.
@@ -103,6 +114,14 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 func (h *Handler) SetBlockChecker(b blockChecker) { h.blocks = b }
 func (h *Handler) SetNotifier(n notifier)         { h.notify = n }
 func (h *Handler) SetUserExister(u userExister)   { h.users = u }
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Mirrors the equivalent
+// setters on posts.Handler + social.Handler.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
 
 func unreadKey(ref int64) string { return strconv.FormatInt(ref, 10) }
 
@@ -345,6 +364,44 @@ func (h *Handler) SendDirectMessage(
 			}, nil
 		}
 	}
+	// Gold-standard path: WithEmissionFn wraps InsertDirectMessage
+	// + Create(Note) activity + direct_message_received notification
+	// in one transactional unit. Cache invalidation fires post-commit.
+	if h.activities != nil {
+		recipientRef := emit.UserRef{
+			UserRef: req.PeerRef,
+			URI:     h.actorURIForUserRef(ctx, req.PeerRef),
+		}
+		var saved DirectMessage
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			r, err := New(tx).InsertDirectMessage(ctx, InsertDirectMessageParams{
+				SenderUserRef:    id.UserRef,
+				RecipientUserRef: req.PeerRef,
+				Body:             body,
+			})
+			if err != nil {
+				return activities.EmissionInput{}, err
+			}
+			saved = r
+			em := emit.DirectMessage(
+				h.senderContext(ctx, id),
+				recipientRef,
+				uuid.UUID(r.ID.Bytes).String(),
+				body,
+			)
+			return activities.EmissionInput{
+				Activity:      em.Activity,
+				Notifications: convertNotifications(em.Notifications),
+			}, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("messages: send dm: %w", err)
+		}
+		h.invalidateUnread(ctx, req.PeerRef)
+		return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(saved)), nil
+	}
+
+	// Legacy fallback (tests).
 	row, err := New(h.Pool).InsertDirectMessage(ctx, InsertDirectMessageParams{
 		SenderUserRef:    id.UserRef,
 		RecipientUserRef: req.PeerRef,
@@ -353,11 +410,6 @@ func (h *Handler) SendDirectMessage(
 	if err != nil {
 		return nil, err
 	}
-	// Invalidate the recipient's unread-DM cache + fire a
-	// `direct_message_received` notification through the writer.
-	// Both are best-effort against the DM write itself — a stale
-	// cache entry resolves on next read; a missed notification is
-	// logged.
 	h.invalidateUnread(ctx, req.PeerRef)
 	if h.notify != nil {
 		actor := id.UserRef
@@ -378,6 +430,59 @@ func (h *Handler) SendDirectMessage(
 		}
 	}
 	return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(row)), nil
+}
+
+// senderContext builds an emit.ActorContext for the authenticated
+// sender. Same shape as social.actorContext but defined here to
+// keep the messages package self-contained.
+func (h *Handler) senderContext(ctx context.Context, caller *auth.Identity) emit.ActorContext {
+	if h.baseURLFn == nil {
+		return emit.ActorContext{UserRef: caller.UserRef, Username: caller.Username}
+	}
+	return emit.ActorContext{
+		UserRef:  caller.UserRef,
+		Username: caller.Username,
+		BaseURL:  h.baseURLFn(ctx),
+	}
+}
+
+// actorURIForUserRef resolves a target user's federation actor
+// URI for emit-input addressing fields. Empty baseURL → empty URI.
+func (h *Handler) actorURIForUserRef(ctx context.Context, userRef int64) string {
+	if h.baseURLFn == nil {
+		return ""
+	}
+	base := h.baseURLFn(ctx)
+	if base == "" {
+		return ""
+	}
+	var username *string
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT username FROM "user" WHERE ref = $1`, userRef,
+	).Scan(&username); err != nil || username == nil {
+		return ""
+	}
+	return base + "/users/" + *username
+}
+
+// convertNotifications adapts the emit subpackage's
+// NotificationFanout slice into the activities.NotificationInput
+// slice the dispatch helper consumes.
+func convertNotifications(ns []emit.NotificationFanout) []activities.NotificationInput {
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]activities.NotificationInput, len(ns))
+	for i, n := range ns {
+		out[i] = activities.NotificationInput{
+			Recipient:  n.Recipient,
+			Verb:       n.Verb,
+			TargetKind: n.TargetKind,
+			TargetID:   n.TargetID,
+			Payload:    n.Payload,
+		}
+	}
+	return out
 }
 
 // MarkDirectMessageThreadRead — POST /account/messages/{peer_ref}/read.

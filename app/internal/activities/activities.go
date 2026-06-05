@@ -144,14 +144,22 @@ type Input struct {
 	Published time.Time
 }
 
-// Writer is the package's central state — the pool (for non-
-// transactional reads), the logger, and the per-actor outbox
-// cache. Constructed once at boot; safe for concurrent use.
+// Writer is the package's central state — the pool, the logger,
+// the per-actor outbox cache, and (post-construction) the
+// post-commit notification dispatcher. Constructed once at boot;
+// safe for concurrent use.
 type Writer struct {
 	Pool        *pgxpool.Pool
 	Logger      *slog.Logger
 	registry    *cache.Registry
 	outboxCache *cache.Cache[CachedOutbox]
+
+	// notifier dispatches NotificationInput slices AFTER commit
+	// per the gold-standard dispatch contract in dispatch.go.
+	// Wired post-construction via SetNotifier so the boot order
+	// (activities → social/userprefs/notifications → adapter)
+	// stays clean.
+	notifier Notifier
 }
 
 // CachedOutbox is the per-actor recent-feed projection held in

@@ -22,12 +22,15 @@ package social
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
@@ -78,25 +81,49 @@ func (h *Handler) FollowUser(
 			},
 		}, nil
 	}
+	// Build the typed followee ref BEFORE the tx — needed for the
+	// emit input. Falls back to bare ref if URI resolution fails.
+	followeeRef := emit.UserRef{
+		UserRef: target,
+		URI:     h.actorURIForUserRef(ctx, target),
+	}
+
+	// Gold-standard path: WithEmission wraps FollowUser + activity
+	// row + new_follower notification in one transactional unit.
+	if h.activities != nil {
+		em := emit.Follow(h.actorContext(ctx, id), followeeRef)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, func(tx pgx.Tx) error {
+			return New(tx).FollowUser(ctx, FollowUserParams{
+				FollowerUserRef: id.UserRef,
+				FolloweeUserRef: target,
+			})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("social: follow: %w", err)
+		}
+		h.invalidateFollowEdge(ctx, id.UserRef, target)
+		if h.Logger != nil {
+			h.Logger.Info("follow",
+				slog.Int64("follower", id.UserRef),
+				slog.Int64("followee", target),
+			)
+		}
+		return openapi.FollowUser204Response{}, nil
+	}
+
+	// Legacy fallback (tests don't wire activities).
 	if err := q.FollowUser(ctx, FollowUserParams{
 		FollowerUserRef: id.UserRef,
 		FolloweeUserRef: target,
 	}); err != nil {
 		return nil, err
 	}
-	// Invalidate the edge + both counts. NOTIFY broadcasts each
-	// invalidation to federated peers so cross-instance views stay
-	// in sync the moment the write commits here.
 	h.invalidateFollowEdge(ctx, id.UserRef, target)
-
-	// Notify the followee about the new follower. The Notify writer
-	// handles the rest: actor != recipient gate, block-edge gate,
-	// recipient's channel pref. Best-effort — fireNotification
-	// swallows errors so a transient notifications-table issue
-	// never blocks the follow itself.
 	follower := id.UserRef
 	h.fireNotification(ctx, target, &follower, "new_follower", "user", strconv.FormatInt(follower, 10), nil)
-
 	if h.Logger != nil {
 		h.Logger.Info("follow",
 			slog.Int64("follower", id.UserRef),
@@ -316,17 +343,64 @@ func (h *Handler) BlockUser(
 		return nil, err
 	}
 	var reason *string
+	var reasonStr string
 	if req.Body != nil && req.Body.Reason != nil {
 		trimmed := strings.TrimSpace(*req.Body.Reason)
 		if trimmed != "" {
 			reason = &trimmed
+			reasonStr = trimmed
 		}
 	}
-	// Auto-unfollow both directions BEFORE recording the block —
-	// keeps the state coherent if the block insert somehow fails:
-	// the follows are gone, the block isn't, the user can retry.
-	// Reverse would leave a block + a stale follow on transient
-	// failure.
+
+	blockedRef := emit.UserRef{
+		UserRef: req.Ref,
+		URI:     h.actorURIForUserRef(ctx, req.Ref),
+	}
+
+	// Gold-standard path: WithEmission wraps the entire transactional
+	// unit — both auto-unfollows + block insert + activity row.
+	// Cache invalidations + log fire post-commit.
+	if h.activities != nil {
+		em := emit.Block(h.actorContext(ctx, id), blockedRef, reasonStr)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications), // empty per AP §6.9
+		}, func(tx pgx.Tx) error {
+			qtx := New(tx)
+			if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
+				FollowerUserRef: id.UserRef,
+				FolloweeUserRef: req.Ref,
+			}); err != nil {
+				return err
+			}
+			if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
+				FollowerUserRef: req.Ref,
+				FolloweeUserRef: id.UserRef,
+			}); err != nil {
+				return err
+			}
+			return qtx.BlockUser(ctx, BlockUserParams{
+				BlockerUserRef: id.UserRef,
+				BlockedUserRef: req.Ref,
+				Reason:         reason,
+			})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("social: block: %w", err)
+		}
+		h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
+		h.invalidateFollowEdge(ctx, req.Ref, id.UserRef)
+		h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)
+		if h.Logger != nil {
+			h.Logger.Info("block",
+				slog.Int64("blocker", id.UserRef),
+				slog.Int64("blocked", req.Ref),
+			)
+		}
+		return openapi.BlockUser204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	if _, err := q.UnfollowUser(ctx, UnfollowUserParams{
 		FollowerUserRef: id.UserRef,
 		FolloweeUserRef: req.Ref,
@@ -346,9 +420,6 @@ func (h *Handler) BlockUser(
 	}); err != nil {
 		return nil, err
 	}
-	// Invalidate both follow directions (block auto-unfollowed) AND
-	// the bidirectional block cache. Each NOTIFY broadcasts so peers
-	// drop their stale copies too.
 	h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
 	h.invalidateFollowEdge(ctx, req.Ref, id.UserRef)
 	h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)

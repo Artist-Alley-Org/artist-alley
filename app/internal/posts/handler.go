@@ -41,6 +41,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -100,6 +102,15 @@ type Handler struct {
 	// 'followers' falls back to "treat as public" — the
 	// pre-1.17.G2 behaviour — rather than refusing every read.
 	follows followChecker
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
+	// per ADR 0044). Wired post-construction in api.go. Handlers
+	// use h.activities.WithEmission to record every social action
+	// in the same tx as its domain write. nil-safe: tests that
+	// don't wire the writer fall back to the pre-ADR-0044 behaviour
+	// (direct domain writes; no activity record).
+	activities  *activities.Writer
+	baseURLFn   func(ctx context.Context) string
 }
 
 // followChecker is the slice of social.Handler this package needs:
@@ -113,6 +124,15 @@ type followChecker interface {
 // construction (same pattern users.Handler uses for the audit
 // recorder + auth.Handler uses for the provider registry).
 func (h *Handler) SetFollowChecker(fc followChecker) { h.follows = fc }
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Post-construction
+// setter so the boot order (handlers → cross-package deps) stays
+// linear.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -266,6 +286,28 @@ func (h *Handler) CreatePost(
 		}
 	}
 
+	// Record the Create activity in the same tx per ADR 0044. The
+	// federation outbox dispatcher (Phase 1.22.D) reads from the
+	// activities ledger to publish to peers; without this the new
+	// post would be invisible to federation.
+	if h.activities != nil && h.baseURLFn != nil {
+		actorCtx := emit.ActorContext{
+			UserRef:  id.UserRef,
+			Username: id.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		postRef := emit.PostRef{
+			ID:            uuid.UUID(row.ID.Bytes).String(),
+			Title:         row.Title,
+			AuthorUserRef: id.UserRef,
+			AuthorURI:     actorCtx.URI(),
+		}
+		em := emit.CreatePost(actorCtx, postRef, emit.PostVisibility(visibility))
+		if _, err := h.activities.RecordActivity(ctx, tx, em.Activity); err != nil {
+			return nil, fmt.Errorf("posts: emit Create activity: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("posts: commit: %w", err)
 	}
@@ -407,6 +449,35 @@ func (h *Handler) UpdatePost(
 		}
 	}
 
+	// Record the Update activity in the same tx per ADR 0044.
+	if h.activities != nil && h.baseURLFn != nil {
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		// Re-resolve title/visibility from the updated state (or
+		// fall back to current row if not in this PATCH).
+		title := current.Title
+		if in.Title != nil {
+			title = *in.Title
+		}
+		vis := current.Visibility
+		if visPtr != nil {
+			vis = *visPtr
+		}
+		postRef := emit.PostRef{
+			ID:            uuid.UUID(pgID.Bytes).String(),
+			Title:         title,
+			AuthorUserRef: current.AuthorUserRef,
+			AuthorURI:     actorCtx.URI(),
+		}
+		em := emit.UpdatePost(actorCtx, postRef, emit.PostVisibility(vis))
+		if _, err := h.activities.RecordActivity(ctx, tx, em.Activity); err != nil {
+			return nil, fmt.Errorf("posts: emit Update activity: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("posts: commit: %w", err)
 	}
@@ -451,8 +522,29 @@ func (h *Handler) DeletePost(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
-	if err := q.SoftDeletePost(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("posts: delete: %w", err)
+	// Wrap SoftDeletePost + Delete activity in one tx per ADR 0044.
+	// Without this the federation outbox can't tell peers the post
+	// is gone (Tombstone per AP §6.4).
+	if h.activities != nil && h.baseURLFn != nil {
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		em := emit.DeletePost(actorCtx, uuid.UUID(pgID.Bytes).String(), cur.Title)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			return New(tx).SoftDeletePost(ctx, pgID)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("posts: delete: %w", err)
+		}
+	} else {
+		// Legacy fallback (tests don't wire activities).
+		if err := q.SoftDeletePost(ctx, pgID); err != nil {
+			return nil, fmt.Errorf("posts: delete: %w", err)
+		}
 	}
 	h.cacheInvalidate(ctx, pgID)
 	// post_count just went down for the author — drop their cached

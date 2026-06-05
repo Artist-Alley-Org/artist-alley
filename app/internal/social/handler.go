@@ -38,6 +38,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -101,6 +103,18 @@ type Handler struct {
 	// nil-safe: when no notifier is attached the emit calls are
 	// no-ops — the comment / like / follow itself still lands.
 	notifier Notifier
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
+	// per ADR 0044). When wired, social handlers route their domain
+	// writes through h.activities.WithEmission so the activity row
+	// commits atomically with the domain row + notifications fire
+	// after commit through the same notifier above.
+	//
+	// When NOT wired (tests), social handlers fall back to direct
+	// pool.Exec + the separate fireNotification path — pre-ADR-0044
+	// behaviour.
+	activities  *activities.Writer
+	baseURLFn   func(ctx context.Context) string
 }
 
 // Notifier is the cross-package contract the notifications package
@@ -114,11 +128,24 @@ type Notifier interface {
 // Post-construction setter mirrors SetFollowChecker on posts.Handler.
 func (h *Handler) SetNotifier(n Notifier) { h.notifier = n }
 
-// fireNotification is the helper every emitter calls. nil-safe + logs
-// + swallows errors (notifications are best-effort — a transient
-// notification-table failure must NEVER block the comment / like /
-// follow it accompanies). The Writer itself logs structured errors;
-// this helper just keeps the call sites short.
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Same shape as the
+// posts.Handler setter.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
+
+// fireNotification is the legacy direct-call helper for the pre-
+// ADR-0044 wiring path. Still used by handlers that haven't been
+// migrated to the activities.WithEmission flow yet; new emits
+// route through h.activities and fire notifications from inside
+// the dispatch helper after the activity row commits.
+//
+// nil-safe + logs + swallows errors (notifications are best-effort
+// — a transient notification-table failure must NEVER block the
+// comment / like / follow it accompanies). The Writer itself logs
+// structured errors; this helper just keeps the call sites short.
 func (h *Handler) fireNotification(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) {
 	if h.notifier == nil {
 		return
@@ -129,6 +156,21 @@ func (h *Handler) fireNotification(ctx context.Context, recipient int64, actor *
 			slog.String("verb", verb),
 			slog.String("err", err.Error()),
 		)
+	}
+}
+
+// actorContext builds an emit.ActorContext from the authenticated
+// caller + the configured baseURL. Returns the zero value when
+// h.activities or h.baseURLFn isn't wired (test path) — callers
+// check h.activities != nil before invoking emit helpers.
+func (h *Handler) actorContext(ctx context.Context, caller *auth.Identity) emit.ActorContext {
+	if h.baseURLFn == nil {
+		return emit.ActorContext{UserRef: caller.UserRef, Username: caller.Username}
+	}
+	return emit.ActorContext{
+		UserRef:  caller.UserRef,
+		Username: caller.Username,
+		BaseURL:  h.baseURLFn(ctx),
 	}
 }
 
@@ -223,6 +265,39 @@ func (h *Handler) LikePost(
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
 	}
+
+	// Look up the post author + title BEFORE the tx so the
+	// emit.Like input is fully built. One round-trip; tiny.
+	postRef := emit.PostRef{ID: uuid.UUID(pgID.Bytes).String()}
+	if author, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgID); err == nil {
+		postRef.AuthorUserRef = author.AuthorUserRef
+		postRef.Title = author.Title
+		postRef.AuthorURI = h.actorURIForUserRef(ctx, author.AuthorUserRef)
+	}
+
+	// Gold-standard path: WithEmission wraps the LikeTarget insert
+	// + activity row in one transaction. Notification fires AFTER
+	// commit through the writer's notifier.
+	if h.activities != nil {
+		em := emit.Like(h.actorContext(ctx, caller), postRef)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, func(tx pgx.Tx) error {
+			return New(tx).LikeTarget(ctx, LikeTargetParams{
+				TargetKind: "post",
+				TargetID:   pgID,
+				RsUserID:   caller.UserRef,
+			})
+		})
+		if err != nil {
+			return nil, fmt.Errorf("social: like: %w", err)
+		}
+		return openapi.LikePost204Response{}, nil
+	}
+
+	// Legacy fallback path (tests don't wire activities). Same
+	// behaviour as pre-ADR-0044.
 	q := New(h.Pool)
 	if err := q.LikeTarget(ctx, LikeTargetParams{
 		TargetKind: "post",
@@ -231,17 +306,61 @@ func (h *Handler) LikePost(
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
 	}
-	// Notify the post author (Phase 1.17.I2). One extra round-trip
-	// for the author + title denorm; payload carries the title so
-	// the inbox card renders "Alice liked 'Post title'" without a
-	// second fetch.
-	if author, err := q.GetPostAuthorAndTitle(ctx, pgID); err == nil {
+	if postRef.AuthorUserRef != 0 {
 		actor := caller.UserRef
-		h.fireNotification(ctx, author.AuthorUserRef, &actor, "like_on_my_post", "post", uuid.UUID(pgID.Bytes).String(), map[string]any{
-			"post_title": author.Title,
+		h.fireNotification(ctx, postRef.AuthorUserRef, &actor, "like_on_my_post", "post", postRef.ID, map[string]any{
+			"post_title": postRef.Title,
 		})
 	}
 	return openapi.LikePost204Response{}, nil
+}
+
+// convertNotifications adapts the emit subpackage's
+// NotificationFanout slice into the activities.NotificationInput
+// slice the dispatch helper consumes. Cycle-avoidance: the emit
+// subpackage doesn't import activities/dispatch internals.
+func convertNotifications(ns []emit.NotificationFanout) []activities.NotificationInput {
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]activities.NotificationInput, len(ns))
+	for i, n := range ns {
+		out[i] = activities.NotificationInput{
+			Recipient:  n.Recipient,
+			Verb:       n.Verb,
+			TargetKind: n.TargetKind,
+			TargetID:   n.TargetID,
+			Payload:    n.Payload,
+		}
+	}
+	return out
+}
+
+// actorURIForUserRef resolves a user's federation actor URI from
+// their user_ref. Used by emit-input builders to address other
+// users (post authors, comment parents, DM recipients). Empty
+// baseURL → empty URI (test path); the activity still records
+// with a NULL-shaped to/cc field.
+func (h *Handler) actorURIForUserRef(ctx context.Context, userRef int64) string {
+	if h.baseURLFn == nil {
+		return ""
+	}
+	base := h.baseURLFn(ctx)
+	if base == "" {
+		return ""
+	}
+	// Single index lookup on user table — already cached via
+	// users.Handler's profile cache. We do the SELECT inline here
+	// instead of crossing the users-package import boundary to
+	// keep the dependency arrow one-way (users → social, not the
+	// reverse).
+	var username *string
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT username FROM "user" WHERE ref = $1`, userRef,
+	).Scan(&username); err != nil || username == nil {
+		return ""
+	}
+	return base + "/users/" + *username
 }
 
 func (h *Handler) UnlikePost(
@@ -434,6 +553,63 @@ func (h *Handler) CreatePostComment(
 		depth = parentRow.Depth + 1
 	}
 
+	// Look up post + (optional) parent info BEFORE the tx so the
+	// emit input is fully built. These are 1-2 small indexed reads.
+	commentRef := emit.CommentRef{
+		ID:     uuid.UUID(newID.Bytes).String(),
+		PostID: uuid.UUID(pgPostID.Bytes).String(),
+		Body:   body,
+		Depth:  depth,
+	}
+	if post, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
+		commentRef.PostAuthorRef = post.AuthorUserRef
+		commentRef.PostTitle = post.Title
+		commentRef.PostAuthorURI = h.actorURIForUserRef(ctx, post.AuthorUserRef)
+	}
+	if parentID.Valid {
+		if parentInfo, err := New(h.Pool).GetCommentAuthorAndContext(ctx, parentID); err == nil {
+			commentRef.ParentID = uuid.UUID(parentID.Bytes).String()
+			commentRef.ParentAuthorRef = parentInfo.AuthorUserRef
+			commentRef.ParentAuthorURI = h.actorURIForUserRef(ctx, parentInfo.AuthorUserRef)
+		}
+	}
+
+	// Gold-standard path: WithEmissionFn wraps CreateComment +
+	// activity row in one tx. Both notifications (post-author +
+	// parent-comment-author for replies) fire AFTER commit.
+	if h.activities != nil {
+		var savedRow Comment
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+				ID:             newID,
+				TargetKind:     "post",
+				TargetID:       pgPostID,
+				ParentID:       parentID,
+				RootID:         rootID,
+				Depth:          depth,
+				AuthorUserRef:  caller.UserRef,
+				Body:           body,
+				BodyHtml:       "",
+				AnnotationType: nil,
+				AnnotationData: nil,
+			})
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("social: create comment: %w", err)
+			}
+			savedRow = r
+			em := emit.CreateComment(h.actorContext(ctx, caller), commentRef)
+			return activities.EmissionInput{
+				Activity:      em.Activity,
+				Notifications: convertNotifications(em.Notifications),
+			}, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
+	}
+
+	// Legacy fallback (test path): pre-ADR-0044 behaviour.
 	q := New(h.Pool)
 	row, err := q.CreateComment(ctx, CreateCommentParams{
 		ID:             newID,
@@ -444,43 +620,29 @@ func (h *Handler) CreatePostComment(
 		Depth:          depth,
 		AuthorUserRef:  caller.UserRef,
 		Body:           body,
-		BodyHtml:       "", // server-side markdown sanitiser is a later phase
+		BodyHtml:       "",
 		AnnotationType: nil,
 		AnnotationData: nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: create comment: %w", err)
 	}
-
-	// Notify the post author (Phase 1.17.I2). Excerpt = first 120
-	// chars of body, trimmed to a word boundary in the renderer.
 	actor := caller.UserRef
-	excerpt := body
-	if len(excerpt) > 120 {
-		excerpt = excerpt[:120]
-	}
-	commentID := uuid.UUID(newID.Bytes).String()
-	if post, err := q.GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
-		h.fireNotification(ctx, post.AuthorUserRef, &actor, "comment_on_my_post", "post", uuid.UUID(pgPostID.Bytes).String(), map[string]any{
-			"post_title":    post.Title,
+	excerpt := commentRef.Excerpt()
+	if commentRef.PostAuthorRef != 0 {
+		h.fireNotification(ctx, commentRef.PostAuthorRef, &actor, "comment_on_my_post", "post", commentRef.PostID, map[string]any{
+			"post_title":    commentRef.PostTitle,
 			"excerpt":       excerpt,
-			"comment_id":    commentID,
+			"comment_id":    commentRef.ID,
 			"comment_depth": depth + 1,
 		})
-		// Reply on a deeper-than-root comment? Also notify the parent's
-		// author (when they're not the post author too — Notify gates
-		// that on actor != recipient anyway). One extra round-trip;
-		// only fires on replies, not top-level comments.
-		if parentID.Valid {
-			parentInfo, err := q.GetCommentAuthorAndContext(ctx, parentID)
-			if err == nil && parentInfo.AuthorUserRef != post.AuthorUserRef {
-				h.fireNotification(ctx, parentInfo.AuthorUserRef, &actor, "reply_to_my_comment", "comment", uuid.UUID(parentID.Bytes).String(), map[string]any{
-					"post_title":    post.Title,
-					"excerpt":       excerpt,
-					"comment_id":    commentID,
-					"comment_depth": depth + 1,
-				})
-			}
+		if commentRef.ParentID != "" && commentRef.ParentAuthorRef != 0 && commentRef.ParentAuthorRef != commentRef.PostAuthorRef {
+			h.fireNotification(ctx, commentRef.ParentAuthorRef, &actor, "reply_to_my_comment", "comment", commentRef.ParentID, map[string]any{
+				"post_title":    commentRef.PostTitle,
+				"excerpt":       excerpt,
+				"comment_id":    commentRef.ID,
+				"comment_depth": depth + 1,
+			})
 		}
 	}
 	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(row)), nil
