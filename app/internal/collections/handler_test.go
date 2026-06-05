@@ -920,3 +920,18 @@ func (collShim) MarkNotificationRead(context.Context, openapi.MarkNotificationRe
 func (collShim) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	panic("MarkAllMyNotificationsRead called from collections test shim")
 }
+func (collShim) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	panic("ListMyDirectMessageThreads called from collections test shim")
+}
+func (collShim) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	panic("GetMyUnreadDirectMessageCount called from collections test shim")
+}
+func (collShim) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	panic("ListDirectMessageThread called from collections test shim")
+}
+func (collShim) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	panic("SendDirectMessage called from collections test shim")
+}
+func (collShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	panic("MarkDirectMessageThreadRead called from collections test shim")
+}

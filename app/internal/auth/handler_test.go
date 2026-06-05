@@ -1002,3 +1002,18 @@ func (authOnlyImpl) MarkNotificationRead(context.Context, openapi.MarkNotificati
 func (authOnlyImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	panic("MarkAllMyNotificationsRead called from auth test shim")
 }
+func (authOnlyImpl) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	panic("ListMyDirectMessageThreads called from auth test shim")
+}
+func (authOnlyImpl) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	panic("GetMyUnreadDirectMessageCount called from auth test shim")
+}
+func (authOnlyImpl) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	panic("ListDirectMessageThread called from auth test shim")
+}
+func (authOnlyImpl) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	panic("SendDirectMessage called from auth test shim")
+}
+func (authOnlyImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	panic("MarkDirectMessageThreadRead called from auth test shim")
+}

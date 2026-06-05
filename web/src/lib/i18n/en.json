@@ -869,6 +869,22 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
+  "messages": {
+    "title": "Messages",
+    "empty": "No conversations yet.",
+    "empty_full": "You haven't exchanged any direct messages yet.",
+    "all_caught_up": "You're all caught up.",
+    "unread_count": "{count} unread",
+    "from_me_prefix": "You: ",
+    "see_all": "See all messages",
+    "thread": "Conversation",
+    "thread_empty": "No messages yet — say hi.",
+    "back_to_inbox": "Back to inbox",
+    "compose_placeholder": "Write a message…",
+    "send": "Send",
+    "load_error": "Couldn't load messages.",
+    "send_error": "Couldn't send."
+  },
   "notifications": {
     "title": "Notifications",
     "empty": "No notifications yet.",

@@ -4230,6 +4230,154 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /account/messages:
+    get:
+      operationId: listMyDirectMessageThreads
+      summary: My DM inbox — one entry per peer (Phase 1.17.I-a)
+      description: |
+        Lists every peer the caller has exchanged DMs with, paired
+        with the most recent message in that thread + the count of
+        unread messages from that peer. Newest-first. Wires the
+        envelope-icon dropdown + the /account/messages full inbox.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: List of threads.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageThreadList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/messages/unread-count:
+    get:
+      operationId: getMyUnreadDirectMessageCount
+      summary: My unread DM badge count
+      description: |
+        Backs the navbar envelope pill on every authenticated page
+        render. Cache-backed (per-recipient LRU + cache.Registry
+        NOTIFY broadcast on every write/mark-read).
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread-DM count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageUnreadCount" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/messages/{peer_ref}:
+    parameters:
+      - name: peer_ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listDirectMessageThread
+      summary: All DMs between me and a specific peer
+      description: |
+        Cursor-paginated newest-first. Caller must be one of the
+        two participants (gate enforced by the WHERE clause — no
+        separate "is this thread mine?" check needed). 404 when
+        the peer doesn't exist.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: sendDirectMessage
+      summary: Send a DM to a peer
+      description: |
+        Send a DM to the user at {peer_ref}. Self-DM rejected with
+        400. A block edge in either direction rejects with 403 —
+        the same gate the FollowUser path enforces.
+
+        On success, a `direct_message_received` notification fires
+        to the recipient via the Phase 1.17.I2 notifications writer
+        (which independently re-runs the block + channel-pref
+        gates, so a user who muted the verb still gets the DM in
+        their inbox but no bell ping).
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendDirectMessageRequest" }
+      responses:
+        "201":
+          description: Message sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /account/messages/{peer_ref}/read:
+    parameters:
+      - name: peer_ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: markDirectMessageThreadRead
+      summary: Mark every unread DM from this peer as read
+      description: |
+        Idempotent. Called when the caller opens the thread.
+        Returns count of rows newly-flipped so the envelope pill
+        can decrement deterministically.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: How many were just marked read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageMarkReadResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /account/notifications:
     get:
       operationId: listMyNotifications
@@ -7156,6 +7304,103 @@ components:
         count: { type: integer, format: int64 }
 
     NotificationMarkAllResult:
+      type: object
+      required: [marked_count]
+      properties:
+        marked_count: { type: integer, format: int64 }
+
+    DirectMessage:
+      type: object
+      description: One DM between two users (Phase 1.17.I-a).
+      required: [id, sender_user_ref, recipient_user_ref, body, sent_at]
+      properties:
+        id: { type: string, format: uuid }
+        sender_user_ref: { type: integer, format: int64 }
+        recipient_user_ref: { type: integer, format: int64 }
+        body: { type: string }
+        sent_at: { type: string, format: date-time }
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL = unread by recipient.
+
+    DirectMessageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DirectMessage" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    DirectMessageThread:
+      type: object
+      description: |
+        Inbox row — one per peer the caller has DM'd. Denormalized
+        peer identity + the most recent message excerpt + this
+        peer's unread count so the inbox renders without N+1
+        round-trips.
+      required:
+        - peer_user_ref
+        - peer_username
+        - last_message_id
+        - last_sender_user_ref
+        - last_body
+        - last_sent_at
+        - unread_count
+      properties:
+        peer_user_ref: { type: integer, format: int64 }
+        peer_username: { type: string }
+        peer_display_name: { type: string, nullable: true }
+        peer_avatar_url: { type: string, nullable: true }
+        last_message_id: { type: string, format: uuid }
+        last_sender_user_ref:
+          type: integer
+          format: int64
+          description: |
+            Which side authored the most recent message in this
+            thread. Lets the inbox card render "You: ..." vs
+            "PeerName: ..." prefixes.
+        last_body: { type: string }
+        last_sent_at: { type: string, format: date-time }
+        last_read_at:
+          type: string
+          format: date-time
+          nullable: true
+        unread_count:
+          type: integer
+          format: int64
+          description: |
+            Count of unread messages from this peer in this thread.
+            Sum across all threads matches the envelope-pill total.
+
+    DirectMessageThreadList:
+      type: object
+      required: [threads]
+      properties:
+        threads:
+          type: array
+          items: { $ref: "#/components/schemas/DirectMessageThread" }
+
+    DirectMessageUnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, format: int64 }
+
+    SendDirectMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 5000
+
+    DirectMessageMarkReadResult:
       type: object
       required: [marked_count]
       properties:

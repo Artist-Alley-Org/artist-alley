@@ -424,6 +424,21 @@ func (h *Handler) requireUserExists(ctx context.Context, q *Queries, ref int64) 
 	return err
 }
 
+// UserExists is the cross-package entry point peer-handler packages
+// (Phase 1.17.I-a messages) call when they need a bool answer.
+// Routes through the same UserExists query the social package uses
+// internally so future cache wrapping can sit in one place.
+func (h *Handler) UserExists(ctx context.Context, ref int64) (bool, error) {
+	_, err := New(h.Pool).UserExists(ctx, ref)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // resolveLimit applies the [1, maxListLimit] clamp and the 50
 // default when the caller omitted the param.
 func resolveLimit(limit *int) int {

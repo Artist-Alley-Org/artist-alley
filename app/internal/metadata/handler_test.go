@@ -925,3 +925,18 @@ func (metaShim) MarkNotificationRead(context.Context, openapi.MarkNotificationRe
 func (metaShim) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	panic("MarkAllMyNotificationsRead called from metadata test shim")
 }
+func (metaShim) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	panic("ListMyDirectMessageThreads called from metadata test shim")
+}
+func (metaShim) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	panic("GetMyUnreadDirectMessageCount called from metadata test shim")
+}
+func (metaShim) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	panic("ListDirectMessageThread called from metadata test shim")
+}
+func (metaShim) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	panic("SendDirectMessage called from metadata test shim")
+}
+func (metaShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	panic("MarkDirectMessageThreadRead called from metadata test shim")
+}

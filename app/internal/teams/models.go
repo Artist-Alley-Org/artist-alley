@@ -249,6 +249,16 @@ type Comment struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type DirectMessage struct {
+	ID               pgtype.UUID
+	SenderUserRef    int64
+	RecipientUserRef int64
+	Body             string
+	SentAt           pgtype.Timestamptz
+	ReadAt           pgtype.Timestamptz
+	OriginServerID   pgtype.UUID
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string

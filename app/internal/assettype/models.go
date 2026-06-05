@@ -249,6 +249,16 @@ type Comment struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DirectMessage struct {
+	ID               pgtype.UUID        `json:"id"`
+	SenderUserRef    int64              `json:"sender_user_ref"`
+	RecipientUserRef int64              `json:"recipient_user_ref"`
+	Body             string             `json:"body"`
+	SentAt           pgtype.Timestamptz `json:"sent_at"`
+	ReadAt           pgtype.Timestamptz `json:"read_at"`
+	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`

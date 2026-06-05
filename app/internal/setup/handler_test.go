@@ -934,3 +934,18 @@ func (shimImpl) MarkNotificationRead(context.Context, openapi.MarkNotificationRe
 func (shimImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	panic("MarkAllMyNotificationsRead called from setup test shim")
 }
+func (shimImpl) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	panic("ListMyDirectMessageThreads called from setup test shim")
+}
+func (shimImpl) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	panic("GetMyUnreadDirectMessageCount called from setup test shim")
+}
+func (shimImpl) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	panic("ListDirectMessageThread called from setup test shim")
+}
+func (shimImpl) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	panic("SendDirectMessage called from setup test shim")
+}
+func (shimImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	panic("MarkDirectMessageThreadRead called from setup test shim")
+}

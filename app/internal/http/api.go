@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
@@ -59,6 +60,7 @@ type apiServer struct {
 	licensing     *licensing.Handler
 	userprefs     *userprefs.Handler
 	notifications *notifications.Handler
+	messages      *messages.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -104,7 +106,24 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// converts the social-package primitive-args contract into the
 	// notifications.Input struct.
 	s.social.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
+	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
+	// notifications + social: nil-constructed for cache, deps
+	// injected post-construction.
+	s.messages = messages.NewHandler(pool, logger, cacheReg)
+	s.messages.SetBlockChecker(socialBlockAdapter{h: s.social})
+	s.messages.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.messages.SetUserExister(socialUserExistsAdapter{h: s.social})
 	return s
+}
+
+// socialUserExistsAdapter satisfies messages' userExister via
+// *social.Handler — the public UserExists method is the cached,
+// cross-package-safe entry point.
+type socialUserExistsAdapter struct{ h *social.Handler }
+
+func (a socialUserExistsAdapter) UserExists(ctx context.Context, ref int64) (bool, error) {
+	return a.h.UserExists(ctx, ref)
 }
 
 // --- cross-package adapters for the notifications wiring ----------
@@ -728,6 +747,28 @@ func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNo
 
 func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- direct messages (Phase 1.17.I-a) -------------------------------------
+
+func (s *apiServer) ListMyDirectMessageThreads(ctx context.Context, req openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	return s.messages.ListMyDirectMessageThreads(ctx, req)
+}
+
+func (s *apiServer) GetMyUnreadDirectMessageCount(ctx context.Context, req openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	return s.messages.GetMyUnreadDirectMessageCount(ctx, req)
+}
+
+func (s *apiServer) ListDirectMessageThread(ctx context.Context, req openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	return s.messages.ListDirectMessageThread(ctx, req)
+}
+
+func (s *apiServer) SendDirectMessage(ctx context.Context, req openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	return s.messages.SendDirectMessage(ctx, req)
+}
+
+func (s *apiServer) MarkDirectMessageThreadRead(ctx context.Context, req openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	return s.messages.MarkDirectMessageThreadRead(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

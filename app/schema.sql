@@ -657,6 +657,30 @@ CREATE TABLE user_blocks (
 CREATE INDEX idx_user_blocks_blocked
     ON user_blocks (blocked_user_ref);
 
+-- migrations/00047_direct_messages.sql — peer-to-peer DMs.
+-- Thread = unordered (sender, recipient) pair (no separate threads
+-- table). Send path consults social.HasBlockBetween + fires a
+-- direct_message_received notification through the notifications
+-- writer (Phase 1.17.I2 → I-a).
+CREATE TABLE direct_messages (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_user_ref    BIGINT       NOT NULL,
+    recipient_user_ref BIGINT       NOT NULL,
+    body               TEXT         NOT NULL,
+    sent_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    read_at            TIMESTAMPTZ  NULL,
+    origin_server_id   UUID         NULL,
+    CHECK (sender_user_ref <> recipient_user_ref),
+    CHECK (length(body) > 0)
+);
+CREATE INDEX idx_dm_recipient_recent
+    ON direct_messages (recipient_user_ref, sent_at DESC);
+CREATE INDEX idx_dm_sender_recent
+    ON direct_messages (sender_user_ref, sent_at DESC);
+CREATE INDEX idx_dm_unread
+    ON direct_messages (recipient_user_ref)
+    WHERE read_at IS NULL;
+
 -- migrations/00046_notifications.sql — per-user in-app feed.
 -- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks
 -- the prefs UI). Permission-aware writer in

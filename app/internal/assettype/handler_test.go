@@ -645,3 +645,18 @@ func (rtOnly) MarkNotificationRead(context.Context, openapi.MarkNotificationRead
 func (rtOnly) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	panic("MarkAllMyNotificationsRead called from assettype test shim")
 }
+func (rtOnly) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	panic("ListMyDirectMessageThreads called from assettype test shim")
+}
+func (rtOnly) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	panic("GetMyUnreadDirectMessageCount called from assettype test shim")
+}
+func (rtOnly) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	panic("ListDirectMessageThread called from assettype test shim")
+}
+func (rtOnly) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	panic("SendDirectMessage called from assettype test shim")
+}
+func (rtOnly) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	panic("MarkDirectMessageThreadRead called from assettype test shim")
+}
