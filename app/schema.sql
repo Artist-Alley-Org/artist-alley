@@ -709,6 +709,7 @@ CREATE TABLE activities (
         'Create', 'Update', 'Delete',
         'Follow', 'Accept', 'Reject',
         'Undo', 'Like', 'Announce', 'Block',
+        'Add', 'Remove',
         'aa:Share', 'aa:Unshare',
         'aa:Approve', 'aa:RequestChanges', 'aa:MarkReviewed',
         'aa:Annotation', 'aa:WorkflowTransition', 'aa:AssetVersion',

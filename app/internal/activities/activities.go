@@ -160,6 +160,13 @@ type Writer struct {
 	// (activities → social/userprefs/notifications → adapter)
 	// stays clean.
 	notifier Notifier
+
+	// userResolver looks up usernames by user_ref so emit helpers
+	// can build actor URIs for arbitrary users on the federation
+	// hot path. Wired post-construction via SetUsernameResolver;
+	// typically backed by *users.Handler whose existing UserPublic
+	// cache makes the lookup memory-bound after warm-up.
+	userResolver UsernameResolver
 }
 
 // CachedOutbox is the per-actor recent-feed projection held in

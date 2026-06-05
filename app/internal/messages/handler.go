@@ -447,22 +447,21 @@ func (h *Handler) senderContext(ctx context.Context, caller *auth.Identity) emit
 }
 
 // actorURIForUserRef resolves a target user's federation actor
-// URI for emit-input addressing fields. Empty baseURL → empty URI.
+// URI via the cached username resolver on h.activities. Same
+// shape as social.actorURIForUserRef.
 func (h *Handler) actorURIForUserRef(ctx context.Context, userRef int64) string {
-	if h.baseURLFn == nil {
+	if h.baseURLFn == nil || h.activities == nil {
 		return ""
 	}
 	base := h.baseURLFn(ctx)
 	if base == "" {
 		return ""
 	}
-	var username *string
-	if err := h.Pool.QueryRow(ctx,
-		`SELECT username FROM "user" WHERE ref = $1`, userRef,
-	).Scan(&username); err != nil || username == nil {
+	username := h.activities.ResolveUsername(ctx, userRef)
+	if username == "" {
 		return ""
 	}
-	return base + "/users/" + *username
+	return base + "/users/" + username
 }
 
 // convertNotifications adapts the emit subpackage's

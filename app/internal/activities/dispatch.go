@@ -44,6 +44,25 @@ type Notifier interface {
 	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
 
+// UsernameResolver is the cross-package username-by-ref lookup
+// federation emit helpers need to build actor URIs for arbitrary
+// users (post authors, comment-parent authors, DM recipients,
+// followees, etc.). Implemented by *users.Handler — which has the
+// existing UserPublic byRef cache so resolves are typically
+// memory-bound.
+//
+// Defined here so the dispatch layer doesn't import users
+// directly; the boot wiring constructs an adapter. Empty-string
+// return on miss is the contract; callers treat that as "skip
+// federated addressing for this user" rather than failing.
+//
+// Per docs/spec/federation/v1.md §8.4 the username is immutable
+// from the federation perspective so cached values stay correct
+// for the actor's lifetime — no invalidation plumbing required.
+type UsernameResolver interface {
+	ResolveUsername(ctx context.Context, userRef int64) string
+}
+
 // EmissionInput is the shape handlers pass to WithEmission. It
 // matches emit.Emission exactly — emit helpers' Emission is
 // trivially convertible. Defined here as a separate type so the
@@ -70,6 +89,23 @@ type NotificationInput struct {
 // passes it here. Nil-safe — when not wired, notifications fire
 // as logged no-ops.
 func (w *Writer) SetNotifier(n Notifier) { w.notifier = n }
+
+// SetUsernameResolver wires the cross-package username lookup
+// per the UsernameResolver doc. Nil-safe — when not wired,
+// ResolveUsername returns empty string and emit helpers fall back
+// to local-only addressing.
+func (w *Writer) SetUsernameResolver(r UsernameResolver) { w.userResolver = r }
+
+// ResolveUsername resolves a user_ref to their username via the
+// wired UsernameResolver (typically users.Handler with its
+// existing cache). Empty string when no resolver is wired or the
+// user isn't found.
+func (w *Writer) ResolveUsername(ctx context.Context, userRef int64) string {
+	if w.userResolver == nil {
+		return ""
+	}
+	return w.userResolver.ResolveUsername(ctx, userRef)
+}
 
 // WithEmission is the gold-standard handler-side helper. Caller
 // supplies an Emission (activity + notifications) and a closure

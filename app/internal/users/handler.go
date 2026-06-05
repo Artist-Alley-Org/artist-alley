@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -67,6 +69,14 @@ type Handler struct {
 	// is deferred to 1.22.K).
 	actorKeys *cache.Cache[ActorKeyMaterial]
 
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-4
+	// per ADR 0044). When wired, UpdateUserProfile emits an Update
+	// activity targeting the user's own actor so federated peers
+	// can sync display_name / avatar / bio changes. nil-safe pre-
+	// ADR-0044 fallback for tests.
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
+
 	// Audit is the typed audit recorder for lifecycle mutations
 	// (Phase 1.17.B + onward — status changes, role assignments,
 	// password resets). Nil-safe — tests that construct a bare
@@ -105,6 +115,55 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 // surface. Safe to call once at startup.
 func (h *Handler) SetAuditRecorder(rec auditRecorder) {
 	h.Audit = rec
+}
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Mirrors the setters on
+// posts.Handler / social.Handler / messages.Handler /
+// collections.Handler.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
+
+func derefOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// ResolveUsername returns the username for the given user_ref,
+// preferring the existing UserPublic cache (h.byRef) to avoid a
+// DB roundtrip. Used by cross-package consumers — the federation
+// activity emitters in social/messages/collections call this to
+// build actor URIs without slamming the user table on every
+// Like/Follow/DM/Block emission.
+//
+// Per docs/spec/federation/v1.md §8.4 the username is immutable
+// from the federation perspective once an actor exists, so the
+// cache hit rate is effectively 100% after warm-up. Returns empty
+// string on miss + DB error (best-effort — caller treats this as
+// "skip federated addressing for this user" and continues with
+// the local-only emission).
+func (h *Handler) ResolveUsername(ctx context.Context, userRef int64) string {
+	// Cache-first.
+	if h.byRef != nil {
+		if hit, ok := h.byRef.Get(strconv.FormatInt(userRef, 10)); ok {
+			return hit.Username
+		}
+	}
+	// Cold path — single indexed read on the user table. We don't
+	// hydrate the full UserPublic just for the username because
+	// rowToAPI does extra joins (post_count, follower_count, etc.)
+	// and we don't need those here.
+	var username *string
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT username FROM "user" WHERE ref = $1`, userRef,
+	).Scan(&username); err != nil || username == nil {
+		return ""
+	}
+	return *username
 }
 
 // InvalidateProfile broadcasts a cache invalidation for the given
@@ -323,18 +382,61 @@ func (h *Handler) UpdateUserProfile(
 		}
 	}
 
-	if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
-		RsUserID:    req.Ref,
-		DisplayName: &displayName,
-		Bio:         bio,
-		AvatarUrl:   avatarURL,
-		Location:    location,
-		WebsiteUrl:  websiteURL,
-		SocialLinks: socialLinks,
-		Language:    language,
-		Theme:       theme,
-	}); err != nil {
-		return nil, fmt.Errorf("users: upsert profile: %w", err)
+	// Gold-standard path: UpsertUserProfile + Update(Actor)
+	// activity in one tx per AP §6.3 / §7.3. Only fires when the
+	// caller is editing their OWN profile — admin-as-someone-else
+	// edits get logged via audit, not activity (that's not a
+	// federated social action by the caller; it's an
+	// administrative override of someone else's data).
+	if h.activities != nil && caller.UserRef == req.Ref && h.baseURLFn != nil {
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		snap := emit.ProfileSnapshot{
+			DisplayName: derefOrEmpty(&displayName),
+			Bio:         bio,
+			AvatarURL:   derefOrEmpty(avatarURL),
+			Location:    location,
+			WebsiteURL:  derefOrEmpty(websiteURL),
+		}
+		em := emit.UpdateProfile(actorCtx, snap)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			_, err := New(tx).UpsertUserProfile(ctx, UpsertUserProfileParams{
+				RsUserID:    req.Ref,
+				DisplayName: &displayName,
+				Bio:         bio,
+				AvatarUrl:   avatarURL,
+				Location:    location,
+				WebsiteUrl:  websiteURL,
+				SocialLinks: socialLinks,
+				Language:    language,
+				Theme:       theme,
+			})
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("users: upsert profile: %w", err)
+		}
+	} else {
+		// Legacy fallback: admin-edits-other (no activity) + the
+		// test path (no activities writer wired).
+		if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
+			RsUserID:    req.Ref,
+			DisplayName: &displayName,
+			Bio:         bio,
+			AvatarUrl:   avatarURL,
+			Location:    location,
+			WebsiteUrl:  websiteURL,
+			SocialLinks: socialLinks,
+			Language:    language,
+			Theme:       theme,
+		}); err != nil {
+			return nil, fmt.Errorf("users: upsert profile: %w", err)
+		}
 	}
 
 	// The cached entry (if any) just went stale. Local-evict +

@@ -338,30 +338,28 @@ func convertNotifications(ns []emit.NotificationFanout) []activities.Notificatio
 }
 
 // actorURIForUserRef resolves a user's federation actor URI from
-// their user_ref. Used by emit-input builders to address other
-// users (post authors, comment parents, DM recipients). Empty
-// baseURL → empty URI (test path); the activity still records
-// with a NULL-shaped to/cc field.
+// their user_ref. Routed through h.activities.ResolveUsername
+// (which uses the wired UsernameResolver, typically users.Handler
+// with its existing UserPublic cache) so the hot federation
+// emission path doesn't slam the user table on every Like /
+// Follow / DM / Block / Block-unblock cycle.
+//
+// Empty string return on miss is the contract — caller treats
+// that as "skip federated addressing for this user" and the
+// activity records with a NULL-shaped to/cc field.
 func (h *Handler) actorURIForUserRef(ctx context.Context, userRef int64) string {
-	if h.baseURLFn == nil {
+	if h.baseURLFn == nil || h.activities == nil {
 		return ""
 	}
 	base := h.baseURLFn(ctx)
 	if base == "" {
 		return ""
 	}
-	// Single index lookup on user table — already cached via
-	// users.Handler's profile cache. We do the SELECT inline here
-	// instead of crossing the users-package import boundary to
-	// keep the dependency arrow one-way (users → social, not the
-	// reverse).
-	var username *string
-	if err := h.Pool.QueryRow(ctx,
-		`SELECT username FROM "user" WHERE ref = $1`, userRef,
-	).Scan(&username); err != nil || username == nil {
+	username := h.activities.ResolveUsername(ctx, userRef)
+	if username == "" {
 		return ""
 	}
-	return base + "/users/" + *username
+	return base + "/users/" + username
 }
 
 func (h *Handler) UnlikePost(
@@ -889,6 +887,56 @@ func (h *Handler) CreatePostWhiteboard(
 	// CreatePostComment handler).
 	newID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	annotationType := "whiteboard"
+	postIDStr := uuid.UUID(pgPostID.Bytes).String()
+
+	// Look up post author/title before the tx so emit input is built.
+	annRef := emit.AnnotationRef{
+		CommentID:      uuid.UUID(newID.Bytes).String(),
+		PostID:         postIDStr,
+		AnnotationKind: annotationType,
+	}
+	if post, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
+		annRef.PostAuthorRef = post.AuthorUserRef
+		annRef.PostTitle = post.Title
+		annRef.PostAuthorURI = h.actorURIForUserRef(ctx, post.AuthorUserRef)
+	}
+
+	// Gold-standard path: CreateComment row + aa:Annotation
+	// activity per ADR 0043 + comment_on_my_post notification
+	// (annotations surface in the same inbox).
+	if h.activities != nil {
+		var saved Comment
+		em := emit.CreateAnnotation(h.actorContext(ctx, caller), annRef)
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+				ID:             newID,
+				TargetKind:     "post",
+				TargetID:       pgPostID,
+				ParentID:       pgtype.UUID{},
+				RootID:         newID,
+				Depth:          0,
+				AuthorUserRef:  caller.UserRef,
+				Body:           title,
+				BodyHtml:       "",
+				AnnotationType: &annotationType,
+				AnnotationData: contentBytes,
+			})
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("social: create whiteboard: %w", err)
+			}
+			saved = r
+			return activities.EmissionInput{
+				Activity:      em.Activity,
+				Notifications: convertNotifications(em.Notifications),
+			}, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(saved)), nil
+	}
+
+	// Legacy fallback (tests).
 	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
 		ID:             newID,
 		TargetKind:     "post",
@@ -897,7 +945,7 @@ func (h *Handler) CreatePostWhiteboard(
 		RootID:         newID,
 		Depth:          0,
 		AuthorUserRef:  caller.UserRef,
-		Body:           title, // title lives in body for whiteboards
+		Body:           title,
 		BodyHtml:       "",
 		AnnotationType: &annotationType,
 		AnnotationData: contentBytes,

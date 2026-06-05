@@ -50,6 +50,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/social"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
+	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
 // activitiesFixture wires a minimal social.Handler with the same
@@ -91,6 +92,10 @@ func setupActivitiesFixture(t *testing.T) *activitiesFixture {
 
 	activitiesW := activities.NewWriter(pool, logger, registry)
 	activitiesW.SetNotifier(notifyAdapter{w: notifWriter})
+	// Wire the username resolver — production routes federation
+	// addressing through users.Handler's cached lookup.
+	usersH := users.NewHandler(pool, logger, registry)
+	activitiesW.SetUsernameResolver(usersH)
 	socialH.SetActivitiesWriter(activitiesW, func(ctx context.Context) string {
 		return "https://test.example"
 	})

@@ -35,6 +35,12 @@ const (
 	ActivityLike     ActivityType = "Like"
 	ActivityAnnounce ActivityType = "Announce" // repost / boost
 	ActivityBlock    ActivityType = "Block"
+	// Add / Remove (AP §6.6 / §6.7) — used for collection
+	// membership: Add(object→target=collection) means "add the
+	// object to the collection"; Remove is the inverse. Added in
+	// migration 00050 alongside the collections handler wiring.
+	ActivityAdd    ActivityType = "Add"
+	ActivityRemove ActivityType = "Remove"
 
 	// Custom artist-alley activities — the load-bearing extension
 	// set. Every `aa:*` activity MUST gate on a current
@@ -68,6 +74,8 @@ var KnownActivityTypes = map[ActivityType]struct{}{
 	ActivityLike:                 {},
 	ActivityAnnounce:             {},
 	ActivityBlock:                {},
+	ActivityAdd:                  {},
+	ActivityRemove:               {},
 	ActivityAAShare:              {},
 	ActivityAAUnshare:            {},
 	ActivityAAApprove:            {},

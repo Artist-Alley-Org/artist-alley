@@ -27,6 +27,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -52,6 +54,14 @@ type Handler struct {
 	// local copy AND broadcasts to peers. Nil-safe: a handler built
 	// without a registry skips the cache.
 	byID *cache.Cache[Collection]
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-4
+	// per ADR 0044). When wired, the Create/Update/Delete/Add/Remove
+	// collection endpoints route their domain writes through
+	// h.activities.WithEmission so each emits a properly-shaped
+	// AP activity. nil-safe pre-ADR-0044 fallback for tests.
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
 }
 
 // NewHandler binds the collections handler to the DB pool and the
@@ -67,6 +77,27 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		h.byID = cache.Register[Collection](registry, cacheDomainCollectionByID, 5000)
 	}
 	return h
+}
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Mirrors the setter on
+// posts.Handler / social.Handler / messages.Handler.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
+
+// actorContext builds an emit.ActorContext for the authenticated
+// caller from the configured baseURL.
+func (h *Handler) actorContext(ctx context.Context, caller *auth.Identity) emit.ActorContext {
+	if h.baseURLFn == nil {
+		return emit.ActorContext{UserRef: caller.UserRef, Username: caller.Username}
+	}
+	return emit.ActorContext{
+		UserRef:  caller.UserRef,
+		Username: caller.Username,
+		BaseURL:  h.baseURLFn(ctx),
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +143,42 @@ func (h *Handler) CreateCollection(
 		}, nil
 	}
 
+	// Gold-standard path: WithEmissionFn so we capture the
+	// generated collection UUID and use it to build the activity's
+	// URI in the same tx.
+	if h.activities != nil {
+		var saved Collection
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			r, err := New(tx).CreateCollection(ctx, CreateCollectionParams{
+				OwnerUserRef: id.UserRef,
+				Name:         name,
+				Description:  strOr(in.Description, ""),
+				Visibility:   visibility,
+				Membership:   membership,
+				ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
+				Featured:     boolOr(in.Featured, false),
+				Purpose:      in.Purpose,
+			})
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("collections: create: %w", err)
+			}
+			saved = r
+			em := emit.CreateCollection(h.actorContext(ctx, id), emit.CollectionRef{
+				ID:          uuid.UUID(r.ID.Bytes).String(),
+				Name:        r.Name,
+				Description: r.Description,
+				OwnerRef:    r.OwnerUserRef,
+			})
+			return activities.EmissionInput{Activity: em.Activity}, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		h.cacheAdd(saved)
+		return openapi.CreateCollection201JSONResponse(rowToAPI(saved)), nil
+	}
+
+	// Legacy fallback (tests).
 	row, err := New(h.Pool).CreateCollection(ctx, CreateCollectionParams{
 		OwnerUserRef: id.UserRef,
 		Name:         name,
@@ -226,6 +293,47 @@ func (h *Handler) UpdateCollection(
 	// via the Go struct alone — the convention here is that a
 	// non-nil pointer means "set to this", and clearing the TTL
 	// goes through the dedicated query.
+	// Gold-standard path: UpdateCollection + Update activity in
+	// the same tx. WithEmissionFn so the post-write row drives
+	// the activity payload.
+	if h.activities != nil {
+		var saved Collection
+		errRun := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			r, err := New(tx).UpdateCollection(ctx, UpdateCollectionParams{
+				ID:          pgID,
+				Name:        namePtr,
+				Description: in.Description,
+				Visibility:  visPtr,
+				Membership:  memPtr,
+				Featured:    in.Featured,
+				Purpose:     in.Purpose,
+				ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
+			})
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
+			}
+			saved = r
+			em := emit.UpdateCollection(h.actorContext(ctx, caller), emit.CollectionRef{
+				ID:          uuid.UUID(r.ID.Bytes).String(),
+				Name:        r.Name,
+				Description: r.Description,
+				OwnerRef:    r.OwnerUserRef,
+			})
+			return activities.EmissionInput{Activity: em.Activity}, nil
+		})
+		if errRun != nil {
+			if errors.Is(errRun, pgx.ErrNoRows) {
+				return openapi.UpdateCollection404JSONResponse{
+					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+				}, nil
+			}
+			return nil, errRun
+		}
+		h.cacheAdd(saved)
+		return openapi.UpdateCollection200JSONResponse(rowToAPI(saved)), nil
+	}
+
+	// Legacy fallback (tests).
 	row, err := q.UpdateCollection(ctx, UpdateCollectionParams{
 		ID:          pgID,
 		Name:        namePtr,
@@ -278,6 +386,23 @@ func (h *Handler) DeleteCollection(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
 		}, nil
 	}
+	// Gold-standard path: DeleteCollection + Delete activity in
+	// one tx per AP §6.4 Tombstone semantics.
+	if h.activities != nil {
+		em := emit.DeleteCollection(h.actorContext(ctx, caller), uuid.UUID(pgID.Bytes).String(), cur.Name)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			return New(tx).DeleteCollection(ctx, pgID)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("collections: delete: %w", err)
+		}
+		h.cacheInvalidate(ctx, pgID)
+		return openapi.DeleteCollection204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	if err := q.DeleteCollection(ctx, pgID); err != nil {
 		return nil, fmt.Errorf("collections: delete: %w", err)
 	}
@@ -527,6 +652,48 @@ func (h *Handler) AddCollectionResource(
 
 	in := req.Body
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(in.AssetId), Valid: true}
+	assetIDStr := uuid.UUID(in.AssetId).String()
+
+	// Gold-standard path: Add(object=asset, target=collection)
+	// per AP §6.6 / §7.8.
+	if h.activities != nil {
+		var fkAssetMissing bool
+		em := emit.AddToCollection(
+			h.actorContext(ctx, caller),
+			activities.ObjectKindAsset,
+			assetIDStr,
+			uuid.UUID(pgID.Bytes).String(),
+			cur.Name,
+		)
+		errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			err := New(tx).AddCollectionResource(ctx, AddCollectionResourceParams{
+				CollectionID: pgID,
+				AssetID:      pgAsset,
+				SortOrder:    int32Or(in.SortOrder, 0),
+				Pinned:       boolOr(in.Pinned, true),
+				ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
+			})
+			if err != nil && strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
+				fkAssetMissing = true
+				return errAssetMissing
+			}
+			return err
+		})
+		if fkAssetMissing {
+			return openapi.AddCollectionResource404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+			}, nil
+		}
+		if errRun != nil {
+			return nil, fmt.Errorf("collections: add resource: %w", errRun)
+		}
+		h.cacheInvalidate(ctx, pgID)
+		return openapi.AddCollectionResource204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	err = q.AddCollectionResource(ctx, AddCollectionResourceParams{
 		CollectionID: pgID,
 		AssetID:      pgAsset,
@@ -535,9 +702,6 @@ func (h *Handler) AddCollectionResource(
 		ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
 	})
 	if err != nil {
-		// FK violation on asset_id surfaces as a friendly 404 rather
-		// than a 500 — the caller is more likely to recognise their
-		// own bad input than our table layout.
 		if strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
 			return openapi.AddCollectionResource404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
@@ -548,6 +712,11 @@ func (h *Handler) AddCollectionResource(
 	h.cacheInvalidate(ctx, pgID)
 	return openapi.AddCollectionResource204Response{}, nil
 }
+
+// errAssetMissing is the sentinel signalling FK-violation on
+// asset_id inside the WithEmission closure. Used to roll back +
+// return 404 without surfacing as a 500 server error.
+var errAssetMissing = errors.New("collections: asset row absent")
 
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource
@@ -579,9 +748,38 @@ func (h *Handler) RemoveCollectionResource(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
 		}, nil
 	}
+	assetIDStr := uuid.UUID(req.AssetId).String()
+	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.AssetId), Valid: true}
+
+	// Gold-standard path: Remove(object=asset, target=collection)
+	// per AP §6.7 / §7.9.
+	if h.activities != nil {
+		em := emit.RemoveFromCollection(
+			h.actorContext(ctx, caller),
+			activities.ObjectKindAsset,
+			assetIDStr,
+			uuid.UUID(pgID.Bytes).String(),
+			cur.Name,
+		)
+		errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			return New(tx).RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
+				CollectionID: pgID,
+				AssetID:      pgAsset,
+			})
+		})
+		if errRun != nil {
+			return nil, fmt.Errorf("collections: remove resource: %w", errRun)
+		}
+		h.cacheInvalidate(ctx, pgID)
+		return openapi.RemoveCollectionResource204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	if err := q.RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
 		CollectionID: pgID,
-		AssetID:      pgtype.UUID{Bytes: uuid.UUID(req.AssetId), Valid: true},
+		AssetID:      pgAsset,
 	}); err != nil {
 		return nil, fmt.Errorf("collections: remove resource: %w", err)
 	}

@@ -18,6 +18,7 @@ func TestActivityTypeValid(t *testing.T) {
 		federation.ActivityFollow, federation.ActivityAccept, federation.ActivityReject,
 		federation.ActivityUndo, federation.ActivityLike, federation.ActivityAnnounce,
 		federation.ActivityBlock,
+		federation.ActivityAdd, federation.ActivityRemove,
 		federation.ActivityAAShare, federation.ActivityAAUnshare,
 		federation.ActivityAAApprove, federation.ActivityAARequestChanges,
 		federation.ActivityAAMarkReviewed, federation.ActivityAAAnnotation,
@@ -41,7 +42,7 @@ func TestActivityTypeMembershipParity(t *testing.T) {
 	// Every declared const above MUST be in KnownActivityTypes
 	// (the consts are the authoritative declaration; the map is
 	// the O(1) lookup mirror). If they drift, this test catches.
-	const expectedCount = 20
+	const expectedCount = 22
 	if len(federation.KnownActivityTypes) != expectedCount {
 		t.Errorf("KnownActivityTypes count drifted: got %d want %d (update both this test and the consts)",
 			len(federation.KnownActivityTypes), expectedCount)

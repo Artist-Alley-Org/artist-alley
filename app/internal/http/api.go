@@ -125,6 +125,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// block + channel-pref gating).
 	s.activities = activities.NewWriter(pool, logger, cacheReg)
 	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	// UsernameResolver: the username-by-ref lookup federation
+	// emitters use to build actor URIs. *users.Handler already
+	// caches UserPublic; ResolveUsername reuses that cache so the
+	// federation hot path (Like/Follow/DM/Block emissions) doesn't
+	// slam the user table on every emit. Per docs/spec/federation/
+	// v1.md §8.4 usernames are immutable from the federation
+	// perspective so cached values stay correct for the actor's
+	// lifetime.
+	s.activities.SetUsernameResolver(s.users)
 	// Handlers that emit need a baseURL to mint actor + activity
 	// URIs. Plumb the sysconfig.Site getter so the URL respects
 	// runtime config changes (admin updates site.base_url → next
@@ -132,6 +141,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.posts.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.users.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	return s
 }
 
