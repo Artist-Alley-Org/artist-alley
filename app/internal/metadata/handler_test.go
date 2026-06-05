@@ -940,3 +940,6 @@ func (metaShim) SendDirectMessage(context.Context, openapi.SendDirectMessageRequ
 func (metaShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
 	panic("MarkDirectMessageThreadRead called from metadata test shim")
 }
+func (metaShim) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	panic("ListAdminActivities called from metadata test shim")
+}

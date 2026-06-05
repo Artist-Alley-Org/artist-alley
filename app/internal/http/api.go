@@ -60,9 +60,10 @@ type apiServer struct {
 	audit         *audit.HTTPHandler
 	licensing     *licensing.Handler
 	userprefs     *userprefs.Handler
-	notifications *notifications.Handler
-	messages      *messages.Handler
-	activities    *activities.Writer
+	notifications   *notifications.Handler
+	messages        *messages.Handler
+	activities      *activities.Writer
+	activitiesAdmin *activities.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -125,6 +126,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// block + channel-pref gating).
 	s.activities = activities.NewWriter(pool, logger, cacheReg)
 	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.activitiesAdmin = activities.NewAdminHandler(s.activities)
 	// UsernameResolver: the username-by-ref lookup federation
 	// emitters use to build actor URIs. *users.Handler already
 	// caches UserPublic; ResolveUsername reuses that cache so the
@@ -794,6 +796,12 @@ func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNo
 
 func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- activities admin audit (Phase 1.22.A-bis-3b) ------------------------
+
+func (s *apiServer) ListAdminActivities(ctx context.Context, req openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	return s.activitiesAdmin.ListAdminActivities(ctx, req)
 }
 
 // --- direct messages (Phase 1.17.I-a) -------------------------------------

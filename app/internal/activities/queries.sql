@@ -136,3 +136,38 @@ WHERE actor_user_ref = $1
   AND source = 'local'
 ORDER BY published_at DESC, id DESC
 LIMIT 1;
+
+-- name: ListActivitiesAdmin :many
+-- Phase 1.22.A-bis-3b — admin audit view. Cursor-paginated by
+-- (published_at DESC, id DESC). All filter args are optional;
+-- pass NULL via sqlc.narg to skip a filter.
+--
+-- This query is system.admin-gated at the handler layer per ADR
+-- 0044 — surfaces full payloads + addressing for the operator
+-- to audit federation activity. Future enhancement (per ADR 0043
+-- §"Audit + observability"): a federation.admin capability split
+-- so non-system admins can view but not mutate the federation
+-- surface.
+SELECT id, activity_uri, activity_type, actor_uri, actor_user_ref,
+       object_uri, object_kind, object_local_id, target_uri,
+       to_uris, cc_uris, bto_uris, bcc_uris, audience_uris,
+       payload, signature_value, signature_pubkey, source,
+       published_at, created_at
+FROM activities
+WHERE
+    (sqlc.narg('activity_type')::TEXT IS NULL
+        OR activity_type = sqlc.narg('activity_type')::TEXT)
+AND (sqlc.narg('source')::TEXT IS NULL
+        OR source = sqlc.narg('source')::TEXT)
+AND (sqlc.narg('actor_user_ref')::BIGINT IS NULL
+        OR actor_user_ref = sqlc.narg('actor_user_ref')::BIGINT)
+AND (sqlc.narg('object_kind')::TEXT IS NULL
+        OR object_kind = sqlc.narg('object_kind')::TEXT)
+AND (sqlc.narg('since')::TIMESTAMPTZ IS NULL
+        OR published_at >= sqlc.narg('since')::TIMESTAMPTZ)
+AND (sqlc.narg('cursor_published_at')::TIMESTAMPTZ IS NULL
+        OR published_at < sqlc.narg('cursor_published_at')::TIMESTAMPTZ
+        OR (published_at = sqlc.narg('cursor_published_at')::TIMESTAMPTZ
+            AND id < sqlc.narg('cursor_id')::UUID))
+ORDER BY published_at DESC, id DESC
+LIMIT sqlc.arg('row_limit')::INTEGER;

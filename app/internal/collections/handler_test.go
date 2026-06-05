@@ -935,3 +935,6 @@ func (collShim) SendDirectMessage(context.Context, openapi.SendDirectMessageRequ
 func (collShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
 	panic("MarkDirectMessageThreadRead called from collections test shim")
 }
+func (collShim) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	panic("ListAdminActivities called from collections test shim")
+}

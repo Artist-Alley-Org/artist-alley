@@ -192,6 +192,103 @@ func (q *Queries) InsertActivity(ctx context.Context, arg InsertActivityParams) 
 	return i, err
 }
 
+const listActivitiesAdmin = `-- name: ListActivitiesAdmin :many
+SELECT id, activity_uri, activity_type, actor_uri, actor_user_ref,
+       object_uri, object_kind, object_local_id, target_uri,
+       to_uris, cc_uris, bto_uris, bcc_uris, audience_uris,
+       payload, signature_value, signature_pubkey, source,
+       published_at, created_at
+FROM activities
+WHERE
+    ($1::TEXT IS NULL
+        OR activity_type = $1::TEXT)
+AND ($2::TEXT IS NULL
+        OR source = $2::TEXT)
+AND ($3::BIGINT IS NULL
+        OR actor_user_ref = $3::BIGINT)
+AND ($4::TEXT IS NULL
+        OR object_kind = $4::TEXT)
+AND ($5::TIMESTAMPTZ IS NULL
+        OR published_at >= $5::TIMESTAMPTZ)
+AND ($6::TIMESTAMPTZ IS NULL
+        OR published_at < $6::TIMESTAMPTZ
+        OR (published_at = $6::TIMESTAMPTZ
+            AND id < $7::UUID))
+ORDER BY published_at DESC, id DESC
+LIMIT $8::INTEGER
+`
+
+type ListActivitiesAdminParams struct {
+	ActivityType      *string
+	Source            *string
+	ActorUserRef      *int64
+	ObjectKind        *string
+	Since             pgtype.Timestamptz
+	CursorPublishedAt pgtype.Timestamptz
+	CursorID          pgtype.UUID
+	RowLimit          int32
+}
+
+// Phase 1.22.A-bis-3b — admin audit view. Cursor-paginated by
+// (published_at DESC, id DESC). All filter args are optional;
+// pass NULL via sqlc.narg to skip a filter.
+//
+// This query is system.admin-gated at the handler layer per ADR
+// 0044 — surfaces full payloads + addressing for the operator
+// to audit federation activity. Future enhancement (per ADR 0043
+// §"Audit + observability"): a federation.admin capability split
+// so non-system admins can view but not mutate the federation
+// surface.
+func (q *Queries) ListActivitiesAdmin(ctx context.Context, arg ListActivitiesAdminParams) ([]Activity, error) {
+	rows, err := q.db.Query(ctx, listActivitiesAdmin,
+		arg.ActivityType,
+		arg.Source,
+		arg.ActorUserRef,
+		arg.ObjectKind,
+		arg.Since,
+		arg.CursorPublishedAt,
+		arg.CursorID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Activity
+	for rows.Next() {
+		var i Activity
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActivityUri,
+			&i.ActivityType,
+			&i.ActorUri,
+			&i.ActorUserRef,
+			&i.ObjectUri,
+			&i.ObjectKind,
+			&i.ObjectLocalID,
+			&i.TargetUri,
+			&i.ToUris,
+			&i.CcUris,
+			&i.BtoUris,
+			&i.BccUris,
+			&i.AudienceUris,
+			&i.Payload,
+			&i.SignatureValue,
+			&i.SignaturePubkey,
+			&i.Source,
+			&i.PublishedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActorOutbox = `-- name: ListActorOutbox :many
 SELECT id, activity_uri, activity_type, actor_uri, actor_user_ref,
        object_uri, object_kind, object_local_id, target_uri,

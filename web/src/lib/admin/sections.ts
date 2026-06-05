@@ -156,6 +156,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
       { key: 'log',          status: 'stub',   href: '/admin/system/log' },
+      { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
       { key: 'themes',       status: 'live',   href: '/admin/system/themes' },
       { key: 'maintenance',  status: 'future', phase: '1.19' },
       { key: 'feature_flags', status: 'future', phase: '1.20' },

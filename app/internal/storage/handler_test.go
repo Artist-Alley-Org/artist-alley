@@ -679,3 +679,6 @@ func (shimImpl) SendDirectMessage(context.Context, openapi.SendDirectMessageRequ
 func (shimImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
 	panic("MarkDirectMessageThreadRead called from storage test shim")
 }
+func (shimImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	panic("ListAdminActivities called from storage test shim")
+}

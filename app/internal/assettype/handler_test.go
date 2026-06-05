@@ -660,3 +660,6 @@ func (rtOnly) SendDirectMessage(context.Context, openapi.SendDirectMessageReques
 func (rtOnly) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
 	panic("MarkDirectMessageThreadRead called from assettype test shim")
 }
+func (rtOnly) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	panic("ListAdminActivities called from assettype test shim")
+}

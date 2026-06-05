@@ -284,6 +284,36 @@
       "stub": "Stub",
       "phase": "Phase {phase}"
     },
+    "activities": {
+      "title": "Activities ledger",
+      "intro": "Every federated social action emitted by this instance and received from peers (per ADR 0044). Source of truth for the federation outbox.",
+      "filter_any": "(any)",
+      "filter_type": "Type",
+      "filter_kind": "Object kind",
+      "filter_source": "Source",
+      "filter_actor": "Actor ref",
+      "clear_filters": "Clear filters",
+      "load_error": "Couldn't load activities.",
+      "load_more": "Load more",
+      "empty": "No activities match these filters.",
+      "col_when": "When",
+      "col_type": "Type",
+      "col_actor": "Actor",
+      "col_object": "Object",
+      "col_source": "Source",
+      "source_local": "local",
+      "source_peer": "peer",
+      "label_activity_uri": "activity_uri:",
+      "label_target_uri": "target_uri:",
+      "label_to": "to:",
+      "label_cc": "cc:",
+      "label_signed": "signed:",
+      "label_signed_yes": "yes ({key})",
+      "label_signed_no": "no (federation outbox not wired yet — Phase 1.22.D)",
+      "label_payload": "payload:",
+      "source_placeholder": "local or https://...",
+      "actor_placeholder": "user ref"
+    },
     "about": {
       "title": "About",
       "intro": "Version, build, and license information.",
@@ -707,7 +737,8 @@
         "smtp": "Outbound email server.",
         "auth": "Password policy and SSO providers.",
         "ai": "AI provider list and default selection.",
-        "log": "Audit trail of admin actions."
+        "log": "Audit trail of admin actions.",
+        "activities": "Federation activity ledger — every Create/Update/Delete/Like/Follow/etc emitted by this instance + received from peers."
       },
       "site": {
         "title": "Site",

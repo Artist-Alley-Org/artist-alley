@@ -493,6 +493,86 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/activities:
+    get:
+      operationId: listAdminActivities
+      summary: Admin audit view of the activities ledger
+      description: |
+        Cursor-paginated list of activity rows with optional
+        filters (type, source, actor, object kind, since). Gated
+        on `system.admin` capability per ADR 0044 — surfaces full
+        payloads + addressing for the operator to audit federation
+        activity.
+
+        Hot-path notes: this endpoint is NOT cached at the writer
+        layer because the filter-combination space is unbounded.
+        The underlying SELECT is covered by per-dimension partial
+        indexes (`activities_type_recent_idx`,
+        `activities_actor_outbox_idx`,
+        `activities_source_recent_idx`) so unfiltered + per-filter
+        access patterns both hit indexed paths.
+      tags: [admin, activities]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: activity_type
+          in: query
+          required: false
+          description: |
+            Filter to one activity type — e.g. `Like`, `Follow`,
+            `Create`, `aa:Share`. See
+            [activities.activity_type CHECK](../db/migrations/00049_activities_ledger.sql)
+            for the closed set.
+          schema: { type: string }
+        - name: source
+          in: query
+          required: false
+          description: |
+            `local` for activities emitted by this instance, or a
+            peer instance URL (e.g. `https://studio-b.example`) to
+            filter to peer-received activities from one peer.
+          schema: { type: string }
+        - name: actor_user_ref
+          in: query
+          required: false
+          description: |
+            Filter to activities emitted by a single local actor.
+            For peer-sourced activities (actor_user_ref is NULL),
+            use the `source` filter instead.
+          schema: { type: integer, format: int64 }
+        - name: object_kind
+          in: query
+          required: false
+          description: |
+            Filter to activities about one object kind — e.g.
+            `post`, `comment`, `asset`, `user`, `collection`.
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 timestamp; activities at or after this time only.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a prior response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of activity rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminActivityList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/license/status:
     get:
       operationId: getAdminLicenseStatus
@@ -7293,6 +7373,76 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Notification" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    AdminActivity:
+      type: object
+      description: |
+        One row from the activities ledger (Phase 1.22.A-bis-1 +
+        ADR 0044). Surfaces the full AP envelope payload + the
+        operator-facing metadata the admin audit UI renders. See
+        [docs/spec/federation/v1.md §3](../../docs/spec/federation/v1.md)
+        for the wire-format contract this projection mirrors.
+      required:
+        - id
+        - activity_uri
+        - activity_type
+        - actor_uri
+        - source
+        - published_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        activity_uri: { type: string }
+        activity_type: { type: string }
+        actor_uri: { type: string }
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: NULL for peer-sourced activities (we don't have a local ref for the remote actor).
+        object_uri:
+          type: string
+          nullable: true
+        object_kind:
+          type: string
+          nullable: true
+        object_local_id:
+          type: string
+          nullable: true
+        target_uri:
+          type: string
+          nullable: true
+        to:
+          type: array
+          items: { type: string }
+        cc:
+          type: array
+          items: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        signature_value:
+          type: string
+          nullable: true
+        signature_pubkey:
+          type: string
+          nullable: true
+        source:
+          type: string
+          description: '`local` or peer instance URL.'
+        published_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    AdminActivityList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminActivity" }
         next_cursor:
           type: string
           nullable: true

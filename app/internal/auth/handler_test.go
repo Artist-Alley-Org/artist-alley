@@ -1017,3 +1017,6 @@ func (authOnlyImpl) SendDirectMessage(context.Context, openapi.SendDirectMessage
 func (authOnlyImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
 	panic("MarkDirectMessageThreadRead called from auth test shim")
 }
+func (authOnlyImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	panic("ListAdminActivities called from auth test shim")
+}
