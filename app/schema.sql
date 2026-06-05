@@ -54,11 +54,26 @@ CREATE TABLE "user" (
     lang                 VARCHAR(11),
     created              TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     origin               VARCHAR(50),
-    unique_hash          VARCHAR(50)
+    unique_hash          VARCHAR(50),
+    -- migrations/00048_federation_actor_keys.sql (Phase 1.22.A).
+    -- Per-user federation identity primitives. NULL when the user
+    -- has not yet been initialized as a federation actor; lazy
+    -- generation on first federation event involving them.
+    -- Encrypted-at-rest columns use the AES-256-GCM wrapper in
+    -- app/internal/atrest (master key from AA_MASTER_KEY).
+    actor_uri                  TEXT  NULL,
+    signing_public_key_pem     TEXT  NULL,
+    signing_private_key_enc    BYTEA NULL,
+    encryption_public_key      BYTEA NULL,
+    encryption_private_key_enc BYTEA NULL
 );
 
 -- migrations/00008_user_username_unique.sql
 CREATE UNIQUE INDEX user_username_uniq_idx ON "user" (username);
+
+-- migrations/00048_federation_actor_keys.sql
+CREATE UNIQUE INDEX user_actor_uri_idx ON "user" (actor_uri)
+    WHERE actor_uri IS NOT NULL;
 
 -- migrations/00037_admin_user_list_indexes.sql — supports the admin
 -- user list cursor pagination + case-insensitive search across

@@ -459,25 +459,30 @@ type TeamParent struct {
 }
 
 type User struct {
-	Ref                int64              `json:"ref"`
-	Username           *string            `json:"username"`
-	Password           *string            `json:"password"`
-	Fullname           *string            `json:"fullname"`
-	Email              *string            `json:"email"`
-	Usergroup          *int64             `json:"usergroup"`
-	LastActive         pgtype.Timestamptz `json:"last_active"`
-	LoggedIn           *int64             `json:"logged_in"`
-	AcceptedTerms      int64              `json:"accepted_terms"`
-	AccountExpires     pgtype.Timestamptz `json:"account_expires"`
-	Session            *string            `json:"session"`
-	PasswordLastChange pgtype.Timestamptz `json:"password_last_change"`
-	LoginTries         int64              `json:"login_tries"`
-	LoginLastTry       pgtype.Timestamptz `json:"login_last_try"`
-	Approved           int64              `json:"approved"`
-	Lang               *string            `json:"lang"`
-	Created            pgtype.Timestamptz `json:"created"`
-	Origin             *string            `json:"origin"`
-	UniqueHash         *string            `json:"unique_hash"`
+	Ref                     int64              `json:"ref"`
+	Username                *string            `json:"username"`
+	Password                *string            `json:"password"`
+	Fullname                *string            `json:"fullname"`
+	Email                   *string            `json:"email"`
+	Usergroup               *int64             `json:"usergroup"`
+	LastActive              pgtype.Timestamptz `json:"last_active"`
+	LoggedIn                *int64             `json:"logged_in"`
+	AcceptedTerms           int64              `json:"accepted_terms"`
+	AccountExpires          pgtype.Timestamptz `json:"account_expires"`
+	Session                 *string            `json:"session"`
+	PasswordLastChange      pgtype.Timestamptz `json:"password_last_change"`
+	LoginTries              int64              `json:"login_tries"`
+	LoginLastTry            pgtype.Timestamptz `json:"login_last_try"`
+	Approved                int64              `json:"approved"`
+	Lang                    *string            `json:"lang"`
+	Created                 pgtype.Timestamptz `json:"created"`
+	Origin                  *string            `json:"origin"`
+	UniqueHash              *string            `json:"unique_hash"`
+	ActorUri                *string            `json:"actor_uri"`
+	SigningPublicKeyPem     *string            `json:"signing_public_key_pem"`
+	SigningPrivateKeyEnc    []byte             `json:"signing_private_key_enc"`
+	EncryptionPublicKey     []byte             `json:"encryption_public_key"`
+	EncryptionPrivateKeyEnc []byte             `json:"encryption_private_key_enc"`
 }
 
 type UserBlock struct {

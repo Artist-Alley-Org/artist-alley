@@ -53,6 +53,42 @@ func (q *Queries) CountPostsByAuthor(ctx context.Context, authorUserRef int64) (
 	return value, err
 }
 
+const getActorKeyMaterial = `-- name: GetActorKeyMaterial :one
+SELECT actor_uri,
+       signing_public_key_pem,
+       signing_private_key_enc,
+       encryption_public_key,
+       encryption_private_key_enc
+FROM "user"
+WHERE ref = $1
+`
+
+type GetActorKeyMaterialRow struct {
+	ActorUri                *string
+	SigningPublicKeyPem     *string
+	SigningPrivateKeyEnc    []byte
+	EncryptionPublicKey     []byte
+	EncryptionPrivateKeyEnc []byte
+}
+
+// Phase 1.22.A — federation actor keypair fetch. Returns the
+// five columns added by migration 00048. Private-key columns
+// come back as their AES-256-GCM ciphertexts; the caller decrypts
+// via app/internal/atrest.Decrypt. Plain bytes never appear in
+// the SQL result row.
+func (q *Queries) GetActorKeyMaterial(ctx context.Context, ref int64) (GetActorKeyMaterialRow, error) {
+	row := q.db.QueryRow(ctx, getActorKeyMaterial, ref)
+	var i GetActorKeyMaterialRow
+	err := row.Scan(
+		&i.ActorUri,
+		&i.SigningPublicKeyPem,
+		&i.SigningPrivateKeyEnc,
+		&i.EncryptionPublicKey,
+		&i.EncryptionPrivateKeyEnc,
+	)
+	return i, err
+}
+
 const getUserPublicByRef = `-- name: GetUserPublicByRef :one
 
 SELECT u.ref                                            AS rs_user_id,
@@ -323,6 +359,41 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setActorKeyMaterial = `-- name: SetActorKeyMaterial :exec
+UPDATE "user"
+SET actor_uri                  = $2,
+    signing_public_key_pem     = $3,
+    signing_private_key_enc    = $4,
+    encryption_public_key      = $5,
+    encryption_private_key_enc = $6
+WHERE ref = $1
+`
+
+type SetActorKeyMaterialParams struct {
+	Ref                     int64
+	ActorUri                *string
+	SigningPublicKeyPem     *string
+	SigningPrivateKeyEnc    []byte
+	EncryptionPublicKey     []byte
+	EncryptionPrivateKeyEnc []byte
+}
+
+// Phase 1.22.A — federation actor keypair install. Called once
+// per user on first federation event involving them (lazy
+// generation). Caller supplies the freshly-generated keys with
+// private keys already wrapped by atrest.Encrypt.
+func (q *Queries) SetActorKeyMaterial(ctx context.Context, arg SetActorKeyMaterialParams) error {
+	_, err := q.db.Exec(ctx, setActorKeyMaterial,
+		arg.Ref,
+		arg.ActorUri,
+		arg.SigningPublicKeyPem,
+		arg.SigningPrivateKeyEnc,
+		arg.EncryptionPublicKey,
+		arg.EncryptionPrivateKeyEnc,
+	)
+	return err
 }
 
 const updateUserStatus = `-- name: UpdateUserStatus :one

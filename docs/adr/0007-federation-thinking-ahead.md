@@ -1,19 +1,30 @@
 ---
 id: "0007"
 title: Federation — thinking ahead
-status: accepted
+status: superseded
 date: 2026-05-24
 area: infrastructure
-phases: 
-  - "1.3"
+phases: []
 supersedes: []
-related: []
+superseded_by: "0043"
+related:
+  - "0043"
 tags:
   - infrastructure
-  - ai
+  - history
+  - federation
 excerpt: >-
-  artist-alley targets game studios. Studios above a certain size have multiple game teams (Blizzard alone has WoW, Overwatch, Diablo, Hearthstone, Hearthstone, etc.) and an archives function that sits above the per-game work. Two real-world topologies came up while discussing t…
+  Historical. Early "we will federate eventually, leave room for it in the schema" placeholder. Superseded by ADR 0043, which commits to the concrete walled-garden ActivityPub-shaped protocol.
 ---
+> **Superseded — historical record.** This ADR was a placeholder
+> committing to forward-compatibility for federation without
+> specifying the protocol. The concrete federation protocol — an
+> artist-alley walled-garden ActivityPub-shaped design with opt-in
+> per-object sharing — is now defined in
+> [ADR 0043](/adr/0043-federation-walled-garden-protocol/).
+> Retained as historical record.
+
+
 ## Context
 
 artist-alley targets game studios. Studios above a certain size have

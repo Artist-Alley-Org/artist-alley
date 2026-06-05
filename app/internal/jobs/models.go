@@ -459,25 +459,30 @@ type TeamParent struct {
 }
 
 type User struct {
-	Ref                int64
-	Username           *string
-	Password           *string
-	Fullname           *string
-	Email              *string
-	Usergroup          *int64
-	LastActive         pgtype.Timestamptz
-	LoggedIn           *int64
-	AcceptedTerms      int64
-	AccountExpires     pgtype.Timestamptz
-	Session            *string
-	PasswordLastChange pgtype.Timestamptz
-	LoginTries         int64
-	LoginLastTry       pgtype.Timestamptz
-	Approved           int64
-	Lang               *string
-	Created            pgtype.Timestamptz
-	Origin             *string
-	UniqueHash         *string
+	Ref                     int64
+	Username                *string
+	Password                *string
+	Fullname                *string
+	Email                   *string
+	Usergroup               *int64
+	LastActive              pgtype.Timestamptz
+	LoggedIn                *int64
+	AcceptedTerms           int64
+	AccountExpires          pgtype.Timestamptz
+	Session                 *string
+	PasswordLastChange      pgtype.Timestamptz
+	LoginTries              int64
+	LoginLastTry            pgtype.Timestamptz
+	Approved                int64
+	Lang                    *string
+	Created                 pgtype.Timestamptz
+	Origin                  *string
+	UniqueHash              *string
+	ActorUri                *string
+	SigningPublicKeyPem     *string
+	SigningPrivateKeyEnc    []byte
+	EncryptionPublicKey     []byte
+	EncryptionPrivateKeyEnc []byte
 }
 
 type UserBlock struct {

@@ -1,0 +1,23 @@
+{
+  "description": "Minimal aa:Share envelope, plaintext, deterministic sign. Uses RFC 8032 §7.1 TEST 1 keypair (public-domain).",
+  "actor_private_key_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "actor_public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "published_fixed": "2026-06-04T10:00:00Z",
+  "envelope_unsigned": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Share",
+    "id": "https://test.example/activities/00000000-0000-0000-0000-000000000001",
+    "actor": "https://test.example/users/alice",
+    "published": "2026-06-04T10:00:00Z",
+    "object": "https://test.example/posts/00000000-0000-0000-0000-000000000002",
+    "to": [
+      "https://peer.example/users/bob"
+    ],
+    "object_kind": "post",
+    "target_peer": "https://peer.example",
+    "scope": "view"
+  },
+  "canonical_bytes_b64": "eyJAY29udGV4dCI6Imh0dHBzOi8vYXJ0aXN0LWFsbGV5Lm9yZy9wcm90b2NvbC92MSIsImFjdG9yIjoiaHR0cHM6Ly90ZXN0LmV4YW1wbGUvdXNlcnMvYWxpY2UiLCJpZCI6Imh0dHBzOi8vdGVzdC5leGFtcGxlL2FjdGl2aXRpZXMvMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIiwib2JqZWN0IjoiaHR0cHM6Ly90ZXN0LmV4YW1wbGUvcG9zdHMvMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAyIiwib2JqZWN0X2tpbmQiOiJwb3N0IiwicHVibGlzaGVkIjoiMjAyNi0wNi0wNFQxMDowMDowMFoiLCJzY29wZSI6InZpZXciLCJ0YXJnZXRfcGVlciI6Imh0dHBzOi8vcGVlci5leGFtcGxlIiwidG8iOlsiaHR0cHM6Ly9wZWVyLmV4YW1wbGUvdXNlcnMvYm9iIl0sInR5cGUiOiJhYTpTaGFyZSJ9",
+  "signature_value_b64": "yLM8aSMnifxmaBkh5oL7VajueZv90tXnyyPSxnhL3SVXneKBMdjYPmAYeeLvhSL5C-WqjX83OkjsTloEmCBvCw",
+  "expected_verify": true
+}

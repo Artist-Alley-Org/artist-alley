@@ -1,0 +1,21 @@
+{
+  "description": "aa:Approve with a review comment. Same RFC 8032 keypair as minimal_aa_share for cross-fixture coherence.",
+  "actor_private_key_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "actor_public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "published_fixed": "2026-06-04T10:05:00Z",
+  "envelope_unsigned": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Approve",
+    "id": "https://test.example/activities/00000000-0000-0000-0000-000000000003",
+    "actor": "https://test.example/users/alice",
+    "published": "2026-06-04T10:05:00Z",
+    "object": "https://test.example/assets/00000000-0000-0000-0000-000000000004",
+    "to": [
+      "https://peer.example/users/bob"
+    ],
+    "aa:comment": "Approved with minor lighting note."
+  },
+  "canonical_bytes_b64": "eyJAY29udGV4dCI6Imh0dHBzOi8vYXJ0aXN0LWFsbGV5Lm9yZy9wcm90b2NvbC92MSIsImFhOmNvbW1lbnQiOiJBcHByb3ZlZCB3aXRoIG1pbm9yIGxpZ2h0aW5nIG5vdGUuIiwiYWN0b3IiOiJodHRwczovL3Rlc3QuZXhhbXBsZS91c2Vycy9hbGljZSIsImlkIjoiaHR0cHM6Ly90ZXN0LmV4YW1wbGUvYWN0aXZpdGllcy8wMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDMiLCJvYmplY3QiOiJodHRwczovL3Rlc3QuZXhhbXBsZS9hc3NldHMvMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDA0IiwicHVibGlzaGVkIjoiMjAyNi0wNi0wNFQxMDowNTowMFoiLCJ0byI6WyJodHRwczovL3BlZXIuZXhhbXBsZS91c2Vycy9ib2IiXSwidHlwZSI6ImFhOkFwcHJvdmUifQ==",
+  "signature_value_b64": "QbtgKWkU5CXVx6dQAU5XZ2fi5HXswcr9ej2I2rChAu2RTKhOd4TKC3W2LbdZkAOb2bBrajHIC44y6AbWaMTVDg",
+  "expected_verify": true
+}

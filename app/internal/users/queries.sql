@@ -183,3 +183,30 @@ ON CONFLICT (rs_user_id) DO UPDATE SET
 RETURNING rs_user_id, display_name, bio, avatar_url, location,
           website_url, social_links, language, theme,
           origin_server_id, created_at, updated_at;
+
+-- name: GetActorKeyMaterial :one
+-- Phase 1.22.A — federation actor keypair fetch. Returns the
+-- five columns added by migration 00048. Private-key columns
+-- come back as their AES-256-GCM ciphertexts; the caller decrypts
+-- via app/internal/atrest.Decrypt. Plain bytes never appear in
+-- the SQL result row.
+SELECT actor_uri,
+       signing_public_key_pem,
+       signing_private_key_enc,
+       encryption_public_key,
+       encryption_private_key_enc
+FROM "user"
+WHERE ref = $1;
+
+-- name: SetActorKeyMaterial :exec
+-- Phase 1.22.A — federation actor keypair install. Called once
+-- per user on first federation event involving them (lazy
+-- generation). Caller supplies the freshly-generated keys with
+-- private keys already wrapped by atrest.Encrypt.
+UPDATE "user"
+SET actor_uri                  = $2,
+    signing_public_key_pem     = $3,
+    signing_private_key_enc    = $4,
+    encryption_public_key      = $5,
+    encryption_private_key_enc = $6
+WHERE ref = $1;

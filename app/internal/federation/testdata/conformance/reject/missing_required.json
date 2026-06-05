@@ -1,0 +1,10 @@
+{
+  "description": "Missing required `actor` field — REJECTED as ErrMissingField.",
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:Share",
+    "id": "https://test.example/activities/x",
+    "published": "2026-06-04T10:00:00Z"
+  },
+  "expected_error": "ErrMissingField"
+}

@@ -36,6 +36,21 @@ const (
 // [InvalidateProfile] which references it.
 const CacheDomain = "user.profile"
 
+// CacheDomainActorKeys keys the federation-keypair LRU. Hot
+// surface on the federation hot path: every outbound activity
+// signs with the actor's private key, and every inbound activity
+// verifies against the actor's published public key. Each of
+// those would otherwise be a DB roundtrip per envelope; cached,
+// they become memory hits after warm-up.
+//
+// What's cached is the AT-REST FORM of the key material (the
+// ActorKeyMaterial struct, with private keys still encrypted).
+// Decryption happens on demand inside DecryptSigningPrivateKey /
+// DecryptEncryptionPrivateKey so plaintext private keys live in
+// memory only for the duration of the signing operation, not for
+// the LRU's residency window.
+const CacheDomainActorKeys = "user.actor_keys"
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
@@ -45,6 +60,12 @@ type Handler struct {
 	// hits the DB. The by-username path doesn't cache (rare URL,
 	// not worth the second-key bookkeeping); it always queries.
 	byRef *cache.Cache[openapi.UserPublic]
+
+	// actorKeys caches ActorKeyMaterial by userRef. Federation hot
+	// path. Invalidated by EnsureActorKeyMaterial when it writes
+	// new keys (rare; once per user lifetime at v1, since rotation
+	// is deferred to 1.22.K).
+	actorKeys *cache.Cache[ActorKeyMaterial]
 
 	// Audit is the typed audit recorder for lifecycle mutations
 	// (Phase 1.17.B + onward — status changes, role assignments,
@@ -68,6 +89,12 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		// profile sizes and covers the hot end of any plausible
 		// active-author set. Anything cold falls back to DB.
 		h.byRef = cache.Register[openapi.UserPublic](registry, CacheDomain, 5_000)
+		// Actor-key cache: ~200B per entry (PEMs + 32B raw keys +
+		// AES-GCM ciphertext); 10k entries comfortably fits 2MB
+		// and covers the active-federated-actor population on any
+		// realistic install. Federation peers may push this higher
+		// in 1.22.B-onward; LRU eviction handles overflow.
+		h.actorKeys = cache.Register[ActorKeyMaterial](registry, CacheDomainActorKeys, 10_000)
 	}
 	return h
 }
