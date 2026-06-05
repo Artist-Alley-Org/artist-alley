@@ -786,6 +786,59 @@ CREATE INDEX federation_peers_pending_inbound_idx
     ON federation_peers (handshake_at DESC)
     WHERE status = 'pending_inbound';
 
+-- migrations/00053_federation_directories.sql — directory protocol
+-- subscriber tables. federation_directories is the per-instance list
+-- of directories we subscribe to; federation_directory_entries is
+-- the locally cached snapshot of each directory's listings (cache-
+-- on-disk so a directory outage doesn't drop our discovery surface).
+CREATE TABLE federation_directories (
+    id                     UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    directory_url          TEXT         NOT NULL UNIQUE,
+    operator_name          TEXT         NOT NULL DEFAULT '',
+    operator_public_key    TEXT         NOT NULL,
+    operator_fingerprint   TEXT         NOT NULL,
+    operator_contact       TEXT         NOT NULL DEFAULT '',
+    subscribed_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    subscribed_by_user_ref BIGINT       NOT NULL,
+    enabled                BOOLEAN      NOT NULL DEFAULT TRUE,
+    last_polled_at         TIMESTAMPTZ  NULL,
+    last_poll_status       TEXT         NOT NULL DEFAULT 'never_polled'
+                           CHECK (last_poll_status IN (
+                               'never_polled', 'ok', 'unreachable',
+                               'signature_failed', 'malformed', 'spec_version_mismatch'
+                           )),
+    last_poll_error        TEXT         NOT NULL DEFAULT '',
+    poll_interval_seconds  INTEGER      NOT NULL DEFAULT 21600
+                           CHECK (poll_interval_seconds >= 300),
+    notes                  TEXT         NOT NULL DEFAULT '',
+    created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX federation_directories_due_idx
+    ON federation_directories (last_polled_at NULLS FIRST)
+    WHERE enabled = TRUE;
+
+CREATE TABLE federation_directory_entries (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    directory_id         UUID         NOT NULL REFERENCES federation_directories(id) ON DELETE CASCADE,
+    instance_url         TEXT         NOT NULL,
+    display_name         TEXT         NOT NULL,
+    instance_public_key  TEXT         NOT NULL,
+    fingerprint          TEXT         NOT NULL,
+    region               TEXT         NOT NULL DEFAULT '',
+    description          TEXT         NOT NULL DEFAULT '',
+    tags                 JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    verified_at          TIMESTAMPTZ  NOT NULL,
+    verified_via         TEXT         NOT NULL,
+    listing_id           TEXT         NOT NULL DEFAULT '',
+    cached_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (directory_id, instance_url)
+);
+CREATE INDEX federation_directory_entries_by_dir_idx
+    ON federation_directory_entries (directory_id, verified_at DESC);
+CREATE INDEX federation_directory_entries_by_url_idx
+    ON federation_directory_entries (instance_url);
+
 -- migrations/00046_notifications.sql — per-user in-app feed.
 -- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks
 -- the prefs UI). Permission-aware writer in

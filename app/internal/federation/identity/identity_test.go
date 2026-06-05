@@ -152,6 +152,11 @@ func TestLoad_Idempotent_SameInstance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ensureAtrest(t)
+	// Scope the sysconfig row so we don't try to decrypt a row
+	// encrypted with a different at-rest key (prod boot uses
+	// AA_MASTER_KEY; tests use ad-hoc keys when atrest hasn't
+	// been initialised yet — without scoping the two will collide).
+	scopedSysconfigKey(t, ctx, pool)
 
 	mgr := identity.NewManager(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	id1, err := mgr.Load(ctx)
@@ -186,6 +191,7 @@ func TestSignAndVerify_RoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ensureAtrest(t)
+	scopedSysconfigKey(t, ctx, pool)
 
 	mgr := identity.NewManager(pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	id, err := mgr.Load(ctx)

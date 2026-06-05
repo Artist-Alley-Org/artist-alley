@@ -282,6 +282,41 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type FederationDirectory struct {
+	ID                  pgtype.UUID        `json:"id"`
+	DirectoryUrl        string             `json:"directory_url"`
+	OperatorName        string             `json:"operator_name"`
+	OperatorPublicKey   string             `json:"operator_public_key"`
+	OperatorFingerprint string             `json:"operator_fingerprint"`
+	OperatorContact     string             `json:"operator_contact"`
+	SubscribedAt        pgtype.Timestamptz `json:"subscribed_at"`
+	SubscribedByUserRef int64              `json:"subscribed_by_user_ref"`
+	Enabled             bool               `json:"enabled"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	LastPollStatus      string             `json:"last_poll_status"`
+	LastPollError       string             `json:"last_poll_error"`
+	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
+	Notes               string             `json:"notes"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationDirectoryEntry struct {
+	ID                pgtype.UUID        `json:"id"`
+	DirectoryID       pgtype.UUID        `json:"directory_id"`
+	InstanceUrl       string             `json:"instance_url"`
+	DisplayName       string             `json:"display_name"`
+	InstancePublicKey string             `json:"instance_public_key"`
+	Fingerprint       string             `json:"fingerprint"`
+	Region            string             `json:"region"`
+	Description       string             `json:"description"`
+	Tags              []byte             `json:"tags"`
+	VerifiedAt        pgtype.Timestamptz `json:"verified_at"`
+	VerifiedVia       string             `json:"verified_via"`
+	ListingID         string             `json:"listing_id"`
+	CachedAt          pgtype.Timestamptz `json:"cached_at"`
+}
+
 type FederationPeer struct {
 	ID                 pgtype.UUID        `json:"id"`
 	InstanceUrl        string             `json:"instance_url"`

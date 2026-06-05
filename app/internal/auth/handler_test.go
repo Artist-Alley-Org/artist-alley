@@ -1050,3 +1050,18 @@ func (authOnlyImpl) ListFederationPendingInbound(context.Context, openapi.ListFe
 func (authOnlyImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
 	panic("AcceptFederationPeer called from auth test shim")
 }
+func (authOnlyImpl) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
+	panic("ListFederationDirectories called from auth test shim")
+}
+func (authOnlyImpl) SubscribeFederationDirectory(context.Context, openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
+	panic("SubscribeFederationDirectory called from auth test shim")
+}
+func (authOnlyImpl) UnsubscribeFederationDirectory(context.Context, openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
+	panic("UnsubscribeFederationDirectory called from auth test shim")
+}
+func (authOnlyImpl) PollFederationDirectory(context.Context, openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
+	panic("PollFederationDirectory called from auth test shim")
+}
+func (authOnlyImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
+	panic("ListFederationDirectoryEntries called from auth test shim")
+}

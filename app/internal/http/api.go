@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"time"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +27,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
@@ -72,6 +74,9 @@ type apiServer struct {
 	peersPublic     *peer.PublicHandler
 	fedIdentity     *identity.Manager
 	fedEngine       *peer.Engine
+	directories      *directory.Registry
+	directoriesAdmin *directory.AdminHandler
+	directoryPoller  *directory.Poller
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -172,6 +177,14 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		sysconfigBaseURLFn(sysCfg),
 		sysconfigSiteNameFn(sysCfg),
 	)
+
+	// Directory subscriber (Phase 1.22.B-c). The Registry +
+	// AdminHandler land here; the background Poller starts in
+	// Run() so test fixtures that don't need it can skip it.
+	s.directories = directory.NewRegistry(pool, logger, cacheReg)
+	dirClient := directory.NewClient(logger)
+	s.directoriesAdmin = directory.NewAdminHandler(s.directories, dirClient)
+	s.directoryPoller = directory.NewPoller(s.directories, dirClient, logger, 5*time.Minute)
 	// UsernameResolver: the username-by-ref lookup federation
 	// emitters use to build actor URIs. *users.Handler already
 	// caches UserPublic; ResolveUsername reuses that cache so the
@@ -857,6 +870,28 @@ func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNo
 
 func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- federation directories (Phase 1.22.B-c) -----------------------------
+
+func (s *apiServer) ListFederationDirectories(ctx context.Context, req openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
+	return s.directoriesAdmin.ListFederationDirectories(ctx, req)
+}
+
+func (s *apiServer) SubscribeFederationDirectory(ctx context.Context, req openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.SubscribeFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) UnsubscribeFederationDirectory(ctx context.Context, req openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.UnsubscribeFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) PollFederationDirectory(ctx context.Context, req openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.PollFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) ListFederationDirectoryEntries(ctx context.Context, req openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
+	return s.directoriesAdmin.ListFederationDirectoryEntries(ctx, req)
 }
 
 // --- federation public + handshake (Phase 1.22.B-b) ----------------------

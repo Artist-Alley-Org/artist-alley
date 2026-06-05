@@ -973,3 +973,18 @@ func (metaShim) ListFederationPendingInbound(context.Context, openapi.ListFedera
 func (metaShim) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
 	panic("AcceptFederationPeer called from metadata test shim")
 }
+func (metaShim) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
+	panic("ListFederationDirectories called from metadata test shim")
+}
+func (metaShim) SubscribeFederationDirectory(context.Context, openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
+	panic("SubscribeFederationDirectory called from metadata test shim")
+}
+func (metaShim) UnsubscribeFederationDirectory(context.Context, openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
+	panic("UnsubscribeFederationDirectory called from metadata test shim")
+}
+func (metaShim) PollFederationDirectory(context.Context, openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
+	panic("PollFederationDirectory called from metadata test shim")
+}
+func (metaShim) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
+	panic("ListFederationDirectoryEntries called from metadata test shim")
+}

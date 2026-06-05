@@ -43,6 +43,7 @@ type Server struct {
 	pool    *pgxpool.Pool
 	srv     *http.Server
 	workers *jobs.Pool // background worker pool; nil if disabled
+	api     *apiServer // aggregate API handler (federation poller is owned here)
 
 	// lifecycleCtx bounds background goroutines (licensing re-verify
 	// ticker, etc.) to the server's lifetime. Cancelled by Run() at
@@ -208,6 +209,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
 	resolver := auth.NewResolver(pool, logger, sessions, cacheReg)
+	// Hoisted so we can stash on Server below (the federation
+	// directory poller lives on this struct + Run() needs it).
+	var impl *apiServer
 	r.Route("/api/v1", func(r chi.Router) {
 		// Resolve identity (cookie or Bearer token) for every request
 		// under /api/v1. Anonymous requests still pass through — each
@@ -231,7 +235,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Get("/assets/{id}/variants/views/*",
 			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
-		impl := newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
+		impl = newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
 		// Hand the provider registry to the auth handler now that
 		// both exist. Done out-of-band rather than threading through
 		// newAPIServer's positional args — same shape as the
@@ -314,6 +318,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			IdleTimeout:       60 * time.Second,
 		},
 		workers:         workers,
+		api:             impl,
 		lifecycleCtx:    serverCtx,
 		lifecycleCancel: serverCancel,
 	}, nil
@@ -374,6 +379,15 @@ func (s *Server) Run(ctx context.Context) error {
 			slog.Int("workers", s.workers.Size),
 		)
 		defer s.workers.Stop()
+	}
+
+	// Federation directory poller (Phase 1.22.B-c). Walks
+	// subscribed directories every 5 minutes; per-directory cadence
+	// is read from the row's poll_interval_seconds column. Stop
+	// via context cancellation alongside the HTTP server.
+	if s.api != nil && s.api.directoryPoller != nil {
+		go s.api.directoryPoller.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "directory.poller.start")
 	}
 
 	listenErr := make(chan error, 1)

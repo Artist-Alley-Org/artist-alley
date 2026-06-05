@@ -282,6 +282,41 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type FederationDirectory struct {
+	ID                  pgtype.UUID
+	DirectoryUrl        string
+	OperatorName        string
+	OperatorPublicKey   string
+	OperatorFingerprint string
+	OperatorContact     string
+	SubscribedAt        pgtype.Timestamptz
+	SubscribedByUserRef int64
+	Enabled             bool
+	LastPolledAt        pgtype.Timestamptz
+	LastPollStatus      string
+	LastPollError       string
+	PollIntervalSeconds int32
+	Notes               string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type FederationDirectoryEntry struct {
+	ID                pgtype.UUID
+	DirectoryID       pgtype.UUID
+	InstanceUrl       string
+	DisplayName       string
+	InstancePublicKey string
+	Fingerprint       string
+	Region            string
+	Description       string
+	Tags              []byte
+	VerifiedAt        pgtype.Timestamptz
+	VerifiedVia       string
+	ListingID         string
+	CachedAt          pgtype.Timestamptz
+}
+
 type FederationPeer struct {
 	ID                 pgtype.UUID
 	InstanceUrl        string

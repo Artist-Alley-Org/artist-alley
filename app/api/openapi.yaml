@@ -493,6 +493,150 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/federation/directories:
+    get:
+      operationId: listFederationDirectories
+      summary: List subscribed federation directories (Phase 1.22.B-c)
+      description: |
+        All directories we've subscribed to, newest-first. Each
+        row carries the pinned operator pubkey + the last poll
+        status. Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of directories.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: subscribeFederationDirectory
+      summary: Subscribe to a federation directory
+      description: |
+        Fetches /v1/operator from the directory URL, captures the
+        operator pubkey + fingerprint, and persists the
+        subscription. The admin should review the returned
+        fingerprint out-of-band before relying on the directory.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationDirectorySubscribe" }
+      responses:
+        "201":
+          description: Subscription created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Already subscribed to this directory URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/directories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: unsubscribeFederationDirectory
+      summary: Unsubscribe from a directory (cascades cached entries)
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unsubscribed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/directories/{id}/poll:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: pollFederationDirectory
+      summary: Force an immediate poll of one directory
+      description: |
+        Bypasses the background poller's cadence — useful when
+        an admin just subscribed or wants to refresh manually.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Poll result (status + count).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryPollResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/directories/{id}/entries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listFederationDirectoryEntries
+      summary: Browse cached entries from one directory
+      description: |
+        Returns the locally cached snapshot of the directory's
+        listings — survives directory outages per the spec's
+        local-caching rule.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: Cached entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryEntryList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /federation/instance:
     get:
       operationId: getFederationInstance
@@ -7717,6 +7861,111 @@ components:
         notes: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    FederationDirectory:
+      type: object
+      description: |
+        One subscribed federation directory (Phase 1.22.B-c).
+        Pairing alone shares no content; directories are
+        discovery aids per docs/spec/federation-directory/v1.md.
+      required:
+        - id
+        - directory_url
+        - operator_name
+        - operator_public_key
+        - operator_fingerprint
+        - subscribed_at
+        - subscribed_by_user_ref
+        - enabled
+        - last_poll_status
+        - last_poll_error
+        - poll_interval_seconds
+        - notes
+      properties:
+        id: { type: string, format: uuid }
+        directory_url: { type: string }
+        operator_name: { type: string }
+        operator_public_key:
+          type: string
+          description: PEM-wrapped Ed25519 directory operator pubkey (pinned at subscribe time).
+        operator_fingerprint: { type: string }
+        operator_contact: { type: string }
+        subscribed_at: { type: string, format: date-time }
+        subscribed_by_user_ref: { type: integer, format: int64 }
+        enabled: { type: boolean }
+        last_polled_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_poll_status:
+          type: string
+          enum: [never_polled, ok, unreachable, signature_failed, malformed, spec_version_mismatch]
+        last_poll_error: { type: string }
+        poll_interval_seconds: { type: integer }
+        notes: { type: string }
+
+    FederationDirectoryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationDirectory" }
+
+    FederationDirectorySubscribe:
+      type: object
+      required: [directory_url]
+      properties:
+        directory_url:
+          type: string
+          description: 'Directory base URL (https, no path, no trailing slash).'
+        notes:
+          type: string
+
+    FederationDirectoryEntry:
+      type: object
+      required:
+        - id
+        - directory_id
+        - instance_url
+        - display_name
+        - instance_public_key
+        - fingerprint
+        - verified_at
+        - verified_via
+        - cached_at
+      properties:
+        id: { type: string, format: uuid }
+        directory_id: { type: string, format: uuid }
+        instance_url: { type: string }
+        display_name: { type: string }
+        instance_public_key: { type: string }
+        fingerprint: { type: string }
+        region: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        verified_at: { type: string, format: date-time }
+        verified_via: { type: string }
+        listing_id: { type: string }
+        cached_at: { type: string, format: date-time }
+
+    FederationDirectoryEntryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationDirectoryEntry" }
+
+    FederationDirectoryPollResult:
+      type: object
+      required: [directory, entry_count]
+      properties:
+        directory:
+          $ref: "#/components/schemas/FederationDirectory"
+        entry_count: { type: integer }
 
     FederationInstanceDoc:
       type: object

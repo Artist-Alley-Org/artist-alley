@@ -982,3 +982,18 @@ func (shimImpl) ListFederationPendingInbound(context.Context, openapi.ListFedera
 func (shimImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
 	panic("AcceptFederationPeer called from setup test shim")
 }
+func (shimImpl) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
+	panic("ListFederationDirectories called from setup test shim")
+}
+func (shimImpl) SubscribeFederationDirectory(context.Context, openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
+	panic("SubscribeFederationDirectory called from setup test shim")
+}
+func (shimImpl) UnsubscribeFederationDirectory(context.Context, openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
+	panic("UnsubscribeFederationDirectory called from setup test shim")
+}
+func (shimImpl) PollFederationDirectory(context.Context, openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
+	panic("PollFederationDirectory called from setup test shim")
+}
+func (shimImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
+	panic("ListFederationDirectoryEntries called from setup test shim")
+}

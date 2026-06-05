@@ -415,6 +415,10 @@ func TestFullHandshakePair_OverHTTPRoundTrip(t *testing.T) {
 	// Seed admin user (handshake_by_user_ref is NOT NULL).
 	adminA := fixtureAdmin(t, ctx, pool)
 
+	// Clean BEFORE the test — a prior failed run may have left
+	// rows we'd UNIQUE-violate on. Also clean AFTER so the next
+	// run starts clean too.
+	_, _ = pool.Exec(ctx, `DELETE FROM federation_peers WHERE instance_url IN ($1, $2)`, aURL, bURL)
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM federation_peers WHERE instance_url IN ($1, $2)`, aURL, bURL)
