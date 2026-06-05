@@ -10,6 +10,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Activity struct {
+	ID              pgtype.UUID        `json:"id"`
+	ActivityUri     string             `json:"activity_uri"`
+	ActivityType    string             `json:"activity_type"`
+	ActorUri        string             `json:"actor_uri"`
+	ActorUserRef    *int64             `json:"actor_user_ref"`
+	ObjectUri       *string            `json:"object_uri"`
+	ObjectKind      *string            `json:"object_kind"`
+	ObjectLocalID   *string            `json:"object_local_id"`
+	TargetUri       *string            `json:"target_uri"`
+	ToUris          []byte             `json:"to_uris"`
+	CcUris          []byte             `json:"cc_uris"`
+	BtoUris         []byte             `json:"bto_uris"`
+	BccUris         []byte             `json:"bcc_uris"`
+	AudienceUris    []byte             `json:"audience_uris"`
+	Payload         []byte             `json:"payload"`
+	SignatureValue  *string            `json:"signature_value"`
+	SignaturePubkey *string            `json:"signature_pubkey"`
+	Source          string             `json:"source"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID        `json:"id"`
 	RsUserID       int64              `json:"rs_user_id"`

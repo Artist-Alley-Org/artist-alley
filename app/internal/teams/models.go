@@ -10,6 +10,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Activity struct {
+	ID              pgtype.UUID
+	ActivityUri     string
+	ActivityType    string
+	ActorUri        string
+	ActorUserRef    *int64
+	ObjectUri       *string
+	ObjectKind      *string
+	ObjectLocalID   *string
+	TargetUri       *string
+	ToUris          []byte
+	CcUris          []byte
+	BtoUris         []byte
+	BccUris         []byte
+	AudienceUris    []byte
+	Payload         []byte
+	SignatureValue  *string
+	SignaturePubkey *string
+	Source          string
+	PublishedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID
 	RsUserID       int64

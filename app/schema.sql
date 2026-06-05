@@ -696,6 +696,58 @@ CREATE INDEX idx_dm_unread
     ON direct_messages (recipient_user_ref)
     WHERE read_at IS NULL;
 
+-- migrations/00049_activities_ledger.sql — CQRS-lite federation
+-- backbone (ADR 0044). Canonical record of every federated social
+-- action. activity_type CHECK mirrors federation.ActivityType;
+-- object_kind CHECK mirrors activities.ActivityObjectKind. Drift
+-- between this DDL and those Go catalogues is a code-review block
+-- (ADR 0042).
+CREATE TABLE activities (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    activity_uri       TEXT NOT NULL UNIQUE,
+    activity_type      TEXT NOT NULL CHECK (activity_type IN (
+        'Create', 'Update', 'Delete',
+        'Follow', 'Accept', 'Reject',
+        'Undo', 'Like', 'Announce', 'Block',
+        'aa:Share', 'aa:Unshare',
+        'aa:Approve', 'aa:RequestChanges', 'aa:MarkReviewed',
+        'aa:Annotation', 'aa:WorkflowTransition', 'aa:AssetVersion',
+        'aa:Subscribe', 'aa:Mention'
+    )),
+    actor_uri          TEXT NOT NULL,
+    actor_user_ref     BIGINT NULL,
+    object_uri         TEXT NULL,
+    object_kind        TEXT NULL CHECK (object_kind IS NULL OR object_kind IN (
+        'post', 'comment', 'asset', 'user', 'collection',
+        'workspace', 'brand_kit', 'message', 'activity'
+    )),
+    object_local_id    TEXT NULL,
+    target_uri         TEXT NULL,
+    to_uris            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    cc_uris            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    bto_uris           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    bcc_uris           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    audience_uris      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    payload            JSONB NOT NULL,
+    signature_value    TEXT NULL,
+    signature_pubkey   TEXT NULL,
+    source             TEXT NOT NULL DEFAULT 'local'
+                       CHECK (source = 'local' OR source LIKE 'https://%'),
+    published_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX activities_actor_outbox_idx
+    ON activities (actor_user_ref, published_at DESC, id DESC)
+    WHERE source = 'local' AND actor_user_ref IS NOT NULL;
+CREATE INDEX activities_object_recent_idx
+    ON activities (object_kind, object_local_id, published_at DESC)
+    WHERE object_kind IS NOT NULL AND object_local_id IS NOT NULL;
+CREATE INDEX activities_type_recent_idx
+    ON activities (activity_type, published_at DESC);
+CREATE INDEX activities_source_recent_idx
+    ON activities (source, published_at DESC)
+    WHERE source <> 'local';
+
 -- migrations/00046_notifications.sql — per-user in-app feed.
 -- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks
 -- the prefs UI). Permission-aware writer in

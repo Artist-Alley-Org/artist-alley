@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package assets
+package activities
 
 import (
 	"net/netip"

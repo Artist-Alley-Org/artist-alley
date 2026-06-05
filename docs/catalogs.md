@@ -76,7 +76,8 @@ When you add a new catalogue: add a row here in the appropriate section, in the 
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| Activity types (`Create`, `Update`, `Delete`, `Follow`, …, `aa:Share`, `aa:Approve`, `aa:Annotation`, …) | `app/internal/federation/vocab.go` (`ActivityType` constants + `KnownActivityTypes`) | `federation_outbox.activity_type` + `federation_inbox.activity_type` columns (Phase 1.22.D, not yet shipped) | envelope parser, inbox dispatch, outbox emitters |
+| Activity types (`Create`, `Update`, `Delete`, `Follow`, …, `aa:Share`, `aa:Approve`, `aa:Annotation`, …) | `app/internal/federation/vocab.go` (`ActivityType` constants + `KnownActivityTypes`) | `activities.activity_type` CHECK (migration 00049) + `federation_outbox.activity_type` + `federation_inbox.activity_type` (Phase 1.22.D) | envelope parser, inbox dispatch, outbox emitters, activities ledger |
+| Activity object kinds (`post` / `comment` / `asset` / `user` / `collection` / `workspace` / `brand_kit` / `message` / `activity`) | `app/internal/activities/activities.go` (`ActivityObjectKind` + `KnownObjectKinds`) | `activities.object_kind` CHECK (migration 00049) | activities writer, federation outbox, admin audit UI |
 | Object types (`Note`, `Image`, …, `aa:Asset`, `aa:Post`, `aa:Workspace`, `aa:BrandKit`, `aa:Collection`) | `app/internal/federation/vocab.go` (`ObjectType` constants + `KnownObjectTypes`) | — (Go-only at v1; object-shape validation is per-type code) | per-activity handlers |
 | Signature algorithms (`Ed25519`) | `app/internal/federation/vocab.go` (`SignatureAlgorithm`) | — | envelope `Sign` + `Verify` |
 | Encryption algorithms (`nacl-box`) | `app/internal/federation/vocab.go` (`EncryptionAlgorithm`) | — | NaCl-box envelope |
