@@ -983,3 +983,9 @@ func (collShim) PollFederationDirectory(context.Context, openapi.PollFederationD
 func (collShim) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	panic("ListFederationDirectoryEntries called from collections test shim")
 }
+func (collShim) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	panic("RequestFederationDirectoryPublishChallenge called from collections test shim")
+}
+func (collShim) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	panic("RegisterFederationDirectoryPublishListing called from collections test shim")
+}

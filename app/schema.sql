@@ -811,6 +811,24 @@ CREATE TABLE federation_directories (
     poll_interval_seconds  INTEGER      NOT NULL DEFAULT 21600
                            CHECK (poll_interval_seconds >= 300),
     notes                  TEXT         NOT NULL DEFAULT '',
+    -- migration 00054 — publish state machine (we want to be
+    -- LISTED in this directory): not_published → pending_dns →
+    -- pending_register → listed (or failed at any step).
+    publish_status         TEXT         NOT NULL DEFAULT 'not_published'
+                           CHECK (publish_status IN (
+                               'not_published', 'pending_dns', 'pending_register', 'listed', 'failed'
+                           )),
+    publish_pending_token    TEXT         NOT NULL DEFAULT '',
+    publish_token_expires_at TIMESTAMPTZ  NULL,
+    publish_record_name      TEXT         NOT NULL DEFAULT '',
+    publish_record_value     TEXT         NOT NULL DEFAULT '',
+    publish_listing_id       TEXT         NOT NULL DEFAULT '',
+    publish_last_attempt_at  TIMESTAMPTZ  NULL,
+    publish_last_error       TEXT         NOT NULL DEFAULT '',
+    publish_display_name     TEXT         NOT NULL DEFAULT '',
+    publish_region           TEXT         NOT NULL DEFAULT '',
+    publish_description      TEXT         NOT NULL DEFAULT '',
+    publish_tags             JSONB        NOT NULL DEFAULT '[]'::jsonb,
     created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

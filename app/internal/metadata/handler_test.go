@@ -988,3 +988,9 @@ func (metaShim) PollFederationDirectory(context.Context, openapi.PollFederationD
 func (metaShim) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	panic("ListFederationDirectoryEntries called from metadata test shim")
 }
+func (metaShim) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	panic("RequestFederationDirectoryPublishChallenge called from metadata test shim")
+}
+func (metaShim) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	panic("RegisterFederationDirectoryPublishListing called from metadata test shim")
+}

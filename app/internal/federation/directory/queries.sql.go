@@ -48,7 +48,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 WHERE id = $1
 `
@@ -71,6 +76,18 @@ func (q *Queries) GetDirectoryByID(ctx context.Context, id pgtype.UUID) (Federat
 		&i.LastPollError,
 		&i.PollIntervalSeconds,
 		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -82,7 +99,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 WHERE directory_url = $1
 `
@@ -107,6 +129,18 @@ func (q *Queries) GetDirectoryByURL(ctx context.Context, directoryUrl string) (F
 		&i.LastPollError,
 		&i.PollIntervalSeconds,
 		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -128,7 +162,12 @@ RETURNING id, directory_url, operator_name, operator_public_key,
           operator_fingerprint, operator_contact,
           subscribed_at, subscribed_by_user_ref, enabled,
           last_polled_at, last_poll_status, last_poll_error,
-          poll_interval_seconds, notes, created_at, updated_at
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
 `
 
 type InsertDirectoryParams struct {
@@ -167,6 +206,18 @@ func (q *Queries) InsertDirectory(ctx context.Context, arg InsertDirectoryParams
 		&i.LastPollError,
 		&i.PollIntervalSeconds,
 		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -178,7 +229,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 ORDER BY subscribed_at DESC
 `
@@ -208,6 +264,18 @@ func (q *Queries) ListDirectories(ctx context.Context) ([]FederationDirectory, e
 			&i.LastPollError,
 			&i.PollIntervalSeconds,
 			&i.Notes,
+			&i.PublishStatus,
+			&i.PublishPendingToken,
+			&i.PublishTokenExpiresAt,
+			&i.PublishRecordName,
+			&i.PublishRecordValue,
+			&i.PublishListingID,
+			&i.PublishLastAttemptAt,
+			&i.PublishLastError,
+			&i.PublishDisplayName,
+			&i.PublishRegion,
+			&i.PublishDescription,
+			&i.PublishTags,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -281,7 +349,12 @@ RETURNING id, directory_url, operator_name, operator_public_key,
           operator_fingerprint, operator_contact,
           subscribed_at, subscribed_by_user_ref, enabled,
           last_polled_at, last_poll_status, last_poll_error,
-          poll_interval_seconds, notes, created_at, updated_at
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
 `
 
 type SetDirectoryEnabledParams struct {
@@ -307,6 +380,299 @@ func (q *Queries) SetDirectoryEnabled(ctx context.Context, arg SetDirectoryEnabl
 		&i.LastPollError,
 		&i.PollIntervalSeconds,
 		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDirectoryPublishChallenge = `-- name: SetDirectoryPublishChallenge :one
+UPDATE federation_directories
+SET publish_status           = 'pending_dns',
+    publish_pending_token    = $2,
+    publish_token_expires_at = $3,
+    publish_record_name      = $4,
+    publish_record_value     = $5,
+    publish_last_attempt_at  = NOW(),
+    publish_last_error       = '',
+    updated_at               = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
+`
+
+type SetDirectoryPublishChallengeParams struct {
+	ID                    pgtype.UUID
+	PublishPendingToken   string
+	PublishTokenExpiresAt pgtype.Timestamptz
+	PublishRecordName     string
+	PublishRecordValue    string
+}
+
+// Records the challenge token we got back from POST /v1/challenge.
+// Atomic: also clears any prior error + bumps status to pending_dns
+// so the admin UI shows the "now add this TXT record" panel.
+func (q *Queries) SetDirectoryPublishChallenge(ctx context.Context, arg SetDirectoryPublishChallengeParams) (FederationDirectory, error) {
+	row := q.db.QueryRow(ctx, setDirectoryPublishChallenge,
+		arg.ID,
+		arg.PublishPendingToken,
+		arg.PublishTokenExpiresAt,
+		arg.PublishRecordName,
+		arg.PublishRecordValue,
+	)
+	var i FederationDirectory
+	err := row.Scan(
+		&i.ID,
+		&i.DirectoryUrl,
+		&i.OperatorName,
+		&i.OperatorPublicKey,
+		&i.OperatorFingerprint,
+		&i.OperatorContact,
+		&i.SubscribedAt,
+		&i.SubscribedByUserRef,
+		&i.Enabled,
+		&i.LastPolledAt,
+		&i.LastPollStatus,
+		&i.LastPollError,
+		&i.PollIntervalSeconds,
+		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDirectoryPublishFailed = `-- name: SetDirectoryPublishFailed :one
+UPDATE federation_directories
+SET publish_status         = 'failed',
+    publish_last_attempt_at = NOW(),
+    publish_last_error     = $2,
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
+`
+
+type SetDirectoryPublishFailedParams struct {
+	ID               pgtype.UUID
+	PublishLastError string
+}
+
+// Failure transition. Preserves the pending_token so the admin
+// can retry register without re-issuing a challenge (tokens are
+// single-use server-side but persist for the operator's UX
+// across retries — we re-issue when expired).
+func (q *Queries) SetDirectoryPublishFailed(ctx context.Context, arg SetDirectoryPublishFailedParams) (FederationDirectory, error) {
+	row := q.db.QueryRow(ctx, setDirectoryPublishFailed, arg.ID, arg.PublishLastError)
+	var i FederationDirectory
+	err := row.Scan(
+		&i.ID,
+		&i.DirectoryUrl,
+		&i.OperatorName,
+		&i.OperatorPublicKey,
+		&i.OperatorFingerprint,
+		&i.OperatorContact,
+		&i.SubscribedAt,
+		&i.SubscribedByUserRef,
+		&i.Enabled,
+		&i.LastPolledAt,
+		&i.LastPollStatus,
+		&i.LastPollError,
+		&i.PollIntervalSeconds,
+		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDirectoryPublishListed = `-- name: SetDirectoryPublishListed :one
+UPDATE federation_directories
+SET publish_status         = 'listed',
+    publish_listing_id     = $2,
+    publish_pending_token  = '',
+    publish_token_expires_at = NULL,
+    publish_last_attempt_at = NOW(),
+    publish_last_error     = '',
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
+`
+
+type SetDirectoryPublishListedParams struct {
+	ID               pgtype.UUID
+	PublishListingID string
+}
+
+// Atomic transition pending_register → listed. Captures the
+// listing_id returned by /v1/register so we can later self-unlist.
+// Clears the pending token (it's been consumed).
+func (q *Queries) SetDirectoryPublishListed(ctx context.Context, arg SetDirectoryPublishListedParams) (FederationDirectory, error) {
+	row := q.db.QueryRow(ctx, setDirectoryPublishListed, arg.ID, arg.PublishListingID)
+	var i FederationDirectory
+	err := row.Scan(
+		&i.ID,
+		&i.DirectoryUrl,
+		&i.OperatorName,
+		&i.OperatorPublicKey,
+		&i.OperatorFingerprint,
+		&i.OperatorContact,
+		&i.SubscribedAt,
+		&i.SubscribedByUserRef,
+		&i.Enabled,
+		&i.LastPolledAt,
+		&i.LastPollStatus,
+		&i.LastPollError,
+		&i.PollIntervalSeconds,
+		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setDirectoryPublishMetadata = `-- name: SetDirectoryPublishMetadata :one
+UPDATE federation_directories
+SET publish_display_name = $2,
+    publish_region       = $3,
+    publish_description  = $4,
+    publish_tags         = $5,
+    updated_at           = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at
+`
+
+type SetDirectoryPublishMetadataParams struct {
+	ID                 pgtype.UUID
+	PublishDisplayName string
+	PublishRegion      string
+	PublishDescription string
+	PublishTags        []byte
+}
+
+// Captures the operator-chosen display_name + region + description
+// + tags BEFORE the register POST. Persisted so the admin UI
+// pre-fills the form on next visit. Separate from
+// SetDirectoryPublishChallenge because the operator may tweak
+// these between issuing the challenge and clicking register.
+func (q *Queries) SetDirectoryPublishMetadata(ctx context.Context, arg SetDirectoryPublishMetadataParams) (FederationDirectory, error) {
+	row := q.db.QueryRow(ctx, setDirectoryPublishMetadata,
+		arg.ID,
+		arg.PublishDisplayName,
+		arg.PublishRegion,
+		arg.PublishDescription,
+		arg.PublishTags,
+	)
+	var i FederationDirectory
+	err := row.Scan(
+		&i.ID,
+		&i.DirectoryUrl,
+		&i.OperatorName,
+		&i.OperatorPublicKey,
+		&i.OperatorFingerprint,
+		&i.OperatorContact,
+		&i.SubscribedAt,
+		&i.SubscribedByUserRef,
+		&i.Enabled,
+		&i.LastPolledAt,
+		&i.LastPollStatus,
+		&i.LastPollError,
+		&i.PollIntervalSeconds,
+		&i.Notes,
+		&i.PublishStatus,
+		&i.PublishPendingToken,
+		&i.PublishTokenExpiresAt,
+		&i.PublishRecordName,
+		&i.PublishRecordValue,
+		&i.PublishListingID,
+		&i.PublishLastAttemptAt,
+		&i.PublishLastError,
+		&i.PublishDisplayName,
+		&i.PublishRegion,
+		&i.PublishDescription,
+		&i.PublishTags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

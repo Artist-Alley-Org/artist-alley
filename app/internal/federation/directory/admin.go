@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -19,11 +21,25 @@ const capAdmin = "system.admin"
 type AdminHandler struct {
 	registry *Registry
 	client   *Client
+
+	// Publish-side dependencies (1.22.B-c-bis). Wired post-
+	// construction via SetPublishDeps; nil-safe so subscribe-only
+	// installs (no AA_MASTER_KEY, no instance identity) still get
+	// list/subscribe/unsubscribe/poll working.
+	identity     *identity.Manager
+	instanceURLFn func(ctx context.Context) string
 }
 
 // NewAdminHandler wires the admin surface.
 func NewAdminHandler(r *Registry, c *Client) *AdminHandler {
 	return &AdminHandler{registry: r, client: c}
+}
+
+// SetPublishDeps wires the identity manager + instance URL
+// resolver needed for the publish flow. Boot calls this once.
+func (h *AdminHandler) SetPublishDeps(id *identity.Manager, instanceURL func(ctx context.Context) string) {
+	h.identity = id
+	h.instanceURLFn = instanceURL
 }
 
 // ListFederationDirectories — GET /admin/federation/directories.
@@ -219,21 +235,162 @@ func (h *AdminHandler) ListFederationDirectoryEntries(
 	}), nil
 }
 
+// --- publish admin endpoints (Phase 1.22.B-c-bis) -----------------------
+
+// RequestFederationDirectoryPublishChallenge — POST /admin/federation/
+// directories/{id}/publish/challenge.
+func (h *AdminHandler) RequestFederationDirectoryPublishChallenge(
+	ctx context.Context,
+	req openapi.RequestFederationDirectoryPublishChallengeRequestObject,
+) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.RequestFederationDirectoryPublishChallenge401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.RequestFederationDirectoryPublishChallenge403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	if h.instanceURLFn == nil {
+		return openapi.RequestFederationDirectoryPublishChallenge503JSONResponse{
+			Error: "instance base URL not configured (set System → Site → Base URL)",
+		}, nil
+	}
+	instanceURL := h.instanceURLFn(ctx)
+	if instanceURL == "" {
+		return openapi.RequestFederationDirectoryPublishChallenge503JSONResponse{
+			Error: "instance base URL not configured (set System → Site → Base URL)",
+		}, nil
+	}
+	d, err := h.registry.ByID(ctx, uuid.UUID(req.Id))
+	if err != nil {
+		if errors.Is(err, ErrDirectoryNotFound) {
+			return openapi.RequestFederationDirectoryPublishChallenge404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "directory not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	updated, err := h.client.RequestChallenge(ctx, h.registry, d, instanceURL)
+	if err != nil {
+		return openapi.RequestFederationDirectoryPublishChallenge503JSONResponse{
+			Error: err.Error(),
+		}, nil
+	}
+	return openapi.RequestFederationDirectoryPublishChallenge200JSONResponse(directoryToAPI(*updated)), nil
+}
+
+// RegisterFederationDirectoryPublishListing — POST /admin/federation/
+// directories/{id}/publish/register.
+func (h *AdminHandler) RegisterFederationDirectoryPublishListing(
+	ctx context.Context,
+	req openapi.RegisterFederationDirectoryPublishListingRequestObject,
+) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.RegisterFederationDirectoryPublishListing401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.RegisterFederationDirectoryPublishListing403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.RegisterFederationDirectoryPublishListing400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "request body required"},
+		}, nil
+	}
+	if h.identity == nil || h.instanceURLFn == nil {
+		return openapi.RegisterFederationDirectoryPublishListing400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "publish flow not configured (set System → Site → Base URL + ensure AA_MASTER_KEY is set)"},
+		}, nil
+	}
+	instanceURL := h.instanceURLFn(ctx)
+	if instanceURL == "" {
+		return openapi.RegisterFederationDirectoryPublishListing400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "instance base URL not configured"},
+		}, nil
+	}
+	dir, err := h.registry.ByID(ctx, uuid.UUID(req.Id))
+	if err != nil {
+		if errors.Is(err, ErrDirectoryNotFound) {
+			return openapi.RegisterFederationDirectoryPublishListing404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "directory not found"},
+			}, nil
+		}
+		return nil, err
+	}
+
+	// Persist the operator-chosen metadata FIRST so it sticks even
+	// if the register POST fails (operator's typing isn't lost on
+	// retry).
+	meta := PublishMetadata{DisplayName: req.Body.DisplayName}
+	if req.Body.Region != nil {
+		meta.Region = *req.Body.Region
+	}
+	if req.Body.Description != nil {
+		meta.Description = *req.Body.Description
+	}
+	if req.Body.Tags != nil {
+		meta.Tags = *req.Body.Tags
+	}
+	if _, err := h.registry.SetPublishMetadata(ctx, dir.ID, meta); err != nil {
+		return nil, err
+	}
+	dir, err = h.registry.ByID(ctx, dir.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	updated, regErr := h.client.RegisterListing(ctx, h.registry, dir, h.identity, instanceURL, meta)
+	if regErr != nil {
+		// Best-effort response — `updated` carries the row state
+		// even on failure (Client.RegisterListing flips to failed
+		// + populates publish_last_error before returning). The UI
+		// reads publish_last_error to show the user.
+		if updated == nil {
+			return openapi.RegisterFederationDirectoryPublishListing400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: regErr.Error()},
+			}, nil
+		}
+		return openapi.RegisterFederationDirectoryPublishListing200JSONResponse(directoryToAPI(*updated)), nil
+	}
+	// Successful registration — defensive type-checked log so
+	// future drift in the federation typed catalogue surfaces.
+	_ = federation.PublishStatusListed
+	return openapi.RegisterFederationDirectoryPublishListing200JSONResponse(directoryToAPI(*updated)), nil
+}
+
 // --- adapters -----------------------------------------------------------
 
 func directoryToAPI(d Directory) openapi.FederationDirectory {
 	out := openapi.FederationDirectory{
-		Id:                  d.ID,
-		DirectoryUrl:        d.URL,
-		OperatorName:        d.OperatorName,
-		OperatorPublicKey:   d.OperatorPublicKey,
-		OperatorFingerprint: d.OperatorFingerprint,
-		Enabled:             d.Enabled,
-		SubscribedByUserRef: d.SubscribedByUserRef,
-		LastPollStatus:      openapi.FederationDirectoryLastPollStatus(d.LastPollStatus),
-		LastPollError:       d.LastPollError,
-		PollIntervalSeconds: int(d.PollIntervalSeconds),
-		Notes:               d.Notes,
+		Id:                   d.ID,
+		DirectoryUrl:         d.URL,
+		OperatorName:         d.OperatorName,
+		OperatorPublicKey:    d.OperatorPublicKey,
+		OperatorFingerprint:  d.OperatorFingerprint,
+		Enabled:              d.Enabled,
+		SubscribedByUserRef:  d.SubscribedByUserRef,
+		LastPollStatus:       openapi.FederationDirectoryLastPollStatus(d.LastPollStatus),
+		LastPollError:        d.LastPollError,
+		PollIntervalSeconds:  int(d.PollIntervalSeconds),
+		Notes:                d.Notes,
+		PublishStatus:        ptrFederationDirectoryPublishStatus(d.PublishStatus),
+		PublishPendingToken:  strPtr(d.PublishPendingToken),
+		PublishRecordName:    strPtr(d.PublishRecordName),
+		PublishRecordValue:   strPtr(d.PublishRecordValue),
+		PublishListingId:     strPtr(d.PublishListingID),
+		PublishLastError:     strPtr(d.PublishLastError),
+		PublishDisplayName:   strPtr(d.PublishDisplayName),
+		PublishRegion:        strPtr(d.PublishRegion),
+		PublishDescription:   strPtr(d.PublishDescription),
+		PublishTags:          &d.PublishTags,
 	}
 	if d.OperatorContact != "" {
 		c := d.OperatorContact
@@ -246,7 +403,30 @@ func directoryToAPI(d Directory) openapi.FederationDirectory {
 		t := d.LastPolledAt.Time
 		out.LastPolledAt = &t
 	}
+	if d.PublishTokenExpiresAt.Valid {
+		t := d.PublishTokenExpiresAt.Time
+		out.PublishTokenExpiresAt = &t
+	}
+	if d.PublishLastAttemptAt.Valid {
+		t := d.PublishLastAttemptAt.Time
+		out.PublishLastAttemptAt = &t
+	}
 	return out
+}
+
+// strPtr returns nil for empty strings, a pointer otherwise.
+// Lets the JSON omit empty fields when the publish state isn't
+// engaged for a directory.
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func ptrFederationDirectoryPublishStatus(s federation.PublishStatus) *openapi.FederationDirectoryPublishStatus {
+	v := openapi.FederationDirectoryPublishStatus(s)
+	return &v
 }
 
 func entryToAPI(e Entry) openapi.FederationDirectoryEntry {

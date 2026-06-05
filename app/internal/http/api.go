@@ -184,6 +184,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.directories = directory.NewRegistry(pool, logger, cacheReg)
 	dirClient := directory.NewClient(logger)
 	s.directoriesAdmin = directory.NewAdminHandler(s.directories, dirClient)
+	// Wire publish-side deps (1.22.B-c-bis). nil-safe: subscribe-only
+	// installs still work; only the publish endpoints fail with a
+	// clear 503 when identity/base-URL aren't configured.
+	s.directoriesAdmin.SetPublishDeps(s.fedIdentity, sysconfigBaseURLFn(sysCfg))
 	s.directoryPoller = directory.NewPoller(s.directories, dirClient, logger, 5*time.Minute)
 	// UsernameResolver: the username-by-ref lookup federation
 	// emitters use to build actor URIs. *users.Handler already
@@ -892,6 +896,14 @@ func (s *apiServer) PollFederationDirectory(ctx context.Context, req openapi.Pol
 
 func (s *apiServer) ListFederationDirectoryEntries(ctx context.Context, req openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	return s.directoriesAdmin.ListFederationDirectoryEntries(ctx, req)
+}
+
+func (s *apiServer) RequestFederationDirectoryPublishChallenge(ctx context.Context, req openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	return s.directoriesAdmin.RequestFederationDirectoryPublishChallenge(ctx, req)
+}
+
+func (s *apiServer) RegisterFederationDirectoryPublishListing(ctx context.Context, req openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	return s.directoriesAdmin.RegisterFederationDirectoryPublishListing(ctx, req)
 }
 
 // --- federation public + handshake (Phase 1.22.B-b) ----------------------

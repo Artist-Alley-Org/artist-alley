@@ -602,6 +602,83 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/federation/directories/{id}/publish/challenge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: requestFederationDirectoryPublishChallenge
+      summary: Request a DNS-TXT challenge to publish this instance to a directory
+      description: |
+        POSTs /v1/challenge to the directory and persists the
+        issued token + the DNS record the operator must publish.
+        Flips status to `pending_dns`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Challenge issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Directory unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/directories/{id}/publish/register:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: registerFederationDirectoryPublishListing
+      summary: Submit /v1/register with the previously-issued token
+      description: |
+        Persists the operator-supplied display_name + region +
+        description + tags, then POSTs /v1/register with the
+        pending token. Caller MUST have completed the DNS step.
+        On success flips status to `listed`; on failure stays
+        `pending_dns` so the operator can retry once DNS
+        propagates.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationDirectoryPublishMetadata" }
+      responses:
+        "200":
+          description: Result of the register call.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/federation/directories/{id}/entries:
     parameters:
       - name: id
@@ -7903,6 +7980,43 @@ components:
         last_poll_error: { type: string }
         poll_interval_seconds: { type: integer }
         notes: { type: string }
+        publish_status:
+          type: string
+          enum: [not_published, pending_dns, pending_register, listed, failed]
+        publish_pending_token: { type: string }
+        publish_token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        publish_record_name: { type: string }
+        publish_record_value: { type: string }
+        publish_listing_id: { type: string }
+        publish_last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        publish_last_error: { type: string }
+        publish_display_name: { type: string }
+        publish_region: { type: string }
+        publish_description: { type: string }
+        publish_tags:
+          type: array
+          items: { type: string }
+
+    FederationDirectoryPublishMetadata:
+      type: object
+      required: [display_name]
+      description: |
+        Operator-chosen entry metadata for /v1/register. Saved on
+        the directory row so it pre-fills the form next time.
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        region: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 2000 }
+        tags:
+          type: array
+          items: { type: string, maxLength: 50 }
+          maxItems: 20
 
     FederationDirectoryList:
       type: object

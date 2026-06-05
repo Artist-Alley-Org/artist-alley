@@ -4,7 +4,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 ORDER BY subscribed_at DESC;
 
@@ -13,7 +18,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 WHERE id = $1;
 
@@ -24,7 +34,12 @@ SELECT id, directory_url, operator_name, operator_public_key,
        operator_fingerprint, operator_contact,
        subscribed_at, subscribed_by_user_ref, enabled,
        last_polled_at, last_poll_status, last_poll_error,
-       poll_interval_seconds, notes, created_at, updated_at
+       poll_interval_seconds, notes,
+       publish_status, publish_pending_token, publish_token_expires_at,
+       publish_record_name, publish_record_value, publish_listing_id,
+       publish_last_attempt_at, publish_last_error,
+       publish_display_name, publish_region, publish_description, publish_tags,
+       created_at, updated_at
 FROM federation_directories
 WHERE directory_url = $1;
 
@@ -43,7 +58,12 @@ RETURNING id, directory_url, operator_name, operator_public_key,
           operator_fingerprint, operator_contact,
           subscribed_at, subscribed_by_user_ref, enabled,
           last_polled_at, last_poll_status, last_poll_error,
-          poll_interval_seconds, notes, created_at, updated_at;
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;
 
 -- name: UpdateDirectoryPollOutcome :exec
 -- Polling worker writes the outcome of a poll cycle here. Status
@@ -65,7 +85,12 @@ RETURNING id, directory_url, operator_name, operator_public_key,
           operator_fingerprint, operator_contact,
           subscribed_at, subscribed_by_user_ref, enabled,
           last_polled_at, last_poll_status, last_poll_error,
-          poll_interval_seconds, notes, created_at, updated_at;
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;
 
 -- name: DeleteDirectory :exec
 -- Unsubscribe. ON DELETE CASCADE on federation_directory_entries
@@ -114,3 +139,98 @@ WHERE directory_id = $1
   AND instance_url NOT IN (
       SELECT jsonb_array_elements_text(sqlc.arg('keep_urls')::JSONB)
   );
+
+-- name: SetDirectoryPublishChallenge :one
+-- Records the challenge token we got back from POST /v1/challenge.
+-- Atomic: also clears any prior error + bumps status to pending_dns
+-- so the admin UI shows the "now add this TXT record" panel.
+UPDATE federation_directories
+SET publish_status           = 'pending_dns',
+    publish_pending_token    = $2,
+    publish_token_expires_at = $3,
+    publish_record_name      = $4,
+    publish_record_value     = $5,
+    publish_last_attempt_at  = NOW(),
+    publish_last_error       = '',
+    updated_at               = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;
+
+-- name: SetDirectoryPublishMetadata :one
+-- Captures the operator-chosen display_name + region + description
+-- + tags BEFORE the register POST. Persisted so the admin UI
+-- pre-fills the form on next visit. Separate from
+-- SetDirectoryPublishChallenge because the operator may tweak
+-- these between issuing the challenge and clicking register.
+UPDATE federation_directories
+SET publish_display_name = $2,
+    publish_region       = $3,
+    publish_description  = $4,
+    publish_tags         = $5,
+    updated_at           = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;
+
+-- name: SetDirectoryPublishListed :one
+-- Atomic transition pending_register → listed. Captures the
+-- listing_id returned by /v1/register so we can later self-unlist.
+-- Clears the pending token (it's been consumed).
+UPDATE federation_directories
+SET publish_status         = 'listed',
+    publish_listing_id     = $2,
+    publish_pending_token  = '',
+    publish_token_expires_at = NULL,
+    publish_last_attempt_at = NOW(),
+    publish_last_error     = '',
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;
+
+-- name: SetDirectoryPublishFailed :one
+-- Failure transition. Preserves the pending_token so the admin
+-- can retry register without re-issuing a challenge (tokens are
+-- single-use server-side but persist for the operator's UX
+-- across retries — we re-issue when expired).
+UPDATE federation_directories
+SET publish_status         = 'failed',
+    publish_last_attempt_at = NOW(),
+    publish_last_error     = $2,
+    updated_at             = NOW()
+WHERE id = $1
+RETURNING id, directory_url, operator_name, operator_public_key,
+          operator_fingerprint, operator_contact,
+          subscribed_at, subscribed_by_user_ref, enabled,
+          last_polled_at, last_poll_status, last_poll_error,
+          poll_interval_seconds, notes,
+          publish_status, publish_pending_token, publish_token_expires_at,
+          publish_record_name, publish_record_value, publish_listing_id,
+          publish_last_attempt_at, publish_last_error,
+          publish_display_name, publish_region, publish_description, publish_tags,
+          created_at, updated_at;

@@ -708,3 +708,9 @@ func (rtOnly) PollFederationDirectory(context.Context, openapi.PollFederationDir
 func (rtOnly) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	panic("ListFederationDirectoryEntries called from assettype test shim")
 }
+func (rtOnly) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	panic("RequestFederationDirectoryPublishChallenge called from assettype test shim")
+}
+func (rtOnly) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	panic("RegisterFederationDirectoryPublishListing called from assettype test shim")
+}

@@ -283,22 +283,34 @@ type DirectMessage struct {
 }
 
 type FederationDirectory struct {
-	ID                  pgtype.UUID
-	DirectoryUrl        string
-	OperatorName        string
-	OperatorPublicKey   string
-	OperatorFingerprint string
-	OperatorContact     string
-	SubscribedAt        pgtype.Timestamptz
-	SubscribedByUserRef int64
-	Enabled             bool
-	LastPolledAt        pgtype.Timestamptz
-	LastPollStatus      string
-	LastPollError       string
-	PollIntervalSeconds int32
-	Notes               string
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                    pgtype.UUID
+	DirectoryUrl          string
+	OperatorName          string
+	OperatorPublicKey     string
+	OperatorFingerprint   string
+	OperatorContact       string
+	SubscribedAt          pgtype.Timestamptz
+	SubscribedByUserRef   int64
+	Enabled               bool
+	LastPolledAt          pgtype.Timestamptz
+	LastPollStatus        string
+	LastPollError         string
+	PollIntervalSeconds   int32
+	Notes                 string
+	PublishStatus         string
+	PublishPendingToken   string
+	PublishTokenExpiresAt pgtype.Timestamptz
+	PublishRecordName     string
+	PublishRecordValue    string
+	PublishListingID      string
+	PublishLastAttemptAt  pgtype.Timestamptz
+	PublishLastError      string
+	PublishDisplayName    string
+	PublishRegion         string
+	PublishDescription    string
+	PublishTags           []byte
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type FederationDirectoryEntry struct {

@@ -283,22 +283,34 @@ type DirectMessage struct {
 }
 
 type FederationDirectory struct {
-	ID                  pgtype.UUID        `json:"id"`
-	DirectoryUrl        string             `json:"directory_url"`
-	OperatorName        string             `json:"operator_name"`
-	OperatorPublicKey   string             `json:"operator_public_key"`
-	OperatorFingerprint string             `json:"operator_fingerprint"`
-	OperatorContact     string             `json:"operator_contact"`
-	SubscribedAt        pgtype.Timestamptz `json:"subscribed_at"`
-	SubscribedByUserRef int64              `json:"subscribed_by_user_ref"`
-	Enabled             bool               `json:"enabled"`
-	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
-	LastPollStatus      string             `json:"last_poll_status"`
-	LastPollError       string             `json:"last_poll_error"`
-	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
-	Notes               string             `json:"notes"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	DirectoryUrl          string             `json:"directory_url"`
+	OperatorName          string             `json:"operator_name"`
+	OperatorPublicKey     string             `json:"operator_public_key"`
+	OperatorFingerprint   string             `json:"operator_fingerprint"`
+	OperatorContact       string             `json:"operator_contact"`
+	SubscribedAt          pgtype.Timestamptz `json:"subscribed_at"`
+	SubscribedByUserRef   int64              `json:"subscribed_by_user_ref"`
+	Enabled               bool               `json:"enabled"`
+	LastPolledAt          pgtype.Timestamptz `json:"last_polled_at"`
+	LastPollStatus        string             `json:"last_poll_status"`
+	LastPollError         string             `json:"last_poll_error"`
+	PollIntervalSeconds   int32              `json:"poll_interval_seconds"`
+	Notes                 string             `json:"notes"`
+	PublishStatus         string             `json:"publish_status"`
+	PublishPendingToken   string             `json:"publish_pending_token"`
+	PublishTokenExpiresAt pgtype.Timestamptz `json:"publish_token_expires_at"`
+	PublishRecordName     string             `json:"publish_record_name"`
+	PublishRecordValue    string             `json:"publish_record_value"`
+	PublishListingID      string             `json:"publish_listing_id"`
+	PublishLastAttemptAt  pgtype.Timestamptz `json:"publish_last_attempt_at"`
+	PublishLastError      string             `json:"publish_last_error"`
+	PublishDisplayName    string             `json:"publish_display_name"`
+	PublishRegion         string             `json:"publish_region"`
+	PublishDescription    string             `json:"publish_description"`
+	PublishTags           []byte             `json:"publish_tags"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FederationDirectoryEntry struct {

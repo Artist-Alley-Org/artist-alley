@@ -1065,3 +1065,9 @@ func (authOnlyImpl) PollFederationDirectory(context.Context, openapi.PollFederat
 func (authOnlyImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	panic("ListFederationDirectoryEntries called from auth test shim")
 }
+func (authOnlyImpl) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	panic("RequestFederationDirectoryPublishChallenge called from auth test shim")
+}
+func (authOnlyImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	panic("RegisterFederationDirectoryPublishListing called from auth test shim")
+}

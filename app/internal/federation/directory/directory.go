@@ -108,6 +108,20 @@ type Directory struct {
 	LastPollError        string
 	PollIntervalSeconds  int32
 	Notes                string
+	// Publish-side state (1.22.B-c-bis). Tracks whether THIS
+	// instance has self-published to the directory.
+	PublishStatus         federation.PublishStatus
+	PublishPendingToken   string
+	PublishTokenExpiresAt pgtype.Timestamptz
+	PublishRecordName     string
+	PublishRecordValue    string
+	PublishListingID      string
+	PublishLastAttemptAt  pgtype.Timestamptz
+	PublishLastError      string
+	PublishDisplayName    string
+	PublishRegion         string
+	PublishDescription    string
+	PublishTags           []string
 }
 
 // Entry is the in-memory shape of one cached directory entry.
@@ -629,21 +643,35 @@ func (p *Poller) sweep(ctx context.Context) {
 // --- helpers ---------------------------------------------------------------
 
 func rowToDirectory(r FederationDirectory) *Directory {
+	var tags []string
+	_ = json.Unmarshal(r.PublishTags, &tags)
 	return &Directory{
-		ID:                  uuid.UUID(r.ID.Bytes),
-		URL:                 r.DirectoryUrl,
-		OperatorName:        r.OperatorName,
-		OperatorPublicKey:   r.OperatorPublicKey,
-		OperatorFingerprint: r.OperatorFingerprint,
-		OperatorContact:     r.OperatorContact,
-		SubscribedAt:        r.SubscribedAt,
-		SubscribedByUserRef: r.SubscribedByUserRef,
-		Enabled:             r.Enabled,
-		LastPolledAt:        r.LastPolledAt,
-		LastPollStatus:      PollStatus(r.LastPollStatus),
-		LastPollError:       r.LastPollError,
-		PollIntervalSeconds: r.PollIntervalSeconds,
-		Notes:               r.Notes,
+		ID:                    uuid.UUID(r.ID.Bytes),
+		URL:                   r.DirectoryUrl,
+		OperatorName:          r.OperatorName,
+		OperatorPublicKey:     r.OperatorPublicKey,
+		OperatorFingerprint:   r.OperatorFingerprint,
+		OperatorContact:       r.OperatorContact,
+		SubscribedAt:          r.SubscribedAt,
+		SubscribedByUserRef:   r.SubscribedByUserRef,
+		Enabled:               r.Enabled,
+		LastPolledAt:          r.LastPolledAt,
+		LastPollStatus:        PollStatus(r.LastPollStatus),
+		LastPollError:         r.LastPollError,
+		PollIntervalSeconds:   r.PollIntervalSeconds,
+		Notes:                 r.Notes,
+		PublishStatus:         federation.PublishStatus(r.PublishStatus),
+		PublishPendingToken:   r.PublishPendingToken,
+		PublishTokenExpiresAt: r.PublishTokenExpiresAt,
+		PublishRecordName:     r.PublishRecordName,
+		PublishRecordValue:    r.PublishRecordValue,
+		PublishListingID:      r.PublishListingID,
+		PublishLastAttemptAt:  r.PublishLastAttemptAt,
+		PublishLastError:      r.PublishLastError,
+		PublishDisplayName:    r.PublishDisplayName,
+		PublishRegion:         r.PublishRegion,
+		PublishDescription:    r.PublishDescription,
+		PublishTags:           tags,
 	}
 }
 

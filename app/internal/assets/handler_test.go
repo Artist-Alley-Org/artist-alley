@@ -993,3 +993,9 @@ func (shimImpl) PollFederationDirectory(context.Context, openapi.PollFederationD
 func (shimImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
 	panic("ListFederationDirectoryEntries called from assets test shim")
 }
+func (shimImpl) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	panic("RequestFederationDirectoryPublishChallenge called from assets test shim")
+}
+func (shimImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	panic("RegisterFederationDirectoryPublishListing called from assets test shim")
+}

@@ -229,6 +229,38 @@ func (t TrustTier) Valid() bool {
 	return ok
 }
 
+// PublishStatus is the state machine for publishing THIS instance
+// to a federation directory per migration 00054 + the publish
+// flow in docs/spec/federation-directory/v1.md §"POST /v1/register".
+//
+//   not_published    — fresh row; we've never tried to be listed
+//   pending_dns      — challenge issued; operator must add the
+//                      TXT record we showed them
+//   pending_register — DNS visible (or operator clicked anyway);
+//                      /v1/register POST is in flight
+//   listed           — directory accepted us; publish_listing_id
+//                      populated
+//   failed           — any step failed; publish_last_error populated
+type PublishStatus string
+
+const (
+	PublishStatusNotPublished    PublishStatus = "not_published"
+	PublishStatusPendingDNS      PublishStatus = "pending_dns"
+	PublishStatusPendingRegister PublishStatus = "pending_register"
+	PublishStatusListed          PublishStatus = "listed"
+	PublishStatusFailed          PublishStatus = "failed"
+)
+
+// Valid reports whether s is in the closed catalogue.
+func (s PublishStatus) Valid() bool {
+	switch s {
+	case PublishStatusNotPublished, PublishStatusPendingDNS,
+		PublishStatusPendingRegister, PublishStatusListed, PublishStatusFailed:
+		return true
+	}
+	return false
+}
+
 // PeerStatus is the handshake state machine for a federation_peers
 // row per migration 00052 + docs/spec/federation/v1.md §11.
 // Mirrors the CHECK constraint added in that migration.

@@ -37,6 +37,19 @@
     notes: string;
     subscribed_at: string;
     subscribed_by_user_ref: number;
+    // Publish-side fields (1.22.B-c-bis).
+    publish_status?: 'not_published' | 'pending_dns' | 'pending_register' | 'listed' | 'failed';
+    publish_pending_token?: string | null;
+    publish_token_expires_at?: string | null;
+    publish_record_name?: string | null;
+    publish_record_value?: string | null;
+    publish_listing_id?: string | null;
+    publish_last_attempt_at?: string | null;
+    publish_last_error?: string | null;
+    publish_display_name?: string | null;
+    publish_region?: string | null;
+    publish_description?: string | null;
+    publish_tags?: string[];
   }
 
   interface Entry {
@@ -67,6 +80,15 @@
   let subscribeNotes = $state('');
   let subscribeError = $state<string | null>(null);
   let subscribing = $state(false);
+
+  // Publish modal state (1.22.B-c-bis).
+  let publishDir = $state<Directory | null>(null);
+  let publishDisplayName = $state('');
+  let publishRegion = $state('');
+  let publishDescription = $state('');
+  let publishTagsStr = $state('');
+  let publishError = $state<string | null>(null);
+  let publishBusy = $state(false);
 
   onMount(() => {
     void loadDirectories();
@@ -134,6 +156,74 @@
       if (selectedID === dir.id) { selectedID = null; entries = []; }
       await loadDirectories();
     }
+  }
+
+  function openPublish(dir: Directory): void {
+    publishDir = dir;
+    publishDisplayName = dir.publish_display_name || dir.operator_name || '';
+    publishRegion = dir.publish_region || '';
+    publishDescription = dir.publish_description || '';
+    publishTagsStr = (dir.publish_tags ?? []).join(', ');
+    publishError = null;
+  }
+
+  function closePublish(): void {
+    publishDir = null;
+    publishError = null;
+  }
+
+  async function requestPublishChallenge(): Promise<void> {
+    if (!publishDir) return;
+    publishError = null;
+    publishBusy = true;
+    try {
+      const r = await api.POST('/admin/federation/directories/{id}/publish/challenge', {
+        params: { path: { id: publishDir.id } },
+      });
+      if (r.error) {
+        publishError = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.dir_publish_challenge_error');
+        return;
+      }
+      publishDir = r.data as Directory;
+      await loadDirectories();
+    } finally {
+      publishBusy = false;
+    }
+  }
+
+  async function registerListing(): Promise<void> {
+    if (!publishDir) return;
+    publishError = null;
+    publishBusy = true;
+    try {
+      const tags = publishTagsStr
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const body: Record<string, unknown> = {
+        display_name: publishDisplayName.trim(),
+      };
+      if (publishRegion.trim()) body.region = publishRegion.trim();
+      if (publishDescription.trim()) body.description = publishDescription.trim();
+      if (tags.length > 0) body.tags = tags;
+      const r = await api.POST('/admin/federation/directories/{id}/publish/register', {
+        params: { path: { id: publishDir.id } },
+        body: body as never,
+      });
+      if (r.error) {
+        publishError = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.dir_publish_register_error');
+        return;
+      }
+      publishDir = r.data as Directory;
+      await loadDirectories();
+    } finally {
+      publishBusy = false;
+    }
+  }
+
+  function publishStatusLabel(s: string | null | undefined): string {
+    if (!s || s === 'not_published') return '';
+    return t(`admin.federation.dir_publish_status_${s}`);
   }
 
   function pairFromEntry(entry: Entry): void {
@@ -266,6 +356,25 @@
               class="rounded-md border border-border bg-surface px-3 py-1 text-xs hover:bg-state-hover"
               onclick={() => pollNow(d)}
             >{t('admin.federation.dir_poll_now')}</button>
+            {#if d.publish_status === 'listed'}
+              <button
+                type="button"
+                class="rounded-md border border-accent/40 bg-accent-container/40 px-3 py-1 text-xs text-on-accent-container hover:bg-accent-container/60"
+                onclick={() => openPublish(d)}
+              >{t('admin.federation.dir_publish_listed_label')}</button>
+            {:else if d.publish_status === 'pending_dns' || d.publish_status === 'pending_register'}
+              <button
+                type="button"
+                class="rounded-md border border-warning/40 bg-warning/10 px-3 py-1 text-xs text-warning hover:bg-warning/20"
+                onclick={() => openPublish(d)}
+              >{publishStatusLabel(d.publish_status)}</button>
+            {:else}
+              <button
+                type="button"
+                class="rounded-md border border-border bg-surface px-3 py-1 text-xs hover:bg-state-hover"
+                onclick={() => openPublish(d)}
+              >{t('admin.federation.dir_publish_here')}</button>
+            {/if}
             <button
               type="button"
               class="rounded-md border border-danger/40 bg-danger/10 px-3 py-1 text-xs text-danger hover:bg-danger/20"
@@ -318,4 +427,131 @@
   </section>
 {:else if selectedID}
   <p class="text-sm text-fg-muted">{t('admin.federation.dir_entries_empty')}</p>
+{/if}
+
+<!-- Publish modal (1.22.B-c-bis) -->
+{#if publishDir}
+  <div
+    role="dialog"
+    aria-modal="true"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    onclick={(e) => { if (e.target === e.currentTarget) closePublish(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') closePublish(); }}
+  >
+    <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-xl">
+      <header class="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-lg font-semibold">{t('admin.federation.dir_publish_title', { name: publishDir.operator_name || publishDir.directory_url })}</h3>
+          <p class="text-xs text-fg-muted">{publishDir.directory_url}</p>
+        </div>
+        <button
+          type="button"
+          class="rounded-md border border-border bg-surface px-2 py-1 text-sm hover:bg-state-hover"
+          onclick={closePublish}
+        >{t('admin.federation.dir_publish_close')}</button>
+      </header>
+
+      {#if publishDir.publish_status === 'listed'}
+        <div class="mb-4 rounded border border-accent/40 bg-accent-container/40 px-3 py-2 text-sm text-on-accent-container">
+          <strong>{t('admin.federation.dir_publish_listed_banner_label')}</strong>
+          {t('admin.federation.dir_publish_listed_banner', { id: publishDir.publish_listing_id || '' })}
+        </div>
+      {:else if publishDir.publish_status === 'pending_dns'}
+        <section class="mb-4 rounded border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+          <p class="mb-2 font-medium">{t('admin.federation.dir_publish_dns_instructions_title')}</p>
+          <p class="mb-2">{t('admin.federation.dir_publish_dns_instructions')}</p>
+          <dl class="space-y-1 font-mono text-[11px]">
+            <div><dt class="inline font-medium">{t('admin.federation.dir_publish_dns_name')}</dt> <dd class="inline">{publishDir.publish_record_name}</dd></div>
+            <div><dt class="inline font-medium">{t('admin.federation.dir_publish_dns_value')}</dt> <dd class="inline">{publishDir.publish_record_value}</dd></div>
+            {#if publishDir.publish_token_expires_at}
+              <div><dt class="inline font-medium">{t('admin.federation.dir_publish_expires')}</dt> <dd class="inline">{new Date(publishDir.publish_token_expires_at).toLocaleString()}</dd></div>
+            {/if}
+          </dl>
+        </section>
+      {:else if publishDir.publish_status === 'failed'}
+        <p class="mb-4 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {publishDir.publish_last_error}
+        </p>
+      {/if}
+
+      <form
+        class="space-y-3"
+        onsubmit={(e) => { e.preventDefault(); void registerListing(); }}
+      >
+        <label class="block">
+          <span class="text-xs font-medium">{t('admin.federation.dir_publish_display_name')}</span>
+          <input
+            bind:value={publishDisplayName}
+            type="text"
+            required
+            maxlength="200"
+            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+          />
+        </label>
+        <label class="block">
+          <span class="text-xs font-medium">{t('admin.federation.dir_publish_region')}</span>
+          <input
+            bind:value={publishRegion}
+            type="text"
+            maxlength="100"
+            placeholder={t('admin.federation.dir_publish_region_placeholder')}
+            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+          />
+        </label>
+        <label class="block">
+          <span class="text-xs font-medium">{t('admin.federation.dir_publish_description')}</span>
+          <textarea
+            bind:value={publishDescription}
+            rows="3"
+            maxlength="2000"
+            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+          ></textarea>
+        </label>
+        <label class="block">
+          <span class="text-xs font-medium">{t('admin.federation.dir_publish_tags')}</span>
+          <input
+            bind:value={publishTagsStr}
+            type="text"
+            placeholder={t('admin.federation.dir_publish_tags_placeholder')}
+            class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+          />
+          <span class="mt-1 block text-[11px] text-fg-muted">{t('admin.federation.dir_publish_tags_help')}</span>
+        </label>
+
+        {#if publishError}
+          <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{publishError}</p>
+        {/if}
+
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          {#if publishDir.publish_status === 'not_published' || publishDir.publish_status === 'failed' || !publishDir.publish_status}
+            <button
+              type="button"
+              class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50"
+              disabled={publishBusy}
+              onclick={requestPublishChallenge}
+            >{publishBusy ? t('common.loading') : t('admin.federation.dir_publish_request_challenge')}</button>
+          {:else if publishDir.publish_status === 'pending_dns'}
+            <button
+              type="button"
+              class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-state-hover disabled:opacity-50"
+              disabled={publishBusy}
+              onclick={requestPublishChallenge}
+            >{t('admin.federation.dir_publish_reissue')}</button>
+            <button
+              type="submit"
+              class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50"
+              disabled={publishBusy}
+            >{publishBusy ? t('common.loading') : t('admin.federation.dir_publish_register_submit')}</button>
+          {:else if publishDir.publish_status === 'listed'}
+            <button
+              type="button"
+              class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-state-hover disabled:opacity-50"
+              disabled={publishBusy}
+              onclick={requestPublishChallenge}
+            >{t('admin.federation.dir_publish_re_register')}</button>
+          {/if}
+        </div>
+      </form>
+    </div>
+  </div>
 {/if}
