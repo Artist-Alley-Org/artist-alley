@@ -21,6 +21,7 @@
   import AssetPlaylist from './AssetPlaylist.svelte';
   import CollectionPicker from './CollectionPicker.svelte';
   import CommentsThread from './CommentsThread.svelte';
+  import FollowButton from './FollowButton.svelte';
   import Menu from './Menu.svelte';
   import WhiteboardCanvas from './whiteboard/WhiteboardCanvas.svelte';
   import BrushCanvas from './whiteboard/BrushCanvas.svelte';
@@ -711,6 +712,14 @@
         <p class="truncate text-xs text-fg-muted">
           {#if author}@{author.username} · {author.post_count} post{author.post_count === 1 ? '' : 's'}{/if}
         </p>
+        {#if post.author_user_ref}
+          <!-- FollowButton self-hides when the viewer IS the author,
+               so this surface stays clean for the post-owner case
+               without a parent-side conditional. -->
+          <div class="mt-1.5">
+            <FollowButton targetRef={post.author_user_ref} compact />
+          </div>
+        {/if}
       </div>
       <Menu align="right" panelClass="min-w-[12rem]">
         {#snippet trigger({ open })}

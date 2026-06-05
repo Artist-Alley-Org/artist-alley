@@ -2440,6 +2440,20 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: feed
+          in: query
+          required: false
+          description: |
+            Pre-baked feed selector (Phase 1.17.G2). When set, applies
+            a viewer-anchored filter on top of the other query params.
+            - `following` — restrict to authors the caller follows
+              (browse-page "Following" tab). Returns an empty page for
+              callers who don't follow anyone yet.
+            - `latest` (default) — no extra filter; same shape as
+              omitting the param.
+          schema:
+            type: string
+            enum: [latest, following]
         - name: limit
           in: query
           required: false

@@ -51,6 +51,10 @@ WHERE id = $1 AND deleted_at IS NULL;
 --     caller is authorised to see (handler enforces)
 --   - q: plain-text TSVECTOR search across post search_text
 --   - tag: single-tag filter (intersects with q if both given)
+--   - feed_follower_ref (Phase 1.17.G2): when non-NULL, restrict the
+--     feed to posts authored by users the given ref follows. EXISTS
+--     subquery hits the user_follows PK (follower, followee) so it's
+--     an index-only scan per candidate row — no nested loop.
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,
        origin_server_id, team_id, state_id, created_at, updated_at
@@ -66,6 +70,10 @@ WHERE deleted_at IS NULL
        OR EXISTS (SELECT 1 FROM post_tags pt
                     WHERE pt.post_id = posts.id
                       AND pt.tag = sqlc.narg('tag')::TEXT))
+  AND (sqlc.narg('feed_follower_ref')::BIGINT IS NULL
+       OR EXISTS (SELECT 1 FROM user_follows f
+                    WHERE f.follower_user_ref = sqlc.narg('feed_follower_ref')::BIGINT
+                      AND f.followee_user_ref = posts.author_user_ref))
   AND (sqlc.narg('cursor_posted_at')::TIMESTAMPTZ IS NULL
        OR posted_at < sqlc.narg('cursor_posted_at')::TIMESTAMPTZ
        OR (posted_at = sqlc.narg('cursor_posted_at')::TIMESTAMPTZ

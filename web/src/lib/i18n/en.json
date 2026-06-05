@@ -130,6 +130,7 @@
       "password":       { "title": "Password",       "blurb": "Change your password." },
       "security":       { "title": "Security",       "blurb": "Two-factor auth, recovery codes, login history." },
       "sessions":       { "title": "Sessions",       "blurb": "Your active sessions across devices; revoke at will." },
+      "blocked":        { "title": "Blocked users",  "blurb": "People you've blocked. Private to you." },
       "connected":      { "title": "Connected accounts", "blurb": "OAuth providers linked to this account." },
 
       "messages":       { "title": "Messages",      "blurb": "Direct messages and inbox." },
@@ -159,6 +160,18 @@
       "website_url": "Website",
       "save": "Save profile",
       "saved": "Profile saved."
+    },
+    "blocked": {
+      "title": "Blocked users",
+      "intro": "People you've blocked. Blocked users can't see your posts, send you DMs, or interact with your content; you can't see theirs either. This list is private to you.",
+      "empty": "You haven't blocked anyone.",
+      "load_error": "Failed to load blocked users.",
+      "unblock_error": "Failed to unblock.",
+      "unblock": "Unblock",
+      "col_user": "User",
+      "col_reason": "Reason (private)",
+      "col_since": "Blocked since",
+      "col_actions": "Actions"
     },
     "preferences": {
       "title": "Preferences",
@@ -846,6 +859,15 @@
         "reset": "Reset to defaults"
       }
     }
+  },
+  "social": {
+    "follow": "Follow",
+    "following": "Following",
+    "unfollow": "Unfollow",
+    "blocked_by_me": "Blocked",
+    "blocked_by_them": "Unavailable",
+    "follow_failed": "Couldn't follow this user.",
+    "unfollow_failed": "Couldn't unfollow this user."
   },
   "common": {
     "loading": "Loading…",

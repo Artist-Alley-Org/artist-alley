@@ -496,22 +496,27 @@ WHERE deleted_at IS NULL
        OR EXISTS (SELECT 1 FROM post_tags pt
                     WHERE pt.post_id = posts.id
                       AND pt.tag = $4::TEXT))
-  AND ($5::TIMESTAMPTZ IS NULL
-       OR posted_at < $5::TIMESTAMPTZ
-       OR (posted_at = $5::TIMESTAMPTZ
-           AND id < $6::UUID))
+  AND ($5::BIGINT IS NULL
+       OR EXISTS (SELECT 1 FROM user_follows f
+                    WHERE f.follower_user_ref = $5::BIGINT
+                      AND f.followee_user_ref = posts.author_user_ref))
+  AND ($6::TIMESTAMPTZ IS NULL
+       OR posted_at < $6::TIMESTAMPTZ
+       OR (posted_at = $6::TIMESTAMPTZ
+           AND id < $7::UUID))
 ORDER BY posted_at DESC, id DESC
-LIMIT $7::INTEGER
+LIMIT $8::INTEGER
 `
 
 type ListPostsPageParams struct {
-	AuthorUserRef  *int64
-	Visibility     *string
-	Q              *string
-	Tag            *string
-	CursorPostedAt pgtype.Timestamptz
-	CursorID       pgtype.UUID
-	RowLimit       int32
+	AuthorUserRef   *int64
+	Visibility      *string
+	Q               *string
+	Tag             *string
+	FeedFollowerRef *int64
+	CursorPostedAt  pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	RowLimit        int32
 }
 
 type ListPostsPageRow struct {
@@ -538,12 +543,17 @@ type ListPostsPageRow struct {
 //     caller is authorised to see (handler enforces)
 //   - q: plain-text TSVECTOR search across post search_text
 //   - tag: single-tag filter (intersects with q if both given)
+//   - feed_follower_ref (Phase 1.17.G2): when non-NULL, restrict the
+//     feed to posts authored by users the given ref follows. EXISTS
+//     subquery hits the user_follows PK (follower, followee) so it's
+//     an index-only scan per candidate row — no nested loop.
 func (q *Queries) ListPostsPage(ctx context.Context, arg ListPostsPageParams) ([]ListPostsPageRow, error) {
 	rows, err := q.db.Query(ctx, listPostsPage,
 		arg.AuthorUserRef,
 		arg.Visibility,
 		arg.Q,
 		arg.Tag,
+		arg.FeedFollowerRef,
 		arg.CursorPostedAt,
 		arg.CursorID,
 		arg.RowLimit,

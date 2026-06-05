@@ -534,12 +534,25 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
+	// feed=following (Phase 1.17.G2) restricts the page to authors
+	// the caller follows. Anonymous callers can never satisfy this
+	// (the 401 path above returns first); for authenticated callers
+	// who don't follow anyone, the EXISTS subquery yields an empty
+	// page rather than a 4xx — matches every social platform's
+	// "your following tab is empty" UX.
+	var followerPtr *int64
+	if req.Params.Feed != nil && *req.Params.Feed == openapi.Following {
+		ref := caller.UserRef
+		followerPtr = &ref
+	}
+
 	fetch := limit + 1
 	rows, err := New(h.Pool).ListPostsPage(ctx, ListPostsPageParams{
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
 		Q:               qText,
 		Tag:             tagPtr,
+		FeedFollowerRef: followerPtr,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
