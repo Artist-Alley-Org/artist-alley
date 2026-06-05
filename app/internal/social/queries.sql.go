@@ -193,6 +193,55 @@ func (q *Queries) GetComment(ctx context.Context, id pgtype.UUID) (Comment, erro
 	return i, err
 }
 
+const getCommentAuthorAndContext = `-- name: GetCommentAuthorAndContext :one
+SELECT author_user_ref, parent_id, target_kind, target_id
+FROM comments
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetCommentAuthorAndContextRow struct {
+	AuthorUserRef int64
+	ParentID      pgtype.UUID
+	TargetKind    string
+	TargetID      pgtype.UUID
+}
+
+// Tiny lookup the comment reply path needs — pulls the comment's
+// author + parent_id so we can fire "reply_to_my_comment" against
+// the parent comment's author (and skip when there isn't one).
+func (q *Queries) GetCommentAuthorAndContext(ctx context.Context, id pgtype.UUID) (GetCommentAuthorAndContextRow, error) {
+	row := q.db.QueryRow(ctx, getCommentAuthorAndContext, id)
+	var i GetCommentAuthorAndContextRow
+	err := row.Scan(
+		&i.AuthorUserRef,
+		&i.ParentID,
+		&i.TargetKind,
+		&i.TargetID,
+	)
+	return i, err
+}
+
+const getPostAuthorAndTitle = `-- name: GetPostAuthorAndTitle :one
+SELECT author_user_ref, title
+FROM posts
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetPostAuthorAndTitleRow struct {
+	AuthorUserRef int64
+	Title         string
+}
+
+// Tiny lookup the notification emitter uses to know who to notify
+// + populate the inbox card with the post title. Single-row index
+// hit on posts.id PK; sub-ms.
+func (q *Queries) GetPostAuthorAndTitle(ctx context.Context, id pgtype.UUID) (GetPostAuthorAndTitleRow, error) {
+	row := q.db.QueryRow(ctx, getPostAuthorAndTitle, id)
+	var i GetPostAuthorAndTitleRow
+	err := row.Scan(&i.AuthorUserRef, &i.Title)
+	return i, err
+}
+
 const hasBlockBetween = `-- name: HasBlockBetween :one
 SELECT EXISTS (
     SELECT 1 FROM user_blocks

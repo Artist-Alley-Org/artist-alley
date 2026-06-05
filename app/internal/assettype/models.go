@@ -301,6 +301,21 @@ type Like struct {
 	LikedAt    pgtype.Timestamptz `json:"liked_at"`
 }
 
+type Notification struct {
+	ID               pgtype.UUID        `json:"id"`
+	RecipientUserRef int64              `json:"recipient_user_ref"`
+	ActorUserRef     *int64             `json:"actor_user_ref"`
+	Verb             string             `json:"verb"`
+	TargetKind       *string            `json:"target_kind"`
+	TargetID         *string            `json:"target_id"`
+	Payload          []byte             `json:"payload"`
+	ReadAt           pgtype.Timestamptz `json:"read_at"`
+	DeliveredAt      pgtype.Timestamptz `json:"delivered_at"`
+	EmailSentAt      pgtype.Timestamptz `json:"email_sent_at"`
+	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type Post struct {
 	ID                    pgtype.UUID        `json:"id"`
 	AuthorUserRef         int64              `json:"author_user_ref"`

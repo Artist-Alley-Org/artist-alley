@@ -990,3 +990,15 @@ func (authOnlyImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObjec
 func (authOnlyImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	panic("ListMyBlocked called from auth test shim")
 }
+func (authOnlyImpl) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	panic("ListMyNotifications called from auth test shim")
+}
+func (authOnlyImpl) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	panic("GetMyUnreadNotificationCount called from auth test shim")
+}
+func (authOnlyImpl) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	panic("MarkNotificationRead called from auth test shim")
+}
+func (authOnlyImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	panic("MarkAllMyNotificationsRead called from auth test shim")
+}

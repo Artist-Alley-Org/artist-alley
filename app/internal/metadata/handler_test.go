@@ -913,3 +913,15 @@ func (metaShim) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (
 func (metaShim) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	panic("ListMyBlocked called from metadata test shim")
 }
+func (metaShim) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	panic("ListMyNotifications called from metadata test shim")
+}
+func (metaShim) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	panic("GetMyUnreadNotificationCount called from metadata test shim")
+}
+func (metaShim) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	panic("MarkNotificationRead called from metadata test shim")
+}
+func (metaShim) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	panic("MarkAllMyNotificationsRead called from metadata test shim")
+}

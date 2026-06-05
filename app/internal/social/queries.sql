@@ -349,3 +349,19 @@ SELECT EXISTS (
 -- "no such user" to 404 BEFORE the downstream write would surface a
 -- less intelligible error. The PK lookup is sub-ms.
 SELECT ref FROM "user" WHERE ref = $1 LIMIT 1;
+
+-- name: GetPostAuthorAndTitle :one
+-- Tiny lookup the notification emitter uses to know who to notify
+-- + populate the inbox card with the post title. Single-row index
+-- hit on posts.id PK; sub-ms.
+SELECT author_user_ref, title
+FROM posts
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetCommentAuthorAndContext :one
+-- Tiny lookup the comment reply path needs — pulls the comment's
+-- author + parent_id so we can fire "reply_to_my_comment" against
+-- the parent comment's author (and skip when there isn't one).
+SELECT author_user_ref, parent_id, target_kind, target_id
+FROM comments
+WHERE id = $1 AND deleted_at IS NULL;

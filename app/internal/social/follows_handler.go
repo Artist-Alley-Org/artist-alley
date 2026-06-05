@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,15 @@ func (h *Handler) FollowUser(
 	// invalidation to federated peers so cross-instance views stay
 	// in sync the moment the write commits here.
 	h.invalidateFollowEdge(ctx, id.UserRef, target)
+
+	// Notify the followee about the new follower. The Notify writer
+	// handles the rest: actor != recipient gate, block-edge gate,
+	// recipient's channel pref. Best-effort — fireNotification
+	// swallows errors so a transient notifications-table issue
+	// never blocks the follow itself.
+	follower := id.UserRef
+	h.fireNotification(ctx, target, &follower, "new_follower", "user", strconv.FormatInt(follower, 10), nil)
+
 	if h.Logger != nil {
 		h.Logger.Info("follow",
 			slog.Int64("follower", id.UserRef),

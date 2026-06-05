@@ -25,6 +25,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
@@ -54,9 +55,10 @@ type apiServer struct {
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
 	brushpacks   *brushpacks.Handler
-	audit        *audit.HTTPHandler
-	licensing    *licensing.Handler
-	userprefs    *userprefs.Handler
+	audit         *audit.HTTPHandler
+	licensing     *licensing.Handler
+	userprefs     *userprefs.Handler
+	notifications *notifications.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -87,7 +89,59 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// struct literal and a direct cross-reference there would be
 	// awkward to read.
 	s.posts.SetFollowChecker(s.social)
+
+	// Notifications writer + handler (Phase 1.17.I2). The writer is
+	// the cross-package entry point every emitter (social, posts,
+	// licensing in I2-b, L in 1.17.L) calls. Permission gates
+	// (block-checker + prefs-resolver) inject post-construction so
+	// the social + userprefs handlers exist first.
+	notifWriter := notifications.NewWriter(pool, logger, nil, nil, nil, cacheReg)
+	notifWriter.SetBlockChecker(socialBlockAdapter{h: s.social})
+	notifWriter.SetPrefsResolver(userprefsPrefsAdapter{h: s.userprefs})
+	s.notifications = notifications.NewHandler(pool, logger, notifWriter)
+	// Plumb the writer back into the social handler so its
+	// comment/like/follow paths can fire notifications. The adapter
+	// converts the social-package primitive-args contract into the
+	// notifications.Input struct.
+	s.social.SetNotifier(socialNotifyAdapter{w: notifWriter})
 	return s
+}
+
+// --- cross-package adapters for the notifications wiring ----------
+
+// socialBlockAdapter satisfies notifications' blockChecker via
+// *social.Handler — the public HasBlockBetween method is the cached,
+// cross-package-safe entry point.
+type socialBlockAdapter struct{ h *social.Handler }
+
+func (a socialBlockAdapter) HasBlockBetween(ctx context.Context, x, y int64) (bool, error) {
+	return a.h.HasBlockBetween(ctx, x, y)
+}
+
+// userprefsPrefsAdapter satisfies notifications' prefsResolver via
+// *userprefs.Handler. The handler exposes a cross-package
+// ChannelsFor that loads prefs (via cache when available) and
+// resolves the channel list for the verb — falling back to the
+// per-event system default when the user has no override.
+type userprefsPrefsAdapter struct{ h *userprefs.Handler }
+
+func (a userprefsPrefsAdapter) ChannelsFor(ctx context.Context, ref int64, verb string) ([]string, error) {
+	return a.h.ChannelsFor(ctx, ref, verb)
+}
+
+// socialNotifyAdapter satisfies the social package's Notifier
+// interface by wrapping the notifications.Writer's typed Input.
+type socialNotifyAdapter struct{ w *notifications.Writer }
+
+func (a socialNotifyAdapter) Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error {
+	return a.w.Notify(ctx, notifications.Input{
+		RecipientUserRef: recipient,
+		ActorUserRef:     actor,
+		Verb:             verb,
+		TargetKind:       targetKind,
+		TargetID:         targetID,
+		Payload:          payload,
+	})
 }
 
 // usersHandlerWithAudit constructs the users handler + attaches the
@@ -656,6 +710,24 @@ func (s *apiServer) UnblockUser(ctx context.Context, req openapi.UnblockUserRequ
 
 func (s *apiServer) ListMyBlocked(ctx context.Context, req openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	return s.social.ListMyBlocked(ctx, req)
+}
+
+// --- notifications (Phase 1.17.I2) ----------------------------------------
+
+func (s *apiServer) ListMyNotifications(ctx context.Context, req openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	return s.notifications.ListMyNotifications(ctx, req)
+}
+
+func (s *apiServer) GetMyUnreadNotificationCount(ctx context.Context, req openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	return s.notifications.GetMyUnreadNotificationCount(ctx, req)
+}
+
+func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	return s.notifications.MarkNotificationRead(ctx, req)
+}
+
+func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

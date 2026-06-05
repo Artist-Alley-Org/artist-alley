@@ -918,3 +918,15 @@ func (shimImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (
 func (shimImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	panic("ListMyBlocked called from assets test shim")
 }
+func (shimImpl) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	panic("ListMyNotifications called from assets test shim")
+}
+func (shimImpl) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	panic("GetMyUnreadNotificationCount called from assets test shim")
+}
+func (shimImpl) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	panic("MarkNotificationRead called from assets test shim")
+}
+func (shimImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	panic("MarkAllMyNotificationsRead called from assets test shim")
+}

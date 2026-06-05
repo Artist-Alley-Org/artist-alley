@@ -4230,6 +4230,115 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /account/notifications:
+    get:
+      operationId: listMyNotifications
+      summary: My notification feed (Phase 1.17.I2)
+      description: |
+        Cursor-paginated notification feed for the caller. Newest-
+        first; `only_unread=true` restricts to the unread tail
+        (the inbox's "Unread" tab). Each notification carries a
+        verb (matching userprefs.KnownEventTypes), an optional
+        actor, an optional polymorphic target reference
+        (target_kind + target_id), and a JSONB payload with per-
+        verb extra context the frontend renderer reads.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: only_unread
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of notifications.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/notifications/unread-count:
+    get:
+      operationId: getMyUnreadNotificationCount
+      summary: My unread badge count
+      description: |
+        The hot read behind the navbar bell on every authenticated
+        page render. Backed by a partial index (`WHERE read_at IS
+        NULL`) so the working set stays bounded even as the
+        lifetime notifications table grows. Per-user cached via
+        cache.Registry — invalidates on every write to this user's
+        rows.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread count snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationUnreadCount" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/notifications/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: markNotificationRead
+      summary: Mark a single notification as read
+      description: |
+        Idempotent: 204 whether the row was unread or already read.
+        Only the recipient can mark — the row's recipient column
+        gates the update so cross-user calls 404 silently.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Marked read (or was already).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /account/notifications/read-all:
+    post:
+      operationId: markAllMyNotificationsRead
+      summary: Mark every unread notification as read
+      description: |
+        Inbox header "Mark all read". Returns the count of rows
+        newly-flipped so the UI can render a "Marked 12 as read"
+        confirmation. Idempotent — running twice in a row returns
+        0 the second time.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: How many rows were just marked read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationMarkAllResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /account/blocked:
     get:
       operationId: listMyBlocked
@@ -6957,6 +7066,100 @@ components:
         users:
           type: array
           items: { $ref: "#/components/schemas/BlockedUserSummary" }
+
+    Notification:
+      type: object
+      description: |
+        One row from the per-user notifications feed (Phase 1.17.I2).
+        verb matches one of the userprefs.KnownEventTypes strings.
+        target_kind + target_id form a polymorphic reference into
+        whatever entity the notification is about (e.g. target_kind=
+        "post", target_id=<uuid>); the frontend renderer keys on verb
+        + target_kind to build the right card.
+      required:
+        - id
+        - verb
+        - delivered_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            User whose action triggered the notification. NULL for
+            system-generated events (license expiry, broadcast).
+        actor_username:
+          type: string
+          nullable: true
+          description: Denormalized for inbox render — no second round-trip.
+        actor_display_name:
+          type: string
+          nullable: true
+        actor_avatar_url:
+          type: string
+          nullable: true
+        verb:
+          type: string
+          description: |
+            Event-type identifier. One of userprefs.KnownEventTypes.
+            Frontend i18n keys are `notifications.verb_<verb>`.
+        target_kind:
+          type: string
+          nullable: true
+          description: |
+            Type discriminator for the polymorphic target (post,
+            comment, asset, user, collection, license, request).
+        target_id:
+          type: string
+          nullable: true
+          description: |
+            ID of the target entity. UUID-typed entities stringify;
+            BIGINT-typed entities stringify too. Frontend resolves
+            via target_kind.
+        payload:
+          type: object
+          additionalProperties: true
+          description: |
+            Per-verb extra context (comment excerpt, license kid,
+            request reason, etc.). Schema documented per-verb in
+            app/internal/notifications/events.go.
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL = unread.
+        delivered_at:
+          type: string
+          format: date-time
+          description: When the row landed (in-app delivery time).
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Notification" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    NotificationUnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, format: int64 }
+
+    NotificationMarkAllResult:
+      type: object
+      required: [marked_count]
+      properties:
+        marked_count: { type: integer, format: int64 }
 
     Comment:
       type: object

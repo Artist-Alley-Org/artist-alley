@@ -301,6 +301,21 @@ type Like struct {
 	LikedAt    pgtype.Timestamptz
 }
 
+type Notification struct {
+	ID               pgtype.UUID
+	RecipientUserRef int64
+	ActorUserRef     *int64
+	Verb             string
+	TargetKind       *string
+	TargetID         *string
+	Payload          []byte
+	ReadAt           pgtype.Timestamptz
+	DeliveredAt      pgtype.Timestamptz
+	EmailSentAt      pgtype.Timestamptz
+	OriginServerID   pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+}
+
 type Post struct {
 	ID                    pgtype.UUID
 	AuthorUserRef         int64

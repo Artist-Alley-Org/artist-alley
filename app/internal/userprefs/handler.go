@@ -100,6 +100,20 @@ func (h *Handler) GetAccountPreferences(
 	return openapi.GetAccountPreferences200JSONResponse(buildResponse(prefs)), nil
 }
 
+// ChannelsFor is the cross-package entry point notification writers
+// call to resolve the channel list ("in_app", "email", ...) the user
+// wants the given event verb delivered through. Goes through the
+// LRU first so the hot per-delivery decision path doesn't slam the
+// DB. Returns SystemDefaultChannels(verb) when the user has no
+// override; explicit empty array MEANS "mute" and propagates as-is.
+func (h *Handler) ChannelsFor(ctx context.Context, ref int64, verb string) ([]string, error) {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return prefs.ChannelsFor(verb), nil
+}
+
 // loadPreferences fetches the user's Preferences via the LRU when
 // available, falling back to the DB on cache miss. Exposed as a
 // method so cross-package consumers (notification writers in I2+)

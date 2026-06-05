@@ -89,6 +89,47 @@ type Handler struct {
 	blockEdge       *cache.Cache[bool]
 	followerCount   *cache.Cache[int64]
 	followingCount  *cache.Cache[int64]
+
+	// notifier is the Phase 1.17.I2 cross-package seam — when a
+	// comment / like / follow lands, the relevant emit method here
+	// calls notifier.Notify to fan a notification out to the
+	// affected user(s). Local interface with primitive args so this
+	// package doesn't import notifications directly (would be a
+	// cycle: notifications imports social for HasBlockBetween). Boot
+	// wires an adapter struct that converts to notifications.Input.
+	//
+	// nil-safe: when no notifier is attached the emit calls are
+	// no-ops — the comment / like / follow itself still lands.
+	notifier Notifier
+}
+
+// Notifier is the cross-package contract the notifications package
+// implements (via an adapter at boot). Primitive args only so the
+// interface stays small + the package boundary stays one-way.
+type Notifier interface {
+	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
+}
+
+// SetNotifier installs the cross-package notifications writer.
+// Post-construction setter mirrors SetFollowChecker on posts.Handler.
+func (h *Handler) SetNotifier(n Notifier) { h.notifier = n }
+
+// fireNotification is the helper every emitter calls. nil-safe + logs
+// + swallows errors (notifications are best-effort — a transient
+// notification-table failure must NEVER block the comment / like /
+// follow it accompanies). The Writer itself logs structured errors;
+// this helper just keeps the call sites short.
+func (h *Handler) fireNotification(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) {
+	if h.notifier == nil {
+		return
+	}
+	if err := h.notifier.Notify(ctx, recipient, actor, verb, targetKind, targetID, payload); err != nil && h.Logger != nil {
+		h.Logger.Warn("social.notify.error",
+			slog.Int64("recipient", recipient),
+			slog.String("verb", verb),
+			slog.String("err", err.Error()),
+		)
+	}
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
@@ -182,12 +223,23 @@ func (h *Handler) LikePost(
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
 	}
-	if err := New(h.Pool).LikeTarget(ctx, LikeTargetParams{
+	q := New(h.Pool)
+	if err := q.LikeTarget(ctx, LikeTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
 		RsUserID:   caller.UserRef,
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
+	}
+	// Notify the post author (Phase 1.17.I2). One extra round-trip
+	// for the author + title denorm; payload carries the title so
+	// the inbox card renders "Alice liked 'Post title'" without a
+	// second fetch.
+	if author, err := q.GetPostAuthorAndTitle(ctx, pgID); err == nil {
+		actor := caller.UserRef
+		h.fireNotification(ctx, author.AuthorUserRef, &actor, "like_on_my_post", "post", uuid.UUID(pgID.Bytes).String(), map[string]any{
+			"post_title": author.Title,
+		})
 	}
 	return openapi.LikePost204Response{}, nil
 }
@@ -382,7 +434,8 @@ func (h *Handler) CreatePostComment(
 		depth = parentRow.Depth + 1
 	}
 
-	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
+	q := New(h.Pool)
+	row, err := q.CreateComment(ctx, CreateCommentParams{
 		ID:             newID,
 		TargetKind:     "post",
 		TargetID:       pgPostID,
@@ -397,6 +450,38 @@ func (h *Handler) CreatePostComment(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: create comment: %w", err)
+	}
+
+	// Notify the post author (Phase 1.17.I2). Excerpt = first 120
+	// chars of body, trimmed to a word boundary in the renderer.
+	actor := caller.UserRef
+	excerpt := body
+	if len(excerpt) > 120 {
+		excerpt = excerpt[:120]
+	}
+	commentID := uuid.UUID(newID.Bytes).String()
+	if post, err := q.GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
+		h.fireNotification(ctx, post.AuthorUserRef, &actor, "comment_on_my_post", "post", uuid.UUID(pgPostID.Bytes).String(), map[string]any{
+			"post_title":    post.Title,
+			"excerpt":       excerpt,
+			"comment_id":    commentID,
+			"comment_depth": depth + 1,
+		})
+		// Reply on a deeper-than-root comment? Also notify the parent's
+		// author (when they're not the post author too — Notify gates
+		// that on actor != recipient anyway). One extra round-trip;
+		// only fires on replies, not top-level comments.
+		if parentID.Valid {
+			parentInfo, err := q.GetCommentAuthorAndContext(ctx, parentID)
+			if err == nil && parentInfo.AuthorUserRef != post.AuthorUserRef {
+				h.fireNotification(ctx, parentInfo.AuthorUserRef, &actor, "reply_to_my_comment", "comment", uuid.UUID(parentID.Bytes).String(), map[string]any{
+					"post_title":    post.Title,
+					"excerpt":       excerpt,
+					"comment_id":    commentID,
+					"comment_depth": depth + 1,
+				})
+			}
+		}
 	}
 	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(row)), nil
 }

@@ -633,3 +633,15 @@ func (rtOnly) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (op
 func (rtOnly) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
 	panic("ListMyBlocked called from assettype test shim")
 }
+func (rtOnly) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	panic("ListMyNotifications called from assettype test shim")
+}
+func (rtOnly) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	panic("GetMyUnreadNotificationCount called from assettype test shim")
+}
+func (rtOnly) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	panic("MarkNotificationRead called from assettype test shim")
+}
+func (rtOnly) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	panic("MarkAllMyNotificationsRead called from assettype test shim")
+}

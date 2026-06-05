@@ -657,6 +657,34 @@ CREATE TABLE user_blocks (
 CREATE INDEX idx_user_blocks_blocked
     ON user_blocks (blocked_user_ref);
 
+-- migrations/00046_notifications.sql — per-user in-app feed.
+-- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks
+-- the prefs UI). Permission-aware writer in
+-- app/internal/notifications/notify.go skips when actor is blocked
+-- by recipient (or vice versa) + when channel pref is empty.
+CREATE TABLE notifications (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    recipient_user_ref BIGINT       NOT NULL,
+    actor_user_ref     BIGINT       NULL,
+    verb               TEXT         NOT NULL,
+    target_kind        TEXT         NULL,
+    target_id          TEXT         NULL,
+    payload            JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    read_at            TIMESTAMPTZ  NULL,
+    delivered_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    email_sent_at      TIMESTAMPTZ  NULL,
+    origin_server_id   UUID         NULL,
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_recipient_recent
+    ON notifications (recipient_user_ref, created_at DESC, id DESC);
+CREATE INDEX idx_notifications_unread
+    ON notifications (recipient_user_ref)
+    WHERE read_at IS NULL;
+CREATE INDEX idx_notifications_actor
+    ON notifications (actor_user_ref, created_at DESC)
+    WHERE actor_user_ref IS NOT NULL;
+
 -- migrations/00024_preview_queue.sql — generic background-job queue
 -- + preview-pipeline bookkeeping on assets. Workers claim rows via
 -- FOR UPDATE SKIP LOCKED; handlers dispatch on `type`.
