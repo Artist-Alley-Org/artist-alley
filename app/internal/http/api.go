@@ -60,7 +60,7 @@ type apiServer struct {
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
-	return &apiServer{
+	s := &apiServer{
 		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
@@ -70,7 +70,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
 		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
-		social:       social.NewHandler(pool, logger),
+		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
@@ -79,8 +79,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:        audit.NewHTTPHandler(pool, logger),
 		licensing:    licensing.NewHandler(licState, logger),
-		userprefs:    userprefs.NewHandler(pool, logger),
+		userprefs:    userprefs.NewHandler(pool, logger, cacheReg),
 	}
+	// Wire the social-graph seam into posts so visibility='followers'
+	// gating consults the new follows table (Phase 1.17.G2). Done
+	// post-construction since the two handlers are siblings in the
+	// struct literal and a direct cross-reference there would be
+	// awkward to read.
+	s.posts.SetFollowChecker(s.social)
+	return s
 }
 
 // usersHandlerWithAudit constructs the users handler + attaches the
@@ -615,6 +622,40 @@ func (s *apiServer) GetAccountPreferences(ctx context.Context, req openapi.GetAc
 
 func (s *apiServer) PatchAccountPreferences(ctx context.Context, req openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
 	return s.userprefs.PatchAccountPreferences(ctx, req)
+}
+
+// --- social graph (Phase 1.17.G2) -----------------------------------------
+
+func (s *apiServer) FollowUser(ctx context.Context, req openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	return s.social.FollowUser(ctx, req)
+}
+
+func (s *apiServer) UnfollowUser(ctx context.Context, req openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	return s.social.UnfollowUser(ctx, req)
+}
+
+func (s *apiServer) ListUserFollowers(ctx context.Context, req openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	return s.social.ListUserFollowers(ctx, req)
+}
+
+func (s *apiServer) ListUserFollowing(ctx context.Context, req openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	return s.social.ListUserFollowing(ctx, req)
+}
+
+func (s *apiServer) GetUserRelationship(ctx context.Context, req openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	return s.social.GetUserRelationship(ctx, req)
+}
+
+func (s *apiServer) BlockUser(ctx context.Context, req openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	return s.social.BlockUser(ctx, req)
+}
+
+func (s *apiServer) UnblockUser(ctx context.Context, req openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	return s.social.UnblockUser(ctx, req)
+}
+
+func (s *apiServer) ListMyBlocked(ctx context.Context, req openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	return s.social.ListMyBlocked(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

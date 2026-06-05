@@ -966,3 +966,27 @@ func (authOnlyImpl)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnot
 func (authOnlyImpl)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	panic("LintAsset called from auth_test test shim")
 }
+func (authOnlyImpl) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	panic("FollowUser called from auth test shim")
+}
+func (authOnlyImpl) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	panic("UnfollowUser called from auth test shim")
+}
+func (authOnlyImpl) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	panic("ListUserFollowers called from auth test shim")
+}
+func (authOnlyImpl) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	panic("ListUserFollowing called from auth test shim")
+}
+func (authOnlyImpl) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	panic("GetUserRelationship called from auth test shim")
+}
+func (authOnlyImpl) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	panic("BlockUser called from auth test shim")
+}
+func (authOnlyImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	panic("UnblockUser called from auth test shim")
+}
+func (authOnlyImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	panic("ListMyBlocked called from auth test shim")
+}

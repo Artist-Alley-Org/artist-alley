@@ -455,6 +455,14 @@ type User struct {
 	UniqueHash         *string
 }
 
+type UserBlock struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+	Reason         *string
+	CreatedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+}
+
 type UserCapabilityGrant struct {
 	RsUserID          int64
 	CapabilityCode    string
@@ -471,6 +479,13 @@ type UserCapabilityRevoke struct {
 	RevokedAt         pgtype.Timestamptz
 	RevokedByRsUserID *int64
 	Note              string
+}
+
+type UserFollow struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+	CreatedAt       pgtype.Timestamptz
+	OriginServerID  pgtype.UUID
 }
 
 type UserPasswordHistory struct {

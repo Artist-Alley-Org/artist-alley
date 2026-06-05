@@ -884,3 +884,27 @@ func (collShim)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotatio
 func (collShim)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	panic("LintAsset called from collections_test test shim")
 }
+func (collShim) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	panic("FollowUser called from collections test shim")
+}
+func (collShim) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	panic("UnfollowUser called from collections test shim")
+}
+func (collShim) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	panic("ListUserFollowers called from collections test shim")
+}
+func (collShim) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	panic("ListUserFollowing called from collections test shim")
+}
+func (collShim) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	panic("GetUserRelationship called from collections test shim")
+}
+func (collShim) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	panic("BlockUser called from collections test shim")
+}
+func (collShim) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	panic("UnblockUser called from collections test shim")
+}
+func (collShim) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	panic("ListMyBlocked called from collections test shim")
+}

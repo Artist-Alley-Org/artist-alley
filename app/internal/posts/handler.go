@@ -88,7 +88,31 @@ type Handler struct {
 	// create/delete a post). nil-safe — the helpers we call are
 	// already no-ops on a nil Registry.
 	registry *cache.Registry
+
+	// follows is the social-graph seam: posts.handler consults it
+	// to gate visibility='followers' posts (the long-parked TODO
+	// from Phase 1.13.I, finally wired in 1.17.G2). Local interface
+	// rather than a direct social.Handler import so this package
+	// doesn't grow a cross-feature dep; concrete impl is injected
+	// at boot via SetFollowChecker.
+	//
+	// nil-safe: when the registry isn't wired (tests), visibility
+	// 'followers' falls back to "treat as public" — the
+	// pre-1.17.G2 behaviour — rather than refusing every read.
+	follows followChecker
 }
+
+// followChecker is the slice of social.Handler this package needs:
+// "does follower follow followee?" Wired at boot via
+// SetFollowChecker so we don't grow an import cycle.
+type followChecker interface {
+	IsFollowing(ctx context.Context, follower, followee int64) (bool, error)
+}
+
+// SetFollowChecker installs the social-graph dependency post-
+// construction (same pattern users.Handler uses for the audit
+// recorder + auth.Handler uses for the provider registry).
+func (h *Handler) SetFollowChecker(fc followChecker) { h.follows = fc }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -291,7 +315,7 @@ func (h *Handler) GetPost(
 		}
 		return nil, err
 	}
-	if !canReadPost(id, full) {
+	if !h.canReadPost(ctx, id, full) {
 		return openapi.GetPost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -667,7 +691,7 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	if !canReadPost(caller, full) {
+	if !h.canReadPost(ctx, caller, full) {
 		return openapi.ListPostAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -861,8 +885,12 @@ func canMutatePost(id *auth.Identity, authorRef int64) bool {
 }
 
 // canReadPost gates GetPost. Author always wins; otherwise the
-// visibility decides.
-func canReadPost(id *auth.Identity, p *openapi.Post) bool {
+// visibility decides. Method (not free function) so the followers-
+// visibility branch can consult h.follows. Anonymous + nil-follows
+// callers fall through to "treat followers like public" — the
+// pre-1.17.G2 behaviour — to keep the test path that doesn't wire
+// the social handler working.
+func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi.Post) bool {
 	if id == nil {
 		return false
 	}
@@ -873,9 +901,25 @@ func canReadPost(id *auth.Identity, p *openapi.Post) bool {
 	case openapi.PostVisibilityPublic:
 		return true
 	case openapi.PostVisibilityFollowers:
-		// Phase 1.13.I lands the follows table; treat as public for now.
-		// TODO(1.13.I): check follows(follower=id.UserRef, followee=p.AuthorUserRef)
-		return true
+		// Phase 1.17.G2 wires this: the post is visible only when
+		// the caller follows the author. follows nil → degrade to
+		// "public" so legacy test fixtures keep passing.
+		if h.follows == nil {
+			return true
+		}
+		ok, err := h.follows.IsFollowing(ctx, id.UserRef, p.AuthorUserRef)
+		if err != nil {
+			// Fail closed on a DB error — better to 403 a real
+			// follower temporarily than silently expose a private
+			// post if the follows table is unreachable.
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.followers_check.error",
+				slog.Int64("follower", id.UserRef),
+				slog.Int64("followee", p.AuthorUserRef),
+				slog.String("err", err.Error()),
+			)
+			return false
+		}
+		return ok
 	case openapi.PostVisibilityPrivate:
 		return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
 	}

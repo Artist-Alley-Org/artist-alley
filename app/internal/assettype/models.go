@@ -455,6 +455,14 @@ type User struct {
 	UniqueHash         *string            `json:"unique_hash"`
 }
 
+type UserBlock struct {
+	BlockerUserRef int64              `json:"blocker_user_ref"`
+	BlockedUserRef int64              `json:"blocked_user_ref"`
+	Reason         *string            `json:"reason"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+}
+
 type UserCapabilityGrant struct {
 	RsUserID          int64              `json:"rs_user_id"`
 	CapabilityCode    string             `json:"capability_code"`
@@ -471,6 +479,13 @@ type UserCapabilityRevoke struct {
 	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
 	RevokedByRsUserID *int64             `json:"revoked_by_rs_user_id"`
 	Note              string             `json:"note"`
+}
+
+type UserFollow struct {
+	FollowerUserRef int64              `json:"follower_user_ref"`
+	FolloweeUserRef int64              `json:"followee_user_ref"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	OriginServerID  pgtype.UUID        `json:"origin_server_id"`
 }
 
 type UserPasswordHistory struct {

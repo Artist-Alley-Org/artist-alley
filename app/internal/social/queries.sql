@@ -212,3 +212,140 @@ WHERE target_kind = 'post'
   AND parent_id IS NULL
   AND deleted_at IS NULL
 ORDER BY created_at DESC;
+
+-- ---------------------------------------------------------------------------
+-- Social graph: follows + blocks (Phase 1.17.G2)
+-- ---------------------------------------------------------------------------
+
+-- name: FollowUser :exec
+-- Idempotent — re-following someone you already follow is a no-op
+-- rather than a primary-key violation, so the handler can return 204
+-- without distinguishing first-follow from already-following.
+INSERT INTO user_follows (follower_user_ref, followee_user_ref)
+VALUES ($1, $2)
+ON CONFLICT (follower_user_ref, followee_user_ref) DO NOTHING;
+
+-- name: UnfollowUser :execrows
+-- Rows-affected so the handler can 404 cleanly when the caller
+-- wasn't following the target. The handler maps "0 rows deleted"
+-- to 204 anyway (idempotent unfollow) but having the count makes
+-- audit + metrics writers happy.
+DELETE FROM user_follows
+WHERE follower_user_ref = $1
+  AND followee_user_ref = $2;
+
+-- name: IsFollowing :one
+-- The load-bearing check for visibility='followers' posts (wires
+-- the long-parked posts.handler.go:877 TODO). Single-row EXISTS
+-- against the PK so it's a sub-ms query.
+SELECT EXISTS (
+    SELECT 1 FROM user_follows
+    WHERE follower_user_ref = $1
+      AND followee_user_ref = $2
+) AS following;
+
+-- name: CountFollowers :one
+-- "X followers" badge on a profile page. The followee-indexed lookup
+-- (idx_user_follows_followee) makes this a small index-only scan.
+SELECT COUNT(*)::BIGINT AS count
+FROM user_follows
+WHERE followee_user_ref = $1;
+
+-- name: CountFollowing :one
+-- "Following Y" badge on a profile page.
+SELECT COUNT(*)::BIGINT AS count
+FROM user_follows
+WHERE follower_user_ref = $1;
+
+-- name: ListFollowers :many
+-- Paginated reverse lookup — who follows the given user. Joined
+-- against "user" + user_profiles so the response carries enough to
+-- render the user card without a second round-trip. Cursor uses
+-- created_at as a stable sort key with PK breakage on ties.
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       f.created_at
+FROM user_follows f
+JOIN "user" u             ON u.ref = f.follower_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE f.followee_user_ref = $1
+ORDER BY f.created_at DESC, f.follower_user_ref DESC
+LIMIT $2;
+
+-- name: ListFollowing :many
+-- Symmetric to ListFollowers — who the given user follows.
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       f.created_at
+FROM user_follows f
+JOIN "user" u             ON u.ref = f.followee_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE f.follower_user_ref = $1
+ORDER BY f.created_at DESC, f.followee_user_ref DESC
+LIMIT $2;
+
+-- name: BlockUser :exec
+-- Upserts the block edge with an optional reason. The handler also
+-- runs UnfollowUser in both directions before BlockUser — blocking
+-- and continuing to follow is a contradictory state, and modern
+-- platforms (Twitter, Mastodon, ArtStation) all auto-unfollow on
+-- block.
+INSERT INTO user_blocks (blocker_user_ref, blocked_user_ref, reason)
+VALUES ($1, $2, $3)
+ON CONFLICT (blocker_user_ref, blocked_user_ref) DO UPDATE
+    SET reason = EXCLUDED.reason;
+
+-- name: UnblockUser :execrows
+DELETE FROM user_blocks
+WHERE blocker_user_ref = $1
+  AND blocked_user_ref = $2;
+
+-- name: HasBlockBetween :one
+-- The "are A and B mutually visible?" gate. Returns true if EITHER
+-- direction of the block edge exists. Consumed by visibility-aware
+-- writers (notification dispatcher, DM delivery in 1.17.I, mention
+-- resolution) to short-circuit before doing work.
+SELECT EXISTS (
+    SELECT 1 FROM user_blocks
+    WHERE (blocker_user_ref = $1 AND blocked_user_ref = $2)
+       OR (blocker_user_ref = $2 AND blocked_user_ref = $1)
+) AS blocked;
+
+-- name: ListBlocked :many
+-- "Users I've blocked" management page (/account/blocked). Only the
+-- blocker's perspective — RS-style "show me who blocked me" is
+-- deliberately NOT exposed (most platforms hide this for the
+-- blocker's privacy).
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       b.reason,
+       b.created_at
+FROM user_blocks b
+JOIN "user" u             ON u.ref = b.blocked_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE b.blocker_user_ref = $1
+ORDER BY b.created_at DESC, b.blocked_user_ref DESC
+LIMIT $2;
+
+-- name: IsBlocking :one
+-- Single-direction block check, consumed by GetUserRelationship to
+-- populate the per-direction is_blocked_by_me / is_blocked_by_them
+-- booleans. HasBlockBetween is the bidirectional visibility gate;
+-- IsBlocking is for "did THIS user block that one?" reporting.
+SELECT EXISTS (
+    SELECT 1 FROM user_blocks
+    WHERE blocker_user_ref = $1
+      AND blocked_user_ref = $2
+) AS blocking;
+
+-- name: UserExists :one
+-- Cheap existence check used by the follow / block handlers to map
+-- "no such user" to 404 BEFORE the downstream write would surface a
+-- less intelligible error. The PK lookup is sub-ms.
+SELECT ref FROM "user" WHERE ref = $1 LIMIT 1;

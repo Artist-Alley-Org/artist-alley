@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -51,14 +53,76 @@ const (
 
 const maxListLimit = 200
 
+// Cache domains for the social graph (Phase 1.17.G2). Each domain
+// invalidates independently so a follow doesn't blow away the block
+// cache, and vice versa. cache.Registry NOTIFY broadcasts every
+// invalidation across federated peers — same federation-prep
+// pattern the rest of the codebase uses.
+const (
+	// cacheDomainFollowEdge holds boolean follow membership, keyed
+	// by "<follower>:<followee>". Single hottest social-graph read:
+	// posts.handler.go consults it for every visibility='followers'
+	// post served; the browse-feed Following filter consults it per
+	// page render. ~1 byte per entry → 50k entries comfortable.
+	cacheDomainFollowEdge = "social.follow_edge"
+
+	// cacheDomainBlockEdge holds bidirectional block presence, keyed
+	// by the canonical "<min(a,b)>:<max(a,b)>" pair so the cache hit
+	// is identical regardless of which side asks. Consumers ALWAYS
+	// check the bidirectional gate; the per-direction split in
+	// GetUserRelationship intentionally bypasses this cache.
+	cacheDomainBlockEdge = "social.block_edge"
+
+	// cacheDomainFollowerCount + cacheDomainFollowingCount feed
+	// profile-page badges and (in I2+) digest selection. Keyed by
+	// the subject user's ref.
+	cacheDomainFollowerCount  = "social.follower_count"
+	cacheDomainFollowingCount = "social.following_count"
+)
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	registry        *cache.Registry
+	followEdge      *cache.Cache[bool]
+	blockEdge       *cache.Cache[bool]
+	followerCount   *cache.Cache[int64]
+	followingCount  *cache.Cache[int64]
 }
 
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Logger: logger}
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Logger: logger, registry: registry}
+	if registry != nil {
+		// Edge caches dominate the working set (one entry per
+		// active (a,b) pair the request stream touches); counts
+		// are bounded by the active-user population.
+		h.followEdge = cache.Register[bool](registry, cacheDomainFollowEdge, 50_000)
+		h.blockEdge = cache.Register[bool](registry, cacheDomainBlockEdge, 20_000)
+		h.followerCount = cache.Register[int64](registry, cacheDomainFollowerCount, 10_000)
+		h.followingCount = cache.Register[int64](registry, cacheDomainFollowingCount, 10_000)
+	}
+	return h
 }
+
+// --- cache key helpers ----------------------------------------------------
+
+func followKey(follower, followee int64) string {
+	return strconv.FormatInt(follower, 10) + ":" + strconv.FormatInt(followee, 10)
+}
+
+// canonicalBlockKey produces the same string regardless of argument
+// order so HasBlockBetween's symmetric semantics get a single cache
+// row per pair (rather than two stale rows after one invalidation).
+func canonicalBlockKey(a, b int64) string {
+	lo, hi := a, b
+	if lo > hi {
+		lo, hi = b, a
+	}
+	return strconv.FormatInt(lo, 10) + ":" + strconv.FormatInt(hi, 10)
+}
+
+func countKey(ref int64) string { return strconv.FormatInt(ref, 10) }
 
 // ---------------------------------------------------------------------------
 // Likes

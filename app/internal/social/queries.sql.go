@@ -11,6 +11,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const blockUser = `-- name: BlockUser :exec
+INSERT INTO user_blocks (blocker_user_ref, blocked_user_ref, reason)
+VALUES ($1, $2, $3)
+ON CONFLICT (blocker_user_ref, blocked_user_ref) DO UPDATE
+    SET reason = EXCLUDED.reason
+`
+
+type BlockUserParams struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+	Reason         *string
+}
+
+// Upserts the block edge with an optional reason. The handler also
+// runs UnfollowUser in both directions before BlockUser — blocking
+// and continuing to follow is a contradictory state, and modern
+// platforms (Twitter, Mastodon, ArtStation) all auto-unfollow on
+// block.
+func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) error {
+	_, err := q.db.Exec(ctx, blockUser, arg.BlockerUserRef, arg.BlockedUserRef, arg.Reason)
+	return err
+}
+
+const countFollowers = `-- name: CountFollowers :one
+SELECT COUNT(*)::BIGINT AS count
+FROM user_follows
+WHERE followee_user_ref = $1
+`
+
+// "X followers" badge on a profile page. The followee-indexed lookup
+// (idx_user_follows_followee) makes this a small index-only scan.
+func (q *Queries) CountFollowers(ctx context.Context, followeeUserRef int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countFollowers, followeeUserRef)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countFollowing = `-- name: CountFollowing :one
+SELECT COUNT(*)::BIGINT AS count
+FROM user_follows
+WHERE follower_user_ref = $1
+`
+
+// "Following Y" badge on a profile page.
+func (q *Queries) CountFollowing(ctx context.Context, followerUserRef int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countFollowing, followerUserRef)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createComment = `-- name: CreateComment :one
 
 INSERT INTO comments (
@@ -83,6 +135,29 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 	return i, err
 }
 
+const followUser = `-- name: FollowUser :exec
+
+INSERT INTO user_follows (follower_user_ref, followee_user_ref)
+VALUES ($1, $2)
+ON CONFLICT (follower_user_ref, followee_user_ref) DO NOTHING
+`
+
+type FollowUserParams struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+}
+
+// ---------------------------------------------------------------------------
+// Social graph: follows + blocks (Phase 1.17.G2)
+// ---------------------------------------------------------------------------
+// Idempotent — re-following someone you already follow is a no-op
+// rather than a primary-key violation, so the handler can return 204
+// without distinguishing first-follow from already-following.
+func (q *Queries) FollowUser(ctx context.Context, arg FollowUserParams) error {
+	_, err := q.db.Exec(ctx, followUser, arg.FollowerUserRef, arg.FolloweeUserRef)
+	return err
+}
+
 const getComment = `-- name: GetComment :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
@@ -118,6 +193,30 @@ func (q *Queries) GetComment(ctx context.Context, id pgtype.UUID) (Comment, erro
 	return i, err
 }
 
+const hasBlockBetween = `-- name: HasBlockBetween :one
+SELECT EXISTS (
+    SELECT 1 FROM user_blocks
+    WHERE (blocker_user_ref = $1 AND blocked_user_ref = $2)
+       OR (blocker_user_ref = $2 AND blocked_user_ref = $1)
+) AS blocked
+`
+
+type HasBlockBetweenParams struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+}
+
+// The "are A and B mutually visible?" gate. Returns true if EITHER
+// direction of the block edge exists. Consumed by visibility-aware
+// writers (notification dispatcher, DM delivery in 1.17.I, mention
+// resolution) to short-circuit before doing work.
+func (q *Queries) HasBlockBetween(ctx context.Context, arg HasBlockBetweenParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasBlockBetween, arg.BlockerUserRef, arg.BlockedUserRef)
+	var blocked bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const hasUserLikedTarget = `-- name: HasUserLikedTarget :one
 SELECT EXISTS (
     SELECT 1 FROM likes
@@ -136,6 +235,53 @@ func (q *Queries) HasUserLikedTarget(ctx context.Context, arg HasUserLikedTarget
 	var value bool
 	err := row.Scan(&value)
 	return value, err
+}
+
+const isBlocking = `-- name: IsBlocking :one
+SELECT EXISTS (
+    SELECT 1 FROM user_blocks
+    WHERE blocker_user_ref = $1
+      AND blocked_user_ref = $2
+) AS blocking
+`
+
+type IsBlockingParams struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+}
+
+// Single-direction block check, consumed by GetUserRelationship to
+// populate the per-direction is_blocked_by_me / is_blocked_by_them
+// booleans. HasBlockBetween is the bidirectional visibility gate;
+// IsBlocking is for "did THIS user block that one?" reporting.
+func (q *Queries) IsBlocking(ctx context.Context, arg IsBlockingParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isBlocking, arg.BlockerUserRef, arg.BlockedUserRef)
+	var blocking bool
+	err := row.Scan(&blocking)
+	return blocking, err
+}
+
+const isFollowing = `-- name: IsFollowing :one
+SELECT EXISTS (
+    SELECT 1 FROM user_follows
+    WHERE follower_user_ref = $1
+      AND followee_user_ref = $2
+) AS following
+`
+
+type IsFollowingParams struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+}
+
+// The load-bearing check for visibility='followers' posts (wires
+// the long-parked posts.handler.go:877 TODO). Single-row EXISTS
+// against the PK so it's a sub-ms query.
+func (q *Queries) IsFollowing(ctx context.Context, arg IsFollowingParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isFollowing, arg.FollowerUserRef, arg.FolloweeUserRef)
+	var following bool
+	err := row.Scan(&following)
+	return following, err
 }
 
 const likeTarget = `-- name: LikeTarget :exec
@@ -222,6 +368,66 @@ func (q *Queries) ListAnnotationsForAsset(ctx context.Context, targetID pgtype.U
 	return items, nil
 }
 
+const listBlocked = `-- name: ListBlocked :many
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       b.reason,
+       b.created_at
+FROM user_blocks b
+JOIN "user" u             ON u.ref = b.blocked_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE b.blocker_user_ref = $1
+ORDER BY b.created_at DESC, b.blocked_user_ref DESC
+LIMIT $2
+`
+
+type ListBlockedParams struct {
+	BlockerUserRef int64
+	Limit          int32
+}
+
+type ListBlockedRow struct {
+	Ref         int64
+	Username    *string
+	DisplayName *string
+	AvatarUrl   *string
+	Reason      *string
+	CreatedAt   pgtype.Timestamptz
+}
+
+// "Users I've blocked" management page (/account/blocked). Only the
+// blocker's perspective — RS-style "show me who blocked me" is
+// deliberately NOT exposed (most platforms hide this for the
+// blocker's privacy).
+func (q *Queries) ListBlocked(ctx context.Context, arg ListBlockedParams) ([]ListBlockedRow, error) {
+	rows, err := q.db.Query(ctx, listBlocked, arg.BlockerUserRef, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlockedRow
+	for rows.Next() {
+		var i ListBlockedRow
+		if err := rows.Scan(
+			&i.Ref,
+			&i.Username,
+			&i.DisplayName,
+			&i.AvatarUrl,
+			&i.Reason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCommentsByAuthor = `-- name: ListCommentsByAuthor :many
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
@@ -269,6 +475,117 @@ func (q *Queries) ListCommentsByAuthor(ctx context.Context, arg ListCommentsByAu
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFollowers = `-- name: ListFollowers :many
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       f.created_at
+FROM user_follows f
+JOIN "user" u             ON u.ref = f.follower_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE f.followee_user_ref = $1
+ORDER BY f.created_at DESC, f.follower_user_ref DESC
+LIMIT $2
+`
+
+type ListFollowersParams struct {
+	FolloweeUserRef int64
+	Limit           int32
+}
+
+type ListFollowersRow struct {
+	Ref         int64
+	Username    *string
+	DisplayName *string
+	AvatarUrl   *string
+	CreatedAt   pgtype.Timestamptz
+}
+
+// Paginated reverse lookup — who follows the given user. Joined
+// against "user" + user_profiles so the response carries enough to
+// render the user card without a second round-trip. Cursor uses
+// created_at as a stable sort key with PK breakage on ties.
+func (q *Queries) ListFollowers(ctx context.Context, arg ListFollowersParams) ([]ListFollowersRow, error) {
+	rows, err := q.db.Query(ctx, listFollowers, arg.FolloweeUserRef, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFollowersRow
+	for rows.Next() {
+		var i ListFollowersRow
+		if err := rows.Scan(
+			&i.Ref,
+			&i.Username,
+			&i.DisplayName,
+			&i.AvatarUrl,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFollowing = `-- name: ListFollowing :many
+SELECT u.ref,
+       u.username,
+       up.display_name,
+       up.avatar_url,
+       f.created_at
+FROM user_follows f
+JOIN "user" u             ON u.ref = f.followee_user_ref
+LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+WHERE f.follower_user_ref = $1
+ORDER BY f.created_at DESC, f.followee_user_ref DESC
+LIMIT $2
+`
+
+type ListFollowingParams struct {
+	FollowerUserRef int64
+	Limit           int32
+}
+
+type ListFollowingRow struct {
+	Ref         int64
+	Username    *string
+	DisplayName *string
+	AvatarUrl   *string
+	CreatedAt   pgtype.Timestamptz
+}
+
+// Symmetric to ListFollowers — who the given user follows.
+func (q *Queries) ListFollowing(ctx context.Context, arg ListFollowingParams) ([]ListFollowingRow, error) {
+	rows, err := q.db.Query(ctx, listFollowing, arg.FollowerUserRef, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFollowingRow
+	for rows.Next() {
+		var i ListFollowingRow
+		if err := rows.Scan(
+			&i.Ref,
+			&i.Username,
+			&i.DisplayName,
+			&i.AvatarUrl,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -547,6 +864,48 @@ func (q *Queries) SoftDeleteComment(ctx context.Context, id pgtype.UUID) (int64,
 	return result.RowsAffected(), nil
 }
 
+const unblockUser = `-- name: UnblockUser :execrows
+DELETE FROM user_blocks
+WHERE blocker_user_ref = $1
+  AND blocked_user_ref = $2
+`
+
+type UnblockUserParams struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+}
+
+func (q *Queries) UnblockUser(ctx context.Context, arg UnblockUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unblockUser, arg.BlockerUserRef, arg.BlockedUserRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unfollowUser = `-- name: UnfollowUser :execrows
+DELETE FROM user_follows
+WHERE follower_user_ref = $1
+  AND followee_user_ref = $2
+`
+
+type UnfollowUserParams struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+}
+
+// Rows-affected so the handler can 404 cleanly when the caller
+// wasn't following the target. The handler maps "0 rows deleted"
+// to 204 anyway (idempotent unfollow) but having the count makes
+// audit + metrics writers happy.
+func (q *Queries) UnfollowUser(ctx context.Context, arg UnfollowUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unfollowUser, arg.FollowerUserRef, arg.FolloweeUserRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const unlikeTarget = `-- name: UnlikeTarget :execrows
 DELETE FROM likes
 WHERE target_kind = $1 AND target_id = $2 AND rs_user_id = $3
@@ -675,4 +1034,18 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const userExists = `-- name: UserExists :one
+SELECT ref FROM "user" WHERE ref = $1 LIMIT 1
+`
+
+// Cheap existence check used by the follow / block handlers to map
+// "no such user" to 404 BEFORE the downstream write would surface a
+// less intelligible error. The PK lookup is sub-ms.
+func (q *Queries) UserExists(ctx context.Context, ref int64) (int64, error) {
+	row := q.db.QueryRow(ctx, userExists, ref)
+	var ref_2 int64
+	err := row.Scan(&ref_2)
+	return ref_2, err
 }

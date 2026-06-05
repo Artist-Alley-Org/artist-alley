@@ -631,6 +631,32 @@ CREATE TABLE user_preferences (
     updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
+-- migrations/00045_social_graph.sql — directional follows + blocks
+-- (ArtStation-shape, not Facebook-shape: mutual = query, no
+-- accept/decline state).
+CREATE TABLE user_follows (
+    follower_user_ref BIGINT       NOT NULL,
+    followee_user_ref BIGINT       NOT NULL,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    origin_server_id  UUID         NULL,
+    PRIMARY KEY (follower_user_ref, followee_user_ref),
+    CHECK (follower_user_ref <> followee_user_ref)
+);
+CREATE INDEX idx_user_follows_followee
+    ON user_follows (followee_user_ref, created_at DESC);
+
+CREATE TABLE user_blocks (
+    blocker_user_ref BIGINT       NOT NULL,
+    blocked_user_ref BIGINT       NOT NULL,
+    reason           TEXT         NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    origin_server_id UUID         NULL,
+    PRIMARY KEY (blocker_user_ref, blocked_user_ref),
+    CHECK (blocker_user_ref <> blocked_user_ref)
+);
+CREATE INDEX idx_user_blocks_blocked
+    ON user_blocks (blocked_user_ref);
+
 -- migrations/00024_preview_queue.sql — generic background-job queue
 -- + preview-pipeline bookkeeping on assets. Workers claim rows via
 -- FOR UPDATE SKIP LOCKED; handlers dispatch on `type`.

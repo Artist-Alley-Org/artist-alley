@@ -4026,6 +4026,223 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /users/{ref}/follow:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: followUser
+      summary: Follow this user
+      description: |
+        Phase 1.17.G2 — directional follow. Idempotent: re-following
+        someone you already follow returns 204 too. Self-follow is
+        rejected with 400. Cross-block-edge follow (either party has
+        blocked the other) is rejected with 403 — modern platforms
+        treat blocks as a hard interaction stop.
+
+        Wires the long-parked `posts.visibility='followers'` gate
+        from Phase 1.13. The browse-feed "Following" tab also
+        activates the moment any follow row exists.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Now following (or was already).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: unfollowUser
+      summary: Stop following this user
+      description: |
+        Phase 1.17.G2 — idempotent unfollow. Returns 204 whether
+        the edge existed or not. Symmetric to followUser; never
+        affects the reverse follow (if the target also follows you,
+        they continue to follow you).
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: No longer following (or never was).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/{ref}/followers:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    get:
+      operationId: listUserFollowers
+      summary: Paginated list of users following this user
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Followers list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocialUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/following:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    get:
+      operationId: listUserFollowing
+      summary: Paginated list of users this user follows
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Following list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocialUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/relationship:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getUserRelationship
+      summary: Caller's social-graph relationship with this user
+      description: |
+        Phase 1.17.G2 — the single round-trip the profile page
+        consumes to decide which "Follow/Unfollow/Blocked/Block"
+        button to render. Reports both directions of follow + the
+        bidirectional block bit. Anonymous callers receive an
+        all-false response (still 200) since the relationship is
+        anchored on the caller; client code can short-circuit
+        rendering on `is_self`.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Relationship snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserRelationship" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/block:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: blockUser
+      summary: Block this user
+      description: |
+        Phase 1.17.G2 — directional block. Auto-unfollows BOTH
+        directions before persisting the block (per Twitter /
+        Mastodon / ArtStation convention — blocking + continuing to
+        follow is a contradictory state). The optional `reason` is
+        private to the blocker, surfaced only in /account/blocked.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlockUserRequest" }
+      responses:
+        "204":
+          description: Block recorded (or already in place).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: unblockUser
+      summary: Stop blocking this user
+      description: |
+        Phase 1.17.G2 — idempotent unblock. Does NOT re-establish
+        any prior follow edges (the original block auto-unfollowed
+        them); callers wanting to follow again must do so explicitly.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: No longer blocked (or never was).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/blocked:
+    get:
+      operationId: listMyBlocked
+      summary: My block list (private to the caller)
+      description: |
+        Phase 1.17.G2 — paginated list of users the caller has
+        blocked, with the optional private reason. The reverse
+        direction ("who blocked me") is deliberately NOT exposed
+        per platform convention — it's the blocker's privacy.
+      tags: [social, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Blocked-users list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockedUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /auth/me/teams:
     get:
       operationId: getMyTeams
@@ -6635,6 +6852,97 @@ components:
       required: [liked]
       properties:
         liked: { type: boolean }
+
+    SocialUserSummary:
+      type: object
+      description: |
+        Compact user-card projection used by the follow/follower
+        lists. Smaller than UserPublic — only the fields the card
+        renders. Phase 1.17.G2.
+      required: [ref, username]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        display_name: { type: string, nullable: true }
+        avatar_url: { type: string, nullable: true }
+        since:
+          type: string
+          format: date-time
+          description: |
+            When this edge was created. For follower lists, when the
+            user started following the subject. For block lists, when
+            the block was recorded.
+
+    SocialUserList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/SocialUserSummary" }
+
+    UserRelationship:
+      type: object
+      description: |
+        Phase 1.17.G2 — caller's relationship with the target user.
+        Profile pages consume this in one round-trip to decide which
+        Follow/Unfollow/Block/Unblock button(s) to render. `is_self`
+        short-circuits all the other flags.
+      required:
+        - is_self
+        - is_following
+        - is_followed_by
+        - is_blocked_by_me
+        - is_blocked_by_them
+      properties:
+        is_self:
+          type: boolean
+          description: True when the caller IS the target — UI hides social buttons.
+        is_following:
+          type: boolean
+          description: Caller follows target.
+        is_followed_by:
+          type: boolean
+          description: Target follows caller.
+        is_blocked_by_me:
+          type: boolean
+          description: Caller has blocked target. Implies social hide on both sides.
+        is_blocked_by_them:
+          type: boolean
+          description: Target has blocked caller. Implies social hide on both sides.
+
+    BlockUserRequest:
+      type: object
+      description: Phase 1.17.G2 — optional reason recorded with the block.
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Private note visible only to the blocker in
+            /account/blocked. Surfaced verbatim. Empty/omitted is
+            fine — most blocks don't carry a reason.
+
+    BlockedUserSummary:
+      type: object
+      required: [ref, username, since]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        display_name: { type: string, nullable: true }
+        avatar_url: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        since:
+          type: string
+          format: date-time
+
+    BlockedUserList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/BlockedUserSummary" }
 
     Comment:
       type: object

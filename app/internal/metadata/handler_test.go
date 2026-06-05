@@ -889,3 +889,27 @@ func (metaShim)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotatio
 func (metaShim)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	panic("LintAsset called from metadata_test test shim")
 }
+func (metaShim) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	panic("FollowUser called from metadata test shim")
+}
+func (metaShim) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	panic("UnfollowUser called from metadata test shim")
+}
+func (metaShim) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	panic("ListUserFollowers called from metadata test shim")
+}
+func (metaShim) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	panic("ListUserFollowing called from metadata test shim")
+}
+func (metaShim) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	panic("GetUserRelationship called from metadata test shim")
+}
+func (metaShim) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	panic("BlockUser called from metadata test shim")
+}
+func (metaShim) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	panic("UnblockUser called from metadata test shim")
+}
+func (metaShim) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	panic("ListMyBlocked called from metadata test shim")
+}

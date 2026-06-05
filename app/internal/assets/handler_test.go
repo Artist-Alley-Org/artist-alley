@@ -894,3 +894,27 @@ func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotati
 func (s shimImpl) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	return s.assets.LintAsset(ctx, req)
 }
+func (shimImpl) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	panic("FollowUser called from assets test shim")
+}
+func (shimImpl) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	panic("UnfollowUser called from assets test shim")
+}
+func (shimImpl) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	panic("ListUserFollowers called from assets test shim")
+}
+func (shimImpl) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	panic("ListUserFollowing called from assets test shim")
+}
+func (shimImpl) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	panic("GetUserRelationship called from assets test shim")
+}
+func (shimImpl) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	panic("BlockUser called from assets test shim")
+}
+func (shimImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	panic("UnblockUser called from assets test shim")
+}
+func (shimImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	panic("ListMyBlocked called from assets test shim")
+}

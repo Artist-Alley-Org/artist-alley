@@ -20,26 +20,54 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
+
+// cacheDomainByUser is the cache-registry domain string for the
+// per-user Preferences blob. Hot read: every notification writer in
+// Phase 1.17.I2+ calls ChannelsFor per delivery decision, and most
+// of those land on the same active user repeatedly within a single
+// request burst (e.g. someone gets 10 likes in a minute). Without
+// the cache that's 10 DB hits for a row that almost never changes.
+// Federation note: writes Invalidate via the cache.Registry NOTIFY
+// channel, so peer instances drop their stale copy too.
+const cacheDomainByUser = "userprefs.by_user"
 
 // Handler is the openapi-strict adapter. Wraps a pgxpool.Pool +
 // logger; api.go's apiServer delegates to it.
 type Handler struct {
-	pool   *pgxpool.Pool
-	logger *slog.Logger
+	pool     *pgxpool.Pool
+	logger   *slog.Logger
+	registry *cache.Registry
+	byUser   *cache.Cache[Preferences]
 }
 
-// NewHandler wires the handler to its dependencies.
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{pool: pool, logger: logger}
+// NewHandler wires the handler to its dependencies. A nil registry
+// is legal — handler falls back to direct DB reads (useful for the
+// test path that doesn't spin up the cache LISTEN goroutine).
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{pool: pool, logger: logger, registry: registry}
+	if registry != nil {
+		// 5k entries fits ~1MB of resident memory at typical prefs
+		// payload sizes (small JSONB) and easily covers the active-
+		// users-in-last-30-days population the writers iterate over.
+		h.byUser = cache.Register[Preferences](registry, cacheDomainByUser, 5_000)
+	}
+	return h
 }
+
+// userKey is the cache key for a per-user Preferences entry. Same
+// shape every consumer uses (the int64 ref stringified) so the
+// invalidator and the reader can't drift.
+func userKey(ref int64) string { return strconv.FormatInt(ref, 10) }
 
 // GetAccountPreferences — GET /account/preferences
 //
@@ -65,23 +93,45 @@ func (h *Handler) GetAccountPreferences(
 		}, nil
 	}
 
+	prefs, err := h.loadPreferences(ctx, id.UserRef)
+	if err != nil {
+		return nil, err
+	}
+	return openapi.GetAccountPreferences200JSONResponse(buildResponse(prefs)), nil
+}
+
+// loadPreferences fetches the user's Preferences via the LRU when
+// available, falling back to the DB on cache miss. Exposed as a
+// method so cross-package consumers (notification writers in I2+)
+// can reuse the same cache-aware path.
+func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, error) {
+	if h.byUser != nil {
+		if hit, ok := h.byUser.Get(userKey(ref)); ok {
+			return hit, nil
+		}
+	}
 	q := New(h.pool)
-	row, err := q.GetUserPreferences(ctx, id.UserRef)
+	row, err := q.GetUserPreferences(ctx, ref)
 	var prefs Preferences
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		// First-visit case — return zero-value prefs. Not a 404.
+		// First-visit case — synthesize the zero-value prefs.
 		prefs = Preferences{NotificationChannels: NotificationChannels{}}
 	case err != nil:
-		return nil, err
+		return Preferences{}, err
 	default:
 		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews)
 		if err != nil {
-			return nil, err
+			return Preferences{}, err
 		}
 	}
-
-	return openapi.GetAccountPreferences200JSONResponse(buildResponse(prefs)), nil
+	if h.byUser != nil {
+		// Best-effort populate. The LRU's Add never fails — but using
+		// a separate variable here keeps the code shape consistent
+		// with the social handler's cache wiring.
+		h.byUser.Add(userKey(ref), prefs)
+	}
+	return prefs, nil
 }
 
 // PatchAccountPreferences — PATCH /account/preferences
@@ -130,6 +180,20 @@ func (h *Handler) PatchAccountPreferences(
 		DefaultViews:         viewsJSON,
 	}); err != nil {
 		return nil, err
+	}
+
+	// Invalidate the cached row across this process AND every
+	// federated peer via the cache.Registry NOTIFY broadcast. The
+	// post-write notification writer might race to read prefs with
+	// stale defaults; we want that next read to hit the DB once + the
+	// freshly-saved values everywhere.
+	if h.byUser != nil {
+		if err := h.byUser.Invalidate(ctx, userKey(id.UserRef)); err != nil && h.logger != nil {
+			h.logger.LogAttrs(ctx, slog.LevelWarn, "userprefs.cache.invalidate.error",
+				slog.Int64("rs_user_id", id.UserRef),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 
 	if h.logger != nil {
