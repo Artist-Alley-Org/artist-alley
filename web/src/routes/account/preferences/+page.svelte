@@ -131,11 +131,22 @@
 
 <svelte:head><title>{t('account.preferences.title')} — artist-alley</title></svelte:head>
 
-<h2 class="mb-2 text-xl font-semibold">{t('account.preferences.title')}</h2>
-<p class="mb-4 text-sm text-fg-muted">{t('account.preferences.intro')}</p>
+<div class="mb-6 flex flex-wrap items-baseline justify-between gap-3">
+  <div>
+    <h2 class="text-2xl font-semibold">{t('account.preferences.title')}</h2>
+    <p class="text-sm text-fg-muted">{t('account.preferences.intro')}</p>
+  </div>
+  {#if saved}
+    <p role="status" class="rounded border border-success/40 bg-success-container px-3 py-1.5 text-sm text-success">
+      {t('account.preferences.saved')}
+    </p>
+  {/if}
+</div>
 
-<div class="max-w-2xl space-y-8">
-  <section>
+<!-- Top row: theme + language sit side-by-side on wider screens since
+     each is a single button row that fits comfortably in its half. -->
+<div class="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <section class="rounded-lg border border-border bg-surface p-4">
     <h3 class="mb-2 text-sm font-medium text-fg">{t('account.preferences.theme_label')}</h3>
     <div class="flex flex-wrap gap-2">
       {#each [
@@ -153,10 +164,10 @@
         </button>
       {/each}
     </div>
-    <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.theme_system_help')}</p>
+    <p class="mt-2 text-xs text-fg-muted">{t('account.preferences.theme_system_help')}</p>
   </section>
 
-  <section>
+  <section class="rounded-lg border border-border bg-surface p-4">
     <h3 class="mb-2 text-sm font-medium text-fg">{t('account.preferences.language_label')}</h3>
     <div class="flex flex-wrap gap-2">
       <button
@@ -181,12 +192,19 @@
         </button>
       {/each}
     </div>
-    <p class="mt-1 text-xs text-fg-muted">{t('account.preferences.language_system_help')}</p>
+    <p class="mt-2 text-xs text-fg-muted">{t('account.preferences.language_system_help')}</p>
   </section>
+</div>
 
-  <section>
-    <h3 class="mb-1 text-sm font-medium text-fg">{t('account.preferences.notif_title')}</h3>
-    <p class="mb-3 text-xs text-fg-muted">{t('account.preferences.notif_intro')}</p>
+<!-- Bottom row: notifications grid takes the wide column (3 of 4 cols
+     on xl); default views sit beside it on a single column. On
+     smaller screens they stack. -->
+<div class="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-4">
+  <section class="rounded-lg border border-border bg-surface p-4 xl:col-span-3">
+    <header class="mb-3">
+      <h3 class="text-sm font-medium text-fg">{t('account.preferences.notif_title')}</h3>
+      <p class="text-xs text-fg-muted">{t('account.preferences.notif_intro')}</p>
+    </header>
 
     {#if loadError}
       <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{loadError}</p>
@@ -194,12 +212,12 @@
       <p class="text-xs text-fg-muted">{t('common.loading')}</p>
     {:else}
       <div class="overflow-hidden rounded-lg border border-border">
-        <table class="w-full text-xs">
+        <table class="w-full text-sm">
           <thead class="bg-surface text-fg-muted">
             <tr>
-              <th class="px-3 py-2 text-left font-medium">{t('account.preferences.notif_event_col')}</th>
+              <th class="w-full px-4 py-2 text-left font-medium">{t('account.preferences.notif_event_col')}</th>
               {#each prefs.known_channels as ch (ch)}
-                <th class="px-3 py-2 text-center font-medium">{t(`account.preferences.notif_channel_${ch}`)}</th>
+                <th class="whitespace-nowrap px-6 py-2 text-center font-medium">{t(`account.preferences.notif_channel_${ch}`)}</th>
               {/each}
             </tr>
           </thead>
@@ -207,17 +225,18 @@
             {#each prefs.known_event_types as event (event)}
               {@const channels = resolvedChannelsFor(event)}
               {@const overridden = hasOverride(event)}
-              <tr class="border-t border-border">
-                <td class="px-3 py-2">
+              <tr class="border-t border-border hover:bg-surface/50">
+                <td class="px-4 py-2.5">
                   <div class="font-medium">{t(`account.preferences.notif_event_${event}`)}</div>
                   {#if !overridden}
-                    <div class="text-[10px] text-fg-muted">{t('account.preferences.notif_default_hint')}</div>
+                    <div class="text-xs text-fg-muted">{t('account.preferences.notif_default_hint')}</div>
                   {/if}
                 </td>
                 {#each prefs.known_channels as ch (ch)}
-                  <td class="px-3 py-2 text-center">
+                  <td class="whitespace-nowrap px-6 py-2.5 text-center">
                     <input
                       type="checkbox"
+                      class="h-4 w-4"
                       checked={channels.includes(ch)}
                       onchange={() => toggleChannel(event, ch)}
                       disabled={savingPrefs}
@@ -233,16 +252,18 @@
     {/if}
   </section>
 
-  <section>
-    <h3 class="mb-1 text-sm font-medium text-fg">{t('account.preferences.views_title')}</h3>
-    <p class="mb-3 text-xs text-fg-muted">{t('account.preferences.views_intro')}</p>
+  <section class="rounded-lg border border-border bg-surface p-4 xl:col-span-1">
+    <header class="mb-3">
+      <h3 class="text-sm font-medium text-fg">{t('account.preferences.views_title')}</h3>
+      <p class="text-xs text-fg-muted">{t('account.preferences.views_intro')}</p>
+    </header>
 
     {#if prefs}
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <label class="block text-xs">
+      <div class="space-y-3">
+        <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_home_tab')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1"
+            class="w-full rounded border border-border bg-bg px-2 py-1.5"
             value={prefs.default_views.home_tab ?? ''}
             onchange={(e) => setView('home_tab', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
@@ -253,10 +274,10 @@
           </select>
         </label>
 
-        <label class="block text-xs">
+        <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_browse_layout')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1"
+            class="w-full rounded border border-border bg-bg px-2 py-1.5"
             value={prefs.default_views.browse_layout ?? ''}
             onchange={(e) => setView('browse_layout', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
@@ -267,10 +288,10 @@
           </select>
         </label>
 
-        <label class="block text-xs">
+        <label class="block text-sm">
           <span class="mb-1 block font-medium text-fg">{t('account.preferences.views_browse_sort')}</span>
           <select
-            class="w-full rounded border border-border bg-bg px-2 py-1"
+            class="w-full rounded border border-border bg-bg px-2 py-1.5"
             value={prefs.default_views.browse_sort ?? ''}
             onchange={(e) => setView('browse_sort', (e.target as HTMLSelectElement).value)}
             disabled={savingPrefs}
@@ -283,10 +304,4 @@
       </div>
     {/if}
   </section>
-
-  {#if saved}
-    <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">
-      {t('account.preferences.saved')}
-    </p>
-  {/if}
 </div>

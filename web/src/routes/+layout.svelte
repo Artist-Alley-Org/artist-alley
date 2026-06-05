@@ -49,10 +49,14 @@
     !!auth.user && page.url.pathname !== '/login' && page.url.pathname !== '/setup'
   );
 
-  // Pages that get the search box rendered into the nav. Currently
-  // only the browse page (/) — when other browsable surfaces land
-  // (collection detail, user gallery, etc.) we'll widen this gate.
-  const showSearch = $derived(showChrome && page.url.pathname === '/');
+  // The navbar search input is present on every authenticated page
+  // — including /account/* and /admin/* — per memory
+  // `feedback_navbar_search_always_visible`. Search is the primary
+  // discovery affordance in an ArtStation-shaped app; gating it to
+  // the browse page friction-trained users to leave settings/admin
+  // just to look something up. Submitting from a non-browse page
+  // navigates to `/?q=...` in handleSearch.
+  const showSearch = $derived(showChrome);
 
   // Active-state for the Collections nav link. Derived in script so we
   // don't run a {@const} inside <nav> (Svelte forbids that placement).
@@ -72,14 +76,20 @@
 
   async function handleSearch(q: string) {
     const trimmed = q.trim();
-    const target = new URL(page.url);
+    // From the browse page (/), keep the user in place and update
+    // the query string. From any other page (account, admin, post
+    // detail, etc.), navigate TO the browse page with the query —
+    // the search input is global per
+    // `feedback_navbar_search_always_visible` and submitting from a
+    // non-browse surface should land the user on the result feed.
+    const isBrowse = page.url.pathname === '/';
+    const target = isBrowse ? new URL(page.url) : new URL('/', page.url);
     if (trimmed === '') {
       target.searchParams.delete('q');
     } else {
       target.searchParams.set('q', trimmed);
     }
-    // keepFocus avoids stealing focus from the still-typing input.
-    await goto(target.pathname + target.search, { keepFocus: true, noScroll: true });
+    await goto(target.pathname + target.search, { keepFocus: isBrowse, noScroll: isBrowse });
   }
 
   // Sign-out + theme cycling moved into UserMenu.

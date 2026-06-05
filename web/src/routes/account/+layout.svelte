@@ -21,16 +21,16 @@
   });
 </script>
 
-<div class="mx-auto w-full max-w-6xl px-6 py-6">
+<div class="w-full px-6 py-6">
   <header class="mb-6">
     <h1 class="text-2xl font-semibold">{t('account.title')}</h1>
   </header>
 
   <div class="grid grid-cols-1 gap-6 md:grid-cols-[15rem_1fr]">
-    <nav class="space-y-3 text-sm">
+    <nav class="space-y-3 self-start rounded-lg border border-border bg-surface-elevated p-3 text-sm">
       <a
         href="/account"
-        class={`block rounded-md px-3 py-1.5 ${page.url.pathname === '/account' ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+        class={`block rounded-md px-3 py-1.5 ${page.url.pathname === '/account' ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
       >
         {t('account.overview.title')}
       </a>
@@ -45,7 +45,7 @@
             {@const active = page.url.pathname === item.href || page.url.pathname.startsWith(item.href + '/')}
             <a
               href={item.href}
-              class={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 ${active ? 'bg-surface-elevated text-fg' : 'text-fg-muted hover:bg-surface-elevated/60 hover:text-fg'}`}
+              class={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 ${active ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
             >
               <span>{t(`account.items.${item.slug}.title`)}</span>
               {#if item.status === 'stub' && item.phase}
