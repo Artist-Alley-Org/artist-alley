@@ -493,6 +493,150 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/federation/peers:
+    get:
+      operationId: listFederationPeers
+      summary: List federation peers (Phase 1.22.B-a)
+      description: |
+        All paired instances, newest-handshake-first. Gated on
+        `system.admin`. Per ADR 0043 §"Trust model" the rows here
+        are just the trusted-channel registry — content shares
+        are managed separately via federation_shares (Phase
+        1.22.C).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: A page of peers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createFederationPeer
+      summary: Manually add a federation peer (1.22.B-a)
+      description: |
+        Manual peer entry — the operator pastes the peer's
+        instance URL + display name + the PEM-encoded Ed25519
+        instance public key (out-of-band coordination between
+        operators). The automated handshake protocol lands in
+        1.22.B-b and uses the same row shape.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationPeerCreate" }
+      responses:
+        "201":
+          description: Peer created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Peer with this instance_url already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/peers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getFederationPeer
+      summary: Get one federation peer
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Peer detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateFederationPeer
+      summary: Edit a federation peer (tier / encryption_policy / enabled / notes / display_name)
+      description: |
+        Cannot change instance_url or instance_public_key — those
+        require defederate + re-pair (the public_key change in
+        particular signals re-handshake).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationPeerUpdate" }
+      responses:
+        "200":
+          description: Updated peer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteFederationPeer
+      summary: Defederate a peer
+      description: |
+        Removes the peer row. Per ADR 0043 §"Trust model" the
+        Phase 1.22.C federation_shares table cascades on this
+        delete and Phase 1.22.D emits the final aa:Unshare
+        activity to the peer so they purge their local cache.
+        Cascade + activity emission happen automatically when
+        those phases ship; this endpoint is the entry point.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Peer removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/activities:
     get:
       operationId: listAdminActivities
@@ -7376,6 +7520,99 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    FederationPeer:
+      type: object
+      description: |
+        One row from the federation_peers registry (Phase
+        1.22.B-a + ADR 0043 §"Trust model"). Pairing alone shares
+        no content — see federation_shares (1.22.C) for the
+        access-control layer.
+      required:
+        - id
+        - instance_url
+        - display_name
+        - instance_public_key
+        - trust_tier
+        - encryption_policy
+        - enabled
+        - handshake_at
+        - handshake_by_user_ref
+        - notes
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        instance_url:
+          type: string
+          description: 'https://peer.example (no trailing slash, no path)'
+        display_name: { type: string }
+        instance_public_key:
+          type: string
+          description: PEM-wrapped Ed25519 public key (RFC 8410).
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+        enabled: { type: boolean }
+        handshake_at: { type: string, format: date-time }
+        handshake_by_user_ref: { type: integer, format: int64 }
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FederationPeerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationPeer" }
+
+    FederationPeerCreate:
+      type: object
+      required: [instance_url, display_name, instance_public_key]
+      properties:
+        instance_url:
+          type: string
+          description: 'Must be https://, no trailing slash, no path component.'
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        instance_public_key:
+          type: string
+          description: PEM-wrapped Ed25519 public key. Validated server-side.
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+          default: connected
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+          default: plaintext
+        enabled: { type: boolean, default: true }
+        notes: { type: string }
+
+    FederationPeerUpdate:
+      type: object
+      description: |
+        PATCH shape — every field optional. Omitting a field
+        leaves it unchanged. instance_url and instance_public_key
+        are NOT editable; defederate + re-pair to change them.
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+        enabled: { type: boolean }
+        notes: { type: string }
 
     AdminActivity:
       type: object

@@ -1020,3 +1020,18 @@ func (authOnlyImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDir
 func (authOnlyImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("ListAdminActivities called from auth test shim")
 }
+func (authOnlyImpl) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	panic("ListFederationPeers called from auth test shim")
+}
+func (authOnlyImpl) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	panic("GetFederationPeer called from auth test shim")
+}
+func (authOnlyImpl) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	panic("CreateFederationPeer called from auth test shim")
+}
+func (authOnlyImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	panic("UpdateFederationPeer called from auth test shim")
+}
+func (authOnlyImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	panic("DeleteFederationPeer called from auth test shim")
+}

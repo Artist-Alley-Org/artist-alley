@@ -682,3 +682,18 @@ func (shimImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectM
 func (shimImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("ListAdminActivities called from storage test shim")
 }
+func (shimImpl) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	panic("ListFederationPeers called from storage test shim")
+}
+func (shimImpl) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	panic("GetFederationPeer called from storage test shim")
+}
+func (shimImpl) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	panic("CreateFederationPeer called from storage test shim")
+}
+func (shimImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	panic("UpdateFederationPeer called from storage test shim")
+}
+func (shimImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	panic("DeleteFederationPeer called from storage test shim")
+}

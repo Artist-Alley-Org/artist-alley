@@ -938,3 +938,18 @@ func (collShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectM
 func (collShim) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("ListAdminActivities called from collections test shim")
 }
+func (collShim) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	panic("ListFederationPeers called from collections test shim")
+}
+func (collShim) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	panic("GetFederationPeer called from collections test shim")
+}
+func (collShim) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	panic("CreateFederationPeer called from collections test shim")
+}
+func (collShim) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	panic("UpdateFederationPeer called from collections test shim")
+}
+func (collShim) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	panic("DeleteFederationPeer called from collections test shim")
+}

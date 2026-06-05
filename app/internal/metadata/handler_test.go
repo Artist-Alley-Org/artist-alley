@@ -943,3 +943,18 @@ func (metaShim) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectM
 func (metaShim) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("ListAdminActivities called from metadata test shim")
 }
+func (metaShim) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	panic("ListFederationPeers called from metadata test shim")
+}
+func (metaShim) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	panic("GetFederationPeer called from metadata test shim")
+}
+func (metaShim) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	panic("CreateFederationPeer called from metadata test shim")
+}
+func (metaShim) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	panic("UpdateFederationPeer called from metadata test shim")
+}
+func (metaShim) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	panic("DeleteFederationPeer called from metadata test shim")
+}

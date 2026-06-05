@@ -749,6 +749,34 @@ CREATE INDEX activities_source_recent_idx
     ON activities (source, published_at DESC)
     WHERE source <> 'local';
 
+-- migrations/00051_federation_peers.sql — trusted-peers registry.
+-- One row per artist-alley instance we federate with. Pairing
+-- alone shares no content (federation_shares in 1.22.C is the
+-- per-object access control layer). CHECK constraints mirror
+-- federation.TrustTier + federation.EncryptionPolicy per ADR 0042.
+CREATE TABLE federation_peers (
+    id                       UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_url             TEXT         NOT NULL UNIQUE,
+    display_name             TEXT         NOT NULL,
+    instance_public_key      TEXT         NOT NULL,
+    trust_tier               TEXT         NOT NULL DEFAULT 'connected'
+                             CHECK (trust_tier IN ('connected', 'directory-listed', 'auto-sync')),
+    encryption_policy        TEXT         NOT NULL DEFAULT 'plaintext'
+                             CHECK (encryption_policy IN ('plaintext', 'e2e-encrypted')),
+    enabled                  BOOLEAN      NOT NULL DEFAULT TRUE,
+    handshake_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    handshake_by_user_ref    BIGINT       NOT NULL,
+    last_seen_at             TIMESTAMPTZ  NULL,
+    notes                    TEXT         NOT NULL DEFAULT '',
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX federation_peers_enabled_idx
+    ON federation_peers (instance_url)
+    WHERE enabled = TRUE;
+CREATE INDEX federation_peers_handshake_at_idx
+    ON federation_peers (handshake_at DESC);
+
 -- migrations/00046_notifications.sql — per-user in-app feed.
 -- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks
 -- the prefs UI). Permission-aware writer in

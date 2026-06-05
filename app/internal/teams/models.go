@@ -282,6 +282,22 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type FederationPeer struct {
+	ID                 pgtype.UUID
+	InstanceUrl        string
+	DisplayName        string
+	InstancePublicKey  string
+	TrustTier          string
+	EncryptionPolicy   string
+	Enabled            bool
+	HandshakeAt        pgtype.Timestamptz
+	HandshakeByUserRef int64
+	LastSeenAt         pgtype.Timestamptz
+	Notes              string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string

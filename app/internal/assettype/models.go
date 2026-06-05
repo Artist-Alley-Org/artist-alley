@@ -282,6 +282,22 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type FederationPeer struct {
+	ID                 pgtype.UUID        `json:"id"`
+	InstanceUrl        string             `json:"instance_url"`
+	DisplayName        string             `json:"display_name"`
+	InstancePublicKey  string             `json:"instance_public_key"`
+	TrustTier          string             `json:"trust_tier"`
+	EncryptionPolicy   string             `json:"encryption_policy"`
+	Enabled            bool               `json:"enabled"`
+	HandshakeAt        pgtype.Timestamptz `json:"handshake_at"`
+	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
+	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
+	Notes              string             `json:"notes"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`

@@ -663,3 +663,18 @@ func (rtOnly) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMes
 func (rtOnly) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
 	panic("ListAdminActivities called from assettype test shim")
 }
+func (rtOnly) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	panic("ListFederationPeers called from assettype test shim")
+}
+func (rtOnly) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	panic("GetFederationPeer called from assettype test shim")
+}
+func (rtOnly) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	panic("CreateFederationPeer called from assettype test shim")
+}
+func (rtOnly) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	panic("UpdateFederationPeer called from assettype test shim")
+}
+func (rtOnly) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	panic("DeleteFederationPeer called from assettype test shim")
+}

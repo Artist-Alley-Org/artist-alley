@@ -26,6 +26,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -64,6 +65,8 @@ type apiServer struct {
 	messages        *messages.Handler
 	activities      *activities.Writer
 	activitiesAdmin *activities.AdminHandler
+	peers           *peer.Registry
+	peersAdmin      *peer.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -127,6 +130,13 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.activities = activities.NewWriter(pool, logger, cacheReg)
 	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
 	s.activitiesAdmin = activities.NewAdminHandler(s.activities)
+
+	// Federation peer registry (Phase 1.22.B-a). Two cache
+	// domains — per-instance-URL + enabled-snapshot — register
+	// with the shared cache.Registry so federated replicas
+	// invalidate in lockstep on every peer mutation.
+	s.peers = peer.NewRegistry(pool, logger, cacheReg)
+	s.peersAdmin = peer.NewAdminHandler(s.peers)
 	// UsernameResolver: the username-by-ref lookup federation
 	// emitters use to build actor URIs. *users.Handler already
 	// caches UserPublic; ResolveUsername reuses that cache so the
@@ -796,6 +806,28 @@ func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNo
 
 func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- federation peers admin (Phase 1.22.B-a) -----------------------------
+
+func (s *apiServer) ListFederationPeers(ctx context.Context, req openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	return s.peersAdmin.ListFederationPeers(ctx, req)
+}
+
+func (s *apiServer) GetFederationPeer(ctx context.Context, req openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	return s.peersAdmin.GetFederationPeer(ctx, req)
+}
+
+func (s *apiServer) CreateFederationPeer(ctx context.Context, req openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	return s.peersAdmin.CreateFederationPeer(ctx, req)
+}
+
+func (s *apiServer) UpdateFederationPeer(ctx context.Context, req openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	return s.peersAdmin.UpdateFederationPeer(ctx, req)
+}
+
+func (s *apiServer) DeleteFederationPeer(ctx context.Context, req openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	return s.peersAdmin.DeleteFederationPeer(ctx, req)
 }
 
 // --- activities admin audit (Phase 1.22.A-bis-3b) ------------------------
