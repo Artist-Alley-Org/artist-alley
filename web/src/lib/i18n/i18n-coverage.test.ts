@@ -36,6 +36,7 @@ const TRACKED_FILES = [
   'src/routes/admin/system/license/+page.svelte',
   'src/routes/account/preferences/+page.svelte',
   'src/routes/account/blocked/+page.svelte',
+  'src/routes/account/notifications/+page.svelte',
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":

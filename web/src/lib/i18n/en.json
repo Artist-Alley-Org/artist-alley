@@ -869,6 +869,32 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications yet.",
+    "empty_unread": "You're all caught up.",
+    "all_caught_up": "You're all caught up.",
+    "unread_count": "{count} unread",
+    "load_error": "Couldn't load notifications.",
+    "load_more": "Load more",
+    "see_all": "See all notifications",
+    "mark_all_read": "Mark all read",
+    "tab_all": "All",
+    "tab_unread": "Unread",
+    "verb_comment_on_my_post": "New comment on your post",
+    "verb_like_on_my_post": "Someone liked your post",
+    "verb_reply_to_my_comment": "Reply to your comment",
+    "verb_new_follower": "New follower",
+    "verb_mention_of_me": "You were mentioned",
+    "verb_post_from_followed_user": "New post from someone you follow",
+    "verb_direct_message_received": "New direct message",
+    "verb_broadcast_received": "Announcement",
+    "verb_resource_request_received_to_approve": "Asset access request awaiting your approval",
+    "verb_resource_request_approved": "Your asset access request was approved",
+    "verb_resource_request_denied": "Your asset access request was denied",
+    "verb_license_expiring_soon": "License expiring soon",
+    "verb_license_expired": "License expired"
+  },
   "common": {
     "loading": "Loading…",
     "save": "Save",
@@ -883,7 +909,8 @@
     "copied": "Copied",
     "coming_soon": "Coming soon",
     "error_generic": "Something went wrong.",
-    "no_permission": "You don't have permission to view this page."
+    "no_permission": "You don't have permission to view this page.",
+    "just_now": "just now"
   },
   "login": {
     "title": "Sign in",
