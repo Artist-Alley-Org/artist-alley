@@ -329,6 +329,57 @@ func (q *Queries) ListObjectActivities(ctx context.Context, arg ListObjectActivi
 	return items, nil
 }
 
+const lookupMostRecentLocalActivity = `-- name: LookupMostRecentLocalActivity :one
+SELECT activity_uri
+FROM activities
+WHERE actor_user_ref = $1
+  AND activity_type  = $2
+  AND object_kind    = $3
+  AND object_local_id = $4
+  AND source = 'local'
+ORDER BY published_at DESC, id DESC
+LIMIT 1
+`
+
+type LookupMostRecentLocalActivityParams struct {
+	ActorUserRef  *int64
+	ActivityType  string
+	ObjectKind    *string
+	ObjectLocalID *string
+}
+
+// Phase 1.22.A-bis-3a — supports Undo emission. Returns the
+// activity_uri of the most recent LOCAL-emitted activity by an
+// actor about a specific object, of a specific type.
+//
+// Use case: when a user unlikes a post, the resulting Undo
+// activity per AP §6.10 must reference the original Like
+// activity's URI. This query finds it.
+//
+// We don't filter "has this been undone already?" — the domain
+// table (likes / user_follows / user_blocks / comments) is the
+// authority on whether the edge is currently active. If the
+// handler is calling this query to emit an Undo, the edge WAS
+// active (the handler just deleted it). The most-recent matching
+// activity is by definition the one we're undoing.
+//
+// Returns pgx.ErrNoRows when no prior activity exists (e.g. the
+// like predates ADR-0044 wiring and was never recorded). Callers
+// treat this as "skip the Undo emission" and continue — the
+// domain mutation still happens; the activity ledger is just
+// incomplete for that pre-existing edge.
+func (q *Queries) LookupMostRecentLocalActivity(ctx context.Context, arg LookupMostRecentLocalActivityParams) (string, error) {
+	row := q.db.QueryRow(ctx, lookupMostRecentLocalActivity,
+		arg.ActorUserRef,
+		arg.ActivityType,
+		arg.ObjectKind,
+		arg.ObjectLocalID,
+	)
+	var activity_uri string
+	err := row.Scan(&activity_uri)
+	return activity_uri, err
+}
+
 const setActivitySignature = `-- name: SetActivitySignature :exec
 UPDATE activities
 SET signature_value  = $2,

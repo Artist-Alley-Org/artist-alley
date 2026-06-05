@@ -338,6 +338,44 @@ func MintActivityURI(baseURL string) string {
 	return baseURL + "/activities/" + uuid.New().String()
 }
 
+// LookupMostRecent returns the activity_uri of the most recent
+// LOCAL-emitted activity by the given actor about the given object
+// of the given type. Empty string + nil when no prior activity
+// exists (the original predates ADR-0044 wiring, or never landed).
+//
+// Used by Undo emitters in social/messages handlers to construct
+// the AP-required `object` field on Undo activities.
+//
+// Best-effort: a DB error here doesn't propagate — the Undo
+// emission just falls back to "no prior activity URI known" so
+// the domain unmutation still proceeds. The activity ledger
+// becomes slightly incomplete; the operator notices via the
+// admin audit UI's "Undo without object_uri" filter (Phase
+// 1.22.A-bis-3b).
+func (w *Writer) LookupMostRecent(ctx context.Context, actorUserRef int64, activityType federation.ActivityType, objectKind ActivityObjectKind, objectLocalID string) string {
+	if w.Pool == nil {
+		return ""
+	}
+	kindStr := string(objectKind)
+	uri, err := New(w.Pool).LookupMostRecentLocalActivity(ctx, LookupMostRecentLocalActivityParams{
+		ActorUserRef:   &actorUserRef,
+		ActivityType:   string(activityType),
+		ObjectKind:     &kindStr,
+		ObjectLocalID:  &objectLocalID,
+	})
+	if err != nil {
+		if w.Logger != nil && !errors.Is(err, pgx.ErrNoRows) {
+			w.Logger.LogAttrs(ctx, slog.LevelWarn, "activities.lookup_most_recent.error",
+				slog.Int64("actor", actorUserRef),
+				slog.String("type", string(activityType)),
+				slog.String("err", err.Error()),
+			)
+		}
+		return ""
+	}
+	return uri
+}
+
 // Record is the in-memory representation of one ledger row.
 // Public so cross-package consumers (federation outbox dispatcher
 // in 1.22.D, admin audit UI in 1.22.A-bis-3) can hold + pass it

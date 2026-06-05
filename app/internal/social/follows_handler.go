@@ -32,6 +32,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -150,6 +151,29 @@ func (h *Handler) UnfollowUser(
 			},
 		}, nil
 	}
+	// Gold-standard path: wrap UnfollowUser + Undo(Follow) in one
+	// tx. Lookup the original Follow URI before the tx (best-effort).
+	if h.activities != nil {
+		targetIDStr := strconv.FormatInt(req.Ref, 10)
+		originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityFollow, activities.ObjectKindUser, targetIDStr)
+		em := emit.UndoFollow(h.actorContext(ctx, id), originalURI, req.Ref)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			_, err := New(tx).UnfollowUser(ctx, UnfollowUserParams{
+				FollowerUserRef: id.UserRef,
+				FolloweeUserRef: req.Ref,
+			})
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("social: unfollow: %w", err)
+		}
+		h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
+		return openapi.UnfollowUser204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	q := New(h.Pool)
 	_, err := q.UnfollowUser(ctx, UnfollowUserParams{
 		FollowerUserRef: id.UserRef,
@@ -446,6 +470,31 @@ func (h *Handler) UnblockUser(
 			},
 		}, nil
 	}
+	// Gold-standard path: wrap UnblockUser + Undo(Block) in one tx.
+	// Like Block itself, Undo(Block) has no recipients in `to` per
+	// AP §6.9 — the formerly-blocked actor should not learn they
+	// were ever blocked.
+	if h.activities != nil {
+		targetIDStr := strconv.FormatInt(req.Ref, 10)
+		originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityBlock, activities.ObjectKindUser, targetIDStr)
+		em := emit.UndoBlock(h.actorContext(ctx, id), originalURI, req.Ref)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			_, err := New(tx).UnblockUser(ctx, UnblockUserParams{
+				BlockerUserRef: id.UserRef,
+				BlockedUserRef: req.Ref,
+			})
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("social: unblock: %w", err)
+		}
+		h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)
+		return openapi.UnblockUser204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	q := New(h.Pool)
 	if _, err := q.UnblockUser(ctx, UnblockUserParams{
 		BlockerUserRef: id.UserRef,

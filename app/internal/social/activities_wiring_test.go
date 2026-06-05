@@ -282,6 +282,99 @@ func TestLikePost_EmitsActivity(t *testing.T) {
 	}
 }
 
+// TestUnlikePost_EmitsUndo proves the Undo wiring from
+// 1.22.A-bis-3a. After Like → Unlike, two activity rows exist:
+// the original Like + an Undo whose object_local_id references
+// the Like's activity_uri (per AP §6.10).
+func TestUnlikePost_EmitsUndo(t *testing.T) {
+	fx := setupActivitiesFixture(t)
+
+	// Peer + post.
+	peerName := "wiring-undo-peer-" + randHex(t, 6)
+	var peerRef int64
+	if err := fx.pool.QueryRow(fx.ctx,
+		`INSERT INTO "user" (username, fullname, approved) VALUES ($1, $2, 1) RETURNING ref`,
+		peerName, "Peer",
+	).Scan(&peerRef); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = fx.pool.Exec(c, `DELETE FROM activities WHERE actor_user_ref = $1`, peerRef)
+		_, _ = fx.pool.Exec(c, `DELETE FROM posts WHERE author_user_ref = $1`, peerRef)
+		_, _ = fx.pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, peerRef)
+	})
+
+	postID := uuid.New()
+	if _, err := fx.pool.Exec(fx.ctx,
+		`INSERT INTO posts (id, author_user_ref, title, description, visibility) VALUES ($1, $2, $3, '', 'public')`,
+		pgtype.UUID{Bytes: postID, Valid: true}, peerRef, "Undo test post",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := fx.withIdentity(fx.ctx)
+	openapiID := openapi_types.UUID(postID)
+	if _, err := fx.social.LikePost(ctx, openapi.LikePostRequestObject{Id: openapiID}); err != nil {
+		t.Fatalf("LikePost: %v", err)
+	}
+	if _, err := fx.social.UnlikePost(ctx, openapi.UnlikePostRequestObject{Id: openapiID}); err != nil {
+		t.Fatalf("UnlikePost: %v", err)
+	}
+
+	// Expect 2 activities now: the Like + the Undo.
+	type row struct {
+		typ           string
+		objectKind    string
+		objectLocalID string
+		undoTarget    string
+	}
+	rows, err := fx.pool.Query(fx.ctx,
+		`SELECT activity_type, COALESCE(object_kind,''), COALESCE(object_local_id,''), COALESCE(payload->>'target_type','')
+		 FROM activities WHERE actor_user_ref=$1 ORDER BY published_at ASC`,
+		fx.userRef,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.typ, &r.objectKind, &r.objectLocalID, &r.undoTarget); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	rows.Close()
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 activities (Like + Undo), got %d: %+v", len(got), got)
+	}
+	if got[0].typ != "Like" {
+		t.Errorf("first activity should be Like, got %q", got[0].typ)
+	}
+	if got[1].typ != "Undo" {
+		t.Errorf("second activity should be Undo, got %q", got[1].typ)
+	}
+	if got[1].objectKind != "activity" {
+		t.Errorf("Undo object_kind should be 'activity', got %q", got[1].objectKind)
+	}
+	if got[1].undoTarget != "Like" {
+		t.Errorf("Undo payload.target_type should be 'Like', got %q", got[1].undoTarget)
+	}
+	// The Undo's object_local_id should be the Like's activity_uri.
+	var likeURI string
+	if err := fx.pool.QueryRow(fx.ctx,
+		`SELECT activity_uri FROM activities WHERE actor_user_ref=$1 AND activity_type='Like'`,
+		fx.userRef,
+	).Scan(&likeURI); err != nil {
+		t.Fatal(err)
+	}
+	if got[1].objectLocalID != likeURI {
+		t.Errorf("Undo should reference the Like's activity_uri (%s), got %q", likeURI, got[1].objectLocalID)
+	}
+}
+
 // TestFollowUser_EmitsActivity proves the wiring on a different
 // handler shape — Follow's target is a user, not a post; addressing
 // is To=[followee URI] not To=[author URI].

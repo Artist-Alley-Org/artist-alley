@@ -42,6 +42,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -374,6 +375,50 @@ func (h *Handler) UnlikePost(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	postIDStr := uuid.UUID(pgID.Bytes).String()
+
+	// Gold-standard path: WithEmissionFn so we can check the
+	// UnlikeTarget rows-affected count inside the tx and skip the
+	// Undo emission (returning a sentinel error) when there was
+	// no like to remove — the tx rolls back, no spurious activity.
+	if h.activities != nil {
+		// Look up the original Like's activity_uri BEFORE the tx
+		// so the Undo's object_uri is correctly populated. Empty
+		// string when no prior activity exists (pre-ADR-0044 like)
+		// — emit a "synthetic" Undo with no object reference.
+		originalURI := h.activities.LookupMostRecent(ctx, caller.UserRef, federation.ActivityLike, activities.ObjectKindPost, postIDStr)
+
+		var notFound bool
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
+				TargetKind: "post",
+				TargetID:   pgID,
+				RsUserID:   caller.UserRef,
+			})
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
+			}
+			if rows == 0 {
+				notFound = true
+				return activities.EmissionInput{}, errLikeAbsent
+			}
+			em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, postIDStr)
+			return activities.EmissionInput{
+				Activity: em.Activity,
+			}, nil
+		})
+		if notFound {
+			return openapi.UnlikePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "no like to remove"},
+			}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return openapi.UnlikePost204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	rows, err := New(h.Pool).UnlikeTarget(ctx, UnlikeTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
@@ -389,6 +434,12 @@ func (h *Handler) UnlikePost(
 	}
 	return openapi.UnlikePost204Response{}, nil
 }
+
+// errLikeAbsent is the sentinel the WithEmissionFn closure
+// returns when the UnlikeTarget query reports 0 rows — the
+// handler treats this as the 404 path rather than a real error.
+// Used as an internal signal only; never escapes the handler.
+var errLikeAbsent = errors.New("social: like row absent")
 
 // ---------------------------------------------------------------------------
 // Comments
@@ -686,6 +737,37 @@ func (h *Handler) DeleteComment(
 		}, nil
 	}
 
+	commentIDStr := uuid.UUID(pgID.Bytes).String()
+	postIDStr := uuid.UUID(row.TargetID.Bytes).String()
+
+	// Gold-standard path: wrap SoftDeleteComment + Delete(Note)
+	// activity in one tx per AP §6.4 (Tombstone semantics).
+	if h.activities != nil {
+		var notFound bool
+		em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
+		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+			rows, err := New(tx).SoftDeleteComment(ctx, pgID)
+			if err != nil {
+				return activities.EmissionInput{}, fmt.Errorf("social: soft delete comment: %w", err)
+			}
+			if rows == 0 {
+				notFound = true
+				return activities.EmissionInput{}, errCommentAbsent
+			}
+			return activities.EmissionInput{Activity: em.Activity}, nil
+		})
+		if notFound {
+			return openapi.DeleteComment404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
+			}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return openapi.DeleteComment204Response{}, nil
+	}
+
+	// Legacy fallback (tests).
 	rows, err := New(h.Pool).SoftDeleteComment(ctx, pgID)
 	if err != nil {
 		return nil, fmt.Errorf("social: soft delete comment: %w", err)
@@ -697,6 +779,12 @@ func (h *Handler) DeleteComment(
 	}
 	return openapi.DeleteComment204Response{}, nil
 }
+
+// errCommentAbsent is the sentinel signalling "rows==0 from
+// SoftDeleteComment" inside the WithEmissionFn closure. Used to
+// roll back the tx + return 404 without treating the absent row
+// as a server error.
+var errCommentAbsent = errors.New("social: comment row absent")
 
 // ---------------------------------------------------------------------------
 // Whiteboards — top-level comments with annotation_type='whiteboard'
