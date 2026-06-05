@@ -958,3 +958,18 @@ func (metaShim) UpdateFederationPeer(context.Context, openapi.UpdateFederationPe
 func (metaShim) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	panic("DeleteFederationPeer called from metadata test shim")
 }
+func (metaShim) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	panic("GetFederationInstance called from metadata test shim")
+}
+func (metaShim) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	panic("PostFederationHandshake called from metadata test shim")
+}
+func (metaShim) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	panic("InitiateFederationHandshake called from metadata test shim")
+}
+func (metaShim) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	panic("ListFederationPendingInbound called from metadata test shim")
+}
+func (metaShim) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	panic("AcceptFederationPeer called from metadata test shim")
+}

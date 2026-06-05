@@ -290,6 +290,7 @@ type FederationPeer struct {
 	TrustTier          string             `json:"trust_tier"`
 	EncryptionPolicy   string             `json:"encryption_policy"`
 	Enabled            bool               `json:"enabled"`
+	Status             string             `json:"status"`
 	HandshakeAt        pgtype.Timestamptz `json:"handshake_at"`
 	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
 	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`

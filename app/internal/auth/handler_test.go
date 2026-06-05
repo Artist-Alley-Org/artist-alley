@@ -1035,3 +1035,18 @@ func (authOnlyImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederati
 func (authOnlyImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	panic("DeleteFederationPeer called from auth test shim")
 }
+func (authOnlyImpl) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	panic("GetFederationInstance called from auth test shim")
+}
+func (authOnlyImpl) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	panic("PostFederationHandshake called from auth test shim")
+}
+func (authOnlyImpl) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	panic("InitiateFederationHandshake called from auth test shim")
+}
+func (authOnlyImpl) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	panic("ListFederationPendingInbound called from auth test shim")
+}
+func (authOnlyImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	panic("AcceptFederationPeer called from auth test shim")
+}

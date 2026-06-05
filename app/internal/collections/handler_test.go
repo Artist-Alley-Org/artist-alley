@@ -953,3 +953,18 @@ func (collShim) UpdateFederationPeer(context.Context, openapi.UpdateFederationPe
 func (collShim) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	panic("DeleteFederationPeer called from collections test shim")
 }
+func (collShim) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	panic("GetFederationInstance called from collections test shim")
+}
+func (collShim) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	panic("PostFederationHandshake called from collections test shim")
+}
+func (collShim) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	panic("InitiateFederationHandshake called from collections test shim")
+}
+func (collShim) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	panic("ListFederationPendingInbound called from collections test shim")
+}
+func (collShim) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	panic("AcceptFederationPeer called from collections test shim")
+}

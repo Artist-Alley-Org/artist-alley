@@ -678,3 +678,18 @@ func (rtOnly) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeer
 func (rtOnly) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	panic("DeleteFederationPeer called from assettype test shim")
 }
+func (rtOnly) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	panic("GetFederationInstance called from assettype test shim")
+}
+func (rtOnly) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	panic("PostFederationHandshake called from assettype test shim")
+}
+func (rtOnly) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	panic("InitiateFederationHandshake called from assettype test shim")
+}
+func (rtOnly) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	panic("ListFederationPendingInbound called from assettype test shim")
+}
+func (rtOnly) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	panic("AcceptFederationPeer called from assettype test shim")
+}

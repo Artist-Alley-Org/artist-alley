@@ -963,3 +963,18 @@ func (shimImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederationPe
 func (shimImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	panic("DeleteFederationPeer called from assets test shim")
 }
+func (shimImpl) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	panic("GetFederationInstance called from assets test shim")
+}
+func (shimImpl) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	panic("PostFederationHandshake called from assets test shim")
+}
+func (shimImpl) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	panic("InitiateFederationHandshake called from assets test shim")
+}
+func (shimImpl) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	panic("ListFederationPendingInbound called from assets test shim")
+}
+func (shimImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	panic("AcceptFederationPeer called from assets test shim")
+}

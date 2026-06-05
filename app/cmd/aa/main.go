@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
@@ -52,6 +53,18 @@ func run() error {
 		return err
 	}
 	logger.Info("migrations applied")
+
+	// At-rest crypto: federation instance identity (1.22.B-b) +
+	// per-user encryption keys (1.22.A) wrap their private keys
+	// with the AA_MASTER_KEY-derived AES-256-GCM cipher. Boot
+	// fails LOUDLY if the key is missing — federation can't sign
+	// without it, and we won't silently fall back to plaintext.
+	// Operators without federation needs can set a throwaway key;
+	// bootstrap.sh generates one if missing.
+	if err := atrest.Init(); err != nil {
+		return err
+	}
+	logger.Info("atrest initialised")
 
 	pool, err := db.Open(ctx, cfg)
 	if err != nil {

@@ -229,6 +229,39 @@ func (t TrustTier) Valid() bool {
 	return ok
 }
 
+// PeerStatus is the handshake state machine for a federation_peers
+// row per migration 00052 + docs/spec/federation/v1.md §11.
+// Mirrors the CHECK constraint added in that migration.
+type PeerStatus string
+
+const (
+	// PeerStatusPendingOutbound — we initiated the handshake;
+	// awaiting the peer's admin confirmation.
+	PeerStatusPendingOutbound PeerStatus = "pending_outbound"
+
+	// PeerStatusPendingInbound — peer initiated; awaiting OUR
+	// admin's manual review + accept (TOFU + explicit confirm).
+	PeerStatusPendingInbound PeerStatus = "pending_inbound"
+
+	// PeerStatusConnected — both sides confirmed; full federation
+	// traffic allowed (gated additionally by enabled + tier +
+	// federation_shares).
+	PeerStatusConnected PeerStatus = "connected"
+)
+
+// KnownPeerStatuses is the closed catalogue.
+var KnownPeerStatuses = map[PeerStatus]struct{}{
+	PeerStatusPendingOutbound: {},
+	PeerStatusPendingInbound:  {},
+	PeerStatusConnected:       {},
+}
+
+// Valid reports whether s is in the closed catalogue.
+func (s PeerStatus) Valid() bool {
+	_, ok := KnownPeerStatuses[s]
+	return ok
+}
+
 // EncryptionPolicy mirrors federation_peers.encryption_policy.
 // Orthogonal to TrustTier — controls whether activities over a
 // peer link MUST use NaCl-box envelopes for restricted / embargo

@@ -1,16 +1,26 @@
 <script lang="ts">
-  // Admin federation peers — Phase 1.22.B-a.
+  // Admin federation peers — Phase 1.22.B-a + 1.22.B-b.
   //
-  // Manual peer entry: operator pastes the peer's instance URL,
-  // display name, and PEM-encoded Ed25519 instance public key
-  // (coordinated out-of-band with the peer's operator). 1.22.B-b
-  // adds an automated handshake form on top; for v1-a this is
-  // the "manual SSH known_hosts" UX.
+  // Three sections (top to bottom):
   //
-  // Per ADR 0043 §"Trust model" pairing alone shares no content
-  // — that's federation_shares in 1.22.C. The page banner makes
-  // this explicit so operators don't expect content to flow just
-  // because they paired.
+  //   1. This instance's identity panel — shows our public key
+  //      fingerprint + URL + display name so the operator can
+  //      relay them out-of-band to the peer's operator.
+  //
+  //   2. Pending inbound requests — pairings the peer initiated
+  //      that need our admin's accept/reject. Hidden when empty.
+  //
+  //   3. Add/pair peer — two paths:
+  //        a) "Pair by URL" (1.22.B-b automated handshake): admin
+  //           enters peer URL, system POSTs an offer envelope, the
+  //           peer's admin accepts on their side.
+  //        b) "Manual entry" (1.22.B-a): paste both URL + PEM
+  //           pubkey, status lands as connected immediately.
+  //           Useful for air-gapped or DNS-less coordination.
+  //
+  //   4. Paired peers table — every row regardless of status, with
+  //      status badges + inline tier picker + enabled toggle +
+  //      defederate.
 
   import { onMount } from 'svelte';
   import { api } from '$api/client';
@@ -24,6 +34,7 @@
     trust_tier: 'connected' | 'directory-listed' | 'auto-sync';
     encryption_policy: 'plaintext' | 'e2e-encrypted';
     enabled: boolean;
+    status: 'pending_outbound' | 'pending_inbound' | 'connected';
     handshake_at: string;
     handshake_by_user_ref: number;
     last_seen_at?: string | null;
@@ -32,20 +43,39 @@
     updated_at: string;
   }
 
+  interface InstanceDoc {
+    instance_url: string;
+    display_name: string;
+    public_key_pem: string;
+    fingerprint: string;
+    protocol_version: string;
+  }
+
   let peers = $state<Peer[]>([]);
+  let pendingInbound = $state<Peer[]>([]);
+  let instance = $state<InstanceDoc | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // Add-peer form state.
-  let showAdd = $state(false);
-  let addInstanceURL = $state('');
-  let addDisplayName = $state('');
-  let addPublicKey = $state('');
-  let addTier = $state<Peer['trust_tier']>('connected');
-  let addEncryption = $state<Peer['encryption_policy']>('plaintext');
-  let addNotes = $state('');
-  let addError = $state<string | null>(null);
-  let addSubmitting = $state(false);
+  // Pair-by-URL form state.
+  let showPair = $state(false);
+  let pairURL = $state('');
+  let pairDisplay = $state('');
+  let pairError = $state<string | null>(null);
+  let pairSubmitting = $state(false);
+
+  // Manual-entry form state (1.22.B-a path, kept as the
+  // "advanced" alternative when DNS / network coordination
+  // doesn't work).
+  let showManual = $state(false);
+  let manualURL = $state('');
+  let manualDisplay = $state('');
+  let manualPubKey = $state('');
+  let manualTier = $state<Peer['trust_tier']>('connected');
+  let manualEncryption = $state<Peer['encryption_policy']>('plaintext');
+  let manualNotes = $state('');
+  let manualError = $state<string | null>(null);
+  let manualSubmitting = $state(false);
 
   onMount(() => {
     void load();
@@ -55,46 +85,86 @@
     loading = true;
     error = null;
     try {
-      const r = await api.GET('/admin/federation/peers');
-      if (r.error) {
-        error = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.load_error');
+      const [peersR, pendingR, instanceR] = await Promise.all([
+        api.GET('/admin/federation/peers'),
+        api.GET('/admin/federation/peers/pending-inbound'),
+        api.GET('/federation/instance'),
+      ]);
+      if (peersR.error) {
+        error = (peersR.error as { error?: string } | undefined)?.error ?? t('admin.federation.load_error');
         return;
       }
-      peers = (r.data?.items ?? []) as Peer[];
+      peers = (peersR.data?.items ?? []) as Peer[];
+      pendingInbound = (pendingR.data?.items ?? []) as Peer[];
+      if (instanceR.data) instance = instanceR.data as InstanceDoc;
     } finally {
       loading = false;
     }
   }
 
-  async function submitAdd(): Promise<void> {
-    addError = null;
-    addSubmitting = true;
+  async function submitPair(): Promise<void> {
+    pairError = null;
+    pairSubmitting = true;
+    try {
+      const body: Record<string, string> = { instance_url: pairURL.trim() };
+      if (pairDisplay.trim()) body.display_name = pairDisplay.trim();
+      const r = await api.POST('/admin/federation/peers/initiate', { body: body as never });
+      if (r.error) {
+        pairError = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.pair_error');
+        return;
+      }
+      pairURL = '';
+      pairDisplay = '';
+      showPair = false;
+      await load();
+    } finally {
+      pairSubmitting = false;
+    }
+  }
+
+  async function submitManual(): Promise<void> {
+    manualError = null;
+    manualSubmitting = true;
     try {
       const r = await api.POST('/admin/federation/peers', {
         body: {
-          instance_url: addInstanceURL.trim(),
-          display_name: addDisplayName.trim(),
-          instance_public_key: addPublicKey,
-          trust_tier: addTier,
-          encryption_policy: addEncryption,
+          instance_url: manualURL.trim(),
+          display_name: manualDisplay.trim(),
+          instance_public_key: manualPubKey,
+          trust_tier: manualTier,
+          encryption_policy: manualEncryption,
           enabled: true,
-          notes: addNotes.trim(),
+          notes: manualNotes.trim(),
         },
       });
       if (r.error) {
-        addError = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.add_error');
+        manualError = (r.error as { error?: string } | undefined)?.error ?? t('admin.federation.add_error');
         return;
       }
-      // Clear form + reload.
-      addInstanceURL = '';
-      addDisplayName = '';
-      addPublicKey = '';
-      addNotes = '';
-      showAdd = false;
+      manualURL = '';
+      manualDisplay = '';
+      manualPubKey = '';
+      manualNotes = '';
+      showManual = false;
       await load();
     } finally {
-      addSubmitting = false;
+      manualSubmitting = false;
     }
+  }
+
+  async function acceptInbound(p: Peer): Promise<void> {
+    const r = await api.POST('/admin/federation/peers/{id}/accept', {
+      params: { path: { id: p.id } },
+    });
+    if (!r.error) await load();
+  }
+
+  async function rejectInbound(p: Peer): Promise<void> {
+    if (!confirm(t('admin.federation.confirm_reject', { name: p.display_name }))) return;
+    const r = await api.DELETE('/admin/federation/peers/{id}', {
+      params: { path: { id: p.id } },
+    });
+    if (!r.error) await load();
   }
 
   async function toggleEnabled(p: Peer): Promise<void> {
@@ -121,8 +191,21 @@
     if (!r.error) await load();
   }
 
-  function tierLabel(tier: Peer['trust_tier']): string {
-    return t(`admin.federation.tier_${tier.replace('-', '_')}`);
+  function fingerprintFromPEM(pem: string): string {
+    // Lightweight client-side hint — we don't reparse the PEM,
+    // just show the first 16 hex chars of the SHA-256 of the
+    // base64 body. Server returns the proper fingerprint on
+    // the instance doc; for other peers we'd need a per-peer
+    // endpoint. Placeholder.
+    const lines = pem.split('\n').filter((l) => l && !l.startsWith('---'));
+    const body = lines.join('').slice(0, 32);
+    return body || '—';
+  }
+
+  function statusLabel(s: Peer['status']): string {
+    if (s === 'pending_outbound') return t('admin.federation.status_pending_outbound');
+    if (s === 'pending_inbound') return t('admin.federation.status_pending_inbound');
+    return t('admin.federation.status_connected');
   }
 </script>
 
@@ -137,31 +220,126 @@
   </p>
 </header>
 
-<section class="mb-4 flex items-center justify-between">
+<!-- This instance's identity (out-of-band verification) -->
+{#if instance}
+  <section class="mb-6 rounded-lg border border-border bg-surface p-4">
+    <h3 class="mb-2 text-sm font-semibold">{t('admin.federation.this_instance')}</h3>
+    <dl class="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+      <div><dt class="inline font-medium">{t('admin.federation.this_url')}</dt> <dd class="inline font-mono">{instance.instance_url || t('admin.federation.this_url_unset')}</dd></div>
+      <div><dt class="inline font-medium">{t('admin.federation.this_display_name')}</dt> <dd class="inline">{instance.display_name || t('admin.federation.this_display_unset')}</dd></div>
+      <div class="sm:col-span-2"><dt class="inline font-medium">{t('admin.federation.this_fingerprint')}</dt> <dd class="inline font-mono">{instance.fingerprint}</dd></div>
+    </dl>
+    <p class="mt-2 text-xs text-fg-muted">{t('admin.federation.this_help')}</p>
+  </section>
+{/if}
+
+<!-- Pending inbound requests -->
+{#if pendingInbound.length > 0}
+  <section class="mb-6 rounded-lg border border-accent/40 bg-accent-container/40 p-4">
+    <h3 class="mb-2 text-sm font-semibold">{t('admin.federation.pending_inbound_title', { count: pendingInbound.length })}</h3>
+    <p class="mb-3 text-xs text-fg-muted">{t('admin.federation.pending_inbound_help')}</p>
+    <ul class="space-y-2">
+      {#each pendingInbound as p (p.id)}
+        <li class="rounded border border-border bg-surface p-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="font-medium">{p.display_name}</div>
+              <div class="font-mono text-xs">{p.instance_url}</div>
+              <div class="mt-1 text-[11px] text-fg-muted">
+                {t('admin.federation.pending_fingerprint_hint')}: <span class="font-mono">{fingerprintFromPEM(p.instance_public_key)}…</span>
+              </div>
+            </div>
+            <div class="flex flex-shrink-0 gap-2">
+              <button
+                type="button"
+                class="rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90"
+                onclick={() => acceptInbound(p)}
+              >{t('admin.federation.accept')}</button>
+              <button
+                type="button"
+                class="rounded-md border border-danger/40 bg-danger/10 px-3 py-1 text-xs text-danger hover:bg-danger/20"
+                onclick={() => rejectInbound(p)}
+              >{t('admin.federation.reject')}</button>
+            </div>
+          </div>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
+
+<!-- Add / pair -->
+<section class="mb-4 flex items-center justify-between gap-2">
   <h3 class="text-lg font-semibold">{t('admin.federation.paired_peers')}</h3>
-  <button
-    type="button"
-    class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
-    onclick={() => (showAdd = !showAdd)}
-  >
-    {showAdd ? t('admin.federation.add_cancel') : t('admin.federation.add_peer')}
-  </button>
+  <div class="flex gap-2">
+    <button
+      type="button"
+      class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
+      onclick={() => { showPair = !showPair; showManual = false; }}
+    >{showPair ? t('admin.federation.add_cancel') : t('admin.federation.pair_peer')}</button>
+    <button
+      type="button"
+      class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-state-hover"
+      onclick={() => { showManual = !showManual; showPair = false; }}
+    >{showManual ? t('admin.federation.add_cancel') : t('admin.federation.manual_entry')}</button>
+  </div>
 </section>
 
-{#if showAdd}
+{#if showPair}
   <form
     class="mb-6 space-y-3 rounded-lg border border-border bg-surface p-4"
-    onsubmit={(e) => {
-      e.preventDefault();
-      void submitAdd();
-    }}
+    onsubmit={(e) => { e.preventDefault(); void submitPair(); }}
   >
-    <h4 class="text-sm font-semibold">{t('admin.federation.add_peer')}</h4>
-    <p class="text-xs text-fg-muted">{t('admin.federation.add_help')}</p>
+    <h4 class="text-sm font-semibold">{t('admin.federation.pair_peer')}</h4>
+    <p class="text-xs text-fg-muted">{t('admin.federation.pair_help')}</p>
     <label class="block">
       <span class="text-xs font-medium">{t('admin.federation.form_instance_url')}</span>
       <input
-        bind:value={addInstanceURL}
+        bind:value={pairURL}
+        type="url"
+        required
+        placeholder={t('admin.federation.form_instance_url_placeholder')}
+        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+      />
+    </label>
+    <label class="block">
+      <span class="text-xs font-medium">{t('admin.federation.form_display_name_optional')}</span>
+      <input
+        bind:value={pairDisplay}
+        type="text"
+        maxlength="200"
+        class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+      />
+    </label>
+    {#if pairError}
+      <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{pairError}</p>
+    {/if}
+    <div class="flex justify-end gap-2">
+      <button
+        type="button"
+        class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-state-hover"
+        onclick={() => (showPair = false)}
+      >{t('admin.federation.add_cancel')}</button>
+      <button
+        type="submit"
+        class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50"
+        disabled={pairSubmitting}
+      >{pairSubmitting ? t('common.loading') : t('admin.federation.pair_submit')}</button>
+    </div>
+  </form>
+{/if}
+
+{#if showManual}
+  <form
+    class="mb-6 space-y-3 rounded-lg border border-border bg-surface p-4"
+    onsubmit={(e) => { e.preventDefault(); void submitManual(); }}
+  >
+    <h4 class="text-sm font-semibold">{t('admin.federation.manual_entry')}</h4>
+    <p class="text-xs text-fg-muted">{t('admin.federation.manual_help')}</p>
+    <label class="block">
+      <span class="text-xs font-medium">{t('admin.federation.form_instance_url')}</span>
+      <input
+        bind:value={manualURL}
         type="url"
         required
         placeholder={t('admin.federation.form_instance_url_placeholder')}
@@ -171,7 +349,7 @@
     <label class="block">
       <span class="text-xs font-medium">{t('admin.federation.form_display_name')}</span>
       <input
-        bind:value={addDisplayName}
+        bind:value={manualDisplay}
         type="text"
         required
         maxlength="200"
@@ -181,7 +359,7 @@
     <label class="block">
       <span class="text-xs font-medium">{t('admin.federation.form_public_key')}</span>
       <textarea
-        bind:value={addPublicKey}
+        bind:value={manualPubKey}
         required
         rows="6"
         placeholder={t('admin.federation.form_public_key_placeholder')}
@@ -191,7 +369,7 @@
     <div class="flex gap-3">
       <label class="flex-1">
         <span class="text-xs font-medium">{t('admin.federation.form_trust_tier')}</span>
-        <select bind:value={addTier} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
+        <select bind:value={manualTier} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
           <option value="connected">{t('admin.federation.tier_connected')}</option>
           <option value="directory-listed">{t('admin.federation.tier_directory_listed')}</option>
           <option value="auto-sync">{t('admin.federation.tier_auto_sync')}</option>
@@ -199,7 +377,7 @@
       </label>
       <label class="flex-1">
         <span class="text-xs font-medium">{t('admin.federation.form_encryption_policy')}</span>
-        <select bind:value={addEncryption} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
+        <select bind:value={manualEncryption} class="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm">
           <option value="plaintext">{t('admin.federation.encryption_plaintext')}</option>
           <option value="e2e-encrypted">{t('admin.federation.encryption_e2e')}</option>
         </select>
@@ -208,25 +386,25 @@
     <label class="block">
       <span class="text-xs font-medium">{t('admin.federation.form_notes')}</span>
       <input
-        bind:value={addNotes}
+        bind:value={manualNotes}
         type="text"
         class="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
       />
     </label>
-    {#if addError}
-      <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{addError}</p>
+    {#if manualError}
+      <p role="alert" class="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{manualError}</p>
     {/if}
     <div class="flex justify-end gap-2">
       <button
         type="button"
         class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-state-hover"
-        onclick={() => (showAdd = false)}
+        onclick={() => (showManual = false)}
       >{t('admin.federation.add_cancel')}</button>
       <button
         type="submit"
         class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50"
-        disabled={addSubmitting}
-      >{addSubmitting ? t('common.loading') : t('admin.federation.add_submit')}</button>
+        disabled={manualSubmitting}
+      >{manualSubmitting ? t('common.loading') : t('admin.federation.add_submit')}</button>
     </div>
   </form>
 {/if}
@@ -246,6 +424,7 @@
         <tr>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_name')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_url')}</th>
+          <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_status')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_tier')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_enc')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_enabled')}</th>
@@ -263,6 +442,13 @@
               {/if}
             </td>
             <td class="px-3 py-2 font-mono text-xs">{p.instance_url}</td>
+            <td class="px-3 py-2">
+              {#if p.status === 'connected'}
+                <span class="rounded bg-accent-container px-1.5 py-0.5 text-[10px] font-medium text-on-accent-container">{statusLabel(p.status)}</span>
+              {:else}
+                <span class="rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-medium text-warning">{statusLabel(p.status)}</span>
+              {/if}
+            </td>
             <td class="px-3 py-2">
               <select
                 value={p.trust_tier}

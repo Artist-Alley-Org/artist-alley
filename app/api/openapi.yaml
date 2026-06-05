@@ -493,6 +493,146 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /federation/instance:
+    get:
+      operationId: getFederationInstance
+      summary: This instance's federation actor doc
+      description: |
+        Public unauthenticated endpoint — returns the per-
+        instance Ed25519 public key, the canonical instance URL,
+        and the display name. This is what peers fetch when
+        verifying inbound handshakes or HTTP-Sig'd requests
+        (the latter ships in Phase 1.22.D).
+      tags: [federation]
+      responses:
+        "200":
+          description: Instance actor doc.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationInstanceDoc" }
+        "503":
+          description: Instance identity not yet generated (first-boot race).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /federation/peers/handshake:
+    post:
+      operationId: postFederationHandshake
+      summary: Peer-to-peer handshake endpoint (1.22.B-b)
+      description: |
+        Public unauthenticated endpoint — accepts signed
+        handshake envelopes from peer instances per
+        docs/spec/federation/v1.md §11. The envelope is signed
+        by the offered Ed25519 public key (payload-signature
+        only — transport HTTP-Sig is for established peers).
+      tags: [federation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HandshakeEnvelope" }
+      responses:
+        "200":
+          description: Envelope accepted; result indicates resulting state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandshakeAccepted" }
+        "400":
+          description: Malformed or unverifiable envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Instance identity not yet generated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/peers/initiate:
+    post:
+      operationId: initiateFederationHandshake
+      summary: Initiate an outbound handshake (1.22.B-b)
+      description: |
+        Admin "Pair by URL" entry. Creates a local
+        pending_outbound row + sends a signed offer envelope to
+        the peer. Idempotent on instance_url.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationHandshakeInitiate" }
+      responses:
+        "201":
+          description: Local pending_outbound row created (offer POST may have failed; check notes).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/peers/pending-inbound:
+    get:
+      operationId: listFederationPendingInbound
+      summary: List pending inbound handshake requests
+      description: |
+        Admin "requests awaiting your approval" feed. Backed by
+        the partial index federation_peers_pending_inbound_idx.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending inbound requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/peers/{id}/accept:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: acceptFederationPeer
+      summary: Accept a pending inbound handshake
+      description: |
+        Admin clicks "Accept" on a pending_inbound row. Flips
+        local status to connected + sends a confirm envelope
+        back to the peer.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Accepted; row is now connected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/federation/peers:
     get:
       operationId: listFederationPeers
@@ -7536,6 +7676,7 @@ components:
         - trust_tier
         - encryption_policy
         - enabled
+        - status
         - handshake_at
         - handshake_by_user_ref
         - notes
@@ -7549,7 +7690,11 @@ components:
         display_name: { type: string }
         instance_public_key:
           type: string
-          description: PEM-wrapped Ed25519 public key (RFC 8410).
+          description: |
+            PEM-wrapped Ed25519 public key (RFC 8410). May be the
+            placeholder string `PENDING-HANDSHAKE-RESPONSE` while
+            status is `pending_outbound` — the peer's real key
+            replaces it when the confirm envelope arrives.
         trust_tier:
           type: string
           enum: [connected, directory-listed, auto-sync]
@@ -7557,6 +7702,12 @@ components:
           type: string
           enum: [plaintext, e2e-encrypted]
         enabled: { type: boolean }
+        status:
+          type: string
+          enum: [pending_outbound, pending_inbound, connected]
+          description: |
+            Handshake state machine (migration 00052 + v1.md §11).
+            Outbound delivery (1.22.D) gates on connected only.
         handshake_at: { type: string, format: date-time }
         handshake_by_user_ref: { type: integer, format: int64 }
         last_seen_at:
@@ -7566,6 +7717,94 @@ components:
         notes: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    FederationInstanceDoc:
+      type: object
+      description: |
+        This instance's federation identity — peers fetch this
+        to verify signed envelopes from us. Stable shape per
+        docs/spec/federation/v1.md §10.
+      required: [instance_url, display_name, public_key_pem, fingerprint, protocol_version]
+      properties:
+        instance_url:
+          type: string
+          description: This instance's canonical https URL.
+        display_name:
+          type: string
+          description: Operator-set display name (from sysconfig.site_name).
+        public_key_pem:
+          type: string
+          description: PEM-wrapped Ed25519 instance public key.
+        fingerprint:
+          type: string
+          description: Lowercase hex SHA-256 of the raw public key for out-of-band verification.
+        protocol_version:
+          type: string
+          description: Always `aa-fed/v1` for this release.
+
+    HandshakeEnvelopeInner:
+      type: object
+      description: |
+        Inner payload of a handshake envelope per v1.md §11.
+        Signed using RFC-8785-canonical JSON.
+      required:
+        - protocol
+        - type
+        - from
+        - from_display_name
+        - from_public_key_pem
+        - to
+        - nonce
+        - timestamp
+      properties:
+        protocol: { type: string, description: 'Always `aa-handshake/v1`' }
+        type:
+          type: string
+          enum: [offer, confirm]
+        from: { type: string }
+        from_display_name: { type: string }
+        from_public_key_pem: { type: string }
+        to: { type: string }
+        nonce: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    HandshakeEnvelope:
+      type: object
+      required: [envelope, signature]
+      properties:
+        envelope:
+          $ref: "#/components/schemas/HandshakeEnvelopeInner"
+        signature:
+          type: string
+          description: Base64-std Ed25519 signature over the canonical envelope.
+
+    HandshakeAccepted:
+      type: object
+      required: [status, peer_id]
+      properties:
+        status:
+          type: string
+          enum: [accepted_pending, completed, ignored_duplicate]
+          description: |
+            `accepted_pending`: we created a pending_inbound row; admin must accept.
+            `completed`: handshake finished (either confirm landed, or cross-handshake auto-merged).
+            `ignored_duplicate`: we already had this row in a terminal state.
+        peer_id:
+          type: string
+          format: uuid
+
+    FederationHandshakeInitiate:
+      type: object
+      required: [instance_url]
+      properties:
+        instance_url:
+          type: string
+          description: Peer's instance URL (https, no path, no trailing slash).
+        display_name:
+          type: string
+          description: |
+            Optional; defaults to the URL host. Operator can rename
+            later from the peer detail page.
 
     FederationPeerList:
       type: object

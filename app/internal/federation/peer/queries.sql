@@ -3,18 +3,30 @@
 -- Bounded LIMIT — admins with thousands of peers would page; v1
 -- expects dozens at most.
 SELECT id, instance_url, display_name, instance_public_key,
-       trust_tier, encryption_policy, enabled,
+       trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
        notes, created_at, updated_at
 FROM federation_peers
 ORDER BY handshake_at DESC, id DESC
 LIMIT $1;
 
+-- name: ListPendingInboundPeers :many
+-- Admin "requests awaiting your approval" feed (1.22.B-b).
+-- Backed by the federation_peers_pending_inbound_idx partial
+-- index so this stays cheap regardless of total table size.
+SELECT id, instance_url, display_name, instance_public_key,
+       trust_tier, encryption_policy, enabled, status,
+       handshake_at, handshake_by_user_ref, last_seen_at,
+       notes, created_at, updated_at
+FROM federation_peers
+WHERE status = 'pending_inbound'
+ORDER BY handshake_at DESC, id DESC;
+
 -- name: GetPeerByID :one
 -- Admin detail view + the auth path that resolves "which peer
 -- is this inbound activity from?" once we have a UUID.
 SELECT id, instance_url, display_name, instance_public_key,
-       trust_tier, encryption_policy, enabled,
+       trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
        notes, created_at, updated_at
 FROM federation_peers
@@ -24,10 +36,10 @@ WHERE id = $1;
 -- Hot read on the inbound federation path: every signed request
 -- from a peer arrives addressed-by-URL; we look up the row to
 -- (a) authenticate the request via instance_public_key, (b) check
--- the enabled flag, (c) update last_seen_at. Cache-fronted at
--- the package layer.
+-- the enabled flag + status, (c) update last_seen_at. Cache-
+-- fronted at the package layer.
 SELECT id, instance_url, display_name, instance_public_key,
-       trust_tier, encryption_policy, enabled,
+       trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
        notes, created_at, updated_at
 FROM federation_peers
@@ -37,13 +49,15 @@ WHERE instance_url = $1;
 -- Hot read on the outbound delivery path: the federation outbox
 -- worker (Phase 1.22.D) iterates this set to know who can
 -- receive activities. Partial index federation_peers_enabled_idx
--- means this is sub-ms even with hundreds of peers.
+-- (revised in migration 00052 to gate on status='connected') means
+-- this is sub-ms even with hundreds of peers — and pending
+-- peers are excluded so we never deliver to a half-paired peer.
 SELECT id, instance_url, display_name, instance_public_key,
-       trust_tier, encryption_policy, enabled,
+       trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
        notes, created_at, updated_at
 FROM federation_peers
-WHERE enabled = TRUE
+WHERE enabled = TRUE AND status = 'connected'
 ORDER BY instance_url;
 
 -- name: InsertPeer :one
@@ -51,6 +65,10 @@ ORDER BY instance_url;
 -- both insert here. UNIQUE on instance_url forces the operator
 -- to think before re-pairing — the upsert variant
 -- (UpdatePeerAfterHandshake) handles re-keying explicitly.
+--
+-- Status param defaults to 'connected' (manual entry) but the
+-- handshake flow passes 'pending_outbound' or 'pending_inbound'
+-- per v1.md §11 state machine.
 INSERT INTO federation_peers (
     instance_url,
     display_name,
@@ -58,12 +76,13 @@ INSERT INTO federation_peers (
     trust_tier,
     encryption_policy,
     enabled,
+    status,
     handshake_by_user_ref,
     notes
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, instance_url, display_name, instance_public_key,
-          trust_tier, encryption_policy, enabled,
+          trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
           notes, created_at, updated_at;
 
@@ -81,7 +100,51 @@ SET display_name     = COALESCE(sqlc.narg('display_name')::TEXT,     display_nam
     updated_at       = NOW()
 WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
-          trust_tier, encryption_policy, enabled,
+          trust_tier, encryption_policy, enabled, status,
+          handshake_at, handshake_by_user_ref, last_seen_at,
+          notes, created_at, updated_at;
+
+-- name: CompleteOutboundHandshake :one
+-- Atomically replaces the pending_outbound placeholder pubkey
+-- with the peer's real key (delivered in the confirm envelope)
+-- + flips status to connected. The atomic write is important —
+-- a separate UPDATE-pubkey-then-UPDATE-status sequence could
+-- leave us with the new key but still pending_outbound on a
+-- mid-flight crash.
+UPDATE federation_peers
+SET instance_public_key = $2,
+    status              = 'connected',
+    updated_at          = NOW()
+WHERE id = $1 AND status = 'pending_outbound'
+RETURNING id, instance_url, display_name, instance_public_key,
+          trust_tier, encryption_policy, enabled, status,
+          handshake_at, handshake_by_user_ref, last_seen_at,
+          notes, created_at, updated_at;
+
+-- name: SetPeerStatus :one
+-- Internal handshake state transition: pending_outbound →
+-- connected, pending_inbound → connected, etc. Bypasses
+-- UpdatePeer because the public PATCH endpoint doesn't expose
+-- status changes — those are protocol-driven, not admin-driven.
+UPDATE federation_peers
+SET status     = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, instance_url, display_name, instance_public_key,
+          trust_tier, encryption_policy, enabled, status,
+          handshake_at, handshake_by_user_ref, last_seen_at,
+          notes, created_at, updated_at;
+
+-- name: AppendPeerNote :one
+-- Internal: append a timestamped line to the notes column so
+-- the admin UI surfaces transient handshake failures (offer POST
+-- timed out, peer 5xx, etc.). $2 is the pre-stamped line.
+UPDATE federation_peers
+SET notes      = CASE WHEN notes = '' THEN $2 ELSE notes || E'\n' || $2 END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, instance_url, display_name, instance_public_key,
+          trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
           notes, created_at, updated_at;
 

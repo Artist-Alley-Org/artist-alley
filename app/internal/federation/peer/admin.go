@@ -253,10 +253,11 @@ func (h *AdminHandler) DeleteFederationPeer(
 
 func peerToAPI(p Peer) openapi.FederationPeer {
 	out := openapi.FederationPeer{
-		Id:                  p.ID,
-		InstanceUrl:         p.InstanceURL,
-		DisplayName:         p.DisplayName,
-		InstancePublicKey:   p.InstancePublicKey,
+		Id:                 p.ID,
+		InstanceUrl:        p.InstanceURL,
+		DisplayName:        p.DisplayName,
+		InstancePublicKey:  p.InstancePublicKey,
+		Status:             openapi.FederationPeerStatus(p.Status),
 		TrustTier:           openapi.FederationPeerTrustTier(p.TrustTier),
 		EncryptionPolicy:    openapi.FederationPeerEncryptionPolicy(p.EncryptionPolicy),
 		Enabled:             p.Enabled,
@@ -285,4 +286,135 @@ func isUniqueViolation(err error) bool {
 	// Fallback string match for drivers that wrap without the
 	// typed error — unlikely but defensive.
 	return strings.Contains(strings.ToLower(err.Error()), "duplicate key")
+}
+
+// --- handshake admin endpoints (Phase 1.22.B-b) -------------------------
+
+// AdminHandshakeHandler is the admin-side handshake control
+// surface — initiate outbound, list pending inbound, accept
+// inbound. Separate from AdminHandler so the wiring stays
+// composable (handshake needs the Engine + identity manager;
+// CRUD doesn't).
+type AdminHandshakeHandler struct {
+	registry *Registry
+	engine   *Engine
+}
+
+// NewAdminHandshakeHandler wires the admin handshake surface.
+func NewAdminHandshakeHandler(r *Registry, e *Engine) *AdminHandshakeHandler {
+	return &AdminHandshakeHandler{registry: r, engine: e}
+}
+
+// InitiateFederationHandshake — POST /admin/federation/peers/initiate.
+func (h *AdminHandshakeHandler) InitiateFederationHandshake(
+	ctx context.Context,
+	req openapi.InitiateFederationHandshakeRequestObject,
+) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.InitiateFederationHandshake401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.InitiateFederationHandshake403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.InitiateFederationHandshake400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "request body required"},
+		}, nil
+	}
+	display := ""
+	if req.Body.DisplayName != nil {
+		display = *req.Body.DisplayName
+	}
+	p, err := h.engine.InitiateOffer(ctx, req.Body.InstanceUrl, display, id.UserRef)
+	if err != nil {
+		// We always created the local row before the POST attempt,
+		// so a POST failure surfaces here AS WELL AS via the
+		// returned peer's notes. The HTTP shape returns 201 with
+		// the row + the failure detail in notes — the admin sees
+		// "pending_outbound, last error: …" and can retry later.
+		if errors.Is(err, ErrInstanceURLInvalid) {
+			return openapi.InitiateFederationHandshake400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		if p != nil {
+			return openapi.InitiateFederationHandshake201JSONResponse(peerToAPI(*p)), nil
+		}
+		return nil, err
+	}
+	return openapi.InitiateFederationHandshake201JSONResponse(peerToAPI(*p)), nil
+}
+
+// ListFederationPendingInbound — GET /admin/federation/peers/pending-inbound.
+func (h *AdminHandshakeHandler) ListFederationPendingInbound(
+	ctx context.Context,
+	req openapi.ListFederationPendingInboundRequestObject,
+) (openapi.ListFederationPendingInboundResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.ListFederationPendingInbound401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.ListFederationPendingInbound403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	peers, err := h.registry.listPendingInbound(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationPeer, len(peers))
+	for i, p := range peers {
+		items[i] = peerToAPI(p)
+	}
+	return openapi.ListFederationPendingInbound200JSONResponse(openapi.FederationPeerList{Items: items}), nil
+}
+
+// AcceptFederationPeer — POST /admin/federation/peers/{id}/accept.
+func (h *AdminHandshakeHandler) AcceptFederationPeer(
+	ctx context.Context,
+	req openapi.AcceptFederationPeerRequestObject,
+) (openapi.AcceptFederationPeerResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.AcceptFederationPeer401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(capAdmin) {
+		return openapi.AcceptFederationPeer403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+		}, nil
+	}
+	p, err := h.registry.ByID(ctx, uuid.UUID(req.Id))
+	if err != nil {
+		if errors.Is(err, ErrPeerNotFound) {
+			return openapi.AcceptFederationPeer404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "peer not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	if err := h.engine.AcceptInbound(ctx, *p); err != nil {
+		// AcceptInbound flips local status BEFORE the confirm
+		// POST. A POST failure is non-fatal for the admin response —
+		// the row IS now connected on our side; the engine recorded
+		// the failure to notes for the admin to see.
+		updated, _ := h.registry.ByID(ctx, uuid.UUID(req.Id))
+		if updated != nil {
+			return openapi.AcceptFederationPeer200JSONResponse(peerToAPI(*updated)), nil
+		}
+		return openapi.AcceptFederationPeer400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+	updated, _ := h.registry.ByID(ctx, uuid.UUID(req.Id))
+	return openapi.AcceptFederationPeer200JSONResponse(peerToAPI(*updated)), nil
 }

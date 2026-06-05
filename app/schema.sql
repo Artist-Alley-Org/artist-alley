@@ -764,6 +764,9 @@ CREATE TABLE federation_peers (
     encryption_policy        TEXT         NOT NULL DEFAULT 'plaintext'
                              CHECK (encryption_policy IN ('plaintext', 'e2e-encrypted')),
     enabled                  BOOLEAN      NOT NULL DEFAULT TRUE,
+    -- Migration 00052: handshake state machine per v1.md §11.
+    status                   TEXT         NOT NULL DEFAULT 'connected'
+                             CHECK (status IN ('pending_outbound', 'pending_inbound', 'connected')),
     handshake_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     handshake_by_user_ref    BIGINT       NOT NULL,
     last_seen_at             TIMESTAMPTZ  NULL,
@@ -771,11 +774,17 @@ CREATE TABLE federation_peers (
     created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+-- Migration 00052 refined this from "enabled only" to gate on
+-- status='connected' too: the outbox hot read wants peers that
+-- can receive, and pending peers can't.
 CREATE INDEX federation_peers_enabled_idx
     ON federation_peers (instance_url)
-    WHERE enabled = TRUE;
+    WHERE enabled = TRUE AND status = 'connected';
 CREATE INDEX federation_peers_handshake_at_idx
     ON federation_peers (handshake_at DESC);
+CREATE INDEX federation_peers_pending_inbound_idx
+    ON federation_peers (handshake_at DESC)
+    WHERE status = 'pending_inbound';
 
 -- migrations/00046_notifications.sql — per-user in-app feed.
 -- Verb taxonomy mirrors userprefs.KnownEventTypes (drift breaks

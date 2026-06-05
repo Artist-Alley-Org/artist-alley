@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -80,17 +81,18 @@ var (
 // admin handlers + future federation transport code (1.22.D)
 // can hold + pass without going through the raw sqlc row.
 type Peer struct {
-	ID                  uuid.UUID
-	InstanceURL         string
-	DisplayName         string
-	InstancePublicKey   string // PEM
-	TrustTier           federation.TrustTier
-	EncryptionPolicy    federation.EncryptionPolicy
-	Enabled             bool
-	HandshakeAt         pgtype.Timestamptz
-	HandshakeByUserRef  int64
-	LastSeenAt          pgtype.Timestamptz
-	Notes               string
+	ID                 uuid.UUID
+	InstanceURL        string
+	DisplayName        string
+	InstancePublicKey  string // PEM (placeholder for pending_outbound; real after handshake)
+	TrustTier          federation.TrustTier
+	EncryptionPolicy   federation.EncryptionPolicy
+	Enabled            bool
+	Status             federation.PeerStatus // handshake state (migration 00052)
+	HandshakeAt        pgtype.Timestamptz
+	HandshakeByUserRef int64
+	LastSeenAt         pgtype.Timestamptz
+	Notes              string
 }
 
 // AddInput is the typed argument to Registry.Add.
@@ -105,6 +107,13 @@ type AddInput struct {
 	// Enabled defaults to TRUE when zero-value; admins can
 	// disable post-create via Update.
 	Enabled *bool
+	// Status defaults to PeerStatusConnected when zero-value
+	// (manual admin entry). The handshake flow sets it to
+	// pending_outbound (we initiated) or pending_inbound (peer
+	// initiated). Skips the PEM-validate step when status is
+	// pending_outbound (placeholder pubkey carried in
+	// InstancePublicKey until the peer's confirm POST replaces it).
+	Status federation.PeerStatus
 }
 
 // UpdateInput is the typed PATCH argument to Registry.Update.
@@ -248,8 +257,22 @@ func (r *Registry) Add(ctx context.Context, in AddInput) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePEMEd25519(in.InstancePublicKey); err != nil {
-		return nil, err
+	status := in.Status
+	if status == "" {
+		status = federation.PeerStatusConnected
+	}
+	if !status.Valid() {
+		return nil, fmt.Errorf("peer: invalid status %q", status)
+	}
+	// PEM validation: pending_outbound rows carry a placeholder
+	// in InstancePublicKey until the peer's confirm POST overwrites
+	// it. Skip validation in that case; validate for every other
+	// status (connected = real key from manual entry;
+	// pending_inbound = real key from peer's offer envelope).
+	if status != federation.PeerStatusPendingOutbound {
+		if err := validatePEMEd25519(in.InstancePublicKey); err != nil {
+			return nil, err
+		}
 	}
 	if !in.TrustTier.Valid() {
 		return nil, fmt.Errorf("%w: %q", ErrTrustTierInvalid, in.TrustTier)
@@ -268,6 +291,7 @@ func (r *Registry) Add(ctx context.Context, in AddInput) (*Peer, error) {
 		TrustTier:          string(in.TrustTier),
 		EncryptionPolicy:   string(in.EncryptionPolicy),
 		Enabled:            enabled,
+		Status:             string(status),
 		HandshakeByUserRef: in.HandshakeByUserRef,
 		Notes:              in.Notes,
 	})
@@ -386,12 +410,101 @@ func rowToPeer(r FederationPeer) *Peer {
 		TrustTier:          federation.TrustTier(r.TrustTier),
 		EncryptionPolicy:   federation.EncryptionPolicy(r.EncryptionPolicy),
 		Enabled:            r.Enabled,
+		Status:             federation.PeerStatus(r.Status),
 		HandshakeAt:        r.HandshakeAt,
 		HandshakeByUserRef: r.HandshakeByUserRef,
 		LastSeenAt:         r.LastSeenAt,
 		Notes:              r.Notes,
 	}
 }
+
+// --- handshake-internal helpers (called only by handshake.go) -----------
+//
+// These live on Registry because the handshake flow needs them
+// but they're not part of the public CRUD surface.
+
+// setStatus atomically updates the status column + invalidates
+// both caches. Used by the handshake state machine ONLY — admin
+// CRUD uses Update which goes through the full validation path.
+func (r *Registry) setStatus(ctx context.Context, id uuid.UUID, status federation.PeerStatus) (*Peer, error) {
+	if !status.Valid() {
+		return nil, fmt.Errorf("peer.setStatus: invalid status %q", status)
+	}
+	row, err := New(r.Pool).SetPeerStatus(ctx, SetPeerStatusParams{
+		ID:     pgtype.UUID{Bytes: id, Valid: true},
+		Status: string(status),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPeerNotFound
+		}
+		return nil, err
+	}
+	p := rowToPeer(row)
+	r.invalidate(ctx, p.InstanceURL)
+	return p, nil
+}
+
+// completeOutboundHandshake atomically replaces a pending_outbound
+// row's placeholder pubkey with the peer's real key + flips
+// status to connected. Called by handshake confirm.
+func (r *Registry) completeOutboundHandshake(ctx context.Context, id uuid.UUID, peerPubKeyPEM string) (*Peer, error) {
+	if err := validatePEMEd25519(peerPubKeyPEM); err != nil {
+		return nil, err
+	}
+	row, err := New(r.Pool).CompleteOutboundHandshake(ctx, CompleteOutboundHandshakeParams{
+		ID:                pgtype.UUID{Bytes: id, Valid: true},
+		InstancePublicKey: peerPubKeyPEM,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPeerNotFound
+		}
+		return nil, err
+	}
+	p := rowToPeer(row)
+	r.invalidate(ctx, p.InstanceURL)
+	return p, nil
+}
+
+// appendNote appends a free-text line to the notes column so
+// the admin UI surfaces transient handshake failures.
+func (r *Registry) appendNote(ctx context.Context, id uuid.UUID, note string) error {
+	stamped := fmt.Sprintf("[%s] %s", nowUTC().Format("2006-01-02T15:04:05Z"), note)
+	row, err := New(r.Pool).AppendPeerNote(ctx, AppendPeerNoteParams{
+		ID:    pgtype.UUID{Bytes: id, Valid: true},
+		Notes: stamped,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPeerNotFound
+		}
+		return err
+	}
+	r.invalidate(ctx, row.InstanceUrl)
+	return nil
+}
+
+// listPendingInbound returns the pending_inbound rows for the
+// admin "requests awaiting your approval" feed. Not cached —
+// the partial index federation_peers_pending_inbound_idx keeps
+// the query cheap + the data changes on every accept/reject so
+// caching would mostly serve stale results.
+func (r *Registry) listPendingInbound(ctx context.Context) ([]Peer, error) {
+	rows, err := New(r.Pool).ListPendingInboundPeers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Peer, len(rows))
+	for i, row := range rows {
+		out[i] = *rowToPeer(row)
+	}
+	return out, nil
+}
+
+// nowUTC is a var so tests can substitute a fixed clock. Public
+// callers of the package don't see it.
+var nowUTC = func() time.Time { return time.Now().UTC() }
 
 // normalizeInstanceURL trims whitespace + rejects shapes the
 // rest of the federation stack doesn't accept (plain http, no

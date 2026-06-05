@@ -290,6 +290,7 @@ type FederationPeer struct {
 	TrustTier          string
 	EncryptionPolicy   string
 	Enabled            bool
+	Status             string
 	HandshakeAt        pgtype.Timestamptz
 	HandshakeByUserRef int64
 	LastSeenAt         pgtype.Timestamptz

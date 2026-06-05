@@ -26,6 +26,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
 	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -67,6 +68,10 @@ type apiServer struct {
 	activitiesAdmin *activities.AdminHandler
 	peers           *peer.Registry
 	peersAdmin      *peer.AdminHandler
+	peersHandshake  *peer.AdminHandshakeHandler
+	peersPublic     *peer.PublicHandler
+	fedIdentity     *identity.Manager
+	fedEngine       *peer.Engine
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -137,6 +142,36 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// invalidate in lockstep on every peer mutation.
 	s.peers = peer.NewRegistry(pool, logger, cacheReg)
 	s.peersAdmin = peer.NewAdminHandler(s.peers)
+
+	// Federation instance identity (Phase 1.22.B-b). Singleton
+	// Ed25519 keypair, atrest-encrypted, loaded once at boot.
+	// Best-effort load — if atrest isn't initialised yet, the
+	// federation HTTP surface returns 503 for handshake POSTs +
+	// instance doc reads until Load succeeds. We don't fail boot
+	// because dev environments without AA_MASTER_KEY should
+	// still come up for non-federation features.
+	s.fedIdentity = identity.NewManager(pool, logger)
+	if _, err := s.fedIdentity.Load(context.Background()); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"federation.identity.load.failed",
+			slog.String("err", err.Error()),
+			slog.String("impact", "/federation/instance + handshake POSTs will return 503"),
+		)
+	}
+
+	// Handshake engine + public + admin surfaces. baseURL +
+	// display name read live from sysconfig per request — admin
+	// edits show up immediately in the actor doc.
+	s.fedEngine = peer.NewEngine(s.peers, s.fedIdentity, nil)
+	s.fedEngine.SetLocalBaseURL(sysconfigBaseURLFn(sysCfg)(context.Background()))
+	s.fedEngine.SetLocalDisplayName(sysconfigSiteNameFn(sysCfg)(context.Background()))
+	s.peersHandshake = peer.NewAdminHandshakeHandler(s.peers, s.fedEngine)
+	s.peersPublic = peer.NewPublicHandler(
+		s.fedIdentity,
+		s.fedEngine,
+		sysconfigBaseURLFn(sysCfg),
+		sysconfigSiteNameFn(sysCfg),
+	)
 	// UsernameResolver: the username-by-ref lookup federation
 	// emitters use to build actor URIs. *users.Handler already
 	// caches UserPublic; ResolveUsername reuses that cache so the
@@ -173,6 +208,22 @@ func sysconfigBaseURLFn(sysCfg *sysconfig.Store) func(ctx context.Context) strin
 			return ""
 		}
 		return site.BaseURL
+	}
+}
+
+// sysconfigSiteNameFn returns a closure resolving sysconfig.Site.Name —
+// used as the federation instance display name (Phase 1.22.B-b).
+// Empty-string fallback matches sysconfigBaseURLFn for test paths.
+func sysconfigSiteNameFn(sysCfg *sysconfig.Store) func(ctx context.Context) string {
+	return func(ctx context.Context) string {
+		if sysCfg == nil {
+			return ""
+		}
+		site, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return ""
+		}
+		return site.Name
 	}
 }
 
@@ -806,6 +857,28 @@ func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNo
 
 func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
 	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- federation public + handshake (Phase 1.22.B-b) ----------------------
+
+func (s *apiServer) GetFederationInstance(ctx context.Context, req openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	return s.peersPublic.GetFederationInstance(ctx, req)
+}
+
+func (s *apiServer) PostFederationHandshake(ctx context.Context, req openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	return s.peersPublic.PostFederationHandshake(ctx, req)
+}
+
+func (s *apiServer) InitiateFederationHandshake(ctx context.Context, req openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	return s.peersHandshake.InitiateFederationHandshake(ctx, req)
+}
+
+func (s *apiServer) ListFederationPendingInbound(ctx context.Context, req openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	return s.peersHandshake.ListFederationPendingInbound(ctx, req)
+}
+
+func (s *apiServer) AcceptFederationPeer(ctx context.Context, req openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	return s.peersHandshake.AcceptFederationPeer(ctx, req)
 }
 
 // --- federation peers admin (Phase 1.22.B-a) -----------------------------
