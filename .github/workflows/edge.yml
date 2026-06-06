@@ -98,7 +98,18 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # arm64 temporarily disabled. The chai2010/webp cgo
+          # binding fails to cross-compile from amd64 host gcc to
+          # arm64 (binutils can't emit aarch64 asm:
+          # `gcc_arm64.S: Error: no such instruction stp x29,x30`),
+          # AND QEMU emulation segfaults Go's mod-download path
+          # under emulation (exit 139 on `go mod download`).
+          # Proper fix is a matrix build with native arm64 runners
+          # — GitHub offers ubuntu-24.04-arm for public repos; the
+          # job would build each arch on its native runner and
+          # combine via `docker buildx imagetools create`. Tracked
+          # in roadmap as a follow-up; edge is amd64-only until then.
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
