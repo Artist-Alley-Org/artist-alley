@@ -723,3 +723,12 @@ func (rtOnly) ListFederationPeerSuggestions(context.Context, openapi.ListFederat
 func (rtOnly) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("RefreshFederationPeerSuggestions called from assettype test shim")
 }
+func (rtOnly) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	panic("ListFederationShares called from assettype test shim")
+}
+func (rtOnly) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	panic("GrantFederationShare called from assettype test shim")
+}
+func (rtOnly) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	panic("RevokeFederationShare called from assettype test shim")
+}

@@ -29,8 +29,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
+	"github.com/google/uuid"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -80,6 +84,8 @@ type apiServer struct {
 	directoryPoller  *directory.Poller
 	p2pRegistry      *p2p.Registry
 	p2pAdmin         *p2p.AdminHandler
+	sharesRegistry   *shares.Registry
+	sharesAdmin      *shares.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -189,6 +195,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	p2pClient := p2p.NewClient()
 	s.p2pAdmin = p2p.NewAdminHandler(s.p2pRegistry, p2pClient)
 
+	// Federation shares (Phase 1.22.C). Registry caches the
+	// per-object active-shares snapshot (the inbox-filter hot
+	// path). Admin handler grants/revokes via the write-ahead-
+	// audit invariant (audit row commits in the SAME tx as the
+	// share row + the aa:Share/aa:Unshare activity row).
+	s.sharesRegistry = shares.NewRegistry(pool, logger, cacheReg)
+	s.sharesAdmin = shares.NewAdminHandler(
+		s.sharesRegistry,
+		s.activities,
+		auditRec,
+		ownerResolverFor(pool),
+		peerLookupFor(s.peers),
+		sysconfigBaseURLFn(sysCfg),
+		usernameResolverFor(s.users),
+	)
+
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
 	// AdminHandler land here; the background Poller starts in
 	// Run() so test fixtures that don't need it can skip it.
@@ -262,6 +284,69 @@ type socialUserExistsAdapter struct{ h *social.Handler }
 
 func (a socialUserExistsAdapter) UserExists(ctx context.Context, ref int64) (bool, error) {
 	return a.h.UserExists(ctx, ref)
+}
+
+// --- 1.22.C-c federation_shares adapters ---------------------------------
+
+// ownerResolverFor returns the shares.ObjectOwnerResolver closure
+// boot wires into the shares admin handler. Checks the per-
+// domain owner columns: posts.author_user_ref,
+// collections.owner_user_ref, assets.owner_user_ref. Unknown
+// kinds default to "no" — system.admin still wins at the caller
+// because the resolver short-circuits before this is called.
+func ownerResolverFor(pool *pgxpool.Pool) shares.ObjectOwnerResolver {
+	return func(ctx context.Context, kind federation.ShareObjectKind, objectID uuid.UUID, caller *auth.Identity) (bool, error) {
+		var column, table string
+		switch kind {
+		case federation.ShareObjectKindPost:
+			table, column = "posts", "author_user_ref"
+		case federation.ShareObjectKindCollection:
+			table, column = "collections", "owner_user_ref"
+		case federation.ShareObjectKindAsset:
+			table, column = "assets", "owner_user_ref"
+		default:
+			// workspace + brand_kit tables don't exist yet;
+			// user-kind shares are server-internal (Accept(Follow)
+			// path). Reject ownership claims for these.
+			return false, nil
+		}
+		var ownerRef int64
+		err := pool.QueryRow(ctx,
+			"SELECT "+column+" FROM "+table+" WHERE id = $1",
+			objectID,
+		).Scan(&ownerRef)
+		if err != nil {
+			return false, nil // unknown object → reject (caller maps to 404)
+		}
+		return ownerRef == caller.UserRef, nil
+	}
+}
+
+// peerLookupFor wraps peer.Registry.ByID with the projection
+// shapes shares needs: id, instance_url, enabled flag, and
+// "connected status" derived from PeerStatus.
+func peerLookupFor(reg *peer.Registry) shares.PeerLookup {
+	return func(ctx context.Context, id uuid.UUID) (shares.PeerInfo, error) {
+		p, err := reg.ByID(ctx, id)
+		if err != nil {
+			return shares.PeerInfo{}, err
+		}
+		return shares.PeerInfo{
+			ID:          p.ID,
+			InstanceURL: p.InstanceURL,
+			Enabled:     p.Enabled,
+			Connected:   p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
+}
+
+// usernameResolverFor wraps users.Handler.ResolveUsername (the
+// existing cache-fronted lookup that the federation hot path
+// already uses).
+func usernameResolverFor(uh *users.Handler) func(ctx context.Context, ref int64) string {
+	return func(ctx context.Context, ref int64) string {
+		return uh.ResolveUsername(ctx, ref)
+	}
 }
 
 // --- cross-package adapters for the notifications wiring ----------
@@ -933,6 +1018,20 @@ func (s *apiServer) ListFederationPeerSuggestions(ctx context.Context, req opena
 
 func (s *apiServer) RefreshFederationPeerSuggestions(ctx context.Context, req openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	return s.p2pAdmin.RefreshFederationPeerSuggestions(ctx, req)
+}
+
+// --- federation shares admin (Phase 1.22.C-c) ---------------------------
+
+func (s *apiServer) ListFederationShares(ctx context.Context, req openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	return s.sharesAdmin.ListFederationShares(ctx, req)
+}
+
+func (s *apiServer) GrantFederationShare(ctx context.Context, req openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	return s.sharesAdmin.GrantFederationShare(ctx, req)
+}
+
+func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	return s.sharesAdmin.RevokeFederationShare(ctx, req)
 }
 
 func (s *apiServer) PostFederationHandshake(ctx context.Context, req openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {

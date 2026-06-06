@@ -356,17 +356,27 @@ func TestListSuggestions_DedupsAgainstOwnPeers(t *testing.T) {
 			t.Errorf("dedup failed: already-paired URL %q in suggestions", alreadyURL)
 		}
 	}
-	// But the genuinely-new one should be there.
-	found := false
-	for _, s := range suggestions {
+	// The genuinely-new one should be there with the right
+	// provenance. Filter to suggestions FROM THIS test's source
+	// to be robust against stale rows left by prior runs (the
+	// suggestions table is global; ListSuggestions doesn't
+	// filter by source).
+	var foundForThisSource *p2p.Suggestion
+	for i := range suggestions {
+		s := &suggestions[i]
+		if s.SourcePeerID != source.ID {
+			continue
+		}
 		if s.SuggestedDisplayName == "Genuinely New" {
-			found = true
-			if s.SourceURL != source.InstanceURL {
-				t.Errorf("source provenance: got %q want %q", s.SourceURL, source.InstanceURL)
-			}
+			foundForThisSource = s
+			break
 		}
 	}
-	if !found {
-		t.Error("genuinely-new suggestion missing")
+	if foundForThisSource == nil {
+		t.Fatal("genuinely-new suggestion missing for this test's source")
+	}
+	if foundForThisSource.SourceURL != source.InstanceURL {
+		t.Errorf("source provenance: got %q want %q",
+			foundForThisSource.SourceURL, source.InstanceURL)
 	}
 }

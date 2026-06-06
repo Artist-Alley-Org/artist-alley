@@ -1003,3 +1003,12 @@ func (metaShim) ListFederationPeerSuggestions(context.Context, openapi.ListFeder
 func (metaShim) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("RefreshFederationPeerSuggestions called from metadata test shim")
 }
+func (metaShim) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	panic("ListFederationShares called from metadata test shim")
+}
+func (metaShim) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	panic("GrantFederationShare called from metadata test shim")
+}
+func (metaShim) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	panic("RevokeFederationShare called from metadata test shim")
+}

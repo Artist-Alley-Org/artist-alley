@@ -927,6 +927,135 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/federation/shares:
+    get:
+      operationId: listFederationShares
+      summary: List federation shares (Phase 1.22.C-c)
+      description: |
+        Mutually-exclusive filter via query params:
+        - `object_kind`+`object_id`: "who has access to this object?"
+        - `peer_id`: "what am I sharing with this peer?"
+        - `grantor_user_ref`: "what shares did this user grant?"
+        Returns only ACTIVE shares. Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: object_kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asset, post, collection, workspace, brand_kit, user]
+        - name: object_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: grantor_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Active shares matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShareList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: grantFederationShare
+      summary: Grant a federation share (write-ahead audit)
+      description: |
+        Creates federation_shares row + emits aa:Share activity +
+        writes federation.share.granted audit event — all in one
+        transaction per the design proposal §7.2 write-ahead
+        invariant. Idempotent: duplicate POST on the active-row
+        tuple (grantor, object, peer, target_user) returns 409
+        with the existing share.
+
+        Permission: caller must own the object OR have
+        system.admin. Restricted objects require target_user_url
+        (NaCl envelope wrap needs a key).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationShareCreate" }
+      responses:
+        "201":
+          description: Share granted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Object or peer not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Active share already exists for this tuple.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+
+  /admin/federation/shares/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeFederationShare
+      summary: Revoke a federation share (aa:Unshare + audit, atomic)
+      description: |
+        Marks revoked_at + emits aa:Unshare activity + writes
+        federation.share.revoked audit event — atomically.
+        Recipient's local cache purges per design §4.2; their
+        own derivative work (comments/annotations) is preserved
+        per §4.3.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Share already revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+
   /admin/federation/peers:
     get:
       operationId: listFederationPeers
@@ -7954,6 +8083,95 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    FederationShare:
+      type: object
+      description: |
+        One federation_shares row per the 1.22.C design proposal.
+        Pairing alone shares nothing; each row here is an
+        explicit per-object grant.
+      required:
+        - id
+        - grantor_user_ref
+        - object_kind
+        - object_id
+        - peer_id
+        - scope
+        - notes
+        - granted_activity_id
+        - granted_at
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        grantor_user_ref: { type: integer, format: int64 }
+        object_kind:
+          type: string
+          enum: [asset, post, collection, workspace, brand_kit, user]
+        object_id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        target_user_url:
+          type: string
+          nullable: true
+          description: 'NULL = broadcast within peer; non-null = specific user actor URL'
+        scope:
+          type: string
+          enum: [view, comment, annotate, remix]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes: { type: string }
+        granted_activity_id: { type: string, format: uuid }
+        granted_at: { type: string, format: date-time }
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_activity_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FederationShareList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationShare" }
+
+    FederationShareCreate:
+      type: object
+      required: [object_kind, object_id, peer_id, scope]
+      properties:
+        object_kind:
+          type: string
+          enum: [asset, post, collection, workspace, brand_kit]
+          description: |
+            'user' is excluded from the operator-facing API —
+            user/follower shares are server-internal
+            (Accept(Follow) creates them).
+        object_id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        target_user_url:
+          type: string
+          description: |
+            Recipient's actor URL on the peer. Omit for a
+            broadcast share (any user on the peer). REQUIRED
+            for restricted/embargo objects (server validates).
+        scope:
+          type: string
+          enum: [view, comment, annotate, remix]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          maxLength: 2000
 
     FederationPeer:
       type: object

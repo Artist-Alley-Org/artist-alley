@@ -39,6 +39,13 @@ const (
 	EventCapabilityRevoked = "user.capability_revoked"
 	EventCapabilityGrantRemoved = "user.capability_grant_removed"
 	EventCapabilityRevokeRemoved = "user.capability_revoke_removed"
+
+	// 1.22.C federation share events. Emitted via WriteInTx so
+	// the audit row commits atomically with the share write per
+	// the design proposal §7.2 write-ahead invariant.
+	EventFederationShareGranted    = "federation.share.granted"
+	EventFederationShareRevoked    = "federation.share.revoked"
+	EventFederationActivityRejected = "federation.activity.rejected"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -206,18 +213,23 @@ func (r *Recorder) CapabilityRevokeRemoved(ctx context.Context, req *http.Reques
 // write is the single funnel for all event writes. Failures are
 // logged at WARN; they never propagate.
 func (r *Recorder) write(ctx context.Context, eventType string, subject, actor *int64, rc reqContext, metadata map[string]any) {
+	r.writeWith(ctx, New(r.Pool), eventType, subject, actor, rc, metadata)
+}
+
+// writeWith is the tx-aware funnel. WriteInTx wraps it for callers
+// that need write-ahead audit semantics — the audit row commits
+// in the SAME transaction as the domain write, so a tx rollback
+// rolls back the audit row too. Used by federation_shares per
+// the 1.22.C design proposal §7.2.
+func (r *Recorder) writeWith(ctx context.Context, q *Queries, eventType string, subject, actor *int64, rc reqContext, metadata map[string]any) {
 	payload, err := json.Marshal(metadata)
 	if err != nil {
-		// Should be impossible for our shapes, but if it happens we
-		// at least keep the row with an empty payload rather than
-		// dropping the event entirely.
 		payload = []byte("{}")
 		r.Logger.LogAttrs(ctx, slog.LevelWarn, "audit.marshal.error",
 			slog.String("event_type", eventType),
 			slog.String("err", err.Error()),
 		)
 	}
-	q := New(r.Pool)
 	if err := q.InsertAuditEvent(ctx, InsertAuditEventParams{
 		EventType:      eventType,
 		SubjectUserRef: subject,
@@ -231,4 +243,25 @@ func (r *Recorder) write(ctx context.Context, eventType string, subject, actor *
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// WriteInTx is the tx-aware public funnel. Callers needing the
+// write-ahead-audit invariant (federation_shares grant/revoke,
+// per the 1.22.C design proposal §7.2) call this from inside a
+// WithEmissionFn closure so the audit row lives or dies with the
+// domain write. The Queries argument must be bound to the same
+// pgx.Tx the closure uses for its other writes.
+//
+// Failures are logged but NOT returned — same contract as the
+// non-tx write. The argument for that contract: a tx rollback
+// triggered by a failing audit insert would block the user-facing
+// share operation on an audit-layer issue. The audit row's
+// absence shows up in the audit feed as a gap, which is the
+// correct surface for an operator to notice + investigate.
+func (r *Recorder) WriteInTx(ctx context.Context, q *Queries, eventType string, subject, actor *int64, metadata map[string]any) {
+	// Tx-bound calls don't carry req-context (no http.Request on
+	// the path); pass an empty reqContext so the ip + UA columns
+	// stay null. Federation share writes are server-internal —
+	// the originating user_ref is the actor, which is enough.
+	r.writeWith(ctx, q, eventType, subject, actor, reqContext{}, metadata)
 }

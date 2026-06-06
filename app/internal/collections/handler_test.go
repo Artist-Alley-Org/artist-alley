@@ -1007,3 +1007,12 @@ func (collShim) ListFederationPeerSuggestions(context.Context, openapi.ListFeder
 func (collShim) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("RefreshFederationPeerSuggestions called from collections test shim")
 }
+func (collShim) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	panic("ListFederationShares called from collections test shim")
+}
+func (collShim) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	panic("GrantFederationShare called from collections test shim")
+}
+func (collShim) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	panic("RevokeFederationShare called from collections test shim")
+}

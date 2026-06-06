@@ -1080,3 +1080,12 @@ func (authOnlyImpl) ListFederationPeerSuggestions(context.Context, openapi.ListF
 func (authOnlyImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("RefreshFederationPeerSuggestions called from auth test shim")
 }
+func (authOnlyImpl) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	panic("ListFederationShares called from auth test shim")
+}
+func (authOnlyImpl) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	panic("GrantFederationShare called from auth test shim")
+}
+func (authOnlyImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	panic("RevokeFederationShare called from auth test shim")
+}

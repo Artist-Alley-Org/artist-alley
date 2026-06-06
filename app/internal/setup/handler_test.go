@@ -1012,3 +1012,12 @@ func (shimImpl) ListFederationPeerSuggestions(context.Context, openapi.ListFeder
 func (shimImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("RefreshFederationPeerSuggestions called from setup test shim")
 }
+func (shimImpl) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	panic("ListFederationShares called from setup test shim")
+}
+func (shimImpl) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	panic("GrantFederationShare called from setup test shim")
+}
+func (shimImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	panic("RevokeFederationShare called from setup test shim")
+}
