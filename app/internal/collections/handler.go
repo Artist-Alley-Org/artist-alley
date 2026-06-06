@@ -422,29 +422,36 @@ func (h *Handler) ListCollections(
 	var sharedWithPtr *int64
 	caller := auth.IdentityFromContext(ctx)
 	if req.Params.Tab != nil && caller != nil {
+		// oapi-codegen drops the type-name prefix on enum constants
+		// when there are no collisions — 'Public' / 'Shared' /
+		// 'Featured' / 'All' / 'Mine' are now globally unique after
+		// the 1.22.C-a visibility-enum cleanup, so the prefixed
+		// ListCollectionsParamsTabXxx names are gone.
 		switch *req.Params.Tab {
-		case openapi.ListCollectionsParamsTabMine:
+		case openapi.Mine:
 			ownerPtr = &caller.UserRef
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.ListCollectionsParamsTabFeatured:
-			vis := "public"
+		case openapi.Featured:
+			vis := "org-only"
 			visPtr = &vis
 			f := true
 			featuredPtr = &f
 			ownerPtr = nil
-		case openapi.ListCollectionsParamsTabPublic:
-			vis := "public"
+		case openapi.Public:
+			// "Public" tab kept as the user-facing label but now
+			// maps to org-only at the storage layer (1.22.C-a).
+			vis := "org-only"
 			visPtr = &vis
 			ownerPtr = nil
 			featuredPtr = nil
-		case openapi.ListCollectionsParamsTabShared:
+		case openapi.Shared:
 			sharedWithPtr = &caller.UserRef
 			excludeOwnerPtr = &caller.UserRef
 			ownerPtr = nil
 			visPtr = nil
 			featuredPtr = nil
-		case openapi.ListCollectionsParamsTabAll:
+		case openapi.All:
 			// no overrides — the listing already enforces visibility
 			// at the row level via the existing filter.
 		}

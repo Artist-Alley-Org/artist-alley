@@ -357,6 +357,24 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz
 }
 
+type FederationShare struct {
+	ID                pgtype.UUID
+	GrantorUserRef    int64
+	ObjectKind        string
+	ObjectID          pgtype.UUID
+	PeerID            pgtype.UUID
+	TargetUserUrl     *string
+	Scope             string
+	ExpiresAt         pgtype.Timestamptz
+	Notes             string
+	GrantedActivityID pgtype.UUID
+	GrantedAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevokedActivityID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string

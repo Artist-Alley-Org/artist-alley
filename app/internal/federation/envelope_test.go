@@ -156,10 +156,10 @@ func TestPublicKeyFingerprintStable(t *testing.T) {
 }
 
 func TestShareScopeAtLeast(t *testing.T) {
-	if !federation.ShareScopeEdit.AtLeast(federation.ShareScopeView) {
+	if !federation.ShareScopeRemix.AtLeast(federation.ShareScopeView) {
 		t.Error("edit should grant at least view")
 	}
-	if federation.ShareScopeView.AtLeast(federation.ShareScopeEdit) {
+	if federation.ShareScopeView.AtLeast(federation.ShareScopeRemix) {
 		t.Error("view should NOT grant edit")
 	}
 	if federation.ShareScopeComment.AtLeast(federation.ShareScopeAnnotate) {

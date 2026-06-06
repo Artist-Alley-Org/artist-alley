@@ -357,6 +357,24 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
+type FederationShare struct {
+	ID                pgtype.UUID        `json:"id"`
+	GrantorUserRef    int64              `json:"grantor_user_ref"`
+	ObjectKind        string             `json:"object_kind"`
+	ObjectID          pgtype.UUID        `json:"object_id"`
+	PeerID            pgtype.UUID        `json:"peer_id"`
+	TargetUserUrl     *string            `json:"target_user_url"`
+	Scope             string             `json:"scope"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	Notes             string             `json:"notes"`
+	GrantedActivityID pgtype.UUID        `json:"granted_activity_id"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedActivityID pgtype.UUID        `json:"revoked_activity_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`

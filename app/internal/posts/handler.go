@@ -172,13 +172,13 @@ func (h *Handler) CreatePost(
 		}, nil
 	}
 
-	visibility := "public"
+	visibility := "org-only"
 	if in.Visibility != nil {
 		visibility = string(*in.Visibility)
 	}
 	if !validVisibility(visibility) {
 		return openapi.CreatePost400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|followers|private"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
 		}, nil
 	}
 
@@ -418,7 +418,7 @@ func (h *Handler) UpdatePost(
 		s := string(*in.Visibility)
 		if !validVisibility(s) {
 			return openapi.UpdatePost400JSONResponse{
-				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|followers|private"},
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
 			}, nil
 		}
 		visPtr = &s
@@ -599,11 +599,15 @@ func (h *Handler) ListPosts(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	// Default visibility filter: public-only. Callers can pass
-	// `?visibility=private` to get their own private posts (we still
-	// AND with the caller's own author_ref so other people's privates
-	// aren't leaked).
-	visibility := "public"
+	// Default visibility filter: org-only (the post-1.22.C-a
+	// equivalent of legacy 'public' for the walled-garden feed).
+	// Callers can pass `?visibility=private` to get their own
+	// private posts (we still AND with the caller's own author_ref
+	// so other people's privates aren't leaked). A future feed
+	// query upgrade unifies the filter with the share-table view
+	// for "what I can actually see"; this is the conservative
+	// preserve-old-behavior path for the cleanup migration.
+	visibility := "org-only"
 	if req.Params.Visibility != nil {
 		visibility = string(*req.Params.Visibility)
 	}
@@ -1009,12 +1013,15 @@ func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi
 		return true
 	}
 	switch p.Visibility {
-	case openapi.PostVisibilityPublic:
+	case openapi.PostVisibilityOrgOnly:
+		// Any authenticated local user can read org-only posts —
+		// the post-1.22.C-a equivalent of legacy 'public' for the
+		// walled-garden default tier.
 		return true
 	case openapi.PostVisibilityFollowers:
 		// Phase 1.17.G2 wires this: the post is visible only when
 		// the caller follows the author. follows nil → degrade to
-		// "public" so legacy test fixtures keep passing.
+		// org-only-style behaviour so legacy test fixtures keep passing.
 		if h.follows == nil {
 			return true
 		}
@@ -1037,9 +1044,13 @@ func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi
 	return false
 }
 
+// validVisibility checks against the 4-tier closed catalogue
+// per the 1.22.C design proposal §1. `public` was removed at
+// migration 00056 (reserved for a future public-fediverse phase).
+// Writes attempting `public` get the clear "tier reserved" error.
 func validVisibility(s string) bool {
 	switch s {
-	case "private", "followers", "public":
+	case "private", "org-only", "followers", "explicit-share":
 		return true
 	}
 	return false

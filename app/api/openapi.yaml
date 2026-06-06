@@ -3086,7 +3086,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, followers, public]
+            enum: [private, org-only, followers, explicit-share]
         - name: q
           in: query
           required: false
@@ -3811,7 +3811,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, shared, public]
+            enum: [private, org-only, followers, explicit-share]
         - name: featured
           in: query
           required: false
@@ -6456,7 +6456,7 @@ components:
         description:      { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -6492,7 +6492,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
           default: private
         membership:
           type: string
@@ -6519,7 +6519,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -6719,7 +6719,7 @@ components:
         description:      { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid
@@ -6789,7 +6789,7 @@ components:
         description:  { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
           default: public
         cover_asset_id:
           type: string
@@ -6843,7 +6843,7 @@ components:
         description:  { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid

@@ -216,7 +216,7 @@ func TestLikePost_EmitsActivity(t *testing.T) {
 
 	postID := uuid.New()
 	if _, err := fx.pool.Exec(fx.ctx,
-		`INSERT INTO posts (id, author_user_ref, title, description, visibility) VALUES ($1, $2, $3, '', 'public')`,
+		`INSERT INTO posts (id, author_user_ref, title, description, visibility) VALUES ($1, $2, $3, '', 'org-only')`,
 		pgtype.UUID{Bytes: postID, Valid: true}, peerRef, "Wiring test post",
 	); err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestUnlikePost_EmitsUndo(t *testing.T) {
 
 	postID := uuid.New()
 	if _, err := fx.pool.Exec(fx.ctx,
-		`INSERT INTO posts (id, author_user_ref, title, description, visibility) VALUES ($1, $2, $3, '', 'public')`,
+		`INSERT INTO posts (id, author_user_ref, title, description, visibility) VALUES ($1, $2, $3, '', 'org-only')`,
 		pgtype.UUID{Bytes: postID, Valid: true}, peerRef, "Undo test post",
 	); err != nil {
 		t.Fatal(err)

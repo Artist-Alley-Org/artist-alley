@@ -229,6 +229,138 @@ func (t TrustTier) Valid() bool {
 	return ok
 }
 
+// ObjectVisibility is the 4-tier closed catalogue for object
+// visibility per the 1.22.C design proposal §1. Mirrors the
+// CHECK constraint added in migration 00056 on posts.visibility
+// + collections.visibility (and any future shareable object).
+//
+//   private        — author + local admins only (no federation)
+//   org-only       — local users with ACL access (no federation)
+//   followers      — federated via Accept(Follow) per-user gates
+//   explicit-share — federated via per-recipient federation_shares
+//
+// `public` is reserved for a future public-fediverse phase; v1
+// implementations MUST reject it at the write API per the
+// reviewer's locked-in answer (§12.5 #5 of the proposal). The
+// constant ObjectVisibilityPublic is INTENTIONALLY absent.
+type ObjectVisibility string
+
+const (
+	ObjectVisibilityPrivate        ObjectVisibility = "private"
+	ObjectVisibilityOrgOnly        ObjectVisibility = "org-only"
+	ObjectVisibilityFollowers      ObjectVisibility = "followers"
+	ObjectVisibilityExplicitShare  ObjectVisibility = "explicit-share"
+)
+
+// Valid reports whether v is in the closed catalogue. `public` is
+// NOT considered valid at v1 (reserved value).
+func (v ObjectVisibility) Valid() bool {
+	switch v {
+	case ObjectVisibilityPrivate, ObjectVisibilityOrgOnly,
+		ObjectVisibilityFollowers, ObjectVisibilityExplicitShare:
+		return true
+	}
+	return false
+}
+
+// IsFederated reports whether the tier flows content across the
+// federation boundary. private + org-only stay local.
+func (v ObjectVisibility) IsFederated() bool {
+	return v == ObjectVisibilityFollowers || v == ObjectVisibilityExplicitShare
+}
+
+// ShareScope is the 4-rung ladder of access scopes per the
+// 1.22.C design proposal §1 + §12.5 #1. Mirrors the CHECK
+// constraint on federation_shares.scope.
+//
+// Ordering: view < comment < annotate < remix.
+//
+//   view     — read-only; can Like / Announce
+//   comment  — view + can Create(Note) (comments)
+//   annotate — comment + can aa:Annotation (whiteboards, text annotations)
+//   remix    — annotate + can incorporate shared assets into
+//              own posts/collections/workspaces/brand_kits on
+//              recipient instance. Original NEVER modified.
+//
+// Future fifth scope `edit` reserved for cross-instance edit of
+// the original (lands when that becomes a real ask). Not v1.
+type ShareScope string
+
+const (
+	ShareScopeView     ShareScope = "view"
+	ShareScopeComment  ShareScope = "comment"
+	ShareScopeAnnotate ShareScope = "annotate"
+	ShareScopeRemix    ShareScope = "remix"
+)
+
+// Valid reports whether s is in the closed catalogue.
+func (s ShareScope) Valid() bool {
+	switch s {
+	case ShareScopeView, ShareScopeComment, ShareScopeAnnotate, ShareScopeRemix:
+		return true
+	}
+	return false
+}
+
+// Rank returns an integer for ordered comparison: view=1 < comment=2
+// < annotate=3 < remix=4. Zero on invalid (the caller should
+// check Valid first; Rank is the comparison helper).
+func (s ShareScope) Rank() int {
+	switch s {
+	case ShareScopeView:
+		return 1
+	case ShareScopeComment:
+		return 2
+	case ShareScopeAnnotate:
+		return 3
+	case ShareScopeRemix:
+		return 4
+	}
+	return 0
+}
+
+// Covers reports whether s is sufficient for a required scope.
+// Used by the inbox filter: e.g. an `annotate` share covers a
+// `comment` activity, but a `view` share does NOT cover a
+// `comment` activity.
+func (s ShareScope) Covers(required ShareScope) bool {
+	return s.Rank() >= required.Rank() && s.Rank() > 0 && required.Rank() > 0
+}
+
+// ShareObjectKind is the closed catalogue of shareable object
+// kinds per the 1.22.C design proposal §2.2. Mirrors the CHECK
+// constraint on federation_shares.object_kind.
+//
+//   asset, post, collection — current shareable objects
+//   workspace, brand_kit    — future containers (tables land later;
+//                              enum value present now so the
+//                              federation_shares schema is
+//                              forward-compatible)
+//   user                    — followers: a share row with
+//                              object_kind=user IS the follower
+//                              relationship (no separate followers
+//                              table).
+type ShareObjectKind string
+
+const (
+	ShareObjectKindAsset      ShareObjectKind = "asset"
+	ShareObjectKindPost       ShareObjectKind = "post"
+	ShareObjectKindCollection ShareObjectKind = "collection"
+	ShareObjectKindWorkspace  ShareObjectKind = "workspace"
+	ShareObjectKindBrandKit   ShareObjectKind = "brand_kit"
+	ShareObjectKindUser       ShareObjectKind = "user"
+)
+
+// Valid reports whether k is in the closed catalogue.
+func (k ShareObjectKind) Valid() bool {
+	switch k {
+	case ShareObjectKindAsset, ShareObjectKindPost, ShareObjectKindCollection,
+		ShareObjectKindWorkspace, ShareObjectKindBrandKit, ShareObjectKindUser:
+		return true
+	}
+	return false
+}
+
 // PublishStatus is the state machine for publishing THIS instance
 // to a federation directory per migration 00054 + the publish
 // flow in docs/spec/federation-directory/v1.md §"POST /v1/register".
@@ -325,62 +457,33 @@ func (p EncryptionPolicy) Valid() bool {
 	return ok
 }
 
-// ShareScope describes what a recipient peer can DO with a shared
-// object. Mirrors federation_shares.scope (Phase 1.22.C).
-type ShareScope string
+// AtLeast is an alias for Covers (see above). Kept as a separate
+// method name because some early callers used .AtLeast(view) and
+// the alternative spelling reads more naturally in some contexts
+// ("does this share grant at-least view?").
+func (s ShareScope) AtLeast(other ShareScope) bool {
+	return s.Covers(other)
+}
 
-const (
-	ShareScopeView     ShareScope = "view"
-	ShareScopeComment  ShareScope = "comment"
-	ShareScopeAnnotate ShareScope = "annotate"
-	ShareScopeEdit     ShareScope = "edit"
-)
-
-// KnownShareScopes is the closed catalogue. The order in slices
-// derived from this map is implementation-defined; consumers that
-// need a stable order use ShareScopeOrdered below.
+// KnownShareScopes mirrors the four-entry catalogue as a map for
+// the .Valid lookup. Kept compatible with earlier code that
+// iterated this set + with the vocab_test invariants.
 var KnownShareScopes = map[ShareScope]struct{}{
 	ShareScopeView:     {},
 	ShareScopeComment:  {},
 	ShareScopeAnnotate: {},
-	ShareScopeEdit:     {},
+	ShareScopeRemix:    {},
 }
 
 // ShareScopeOrdered is the elevation-ordered list — earlier
-// entries grant strictly less than later ones. `view` ⊂ `comment`
-// ⊂ `annotate` ⊂ `edit`. Used by access-check helpers in 1.22.C.
+// entries grant strictly less than later ones. `view` < `comment`
+// < `annotate` < `remix`. Used by access-check helpers + by the
+// vocab_test drift detector.
 var ShareScopeOrdered = []ShareScope{
 	ShareScopeView,
 	ShareScopeComment,
 	ShareScopeAnnotate,
-	ShareScopeEdit,
-}
-
-// Valid reports whether s is in the closed catalogue.
-func (s ShareScope) Valid() bool {
-	_, ok := KnownShareScopes[s]
-	return ok
-}
-
-// AtLeast reports whether s grants at least the access level of
-// other. `edit.AtLeast(view)` is true; `view.AtLeast(edit)` is
-// false; an unknown scope is never sufficient.
-func (s ShareScope) AtLeast(other ShareScope) bool {
-	sRank, sOK := scopeRank(s)
-	oRank, oOK := scopeRank(other)
-	if !sOK || !oOK {
-		return false
-	}
-	return sRank >= oRank
-}
-
-func scopeRank(s ShareScope) (int, bool) {
-	for i, ord := range ShareScopeOrdered {
-		if ord == s {
-			return i, true
-		}
-	}
-	return -1, false
+	ShareScopeRemix,
 }
 
 // InboxStatus is the typed result of an inbox-side parse + admit

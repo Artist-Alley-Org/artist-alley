@@ -469,7 +469,7 @@ CREATE TABLE posts (
     author_user_ref   BIGINT       NOT NULL,
     title             TEXT         NOT NULL DEFAULT '',
     description       TEXT         NOT NULL DEFAULT '',
-    visibility        TEXT         NOT NULL DEFAULT 'public',
+    visibility        TEXT         NOT NULL DEFAULT 'org-only',
     cover_asset_id    UUID         NULL,
     -- cover_thumbnail_asset_id added by 00022_upload_seam.sql.
     -- Standalone thumbnail asset, NOT a member of the post (the
@@ -810,6 +810,52 @@ CREATE INDEX federation_peer_suggestions_by_source_idx
     ON federation_peer_suggestions (source_peer_id, cached_at DESC);
 CREATE INDEX federation_peer_suggestions_by_url_idx
     ON federation_peer_suggestions (suggested_url);
+
+-- migrations/00056_federation_shares.sql — per-object federation grants.
+-- The load-bearing security layer per ADR 0043 + the 1.22.C design
+-- proposal (4-tier visibility, followers-via-Accept(Follow), aa:Share
+-- transactional emit, expiry-sweeper-driven cleanup).
+CREATE TABLE federation_shares (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    grantor_user_ref    BIGINT       NOT NULL,
+    object_kind         TEXT         NOT NULL
+        CHECK (object_kind IN ('asset', 'post', 'collection',
+                                'workspace', 'brand_kit', 'user')),
+    object_id           UUID         NOT NULL,
+    peer_id             UUID         NOT NULL REFERENCES federation_peers(id) ON DELETE CASCADE,
+    target_user_url     TEXT         NULL,
+    scope               TEXT         NOT NULL DEFAULT 'view'
+        CHECK (scope IN ('view', 'comment', 'annotate', 'remix')),
+    expires_at          TIMESTAMPTZ  NULL,
+    notes               TEXT         NOT NULL DEFAULT '',
+    granted_activity_id UUID         NOT NULL REFERENCES activities(id) ON DELETE RESTRICT,
+    granted_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    revoked_at          TIMESTAMPTZ  NULL,
+    revoked_activity_id UUID         NULL REFERENCES activities(id) ON DELETE RESTRICT,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX federation_shares_active_uniq_idx
+    ON federation_shares (
+        grantor_user_ref, object_kind, object_id, peer_id,
+        COALESCE(target_user_url, '')
+    )
+    WHERE revoked_at IS NULL;
+CREATE INDEX federation_shares_lookup_idx
+    ON federation_shares (object_kind, object_id, peer_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX federation_shares_delivery_idx
+    ON federation_shares (object_kind, object_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX federation_shares_by_peer_idx
+    ON federation_shares (peer_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX federation_shares_expiring_idx
+    ON federation_shares (expires_at)
+    WHERE revoked_at IS NULL AND expires_at IS NOT NULL;
+CREATE INDEX federation_shares_by_grantor_idx
+    ON federation_shares (grantor_user_ref, granted_at DESC)
+    WHERE revoked_at IS NULL;
 
 -- migrations/00053_federation_directories.sql — directory protocol
 -- subscriber tables. federation_directories is the per-instance list
