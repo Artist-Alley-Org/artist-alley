@@ -261,7 +261,7 @@ it's not a catalogue.
   CHECK clauses.** Considered. Rejected at this scale because
   (a) the generator is more code than the typed constants it
   produces; (b) it forces every catalogue through one parser's
-  failure modes; (c) hand-maintained typed mirrors are <50 lines
+  failure modes; (c) hand-maintained typed mirrors are under 50 lines
   per catalogue and the drift is caught at review.
 
 - **Code-generate the migration's CHECK from the Go typed
