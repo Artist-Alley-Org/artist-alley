@@ -150,9 +150,15 @@ jobs:
       runner: ${{ steps.pick.outputs.runner }}
     steps:
       - id: pick
+        # Emit a valid JSON literal in both branches so `fromJSON`
+        # in the consumer job never throws. The PR branch used to
+        # emit a bare `ubuntu-latest` string which fromJSON
+        # rejected → the test job got silently skipped (with no
+        # job entry in the run UI) instead of running on
+        # ubuntu-latest as intended.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            echo 'runner="ubuntu-latest"' >> "$GITHUB_OUTPUT"
           else
             echo 'runner=["self-hosted","artist-alley"]' >> "$GITHUB_OUTPUT"
           fi
@@ -160,7 +166,7 @@ jobs:
   test:
     name: Integration tests (full compose stack)
     needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) || needs.pick-runner.outputs.runner }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
     timeout-minutes: 30
 
     steps:
