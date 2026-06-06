@@ -137,6 +137,17 @@ SELECT collection_id::UUID AS collection_id
 FROM collection_resources
 WHERE asset_id = $1;
 
+-- name: GetShareCountsByPeer :many
+-- Defederation cascade-preview source. Groups active shares by
+-- object_kind so the admin UI can render "12 posts, 23
+-- collections, 8 assets, 4 brand kits" in the cascade modal.
+-- Bounded by federation_shares_by_peer_idx (partial active).
+SELECT object_kind, COUNT(*)::BIGINT AS share_count
+FROM federation_shares
+WHERE peer_id = $1 AND revoked_at IS NULL
+GROUP BY object_kind
+ORDER BY object_kind;
+
 -- name: ListExpiringShares :many
 -- Expiry sweeper (Phase 1.22.C-d job) input. Returns active
 -- shares whose expires_at has passed in the last `lookback`

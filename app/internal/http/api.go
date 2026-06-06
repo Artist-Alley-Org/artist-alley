@@ -86,6 +86,7 @@ type apiServer struct {
 	p2pAdmin         *p2p.AdminHandler
 	sharesRegistry   *shares.Registry
 	sharesAdmin      *shares.AdminHandler
+	sharesSweeper    *shares.Sweeper
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -209,6 +210,28 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		peerLookupFor(s.peers),
 		sysconfigBaseURLFn(sysCfg),
 		usernameResolverFor(s.users),
+	)
+	// 1.22.C-d defederation-preview deps: count pending
+	// handshakes for the peer + count cached suggestions sourced
+	// from the peer + resolve display name/URL for the modal
+	// header. Closures over the existing registries.
+	s.sharesAdmin.SetDefederationDeps(
+		pendingHandshakeCounterFor(pool),
+		suggestionCounterFor(pool),
+		peerDisplayFor(s.peers),
+	)
+	// 1.22.C-d expiry sweeper — periodic goroutine, started in
+	// Server.Run() alongside the directory poller. Defaults to
+	// 1-hour cadence + 500-row batches per the design.
+	s.sharesSweeper = shares.NewSweeper(
+		shares.DefaultSweeperConfig(),
+		s.sharesRegistry,
+		s.activities,
+		auditRec,
+		peerLookupFor(s.peers),
+		sysconfigBaseURLFn(sysCfg),
+		usernameResolverFor(s.users),
+		logger,
 	)
 
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
@@ -346,6 +369,58 @@ func peerLookupFor(reg *peer.Registry) shares.PeerLookup {
 func usernameResolverFor(uh *users.Handler) func(ctx context.Context, ref int64) string {
 	return func(ctx context.Context, ref int64) string {
 		return uh.ResolveUsername(ctx, ref)
+	}
+}
+
+// --- 1.22.C-d defederation-preview adapters -----------------------------
+
+// pendingHandshakeCounterFor counts pending_outbound +
+// pending_inbound rows for one peer. Used by the cascade-preview
+// endpoint to render "3 pending handshakes will be cancelled."
+// Plain SQL because the peer registry doesn't expose the count
+// directly — adding a Registry method would be over-fitting to
+// the one caller.
+func pendingHandshakeCounterFor(pool *pgxpool.Pool) shares.PendingHandshakeCounter {
+	return func(ctx context.Context, peerID uuid.UUID) (int, error) {
+		var n int
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*)::INT FROM federation_peers
+			 WHERE id = $1 AND status IN ('pending_outbound', 'pending_inbound')`,
+			peerID,
+		).Scan(&n)
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+}
+
+// suggestionCounterFor counts peer-of-peer suggestions sourced
+// from a given peer (will be dropped when the peer's row is
+// deleted via FK CASCADE on federation_peer_suggestions).
+func suggestionCounterFor(pool *pgxpool.Pool) shares.SuggestionCounter {
+	return func(ctx context.Context, peerID uuid.UUID) (int, error) {
+		var n int
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*)::INT FROM federation_peer_suggestions WHERE source_peer_id = $1`,
+			peerID,
+		).Scan(&n)
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+}
+
+// peerDisplayFor resolves peer display_name + URL for the
+// preview modal header. Wraps peer.Registry.ByID.
+func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
+	return func(ctx context.Context, id uuid.UUID) (string, string, error) {
+		p, err := reg.ByID(ctx, id)
+		if err != nil {
+			return "", "", err
+		}
+		return p.DisplayName, p.InstanceURL, nil
 	}
 }
 
@@ -1032,6 +1107,10 @@ func (s *apiServer) GrantFederationShare(ctx context.Context, req openapi.GrantF
 
 func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	return s.sharesAdmin.RevokeFederationShare(ctx, req)
+}
+
+func (s *apiServer) PreviewFederationPeerDefederation(ctx context.Context, req openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	return s.sharesAdmin.PreviewFederationPeerDefederation(ctx, req)
 }
 
 func (s *apiServer) PostFederationHandshake(ctx context.Context, req openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {

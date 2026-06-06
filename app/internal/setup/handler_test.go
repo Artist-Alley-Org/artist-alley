@@ -1021,3 +1021,6 @@ func (shimImpl) GrantFederationShare(context.Context, openapi.GrantFederationSha
 func (shimImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("RevokeFederationShare called from setup test shim")
 }
+func (shimImpl) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	panic("PreviewFederationPeerDefederation called from setup test shim")
+}

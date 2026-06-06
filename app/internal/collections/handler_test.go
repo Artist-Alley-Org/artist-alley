@@ -1016,3 +1016,6 @@ func (collShim) GrantFederationShare(context.Context, openapi.GrantFederationSha
 func (collShim) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("RevokeFederationShare called from collections test shim")
 }
+func (collShim) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	panic("PreviewFederationPeerDefederation called from collections test shim")
+}

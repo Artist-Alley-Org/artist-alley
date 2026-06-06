@@ -1012,3 +1012,6 @@ func (metaShim) GrantFederationShare(context.Context, openapi.GrantFederationSha
 func (metaShim) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("RevokeFederationShare called from metadata test shim")
 }
+func (metaShim) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	panic("PreviewFederationPeerDefederation called from metadata test shim")
+}

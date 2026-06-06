@@ -290,6 +290,24 @@ func (r *Registry) CountByPeer(ctx context.Context, peerID uuid.UUID) (int64, er
 	return New(r.Pool).CountSharesByPeer(ctx, pgtype.UUID{Bytes: peerID, Valid: true})
 }
 
+// CountsByPeerBreakdown returns the per-object-kind active-share
+// counts for one peer. Used by the defederation cascade-preview
+// modal to show "12 posts, 23 collections, 8 assets, 4 brand kits"
+// per the design proposal §8.5. NOT cached — the preview is an
+// admin-clicked one-shot, not a hot path; the per-peer partial
+// index keeps it sub-ms.
+func (r *Registry) CountsByPeerBreakdown(ctx context.Context, peerID uuid.UUID) (map[federation.ShareObjectKind]int64, error) {
+	rows, err := New(r.Pool).GetShareCountsByPeer(ctx, pgtype.UUID{Bytes: peerID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[federation.ShareObjectKind]int64, len(rows))
+	for _, row := range rows {
+		out[federation.ShareObjectKind(row.ObjectKind)] = row.ShareCount
+	}
+	return out, nil
+}
+
 // ListByGrantor returns the user's own outbound shares list.
 func (r *Registry) ListByGrantor(ctx context.Context, grantorUserRef int64, limit int32) ([]Share, error) {
 	if limit <= 0 {

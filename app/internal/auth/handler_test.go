@@ -1089,3 +1089,6 @@ func (authOnlyImpl) GrantFederationShare(context.Context, openapi.GrantFederatio
 func (authOnlyImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("RevokeFederationShare called from auth test shim")
 }
+func (authOnlyImpl) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	panic("PreviewFederationPeerDefederation called from auth test shim")
+}

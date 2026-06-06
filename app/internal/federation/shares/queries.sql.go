@@ -155,6 +155,43 @@ func (q *Queries) GetShareByID(ctx context.Context, id pgtype.UUID) (FederationS
 	return i, err
 }
 
+const getShareCountsByPeer = `-- name: GetShareCountsByPeer :many
+SELECT object_kind, COUNT(*)::BIGINT AS share_count
+FROM federation_shares
+WHERE peer_id = $1 AND revoked_at IS NULL
+GROUP BY object_kind
+ORDER BY object_kind
+`
+
+type GetShareCountsByPeerRow struct {
+	ObjectKind string
+	ShareCount int64
+}
+
+// Defederation cascade-preview source. Groups active shares by
+// object_kind so the admin UI can render "12 posts, 23
+// collections, 8 assets, 4 brand kits" in the cascade modal.
+// Bounded by federation_shares_by_peer_idx (partial active).
+func (q *Queries) GetShareCountsByPeer(ctx context.Context, peerID pgtype.UUID) ([]GetShareCountsByPeerRow, error) {
+	rows, err := q.db.Query(ctx, getShareCountsByPeer, peerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetShareCountsByPeerRow
+	for rows.Next() {
+		var i GetShareCountsByPeerRow
+		if err := rows.Scan(&i.ObjectKind, &i.ShareCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertShare = `-- name: InsertShare :one
 INSERT INTO federation_shares (
     grantor_user_ref,

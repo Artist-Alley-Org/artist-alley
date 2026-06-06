@@ -732,3 +732,6 @@ func (rtOnly) GrantFederationShare(context.Context, openapi.GrantFederationShare
 func (rtOnly) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	panic("RevokeFederationShare called from assettype test shim")
 }
+func (rtOnly) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	panic("PreviewFederationPeerDefederation called from assettype test shim")
+}

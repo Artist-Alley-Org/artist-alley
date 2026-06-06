@@ -390,6 +390,14 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "directory.poller.start")
 	}
 
+	// Federation shares expiry sweeper (Phase 1.22.C-d). Periodic
+	// goroutine that emits aa:Unshare for expired-active shares
+	// so recipients purge cached bytes. Stop via ctx cancellation.
+	if s.api != nil && s.api.sharesSweeper != nil {
+		go s.api.sharesSweeper.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

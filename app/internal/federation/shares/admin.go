@@ -52,7 +52,8 @@ type PeerInfo struct {
 }
 
 // AdminHandler is the openapi-strict adapter for the three
-// /admin/federation/shares endpoints.
+// /admin/federation/shares endpoints + the defederation-preview
+// endpoint (1.22.C-d).
 type AdminHandler struct {
 	registry      *Registry
 	activities    *activities.Writer
@@ -61,6 +62,13 @@ type AdminHandler struct {
 	lookupPeer    PeerLookup
 	instanceURLFn func(ctx context.Context) string
 	usernameFn    func(ctx context.Context, userRef int64) string
+
+	// 1.22.C-d defederation-preview cross-package deps. Nil-safe;
+	// the preview endpoint returns 500 if not wired. Boot calls
+	// SetDefederationDeps once.
+	pendingHandshakeCounter PendingHandshakeCounter
+	suggestionCounter       SuggestionCounter
+	peerDisplay             PeerDisplay
 }
 
 // NewAdminHandler wires the admin surface. All five callbacks

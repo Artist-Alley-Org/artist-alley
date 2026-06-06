@@ -1121,6 +1121,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /admin/federation/peers/{id}/defederation-preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: previewFederationPeerDefederation
+      summary: Preview what defederation will cascade (Phase 1.22.C-d)
+      description: |
+        Backs the cascade-preview modal per the 1.22.C design
+        proposal §8.5. Returns:
+          - total_active_shares + per-object-kind breakdown
+          - pending_handshakes (handshakes in flight that would
+            be cancelled)
+          - cached_suggestions (peer-of-peer suggestions
+            contributed by this peer that would be dropped)
+          - peer summary (display_name + URL for the modal
+            header)
+        Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cascade impact summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDefederationPreview" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/federation/peers/{id}:
     parameters:
       - name: id
@@ -8134,6 +8171,50 @@ components:
           nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    FederationDefederationPreview:
+      type: object
+      description: |
+        Cascade-preview summary returned by
+        GET /admin/federation/peers/{id}/defederation-preview
+        per the 1.22.C design proposal §8.5. The admin UI
+        renders this in the confirm-defederation modal so the
+        operator sees exact impact before clicking through.
+      required:
+        - peer_id
+        - peer_display_name
+        - peer_url
+        - total_active_shares
+        - shares_by_kind
+        - pending_handshakes
+        - cached_suggestions
+      properties:
+        peer_id: { type: string, format: uuid }
+        peer_display_name: { type: string }
+        peer_url: { type: string }
+        total_active_shares:
+          type: integer
+          format: int64
+          description: |
+            Sum across all object kinds. The cascade emits one
+            aa:Unshare per row (best-effort delivery via the
+            outbox) before deleting the peer.
+        shares_by_kind:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: |
+            Per-object-kind breakdown so the modal renders
+            "12 posts, 23 collections, 8 assets, …". Keys are
+            from the federation.ShareObjectKind closed catalogue;
+            kinds with zero active shares may be omitted.
+        pending_handshakes:
+          type: integer
+          description: Number of pending_outbound + pending_inbound rows for this peer.
+        cached_suggestions:
+          type: integer
+          description: federation_peer_suggestions rows sourced from this peer that would be dropped.
 
     FederationShareList:
       type: object

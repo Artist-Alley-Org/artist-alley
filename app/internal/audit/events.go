@@ -245,6 +245,32 @@ func (r *Recorder) writeWith(ctx context.Context, q *Queries, eventType string, 
 	}
 }
 
+// ActivityRejected records a federation.activity.rejected event
+// per the 1.22.C design proposal §7.1 — the inbox dispatcher
+// (1.22.D) calls this whenever the shares gate denies an
+// inbound activity. Pool-bound (NOT tx-bound) because the
+// inbox doesn't have a domain write to atomically pair with;
+// rejection drops the activity outright. correlationID is the
+// inbound activity's UUID so the audit chain links back to the
+// /admin/activities ledger row for the dropped delivery.
+func (r *Recorder) ActivityRejected(
+	ctx context.Context,
+	peerID, sourceUserURL, activityType, objectKind, objectID, reason, correlationID string,
+) {
+	meta := map[string]any{
+		"peer_id":        peerID,
+		"activity_type":  activityType,
+		"object_kind":    objectKind,
+		"object_id":      objectID,
+		"reason":         reason,
+		"correlation_id": correlationID,
+	}
+	if sourceUserURL != "" {
+		meta["source_user_url"] = sourceUserURL
+	}
+	r.write(ctx, EventFederationActivityRejected, nil, nil, reqContext{}, meta)
+}
+
 // WriteInTx is the tx-aware public funnel. Callers needing the
 // write-ahead-audit invariant (federation_shares grant/revoke,
 // per the 1.22.C design proposal §7.2) call this from inside a
