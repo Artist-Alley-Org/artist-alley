@@ -22,6 +22,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 )
@@ -62,7 +63,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
 		})
 	})
-	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), router)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{PanicShim: &strictservershim.PanicShim{}, storage: storageH, assets: assetsH}, nil), router)
 
 	// Random payload so reruns don't dedup against earlier state.
 	payload := make([]byte, 8*1024)
@@ -252,7 +253,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 
 	// --- 12. anonymous create -> 401 ---
 	bareRouter := chi.NewRouter()
-	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), bareRouter)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{PanicShim: &strictservershim.PanicShim{}, storage: storageH, assets: assetsH}, nil), bareRouter)
 	anonRR := postJSON(t, bareRouter, "/assets", map[string]any{
 		"title": "Anon", "asset_type": int64(1),
 	})
@@ -291,7 +292,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
 		})
 	})
-	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), router)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{PanicShim: &strictservershim.PanicShim{}, storage: storageH, assets: assetsH}, nil), router)
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE owner_user_ref=$1`, userRef)
@@ -344,7 +345,7 @@ func TestCreateAssetInputValidation(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
 		})
 	})
-	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{storage: storageH, assets: assetsH}, nil), router)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{PanicShim: &strictservershim.PanicShim{}, storage: storageH, assets: assetsH}, nil), router)
 
 	cases := []struct {
 		name string
@@ -427,6 +428,7 @@ func pinCount(t *testing.T, pool *pgxpool.Pool, subjType, subjID, hash string) i
 // ---------------------------------------------------------------------------
 
 type shimImpl struct {
+	*strictservershim.PanicShim
 	storage *storage.Handler
 	assets  *assets.Handler
 }
@@ -507,273 +509,6 @@ func (s shimImpl) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestO
 	return s.assets.SearchEpub(ctx, req)
 }
 
-func (shimImpl) Login(context.Context, openapi.LoginRequestObject) (openapi.LoginResponseObject, error) {
-	panic("Login called from assets test shim")
-}
-func (shimImpl) Logout(context.Context, openapi.LogoutRequestObject) (openapi.LogoutResponseObject, error) {
-	panic("Logout called from assets test shim")
-}
-func (shimImpl) GetCurrentUser(context.Context, openapi.GetCurrentUserRequestObject) (openapi.GetCurrentUserResponseObject, error) {
-	panic("GetCurrentUser called from assets test shim")
-}
-func (shimImpl) ListApiTokens(context.Context, openapi.ListApiTokensRequestObject) (openapi.ListApiTokensResponseObject, error) {
-	panic("ListApiTokens called from assets test shim")
-}
-func (shimImpl) CreateApiToken(context.Context, openapi.CreateApiTokenRequestObject) (openapi.CreateApiTokenResponseObject, error) {
-	panic("CreateApiToken called from assets test shim")
-}
-func (shimImpl) RevokeApiToken(context.Context, openapi.RevokeApiTokenRequestObject) (openapi.RevokeApiTokenResponseObject, error) {
-	panic("RevokeApiToken called from assets test shim")
-}
-func (shimImpl) ListCapabilities(context.Context, openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
-	panic("ListCapabilities called from assets test shim")
-}
-func (shimImpl) ListRoles(context.Context, openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
-	panic("ListRoles called from assets test shim")
-}
-func (shimImpl) GetMyCapabilities(context.Context, openapi.GetMyCapabilitiesRequestObject) (openapi.GetMyCapabilitiesResponseObject, error) {
-	panic("GetMyCapabilities called from assets test shim")
-}
-func (shimImpl) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
-	panic("SetUserRole called from assets test shim")
-}
-func (shimImpl) ListAssetTypes(context.Context, openapi.ListAssetTypesRequestObject) (openapi.ListAssetTypesResponseObject, error) {
-	panic("ListAssetTypes called from assets test shim")
-}
-func (shimImpl) GetSetupStatus(context.Context, openapi.GetSetupStatusRequestObject) (openapi.GetSetupStatusResponseObject, error) {
-	panic("GetSetupStatus called from assets test shim")
-}
-func (shimImpl) CompleteSetup(context.Context, openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
-	panic("CompleteSetup called from assets test shim")
-}
-func (shimImpl) ListWorkflowStates(context.Context, openapi.ListWorkflowStatesRequestObject) (openapi.ListWorkflowStatesResponseObject, error) {
-	panic("ListWorkflowStates called from assets test shim")
-}
-func (shimImpl) ListFields(context.Context, openapi.ListFieldsRequestObject) (openapi.ListFieldsResponseObject, error) {
-	panic("ListFields called from assets test shim")
-}
-func (shimImpl) CreateField(context.Context, openapi.CreateFieldRequestObject) (openapi.CreateFieldResponseObject, error) {
-	panic("CreateField called from assets test shim")
-}
-func (shimImpl) GetField(context.Context, openapi.GetFieldRequestObject) (openapi.GetFieldResponseObject, error) {
-	panic("GetField called from assets test shim")
-}
-func (shimImpl) UpdateField(context.Context, openapi.UpdateFieldRequestObject) (openapi.UpdateFieldResponseObject, error) {
-	panic("UpdateField called from assets test shim")
-}
-func (shimImpl) ArchiveField(context.Context, openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
-	panic("ArchiveField called from assets test shim")
-}
-func (shimImpl) GetAssetFields(context.Context, openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
-	panic("GetAssetFields called from assets test shim")
-}
-func (shimImpl) SetAssetFieldValue(context.Context, openapi.SetAssetFieldValueRequestObject) (openapi.SetAssetFieldValueResponseObject, error) {
-	panic("SetAssetFieldValue called from assets test shim")
-}
-func (shimImpl) ClearAssetFieldValue(context.Context, openapi.ClearAssetFieldValueRequestObject) (openapi.ClearAssetFieldValueResponseObject, error) {
-	panic("ClearAssetFieldValue called from assets test shim")
-}
-func (shimImpl) GetAssetFieldValueHistory(context.Context, openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
-	panic("GetAssetFieldValueHistory called from assets test shim")
-}
-func (shimImpl) ListCollections(context.Context, openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
-	panic("ListCollections called from assets test shim")
-}
-func (shimImpl) CreateCollection(context.Context, openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
-	panic("CreateCollection called from assets test shim")
-}
-func (shimImpl) GetCollection(context.Context, openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
-	panic("GetCollection called from assets test shim")
-}
-func (shimImpl) UpdateCollection(context.Context, openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
-	panic("UpdateCollection called from assets test shim")
-}
-func (shimImpl) DeleteCollection(context.Context, openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
-	panic("DeleteCollection called from assets test shim")
-}
-func (shimImpl) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
-	panic("ListCollectionResources called from assets test shim")
-}
-func (shimImpl) AddCollectionResource(context.Context, openapi.AddCollectionResourceRequestObject) (openapi.AddCollectionResourceResponseObject, error) {
-	panic("AddCollectionResource called from assets test shim")
-}
-func (shimImpl) RemoveCollectionResource(context.Context, openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
-	panic("RemoveCollectionResource called from assets test shim")
-}
-func (shimImpl) ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error) {
-	panic("ListPosts called from assets test shim")
-}
-func (shimImpl) CreatePost(context.Context, openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
-	panic("CreatePost called from assets test shim")
-}
-func (shimImpl) GetPost(context.Context, openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
-	panic("GetPost called from assets test shim")
-}
-func (shimImpl) UpdatePost(context.Context, openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
-	panic("UpdatePost called from assets test shim")
-}
-func (shimImpl) DeletePost(context.Context, openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
-	panic("DeletePost called from assets test shim")
-}
-func (shimImpl) AddPostAsset(context.Context, openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
-	panic("AddPostAsset called from assets test shim")
-}
-func (shimImpl) RemovePostAsset(context.Context, openapi.RemovePostAssetRequestObject) (openapi.RemovePostAssetResponseObject, error) {
-	panic("RemovePostAsset called from assets test shim")
-}
-func (shimImpl) ListTeams(context.Context, openapi.ListTeamsRequestObject) (openapi.ListTeamsResponseObject, error) {
-	panic("ListTeams called from assets_test test shim")
-}
-func (shimImpl) CreateTeam(context.Context, openapi.CreateTeamRequestObject) (openapi.CreateTeamResponseObject, error) {
-	panic("CreateTeam called from assets_test test shim")
-}
-func (shimImpl) GetTeam(context.Context, openapi.GetTeamRequestObject) (openapi.GetTeamResponseObject, error) {
-	panic("GetTeam called from assets_test test shim")
-}
-func (shimImpl) UpdateTeam(context.Context, openapi.UpdateTeamRequestObject) (openapi.UpdateTeamResponseObject, error) {
-	panic("UpdateTeam called from assets_test test shim")
-}
-func (shimImpl) DeleteTeam(context.Context, openapi.DeleteTeamRequestObject) (openapi.DeleteTeamResponseObject, error) {
-	panic("DeleteTeam called from assets_test test shim")
-}
-func (shimImpl) ListTeamParents(context.Context, openapi.ListTeamParentsRequestObject) (openapi.ListTeamParentsResponseObject, error) {
-	panic("ListTeamParents called from assets_test test shim")
-}
-func (shimImpl) AddTeamParent(context.Context, openapi.AddTeamParentRequestObject) (openapi.AddTeamParentResponseObject, error) {
-	panic("AddTeamParent called from assets_test test shim")
-}
-func (shimImpl) RemoveTeamParent(context.Context, openapi.RemoveTeamParentRequestObject) (openapi.RemoveTeamParentResponseObject, error) {
-	panic("RemoveTeamParent called from assets_test test shim")
-}
-func (shimImpl) ListTeamMembers(context.Context, openapi.ListTeamMembersRequestObject) (openapi.ListTeamMembersResponseObject, error) {
-	panic("ListTeamMembers called from assets_test test shim")
-}
-func (shimImpl) AddTeamMember(context.Context, openapi.AddTeamMemberRequestObject) (openapi.AddTeamMemberResponseObject, error) {
-	panic("AddTeamMember called from assets_test test shim")
-}
-func (shimImpl) RemoveTeamMember(context.Context, openapi.RemoveTeamMemberRequestObject) (openapi.RemoveTeamMemberResponseObject, error) {
-	panic("RemoveTeamMember called from assets_test test shim")
-}
-func (shimImpl) GetMyTeams(context.Context, openapi.GetMyTeamsRequestObject) (openapi.GetMyTeamsResponseObject, error) {
-	panic("GetMyTeams called from assets_test test shim")
-}
-func (shimImpl) ListPostAcls(context.Context, openapi.ListPostAclsRequestObject) (openapi.ListPostAclsResponseObject, error) {
-	panic("ListPostAcls called from assets_test test shim")
-}
-func (shimImpl) AddPostAcl(context.Context, openapi.AddPostAclRequestObject) (openapi.AddPostAclResponseObject, error) {
-	panic("AddPostAcl called from assets_test test shim")
-}
-func (shimImpl) RemovePostAcl(context.Context, openapi.RemovePostAclRequestObject) (openapi.RemovePostAclResponseObject, error) {
-	panic("RemovePostAcl called from assets_test test shim")
-}
-func (shimImpl) ListCollectionAcls(context.Context, openapi.ListCollectionAclsRequestObject) (openapi.ListCollectionAclsResponseObject, error) {
-	panic("ListCollectionAcls called from assets_test test shim")
-}
-func (shimImpl) AddCollectionAcl(context.Context, openapi.AddCollectionAclRequestObject) (openapi.AddCollectionAclResponseObject, error) {
-	panic("AddCollectionAcl called from assets_test test shim")
-}
-func (shimImpl) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionAclRequestObject) (openapi.RemoveCollectionAclResponseObject, error) {
-	panic("RemoveCollectionAcl called from assets_test test shim")
-}
-func (shimImpl) GetUserPublicByRef(context.Context, openapi.GetUserPublicByRefRequestObject) (openapi.GetUserPublicByRefResponseObject, error) {
-	panic("GetUserPublicByRef called from assets_test test shim")
-}
-func (shimImpl) GetUserPublicByUsername(context.Context, openapi.GetUserPublicByUsernameRequestObject) (openapi.GetUserPublicByUsernameResponseObject, error) {
-	panic("GetUserPublicByUsername called from assets_test test shim")
-}
-func (shimImpl) UpdateUserProfile(context.Context, openapi.UpdateUserProfileRequestObject) (openapi.UpdateUserProfileResponseObject, error) {
-	panic("UpdateUserProfile called from assets_test test shim")
-}
-func (shimImpl) ListAdminUsers(context.Context, openapi.ListAdminUsersRequestObject) (openapi.ListAdminUsersResponseObject, error) {
-	panic("ListAdminUsers called from assets test shim")
-}
-func (shimImpl) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
-	panic("SetAdminUserStatus called from assets test shim")
-}
-func (shimImpl) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
-	panic("ListMySessions called from assets test shim")
-}
-func (shimImpl) RevokeMySession(context.Context, openapi.RevokeMySessionRequestObject) (openapi.RevokeMySessionResponseObject, error) {
-	panic("RevokeMySession called from assets test shim")
-}
-func (shimImpl) ListAdminUserSessions(context.Context, openapi.ListAdminUserSessionsRequestObject) (openapi.ListAdminUserSessionsResponseObject, error) {
-	panic("ListAdminUserSessions called from assets test shim")
-}
-func (shimImpl) RevokeAdminUserSession(context.Context, openapi.RevokeAdminUserSessionRequestObject) (openapi.RevokeAdminUserSessionResponseObject, error) {
-	panic("RevokeAdminUserSession called from assets test shim")
-}
-func (shimImpl) ChangeMyPassword(context.Context, openapi.ChangeMyPasswordRequestObject) (openapi.ChangeMyPasswordResponseObject, error) {
-	panic("ChangeMyPassword called from assets test shim")
-}
-func (shimImpl) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
-	panic("AdminResetUserPassword called from assets test shim")
-}
-func (shimImpl) ListAdminUserCapabilities(context.Context, openapi.ListAdminUserCapabilitiesRequestObject) (openapi.ListAdminUserCapabilitiesResponseObject, error) {
-	panic("ListAdminUserCapabilities called from assets test shim")
-}
-func (shimImpl) AddAdminUserGrant(context.Context, openapi.AddAdminUserGrantRequestObject) (openapi.AddAdminUserGrantResponseObject, error) {
-	panic("AddAdminUserGrant called from assets test shim")
-}
-func (shimImpl) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserGrantRequestObject) (openapi.RemoveAdminUserGrantResponseObject, error) {
-	panic("RemoveAdminUserGrant called from assets test shim")
-}
-func (shimImpl) AddAdminUserRevoke(context.Context, openapi.AddAdminUserRevokeRequestObject) (openapi.AddAdminUserRevokeResponseObject, error) {
-	panic("AddAdminUserRevoke called from assets test shim")
-}
-func (shimImpl) RemoveAdminUserRevoke(context.Context, openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
-	panic("RemoveAdminUserRevoke called from assets test shim")
-}
-func (shimImpl) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
-	panic("ListAssetTypeAcls called from assets test shim")
-}
-func (shimImpl) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
-	panic("AddAssetTypeAcl called from assets test shim")
-}
-func (shimImpl) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
-	panic("RemoveAssetTypeAcl called from assets test shim")
-}
-func (shimImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
-	panic("ListAdminAuditEvents called from assets test shim")
-}
-func (shimImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
-	panic("ListAdminAuditEventTypes called from assets test shim")
-}
-func (shimImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
-	panic("GetAdminLicenseStatus called from assets test shim")
-}
-func (shimImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
-	panic("ValidateAdminLicense called from assets test shim")
-}
-func (shimImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
-	panic("UploadAdminLicense called from assets test shim")
-}
-func (shimImpl) ListIdentityProviders(context.Context, openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
-	panic("ListIdentityProviders called from assets test shim")
-}
-func (shimImpl) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
-	panic("GetAccountPreferences called from assets test shim")
-}
-func (shimImpl) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
-	panic("PatchAccountPreferences called from assets test shim")
-}
-func (shimImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
-	panic("GetPostLike called from assets_test test shim")
-}
-func (shimImpl) LikePost(context.Context, openapi.LikePostRequestObject) (openapi.LikePostResponseObject, error) {
-	panic("LikePost called from assets_test test shim")
-}
-func (shimImpl) UnlikePost(context.Context, openapi.UnlikePostRequestObject) (openapi.UnlikePostResponseObject, error) {
-	panic("UnlikePost called from assets_test test shim")
-}
-func (shimImpl) ListPostComments(context.Context, openapi.ListPostCommentsRequestObject) (openapi.ListPostCommentsResponseObject, error) {
-	panic("ListPostComments called from assets_test test shim")
-}
-func (shimImpl) CreatePostComment(context.Context, openapi.CreatePostCommentRequestObject) (openapi.CreatePostCommentResponseObject, error) {
-	panic("CreatePostComment called from assets_test test shim")
-}
-func (shimImpl) DeleteComment(context.Context, openapi.DeleteCommentRequestObject) (openapi.DeleteCommentResponseObject, error) {
-	panic("DeleteComment called from assets_test test shim")
-}
 
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()
@@ -803,220 +538,9 @@ func envOr(key, def string) string {
 	return def
 }
 
-func (shimImpl) GetSiteConfig(context.Context, openapi.GetSiteConfigRequestObject) (openapi.GetSiteConfigResponseObject, error) {
-	panic("GetSiteConfig called from assets test shim")
-}
-func (shimImpl) UpdateSiteConfig(context.Context, openapi.UpdateSiteConfigRequestObject) (openapi.UpdateSiteConfigResponseObject, error) {
-	panic("UpdateSiteConfig called from assets test shim")
-}
-func (shimImpl) GetSMTPConfig(context.Context, openapi.GetSMTPConfigRequestObject) (openapi.GetSMTPConfigResponseObject, error) {
-	panic("GetSMTPConfig called from assets test shim")
-}
-func (shimImpl) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
-	panic("UpdateSMTPConfig called from assets test shim")
-}
-func (shimImpl) GetAuthConfig(context.Context, openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
-	panic("GetAuthConfig called from assets test shim")
-}
-func (shimImpl) UpdateAuthConfig(context.Context, openapi.UpdateAuthConfigRequestObject) (openapi.UpdateAuthConfigResponseObject, error) {
-	panic("UpdateAuthConfig called from assets test shim")
-}
-func (shimImpl) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
-	panic("GetAIConfig called from assets test shim")
-}
-func (shimImpl) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
-	panic("UpdateAIConfig called from assets test shim")
-}
-func (shimImpl) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
-	panic("ListLocales called from assets test shim")
-}
 
-func (shimImpl) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
-	panic("GetAppearanceConfig called from assets test shim")
-}
-func (shimImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
-	panic("UpdateAppearanceConfig called from assets test shim")
-}
-func (shimImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
-	panic("GetPublicAppearance called from assets test shim")
-}
-
-// --- jobs stubs (Phase 1.18.A) -------------------------------------------
-func (shimImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
-	panic("ClaimJobs called from test shim")
-}
-func (shimImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
-	panic("GetJob called from test shim")
-}
-func (shimImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
-	panic("HeartbeatJob called from test shim")
-}
-func (shimImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
-	panic("CompleteJob called from test shim")
-}
-func (shimImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
-	panic("FailJob called from test shim")
-}
-
-func (shimImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
-	panic("ListPostWhiteboards called from assets_test test shim")
-}
-
-func (shimImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
-	panic("CreatePostWhiteboard called from assets_test test shim")
-}
 
 // --- brush packs stubs (Phase 1.21c) -------------------------------------
-func (shimImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
-	panic("ListBrushPacks called from shimImpl test shim")
-}
-func (shimImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
-	panic("ImportBrushPack called from shimImpl test shim")
-}
-func (shimImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
-	panic("GetBrushPack called from shimImpl test shim")
-}
-func (shimImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
-	panic("DeleteBrushPack called from shimImpl test shim")
-}
-func (shimImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
-	panic("GetBrushPackStamp called from shimImpl test shim")
-}
-func (shimImpl) ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
-	panic("ListAssetTextAnnotations called from assets_test test shim")
-}
-func (shimImpl) CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
-	panic("CreateAssetTextAnnotation called from assets_test test shim")
-}
-func (shimImpl) UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
-	panic("UpdateTextAnnotation called from assets_test test shim")
-}
 func (s shimImpl) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
 	return s.assets.LintAsset(ctx, req)
-}
-func (shimImpl) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
-	panic("FollowUser called from assets test shim")
-}
-func (shimImpl) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
-	panic("UnfollowUser called from assets test shim")
-}
-func (shimImpl) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
-	panic("ListUserFollowers called from assets test shim")
-}
-func (shimImpl) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
-	panic("ListUserFollowing called from assets test shim")
-}
-func (shimImpl) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
-	panic("GetUserRelationship called from assets test shim")
-}
-func (shimImpl) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
-	panic("BlockUser called from assets test shim")
-}
-func (shimImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
-	panic("UnblockUser called from assets test shim")
-}
-func (shimImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
-	panic("ListMyBlocked called from assets test shim")
-}
-func (shimImpl) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
-	panic("ListMyNotifications called from assets test shim")
-}
-func (shimImpl) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
-	panic("GetMyUnreadNotificationCount called from assets test shim")
-}
-func (shimImpl) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
-	panic("MarkNotificationRead called from assets test shim")
-}
-func (shimImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
-	panic("MarkAllMyNotificationsRead called from assets test shim")
-}
-func (shimImpl) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
-	panic("ListMyDirectMessageThreads called from assets test shim")
-}
-func (shimImpl) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
-	panic("GetMyUnreadDirectMessageCount called from assets test shim")
-}
-func (shimImpl) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
-	panic("ListDirectMessageThread called from assets test shim")
-}
-func (shimImpl) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
-	panic("SendDirectMessage called from assets test shim")
-}
-func (shimImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
-	panic("MarkDirectMessageThreadRead called from assets test shim")
-}
-func (shimImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
-	panic("ListAdminActivities called from assets test shim")
-}
-func (shimImpl) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
-	panic("ListFederationPeers called from assets test shim")
-}
-func (shimImpl) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
-	panic("GetFederationPeer called from assets test shim")
-}
-func (shimImpl) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
-	panic("CreateFederationPeer called from assets test shim")
-}
-func (shimImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
-	panic("UpdateFederationPeer called from assets test shim")
-}
-func (shimImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
-	panic("DeleteFederationPeer called from assets test shim")
-}
-func (shimImpl) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
-	panic("GetFederationInstance called from assets test shim")
-}
-func (shimImpl) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
-	panic("PostFederationHandshake called from assets test shim")
-}
-func (shimImpl) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
-	panic("InitiateFederationHandshake called from assets test shim")
-}
-func (shimImpl) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
-	panic("ListFederationPendingInbound called from assets test shim")
-}
-func (shimImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
-	panic("AcceptFederationPeer called from assets test shim")
-}
-func (shimImpl) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
-	panic("ListFederationDirectories called from assets test shim")
-}
-func (shimImpl) SubscribeFederationDirectory(context.Context, openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
-	panic("SubscribeFederationDirectory called from assets test shim")
-}
-func (shimImpl) UnsubscribeFederationDirectory(context.Context, openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
-	panic("UnsubscribeFederationDirectory called from assets test shim")
-}
-func (shimImpl) PollFederationDirectory(context.Context, openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
-	panic("PollFederationDirectory called from assets test shim")
-}
-func (shimImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
-	panic("ListFederationDirectoryEntries called from assets test shim")
-}
-func (shimImpl) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
-	panic("RequestFederationDirectoryPublishChallenge called from assets test shim")
-}
-func (shimImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
-	panic("RegisterFederationDirectoryPublishListing called from assets test shim")
-}
-func (shimImpl) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
-	panic("GetFederationPeersVisible called from assets test shim")
-}
-func (shimImpl) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
-	panic("ListFederationPeerSuggestions called from assets test shim")
-}
-func (shimImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
-	panic("RefreshFederationPeerSuggestions called from assets test shim")
-}
-func (shimImpl) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
-	panic("ListFederationShares called from assets test shim")
-}
-func (shimImpl) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
-	panic("GrantFederationShare called from assets test shim")
-}
-func (shimImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
-	panic("RevokeFederationShare called from assets test shim")
-}
-func (shimImpl) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
-	panic("PreviewFederationPeerDefederation called from assets test shim")
 }

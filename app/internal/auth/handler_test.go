@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
 )
 
 // All tests in this file are integration tests against the live
@@ -393,7 +394,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 
 	router := chi.NewRouter()
 	router.Use(resolver.ResolveIdentity)
-	openapi.HandlerFromMux(openapi.NewStrictHandler(authOnlyImpl{handler}, nil), router)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(authOnlyImpl{PanicShim: &strictservershim.PanicShim{}, h: handler}, nil), router)
 
 	fx := &fixture{
 		pool:     pool,
@@ -411,6 +412,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 // the real handler. The other endpoints panic if accidentally called,
 // which would surface as a test failure rather than a silent miss.
 type authOnlyImpl struct {
+	*strictservershim.PanicShim
 	h *Handler
 }
 
@@ -705,40 +707,10 @@ func (a authOnlyImpl) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdm
 func (a authOnlyImpl) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
 	return a.h.RemoveAdminUserRevoke(ctx, req)
 }
-func (authOnlyImpl) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
-	panic("ListAssetTypeAcls called from auth test shim")
-}
-func (authOnlyImpl) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
-	panic("AddAssetTypeAcl called from auth test shim")
-}
-func (authOnlyImpl) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
-	panic("RemoveAssetTypeAcl called from auth test shim")
-}
-func (authOnlyImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
-	panic("ListAdminAuditEvents called from auth test shim")
-}
-func (authOnlyImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
-	panic("ListAdminAuditEventTypes called from auth test shim")
-}
-func (authOnlyImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
-	panic("GetAdminLicenseStatus called from auth test shim")
-}
-func (authOnlyImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
-	panic("ValidateAdminLicense called from auth test shim")
-}
-func (authOnlyImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
-	panic("UploadAdminLicense called from auth test shim")
-}
 func (a authOnlyImpl) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	// Real call — the auth handler IS the unit-under-test in this
 	// package, and the providers endpoint is in scope for its tests.
 	return a.h.ListIdentityProviders(ctx, req)
-}
-func (authOnlyImpl) GetAccountPreferences(context.Context, openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
-	panic("GetAccountPreferences called from auth test shim")
-}
-func (authOnlyImpl) PatchAccountPreferences(context.Context, openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
-	panic("PatchAccountPreferences called from auth test shim")
 }
 func (a authOnlyImpl) GetPostLike(context.Context, openapi.GetPostLikeRequestObject) (openapi.GetPostLikeResponseObject, error) {
 	panic("GetPostLike called from auth test shim")
@@ -903,192 +875,4 @@ func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesReques
 	panic("ListLocales called from auth test shim")
 }
 
-func (authOnlyImpl) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
-	panic("GetAppearanceConfig called from auth test shim")
-}
-func (authOnlyImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
-	panic("UpdateAppearanceConfig called from auth test shim")
-}
-func (authOnlyImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
-	panic("GetPublicAppearance called from auth test shim")
-}
 
-// --- jobs stubs (Phase 1.18.A) -------------------------------------------
-func (authOnlyImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
-	panic("ClaimJobs called from test shim")
-}
-func (authOnlyImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
-	panic("GetJob called from test shim")
-}
-func (authOnlyImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
-	panic("HeartbeatJob called from test shim")
-}
-func (authOnlyImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
-	panic("CompleteJob called from test shim")
-}
-func (authOnlyImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
-	panic("FailJob called from test shim")
-}
-
-func (authOnlyImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
-	panic("ListPostWhiteboards called from auth test shim")
-}
-
-func (authOnlyImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
-	panic("CreatePostWhiteboard called from auth test shim")
-}
-
-// --- brush packs stubs (Phase 1.21c) -------------------------------------
-func (authOnlyImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
-	panic("ListBrushPacks called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
-	panic("ImportBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
-	panic("GetBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
-	panic("DeleteBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
-	panic("GetBrushPackStamp called from authOnlyImpl test shim")
-}
-func (authOnlyImpl)ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
-	panic("ListAssetTextAnnotations called from auth_test test shim")
-}
-func (authOnlyImpl)CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
-	panic("CreateAssetTextAnnotation called from auth_test test shim")
-}
-func (authOnlyImpl)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
-	panic("UpdateTextAnnotation called from auth_test test shim")
-}
-func (authOnlyImpl)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
-	panic("LintAsset called from auth_test test shim")
-}
-func (authOnlyImpl) FollowUser(context.Context, openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
-	panic("FollowUser called from auth test shim")
-}
-func (authOnlyImpl) UnfollowUser(context.Context, openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
-	panic("UnfollowUser called from auth test shim")
-}
-func (authOnlyImpl) ListUserFollowers(context.Context, openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
-	panic("ListUserFollowers called from auth test shim")
-}
-func (authOnlyImpl) ListUserFollowing(context.Context, openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
-	panic("ListUserFollowing called from auth test shim")
-}
-func (authOnlyImpl) GetUserRelationship(context.Context, openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
-	panic("GetUserRelationship called from auth test shim")
-}
-func (authOnlyImpl) BlockUser(context.Context, openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
-	panic("BlockUser called from auth test shim")
-}
-func (authOnlyImpl) UnblockUser(context.Context, openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
-	panic("UnblockUser called from auth test shim")
-}
-func (authOnlyImpl) ListMyBlocked(context.Context, openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
-	panic("ListMyBlocked called from auth test shim")
-}
-func (authOnlyImpl) ListMyNotifications(context.Context, openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
-	panic("ListMyNotifications called from auth test shim")
-}
-func (authOnlyImpl) GetMyUnreadNotificationCount(context.Context, openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
-	panic("GetMyUnreadNotificationCount called from auth test shim")
-}
-func (authOnlyImpl) MarkNotificationRead(context.Context, openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
-	panic("MarkNotificationRead called from auth test shim")
-}
-func (authOnlyImpl) MarkAllMyNotificationsRead(context.Context, openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
-	panic("MarkAllMyNotificationsRead called from auth test shim")
-}
-func (authOnlyImpl) ListMyDirectMessageThreads(context.Context, openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
-	panic("ListMyDirectMessageThreads called from auth test shim")
-}
-func (authOnlyImpl) GetMyUnreadDirectMessageCount(context.Context, openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
-	panic("GetMyUnreadDirectMessageCount called from auth test shim")
-}
-func (authOnlyImpl) ListDirectMessageThread(context.Context, openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
-	panic("ListDirectMessageThread called from auth test shim")
-}
-func (authOnlyImpl) SendDirectMessage(context.Context, openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
-	panic("SendDirectMessage called from auth test shim")
-}
-func (authOnlyImpl) MarkDirectMessageThreadRead(context.Context, openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
-	panic("MarkDirectMessageThreadRead called from auth test shim")
-}
-func (authOnlyImpl) ListAdminActivities(context.Context, openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
-	panic("ListAdminActivities called from auth test shim")
-}
-func (authOnlyImpl) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
-	panic("ListFederationPeers called from auth test shim")
-}
-func (authOnlyImpl) GetFederationPeer(context.Context, openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
-	panic("GetFederationPeer called from auth test shim")
-}
-func (authOnlyImpl) CreateFederationPeer(context.Context, openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
-	panic("CreateFederationPeer called from auth test shim")
-}
-func (authOnlyImpl) UpdateFederationPeer(context.Context, openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
-	panic("UpdateFederationPeer called from auth test shim")
-}
-func (authOnlyImpl) DeleteFederationPeer(context.Context, openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
-	panic("DeleteFederationPeer called from auth test shim")
-}
-func (authOnlyImpl) GetFederationInstance(context.Context, openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
-	panic("GetFederationInstance called from auth test shim")
-}
-func (authOnlyImpl) PostFederationHandshake(context.Context, openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
-	panic("PostFederationHandshake called from auth test shim")
-}
-func (authOnlyImpl) InitiateFederationHandshake(context.Context, openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
-	panic("InitiateFederationHandshake called from auth test shim")
-}
-func (authOnlyImpl) ListFederationPendingInbound(context.Context, openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
-	panic("ListFederationPendingInbound called from auth test shim")
-}
-func (authOnlyImpl) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
-	panic("AcceptFederationPeer called from auth test shim")
-}
-func (authOnlyImpl) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
-	panic("ListFederationDirectories called from auth test shim")
-}
-func (authOnlyImpl) SubscribeFederationDirectory(context.Context, openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
-	panic("SubscribeFederationDirectory called from auth test shim")
-}
-func (authOnlyImpl) UnsubscribeFederationDirectory(context.Context, openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
-	panic("UnsubscribeFederationDirectory called from auth test shim")
-}
-func (authOnlyImpl) PollFederationDirectory(context.Context, openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
-	panic("PollFederationDirectory called from auth test shim")
-}
-func (authOnlyImpl) ListFederationDirectoryEntries(context.Context, openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
-	panic("ListFederationDirectoryEntries called from auth test shim")
-}
-func (authOnlyImpl) RequestFederationDirectoryPublishChallenge(context.Context, openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
-	panic("RequestFederationDirectoryPublishChallenge called from auth test shim")
-}
-func (authOnlyImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
-	panic("RegisterFederationDirectoryPublishListing called from auth test shim")
-}
-func (authOnlyImpl) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
-	panic("GetFederationPeersVisible called from auth test shim")
-}
-func (authOnlyImpl) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
-	panic("ListFederationPeerSuggestions called from auth test shim")
-}
-func (authOnlyImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
-	panic("RefreshFederationPeerSuggestions called from auth test shim")
-}
-func (authOnlyImpl) ListFederationShares(context.Context, openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
-	panic("ListFederationShares called from auth test shim")
-}
-func (authOnlyImpl) GrantFederationShare(context.Context, openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
-	panic("GrantFederationShare called from auth test shim")
-}
-func (authOnlyImpl) RevokeFederationShare(context.Context, openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
-	panic("RevokeFederationShare called from auth test shim")
-}
-func (authOnlyImpl) PreviewFederationPeerDefederation(context.Context, openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
-	panic("PreviewFederationPeerDefederation called from auth test shim")
-}
