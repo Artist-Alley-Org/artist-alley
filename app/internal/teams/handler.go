@@ -493,11 +493,11 @@ func (h *Handler) ListTeamMembers(
 	for _, r := range rows {
 		m := openapi.TeamMember{
 			TeamId:    openapi_types.UUID(r.TeamID.Bytes),
-			RsUserId:  r.RsUserID,
+			RsUserId:  r.UserRef,
 			AddedAt:   r.AddedAt.Time,
 		}
-		if r.AddedByRsUserID != nil {
-			m.AddedByRsUserId = r.AddedByRsUserID
+		if r.AddedByUserRef != nil {
+			m.AddedByRsUserId = r.AddedByUserRef
 		}
 		out = append(out, m)
 	}
@@ -526,8 +526,8 @@ func (h *Handler) AddTeamMember(
 	}
 	if err := New(h.Pool).AddTeamMember(ctx, AddTeamMemberParams{
 		TeamID:              pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
-		RsUserID:            req.Body.RsUserId,
-		AddedByRsUserID:     &caller.UserRef,
+		UserRef:            req.Body.RsUserId,
+		AddedByUserRef:     &caller.UserRef,
 	}); err != nil {
 		if isFKViolation(err) {
 			return openapi.AddTeamMember404JSONResponse{
@@ -556,7 +556,7 @@ func (h *Handler) RemoveTeamMember(
 	}
 	rows, err := New(h.Pool).RemoveTeamMember(ctx, RemoveTeamMemberParams{
 		TeamID:   pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
-		RsUserID: req.RsUserId,
+		UserRef: req.RsUserId,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("teams: remove member: %w", err)

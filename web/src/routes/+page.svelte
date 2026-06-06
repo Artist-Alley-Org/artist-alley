@@ -69,12 +69,21 @@
       const params: Record<string, string | number> = { limit: PAGE };
       if (q.trim() !== '') params.q = q.trim();
       if (!reset && cursor) params.cursor = cursor;
-      // Feed filter + direction from the BrowseFooter store. Backend
-      // support for `filter` (team / trending / following) and `dir`
-      // lands incrementally — until then unknown params are ignored
-      // and the default newest-first feed comes back.
+      // Feed filter + direction from the BrowseFooter store. The
+      // backend's `feed` enum currently accepts `latest` + `following`
+      // (Phase 1.17.G2); `team` and `trending` are still client-only
+      // pills that the server treats as `latest` until those phases
+      // land. The full `filter` value still goes out for
+      // observability — server logs which pill the user hit.
       params.filter = browseView.filter;
       params.dir = browseView.feedDir;
+      // Map the client pill onto the server's typed `feed` enum.
+      // Unknown pills fall through to `latest` (the default), so a
+      // pre-1.17.G2 client sending `following` to a server without
+      // that enum value still gets a sensible page.
+      if (browseView.filter === 'following') {
+        params.feed = 'following';
+      }
 
       const { data, error: apiErr } = await api.GET('/posts', {
         params: { query: params as never },

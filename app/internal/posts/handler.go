@@ -41,6 +41,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -88,6 +90,48 @@ type Handler struct {
 	// create/delete a post). nil-safe — the helpers we call are
 	// already no-ops on a nil Registry.
 	registry *cache.Registry
+
+	// follows is the social-graph seam: posts.handler consults it
+	// to gate visibility='followers' posts (the long-parked TODO
+	// from Phase 1.13.I, finally wired in 1.17.G2). Local interface
+	// rather than a direct social.Handler import so this package
+	// doesn't grow a cross-feature dep; concrete impl is injected
+	// at boot via SetFollowChecker.
+	//
+	// nil-safe: when the registry isn't wired (tests), visibility
+	// 'followers' falls back to "treat as public" — the
+	// pre-1.17.G2 behaviour — rather than refusing every read.
+	follows followChecker
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
+	// per ADR 0044). Wired post-construction in api.go. Handlers
+	// use h.activities.WithEmission to record every social action
+	// in the same tx as its domain write. nil-safe: tests that
+	// don't wire the writer fall back to the pre-ADR-0044 behaviour
+	// (direct domain writes; no activity record).
+	activities  *activities.Writer
+	baseURLFn   func(ctx context.Context) string
+}
+
+// followChecker is the slice of social.Handler this package needs:
+// "does follower follow followee?" Wired at boot via
+// SetFollowChecker so we don't grow an import cycle.
+type followChecker interface {
+	IsFollowing(ctx context.Context, follower, followee int64) (bool, error)
+}
+
+// SetFollowChecker installs the social-graph dependency post-
+// construction (same pattern users.Handler uses for the audit
+// recorder + auth.Handler uses for the provider registry).
+func (h *Handler) SetFollowChecker(fc followChecker) { h.follows = fc }
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Post-construction
+// setter so the boot order (handlers → cross-package deps) stays
+// linear.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
@@ -128,13 +172,13 @@ func (h *Handler) CreatePost(
 		}, nil
 	}
 
-	visibility := "public"
+	visibility := "org-only"
 	if in.Visibility != nil {
 		visibility = string(*in.Visibility)
 	}
 	if !validVisibility(visibility) {
 		return openapi.CreatePost400JSONResponse{
-			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|followers|private"},
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
 		}, nil
 	}
 
@@ -242,6 +286,29 @@ func (h *Handler) CreatePost(
 		}
 	}
 
+	// Record the Create activity in the same tx per ADR 0044. The
+	// federation outbox dispatcher (Phase 1.22.D) reads from the
+	// activities ledger to publish to peers; without this the new
+	// post would be invisible to federation. 1.22.B-cleanup made
+	// this required — no more silent skip.
+	{
+		actorCtx := emit.ActorContext{
+			UserRef:  id.UserRef,
+			Username: id.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		postRef := emit.PostRef{
+			ID:            uuid.UUID(row.ID.Bytes).String(),
+			Title:         row.Title,
+			AuthorUserRef: id.UserRef,
+			AuthorURI:     actorCtx.URI(),
+		}
+		em := emit.CreatePost(actorCtx, postRef, emit.PostVisibility(visibility))
+		if _, err := h.activities.RecordActivity(ctx, tx, em.Activity); err != nil {
+			return nil, fmt.Errorf("posts: emit Create activity: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("posts: commit: %w", err)
 	}
@@ -291,7 +358,7 @@ func (h *Handler) GetPost(
 		}
 		return nil, err
 	}
-	if !canReadPost(id, full) {
+	if !h.canReadPost(ctx, id, full) {
 		return openapi.GetPost403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -348,7 +415,7 @@ func (h *Handler) UpdatePost(
 		s := string(*in.Visibility)
 		if !validVisibility(s) {
 			return openapi.UpdatePost400JSONResponse{
-				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be public|followers|private"},
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "visibility must be private|org-only|followers|explicit-share (1.22.C: 'public' reserved for future public-fediverse phase)"},
 			}, nil
 		}
 		visPtr = &s
@@ -380,6 +447,35 @@ func (h *Handler) UpdatePost(
 			Column2: clean,
 		}); err != nil {
 			return nil, fmt.Errorf("posts: replace tags: %w", err)
+		}
+	}
+
+	// Record the Update activity in the same tx per ADR 0044.
+	{
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		// Re-resolve title/visibility from the updated state (or
+		// fall back to current row if not in this PATCH).
+		title := current.Title
+		if in.Title != nil {
+			title = *in.Title
+		}
+		vis := current.Visibility
+		if visPtr != nil {
+			vis = *visPtr
+		}
+		postRef := emit.PostRef{
+			ID:            uuid.UUID(pgID.Bytes).String(),
+			Title:         title,
+			AuthorUserRef: current.AuthorUserRef,
+			AuthorURI:     actorCtx.URI(),
+		}
+		em := emit.UpdatePost(actorCtx, postRef, emit.PostVisibility(vis))
+		if _, err := h.activities.RecordActivity(ctx, tx, em.Activity); err != nil {
+			return nil, fmt.Errorf("posts: emit Update activity: %w", err)
 		}
 	}
 
@@ -427,8 +523,25 @@ func (h *Handler) DeletePost(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
-	if err := q.SoftDeletePost(ctx, pgID); err != nil {
-		return nil, fmt.Errorf("posts: delete: %w", err)
+	// Wrap SoftDeletePost + Delete activity in one tx per ADR 0044.
+	// Without this the federation outbox can't tell peers the post
+	// is gone (Tombstone per AP §6.4). 1.22.B-cleanup made
+	// activities required.
+	{
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		em := emit.DeletePost(actorCtx, uuid.UUID(pgID.Bytes).String(), cur.Title)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			return New(tx).SoftDeletePost(ctx, pgID)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("posts: delete: %w", err)
+		}
 	}
 	h.cacheInvalidate(ctx, pgID)
 	// post_count just went down for the author — drop their cached
@@ -477,11 +590,15 @@ func (h *Handler) ListPosts(
 		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
 
-	// Default visibility filter: public-only. Callers can pass
-	// `?visibility=private` to get their own private posts (we still
-	// AND with the caller's own author_ref so other people's privates
-	// aren't leaked).
-	visibility := "public"
+	// Default visibility filter: org-only (the post-1.22.C-a
+	// equivalent of legacy 'public' for the walled-garden feed).
+	// Callers can pass `?visibility=private` to get their own
+	// private posts (we still AND with the caller's own author_ref
+	// so other people's privates aren't leaked). A future feed
+	// query upgrade unifies the filter with the share-table view
+	// for "what I can actually see"; this is the conservative
+	// preserve-old-behavior path for the cleanup migration.
+	visibility := "org-only"
 	if req.Params.Visibility != nil {
 		visibility = string(*req.Params.Visibility)
 	}
@@ -510,12 +627,25 @@ func (h *Handler) ListPosts(
 		tagPtr = req.Params.Tag
 	}
 
+	// feed=following (Phase 1.17.G2) restricts the page to authors
+	// the caller follows. Anonymous callers can never satisfy this
+	// (the 401 path above returns first); for authenticated callers
+	// who don't follow anyone, the EXISTS subquery yields an empty
+	// page rather than a 4xx — matches every social platform's
+	// "your following tab is empty" UX.
+	var followerPtr *int64
+	if req.Params.Feed != nil && *req.Params.Feed == openapi.Following {
+		ref := caller.UserRef
+		followerPtr = &ref
+	}
+
 	fetch := limit + 1
 	rows, err := New(h.Pool).ListPostsPage(ctx, ListPostsPageParams{
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
 		Q:               qText,
 		Tag:             tagPtr,
+		FeedFollowerRef: followerPtr,
 		CursorPostedAt:  cursorTs,
 		CursorID:        cursorID,
 		RowLimit:        fetch,
@@ -667,7 +797,7 @@ func (h *Handler) ListPostAcls(
 		}
 		return nil, err
 	}
-	if !canReadPost(caller, full) {
+	if !h.canReadPost(ctx, caller, full) {
 		return openapi.ListPostAcls403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not visible to this user"},
 		}, nil
@@ -684,8 +814,8 @@ func (h *Handler) ListPostAcls(
 			Permission:    openapi.AclEntryPermission(r.Permission),
 			GrantedAt:     r.GrantedAt.Time,
 		}
-		if r.GrantedByRsUserID != nil {
-			e.GrantedByRsUserId = r.GrantedByRsUserID
+		if r.GrantedByUserRef != nil {
+			e.GrantedByRsUserId = r.GrantedByUserRef
 		}
 		if r.ExpiresAt.Valid {
 			t := r.ExpiresAt.Time
@@ -737,7 +867,7 @@ func (h *Handler) AddPostAcl(
 		PrincipalType:       string(req.Body.PrincipalType),
 		PrincipalID:         req.Body.PrincipalId,
 		Permission:          string(req.Body.Permission),
-		GrantedByRsUserID:   &caller.UserRef,
+		GrantedByUserRef:   &caller.UserRef,
 		ExpiresAt:           expires,
 	}); err != nil {
 		return nil, fmt.Errorf("posts: add acl: %w", err)
@@ -861,8 +991,12 @@ func canMutatePost(id *auth.Identity, authorRef int64) bool {
 }
 
 // canReadPost gates GetPost. Author always wins; otherwise the
-// visibility decides.
-func canReadPost(id *auth.Identity, p *openapi.Post) bool {
+// visibility decides. Method (not free function) so the followers-
+// visibility branch can consult h.follows. Anonymous + nil-follows
+// callers fall through to "treat followers like public" — the
+// pre-1.17.G2 behaviour — to keep the test path that doesn't wire
+// the social handler working.
+func (h *Handler) canReadPost(ctx context.Context, id *auth.Identity, p *openapi.Post) bool {
 	if id == nil {
 		return false
 	}
@@ -870,21 +1004,44 @@ func canReadPost(id *auth.Identity, p *openapi.Post) bool {
 		return true
 	}
 	switch p.Visibility {
-	case openapi.PostVisibilityPublic:
+	case openapi.PostVisibilityOrgOnly:
+		// Any authenticated local user can read org-only posts —
+		// the post-1.22.C-a equivalent of legacy 'public' for the
+		// walled-garden default tier.
 		return true
 	case openapi.PostVisibilityFollowers:
-		// Phase 1.13.I lands the follows table; treat as public for now.
-		// TODO(1.13.I): check follows(follower=id.UserRef, followee=p.AuthorUserRef)
-		return true
+		// Phase 1.17.G2 wires this: the post is visible only when
+		// the caller follows the author. follows nil → degrade to
+		// org-only-style behaviour so legacy test fixtures keep passing.
+		if h.follows == nil {
+			return true
+		}
+		ok, err := h.follows.IsFollowing(ctx, id.UserRef, p.AuthorUserRef)
+		if err != nil {
+			// Fail closed on a DB error — better to 403 a real
+			// follower temporarily than silently expose a private
+			// post if the follows table is unreachable.
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "posts.followers_check.error",
+				slog.Int64("follower", id.UserRef),
+				slog.Int64("followee", p.AuthorUserRef),
+				slog.String("err", err.Error()),
+			)
+			return false
+		}
+		return ok
 	case openapi.PostVisibilityPrivate:
 		return id.Can(CapPostsAdmin) || id.Can(CapSystemAdmin)
 	}
 	return false
 }
 
+// validVisibility checks against the 4-tier closed catalogue
+// per the 1.22.C design proposal §1. `public` was removed at
+// migration 00056 (reserved for a future public-fediverse phase).
+// Writes attempting `public` get the clear "tier reserved" error.
 func validVisibility(s string) bool {
 	switch s {
-	case "private", "followers", "public":
+	case "private", "org-only", "followers", "explicit-share":
 		return true
 	}
 	return false
@@ -1038,6 +1195,7 @@ func isFKError(err error, constraint string) bool {
 // ---------------------------------------------------------------------------
 // Compile-time assertion: catches openapi-codegen signature drift.
 // ---------------------------------------------------------------------------
+
 
 var _ interface {
 	ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error)

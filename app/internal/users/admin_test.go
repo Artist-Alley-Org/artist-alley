@@ -109,7 +109,7 @@ func TestAdminUserCursor_RejectsGarbage(t *testing.T) {
 	}
 }
 
-// status → approved mapping must match the RS convention exactly.
+// status → approved mapping must match the legacy convention exactly.
 // A swap here (e.g., active=0 instead of 1) silently inverts every
 // admin filter — pending users would show as active, etc.
 func TestApprovedFromStatus(t *testing.T) {

@@ -104,7 +104,7 @@
     backgroundUrl?: string;
     /** Infinite-canvas mode (C-1.19). When true, the canvas matches
         the wrapper dimensions and applies session.viewX / viewY /
-        viewZoom at render time so the user can pan + zoom Miro-style.
+        viewZoom at render time so the user can pan + zoom whiteboard-style.
         When false (default — annotation use case), the canvas matches
         source dimensions and renders fixed-fit. The whiteboard host
         opts in; the annotation host doesn't, so the two surfaces
@@ -193,7 +193,7 @@
   //     transform; world coords == source coords == CSS coords.
   //     Same shape as before C-1.19. Used by the annotation host.
   //   - infinite=true:  canvas matches the wrapper dimensions in
-  //     CSS px (Miro-style). Render-time setTransform applies
+  //     CSS px (infinite-canvas style). Render-time setTransform applies
   //     session.view{X,Y,Zoom} so the user can pan + zoom freely.
   //     Source-doc dims become a "rasterization frame" hint only.
 
@@ -211,7 +211,7 @@
       canvasEl.width = Math.round(wW * dpr);
       canvasEl.height = Math.round(wH * dpr);
       // Auto-fit on first mount so the source-doc rect lands
-      // centered + visible — same as opening a fresh sketch in Miro.
+      // centered + visible — same as opening a fresh sketch in any infinite-canvas tool.
       if (session.viewZoom === 1 && session.viewX === 0 && session.viewY === 0) {
         session.fitView(wW, wH);
       }
@@ -1465,7 +1465,7 @@
 
   // ── Pan + zoom (infinite mode) ────────────────────────────────────
   //
-  // Three pan gestures, mirroring Figma / Miro conventions:
+  // Three pan gestures, mirroring common design-tool conventions:
   //   - Middle-mouse drag — always pans regardless of active tool
   //   - Space + left-drag — Photoshop's hand-tool toggle
   //   - Two-finger trackpad drag without ctrl — handled via wheel
@@ -1474,7 +1474,7 @@
   // Wheel zoom-at-cursor: ctrl/cmd + wheel OR pinch-zoom (which
   // browsers report as wheel + ctrlKey). Anchor the zoom on the
   // cursor's CSS position so the world point under it stays put —
-  // Miro / Figma behaviour.
+  // standard design-tool behaviour.
   //
   // The gesture state lives outside selectGesture so it doesn't
   // tangle with item-resize / rotate transforms.

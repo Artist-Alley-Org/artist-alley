@@ -43,7 +43,7 @@ LIMIT 1;
 
 -- name: SetUserSession :exec
 -- Writes a freshly minted session token to the user's row. Also
--- bumps last_active so RS-side "active users" lists notice. Used at
+-- bumps last_active so legacy-side "active users" lists notice. Used at
 -- the end of /auth/login.
 UPDATE "user"
 SET session     = $1,
@@ -137,12 +137,12 @@ WHERE token_hash = $1
 SELECT g.capability_code,
        g.team_id,
        g.granted_at,
-       g.granted_by_rs_user_id,
+       g.granted_by_user_ref,
        g.note,
        t.name AS team_name
 FROM user_capability_grants g
 LEFT JOIN teams t ON t.id = g.team_id
-WHERE g.rs_user_id = $1
+WHERE g.user_ref = $1
 ORDER BY g.capability_code, g.team_id NULLS FIRST;
 
 -- name: ListUserRevokes :many
@@ -151,48 +151,48 @@ ORDER BY g.capability_code, g.team_id NULLS FIRST;
 SELECT r.capability_code,
        r.team_id,
        r.revoked_at,
-       r.revoked_by_rs_user_id,
+       r.revoked_by_user_ref,
        r.note,
        t.name AS team_name
 FROM user_capability_revokes r
 LEFT JOIN teams t ON t.id = r.team_id
-WHERE r.rs_user_id = $1
+WHERE r.user_ref = $1
 ORDER BY r.capability_code, r.team_id NULLS FIRST;
 
 -- name: InsertUserGrant :exec
--- Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+-- Upsert a grant. The UNIQUE NULLS NOT DISTINCT (user_ref, cap,
 -- team_id) means re-granting the same (cap, team_id) is a no-op
 -- update of granted_at + note + granter — useful when an admin
 -- refreshes a stale grant.
 INSERT INTO user_capability_grants (
-    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+    user_ref, capability_code, team_id, granted_by_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     granted_at = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     note = EXCLUDED.note;
 
 -- name: DeleteUserGrant :execrows
--- Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+-- Ownership-checked delete. The (user_ref, cap, team_id) tuple is
 -- the natural key — team_id may be NULL (global grant). Returns
 -- rows-affected so the handler can 404 cleanly.
 DELETE FROM user_capability_grants
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND capability_code = $2
   AND team_id IS NOT DISTINCT FROM $3;
 
 -- name: InsertUserRevoke :exec
 INSERT INTO user_capability_revokes (
-    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+    user_ref, capability_code, team_id, revoked_by_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     revoked_at = NOW(),
-    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    revoked_by_user_ref = EXCLUDED.revoked_by_user_ref,
     note = EXCLUDED.note;
 
 -- name: DeleteUserRevoke :execrows
 DELETE FROM user_capability_revokes
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND capability_code = $2
   AND team_id IS NOT DISTINCT FROM $3;
 
@@ -212,7 +212,7 @@ WHERE user_ref = $1
 -- Returns just the username + stored hash for a user. Used by the
 -- self-service password change endpoint to verify the caller knows
 -- their CURRENT password before accepting a new one.
-SELECT ref AS rs_user_id, username, password
+SELECT ref AS user_ref, username, password
 FROM "user"
 WHERE ref = $1;
 
@@ -231,17 +231,17 @@ WHERE ref = $1;
 -- Append-only history row. The handler calls this after every
 -- successful UpdateUserPassword (whether self-service or admin
 -- reset) so the reuse-prevention check has the data it needs.
-INSERT INTO user_password_history (rs_user_id, password_hash)
+INSERT INTO user_password_history (user_ref, password_hash)
 VALUES ($1, $2);
 
 -- name: ListRecentPasswordHashes :many
 -- Most recent N hashes for reuse-prevention. The handler iterates +
 -- VerifyPasswords against each — we can't WHERE on the hash directly
--- because RS-style hashing has a per-call HMAC step (the candidate
+-- because the legacy-style hashing has a per-call HMAC step (the candidate
 -- plaintext needs to be re-hashed and compared in code).
 SELECT password_hash
 FROM user_password_history
-WHERE rs_user_id = $1
+WHERE user_ref = $1
 ORDER BY changed_at DESC
 LIMIT $2;
 
@@ -272,10 +272,10 @@ ORDER BY last_used_at DESC;
 -- cascade. Counts only global role assignments (team_id IS NULL);
 -- team-scoped system.admin would be a misconfiguration anyway since
 -- system.admin is a global wildcard.
-SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+SELECT COUNT(DISTINCT ur.user_ref)::BIGINT AS value
 FROM user_roles ur
 JOIN role_capabilities rc ON rc.role_id = ur.role_id
-JOIN "user" u             ON u.ref     = ur.rs_user_id
+JOIN "user" u             ON u.ref     = ur.user_ref
 WHERE rc.capability_code = 'system.admin'
   AND ur.team_id IS NULL;
 
@@ -289,8 +289,8 @@ LIMIT 1;
 
 -- name: CreateUser :one
 -- Used by setup (initial admin) and later by the admin user-management
--- endpoints. usergroup is the RS-side permission group: while the Go
--- side authorises via roles+capabilities, RS-rendered pages still gate
+-- endpoints. usergroup is the legacy-side permission group: while the Go
+-- side authorises via roles+capabilities, legacy-rendered pages still gate
 -- on the `permissions` string of the assigned usergroup. Pass NULL to
 -- omit (Go-only user); pass 3 for the seeded Super Admin row.
 -- approved defaults to 1.
@@ -299,15 +299,15 @@ VALUES ($1, $2, $3, $4, $5, 1, $6)
 RETURNING ref, username, fullname, email, usergroup, created;
 
 -- name: CreateApiToken :one
-INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
+INSERT INTO api_tokens (user_ref, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, rs_user_id, name, scopes, expires_at, last_used_at, created_at;
+RETURNING id, user_ref, name, scopes, expires_at, last_used_at, created_at;
 
 -- name: FindActiveApiToken :one
 -- Returns the matching token only if it is not revoked and not expired.
 -- Used by the bearer-token middleware on every authenticated request.
 SELECT id,
-       rs_user_id,
+       user_ref,
        name,
        scopes,
        expires_at,
@@ -331,14 +331,14 @@ WHERE id = $1;
 -- Lists the caller's tokens. Excludes revoked ones; expired ones are
 -- still shown so the user can see why an old token stopped working.
 SELECT id,
-       rs_user_id,
+       user_ref,
        name,
        scopes,
        expires_at,
        last_used_at,
        created_at
 FROM api_tokens
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND revoked_at IS NULL
 ORDER BY created_at DESC;
 
@@ -348,7 +348,7 @@ ORDER BY created_at DESC;
 UPDATE api_tokens
 SET revoked_at = NOW()
 WHERE id = $1
-  AND rs_user_id = $2
+  AND user_ref = $2
   AND revoked_at IS NULL;
 
 -- name: EffectiveCapabilitiesForUser :many
@@ -366,7 +366,7 @@ WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
     FROM roles r
     JOIN user_roles ur ON ur.role_id = r.id
-    WHERE ur.rs_user_id = $1
+    WHERE ur.user_ref = $1
       AND ur.team_id IS NULL
 
     UNION ALL
@@ -386,7 +386,7 @@ all_caps AS (
     UNION
     SELECT g.capability_code AS code
     FROM user_capability_grants g
-    WHERE g.rs_user_id = $1
+    WHERE g.user_ref = $1
       AND g.team_id IS NULL
 )
 SELECT ac.code
@@ -394,7 +394,7 @@ FROM all_caps ac
 WHERE ac.code NOT IN (
     SELECT v.capability_code
     FROM user_capability_revokes v
-    WHERE v.rs_user_id = $1
+    WHERE v.user_ref = $1
       AND v.team_id IS NULL
 )
 ORDER BY ac.code;
@@ -426,7 +426,7 @@ WITH RECURSIVE role_chain(role_id, team_id, depth) AS (
     -- Seed: every role assignment, preserving its team scope.
     SELECT ur.role_id, ur.team_id, 0
     FROM user_roles ur
-    WHERE ur.rs_user_id = $1
+    WHERE ur.user_ref = $1
 
     UNION ALL
 
@@ -444,7 +444,7 @@ role_caps AS (
 grant_caps AS (
     SELECT g.capability_code AS code, g.team_id AS team_id
     FROM user_capability_grants g
-    WHERE g.rs_user_id = $1
+    WHERE g.user_ref = $1
 ),
 all_caps AS (
     SELECT code, team_id FROM role_caps
@@ -456,7 +456,7 @@ non_revoked AS (
     FROM all_caps a
     WHERE NOT EXISTS (
         SELECT 1 FROM user_capability_revokes v
-        WHERE v.rs_user_id = $1
+        WHERE v.user_ref = $1
           AND v.capability_code = a.code
           AND v.team_id IS NOT DISTINCT FROM a.team_id
     )
@@ -507,7 +507,7 @@ ORDER BY code;
 SELECT r.id, r.name, r.description, r.parent_id, ur.team_id
 FROM roles r
 JOIN user_roles ur ON ur.role_id = r.id
-WHERE ur.rs_user_id = $1
+WHERE ur.user_ref = $1
 ORDER BY ur.team_id NULLS FIRST, r.name;
 
 -- name: SetUserGlobalRole :exec
@@ -521,13 +521,13 @@ ORDER BY ur.team_id NULLS FIRST, r.name;
 -- so there's no window where the user has zero roles.
 WITH _del AS (
     DELETE FROM user_roles
-     WHERE rs_user_id = $1 AND team_id IS NULL
+     WHERE user_ref = $1 AND team_id IS NULL
 )
-INSERT INTO user_roles (rs_user_id, role_id, assigned_by_rs_user_id)
+INSERT INTO user_roles (user_ref, role_id, assigned_by_user_ref)
 VALUES ($1, $2, $3)
 ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
     assigned_at            = NOW(),
-    assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id;
+    assigned_by_user_ref = EXCLUDED.assigned_by_user_ref;
 
 -- name: ListCapabilities :many
 SELECT code, description FROM capabilities ORDER BY code;

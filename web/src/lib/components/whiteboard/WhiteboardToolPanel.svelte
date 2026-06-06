@@ -163,12 +163,12 @@
     // shapes with a line. End sticks when the shape moves.
     { id: 'connector',  label: 'Connector', icon: 'M6 18a4 4 0 0 0 4-4 M14 10a4 4 0 0 0 4-4 M10 14L14 10' },
     // Phase 1.23 — frame: drag out a labelled boundary; items
-    // inside move with it (Figma / Miro frames).
+    // inside move with it (Figma-style frames).
     { id: 'frame',      label: 'Frame', icon: 'M4 6h16v12H4z M4 9h16' },
     // Phase 1.23 — sticky note: drop a colored card with text.
     { id: 'sticky',     label: 'Sticky note', icon: 'M5 4h12l2 2v14H5z M19 6h-3v-2 M5 19h10' },
     // Label: a flat colored rectangle with centered text — a
-    // Miro-style chip/tag. Same item kind as sticky but with the
+    // chip/tag. Same item kind as sticky but with the
     // `style: 'label'` field for renderer-flipping.
     { id: 'label',      label: 'Label', icon: 'M3 7h14l4 5-4 5H3z M16 12h.01' },
     // Phase 1.24 — mindmap: drop a hierarchical tree with auto-
@@ -1459,7 +1459,7 @@
     {/if}
 
     <!-- ── Comments on selected element (Phase 1.27) ───────────
-         AFFiNE pattern: comments live on individual canvas
+         Element-typed pattern: comments live on individual canvas
          elements. Shown only when an item is selected. Same
          engine will power asset annotations in the future
          (annotation surface = same shape with an additional

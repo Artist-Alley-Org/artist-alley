@@ -80,14 +80,14 @@ UPDATE assets
 
 -- name: InsertWorkflowAudit :exec
 INSERT INTO workflow_audit (
-    resource_kind, resource_id, from_state_id, to_state_id, actor_rs_user_id, note
+    resource_kind, resource_id, from_state_id, to_state_id, actor_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5, $6);
 
 -- name: ListWorkflowAudit :many
 -- Audit history for a single resource, newest first.
 SELECT a.id, a.resource_kind, a.resource_id,
        a.from_state_id, a.to_state_id,
-       a.actor_rs_user_id, a.note, a.transitioned_at,
+       a.actor_user_ref, a.note, a.transitioned_at,
        fs.code AS from_code, ts.code AS to_code
 FROM workflow_audit a
 LEFT JOIN workflow_states fs ON fs.id = a.from_state_id

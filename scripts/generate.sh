@@ -35,5 +35,10 @@ docker run --rm \
         /go/bin/oapi-codegen -config oapi-codegen.yaml openapi.yaml
     '
 
+step "gen-panicshim: regenerating strictservershim.PanicShim from openapi.gen.go"
+"${ROOT}/scripts/gen-panicshim.sh" \
+    "${ROOT}/app/internal/openapi/openapi.gen.go" \
+    "${ROOT}/app/internal/openapi/strictservershim/panicshim_gen.go"
+
 step "Generated files now match the specs."
 echo "Verify with: cd app && go build ./... && ./scripts/test.sh --go"

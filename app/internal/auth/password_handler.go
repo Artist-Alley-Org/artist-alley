@@ -36,7 +36,7 @@ import (
 )
 
 // reuseWindow — how many previous hashes the change handler compares
-// against. RS doesn't ship this; we cap at 5 (NIST 800-63B's typical
+// against. The legacy stack doesn't ship this; we cap at 5 (NIST 800-63B's typical
 // guidance) so a user can roll through a few passwords without
 // running out of options, but can't immediately re-use the one they
 // just rotated away from.
@@ -182,7 +182,7 @@ func (h *Handler) ChangeMyPassword(
 
 	// Reuse check — compare against the last N hashes.
 	prevHashes, err := q.ListRecentPasswordHashes(ctx, ListRecentPasswordHashesParams{
-		RsUserID: caller.UserRef,
+		UserRef: caller.UserRef,
 		Limit:    reuseWindow,
 	})
 	if err != nil {
@@ -193,7 +193,7 @@ func (h *Handler) ChangeMyPassword(
 			VerifyPassword(req.Body.NewPassword, h, "") == nil {
 			// Two probes because old hashes might pre-date the
 			// scramble-key rotation. VerifyPassword without the key
-			// is allowed (RS strips the HMAC step when scrambleKey
+			// is allowed (the legacy code strips the HMAC step when scrambleKey
 			// is empty).
 		}
 	}
@@ -224,7 +224,7 @@ func (h *Handler) ChangeMyPassword(
 		return nil, fmt.Errorf("auth: update password: %w", err)
 	}
 	if err := q.InsertPasswordHistory(ctx, InsertPasswordHistoryParams{
-		RsUserID:     caller.UserRef,
+		UserRef:     caller.UserRef,
 		PasswordHash: newHash,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert history: %w", err)
@@ -301,7 +301,7 @@ func (h *Handler) AdminResetUserPassword(
 		return nil, fmt.Errorf("auth: update password: %w", err)
 	}
 	if err := q.InsertPasswordHistory(ctx, InsertPasswordHistoryParams{
-		RsUserID:     req.Ref,
+		UserRef:     req.Ref,
 		PasswordHash: hash,
 	}); err != nil {
 		// History is best-effort here — the password is already

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
 )
 
 // All tests in this file are integration tests against the live
@@ -322,8 +323,8 @@ func (f *fixture) callWithBearer(t *testing.T, method, path string, body any, to
 
 // withFixture spins up a real-DB-backed fixture, calls fn, then rolls
 // back the transaction so the run leaves no trace. It also makes sure
-// the "user" table exists (creates a minimal version if RS hasn't
-// installed yet) so tests aren't coupled to install state.
+// the "user" table exists (creates a minimal version if the legacy
+// installer hasn't run yet) so tests aren't coupled to install state.
 func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	t.Helper()
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -366,10 +367,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	// from a previously-killed run (panic, ^C) doesn't trip PK
 	// constraints inside the test body.
 	for _, sql := range []string{
-		`DELETE FROM api_tokens             WHERE rs_user_id = $1`,
-		`DELETE FROM user_capability_grants WHERE rs_user_id = $1`,
-		`DELETE FROM user_capability_revokes WHERE rs_user_id = $1`,
-		`DELETE FROM user_roles              WHERE rs_user_id = $1`,
+		`DELETE FROM api_tokens             WHERE user_ref = $1`,
+		`DELETE FROM user_capability_grants WHERE user_ref = $1`,
+		`DELETE FROM user_capability_revokes WHERE user_ref = $1`,
+		`DELETE FROM user_roles              WHERE user_ref = $1`,
 		`DELETE FROM sessions               WHERE user_ref   = $1`,
 	} {
 		if _, err := pool.Exec(ctx, sql, userRef); err != nil {
@@ -379,10 +380,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	t.Cleanup(func() {
 		// Best-effort: remove the user and any rows that reference them.
 		cleanCtx := context.Background()
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})
@@ -393,7 +394,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 
 	router := chi.NewRouter()
 	router.Use(resolver.ResolveIdentity)
-	openapi.HandlerFromMux(openapi.NewStrictHandler(authOnlyImpl{handler}, nil), router)
+	openapi.HandlerFromMux(openapi.NewStrictHandler(authOnlyImpl{PanicShim: &strictservershim.PanicShim{}, h: handler}, nil), router)
 
 	fx := &fixture{
 		pool:     pool,
@@ -411,6 +412,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 // the real handler. The other endpoints panic if accidentally called,
 // which would surface as a test failure rather than a silent miss.
 type authOnlyImpl struct {
+	*strictservershim.PanicShim
 	h *Handler
 }
 
@@ -705,30 +707,6 @@ func (a authOnlyImpl) AddAdminUserRevoke(ctx context.Context, req openapi.AddAdm
 func (a authOnlyImpl) RemoveAdminUserRevoke(ctx context.Context, req openapi.RemoveAdminUserRevokeRequestObject) (openapi.RemoveAdminUserRevokeResponseObject, error) {
 	return a.h.RemoveAdminUserRevoke(ctx, req)
 }
-func (authOnlyImpl) ListAssetTypeAcls(context.Context, openapi.ListAssetTypeAclsRequestObject) (openapi.ListAssetTypeAclsResponseObject, error) {
-	panic("ListAssetTypeAcls called from auth test shim")
-}
-func (authOnlyImpl) AddAssetTypeAcl(context.Context, openapi.AddAssetTypeAclRequestObject) (openapi.AddAssetTypeAclResponseObject, error) {
-	panic("AddAssetTypeAcl called from auth test shim")
-}
-func (authOnlyImpl) RemoveAssetTypeAcl(context.Context, openapi.RemoveAssetTypeAclRequestObject) (openapi.RemoveAssetTypeAclResponseObject, error) {
-	panic("RemoveAssetTypeAcl called from auth test shim")
-}
-func (authOnlyImpl) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
-	panic("ListAdminAuditEvents called from auth test shim")
-}
-func (authOnlyImpl) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
-	panic("ListAdminAuditEventTypes called from auth test shim")
-}
-func (authOnlyImpl) GetAdminLicenseStatus(context.Context, openapi.GetAdminLicenseStatusRequestObject) (openapi.GetAdminLicenseStatusResponseObject, error) {
-	panic("GetAdminLicenseStatus called from auth test shim")
-}
-func (authOnlyImpl) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
-	panic("ValidateAdminLicense called from auth test shim")
-}
-func (authOnlyImpl) UploadAdminLicense(context.Context, openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
-	panic("UploadAdminLicense called from auth test shim")
-}
 func (a authOnlyImpl) ListIdentityProviders(ctx context.Context, req openapi.ListIdentityProvidersRequestObject) (openapi.ListIdentityProvidersResponseObject, error) {
 	// Real call — the auth handler IS the unit-under-test in this
 	// package, and the providers endpoint is in scope for its tests.
@@ -802,7 +780,7 @@ func mustDecode(t *testing.T, resp *http.Response, v any) {
 }
 
 // ensureUserTable creates a minimal "user" table if it doesn't exist.
-// In a real install RS's CheckDBStruct will have done this already
+// In a real install the legacy CheckDBStruct will have done this already
 // with the full set of columns; for test environments we synthesise
 // the few columns the auth tests touch.
 func ensureUserTable(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -897,66 +875,4 @@ func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesReques
 	panic("ListLocales called from auth test shim")
 }
 
-func (authOnlyImpl) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
-	panic("GetAppearanceConfig called from auth test shim")
-}
-func (authOnlyImpl) UpdateAppearanceConfig(context.Context, openapi.UpdateAppearanceConfigRequestObject) (openapi.UpdateAppearanceConfigResponseObject, error) {
-	panic("UpdateAppearanceConfig called from auth test shim")
-}
-func (authOnlyImpl) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
-	panic("GetPublicAppearance called from auth test shim")
-}
 
-// --- jobs stubs (Phase 1.18.A) -------------------------------------------
-func (authOnlyImpl) ClaimJobs(context.Context, openapi.ClaimJobsRequestObject) (openapi.ClaimJobsResponseObject, error) {
-	panic("ClaimJobs called from test shim")
-}
-func (authOnlyImpl) GetJob(context.Context, openapi.GetJobRequestObject) (openapi.GetJobResponseObject, error) {
-	panic("GetJob called from test shim")
-}
-func (authOnlyImpl) HeartbeatJob(context.Context, openapi.HeartbeatJobRequestObject) (openapi.HeartbeatJobResponseObject, error) {
-	panic("HeartbeatJob called from test shim")
-}
-func (authOnlyImpl) CompleteJob(context.Context, openapi.CompleteJobRequestObject) (openapi.CompleteJobResponseObject, error) {
-	panic("CompleteJob called from test shim")
-}
-func (authOnlyImpl) FailJob(context.Context, openapi.FailJobRequestObject) (openapi.FailJobResponseObject, error) {
-	panic("FailJob called from test shim")
-}
-
-func (authOnlyImpl) ListPostWhiteboards(context.Context, openapi.ListPostWhiteboardsRequestObject) (openapi.ListPostWhiteboardsResponseObject, error) {
-	panic("ListPostWhiteboards called from auth test shim")
-}
-
-func (authOnlyImpl) CreatePostWhiteboard(context.Context, openapi.CreatePostWhiteboardRequestObject) (openapi.CreatePostWhiteboardResponseObject, error) {
-	panic("CreatePostWhiteboard called from auth test shim")
-}
-
-// --- brush packs stubs (Phase 1.21c) -------------------------------------
-func (authOnlyImpl) ListBrushPacks(context.Context, openapi.ListBrushPacksRequestObject) (openapi.ListBrushPacksResponseObject, error) {
-	panic("ListBrushPacks called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) ImportBrushPack(context.Context, openapi.ImportBrushPackRequestObject) (openapi.ImportBrushPackResponseObject, error) {
-	panic("ImportBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) GetBrushPack(context.Context, openapi.GetBrushPackRequestObject) (openapi.GetBrushPackResponseObject, error) {
-	panic("GetBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) DeleteBrushPack(context.Context, openapi.DeleteBrushPackRequestObject) (openapi.DeleteBrushPackResponseObject, error) {
-	panic("DeleteBrushPack called from authOnlyImpl test shim")
-}
-func (authOnlyImpl) GetBrushPackStamp(context.Context, openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
-	panic("GetBrushPackStamp called from authOnlyImpl test shim")
-}
-func (authOnlyImpl)ListAssetTextAnnotations(context.Context, openapi.ListAssetTextAnnotationsRequestObject) (openapi.ListAssetTextAnnotationsResponseObject, error) {
-	panic("ListAssetTextAnnotations called from auth_test test shim")
-}
-func (authOnlyImpl)CreateAssetTextAnnotation(context.Context, openapi.CreateAssetTextAnnotationRequestObject) (openapi.CreateAssetTextAnnotationResponseObject, error) {
-	panic("CreateAssetTextAnnotation called from auth_test test shim")
-}
-func (authOnlyImpl)UpdateTextAnnotation(context.Context, openapi.UpdateTextAnnotationRequestObject) (openapi.UpdateTextAnnotationResponseObject, error) {
-	panic("UpdateTextAnnotation called from auth_test test shim")
-}
-func (authOnlyImpl)LintAsset(context.Context, openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {
-	panic("LintAsset called from auth_test test shim")
-}

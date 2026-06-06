@@ -39,7 +39,7 @@ type Config struct {
 
 	// Auth — must match the PHP side exactly during the transition
 	// since both worlds hash passwords with the same pepper. Pulled
-	// from the same config value RS reads as $scramble_key.
+	// from the same config value the legacy PHP reads as $scramble_key.
 	ScrambleKey string
 
 	// Storage. Backend selects which storage.Backend implementation
@@ -143,7 +143,7 @@ func Load() (Config, error) {
 		return c, errors.New("config: AA_DB_PASSWORD is required")
 	}
 	if c.ScrambleKey == "" {
-		return c, errors.New("config: AA_SCRAMBLE_KEY is required (must match RS's $scramble_key)")
+		return c, errors.New("config: AA_SCRAMBLE_KEY is required (must match the legacy $scramble_key)")
 	}
 	return c, nil
 }

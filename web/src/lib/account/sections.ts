@@ -41,11 +41,12 @@ export const ACCOUNT_ITEMS: AccountItem[] = [
   { slug: 'password',    group: 'identity', status: 'live', phase: '1.17', href: '/account/password' },
   { slug: 'security',    group: 'identity', status: 'stub', phase: '1.17', href: '/account/security' },
   { slug: 'sessions',    group: 'identity', status: 'live', phase: '1.17', href: '/account/sessions' },
+  { slug: 'blocked',     group: 'identity', status: 'live', phase: '1.17', href: '/account/blocked' },
   { slug: 'connected',   group: 'identity', status: 'stub', phase: '1.18', href: '/account/connected' },
 
   // Communication
   { slug: 'messages',      group: 'communication', status: 'stub', phase: '1.21', href: '/account/messages' },
-  { slug: 'notifications', group: 'communication', status: 'stub', phase: '1.18', href: '/account/notifications' },
+  { slug: 'notifications', group: 'communication', status: 'live', phase: '1.17', href: '/account/notifications' },
   { slug: 'subscriptions', group: 'communication', status: 'stub', phase: '1.13', href: '/account/subscriptions' },
 
   // Workspace

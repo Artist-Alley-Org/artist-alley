@@ -493,6 +493,830 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/federation/directories:
+    get:
+      operationId: listFederationDirectories
+      summary: List subscribed federation directories (Phase 1.22.B-c)
+      description: |
+        All directories we've subscribed to, newest-first. Each
+        row carries the pinned operator pubkey + the last poll
+        status. Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of directories.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: subscribeFederationDirectory
+      summary: Subscribe to a federation directory
+      description: |
+        Fetches /v1/operator from the directory URL, captures the
+        operator pubkey + fingerprint, and persists the
+        subscription. The admin should review the returned
+        fingerprint out-of-band before relying on the directory.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationDirectorySubscribe" }
+      responses:
+        "201":
+          description: Subscription created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Already subscribed to this directory URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/directories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: unsubscribeFederationDirectory
+      summary: Unsubscribe from a directory (cascades cached entries)
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Unsubscribed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/directories/{id}/poll:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: pollFederationDirectory
+      summary: Force an immediate poll of one directory
+      description: |
+        Bypasses the background poller's cadence — useful when
+        an admin just subscribed or wants to refresh manually.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Poll result (status + count).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryPollResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/directories/{id}/publish/challenge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: requestFederationDirectoryPublishChallenge
+      summary: Request a DNS-TXT challenge to publish this instance to a directory
+      description: |
+        POSTs /v1/challenge to the directory and persists the
+        issued token + the DNS record the operator must publish.
+        Flips status to `pending_dns`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Challenge issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Directory unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/directories/{id}/publish/register:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: registerFederationDirectoryPublishListing
+      summary: Submit /v1/register with the previously-issued token
+      description: |
+        Persists the operator-supplied display_name + region +
+        description + tags, then POSTs /v1/register with the
+        pending token. Caller MUST have completed the DNS step.
+        On success flips status to `listed`; on failure stays
+        `pending_dns` so the operator can retry once DNS
+        propagates.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationDirectoryPublishMetadata" }
+      responses:
+        "200":
+          description: Result of the register call.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectory" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/directories/{id}/entries:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listFederationDirectoryEntries
+      summary: Browse cached entries from one directory
+      description: |
+        Returns the locally cached snapshot of the directory's
+        listings — survives directory outages per the spec's
+        local-caching rule.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: Cached entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDirectoryEntryList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /federation/instance:
+    get:
+      operationId: getFederationInstance
+      summary: This instance's federation actor doc
+      description: |
+        Public unauthenticated endpoint — returns the per-
+        instance Ed25519 public key, the canonical instance URL,
+        and the display name. This is what peers fetch when
+        verifying inbound handshakes or HTTP-Sig'd requests
+        (the latter ships in Phase 1.22.D).
+      tags: [federation]
+      responses:
+        "200":
+          description: Instance actor doc.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationInstanceDoc" }
+        "503":
+          description: Instance identity not yet generated (first-boot race).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /federation/peers/visible:
+    get:
+      operationId: getFederationPeersVisible
+      summary: Peer-of-peer discovery — list of peers we've opted to share (Phase 1.22.B-d)
+      description: |
+        Public unauthenticated endpoint. Returns the subset of our
+        connected+enabled peers that have `share_in_visible_list`
+        toggled on. Other instances poll this to build their
+        "Suggested peers (via this instance)" feed per ADR 0043.
+
+        Per the spec these are advisory ONLY — a listed peer is
+        a discovery hint, not a trust endorsement. Pairing still
+        goes through the handshake from 1.22.B-b.
+      tags: [federation]
+      responses:
+        "200":
+          description: List of visible peers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationVisiblePeerList" }
+
+  /federation/peers/handshake:
+    post:
+      operationId: postFederationHandshake
+      summary: Peer-to-peer handshake endpoint (1.22.B-b)
+      description: |
+        Public unauthenticated endpoint — accepts signed
+        handshake envelopes from peer instances per
+        docs/spec/federation/v1.md §11. The envelope is signed
+        by the offered Ed25519 public key (payload-signature
+        only — transport HTTP-Sig is for established peers).
+      tags: [federation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HandshakeEnvelope" }
+      responses:
+        "200":
+          description: Envelope accepted; result indicates resulting state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandshakeAccepted" }
+        "400":
+          description: Malformed or unverifiable envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Instance identity not yet generated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/peers/initiate:
+    post:
+      operationId: initiateFederationHandshake
+      summary: Initiate an outbound handshake (1.22.B-b)
+      description: |
+        Admin "Pair by URL" entry. Creates a local
+        pending_outbound row + sends a signed offer envelope to
+        the peer. Idempotent on instance_url.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationHandshakeInitiate" }
+      responses:
+        "201":
+          description: Local pending_outbound row created (offer POST may have failed; check notes).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/peers/pending-inbound:
+    get:
+      operationId: listFederationPendingInbound
+      summary: List pending inbound handshake requests
+      description: |
+        Admin "requests awaiting your approval" feed. Backed by
+        the partial index federation_peers_pending_inbound_idx.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending inbound requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/peers/{id}/accept:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: acceptFederationPeer
+      summary: Accept a pending inbound handshake
+      description: |
+        Admin clicks "Accept" on a pending_inbound row. Flips
+        local status to connected + sends a confirm envelope
+        back to the peer.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Accepted; row is now connected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/suggestions:
+    get:
+      operationId: listFederationPeerSuggestions
+      summary: List cached peer-of-peer suggestions (Phase 1.22.B-d)
+      description: |
+        Returns suggestions from all sources, deduped against our
+        own federation_peers (URLs we already federate with are
+        hidden). Each suggestion carries provenance — which of
+        OUR peers contributed it.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: List of suggestions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerSuggestionList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/suggestions/refresh:
+    post:
+      operationId: refreshFederationPeerSuggestions
+      summary: Force a sweep of all connected peers for fresh suggestions
+      description: |
+        Iterates every connected+enabled peer, fetches their
+        /federation/peers/visible response, and persists the
+        results. Returns per-source feedback (count or error).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-source refresh outcomes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerSuggestionRefreshResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/shares:
+    get:
+      operationId: listFederationShares
+      summary: List federation shares (Phase 1.22.C-c)
+      description: |
+        Mutually-exclusive filter via query params:
+        - `object_kind`+`object_id`: "who has access to this object?"
+        - `peer_id`: "what am I sharing with this peer?"
+        - `grantor_user_ref`: "what shares did this user grant?"
+        Returns only ACTIVE shares. Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: object_kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asset, post, collection, workspace, brand_kit, user]
+        - name: object_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: grantor_user_ref
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Active shares matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShareList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: grantFederationShare
+      summary: Grant a federation share (write-ahead audit)
+      description: |
+        Creates federation_shares row + emits aa:Share activity +
+        writes federation.share.granted audit event — all in one
+        transaction per the design proposal §7.2 write-ahead
+        invariant. Idempotent: duplicate POST on the active-row
+        tuple (grantor, object, peer, target_user) returns 409
+        with the existing share.
+
+        Permission: caller must own the object OR have
+        system.admin. Restricted objects require target_user_url
+        (NaCl envelope wrap needs a key).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationShareCreate" }
+      responses:
+        "201":
+          description: Share granted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Object or peer not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Active share already exists for this tuple.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+
+  /admin/federation/shares/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeFederationShare
+      summary: Revoke a federation share (aa:Unshare + audit, atomic)
+      description: |
+        Marks revoked_at + emits aa:Unshare activity + writes
+        federation.share.revoked audit event — atomically.
+        Recipient's local cache purges per design §4.2; their
+        own derivative work (comments/annotations) is preserved
+        per §4.3.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Share already revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationShare" }
+
+  /admin/federation/peers:
+    get:
+      operationId: listFederationPeers
+      summary: List federation peers (Phase 1.22.B-a)
+      description: |
+        All paired instances, newest-handshake-first. Gated on
+        `system.admin`. Per ADR 0043 §"Trust model" the rows here
+        are just the trusted-channel registry — content shares
+        are managed separately via federation_shares (Phase
+        1.22.C).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: A page of peers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createFederationPeer
+      summary: Manually add a federation peer (1.22.B-a)
+      description: |
+        Manual peer entry — the operator pastes the peer's
+        instance URL + display name + the PEM-encoded Ed25519
+        instance public key (out-of-band coordination between
+        operators). The automated handshake protocol lands in
+        1.22.B-b and uses the same row shape.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationPeerCreate" }
+      responses:
+        "201":
+          description: Peer created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Peer with this instance_url already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/peers/{id}/defederation-preview:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: previewFederationPeerDefederation
+      summary: Preview what defederation will cascade (Phase 1.22.C-d)
+      description: |
+        Backs the cascade-preview modal per the 1.22.C design
+        proposal §8.5. Returns:
+          - total_active_shares + per-object-kind breakdown
+          - pending_handshakes (handshakes in flight that would
+            be cancelled)
+          - cached_suggestions (peer-of-peer suggestions
+            contributed by this peer that would be dropped)
+          - peer summary (display_name + URL for the modal
+            header)
+        Gated on `system.admin`.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cascade impact summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationDefederationPreview" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/federation/peers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getFederationPeer
+      summary: Get one federation peer
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Peer detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateFederationPeer
+      summary: Edit a federation peer (tier / encryption_policy / enabled / notes / display_name)
+      description: |
+        Cannot change instance_url or instance_public_key — those
+        require defederate + re-pair (the public_key change in
+        particular signals re-handshake).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FederationPeerUpdate" }
+      responses:
+        "200":
+          description: Updated peer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteFederationPeer
+      summary: Defederate a peer
+      description: |
+        Removes the peer row. Per ADR 0043 §"Trust model" the
+        Phase 1.22.C federation_shares table cascades on this
+        delete and Phase 1.22.D emits the final aa:Unshare
+        activity to the peer so they purge their local cache.
+        Cascade + activity emission happen automatically when
+        those phases ship; this endpoint is the entry point.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Peer removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/activities:
+    get:
+      operationId: listAdminActivities
+      summary: Admin audit view of the activities ledger
+      description: |
+        Cursor-paginated list of activity rows with optional
+        filters (type, source, actor, object kind, since). Gated
+        on `system.admin` capability per ADR 0044 — surfaces full
+        payloads + addressing for the operator to audit federation
+        activity.
+
+        Hot-path notes: this endpoint is NOT cached at the writer
+        layer because the filter-combination space is unbounded.
+        The underlying SELECT is covered by per-dimension partial
+        indexes (`activities_type_recent_idx`,
+        `activities_actor_outbox_idx`,
+        `activities_source_recent_idx`) so unfiltered + per-filter
+        access patterns both hit indexed paths.
+      tags: [admin, activities]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: activity_type
+          in: query
+          required: false
+          description: |
+            Filter to one activity type — e.g. `Like`, `Follow`,
+            `Create`, `aa:Share`. See
+            [activities.activity_type CHECK](../db/migrations/00049_activities_ledger.sql)
+            for the closed set.
+          schema: { type: string }
+        - name: source
+          in: query
+          required: false
+          description: |
+            `local` for activities emitted by this instance, or a
+            peer instance URL (e.g. `https://studio-b.example`) to
+            filter to peer-received activities from one peer.
+          schema: { type: string }
+        - name: actor_user_ref
+          in: query
+          required: false
+          description: |
+            Filter to activities emitted by a single local actor.
+            For peer-sourced activities (actor_user_ref is NULL),
+            use the `source` filter instead.
+          schema: { type: integer, format: int64 }
+        - name: object_kind
+          in: query
+          required: false
+          description: |
+            Filter to activities about one object kind — e.g.
+            `post`, `comment`, `asset`, `user`, `collection`.
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 timestamp; activities at or after this time only.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a prior response.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of activity rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminActivityList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/license/status:
     get:
       operationId: getAdminLicenseStatus
@@ -752,6 +1576,85 @@ paths:
                 $ref: "#/components/schemas/ChangePasswordResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /account/preferences:
+    get:
+      operationId: getAccountPreferences
+      summary: Get my notification + view preferences
+      description: |
+        Phase 1.17.G — per-user application-behavior preferences:
+        which channels (in_app, email) the user wants each notification
+        event delivered through, plus default-view selections (home
+        tab, browse layout, browse sort) that apply to the user's
+        next page load.
+
+        First-visit callers (no row yet) get a zero-value response —
+        empty `notification_channels`, empty `default_views`, but the
+        canonical `known_event_types`, `known_channels`, and per-event
+        `default_channels_by_event` are always populated so the UI can
+        render the toggle grid without hard-coding the catalog.
+
+        Channel resolution at notification-write time falls back to
+        `default_channels_by_event` for any event the user hasn't
+        explicitly set. An explicit empty array MEANS "deliver
+        nothing for this event" and overrides the default.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferencesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      operationId: patchAccountPreferences
+      summary: Replace my notification + view preferences
+      description: |
+        Phase 1.17.G — upserts the caller's preferences. The wire
+        contract is full-object replacement: the client sends the
+        entire resolved object, the server validates against the
+        build's `known_event_types` + `known_channels` catalogs, and
+        rejects unknown values rather than silently persisting them.
+
+        There is no per-field PATCH verb. To "remove a channel from
+        an event," send the full `notification_channels` object with
+        that channel omitted from the array. To "fall back to system
+        default for an event," omit the event key entirely from the
+        map.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPreferencesRequest"
+      responses:
+        "200":
+          description: Preferences saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPreferencesResponse"
+        "400":
+          description: Validation failure (unknown event / channel / duplicate).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -2349,7 +3252,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, followers, public]
+            enum: [private, org-only, followers, explicit-share]
         - name: q
           in: query
           required: false
@@ -2361,6 +3264,20 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: feed
+          in: query
+          required: false
+          description: |
+            Pre-baked feed selector (Phase 1.17.G2). When set, applies
+            a viewer-anchored filter on top of the other query params.
+            - `following` — restrict to authors the caller follows
+              (browse-page "Following" tab). Returns an empty page for
+              callers who don't follow anyone yet.
+            - `latest` (default) — no extra filter; same shape as
+              omitting the param.
+          schema:
+            type: string
+            enum: [latest, following]
         - name: limit
           in: query
           required: false
@@ -3060,7 +3977,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [private, shared, public]
+            enum: [private, org-only, followers, explicit-share]
         - name: featured
           in: query
           required: false
@@ -3946,6 +4863,480 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/follow:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: followUser
+      summary: Follow this user
+      description: |
+        Phase 1.17.G2 — directional follow. Idempotent: re-following
+        someone you already follow returns 204 too. Self-follow is
+        rejected with 400. Cross-block-edge follow (either party has
+        blocked the other) is rejected with 403 — modern platforms
+        treat blocks as a hard interaction stop.
+
+        Wires the long-parked `posts.visibility='followers'` gate
+        from Phase 1.13. The browse-feed "Following" tab also
+        activates the moment any follow row exists.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Now following (or was already).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: unfollowUser
+      summary: Stop following this user
+      description: |
+        Phase 1.17.G2 — idempotent unfollow. Returns 204 whether
+        the edge existed or not. Symmetric to followUser; never
+        affects the reverse follow (if the target also follows you,
+        they continue to follow you).
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: No longer following (or never was).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/{ref}/followers:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    get:
+      operationId: listUserFollowers
+      summary: Paginated list of users following this user
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Followers list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocialUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/following:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    get:
+      operationId: listUserFollowing
+      summary: Paginated list of users this user follows
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Following list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocialUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/relationship:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: getUserRelationship
+      summary: Caller's social-graph relationship with this user
+      description: |
+        Phase 1.17.G2 — the single round-trip the profile page
+        consumes to decide which "Follow/Unfollow/Blocked/Block"
+        button to render. Reports both directions of follow + the
+        bidirectional block bit. Anonymous callers receive an
+        all-false response (still 200) since the relationship is
+        anchored on the caller; client code can short-circuit
+        rendering on `is_self`.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Relationship snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserRelationship" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{ref}/block:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: blockUser
+      summary: Block this user
+      description: |
+        Phase 1.17.G2 — directional block. Auto-unfollows BOTH
+        directions before persisting the block (per Twitter /
+        Mastodon / ArtStation convention — blocking + continuing to
+        follow is a contradictory state). The optional `reason` is
+        private to the blocker, surfaced only in /account/blocked.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlockUserRequest" }
+      responses:
+        "204":
+          description: Block recorded (or already in place).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: unblockUser
+      summary: Stop blocking this user
+      description: |
+        Phase 1.17.G2 — idempotent unblock. Does NOT re-establish
+        any prior follow edges (the original block auto-unfollowed
+        them); callers wanting to follow again must do so explicitly.
+      tags: [social]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: No longer blocked (or never was).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/messages:
+    get:
+      operationId: listMyDirectMessageThreads
+      summary: My DM inbox — one entry per peer (Phase 1.17.I-a)
+      description: |
+        Lists every peer the caller has exchanged DMs with, paired
+        with the most recent message in that thread + the count of
+        unread messages from that peer. Newest-first. Wires the
+        envelope-icon dropdown + the /account/messages full inbox.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: List of threads.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageThreadList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/messages/unread-count:
+    get:
+      operationId: getMyUnreadDirectMessageCount
+      summary: My unread DM badge count
+      description: |
+        Backs the navbar envelope pill on every authenticated page
+        render. Cache-backed (per-recipient LRU + cache.Registry
+        NOTIFY broadcast on every write/mark-read).
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread-DM count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageUnreadCount" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/messages/{peer_ref}:
+    parameters:
+      - name: peer_ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      operationId: listDirectMessageThread
+      summary: All DMs between me and a specific peer
+      description: |
+        Cursor-paginated newest-first. Caller must be one of the
+        two participants (gate enforced by the WHERE clause — no
+        separate "is this thread mine?" check needed). 404 when
+        the peer doesn't exist.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: sendDirectMessage
+      summary: Send a DM to a peer
+      description: |
+        Send a DM to the user at {peer_ref}. Self-DM rejected with
+        400. A block edge in either direction rejects with 403 —
+        the same gate the FollowUser path enforces.
+
+        On success, a `direct_message_received` notification fires
+        to the recipient via the Phase 1.17.I2 notifications writer
+        (which independently re-runs the block + channel-pref
+        gates, so a user who muted the verb still gets the DM in
+        their inbox but no bell ping).
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendDirectMessageRequest" }
+      responses:
+        "201":
+          description: Message sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /account/messages/{peer_ref}/read:
+    parameters:
+      - name: peer_ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: markDirectMessageThreadRead
+      summary: Mark every unread DM from this peer as read
+      description: |
+        Idempotent. Called when the caller opens the thread.
+        Returns count of rows newly-flipped so the envelope pill
+        can decrement deterministically.
+      tags: [messages, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: How many were just marked read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DirectMessageMarkReadResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/notifications:
+    get:
+      operationId: listMyNotifications
+      summary: My notification feed (Phase 1.17.I2)
+      description: |
+        Cursor-paginated notification feed for the caller. Newest-
+        first; `only_unread=true` restricts to the unread tail
+        (the inbox's "Unread" tab). Each notification carries a
+        verb (matching userprefs.KnownEventTypes), an optional
+        actor, an optional polymorphic target reference
+        (target_kind + target_id), and a JSONB payload with per-
+        verb extra context the frontend renderer reads.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: only_unread
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of notifications.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/notifications/unread-count:
+    get:
+      operationId: getMyUnreadNotificationCount
+      summary: My unread badge count
+      description: |
+        The hot read behind the navbar bell on every authenticated
+        page render. Backed by a partial index (`WHERE read_at IS
+        NULL`) so the working set stays bounded even as the
+        lifetime notifications table grows. Per-user cached via
+        cache.Registry — invalidates on every write to this user's
+        rows.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread count snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationUnreadCount" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/notifications/{id}/read:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: markNotificationRead
+      summary: Mark a single notification as read
+      description: |
+        Idempotent: 204 whether the row was unread or already read.
+        Only the recipient can mark — the row's recipient column
+        gates the update so cross-user calls 404 silently.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Marked read (or was already).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /account/notifications/read-all:
+    post:
+      operationId: markAllMyNotificationsRead
+      summary: Mark every unread notification as read
+      description: |
+        Inbox header "Mark all read". Returns the count of rows
+        newly-flipped so the UI can render a "Marked 12 as read"
+        confirmation. Idempotent — running twice in a row returns
+        0 the second time.
+      tags: [notifications, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: How many rows were just marked read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationMarkAllResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/blocked:
+    get:
+      operationId: listMyBlocked
+      summary: My block list (private to the caller)
+      description: |
+        Phase 1.17.G2 — paginated list of users the caller has
+        blocked, with the optional private reason. The reverse
+        direction ("who blocked me") is deliberately NOT exposed
+        per platform convention — it's the blocker's privacy.
+      tags: [social, account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Blocked-users list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockedUserList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /auth/me/teams:
     get:
@@ -5231,7 +6622,7 @@ components:
         description:      { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -5267,7 +6658,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
           default: private
         membership:
           type: string
@@ -5294,7 +6685,7 @@ components:
         description: { type: string }
         visibility:
           type: string
-          enum: [private, shared, public]
+          enum: [private, org-only, followers, explicit-share]
         membership:
           type: string
           enum: [manual, query, hybrid]
@@ -5494,7 +6885,7 @@ components:
         description:      { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid
@@ -5564,7 +6955,7 @@ components:
         description:  { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
           default: public
         cover_asset_id:
           type: string
@@ -5618,7 +7009,7 @@ components:
         description:  { type: string }
         visibility:
           type: string
-          enum: [private, followers, public]
+          enum: [private, org-only, followers, explicit-share]
         cover_asset_id:
           type: string
           format: uuid
@@ -5943,6 +7334,102 @@ components:
         sessions_revoked:
           type: integer
           description: Count of other sessions ended as part of this change.
+
+    UserPreferencesViews:
+      type: object
+      description: |
+        Default-view selections (Phase 1.17.G). Unset fields fall back
+        to per-route defaults at render time. Adding a new view knob
+        is a string-additive change; the valid value sets grow as new
+        layouts ship in later phases.
+      properties:
+        home_tab:
+          type: string
+          description: |
+            Which tab the home page lands on. Valid values today:
+            `following`, `latest`, `trending`, `for_you`. Empty/unset
+            falls back to `latest`.
+        browse_layout:
+          type: string
+          description: |
+            Default browse-feed layout. Valid values today: `grid`,
+            `masonry`, `thumbnail`, `list`. Empty/unset falls back to
+            the route's default.
+        browse_sort:
+          type: string
+          description: |
+            Default browse-feed sort. Valid values today: `newest`,
+            `oldest`, `popular`, `trending`. Empty/unset falls back
+            to the route's default.
+
+    UserPreferencesRequest:
+      type: object
+      description: |
+        PATCH-time payload for the per-user preferences row. Wire
+        contract is full-object replacement; field-level merge is
+        NOT supported. Both fields are optional — an absent
+        `notification_channels` clears the user's overrides, an
+        absent `default_views` clears the view selections.
+      properties:
+        notification_channels:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: |
+            Map from event-type key to channel list. Unknown event
+            types or unknown channel names trigger a 400. An empty
+            array MEANS "deliver nothing for this event" and
+            overrides the system default; an absent key means
+            "use system default."
+        default_views:
+          $ref: "#/components/schemas/UserPreferencesViews"
+
+    UserPreferencesResponse:
+      type: object
+      description: |
+        GET / PATCH response for per-user preferences (Phase 1.17.G).
+        Includes the build's known event-type + channel catalogs so
+        the UI renders toggle grids without hard-coding the lists
+        client-side. Per-event system defaults are surfaced so the UI
+        can show "follows system default — in_app only" hints
+        alongside each toggle.
+      required:
+        - notification_channels
+        - default_views
+        - known_event_types
+        - known_channels
+        - default_channels_by_event
+      properties:
+        notification_channels:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        default_views:
+          $ref: "#/components/schemas/UserPreferencesViews"
+        known_event_types:
+          type: array
+          items: { type: string }
+          description: |
+            Canonical ordered list of notification event types this
+            build knows about. Order is the recommended rendering
+            order in the UI.
+        known_channels:
+          type: array
+          items: { type: string }
+          description: |
+            Canonical channel names this build supports
+            (`in_app`, `email`, future: `sms`, `push`, `webhook`).
+        default_channels_by_event:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: |
+            Per-event-type system default channel list. Applied at
+            notification-write time when the user's
+            `notification_channels` doesn't have that key.
 
     AdminPasswordResetRequest:
       type: object
@@ -6460,6 +7947,908 @@ components:
       required: [liked]
       properties:
         liked: { type: boolean }
+
+    SocialUserSummary:
+      type: object
+      description: |
+        Compact user-card projection used by the follow/follower
+        lists. Smaller than UserPublic — only the fields the card
+        renders. Phase 1.17.G2.
+      required: [ref, username]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        display_name: { type: string, nullable: true }
+        avatar_url: { type: string, nullable: true }
+        since:
+          type: string
+          format: date-time
+          description: |
+            When this edge was created. For follower lists, when the
+            user started following the subject. For block lists, when
+            the block was recorded.
+
+    SocialUserList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/SocialUserSummary" }
+
+    UserRelationship:
+      type: object
+      description: |
+        Phase 1.17.G2 — caller's relationship with the target user.
+        Profile pages consume this in one round-trip to decide which
+        Follow/Unfollow/Block/Unblock button(s) to render. `is_self`
+        short-circuits all the other flags.
+      required:
+        - is_self
+        - is_following
+        - is_followed_by
+        - is_blocked_by_me
+        - is_blocked_by_them
+      properties:
+        is_self:
+          type: boolean
+          description: True when the caller IS the target — UI hides social buttons.
+        is_following:
+          type: boolean
+          description: Caller follows target.
+        is_followed_by:
+          type: boolean
+          description: Target follows caller.
+        is_blocked_by_me:
+          type: boolean
+          description: Caller has blocked target. Implies social hide on both sides.
+        is_blocked_by_them:
+          type: boolean
+          description: Target has blocked caller. Implies social hide on both sides.
+
+    BlockUserRequest:
+      type: object
+      description: Phase 1.17.G2 — optional reason recorded with the block.
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Private note visible only to the blocker in
+            /account/blocked. Surfaced verbatim. Empty/omitted is
+            fine — most blocks don't carry a reason.
+
+    BlockedUserSummary:
+      type: object
+      required: [ref, username, since]
+      properties:
+        ref: { type: integer, format: int64 }
+        username: { type: string }
+        display_name: { type: string, nullable: true }
+        avatar_url: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        since:
+          type: string
+          format: date-time
+
+    BlockedUserList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/BlockedUserSummary" }
+
+    Notification:
+      type: object
+      description: |
+        One row from the per-user notifications feed (Phase 1.17.I2).
+        verb matches one of the userprefs.KnownEventTypes strings.
+        target_kind + target_id form a polymorphic reference into
+        whatever entity the notification is about (e.g. target_kind=
+        "post", target_id=<uuid>); the frontend renderer keys on verb
+        + target_kind to build the right card.
+      required:
+        - id
+        - verb
+        - delivered_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            User whose action triggered the notification. NULL for
+            system-generated events (license expiry, broadcast).
+        actor_username:
+          type: string
+          nullable: true
+          description: Denormalized for inbox render — no second round-trip.
+        actor_display_name:
+          type: string
+          nullable: true
+        actor_avatar_url:
+          type: string
+          nullable: true
+        verb:
+          type: string
+          description: |
+            Event-type identifier. One of userprefs.KnownEventTypes.
+            Frontend i18n keys are `notifications.verb_<verb>`.
+        target_kind:
+          type: string
+          nullable: true
+          description: |
+            Type discriminator for the polymorphic target (post,
+            comment, asset, user, collection, license, request).
+        target_id:
+          type: string
+          nullable: true
+          description: |
+            ID of the target entity. UUID-typed entities stringify;
+            BIGINT-typed entities stringify too. Frontend resolves
+            via target_kind.
+        payload:
+          type: object
+          additionalProperties: true
+          description: |
+            Per-verb extra context (comment excerpt, license kid,
+            request reason, etc.). Schema documented per-verb in
+            app/internal/notifications/events.go.
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL = unread.
+        delivered_at:
+          type: string
+          format: date-time
+          description: When the row landed (in-app delivery time).
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Notification" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    FederationShare:
+      type: object
+      description: |
+        One federation_shares row per the 1.22.C design proposal.
+        Pairing alone shares nothing; each row here is an
+        explicit per-object grant.
+      required:
+        - id
+        - grantor_user_ref
+        - object_kind
+        - object_id
+        - peer_id
+        - scope
+        - notes
+        - granted_activity_id
+        - granted_at
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        grantor_user_ref: { type: integer, format: int64 }
+        object_kind:
+          type: string
+          enum: [asset, post, collection, workspace, brand_kit, user]
+        object_id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        target_user_url:
+          type: string
+          nullable: true
+          description: 'NULL = broadcast within peer; non-null = specific user actor URL'
+        scope:
+          type: string
+          enum: [view, comment, annotate, remix]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes: { type: string }
+        granted_activity_id: { type: string, format: uuid }
+        granted_at: { type: string, format: date-time }
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_activity_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FederationDefederationPreview:
+      type: object
+      description: |
+        Cascade-preview summary returned by
+        GET /admin/federation/peers/{id}/defederation-preview
+        per the 1.22.C design proposal §8.5. The admin UI
+        renders this in the confirm-defederation modal so the
+        operator sees exact impact before clicking through.
+      required:
+        - peer_id
+        - peer_display_name
+        - peer_url
+        - total_active_shares
+        - shares_by_kind
+        - pending_handshakes
+        - cached_suggestions
+      properties:
+        peer_id: { type: string, format: uuid }
+        peer_display_name: { type: string }
+        peer_url: { type: string }
+        total_active_shares:
+          type: integer
+          format: int64
+          description: |
+            Sum across all object kinds. The cascade emits one
+            aa:Unshare per row (best-effort delivery via the
+            outbox) before deleting the peer.
+        shares_by_kind:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: |
+            Per-object-kind breakdown so the modal renders
+            "12 posts, 23 collections, 8 assets, …". Keys are
+            from the federation.ShareObjectKind closed catalogue;
+            kinds with zero active shares may be omitted.
+        pending_handshakes:
+          type: integer
+          description: Number of pending_outbound + pending_inbound rows for this peer.
+        cached_suggestions:
+          type: integer
+          description: federation_peer_suggestions rows sourced from this peer that would be dropped.
+
+    FederationShareList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationShare" }
+
+    FederationShareCreate:
+      type: object
+      required: [object_kind, object_id, peer_id, scope]
+      properties:
+        object_kind:
+          type: string
+          enum: [asset, post, collection, workspace, brand_kit]
+          description: |
+            'user' is excluded from the operator-facing API —
+            user/follower shares are server-internal
+            (Accept(Follow) creates them).
+        object_id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        target_user_url:
+          type: string
+          description: |
+            Recipient's actor URL on the peer. Omit for a
+            broadcast share (any user on the peer). REQUIRED
+            for restricted/embargo objects (server validates).
+        scope:
+          type: string
+          enum: [view, comment, annotate, remix]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          maxLength: 2000
+
+    FederationPeer:
+      type: object
+      description: |
+        One row from the federation_peers registry (Phase
+        1.22.B-a + ADR 0043 §"Trust model"). Pairing alone shares
+        no content — see federation_shares (1.22.C) for the
+        access-control layer.
+      required:
+        - id
+        - instance_url
+        - display_name
+        - instance_public_key
+        - trust_tier
+        - encryption_policy
+        - enabled
+        - status
+        - handshake_at
+        - handshake_by_user_ref
+        - notes
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        instance_url:
+          type: string
+          description: 'https://peer.example (no trailing slash, no path)'
+        display_name: { type: string }
+        instance_public_key:
+          type: string
+          description: |
+            PEM-wrapped Ed25519 public key (RFC 8410). May be the
+            placeholder string `PENDING-HANDSHAKE-RESPONSE` while
+            status is `pending_outbound` — the peer's real key
+            replaces it when the confirm envelope arrives.
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+        enabled: { type: boolean }
+        status:
+          type: string
+          enum: [pending_outbound, pending_inbound, connected]
+          description: |
+            Handshake state machine (migration 00052 + v1.md §11).
+            Outbound delivery (1.22.D) gates on connected only.
+        handshake_at: { type: string, format: date-time }
+        handshake_by_user_ref: { type: integer, format: int64 }
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes: { type: string }
+        share_in_visible_list:
+          type: boolean
+          description: |
+            Per-peer opt-in for peer-of-peer discovery (Phase
+            1.22.B-d). When true, this peer appears in
+            GET /federation/peers/visible — other peers can
+            then surface it as a discovery suggestion. Default
+            false; explicit opt-in.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FederationVisiblePeer:
+      type: object
+      description: |
+        Minimal projection of a peer for /federation/peers/visible.
+        Public — no auth required to fetch. Excludes operator-
+        private fields like notes or trust_tier.
+      required: [instance_url, display_name, instance_public_key, fingerprint]
+      properties:
+        instance_url: { type: string }
+        display_name: { type: string }
+        instance_public_key: { type: string }
+        fingerprint: { type: string }
+
+    FederationVisiblePeerList:
+      type: object
+      required: [peers]
+      properties:
+        peers:
+          type: array
+          items: { $ref: "#/components/schemas/FederationVisiblePeer" }
+
+    FederationPeerSuggestion:
+      type: object
+      required:
+        - id
+        - source_peer_id
+        - source_display_name
+        - source_url
+        - suggested_url
+        - suggested_display_name
+        - suggested_public_key
+        - suggested_fingerprint
+        - cached_at
+      properties:
+        id: { type: string, format: uuid }
+        source_peer_id: { type: string, format: uuid }
+        source_display_name: { type: string }
+        source_url: { type: string }
+        suggested_url: { type: string }
+        suggested_display_name: { type: string }
+        suggested_public_key: { type: string }
+        suggested_fingerprint: { type: string }
+        cached_at: { type: string, format: date-time }
+
+    FederationPeerSuggestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationPeerSuggestion" }
+
+    FederationPeerSuggestionRefreshResult:
+      type: object
+      required: [outcomes]
+      properties:
+        outcomes:
+          type: array
+          items:
+            type: object
+            required: [source_peer_id, source_display_name, source_url, count]
+            properties:
+              source_peer_id: { type: string, format: uuid }
+              source_display_name: { type: string }
+              source_url: { type: string }
+              count: { type: integer }
+              error: { type: string }
+
+    FederationDirectory:
+      type: object
+      description: |
+        One subscribed federation directory (Phase 1.22.B-c).
+        Pairing alone shares no content; directories are
+        discovery aids per docs/spec/federation-directory/v1.md.
+      required:
+        - id
+        - directory_url
+        - operator_name
+        - operator_public_key
+        - operator_fingerprint
+        - subscribed_at
+        - subscribed_by_user_ref
+        - enabled
+        - last_poll_status
+        - last_poll_error
+        - poll_interval_seconds
+        - notes
+      properties:
+        id: { type: string, format: uuid }
+        directory_url: { type: string }
+        operator_name: { type: string }
+        operator_public_key:
+          type: string
+          description: PEM-wrapped Ed25519 directory operator pubkey (pinned at subscribe time).
+        operator_fingerprint: { type: string }
+        operator_contact: { type: string }
+        subscribed_at: { type: string, format: date-time }
+        subscribed_by_user_ref: { type: integer, format: int64 }
+        enabled: { type: boolean }
+        last_polled_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_poll_status:
+          type: string
+          enum: [never_polled, ok, unreachable, signature_failed, malformed, spec_version_mismatch]
+        last_poll_error: { type: string }
+        poll_interval_seconds: { type: integer }
+        notes: { type: string }
+        publish_status:
+          type: string
+          enum: [not_published, pending_dns, pending_register, listed, failed]
+        publish_pending_token: { type: string }
+        publish_token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        publish_record_name: { type: string }
+        publish_record_value: { type: string }
+        publish_listing_id: { type: string }
+        publish_last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        publish_last_error: { type: string }
+        publish_display_name: { type: string }
+        publish_region: { type: string }
+        publish_description: { type: string }
+        publish_tags:
+          type: array
+          items: { type: string }
+
+    FederationDirectoryPublishMetadata:
+      type: object
+      required: [display_name]
+      description: |
+        Operator-chosen entry metadata for /v1/register. Saved on
+        the directory row so it pre-fills the form next time.
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        region: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 2000 }
+        tags:
+          type: array
+          items: { type: string, maxLength: 50 }
+          maxItems: 20
+
+    FederationDirectoryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationDirectory" }
+
+    FederationDirectorySubscribe:
+      type: object
+      required: [directory_url]
+      properties:
+        directory_url:
+          type: string
+          description: 'Directory base URL (https, no path, no trailing slash).'
+        notes:
+          type: string
+
+    FederationDirectoryEntry:
+      type: object
+      required:
+        - id
+        - directory_id
+        - instance_url
+        - display_name
+        - instance_public_key
+        - fingerprint
+        - verified_at
+        - verified_via
+        - cached_at
+      properties:
+        id: { type: string, format: uuid }
+        directory_id: { type: string, format: uuid }
+        instance_url: { type: string }
+        display_name: { type: string }
+        instance_public_key: { type: string }
+        fingerprint: { type: string }
+        region: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        verified_at: { type: string, format: date-time }
+        verified_via: { type: string }
+        listing_id: { type: string }
+        cached_at: { type: string, format: date-time }
+
+    FederationDirectoryEntryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationDirectoryEntry" }
+
+    FederationDirectoryPollResult:
+      type: object
+      required: [directory, entry_count]
+      properties:
+        directory:
+          $ref: "#/components/schemas/FederationDirectory"
+        entry_count: { type: integer }
+
+    FederationInstanceDoc:
+      type: object
+      description: |
+        This instance's federation identity — peers fetch this
+        to verify signed envelopes from us. Stable shape per
+        docs/spec/federation/v1.md §10.
+      required: [instance_url, display_name, public_key_pem, fingerprint, protocol_version]
+      properties:
+        instance_url:
+          type: string
+          description: This instance's canonical https URL.
+        display_name:
+          type: string
+          description: Operator-set display name (from sysconfig.site_name).
+        public_key_pem:
+          type: string
+          description: PEM-wrapped Ed25519 instance public key.
+        fingerprint:
+          type: string
+          description: Lowercase hex SHA-256 of the raw public key for out-of-band verification.
+        protocol_version:
+          type: string
+          description: Always `aa-fed/v1` for this release.
+
+    HandshakeEnvelopeInner:
+      type: object
+      description: |
+        Inner payload of a handshake envelope per v1.md §11.
+        Signed using RFC-8785-canonical JSON.
+      required:
+        - protocol
+        - type
+        - from
+        - from_display_name
+        - from_public_key_pem
+        - to
+        - nonce
+        - timestamp
+      properties:
+        protocol: { type: string, description: 'Always `aa-handshake/v1`' }
+        type:
+          type: string
+          enum: [offer, confirm]
+        from: { type: string }
+        from_display_name: { type: string }
+        from_public_key_pem: { type: string }
+        to: { type: string }
+        nonce: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    HandshakeEnvelope:
+      type: object
+      required: [envelope, signature]
+      properties:
+        envelope:
+          $ref: "#/components/schemas/HandshakeEnvelopeInner"
+        signature:
+          type: string
+          description: Base64-std Ed25519 signature over the canonical envelope.
+
+    HandshakeAccepted:
+      type: object
+      required: [status, peer_id]
+      properties:
+        status:
+          type: string
+          enum: [accepted_pending, completed, ignored_duplicate]
+          description: |
+            `accepted_pending`: we created a pending_inbound row; admin must accept.
+            `completed`: handshake finished (either confirm landed, or cross-handshake auto-merged).
+            `ignored_duplicate`: we already had this row in a terminal state.
+        peer_id:
+          type: string
+          format: uuid
+
+    FederationHandshakeInitiate:
+      type: object
+      required: [instance_url]
+      properties:
+        instance_url:
+          type: string
+          description: Peer's instance URL (https, no path, no trailing slash).
+        display_name:
+          type: string
+          description: |
+            Optional; defaults to the URL host. Operator can rename
+            later from the peer detail page.
+
+    FederationPeerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationPeer" }
+
+    FederationPeerCreate:
+      type: object
+      required: [instance_url, display_name, instance_public_key]
+      properties:
+        instance_url:
+          type: string
+          description: 'Must be https://, no trailing slash, no path component.'
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        instance_public_key:
+          type: string
+          description: PEM-wrapped Ed25519 public key. Validated server-side.
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+          default: connected
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+          default: plaintext
+        enabled: { type: boolean, default: true }
+        notes: { type: string }
+
+    FederationPeerUpdate:
+      type: object
+      description: |
+        PATCH shape — every field optional. Omitting a field
+        leaves it unchanged. instance_url and instance_public_key
+        are NOT editable; defederate + re-pair to change them.
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+        trust_tier:
+          type: string
+          enum: [connected, directory-listed, auto-sync]
+        encryption_policy:
+          type: string
+          enum: [plaintext, e2e-encrypted]
+        enabled: { type: boolean }
+        notes: { type: string }
+        share_in_visible_list:
+          type: boolean
+          description: |
+            Per-peer opt-in for peer-of-peer discovery (Phase
+            1.22.B-d). Toggle this to expose the peer in our
+            /federation/peers/visible response so other peers
+            can surface it as a suggestion.
+
+    AdminActivity:
+      type: object
+      description: |
+        One row from the activities ledger (Phase 1.22.A-bis-1 +
+        ADR 0044). Surfaces the full AP envelope payload + the
+        operator-facing metadata the admin audit UI renders. See
+        [docs/spec/federation/v1.md §3](../../docs/spec/federation/v1.md)
+        for the wire-format contract this projection mirrors.
+      required:
+        - id
+        - activity_uri
+        - activity_type
+        - actor_uri
+        - source
+        - published_at
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        activity_uri: { type: string }
+        activity_type: { type: string }
+        actor_uri: { type: string }
+        actor_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: NULL for peer-sourced activities (we don't have a local ref for the remote actor).
+        object_uri:
+          type: string
+          nullable: true
+        object_kind:
+          type: string
+          nullable: true
+        object_local_id:
+          type: string
+          nullable: true
+        target_uri:
+          type: string
+          nullable: true
+        to:
+          type: array
+          items: { type: string }
+        cc:
+          type: array
+          items: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        signature_value:
+          type: string
+          nullable: true
+        signature_pubkey:
+          type: string
+          nullable: true
+        source:
+          type: string
+          description: '`local` or peer instance URL.'
+        published_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    AdminActivityList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminActivity" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    NotificationUnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, format: int64 }
+
+    NotificationMarkAllResult:
+      type: object
+      required: [marked_count]
+      properties:
+        marked_count: { type: integer, format: int64 }
+
+    DirectMessage:
+      type: object
+      description: One DM between two users (Phase 1.17.I-a).
+      required: [id, sender_user_ref, recipient_user_ref, body, sent_at]
+      properties:
+        id: { type: string, format: uuid }
+        sender_user_ref: { type: integer, format: int64 }
+        recipient_user_ref: { type: integer, format: int64 }
+        body: { type: string }
+        sent_at: { type: string, format: date-time }
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL = unread by recipient.
+
+    DirectMessageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DirectMessage" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    DirectMessageThread:
+      type: object
+      description: |
+        Inbox row — one per peer the caller has DM'd. Denormalized
+        peer identity + the most recent message excerpt + this
+        peer's unread count so the inbox renders without N+1
+        round-trips.
+      required:
+        - peer_user_ref
+        - peer_username
+        - last_message_id
+        - last_sender_user_ref
+        - last_body
+        - last_sent_at
+        - unread_count
+      properties:
+        peer_user_ref: { type: integer, format: int64 }
+        peer_username: { type: string }
+        peer_display_name: { type: string, nullable: true }
+        peer_avatar_url: { type: string, nullable: true }
+        last_message_id: { type: string, format: uuid }
+        last_sender_user_ref:
+          type: integer
+          format: int64
+          description: |
+            Which side authored the most recent message in this
+            thread. Lets the inbox card render "You: ..." vs
+            "PeerName: ..." prefixes.
+        last_body: { type: string }
+        last_sent_at: { type: string, format: date-time }
+        last_read_at:
+          type: string
+          format: date-time
+          nullable: true
+        unread_count:
+          type: integer
+          format: int64
+          description: |
+            Count of unread messages from this peer in this thread.
+            Sum across all threads matches the envelope-pill total.
+
+    DirectMessageThreadList:
+      type: object
+      required: [threads]
+      properties:
+        threads:
+          type: array
+          items: { $ref: "#/components/schemas/DirectMessageThread" }
+
+    DirectMessageUnreadCount:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, format: int64 }
+
+    SendDirectMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 5000
+
+    DirectMessageMarkReadResult:
+      type: object
+      required: [marked_count]
+      properties:
+        marked_count: { type: integer, format: int64 }
 
     Comment:
       type: object

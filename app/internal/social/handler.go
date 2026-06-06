@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -51,14 +56,135 @@ const (
 
 const maxListLimit = 200
 
+// Cache domains for the social graph (Phase 1.17.G2). Each domain
+// invalidates independently so a follow doesn't blow away the block
+// cache, and vice versa. cache.Registry NOTIFY broadcasts every
+// invalidation across federated peers — same federation-prep
+// pattern the rest of the codebase uses.
+const (
+	// cacheDomainFollowEdge holds boolean follow membership, keyed
+	// by "<follower>:<followee>". Single hottest social-graph read:
+	// posts.handler.go consults it for every visibility='followers'
+	// post served; the browse-feed Following filter consults it per
+	// page render. ~1 byte per entry → 50k entries comfortable.
+	cacheDomainFollowEdge = "social.follow_edge"
+
+	// cacheDomainBlockEdge holds bidirectional block presence, keyed
+	// by the canonical "<min(a,b)>:<max(a,b)>" pair so the cache hit
+	// is identical regardless of which side asks. Consumers ALWAYS
+	// check the bidirectional gate; the per-direction split in
+	// GetUserRelationship intentionally bypasses this cache.
+	cacheDomainBlockEdge = "social.block_edge"
+
+	// cacheDomainFollowerCount + cacheDomainFollowingCount feed
+	// profile-page badges and (in I2+) digest selection. Keyed by
+	// the subject user's ref.
+	cacheDomainFollowerCount  = "social.follower_count"
+	cacheDomainFollowingCount = "social.following_count"
+)
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	registry        *cache.Registry
+	followEdge      *cache.Cache[bool]
+	blockEdge       *cache.Cache[bool]
+	followerCount   *cache.Cache[int64]
+	followingCount  *cache.Cache[int64]
+
+	// notifier is the Phase 1.17.I2 cross-package seam — when a
+	// comment / like / follow lands, the relevant emit method here
+	// calls notifier.Notify to fan a notification out to the
+	// affected user(s). Local interface with primitive args so this
+	// package doesn't import notifications directly (would be a
+	// cycle: notifications imports social for HasBlockBetween). Boot
+	// wires an adapter struct that converts to notifications.Input.
+	//
+	// nil-safe: when no notifier is attached the emit calls are
+	// no-ops — the comment / like / follow itself still lands.
+	notifier Notifier
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
+	// per ADR 0044). When wired, social handlers route their domain
+	// writes through h.activities.WithEmission so the activity row
+	// commits atomically with the domain row + notifications fire
+	// after commit through the same notifier above.
+	//
+	// When NOT wired (tests), social handlers fall back to direct
+	// pool.Exec + the separate fireNotification path — pre-ADR-0044
+	// behaviour.
+	activities  *activities.Writer
+	baseURLFn   func(ctx context.Context) string
 }
 
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
-	return &Handler{Pool: pool, Logger: logger}
+// Notifier is the cross-package contract the notifications package
+// implements (via an adapter at boot). Primitive args only so the
+// interface stays small + the package boundary stays one-way.
+type Notifier interface {
+	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
+
+// SetNotifier installs the cross-package notifications writer.
+// Post-construction setter mirrors SetFollowChecker on posts.Handler.
+func (h *Handler) SetNotifier(n Notifier) { h.notifier = n }
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Same shape as the
+// posts.Handler setter.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
+
+
+// actorContext builds an emit.ActorContext from the authenticated
+// caller + the configured baseURL. Returns the zero value when
+// h.activities or h.baseURLFn isn't wired (test path) — callers
+// check h.activities != nil before invoking emit helpers.
+func (h *Handler) actorContext(ctx context.Context, caller *auth.Identity) emit.ActorContext {
+	if h.baseURLFn == nil {
+		return emit.ActorContext{UserRef: caller.UserRef, Username: caller.Username}
+	}
+	return emit.ActorContext{
+		UserRef:  caller.UserRef,
+		Username: caller.Username,
+		BaseURL:  h.baseURLFn(ctx),
+	}
+}
+
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
+	h := &Handler{Pool: pool, Logger: logger, registry: registry}
+	if registry != nil {
+		// Edge caches dominate the working set (one entry per
+		// active (a,b) pair the request stream touches); counts
+		// are bounded by the active-user population.
+		h.followEdge = cache.Register[bool](registry, cacheDomainFollowEdge, 50_000)
+		h.blockEdge = cache.Register[bool](registry, cacheDomainBlockEdge, 20_000)
+		h.followerCount = cache.Register[int64](registry, cacheDomainFollowerCount, 10_000)
+		h.followingCount = cache.Register[int64](registry, cacheDomainFollowingCount, 10_000)
+	}
+	return h
+}
+
+// --- cache key helpers ----------------------------------------------------
+
+func followKey(follower, followee int64) string {
+	return strconv.FormatInt(follower, 10) + ":" + strconv.FormatInt(followee, 10)
+}
+
+// canonicalBlockKey produces the same string regardless of argument
+// order so HasBlockBetween's symmetric semantics get a single cache
+// row per pair (rather than two stale rows after one invalidation).
+func canonicalBlockKey(a, b int64) string {
+	lo, hi := a, b
+	if lo > hi {
+		lo, hi = b, a
+	}
+	return strconv.FormatInt(lo, 10) + ":" + strconv.FormatInt(hi, 10)
+}
+
+func countKey(ref int64) string { return strconv.FormatInt(ref, 10) }
 
 // ---------------------------------------------------------------------------
 // Likes
@@ -87,7 +213,7 @@ func (h *Handler) GetPostLike(
 	liked, err := New(h.Pool).HasUserLikedTarget(ctx, HasUserLikedTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+		UserRef:   caller.UserRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: has liked: %w", err)
@@ -118,14 +244,80 @@ func (h *Handler) LikePost(
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not found"},
 		}, nil
 	}
-	if err := New(h.Pool).LikeTarget(ctx, LikeTargetParams{
-		TargetKind: "post",
-		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+
+	// Look up the post author + title BEFORE the tx so the
+	// emit.Like input is fully built. One round-trip; tiny.
+	postRef := emit.PostRef{ID: uuid.UUID(pgID.Bytes).String()}
+	if author, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgID); err == nil {
+		postRef.AuthorUserRef = author.AuthorUserRef
+		postRef.Title = author.Title
+		postRef.AuthorURI = h.actorURIForUserRef(ctx, author.AuthorUserRef)
+	}
+
+	// Gold-standard path: WithEmission wraps the LikeTarget insert
+	// + activity row in one transaction. Notification fires AFTER
+	// commit through the writer's notifier. 1.22.B-cleanup made
+	// activities required.
+	em := emit.Like(h.actorContext(ctx, caller), postRef)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity:      em.Activity,
+		Notifications: convertNotifications(em.Notifications),
+	}, func(tx pgx.Tx) error {
+		return New(tx).LikeTarget(ctx, LikeTargetParams{
+			TargetKind: "post",
+			TargetID:   pgID,
+			UserRef:   caller.UserRef,
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
 	}
 	return openapi.LikePost204Response{}, nil
+}
+
+// convertNotifications adapts the emit subpackage's
+// NotificationFanout slice into the activities.NotificationInput
+// slice the dispatch helper consumes. Cycle-avoidance: the emit
+// subpackage doesn't import activities/dispatch internals.
+func convertNotifications(ns []emit.NotificationFanout) []activities.NotificationInput {
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]activities.NotificationInput, len(ns))
+	for i, n := range ns {
+		out[i] = activities.NotificationInput{
+			Recipient:  n.Recipient,
+			Verb:       n.Verb,
+			TargetKind: n.TargetKind,
+			TargetID:   n.TargetID,
+			Payload:    n.Payload,
+		}
+	}
+	return out
+}
+
+// actorURIForUserRef resolves a user's federation actor URI from
+// their user_ref. Routed through h.activities.ResolveUsername
+// (which uses the wired UsernameResolver, typically users.Handler
+// with its existing UserPublic cache) so the hot federation
+// emission path doesn't slam the user table on every Like /
+// Follow / DM / Block / Block-unblock cycle.
+//
+// Empty string return on miss is the contract — caller treats
+// that as "skip federated addressing for this user" and the
+// activity records with a NULL-shaped to/cc field.
+func (h *Handler) actorURIForUserRef(ctx context.Context, userRef int64) string {
+	if h.baseURLFn == nil || h.activities == nil {
+		return ""
+	}
+	base := h.baseURLFn(ctx)
+	if base == "" {
+		return ""
+	}
+	username := h.activities.ResolveUsername(ctx, userRef)
+	if username == "" {
+		return ""
+	}
+	return base + "/users/" + username
 }
 
 func (h *Handler) UnlikePost(
@@ -139,21 +331,52 @@ func (h *Handler) UnlikePost(
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
-	rows, err := New(h.Pool).UnlikeTarget(ctx, UnlikeTargetParams{
-		TargetKind: "post",
-		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+	postIDStr := uuid.UUID(pgID.Bytes).String()
+
+	// Gold-standard path: WithEmissionFn so we can check the
+	// UnlikeTarget rows-affected count inside the tx and skip the
+	// Undo emission (returning a sentinel error) when there was
+	// no like to remove — the tx rolls back, no spurious activity.
+	// 1.22.B-cleanup made activities required.
+	// Look up the original Like's activity_uri BEFORE the tx
+	// so the Undo's object_uri is correctly populated.
+	originalURI := h.activities.LookupMostRecent(ctx, caller.UserRef, federation.ActivityLike, activities.ObjectKindPost, postIDStr)
+
+	var notFound bool
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
+			TargetKind: "post",
+			TargetID:   pgID,
+			UserRef:   caller.UserRef,
+		})
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
+		}
+		if rows == 0 {
+			notFound = true
+			return activities.EmissionInput{}, errLikeAbsent
+		}
+		em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, postIDStr)
+		return activities.EmissionInput{
+			Activity: em.Activity,
+		}, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("social: unlike: %w", err)
-	}
-	if rows == 0 {
+	if notFound {
 		return openapi.UnlikePost404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "no like to remove"},
 		}, nil
 	}
+	if err != nil {
+		return nil, err
+	}
 	return openapi.UnlikePost204Response{}, nil
 }
+
+// errLikeAbsent is the sentinel the WithEmissionFn closure
+// returns when the UnlikeTarget query reports 0 rows — the
+// handler treats this as the 404 path rather than a real error.
+// Used as an internal signal only; never escapes the handler.
+var errLikeAbsent = errors.New("social: like row absent")
 
 // ---------------------------------------------------------------------------
 // Comments
@@ -318,23 +541,60 @@ func (h *Handler) CreatePostComment(
 		depth = parentRow.Depth + 1
 	}
 
-	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
-		ID:             newID,
-		TargetKind:     "post",
-		TargetID:       pgPostID,
-		ParentID:       parentID,
-		RootID:         rootID,
-		Depth:          depth,
-		AuthorUserRef:  caller.UserRef,
-		Body:           body,
-		BodyHtml:       "", // server-side markdown sanitiser is a later phase
-		AnnotationType: nil,
-		AnnotationData: nil,
+	// Look up post + (optional) parent info BEFORE the tx so the
+	// emit input is fully built. These are 1-2 small indexed reads.
+	commentRef := emit.CommentRef{
+		ID:     uuid.UUID(newID.Bytes).String(),
+		PostID: uuid.UUID(pgPostID.Bytes).String(),
+		Body:   body,
+		Depth:  depth,
+	}
+	if post, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
+		commentRef.PostAuthorRef = post.AuthorUserRef
+		commentRef.PostTitle = post.Title
+		commentRef.PostAuthorURI = h.actorURIForUserRef(ctx, post.AuthorUserRef)
+	}
+	if parentID.Valid {
+		if parentInfo, err := New(h.Pool).GetCommentAuthorAndContext(ctx, parentID); err == nil {
+			commentRef.ParentID = uuid.UUID(parentID.Bytes).String()
+			commentRef.ParentAuthorRef = parentInfo.AuthorUserRef
+			commentRef.ParentAuthorURI = h.actorURIForUserRef(ctx, parentInfo.AuthorUserRef)
+		}
+	}
+
+	// Gold-standard path: WithEmissionFn wraps CreateComment +
+	// activity row in one tx. Both notifications (post-author +
+	// parent-comment-author for replies) fire AFTER commit.
+	// 1.22.B-cleanup made activities required.
+	var savedRow Comment
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+			ID:             newID,
+			TargetKind:     "post",
+			TargetID:       pgPostID,
+			ParentID:       parentID,
+			RootID:         rootID,
+			Depth:          depth,
+			AuthorUserRef:  caller.UserRef,
+			Body:           body,
+			BodyHtml:       "",
+			AnnotationType: nil,
+			AnnotationData: nil,
+		})
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("social: create comment: %w", err)
+		}
+		savedRow = r
+		em := emit.CreateComment(h.actorContext(ctx, caller), commentRef)
+		return activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("social: create comment: %w", err)
+		return nil, err
 	}
-	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(row)), nil
+	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
 }
 
 func (h *Handler) DeleteComment(
@@ -375,17 +635,41 @@ func (h *Handler) DeleteComment(
 		}, nil
 	}
 
-	rows, err := New(h.Pool).SoftDeleteComment(ctx, pgID)
-	if err != nil {
-		return nil, fmt.Errorf("social: soft delete comment: %w", err)
-	}
-	if rows == 0 {
+	commentIDStr := uuid.UUID(pgID.Bytes).String()
+	postIDStr := uuid.UUID(row.TargetID.Bytes).String()
+
+	// Gold-standard path: wrap SoftDeleteComment + Delete(Note)
+	// activity in one tx per AP §6.4 (Tombstone semantics).
+	// 1.22.B-cleanup made activities required.
+	var notFound bool
+	em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
+	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		rows, err := New(tx).SoftDeleteComment(ctx, pgID)
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("social: soft delete comment: %w", err)
+		}
+		if rows == 0 {
+			notFound = true
+			return activities.EmissionInput{}, errCommentAbsent
+		}
+		return activities.EmissionInput{Activity: em.Activity}, nil
+	})
+	if notFound {
 		return openapi.DeleteComment404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
 		}, nil
 	}
+	if err != nil {
+		return nil, err
+	}
 	return openapi.DeleteComment204Response{}, nil
 }
+
+// errCommentAbsent is the sentinel signalling "rows==0 from
+// SoftDeleteComment" inside the WithEmissionFn closure. Used to
+// roll back the tx + return 404 without treating the absent row
+// as a server error.
+var errCommentAbsent = errors.New("social: comment row absent")
 
 // ---------------------------------------------------------------------------
 // Whiteboards — top-level comments with annotation_type='whiteboard'
@@ -490,23 +774,53 @@ func (h *Handler) CreatePostWhiteboard(
 	// CreatePostComment handler).
 	newID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	annotationType := "whiteboard"
-	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
-		ID:             newID,
-		TargetKind:     "post",
-		TargetID:       pgPostID,
-		ParentID:       pgtype.UUID{},
-		RootID:         newID,
-		Depth:          0,
-		AuthorUserRef:  caller.UserRef,
-		Body:           title, // title lives in body for whiteboards
-		BodyHtml:       "",
-		AnnotationType: &annotationType,
-		AnnotationData: contentBytes,
+	postIDStr := uuid.UUID(pgPostID.Bytes).String()
+
+	// Look up post author/title before the tx so emit input is built.
+	annRef := emit.AnnotationRef{
+		CommentID:      uuid.UUID(newID.Bytes).String(),
+		PostID:         postIDStr,
+		AnnotationKind: annotationType,
+	}
+	if post, err := New(h.Pool).GetPostAuthorAndTitle(ctx, pgPostID); err == nil {
+		annRef.PostAuthorRef = post.AuthorUserRef
+		annRef.PostTitle = post.Title
+		annRef.PostAuthorURI = h.actorURIForUserRef(ctx, post.AuthorUserRef)
+	}
+
+	// Gold-standard path: CreateComment row + aa:Annotation
+	// activity per ADR 0043 + comment_on_my_post notification
+	// (annotations surface in the same inbox). 1.22.B-cleanup
+	// made activities required.
+	var saved Comment
+	em := emit.CreateAnnotation(h.actorContext(ctx, caller), annRef)
+	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+			ID:             newID,
+			TargetKind:     "post",
+			TargetID:       pgPostID,
+			ParentID:       pgtype.UUID{},
+			RootID:         newID,
+			Depth:          0,
+			AuthorUserRef:  caller.UserRef,
+			Body:           title,
+			BodyHtml:       "",
+			AnnotationType: &annotationType,
+			AnnotationData: contentBytes,
+		})
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("social: create whiteboard: %w", err)
+		}
+		saved = r
+		return activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("social: create whiteboard: %w", err)
+		return nil, err
 	}
-	return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(row)), nil
+	return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(saved)), nil
 }
 
 // ---------------------------------------------------------------------------

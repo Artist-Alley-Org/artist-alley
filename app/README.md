@@ -1,13 +1,13 @@
 # `app/` — the artist-alley Go server
 
 This is the long-term home for artist-alley's backend. The plan (ADR 0006)
-is to port RS PHP features into this Go binary one at a time until PHP is
-fully retired; at the end state, `app` is the only backend process.
+was to port legacy PHP features into this Go binary one at a time until PHP
+was fully retired; at the end state, `app` is the only backend process.
 
-Phase 1.0 (this directory's current state) is the **skeleton only**: the
+Phase 1.0 (this directory's original state) was the **skeleton only**: the
 binary boots, connects to Postgres, serves a single `/healthz` endpoint,
-and lets nginx route to it. No RS features have been ported yet — every
-RS route still goes to PHP-FPM via the same nginx in front of the stack.
+and lets nginx route to it. Subsequent phases ported every active surface
+into Go; remaining PHP-FPM routes are legacy fallbacks slated for removal.
 
 ## Layout
 

@@ -52,7 +52,7 @@ func TestEffectiveCapabilities_ResolvesRoleChain(t *testing.T) {
 
 		// Put the test user into the Director role.
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   pgtype.UUID{Bytes: dirID, Valid: true},
 		}); err != nil {
 			t.Fatalf("SetUserGlobalRole: %v", err)
@@ -78,19 +78,19 @@ func TestEffectiveCapabilities_GrantsAndRevokes(t *testing.T) {
 		roleID := seedRole(t, ctx, fx.pool, "test_GrantsRevokes", nil, "test.role_cap", "test.to_revoke")
 
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   pgtype.UUID{Bytes: roleID, Valid: true},
 		}); err != nil {
 			t.Fatalf("SetUserGlobalRole: %v", err)
 		}
 
 		if _, err := fx.pool.Exec(ctx,
-			`INSERT INTO user_capability_grants (rs_user_id, capability_code) VALUES ($1, $2)`,
+			`INSERT INTO user_capability_grants (user_ref, capability_code) VALUES ($1, $2)`,
 			fx.userRef, "test.granted"); err != nil {
 			t.Fatalf("grant insert: %v", err)
 		}
 		if _, err := fx.pool.Exec(ctx,
-			`INSERT INTO user_capability_revokes (rs_user_id, capability_code) VALUES ($1, $2)`,
+			`INSERT INTO user_capability_revokes (user_ref, capability_code) VALUES ($1, $2)`,
 			fx.userRef, "test.to_revoke"); err != nil {
 			t.Fatalf("revoke insert: %v", err)
 		}
@@ -129,7 +129,7 @@ func TestHandlers_CapabilityEnforcement(t *testing.T) {
 		}
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   adminID,
 		}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
@@ -159,7 +159,7 @@ func TestGetMyCapabilities_FullShape(t *testing.T) {
 			t.Fatalf("lookup Admin: %v", err)
 		}
 		q := New(fx.pool)
-		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{RsUserID: fx.userRef, RoleID: adminID}); err != nil {
+		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{UserRef: fx.userRef, RoleID: adminID}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
 		}
 

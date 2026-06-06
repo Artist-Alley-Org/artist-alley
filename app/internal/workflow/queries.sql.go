@@ -216,17 +216,17 @@ func (q *Queries) GetStateByCode(ctx context.Context, arg GetStateByCodeParams) 
 
 const insertWorkflowAudit = `-- name: InsertWorkflowAudit :exec
 INSERT INTO workflow_audit (
-    resource_kind, resource_id, from_state_id, to_state_id, actor_rs_user_id, note
+    resource_kind, resource_id, from_state_id, to_state_id, actor_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertWorkflowAuditParams struct {
-	ResourceKind  string
-	ResourceID    pgtype.UUID
-	FromStateID   pgtype.UUID
-	ToStateID     pgtype.UUID
-	ActorRsUserID *int64
-	Note          string
+	ResourceKind string
+	ResourceID   pgtype.UUID
+	FromStateID  pgtype.UUID
+	ToStateID    pgtype.UUID
+	ActorUserRef *int64
+	Note         string
 }
 
 func (q *Queries) InsertWorkflowAudit(ctx context.Context, arg InsertWorkflowAuditParams) error {
@@ -235,7 +235,7 @@ func (q *Queries) InsertWorkflowAudit(ctx context.Context, arg InsertWorkflowAud
 		arg.ResourceID,
 		arg.FromStateID,
 		arg.ToStateID,
-		arg.ActorRsUserID,
+		arg.ActorUserRef,
 		arg.Note,
 	)
 	return err
@@ -335,7 +335,7 @@ func (q *Queries) ListTransitionsForDomain(ctx context.Context, domain string) (
 const listWorkflowAudit = `-- name: ListWorkflowAudit :many
 SELECT a.id, a.resource_kind, a.resource_id,
        a.from_state_id, a.to_state_id,
-       a.actor_rs_user_id, a.note, a.transitioned_at,
+       a.actor_user_ref, a.note, a.transitioned_at,
        fs.code AS from_code, ts.code AS to_code
 FROM workflow_audit a
 LEFT JOIN workflow_states fs ON fs.id = a.from_state_id
@@ -358,7 +358,7 @@ type ListWorkflowAuditRow struct {
 	ResourceID     pgtype.UUID
 	FromStateID    pgtype.UUID
 	ToStateID      pgtype.UUID
-	ActorRsUserID  *int64
+	ActorUserRef   *int64
 	Note           string
 	TransitionedAt pgtype.Timestamptz
 	FromCode       *string
@@ -386,7 +386,7 @@ func (q *Queries) ListWorkflowAudit(ctx context.Context, arg ListWorkflowAuditPa
 			&i.ResourceID,
 			&i.FromStateID,
 			&i.ToStateID,
-			&i.ActorRsUserID,
+			&i.ActorUserRef,
 			&i.Note,
 			&i.TransitionedAt,
 			&i.FromCode,

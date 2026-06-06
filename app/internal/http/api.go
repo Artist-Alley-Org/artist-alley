@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"time"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,18 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
+	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
+	"github.com/google/uuid"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
+	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/messages"
+	"github.com/mscrnt/artist-alley/app/internal/notifications"
+	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
 )
@@ -53,12 +66,31 @@ type apiServer struct {
 	i18n         *i18n.Handler
 	jobs         *jobs.HTTPHandler
 	brushpacks   *brushpacks.Handler
-	audit        *audit.HTTPHandler
-	licensing    *licensing.Handler
+	audit         *audit.HTTPHandler
+	licensing     *licensing.Handler
+	userprefs     *userprefs.Handler
+	notifications   *notifications.Handler
+	messages        *messages.Handler
+	activities      *activities.Writer
+	activitiesAdmin *activities.AdminHandler
+	peers           *peer.Registry
+	peersAdmin      *peer.AdminHandler
+	peersHandshake  *peer.AdminHandshakeHandler
+	peersPublic     *peer.PublicHandler
+	fedIdentity     *identity.Manager
+	fedEngine       *peer.Engine
+	directories      *directory.Registry
+	directoriesAdmin *directory.AdminHandler
+	directoryPoller  *directory.Poller
+	p2pRegistry      *p2p.Registry
+	p2pAdmin         *p2p.AdminHandler
+	sharesRegistry   *shares.Registry
+	sharesAdmin      *shares.AdminHandler
+	sharesSweeper    *shares.Sweeper
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
-	return &apiServer{
+	s := &apiServer{
 		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
@@ -68,7 +100,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
 		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
-		social:       social.NewHandler(pool, logger),
+		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
@@ -77,7 +109,356 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:        audit.NewHTTPHandler(pool, logger),
 		licensing:    licensing.NewHandler(licState, logger),
+		userprefs:    userprefs.NewHandler(pool, logger, cacheReg),
 	}
+	// Wire the social-graph seam into posts so visibility='followers'
+	// gating consults the new follows table (Phase 1.17.G2). Done
+	// post-construction since the two handlers are siblings in the
+	// struct literal and a direct cross-reference there would be
+	// awkward to read.
+	s.posts.SetFollowChecker(s.social)
+
+	// Notifications writer + handler (Phase 1.17.I2). The writer is
+	// the cross-package entry point every emitter (social, posts,
+	// licensing in I2-b, L in 1.17.L) calls. Permission gates
+	// (block-checker + prefs-resolver) inject post-construction so
+	// the social + userprefs handlers exist first.
+	notifWriter := notifications.NewWriter(pool, logger, nil, nil, nil, cacheReg)
+	notifWriter.SetBlockChecker(socialBlockAdapter{h: s.social})
+	notifWriter.SetPrefsResolver(userprefsPrefsAdapter{h: s.userprefs})
+	s.notifications = notifications.NewHandler(pool, logger, notifWriter)
+	// Plumb the writer back into the social handler so its
+	// comment/like/follow paths can fire notifications. The adapter
+	// converts the social-package primitive-args contract into the
+	// notifications.Input struct.
+	s.social.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
+	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
+	// notifications + social: nil-constructed for cache, deps
+	// injected post-construction.
+	s.messages = messages.NewHandler(pool, logger, cacheReg)
+	s.messages.SetBlockChecker(socialBlockAdapter{h: s.social})
+	s.messages.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.messages.SetUserExister(socialUserExistsAdapter{h: s.social})
+
+	// Activities ledger writer (Phase 1.22.A-bis-1/2 per ADR 0044).
+	// The writer is the cross-package recorder every social
+	// handler calls via WithEmission. Reuses the same notification
+	// adapter so post-commit notification fan-out fires through
+	// the existing notifications.Writer (which already enforces
+	// block + channel-pref gating).
+	s.activities = activities.NewWriter(pool, logger, cacheReg)
+	s.activities.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.activitiesAdmin = activities.NewAdminHandler(s.activities)
+
+	// Federation peer registry (Phase 1.22.B-a). Two cache
+	// domains — per-instance-URL + enabled-snapshot — register
+	// with the shared cache.Registry so federated replicas
+	// invalidate in lockstep on every peer mutation.
+	s.peers = peer.NewRegistry(pool, logger, cacheReg)
+	s.peersAdmin = peer.NewAdminHandler(s.peers)
+
+	// Federation instance identity (Phase 1.22.B-b). Singleton
+	// Ed25519 keypair, atrest-encrypted, loaded once at boot.
+	// Best-effort load — if atrest isn't initialised yet, the
+	// federation HTTP surface returns 503 for handshake POSTs +
+	// instance doc reads until Load succeeds. We don't fail boot
+	// because dev environments without AA_MASTER_KEY should
+	// still come up for non-federation features.
+	s.fedIdentity = identity.NewManager(pool, logger)
+	if _, err := s.fedIdentity.Load(context.Background()); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"federation.identity.load.failed",
+			slog.String("err", err.Error()),
+			slog.String("impact", "/federation/instance + handshake POSTs will return 503"),
+		)
+	}
+
+	// Handshake engine + public + admin surfaces. baseURL +
+	// display name read live from sysconfig per request — admin
+	// edits show up immediately in the actor doc.
+	s.fedEngine = peer.NewEngine(s.peers, s.fedIdentity, nil)
+	s.fedEngine.SetLocalBaseURL(sysconfigBaseURLFn(sysCfg)(context.Background()))
+	s.fedEngine.SetLocalDisplayName(sysconfigSiteNameFn(sysCfg)(context.Background()))
+	s.peersHandshake = peer.NewAdminHandshakeHandler(s.peers, s.fedEngine)
+	s.peersPublic = peer.NewPublicHandler(
+		s.fedIdentity,
+		s.fedEngine,
+		s.peers,
+		sysconfigBaseURLFn(sysCfg),
+		sysconfigSiteNameFn(sysCfg),
+	)
+
+	// Peer-of-peer discovery (Phase 1.22.B-d). Suggestions
+	// registry + admin handler share the peer registry so dedup
+	// against our own peers can happen at query time.
+	s.p2pRegistry = p2p.NewRegistry(pool, logger, s.peers, cacheReg)
+	p2pClient := p2p.NewClient()
+	s.p2pAdmin = p2p.NewAdminHandler(s.p2pRegistry, p2pClient)
+
+	// Federation shares (Phase 1.22.C). Registry caches the
+	// per-object active-shares snapshot (the inbox-filter hot
+	// path). Admin handler grants/revokes via the write-ahead-
+	// audit invariant (audit row commits in the SAME tx as the
+	// share row + the aa:Share/aa:Unshare activity row).
+	s.sharesRegistry = shares.NewRegistry(pool, logger, cacheReg)
+	s.sharesAdmin = shares.NewAdminHandler(
+		s.sharesRegistry,
+		s.activities,
+		auditRec,
+		ownerResolverFor(pool),
+		peerLookupFor(s.peers),
+		sysconfigBaseURLFn(sysCfg),
+		usernameResolverFor(s.users),
+	)
+	// 1.22.C-d defederation-preview deps: count pending
+	// handshakes for the peer + count cached suggestions sourced
+	// from the peer + resolve display name/URL for the modal
+	// header. Closures over the existing registries.
+	s.sharesAdmin.SetDefederationDeps(
+		pendingHandshakeCounterFor(pool),
+		suggestionCounterFor(pool),
+		peerDisplayFor(s.peers),
+	)
+	// 1.22.C-d expiry sweeper — periodic goroutine, started in
+	// Server.Run() alongside the directory poller. Defaults to
+	// 1-hour cadence + 500-row batches per the design.
+	s.sharesSweeper = shares.NewSweeper(
+		shares.DefaultSweeperConfig(),
+		s.sharesRegistry,
+		s.activities,
+		auditRec,
+		peerLookupFor(s.peers),
+		sysconfigBaseURLFn(sysCfg),
+		usernameResolverFor(s.users),
+		logger,
+	)
+
+	// Directory subscriber (Phase 1.22.B-c). The Registry +
+	// AdminHandler land here; the background Poller starts in
+	// Run() so test fixtures that don't need it can skip it.
+	s.directories = directory.NewRegistry(pool, logger, cacheReg)
+	dirClient := directory.NewClient(logger)
+	s.directoriesAdmin = directory.NewAdminHandler(s.directories, dirClient)
+	// Wire publish-side deps (1.22.B-c-bis). nil-safe: subscribe-only
+	// installs still work; only the publish endpoints fail with a
+	// clear 503 when identity/base-URL aren't configured.
+	s.directoriesAdmin.SetPublishDeps(s.fedIdentity, sysconfigBaseURLFn(sysCfg))
+	s.directoryPoller = directory.NewPoller(s.directories, dirClient, logger, 5*time.Minute)
+	// UsernameResolver: the username-by-ref lookup federation
+	// emitters use to build actor URIs. *users.Handler already
+	// caches UserPublic; ResolveUsername reuses that cache so the
+	// federation hot path (Like/Follow/DM/Block emissions) doesn't
+	// slam the user table on every emit. Per docs/spec/federation/
+	// v1.md §8.4 usernames are immutable from the federation
+	// perspective so cached values stay correct for the actor's
+	// lifetime.
+	s.activities.SetUsernameResolver(s.users)
+	// Handlers that emit need a baseURL to mint actor + activity
+	// URIs. Plumb the sysconfig.Site getter so the URL respects
+	// runtime config changes (admin updates site.base_url → next
+	// emit uses the new value, no restart).
+	s.posts.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.social.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	s.users.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	return s
+}
+
+// sysconfigBaseURLFn returns a base-URL resolver closure that
+// reads the current Site.BaseURL from sysconfig on each call.
+// Cheap because sysconfig itself is cached; ensures emits pick
+// up admin-time URL changes without a restart. Empty string
+// fallback when sysconfig hasn't been initialized (tests).
+func sysconfigBaseURLFn(sysCfg *sysconfig.Store) func(ctx context.Context) string {
+	return func(ctx context.Context) string {
+		if sysCfg == nil {
+			return ""
+		}
+		site, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return ""
+		}
+		return site.BaseURL
+	}
+}
+
+// sysconfigSiteNameFn returns a closure resolving sysconfig.Site.Name —
+// used as the federation instance display name (Phase 1.22.B-b).
+// Empty-string fallback matches sysconfigBaseURLFn for test paths.
+func sysconfigSiteNameFn(sysCfg *sysconfig.Store) func(ctx context.Context) string {
+	return func(ctx context.Context) string {
+		if sysCfg == nil {
+			return ""
+		}
+		site, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return ""
+		}
+		return site.Name
+	}
+}
+
+// socialUserExistsAdapter satisfies messages' userExister via
+// *social.Handler — the public UserExists method is the cached,
+// cross-package-safe entry point.
+type socialUserExistsAdapter struct{ h *social.Handler }
+
+func (a socialUserExistsAdapter) UserExists(ctx context.Context, ref int64) (bool, error) {
+	return a.h.UserExists(ctx, ref)
+}
+
+// --- 1.22.C-c federation_shares adapters ---------------------------------
+
+// ownerResolverFor returns the shares.ObjectOwnerResolver closure
+// boot wires into the shares admin handler. Checks the per-
+// domain owner columns: posts.author_user_ref,
+// collections.owner_user_ref, assets.owner_user_ref. Unknown
+// kinds default to "no" — system.admin still wins at the caller
+// because the resolver short-circuits before this is called.
+func ownerResolverFor(pool *pgxpool.Pool) shares.ObjectOwnerResolver {
+	return func(ctx context.Context, kind federation.ShareObjectKind, objectID uuid.UUID, caller *auth.Identity) (bool, error) {
+		var column, table string
+		switch kind {
+		case federation.ShareObjectKindPost:
+			table, column = "posts", "author_user_ref"
+		case federation.ShareObjectKindCollection:
+			table, column = "collections", "owner_user_ref"
+		case federation.ShareObjectKindAsset:
+			table, column = "assets", "owner_user_ref"
+		default:
+			// workspace + brand_kit tables don't exist yet;
+			// user-kind shares are server-internal (Accept(Follow)
+			// path). Reject ownership claims for these.
+			return false, nil
+		}
+		var ownerRef int64
+		err := pool.QueryRow(ctx,
+			"SELECT "+column+" FROM "+table+" WHERE id = $1",
+			objectID,
+		).Scan(&ownerRef)
+		if err != nil {
+			return false, nil // unknown object → reject (caller maps to 404)
+		}
+		return ownerRef == caller.UserRef, nil
+	}
+}
+
+// peerLookupFor wraps peer.Registry.ByID with the projection
+// shapes shares needs: id, instance_url, enabled flag, and
+// "connected status" derived from PeerStatus.
+func peerLookupFor(reg *peer.Registry) shares.PeerLookup {
+	return func(ctx context.Context, id uuid.UUID) (shares.PeerInfo, error) {
+		p, err := reg.ByID(ctx, id)
+		if err != nil {
+			return shares.PeerInfo{}, err
+		}
+		return shares.PeerInfo{
+			ID:          p.ID,
+			InstanceURL: p.InstanceURL,
+			Enabled:     p.Enabled,
+			Connected:   p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
+}
+
+// usernameResolverFor wraps users.Handler.ResolveUsername (the
+// existing cache-fronted lookup that the federation hot path
+// already uses).
+func usernameResolverFor(uh *users.Handler) func(ctx context.Context, ref int64) string {
+	return func(ctx context.Context, ref int64) string {
+		return uh.ResolveUsername(ctx, ref)
+	}
+}
+
+// --- 1.22.C-d defederation-preview adapters -----------------------------
+
+// pendingHandshakeCounterFor counts pending_outbound +
+// pending_inbound rows for one peer. Used by the cascade-preview
+// endpoint to render "3 pending handshakes will be cancelled."
+// Plain SQL because the peer registry doesn't expose the count
+// directly — adding a Registry method would be over-fitting to
+// the one caller.
+func pendingHandshakeCounterFor(pool *pgxpool.Pool) shares.PendingHandshakeCounter {
+	return func(ctx context.Context, peerID uuid.UUID) (int, error) {
+		var n int
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*)::INT FROM federation_peers
+			 WHERE id = $1 AND status IN ('pending_outbound', 'pending_inbound')`,
+			peerID,
+		).Scan(&n)
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+}
+
+// suggestionCounterFor counts peer-of-peer suggestions sourced
+// from a given peer (will be dropped when the peer's row is
+// deleted via FK CASCADE on federation_peer_suggestions).
+func suggestionCounterFor(pool *pgxpool.Pool) shares.SuggestionCounter {
+	return func(ctx context.Context, peerID uuid.UUID) (int, error) {
+		var n int
+		err := pool.QueryRow(ctx,
+			`SELECT COUNT(*)::INT FROM federation_peer_suggestions WHERE source_peer_id = $1`,
+			peerID,
+		).Scan(&n)
+		if err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+}
+
+// peerDisplayFor resolves peer display_name + URL for the
+// preview modal header. Wraps peer.Registry.ByID.
+func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
+	return func(ctx context.Context, id uuid.UUID) (string, string, error) {
+		p, err := reg.ByID(ctx, id)
+		if err != nil {
+			return "", "", err
+		}
+		return p.DisplayName, p.InstanceURL, nil
+	}
+}
+
+// --- cross-package adapters for the notifications wiring ----------
+
+// socialBlockAdapter satisfies notifications' blockChecker via
+// *social.Handler — the public HasBlockBetween method is the cached,
+// cross-package-safe entry point.
+type socialBlockAdapter struct{ h *social.Handler }
+
+func (a socialBlockAdapter) HasBlockBetween(ctx context.Context, x, y int64) (bool, error) {
+	return a.h.HasBlockBetween(ctx, x, y)
+}
+
+// userprefsPrefsAdapter satisfies notifications' prefsResolver via
+// *userprefs.Handler. The handler exposes a cross-package
+// ChannelsFor that loads prefs (via cache when available) and
+// resolves the channel list for the verb — falling back to the
+// per-event system default when the user has no override.
+type userprefsPrefsAdapter struct{ h *userprefs.Handler }
+
+func (a userprefsPrefsAdapter) ChannelsFor(ctx context.Context, ref int64, verb string) ([]string, error) {
+	return a.h.ChannelsFor(ctx, ref, verb)
+}
+
+// socialNotifyAdapter satisfies the social package's Notifier
+// interface by wrapping the notifications.Writer's typed Input.
+type socialNotifyAdapter struct{ w *notifications.Writer }
+
+func (a socialNotifyAdapter) Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error {
+	return a.w.Notify(ctx, notifications.Input{
+		RecipientUserRef: recipient,
+		ActorUserRef:     actor,
+		Verb:             verb,
+		TargetKind:       targetKind,
+		TargetID:         targetID,
+		Payload:          payload,
+	})
 }
 
 // usersHandlerWithAudit constructs the users handler + attaches the
@@ -602,6 +983,200 @@ func (s *apiServer) ValidateAdminLicense(ctx context.Context, req openapi.Valida
 
 func (s *apiServer) UploadAdminLicense(ctx context.Context, req openapi.UploadAdminLicenseRequestObject) (openapi.UploadAdminLicenseResponseObject, error) {
 	return s.licensing.UploadAdminLicense(ctx, req)
+}
+
+// --- userprefs (Phase 1.17.G) ----------------------------------------------
+
+func (s *apiServer) GetAccountPreferences(ctx context.Context, req openapi.GetAccountPreferencesRequestObject) (openapi.GetAccountPreferencesResponseObject, error) {
+	return s.userprefs.GetAccountPreferences(ctx, req)
+}
+
+func (s *apiServer) PatchAccountPreferences(ctx context.Context, req openapi.PatchAccountPreferencesRequestObject) (openapi.PatchAccountPreferencesResponseObject, error) {
+	return s.userprefs.PatchAccountPreferences(ctx, req)
+}
+
+// --- social graph (Phase 1.17.G2) -----------------------------------------
+
+func (s *apiServer) FollowUser(ctx context.Context, req openapi.FollowUserRequestObject) (openapi.FollowUserResponseObject, error) {
+	return s.social.FollowUser(ctx, req)
+}
+
+func (s *apiServer) UnfollowUser(ctx context.Context, req openapi.UnfollowUserRequestObject) (openapi.UnfollowUserResponseObject, error) {
+	return s.social.UnfollowUser(ctx, req)
+}
+
+func (s *apiServer) ListUserFollowers(ctx context.Context, req openapi.ListUserFollowersRequestObject) (openapi.ListUserFollowersResponseObject, error) {
+	return s.social.ListUserFollowers(ctx, req)
+}
+
+func (s *apiServer) ListUserFollowing(ctx context.Context, req openapi.ListUserFollowingRequestObject) (openapi.ListUserFollowingResponseObject, error) {
+	return s.social.ListUserFollowing(ctx, req)
+}
+
+func (s *apiServer) GetUserRelationship(ctx context.Context, req openapi.GetUserRelationshipRequestObject) (openapi.GetUserRelationshipResponseObject, error) {
+	return s.social.GetUserRelationship(ctx, req)
+}
+
+func (s *apiServer) BlockUser(ctx context.Context, req openapi.BlockUserRequestObject) (openapi.BlockUserResponseObject, error) {
+	return s.social.BlockUser(ctx, req)
+}
+
+func (s *apiServer) UnblockUser(ctx context.Context, req openapi.UnblockUserRequestObject) (openapi.UnblockUserResponseObject, error) {
+	return s.social.UnblockUser(ctx, req)
+}
+
+func (s *apiServer) ListMyBlocked(ctx context.Context, req openapi.ListMyBlockedRequestObject) (openapi.ListMyBlockedResponseObject, error) {
+	return s.social.ListMyBlocked(ctx, req)
+}
+
+// --- notifications (Phase 1.17.I2) ----------------------------------------
+
+func (s *apiServer) ListMyNotifications(ctx context.Context, req openapi.ListMyNotificationsRequestObject) (openapi.ListMyNotificationsResponseObject, error) {
+	return s.notifications.ListMyNotifications(ctx, req)
+}
+
+func (s *apiServer) GetMyUnreadNotificationCount(ctx context.Context, req openapi.GetMyUnreadNotificationCountRequestObject) (openapi.GetMyUnreadNotificationCountResponseObject, error) {
+	return s.notifications.GetMyUnreadNotificationCount(ctx, req)
+}
+
+func (s *apiServer) MarkNotificationRead(ctx context.Context, req openapi.MarkNotificationReadRequestObject) (openapi.MarkNotificationReadResponseObject, error) {
+	return s.notifications.MarkNotificationRead(ctx, req)
+}
+
+func (s *apiServer) MarkAllMyNotificationsRead(ctx context.Context, req openapi.MarkAllMyNotificationsReadRequestObject) (openapi.MarkAllMyNotificationsReadResponseObject, error) {
+	return s.notifications.MarkAllMyNotificationsRead(ctx, req)
+}
+
+// --- federation directories (Phase 1.22.B-c) -----------------------------
+
+func (s *apiServer) ListFederationDirectories(ctx context.Context, req openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
+	return s.directoriesAdmin.ListFederationDirectories(ctx, req)
+}
+
+func (s *apiServer) SubscribeFederationDirectory(ctx context.Context, req openapi.SubscribeFederationDirectoryRequestObject) (openapi.SubscribeFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.SubscribeFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) UnsubscribeFederationDirectory(ctx context.Context, req openapi.UnsubscribeFederationDirectoryRequestObject) (openapi.UnsubscribeFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.UnsubscribeFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) PollFederationDirectory(ctx context.Context, req openapi.PollFederationDirectoryRequestObject) (openapi.PollFederationDirectoryResponseObject, error) {
+	return s.directoriesAdmin.PollFederationDirectory(ctx, req)
+}
+
+func (s *apiServer) ListFederationDirectoryEntries(ctx context.Context, req openapi.ListFederationDirectoryEntriesRequestObject) (openapi.ListFederationDirectoryEntriesResponseObject, error) {
+	return s.directoriesAdmin.ListFederationDirectoryEntries(ctx, req)
+}
+
+func (s *apiServer) RequestFederationDirectoryPublishChallenge(ctx context.Context, req openapi.RequestFederationDirectoryPublishChallengeRequestObject) (openapi.RequestFederationDirectoryPublishChallengeResponseObject, error) {
+	return s.directoriesAdmin.RequestFederationDirectoryPublishChallenge(ctx, req)
+}
+
+func (s *apiServer) RegisterFederationDirectoryPublishListing(ctx context.Context, req openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
+	return s.directoriesAdmin.RegisterFederationDirectoryPublishListing(ctx, req)
+}
+
+// --- federation public + handshake (Phase 1.22.B-b) ----------------------
+
+func (s *apiServer) GetFederationInstance(ctx context.Context, req openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
+	return s.peersPublic.GetFederationInstance(ctx, req)
+}
+
+func (s *apiServer) GetFederationPeersVisible(ctx context.Context, req openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	return s.peersPublic.GetFederationPeersVisible(ctx, req)
+}
+
+func (s *apiServer) ListFederationPeerSuggestions(ctx context.Context, req openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	return s.p2pAdmin.ListFederationPeerSuggestions(ctx, req)
+}
+
+func (s *apiServer) RefreshFederationPeerSuggestions(ctx context.Context, req openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	return s.p2pAdmin.RefreshFederationPeerSuggestions(ctx, req)
+}
+
+// --- federation shares admin (Phase 1.22.C-c) ---------------------------
+
+func (s *apiServer) ListFederationShares(ctx context.Context, req openapi.ListFederationSharesRequestObject) (openapi.ListFederationSharesResponseObject, error) {
+	return s.sharesAdmin.ListFederationShares(ctx, req)
+}
+
+func (s *apiServer) GrantFederationShare(ctx context.Context, req openapi.GrantFederationShareRequestObject) (openapi.GrantFederationShareResponseObject, error) {
+	return s.sharesAdmin.GrantFederationShare(ctx, req)
+}
+
+func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
+	return s.sharesAdmin.RevokeFederationShare(ctx, req)
+}
+
+func (s *apiServer) PreviewFederationPeerDefederation(ctx context.Context, req openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {
+	return s.sharesAdmin.PreviewFederationPeerDefederation(ctx, req)
+}
+
+func (s *apiServer) PostFederationHandshake(ctx context.Context, req openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {
+	return s.peersPublic.PostFederationHandshake(ctx, req)
+}
+
+func (s *apiServer) InitiateFederationHandshake(ctx context.Context, req openapi.InitiateFederationHandshakeRequestObject) (openapi.InitiateFederationHandshakeResponseObject, error) {
+	return s.peersHandshake.InitiateFederationHandshake(ctx, req)
+}
+
+func (s *apiServer) ListFederationPendingInbound(ctx context.Context, req openapi.ListFederationPendingInboundRequestObject) (openapi.ListFederationPendingInboundResponseObject, error) {
+	return s.peersHandshake.ListFederationPendingInbound(ctx, req)
+}
+
+func (s *apiServer) AcceptFederationPeer(ctx context.Context, req openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
+	return s.peersHandshake.AcceptFederationPeer(ctx, req)
+}
+
+// --- federation peers admin (Phase 1.22.B-a) -----------------------------
+
+func (s *apiServer) ListFederationPeers(ctx context.Context, req openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
+	return s.peersAdmin.ListFederationPeers(ctx, req)
+}
+
+func (s *apiServer) GetFederationPeer(ctx context.Context, req openapi.GetFederationPeerRequestObject) (openapi.GetFederationPeerResponseObject, error) {
+	return s.peersAdmin.GetFederationPeer(ctx, req)
+}
+
+func (s *apiServer) CreateFederationPeer(ctx context.Context, req openapi.CreateFederationPeerRequestObject) (openapi.CreateFederationPeerResponseObject, error) {
+	return s.peersAdmin.CreateFederationPeer(ctx, req)
+}
+
+func (s *apiServer) UpdateFederationPeer(ctx context.Context, req openapi.UpdateFederationPeerRequestObject) (openapi.UpdateFederationPeerResponseObject, error) {
+	return s.peersAdmin.UpdateFederationPeer(ctx, req)
+}
+
+func (s *apiServer) DeleteFederationPeer(ctx context.Context, req openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
+	return s.peersAdmin.DeleteFederationPeer(ctx, req)
+}
+
+// --- activities admin audit (Phase 1.22.A-bis-3b) ------------------------
+
+func (s *apiServer) ListAdminActivities(ctx context.Context, req openapi.ListAdminActivitiesRequestObject) (openapi.ListAdminActivitiesResponseObject, error) {
+	return s.activitiesAdmin.ListAdminActivities(ctx, req)
+}
+
+// --- direct messages (Phase 1.17.I-a) -------------------------------------
+
+func (s *apiServer) ListMyDirectMessageThreads(ctx context.Context, req openapi.ListMyDirectMessageThreadsRequestObject) (openapi.ListMyDirectMessageThreadsResponseObject, error) {
+	return s.messages.ListMyDirectMessageThreads(ctx, req)
+}
+
+func (s *apiServer) GetMyUnreadDirectMessageCount(ctx context.Context, req openapi.GetMyUnreadDirectMessageCountRequestObject) (openapi.GetMyUnreadDirectMessageCountResponseObject, error) {
+	return s.messages.GetMyUnreadDirectMessageCount(ctx, req)
+}
+
+func (s *apiServer) ListDirectMessageThread(ctx context.Context, req openapi.ListDirectMessageThreadRequestObject) (openapi.ListDirectMessageThreadResponseObject, error) {
+	return s.messages.ListDirectMessageThread(ctx, req)
+}
+
+func (s *apiServer) SendDirectMessage(ctx context.Context, req openapi.SendDirectMessageRequestObject) (openapi.SendDirectMessageResponseObject, error) {
+	return s.messages.SendDirectMessage(ctx, req)
+}
+
+func (s *apiServer) MarkDirectMessageThreadRead(ctx context.Context, req openapi.MarkDirectMessageThreadReadRequestObject) (openapi.MarkDirectMessageThreadReadResponseObject, error) {
+	return s.messages.MarkDirectMessageThreadRead(ctx, req)
 }
 
 // --- brush packs (Phase 1.21) ---------------------------------------------

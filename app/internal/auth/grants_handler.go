@@ -79,7 +79,7 @@ func (h *Handler) ListAdminUserCapabilities(
 			Capability: g.CapabilityCode,
 			TeamId:     pgUUIDToOpenAPI(g.TeamID),
 			Note:       strPtrOrNil(g.Note),
-			GrantedBy:  g.GrantedByRsUserID,
+			GrantedBy:  g.GrantedByUserRef,
 			GrantedAt:  g.GrantedAt.Time,
 		})
 	}
@@ -88,7 +88,7 @@ func (h *Handler) ListAdminUserCapabilities(
 			Capability: r.CapabilityCode,
 			TeamId:     pgUUIDToOpenAPI(r.TeamID),
 			Note:       strPtrOrNil(r.Note),
-			GrantedBy:  r.RevokedByRsUserID,
+			GrantedBy:  r.RevokedByUserRef,
 			GrantedAt:  r.RevokedAt.Time,
 		})
 	}
@@ -133,10 +133,10 @@ func (h *Handler) AddAdminUserGrant(
 		note = *req.Body.Note
 	}
 	if err := q.InsertUserGrant(ctx, InsertUserGrantParams{
-		RsUserID:          req.Ref,
+		UserRef:          req.Ref,
 		CapabilityCode:    req.Body.Capability,
 		TeamID:            teamUUID,
-		GrantedByRsUserID: &caller.UserRef,
+		GrantedByUserRef: &caller.UserRef,
 		Note:              note,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert grant: %w", err)
@@ -174,7 +174,7 @@ func (h *Handler) RemoveAdminUserGrant(
 	q := New(h.Pool)
 	teamUUID := openAPIToPgUUID(req.Params.TeamId)
 	n, err := q.DeleteUserGrant(ctx, DeleteUserGrantParams{
-		RsUserID:       req.Ref,
+		UserRef:       req.Ref,
 		CapabilityCode: req.Capability,
 		TeamID:         teamUUID,
 	})
@@ -237,10 +237,10 @@ func (h *Handler) AddAdminUserRevoke(
 		note = *req.Body.Note
 	}
 	if err := q.InsertUserRevoke(ctx, InsertUserRevokeParams{
-		RsUserID:          req.Ref,
+		UserRef:          req.Ref,
 		CapabilityCode:    req.Body.Capability,
 		TeamID:            teamUUID,
-		RevokedByRsUserID: &caller.UserRef,
+		RevokedByUserRef: &caller.UserRef,
 		Note:              note,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert revoke: %w", err)
@@ -277,7 +277,7 @@ func (h *Handler) RemoveAdminUserRevoke(
 	q := New(h.Pool)
 	teamUUID := openAPIToPgUUID(req.Params.TeamId)
 	n, err := q.DeleteUserRevoke(ctx, DeleteUserRevokeParams{
-		RsUserID:       req.Ref,
+		UserRef:       req.Ref,
 		CapabilityCode: req.Capability,
 		TeamID:         teamUUID,
 	})

@@ -85,12 +85,12 @@ const hasAssetTypeAccess = `-- name: HasAssetTypeAccess :one
 WITH user_role_ids AS (
     SELECT ur.role_id::text AS rid
       FROM user_roles ur
-     WHERE ur.rs_user_id = $3::bigint
+     WHERE ur.user_ref = $3::bigint
 ),
 user_team_ids AS (
     SELECT tm.team_id::text AS tid
       FROM team_memberships tm
-     WHERE tm.rs_user_id = $3::bigint
+     WHERE tm.user_ref = $3::bigint
 )
 SELECT EXISTS (
     SELECT 1
@@ -113,7 +113,7 @@ SELECT EXISTS (
 type HasAssetTypeAccessParams struct {
 	AssetTypeRef int64  `json:"asset_type_ref"`
 	Permission   string `json:"permission"`
-	RsUserID     int64  `json:"rs_user_id"`
+	UserRef      int64  `json:"user_ref"`
 }
 
 // Returns true when the given user holds at least the requested
@@ -124,9 +124,9 @@ type HasAssetTypeAccessParams struct {
 // Used by the upload + asset-list handlers (follow-up commit) to gate
 // per-type operations.
 //
-// Params: @rs_user_id, @asset_type_ref, @permission.
+// Params: @user_ref, @asset_type_ref, @permission.
 func (q *Queries) HasAssetTypeAccess(ctx context.Context, arg HasAssetTypeAccessParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasAssetTypeAccess, arg.AssetTypeRef, arg.Permission, arg.RsUserID)
+	row := q.db.QueryRow(ctx, hasAssetTypeAccess, arg.AssetTypeRef, arg.Permission, arg.UserRef)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
@@ -135,21 +135,21 @@ func (q *Queries) HasAssetTypeAccess(ctx context.Context, arg HasAssetTypeAccess
 const insertAcl = `-- name: InsertAcl :exec
 INSERT INTO asset_type_acls (
     asset_type_ref, principal_type, principal_id, permission,
-    granted_by_rs_user_id, expires_at
+    granted_by_user_ref, expires_at
 ) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (asset_type_ref, principal_type, principal_id, permission) DO UPDATE SET
     granted_at            = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     expires_at            = EXCLUDED.expires_at
 `
 
 type InsertAclParams struct {
-	AssetTypeRef      int64              `json:"asset_type_ref"`
-	PrincipalType     string             `json:"principal_type"`
-	PrincipalID       string             `json:"principal_id"`
-	Permission        string             `json:"permission"`
-	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	AssetTypeRef     int64              `json:"asset_type_ref"`
+	PrincipalType    string             `json:"principal_type"`
+	PrincipalID      string             `json:"principal_id"`
+	Permission       string             `json:"permission"`
+	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 // Upsert an ACL row. The PRIMARY KEY (ref, principal_type, principal_id,
@@ -161,7 +161,7 @@ func (q *Queries) InsertAcl(ctx context.Context, arg InsertAclParams) error {
 		arg.PrincipalType,
 		arg.PrincipalID,
 		arg.Permission,
-		arg.GrantedByRsUserID,
+		arg.GrantedByUserRef,
 		arg.ExpiresAt,
 	)
 	return err
@@ -227,7 +227,7 @@ SELECT asset_type_ref,
        principal_id,
        permission,
        granted_at,
-       granted_by_rs_user_id,
+       granted_by_user_ref,
        expires_at
 FROM asset_type_acls
 WHERE asset_type_ref = $1
@@ -254,7 +254,7 @@ func (q *Queries) ListAcls(ctx context.Context, assetTypeRef int64) ([]AssetType
 			&i.PrincipalID,
 			&i.Permission,
 			&i.GrantedAt,
-			&i.GrantedByRsUserID,
+			&i.GrantedByUserRef,
 			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
@@ -271,12 +271,12 @@ const listUnauthorisedTypeRefsForUser = `-- name: ListUnauthorisedTypeRefsForUse
 WITH user_role_ids AS (
     SELECT ur.role_id::text AS rid
       FROM user_roles ur
-     WHERE ur.rs_user_id = $1::bigint
+     WHERE ur.user_ref = $1::bigint
 ),
 user_team_ids AS (
     SELECT tm.team_id::text AS tid
       FROM team_memberships tm
-     WHERE tm.rs_user_id = $1::bigint
+     WHERE tm.user_ref = $1::bigint
 ),
 restricted_types AS (
     SELECT DISTINCT asset_type_ref FROM asset_type_acls
@@ -305,11 +305,11 @@ WHERE asset_type_ref NOT IN (SELECT asset_type_ref FROM allowed_types)
 // team memberships; any of read/write/admin counts as read (higher
 // permissions implicitly include lower).
 //
-// For anonymous callers (no rs_user_id) pass 0 — the join still works
-// because no user_role or team_membership row has rs_user_id=0, so
+// For anonymous callers (no user_ref) pass 0 — the join still works
+// because no user_role or team_membership row has user_ref=0, so
 // every restricted type ends up in the unauthorised set.
-func (q *Queries) ListUnauthorisedTypeRefsForUser(ctx context.Context, rsUserID int64) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listUnauthorisedTypeRefsForUser, rsUserID)
+func (q *Queries) ListUnauthorisedTypeRefsForUser(ctx context.Context, userRef int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listUnauthorisedTypeRefsForUser, userRef)
 	if err != nil {
 		return nil, err
 	}

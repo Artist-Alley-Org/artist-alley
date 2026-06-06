@@ -128,18 +128,18 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 
 -- name: ListCollectionAcls :many
 SELECT collection_id, principal_type, principal_id, permission,
-       granted_at, granted_by_rs_user_id, expires_at
+       granted_at, granted_by_user_ref, expires_at
 FROM collection_acls
 WHERE collection_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission;
 
 -- name: AddCollectionAcl :exec
 INSERT INTO collection_acls (collection_id, principal_type, principal_id, permission,
-                             granted_by_rs_user_id, expires_at)
+                             granted_by_user_ref, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (collection_id, principal_type, principal_id, permission) DO UPDATE SET
     granted_at            = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     expires_at            = EXCLUDED.expires_at;
 
 -- name: RemoveCollectionAcl :execrows

@@ -41,7 +41,7 @@ func TestCapsCache_PopulatesAndHits(t *testing.T) {
 		roleID := seedRole(t, ctx, fx.pool, "test_CapsCache", nil, "test.caps.cached")
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   pgUUID(roleID),
 		}); err != nil {
 			t.Fatalf("assign role: %v", err)

@@ -10,9 +10,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Activity struct {
+	ID              pgtype.UUID
+	ActivityUri     string
+	ActivityType    string
+	ActorUri        string
+	ActorUserRef    *int64
+	ObjectUri       *string
+	ObjectKind      *string
+	ObjectLocalID   *string
+	TargetUri       *string
+	ToUris          []byte
+	CcUris          []byte
+	BtoUris         []byte
+	BccUris         []byte
+	AudienceUris    []byte
+	Payload         []byte
+	SignatureValue  *string
+	SignaturePubkey *string
+	Source          string
+	PublishedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID
-	RsUserID       int64
+	UserRef        int64
 	Name           string
 	TokenHash      []byte
 	Scopes         []string
@@ -33,26 +56,15 @@ type Asset struct {
 	FileHash             *string
 	FileExtension        *string
 	FileSizeBytes        *int64
-	Rating               *int32
-	UserRating           *float32
-	HitCount             int64
-	NewHitCount          int64
-	RequestCount         int64
-	ArchiveState         int32
 	Access               int32
-	ThumbWidth           *int32
-	ThumbHeight          *int32
-	ImageRed             *int16
-	ImageGreen           *int16
-	ImageBlue            *int16
-	ColourKey            *string
-	GeoLat               *float64
-	GeoLong              *float64
-	Country              *string
 	HasImage             bool
 	IsTranscoding        bool
 	Metadata             []byte
 	OriginServerID       pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	DeletedAt            pgtype.Timestamptz
+	SearchText           interface{}
 	StateID              pgtype.UUID
 	TeamID               pgtype.UUID
 	ProcessingStatus     string
@@ -61,9 +73,6 @@ type Asset struct {
 	ProcessingError      *string
 	ProcessingStartedAt  pgtype.Timestamptz
 	ProcessingFinishedAt pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
-	DeletedAt            pgtype.Timestamptz
 }
 
 type AssetAlternate struct {
@@ -126,21 +135,21 @@ type AssetType struct {
 	AllowedExtensions *string
 	OrderBy           *int64
 	ConfigOptions     *string
-	PushMetadata      *int64
+	PushMetadata      *int32
 	Colour            *int64
 	Icon              *string
 	Tab               *int64
-	PullImages        *int64
+	PullImages        *int16
 }
 
 type AssetTypeAcl struct {
-	AssetTypeRef      int64
-	PrincipalType     string
-	PrincipalID       string
-	Permission        string
-	GrantedAt         pgtype.Timestamptz
-	GrantedByRsUserID *int64
-	ExpiresAt         pgtype.Timestamptz
+	AssetTypeRef     int64
+	PrincipalType    string
+	PrincipalID      string
+	Permission       string
+	GrantedAt        pgtype.Timestamptz
+	GrantedByUserRef *int64
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type AuditEvent struct {
@@ -182,8 +191,8 @@ type BrushPackStamp struct {
 type Capability struct {
 	Code                   string
 	Description            string
-	RequiredLicenseFeature *string
 	CreatedAt              pgtype.Timestamptz
+	RequiredLicenseFeature *string
 }
 
 type Collection struct {
@@ -202,13 +211,13 @@ type Collection struct {
 }
 
 type CollectionAcl struct {
-	CollectionID      pgtype.UUID
-	PrincipalType     string
-	PrincipalID       string
-	Permission        string
-	GrantedAt         pgtype.Timestamptz
-	GrantedByRsUserID *int64
-	ExpiresAt         pgtype.Timestamptz
+	CollectionID     pgtype.UUID
+	PrincipalType    string
+	PrincipalID      string
+	Permission       string
+	GrantedAt        pgtype.Timestamptz
+	GrantedByUserRef *int64
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type CollectionPost struct {
@@ -247,6 +256,109 @@ type Comment struct {
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type DirectMessage struct {
+	ID               pgtype.UUID
+	SenderUserRef    int64
+	RecipientUserRef int64
+	Body             string
+	SentAt           pgtype.Timestamptz
+	ReadAt           pgtype.Timestamptz
+	OriginServerID   pgtype.UUID
+}
+
+type FederationDirectory struct {
+	ID                    pgtype.UUID
+	DirectoryUrl          string
+	OperatorName          string
+	OperatorPublicKey     string
+	OperatorFingerprint   string
+	OperatorContact       string
+	SubscribedAt          pgtype.Timestamptz
+	SubscribedByUserRef   int64
+	Enabled               bool
+	LastPolledAt          pgtype.Timestamptz
+	LastPollStatus        string
+	LastPollError         string
+	PollIntervalSeconds   int32
+	Notes                 string
+	PublishStatus         string
+	PublishPendingToken   string
+	PublishTokenExpiresAt pgtype.Timestamptz
+	PublishRecordName     string
+	PublishRecordValue    string
+	PublishListingID      string
+	PublishLastAttemptAt  pgtype.Timestamptz
+	PublishLastError      string
+	PublishDisplayName    string
+	PublishRegion         string
+	PublishDescription    string
+	PublishTags           []byte
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type FederationDirectoryEntry struct {
+	ID                pgtype.UUID
+	DirectoryID       pgtype.UUID
+	InstanceUrl       string
+	DisplayName       string
+	InstancePublicKey string
+	Fingerprint       string
+	Region            string
+	Description       string
+	Tags              []byte
+	VerifiedAt        pgtype.Timestamptz
+	VerifiedVia       string
+	ListingID         string
+	CachedAt          pgtype.Timestamptz
+}
+
+type FederationPeer struct {
+	ID                 pgtype.UUID
+	InstanceUrl        string
+	DisplayName        string
+	InstancePublicKey  string
+	TrustTier          string
+	EncryptionPolicy   string
+	Enabled            bool
+	Status             string
+	HandshakeAt        pgtype.Timestamptz
+	HandshakeByUserRef int64
+	LastSeenAt         pgtype.Timestamptz
+	Notes              string
+	ShareInVisibleList bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type FederationPeerSuggestion struct {
+	ID                   pgtype.UUID
+	SourcePeerID         pgtype.UUID
+	SuggestedUrl         string
+	SuggestedDisplayName string
+	SuggestedPublicKey   string
+	SuggestedFingerprint string
+	CachedAt             pgtype.Timestamptz
+}
+
+type FederationShare struct {
+	ID                pgtype.UUID
+	GrantorUserRef    int64
+	ObjectKind        string
+	ObjectID          pgtype.UUID
+	PeerID            pgtype.UUID
+	TargetUserUrl     *string
+	Scope             string
+	ExpiresAt         pgtype.Timestamptz
+	Notes             string
+	GrantedActivityID pgtype.UUID
+	GrantedAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevokedActivityID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type FieldDefinition struct {
@@ -297,8 +409,23 @@ type Job struct {
 type Like struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 	LikedAt    pgtype.Timestamptz
+}
+
+type Notification struct {
+	ID               pgtype.UUID
+	RecipientUserRef int64
+	ActorUserRef     *int64
+	Verb             string
+	TargetKind       *string
+	TargetID         *string
+	Payload          []byte
+	ReadAt           pgtype.Timestamptz
+	DeliveredAt      pgtype.Timestamptz
+	EmailSentAt      pgtype.Timestamptz
+	OriginServerID   pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
 }
 
 type Post struct {
@@ -308,27 +435,27 @@ type Post struct {
 	Description           string
 	Visibility            string
 	CoverAssetID          pgtype.UUID
-	CoverThumbnailAssetID pgtype.UUID
 	PostedAt              pgtype.Timestamptz
 	LikeCount             int64
 	CommentCount          int64
 	SearchText            interface{}
 	OriginServerID        pgtype.UUID
-	StateID               pgtype.UUID
-	TeamID                pgtype.UUID
 	DeletedAt             pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	StateID               pgtype.UUID
+	TeamID                pgtype.UUID
+	CoverThumbnailAssetID pgtype.UUID
 }
 
 type PostAcl struct {
-	PostID            pgtype.UUID
-	PrincipalType     string
-	PrincipalID       string
-	Permission        string
-	GrantedAt         pgtype.Timestamptz
-	GrantedByRsUserID *int64
-	ExpiresAt         pgtype.Timestamptz
+	PostID           pgtype.UUID
+	PrincipalType    string
+	PrincipalID      string
+	Permission       string
+	GrantedAt        pgtype.Timestamptz
+	GrantedByUserRef *int64
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type PostAsset struct {
@@ -422,10 +549,10 @@ type TeamClosure struct {
 }
 
 type TeamMembership struct {
-	TeamID          pgtype.UUID
-	RsUserID        int64
-	AddedAt         pgtype.Timestamptz
-	AddedByRsUserID *int64
+	TeamID         pgtype.UUID
+	UserRef        int64
+	AddedAt        pgtype.Timestamptz
+	AddedByUserRef *int64
 }
 
 type TeamParent struct {
@@ -434,74 +561,118 @@ type TeamParent struct {
 }
 
 type User struct {
-	Ref                int64
-	Username           *string
-	Password           *string
-	Fullname           *string
-	Email              *string
-	Usergroup          *int64
-	LastActive         pgtype.Timestamptz
-	LoggedIn           *int64
-	AcceptedTerms      int64
-	AccountExpires     pgtype.Timestamptz
-	Session            *string
-	PasswordLastChange pgtype.Timestamptz
-	LoginTries         int64
-	LoginLastTry       pgtype.Timestamptz
-	Approved           int64
-	Lang               *string
-	Created            pgtype.Timestamptz
-	Origin             *string
-	UniqueHash         *string
+	Ref                     int64
+	Username                *string
+	Password                *string
+	Fullname                *string
+	Email                   *string
+	Usergroup               *int64
+	LastActive              pgtype.Timestamptz
+	LoggedIn                *int32
+	LastBrowser             *string
+	LastIp                  *string
+	CurrentCollection       *int32
+	AcceptedTerms           int32
+	AccountExpires          pgtype.Timestamptz
+	Comments                *string
+	Session                 *string
+	IpRestrict              *string
+	SearchFilterOverride    *string
+	PasswordLastChange      pgtype.Timestamptz
+	LoginTries              int32
+	LoginLastTry            pgtype.Timestamptz
+	Approved                int64
+	Lang                    *string
+	Created                 pgtype.Timestamptz
+	HiddenCollections       *string
+	PasswordResetHash       *string
+	Origin                  *string
+	UniqueHash              *string
+	CsrfToken               *string
+	SearchFilterOID         *int32
+	ProfileImage            *string
+	ProfileText             *string
+	EmailInvalid            *int32
+	EmailRateLimitActive    *int32
+	ProcessingMessages      *string
+	ActorUri                *string
+	SigningPublicKeyPem     *string
+	SigningPrivateKeyEnc    []byte
+	EncryptionPublicKey     []byte
+	EncryptionPrivateKeyEnc []byte
+}
+
+type UserBlock struct {
+	BlockerUserRef int64
+	BlockedUserRef int64
+	Reason         *string
+	CreatedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
 }
 
 type UserCapabilityGrant struct {
-	RsUserID          int64
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	GrantedAt         pgtype.Timestamptz
-	GrantedByRsUserID *int64
-	Note              string
+	UserRef          int64
+	CapabilityCode   string
+	GrantedAt        pgtype.Timestamptz
+	GrantedByUserRef *int64
+	Note             string
+	TeamID           pgtype.UUID
 }
 
 type UserCapabilityRevoke struct {
-	RsUserID          int64
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	RevokedAt         pgtype.Timestamptz
-	RevokedByRsUserID *int64
-	Note              string
+	UserRef          int64
+	CapabilityCode   string
+	RevokedAt        pgtype.Timestamptz
+	RevokedByUserRef *int64
+	Note             string
+	TeamID           pgtype.UUID
+}
+
+type UserFollow struct {
+	FollowerUserRef int64
+	FolloweeUserRef int64
+	CreatedAt       pgtype.Timestamptz
+	OriginServerID  pgtype.UUID
 }
 
 type UserPasswordHistory struct {
 	ID             pgtype.UUID
-	RsUserID       int64
+	UserRef        int64
 	PasswordHash   string
 	ChangedAt      pgtype.Timestamptz
 	OriginServerID pgtype.UUID
 }
 
+type UserPreference struct {
+	UserRef              int64
+	NotificationChannels []byte
+	DefaultViews         []byte
+	OriginServerID       pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type UserProfile struct {
-	RsUserID       int64
+	UserRef        int64
 	DisplayName    *string
 	Bio            string
 	AvatarUrl      *string
 	Location       string
 	WebsiteUrl     *string
 	SocialLinks    []byte
-	Language       string
-	Theme          string
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	Language       string
+	Theme          string
 }
 
 type UserRole struct {
-	RsUserID           int64
-	RoleID             pgtype.UUID
-	TeamID             pgtype.UUID
-	AssignedAt         pgtype.Timestamptz
-	AssignedByRsUserID *int64
+	UserRef           int64
+	RoleID            pgtype.UUID
+	AssignedAt        pgtype.Timestamptz
+	AssignedByUserRef *int64
+	TeamID            pgtype.UUID
 }
 
 type WorkflowAudit struct {
@@ -510,7 +681,7 @@ type WorkflowAudit struct {
 	ResourceID     pgtype.UUID
 	FromStateID    pgtype.UUID
 	ToStateID      pgtype.UUID
-	ActorRsUserID  *int64
+	ActorUserRef   *int64
 	Note           string
 	TransitionedAt pgtype.Timestamptz
 }
@@ -524,10 +695,10 @@ type WorkflowState struct {
 	IsInitial        bool
 	IsTerminal       bool
 	VisibleByDefault bool
+	CreatedAt        pgtype.Timestamptz
 	Icon             string
 	Color            string
 	RequiresNote     bool
-	CreatedAt        pgtype.Timestamptz
 }
 
 type WorkflowTransition struct {

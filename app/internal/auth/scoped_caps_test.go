@@ -62,7 +62,7 @@ func linkTeams(t *testing.T, ctx context.Context, pool *pgxpool.Pool, parent, ch
 func assignTeamRole(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userRef int64, roleID [16]byte, team uuid.UUID) {
 	t.Helper()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO user_roles (rs_user_id, role_id, team_id) VALUES ($1, $2, $3)`,
+		`INSERT INTO user_roles (user_ref, role_id, team_id) VALUES ($1, $2, $3)`,
 		userRef, pgtype.UUID{Bytes: roleID, Valid: true},
 		pgtype.UUID{Bytes: team, Valid: true},
 	); err != nil {
@@ -79,7 +79,7 @@ func TestCan_GlobalRolePassesEverywhere(t *testing.T) {
 
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   pgtype.UUID{Bytes: roleID, Valid: true},
 		}); err != nil {
 			t.Fatalf("assign global: %v", err)
@@ -161,7 +161,7 @@ func TestCan_SystemAdminBypassesScope(t *testing.T) {
 		}
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-			RsUserID: fx.userRef,
+			UserRef: fx.userRef,
 			RoleID:   adminID,
 		}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
@@ -185,7 +185,7 @@ func TestCan_PerUserScopedGrant(t *testing.T) {
 		linkTeams(t, ctx, fx.pool, teamA, child)
 
 		if _, err := fx.pool.Exec(ctx,
-			`INSERT INTO user_capability_grants (rs_user_id, capability_code, team_id) VALUES ($1, $2, $3)`,
+			`INSERT INTO user_capability_grants (user_ref, capability_code, team_id) VALUES ($1, $2, $3)`,
 			fx.userRef, "test.scoped.directgrant",
 			pgtype.UUID{Bytes: teamA, Valid: true},
 		); err != nil {

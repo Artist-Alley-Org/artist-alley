@@ -45,6 +45,12 @@ services:
       # carried over from an old ResourceSpace install. Fresh installs
       # can generate a random value via ./scripts/bootstrap.sh.
       AA_SCRAMBLE_KEY: ${AA_SCRAMBLE_KEY:?AA_SCRAMBLE_KEY is required; see scripts/bootstrap.sh}
+      # Master key for at-rest encryption (AES-256-GCM). Used by
+      # the federation instance identity (1.22.B-b) to wrap the
+      # per-instance Ed25519 private key in the system_config row,
+      # and by per-user encryption keys (1.22.A). Hex-encoded
+      # 32 bytes; bootstrap.sh generates one if missing.
+      AA_MASTER_KEY: ${AA_MASTER_KEY:?AA_MASTER_KEY is required; see scripts/bootstrap.sh}
       # Storage root for the fs backend. Mounted as a named volume below
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.

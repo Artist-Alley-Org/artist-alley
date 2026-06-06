@@ -22,7 +22,7 @@ import (
 //     principal_id is the role's id; rows for other principal types
 //     remain.
 //   - Deleting a team does the same for principal_type='team'.
-//   - User-principal rows are NOT swept (we have no trigger on the RS
+//   - User-principal rows are NOT swept (we have no trigger on the legacy
 //     user table and dangling rows are tolerated by the handler-side
 //     check).
 //
@@ -45,7 +45,7 @@ func TestACLSweep_OnRoleAndTeamDelete(t *testing.T) {
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	// We need a real post to satisfy the FK. Seed one in this tx.
-	// The post needs an author (RS user.ref); 0 is fine for the test
+	// The post needs an author (user.ref); 0 is fine for the test
 	// since we never use this post via the user-facing API.
 	postID := uuid.New()
 	if _, err := tx.Exec(ctx, `

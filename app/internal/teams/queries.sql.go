@@ -12,19 +12,19 @@ import (
 )
 
 const addTeamMember = `-- name: AddTeamMember :exec
-INSERT INTO team_memberships (team_id, rs_user_id, added_by_rs_user_id)
+INSERT INTO team_memberships (team_id, user_ref, added_by_user_ref)
 VALUES ($1, $2, $3)
-ON CONFLICT (team_id, rs_user_id) DO NOTHING
+ON CONFLICT (team_id, user_ref) DO NOTHING
 `
 
 type AddTeamMemberParams struct {
-	TeamID          pgtype.UUID
-	RsUserID        int64
-	AddedByRsUserID *int64
+	TeamID         pgtype.UUID
+	UserRef        int64
+	AddedByUserRef *int64
 }
 
 func (q *Queries) AddTeamMember(ctx context.Context, arg AddTeamMemberParams) error {
-	_, err := q.db.Exec(ctx, addTeamMember, arg.TeamID, arg.RsUserID, arg.AddedByRsUserID)
+	_, err := q.db.Exec(ctx, addTeamMember, arg.TeamID, arg.UserRef, arg.AddedByUserRef)
 	return err
 }
 
@@ -101,10 +101,10 @@ func (q *Queries) GetTeam(ctx context.Context, id pgtype.UUID) (Team, error) {
 }
 
 const listTeamMembers = `-- name: ListTeamMembers :many
-SELECT team_id, rs_user_id, added_at, added_by_rs_user_id
+SELECT team_id, user_ref, added_at, added_by_user_ref
 FROM team_memberships
 WHERE team_id = $1
-ORDER BY added_at DESC, rs_user_id ASC
+ORDER BY added_at DESC, user_ref ASC
 `
 
 func (q *Queries) ListTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]TeamMembership, error) {
@@ -118,9 +118,9 @@ func (q *Queries) ListTeamMembers(ctx context.Context, teamID pgtype.UUID) ([]Te
 		var i TeamMembership
 		if err := rows.Scan(
 			&i.TeamID,
-			&i.RsUserID,
+			&i.UserRef,
 			&i.AddedAt,
-			&i.AddedByRsUserID,
+			&i.AddedByUserRef,
 		); err != nil {
 			return nil, err
 		}
@@ -270,14 +270,14 @@ SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
        t.created_at, t.updated_at, t.deleted_at
 FROM team_memberships tm
 JOIN teams t ON t.id = tm.team_id
-WHERE tm.rs_user_id = $1 AND t.deleted_at IS NULL
+WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
 ORDER BY t.name ASC, t.id ASC
 `
 
-// Direct team memberships for the caller's rs_user_id. Used by
+// Direct team memberships for the caller's user_ref. Used by
 // /auth/me/teams to render the upload modal's team picker.
-func (q *Queries) ListUserTeams(ctx context.Context, rsUserID int64) ([]Team, error) {
-	rows, err := q.db.Query(ctx, listUserTeams, rsUserID)
+func (q *Queries) ListUserTeams(ctx context.Context, userRef int64) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listUserTeams, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -307,16 +307,16 @@ func (q *Queries) ListUserTeams(ctx context.Context, rsUserID int64) ([]Team, er
 
 const removeTeamMember = `-- name: RemoveTeamMember :execrows
 DELETE FROM team_memberships
-WHERE team_id = $1 AND rs_user_id = $2
+WHERE team_id = $1 AND user_ref = $2
 `
 
 type RemoveTeamMemberParams struct {
-	TeamID   pgtype.UUID
-	RsUserID int64
+	TeamID  pgtype.UUID
+	UserRef int64
 }
 
 func (q *Queries) RemoveTeamMember(ctx context.Context, arg RemoveTeamMemberParams) (int64, error) {
-	result, err := q.db.Exec(ctx, removeTeamMember, arg.TeamID, arg.RsUserID)
+	result, err := q.db.Exec(ctx, removeTeamMember, arg.TeamID, arg.UserRef)
 	if err != nil {
 		return 0, err
 	}

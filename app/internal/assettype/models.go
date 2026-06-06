@@ -10,9 +10,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Activity struct {
+	ID              pgtype.UUID        `json:"id"`
+	ActivityUri     string             `json:"activity_uri"`
+	ActivityType    string             `json:"activity_type"`
+	ActorUri        string             `json:"actor_uri"`
+	ActorUserRef    *int64             `json:"actor_user_ref"`
+	ObjectUri       *string            `json:"object_uri"`
+	ObjectKind      *string            `json:"object_kind"`
+	ObjectLocalID   *string            `json:"object_local_id"`
+	TargetUri       *string            `json:"target_uri"`
+	ToUris          []byte             `json:"to_uris"`
+	CcUris          []byte             `json:"cc_uris"`
+	BtoUris         []byte             `json:"bto_uris"`
+	BccUris         []byte             `json:"bcc_uris"`
+	AudienceUris    []byte             `json:"audience_uris"`
+	Payload         []byte             `json:"payload"`
+	SignatureValue  *string            `json:"signature_value"`
+	SignaturePubkey *string            `json:"signature_pubkey"`
+	Source          string             `json:"source"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID        `json:"id"`
-	RsUserID       int64              `json:"rs_user_id"`
+	UserRef        int64              `json:"user_ref"`
 	Name           string             `json:"name"`
 	TokenHash      []byte             `json:"token_hash"`
 	Scopes         []string           `json:"scopes"`
@@ -33,26 +56,15 @@ type Asset struct {
 	FileHash             *string            `json:"file_hash"`
 	FileExtension        *string            `json:"file_extension"`
 	FileSizeBytes        *int64             `json:"file_size_bytes"`
-	Rating               *int32             `json:"rating"`
-	UserRating           *float32           `json:"user_rating"`
-	HitCount             int64              `json:"hit_count"`
-	NewHitCount          int64              `json:"new_hit_count"`
-	RequestCount         int64              `json:"request_count"`
-	ArchiveState         int32              `json:"archive_state"`
 	Access               int32              `json:"access"`
-	ThumbWidth           *int32             `json:"thumb_width"`
-	ThumbHeight          *int32             `json:"thumb_height"`
-	ImageRed             *int16             `json:"image_red"`
-	ImageGreen           *int16             `json:"image_green"`
-	ImageBlue            *int16             `json:"image_blue"`
-	ColourKey            *string            `json:"colour_key"`
-	GeoLat               *float64           `json:"geo_lat"`
-	GeoLong              *float64           `json:"geo_long"`
-	Country              *string            `json:"country"`
 	HasImage             bool               `json:"has_image"`
 	IsTranscoding        bool               `json:"is_transcoding"`
 	Metadata             []byte             `json:"metadata"`
 	OriginServerID       pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
+	SearchText           interface{}        `json:"search_text"`
 	StateID              pgtype.UUID        `json:"state_id"`
 	TeamID               pgtype.UUID        `json:"team_id"`
 	ProcessingStatus     string             `json:"processing_status"`
@@ -61,9 +73,6 @@ type Asset struct {
 	ProcessingError      *string            `json:"processing_error"`
 	ProcessingStartedAt  pgtype.Timestamptz `json:"processing_started_at"`
 	ProcessingFinishedAt pgtype.Timestamptz `json:"processing_finished_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type AssetAlternate struct {
@@ -126,21 +135,21 @@ type AssetType struct {
 	AllowedExtensions *string `json:"allowed_extensions"`
 	OrderBy           *int64  `json:"order_by"`
 	ConfigOptions     *string `json:"config_options"`
-	PushMetadata      *int64  `json:"push_metadata"`
+	PushMetadata      *int32  `json:"push_metadata"`
 	Colour            *int64  `json:"colour"`
 	Icon              *string `json:"icon"`
 	Tab               *int64  `json:"tab"`
-	PullImages        *int64  `json:"pull_images"`
+	PullImages        *int16  `json:"pull_images"`
 }
 
 type AssetTypeAcl struct {
-	AssetTypeRef      int64              `json:"asset_type_ref"`
-	PrincipalType     string             `json:"principal_type"`
-	PrincipalID       string             `json:"principal_id"`
-	Permission        string             `json:"permission"`
-	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
-	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	AssetTypeRef     int64              `json:"asset_type_ref"`
+	PrincipalType    string             `json:"principal_type"`
+	PrincipalID      string             `json:"principal_id"`
+	Permission       string             `json:"permission"`
+	GrantedAt        pgtype.Timestamptz `json:"granted_at"`
+	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 type AuditEvent struct {
@@ -182,8 +191,8 @@ type BrushPackStamp struct {
 type Capability struct {
 	Code                   string             `json:"code"`
 	Description            string             `json:"description"`
-	RequiredLicenseFeature *string            `json:"required_license_feature"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	RequiredLicenseFeature *string            `json:"required_license_feature"`
 }
 
 type Collection struct {
@@ -202,13 +211,13 @@ type Collection struct {
 }
 
 type CollectionAcl struct {
-	CollectionID      pgtype.UUID        `json:"collection_id"`
-	PrincipalType     string             `json:"principal_type"`
-	PrincipalID       string             `json:"principal_id"`
-	Permission        string             `json:"permission"`
-	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
-	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	CollectionID     pgtype.UUID        `json:"collection_id"`
+	PrincipalType    string             `json:"principal_type"`
+	PrincipalID      string             `json:"principal_id"`
+	Permission       string             `json:"permission"`
+	GrantedAt        pgtype.Timestamptz `json:"granted_at"`
+	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 type CollectionPost struct {
@@ -247,6 +256,109 @@ type Comment struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DirectMessage struct {
+	ID               pgtype.UUID        `json:"id"`
+	SenderUserRef    int64              `json:"sender_user_ref"`
+	RecipientUserRef int64              `json:"recipient_user_ref"`
+	Body             string             `json:"body"`
+	SentAt           pgtype.Timestamptz `json:"sent_at"`
+	ReadAt           pgtype.Timestamptz `json:"read_at"`
+	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
+}
+
+type FederationDirectory struct {
+	ID                    pgtype.UUID        `json:"id"`
+	DirectoryUrl          string             `json:"directory_url"`
+	OperatorName          string             `json:"operator_name"`
+	OperatorPublicKey     string             `json:"operator_public_key"`
+	OperatorFingerprint   string             `json:"operator_fingerprint"`
+	OperatorContact       string             `json:"operator_contact"`
+	SubscribedAt          pgtype.Timestamptz `json:"subscribed_at"`
+	SubscribedByUserRef   int64              `json:"subscribed_by_user_ref"`
+	Enabled               bool               `json:"enabled"`
+	LastPolledAt          pgtype.Timestamptz `json:"last_polled_at"`
+	LastPollStatus        string             `json:"last_poll_status"`
+	LastPollError         string             `json:"last_poll_error"`
+	PollIntervalSeconds   int32              `json:"poll_interval_seconds"`
+	Notes                 string             `json:"notes"`
+	PublishStatus         string             `json:"publish_status"`
+	PublishPendingToken   string             `json:"publish_pending_token"`
+	PublishTokenExpiresAt pgtype.Timestamptz `json:"publish_token_expires_at"`
+	PublishRecordName     string             `json:"publish_record_name"`
+	PublishRecordValue    string             `json:"publish_record_value"`
+	PublishListingID      string             `json:"publish_listing_id"`
+	PublishLastAttemptAt  pgtype.Timestamptz `json:"publish_last_attempt_at"`
+	PublishLastError      string             `json:"publish_last_error"`
+	PublishDisplayName    string             `json:"publish_display_name"`
+	PublishRegion         string             `json:"publish_region"`
+	PublishDescription    string             `json:"publish_description"`
+	PublishTags           []byte             `json:"publish_tags"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationDirectoryEntry struct {
+	ID                pgtype.UUID        `json:"id"`
+	DirectoryID       pgtype.UUID        `json:"directory_id"`
+	InstanceUrl       string             `json:"instance_url"`
+	DisplayName       string             `json:"display_name"`
+	InstancePublicKey string             `json:"instance_public_key"`
+	Fingerprint       string             `json:"fingerprint"`
+	Region            string             `json:"region"`
+	Description       string             `json:"description"`
+	Tags              []byte             `json:"tags"`
+	VerifiedAt        pgtype.Timestamptz `json:"verified_at"`
+	VerifiedVia       string             `json:"verified_via"`
+	ListingID         string             `json:"listing_id"`
+	CachedAt          pgtype.Timestamptz `json:"cached_at"`
+}
+
+type FederationPeer struct {
+	ID                 pgtype.UUID        `json:"id"`
+	InstanceUrl        string             `json:"instance_url"`
+	DisplayName        string             `json:"display_name"`
+	InstancePublicKey  string             `json:"instance_public_key"`
+	TrustTier          string             `json:"trust_tier"`
+	EncryptionPolicy   string             `json:"encryption_policy"`
+	Enabled            bool               `json:"enabled"`
+	Status             string             `json:"status"`
+	HandshakeAt        pgtype.Timestamptz `json:"handshake_at"`
+	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
+	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
+	Notes              string             `json:"notes"`
+	ShareInVisibleList bool               `json:"share_in_visible_list"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationPeerSuggestion struct {
+	ID                   pgtype.UUID        `json:"id"`
+	SourcePeerID         pgtype.UUID        `json:"source_peer_id"`
+	SuggestedUrl         string             `json:"suggested_url"`
+	SuggestedDisplayName string             `json:"suggested_display_name"`
+	SuggestedPublicKey   string             `json:"suggested_public_key"`
+	SuggestedFingerprint string             `json:"suggested_fingerprint"`
+	CachedAt             pgtype.Timestamptz `json:"cached_at"`
+}
+
+type FederationShare struct {
+	ID                pgtype.UUID        `json:"id"`
+	GrantorUserRef    int64              `json:"grantor_user_ref"`
+	ObjectKind        string             `json:"object_kind"`
+	ObjectID          pgtype.UUID        `json:"object_id"`
+	PeerID            pgtype.UUID        `json:"peer_id"`
+	TargetUserUrl     *string            `json:"target_user_url"`
+	Scope             string             `json:"scope"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	Notes             string             `json:"notes"`
+	GrantedActivityID pgtype.UUID        `json:"granted_activity_id"`
+	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedActivityID pgtype.UUID        `json:"revoked_activity_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FieldDefinition struct {
@@ -297,8 +409,23 @@ type Job struct {
 type Like struct {
 	TargetKind string             `json:"target_kind"`
 	TargetID   pgtype.UUID        `json:"target_id"`
-	RsUserID   int64              `json:"rs_user_id"`
+	UserRef    int64              `json:"user_ref"`
 	LikedAt    pgtype.Timestamptz `json:"liked_at"`
+}
+
+type Notification struct {
+	ID               pgtype.UUID        `json:"id"`
+	RecipientUserRef int64              `json:"recipient_user_ref"`
+	ActorUserRef     *int64             `json:"actor_user_ref"`
+	Verb             string             `json:"verb"`
+	TargetKind       *string            `json:"target_kind"`
+	TargetID         *string            `json:"target_id"`
+	Payload          []byte             `json:"payload"`
+	ReadAt           pgtype.Timestamptz `json:"read_at"`
+	DeliveredAt      pgtype.Timestamptz `json:"delivered_at"`
+	EmailSentAt      pgtype.Timestamptz `json:"email_sent_at"`
+	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Post struct {
@@ -308,27 +435,27 @@ type Post struct {
 	Description           string             `json:"description"`
 	Visibility            string             `json:"visibility"`
 	CoverAssetID          pgtype.UUID        `json:"cover_asset_id"`
-	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
 	PostedAt              pgtype.Timestamptz `json:"posted_at"`
 	LikeCount             int64              `json:"like_count"`
 	CommentCount          int64              `json:"comment_count"`
 	SearchText            interface{}        `json:"search_text"`
 	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
-	StateID               pgtype.UUID        `json:"state_id"`
-	TeamID                pgtype.UUID        `json:"team_id"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	StateID               pgtype.UUID        `json:"state_id"`
+	TeamID                pgtype.UUID        `json:"team_id"`
+	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
 }
 
 type PostAcl struct {
-	PostID            pgtype.UUID        `json:"post_id"`
-	PrincipalType     string             `json:"principal_type"`
-	PrincipalID       string             `json:"principal_id"`
-	Permission        string             `json:"permission"`
-	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
-	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	PostID           pgtype.UUID        `json:"post_id"`
+	PrincipalType    string             `json:"principal_type"`
+	PrincipalID      string             `json:"principal_id"`
+	Permission       string             `json:"permission"`
+	GrantedAt        pgtype.Timestamptz `json:"granted_at"`
+	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 type PostAsset struct {
@@ -422,10 +549,10 @@ type TeamClosure struct {
 }
 
 type TeamMembership struct {
-	TeamID          pgtype.UUID        `json:"team_id"`
-	RsUserID        int64              `json:"rs_user_id"`
-	AddedAt         pgtype.Timestamptz `json:"added_at"`
-	AddedByRsUserID *int64             `json:"added_by_rs_user_id"`
+	TeamID         pgtype.UUID        `json:"team_id"`
+	UserRef        int64              `json:"user_ref"`
+	AddedAt        pgtype.Timestamptz `json:"added_at"`
+	AddedByUserRef *int64             `json:"added_by_user_ref"`
 }
 
 type TeamParent struct {
@@ -434,74 +561,118 @@ type TeamParent struct {
 }
 
 type User struct {
-	Ref                int64              `json:"ref"`
-	Username           *string            `json:"username"`
-	Password           *string            `json:"password"`
-	Fullname           *string            `json:"fullname"`
-	Email              *string            `json:"email"`
-	Usergroup          *int64             `json:"usergroup"`
-	LastActive         pgtype.Timestamptz `json:"last_active"`
-	LoggedIn           *int64             `json:"logged_in"`
-	AcceptedTerms      int64              `json:"accepted_terms"`
-	AccountExpires     pgtype.Timestamptz `json:"account_expires"`
-	Session            *string            `json:"session"`
-	PasswordLastChange pgtype.Timestamptz `json:"password_last_change"`
-	LoginTries         int64              `json:"login_tries"`
-	LoginLastTry       pgtype.Timestamptz `json:"login_last_try"`
-	Approved           int64              `json:"approved"`
-	Lang               *string            `json:"lang"`
-	Created            pgtype.Timestamptz `json:"created"`
-	Origin             *string            `json:"origin"`
-	UniqueHash         *string            `json:"unique_hash"`
+	Ref                     int64              `json:"ref"`
+	Username                *string            `json:"username"`
+	Password                *string            `json:"password"`
+	Fullname                *string            `json:"fullname"`
+	Email                   *string            `json:"email"`
+	Usergroup               *int64             `json:"usergroup"`
+	LastActive              pgtype.Timestamptz `json:"last_active"`
+	LoggedIn                *int32             `json:"logged_in"`
+	LastBrowser             *string            `json:"last_browser"`
+	LastIp                  *string            `json:"last_ip"`
+	CurrentCollection       *int32             `json:"current_collection"`
+	AcceptedTerms           int32              `json:"accepted_terms"`
+	AccountExpires          pgtype.Timestamptz `json:"account_expires"`
+	Comments                *string            `json:"comments"`
+	Session                 *string            `json:"session"`
+	IpRestrict              *string            `json:"ip_restrict"`
+	SearchFilterOverride    *string            `json:"search_filter_override"`
+	PasswordLastChange      pgtype.Timestamptz `json:"password_last_change"`
+	LoginTries              int32              `json:"login_tries"`
+	LoginLastTry            pgtype.Timestamptz `json:"login_last_try"`
+	Approved                int64              `json:"approved"`
+	Lang                    *string            `json:"lang"`
+	Created                 pgtype.Timestamptz `json:"created"`
+	HiddenCollections       *string            `json:"hidden_collections"`
+	PasswordResetHash       *string            `json:"password_reset_hash"`
+	Origin                  *string            `json:"origin"`
+	UniqueHash              *string            `json:"unique_hash"`
+	CsrfToken               *string            `json:"csrf_token"`
+	SearchFilterOID         *int32             `json:"search_filter_o_id"`
+	ProfileImage            *string            `json:"profile_image"`
+	ProfileText             *string            `json:"profile_text"`
+	EmailInvalid            *int32             `json:"email_invalid"`
+	EmailRateLimitActive    *int32             `json:"email_rate_limit_active"`
+	ProcessingMessages      *string            `json:"processing_messages"`
+	ActorUri                *string            `json:"actor_uri"`
+	SigningPublicKeyPem     *string            `json:"signing_public_key_pem"`
+	SigningPrivateKeyEnc    []byte             `json:"signing_private_key_enc"`
+	EncryptionPublicKey     []byte             `json:"encryption_public_key"`
+	EncryptionPrivateKeyEnc []byte             `json:"encryption_private_key_enc"`
+}
+
+type UserBlock struct {
+	BlockerUserRef int64              `json:"blocker_user_ref"`
+	BlockedUserRef int64              `json:"blocked_user_ref"`
+	Reason         *string            `json:"reason"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
 type UserCapabilityGrant struct {
-	RsUserID          int64              `json:"rs_user_id"`
-	CapabilityCode    string             `json:"capability_code"`
-	TeamID            pgtype.UUID        `json:"team_id"`
-	GrantedAt         pgtype.Timestamptz `json:"granted_at"`
-	GrantedByRsUserID *int64             `json:"granted_by_rs_user_id"`
-	Note              string             `json:"note"`
+	UserRef          int64              `json:"user_ref"`
+	CapabilityCode   string             `json:"capability_code"`
+	GrantedAt        pgtype.Timestamptz `json:"granted_at"`
+	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
+	Note             string             `json:"note"`
+	TeamID           pgtype.UUID        `json:"team_id"`
 }
 
 type UserCapabilityRevoke struct {
-	RsUserID          int64              `json:"rs_user_id"`
-	CapabilityCode    string             `json:"capability_code"`
-	TeamID            pgtype.UUID        `json:"team_id"`
-	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
-	RevokedByRsUserID *int64             `json:"revoked_by_rs_user_id"`
-	Note              string             `json:"note"`
+	UserRef          int64              `json:"user_ref"`
+	CapabilityCode   string             `json:"capability_code"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevokedByUserRef *int64             `json:"revoked_by_user_ref"`
+	Note             string             `json:"note"`
+	TeamID           pgtype.UUID        `json:"team_id"`
+}
+
+type UserFollow struct {
+	FollowerUserRef int64              `json:"follower_user_ref"`
+	FolloweeUserRef int64              `json:"followee_user_ref"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	OriginServerID  pgtype.UUID        `json:"origin_server_id"`
 }
 
 type UserPasswordHistory struct {
 	ID             pgtype.UUID        `json:"id"`
-	RsUserID       int64              `json:"rs_user_id"`
+	UserRef        int64              `json:"user_ref"`
 	PasswordHash   string             `json:"password_hash"`
 	ChangedAt      pgtype.Timestamptz `json:"changed_at"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 }
 
+type UserPreference struct {
+	UserRef              int64              `json:"user_ref"`
+	NotificationChannels []byte             `json:"notification_channels"`
+	DefaultViews         []byte             `json:"default_views"`
+	OriginServerID       pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserProfile struct {
-	RsUserID       int64              `json:"rs_user_id"`
+	UserRef        int64              `json:"user_ref"`
 	DisplayName    *string            `json:"display_name"`
 	Bio            string             `json:"bio"`
 	AvatarUrl      *string            `json:"avatar_url"`
 	Location       string             `json:"location"`
 	WebsiteUrl     *string            `json:"website_url"`
 	SocialLinks    []byte             `json:"social_links"`
-	Language       string             `json:"language"`
-	Theme          string             `json:"theme"`
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	Language       string             `json:"language"`
+	Theme          string             `json:"theme"`
 }
 
 type UserRole struct {
-	RsUserID           int64              `json:"rs_user_id"`
-	RoleID             pgtype.UUID        `json:"role_id"`
-	TeamID             pgtype.UUID        `json:"team_id"`
-	AssignedAt         pgtype.Timestamptz `json:"assigned_at"`
-	AssignedByRsUserID *int64             `json:"assigned_by_rs_user_id"`
+	UserRef           int64              `json:"user_ref"`
+	RoleID            pgtype.UUID        `json:"role_id"`
+	AssignedAt        pgtype.Timestamptz `json:"assigned_at"`
+	AssignedByUserRef *int64             `json:"assigned_by_user_ref"`
+	TeamID            pgtype.UUID        `json:"team_id"`
 }
 
 type WorkflowAudit struct {
@@ -510,7 +681,7 @@ type WorkflowAudit struct {
 	ResourceID     pgtype.UUID        `json:"resource_id"`
 	FromStateID    pgtype.UUID        `json:"from_state_id"`
 	ToStateID      pgtype.UUID        `json:"to_state_id"`
-	ActorRsUserID  *int64             `json:"actor_rs_user_id"`
+	ActorUserRef   *int64             `json:"actor_user_ref"`
 	Note           string             `json:"note"`
 	TransitionedAt pgtype.Timestamptz `json:"transitioned_at"`
 }
@@ -524,10 +695,10 @@ type WorkflowState struct {
 	IsInitial        bool               `json:"is_initial"`
 	IsTerminal       bool               `json:"is_terminal"`
 	VisibleByDefault bool               `json:"visible_by_default"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	Icon             string             `json:"icon"`
 	Color            string             `json:"color"`
 	RequiresNote     bool               `json:"requires_note"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type WorkflowTransition struct {

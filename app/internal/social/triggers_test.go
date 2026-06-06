@@ -61,7 +61,7 @@ func TestLikeTriggers_PostAndCommentTargets(t *testing.T) {
 	// Post likes -> bump posts.like_count.
 	for _, ref := range []int64{1001, 1002, 1003} {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO likes (target_kind, target_id, rs_user_id) VALUES ('post', $1, $2)`,
+			`INSERT INTO likes (target_kind, target_id, user_ref) VALUES ('post', $1, $2)`,
 			postID, ref,
 		); err != nil {
 			t.Fatalf("insert like: %v", err)
@@ -73,7 +73,7 @@ func TestLikeTriggers_PostAndCommentTargets(t *testing.T) {
 
 	// Idempotent re-insert: (post, 1001) already exists — counter stays at 3.
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO likes (target_kind, target_id, rs_user_id) VALUES ('post', $1, 1001) ON CONFLICT DO NOTHING`,
+		`INSERT INTO likes (target_kind, target_id, user_ref) VALUES ('post', $1, 1001) ON CONFLICT DO NOTHING`,
 		postID,
 	); err != nil {
 		t.Fatalf("idempotent insert: %v", err)
@@ -84,7 +84,7 @@ func TestLikeTriggers_PostAndCommentTargets(t *testing.T) {
 
 	// Comment likes -> bump comments.like_count, not posts.like_count.
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO likes (target_kind, target_id, rs_user_id) VALUES ('comment', $1, 9001)`,
+		`INSERT INTO likes (target_kind, target_id, user_ref) VALUES ('comment', $1, 9001)`,
 		commentID,
 	); err != nil {
 		t.Fatalf("comment like: %v", err)
@@ -98,7 +98,7 @@ func TestLikeTriggers_PostAndCommentTargets(t *testing.T) {
 
 	// Unliking decrements.
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM likes WHERE target_kind='post' AND target_id=$1 AND rs_user_id=1001`,
+		`DELETE FROM likes WHERE target_kind='post' AND target_id=$1 AND user_ref=1001`,
 		postID,
 	); err != nil {
 		t.Fatalf("delete like: %v", err)
@@ -215,7 +215,7 @@ func TestSweepOnPostDelete(t *testing.T) {
 		t.Fatalf("seed comment: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO likes (target_kind, target_id, rs_user_id) VALUES ('post', $1, 7777)`,
+		`INSERT INTO likes (target_kind, target_id, user_ref) VALUES ('post', $1, 7777)`,
 		postID,
 	); err != nil {
 		t.Fatalf("seed like: %v", err)

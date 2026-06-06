@@ -37,7 +37,7 @@ SELECT asset_type_ref,
        principal_id,
        permission,
        granted_at,
-       granted_by_rs_user_id,
+       granted_by_user_ref,
        expires_at
 FROM asset_type_acls
 WHERE asset_type_ref = $1
@@ -49,11 +49,11 @@ ORDER BY principal_type, principal_id, permission;
 -- granted_at + granter + expires_at, mirroring user_capability_grants.
 INSERT INTO asset_type_acls (
     asset_type_ref, principal_type, principal_id, permission,
-    granted_by_rs_user_id, expires_at
+    granted_by_user_ref, expires_at
 ) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (asset_type_ref, principal_type, principal_id, permission) DO UPDATE SET
     granted_at            = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     expires_at            = EXCLUDED.expires_at;
 
 -- name: DeleteAcl :execrows
@@ -77,18 +77,18 @@ WHERE asset_type_ref = $1
 -- team memberships; any of read/write/admin counts as read (higher
 -- permissions implicitly include lower).
 --
--- For anonymous callers (no rs_user_id) pass 0 — the join still works
--- because no user_role or team_membership row has rs_user_id=0, so
+-- For anonymous callers (no user_ref) pass 0 — the join still works
+-- because no user_role or team_membership row has user_ref=0, so
 -- every restricted type ends up in the unauthorised set.
 WITH user_role_ids AS (
     SELECT ur.role_id::text AS rid
       FROM user_roles ur
-     WHERE ur.rs_user_id = sqlc.arg(rs_user_id)::bigint
+     WHERE ur.user_ref = sqlc.arg(user_ref)::bigint
 ),
 user_team_ids AS (
     SELECT tm.team_id::text AS tid
       FROM team_memberships tm
-     WHERE tm.rs_user_id = sqlc.arg(rs_user_id)::bigint
+     WHERE tm.user_ref = sqlc.arg(user_ref)::bigint
 ),
 restricted_types AS (
     SELECT DISTINCT asset_type_ref FROM asset_type_acls
@@ -98,7 +98,7 @@ allowed_types AS (
     FROM asset_type_acls a
     WHERE (a.expires_at IS NULL OR a.expires_at > NOW())
       AND (
-            (a.principal_type = 'user' AND a.principal_id = sqlc.arg(rs_user_id)::bigint::text)
+            (a.principal_type = 'user' AND a.principal_id = sqlc.arg(user_ref)::bigint::text)
          OR (a.principal_type = 'role' AND a.principal_id IN (SELECT rid FROM user_role_ids))
          OR (a.principal_type = 'team' AND a.principal_id IN (SELECT tid FROM user_team_ids))
       )
@@ -115,16 +115,16 @@ WHERE asset_type_ref NOT IN (SELECT asset_type_ref FROM allowed_types);
 -- Used by the upload + asset-list handlers (follow-up commit) to gate
 -- per-type operations.
 --
--- Params: @rs_user_id, @asset_type_ref, @permission.
+-- Params: @user_ref, @asset_type_ref, @permission.
 WITH user_role_ids AS (
     SELECT ur.role_id::text AS rid
       FROM user_roles ur
-     WHERE ur.rs_user_id = sqlc.arg(rs_user_id)::bigint
+     WHERE ur.user_ref = sqlc.arg(user_ref)::bigint
 ),
 user_team_ids AS (
     SELECT tm.team_id::text AS tid
       FROM team_memberships tm
-     WHERE tm.rs_user_id = sqlc.arg(rs_user_id)::bigint
+     WHERE tm.user_ref = sqlc.arg(user_ref)::bigint
 )
 SELECT EXISTS (
     SELECT 1
@@ -137,7 +137,7 @@ SELECT EXISTS (
           OR (a.permission = 'write' AND sqlc.arg(permission)::text = 'read')
       )
       AND (
-          (a.principal_type = 'user' AND a.principal_id = sqlc.arg(rs_user_id)::bigint::text)
+          (a.principal_type = 'user' AND a.principal_id = sqlc.arg(user_ref)::bigint::text)
        OR (a.principal_type = 'role' AND a.principal_id IN (SELECT rid FROM user_role_ids))
        OR (a.principal_type = 'team' AND a.principal_id IN (SELECT tid FROM user_team_ids))
       )

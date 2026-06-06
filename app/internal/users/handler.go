@@ -1,6 +1,6 @@
 // Package users implements the public user-profile surface.
 //
-// The RS "user" table carries auth-bearing data we never expose;
+// The legacy "user" table carries auth-bearing data we never expose;
 // user_profiles (migration 00021) carries display-layer fields. Reads
 // merge both; defaults substitute when no profile row exists. Federation:
 // the profile row is what gets mirrored to peer sites.
@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
+	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -36,15 +38,44 @@ const (
 // [InvalidateProfile] which references it.
 const CacheDomain = "user.profile"
 
+// CacheDomainActorKeys keys the federation-keypair LRU. Hot
+// surface on the federation hot path: every outbound activity
+// signs with the actor's private key, and every inbound activity
+// verifies against the actor's published public key. Each of
+// those would otherwise be a DB roundtrip per envelope; cached,
+// they become memory hits after warm-up.
+//
+// What's cached is the AT-REST FORM of the key material (the
+// ActorKeyMaterial struct, with private keys still encrypted).
+// Decryption happens on demand inside DecryptSigningPrivateKey /
+// DecryptEncryptionPrivateKey so plaintext private keys live in
+// memory only for the duration of the signing operation, not for
+// the LRU's residency window.
+const CacheDomainActorKeys = "user.actor_keys"
+
 type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 
 	// byRef caches the closure-resolved openapi.UserPublic by
-	// rs_user_id. nil-safe — nil means "no cache", every request
+	// user_ref. nil-safe — nil means "no cache", every request
 	// hits the DB. The by-username path doesn't cache (rare URL,
 	// not worth the second-key bookkeeping); it always queries.
 	byRef *cache.Cache[openapi.UserPublic]
+
+	// actorKeys caches ActorKeyMaterial by userRef. Federation hot
+	// path. Invalidated by EnsureActorKeyMaterial when it writes
+	// new keys (rare; once per user lifetime at v1, since rotation
+	// is deferred to 1.22.K).
+	actorKeys *cache.Cache[ActorKeyMaterial]
+
+	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-4
+	// per ADR 0044). When wired, UpdateUserProfile emits an Update
+	// activity targeting the user's own actor so federated peers
+	// can sync display_name / avatar / bio changes. nil-safe pre-
+	// ADR-0044 fallback for tests.
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
 
 	// Audit is the typed audit recorder for lifecycle mutations
 	// (Phase 1.17.B + onward — status changes, role assignments,
@@ -68,6 +99,12 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		// profile sizes and covers the hot end of any plausible
 		// active-author set. Anything cold falls back to DB.
 		h.byRef = cache.Register[openapi.UserPublic](registry, CacheDomain, 5_000)
+		// Actor-key cache: ~200B per entry (PEMs + 32B raw keys +
+		// AES-GCM ciphertext); 10k entries comfortably fits 2MB
+		// and covers the active-federated-actor population on any
+		// realistic install. Federation peers may push this higher
+		// in 1.22.B-onward; LRU eviction handles overflow.
+		h.actorKeys = cache.Register[ActorKeyMaterial](registry, CacheDomainActorKeys, 10_000)
 	}
 	return h
 }
@@ -78,6 +115,55 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 // surface. Safe to call once at startup.
 func (h *Handler) SetAuditRecorder(rec auditRecorder) {
 	h.Audit = rec
+}
+
+// SetActivitiesWriter installs the federation activity-ledger
+// writer + baseURL resolver per ADR 0044. Mirrors the setters on
+// posts.Handler / social.Handler / messages.Handler /
+// collections.Handler.
+func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
+	h.activities = w
+	h.baseURLFn = baseURLFn
+}
+
+func derefOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// ResolveUsername returns the username for the given user_ref,
+// preferring the existing UserPublic cache (h.byRef) to avoid a
+// DB roundtrip. Used by cross-package consumers — the federation
+// activity emitters in social/messages/collections call this to
+// build actor URIs without slamming the user table on every
+// Like/Follow/DM/Block emission.
+//
+// Per docs/spec/federation/v1.md §8.4 the username is immutable
+// from the federation perspective once an actor exists, so the
+// cache hit rate is effectively 100% after warm-up. Returns empty
+// string on miss + DB error (best-effort — caller treats this as
+// "skip federated addressing for this user" and continues with
+// the local-only emission).
+func (h *Handler) ResolveUsername(ctx context.Context, userRef int64) string {
+	// Cache-first.
+	if h.byRef != nil {
+		if hit, ok := h.byRef.Get(strconv.FormatInt(userRef, 10)); ok {
+			return hit.Username
+		}
+	}
+	// Cold path — single indexed read on the user table. We don't
+	// hydrate the full UserPublic just for the username because
+	// rowToAPI does extra joins (post_count, follower_count, etc.)
+	// and we don't need those here.
+	var username *string
+	if err := h.Pool.QueryRow(ctx,
+		`SELECT username FROM "user" WHERE ref = $1`, userRef,
+	).Scan(&username); err != nil || username == nil {
+		return ""
+	}
+	return *username
 }
 
 // InvalidateProfile broadcasts a cache invalidation for the given
@@ -104,7 +190,7 @@ func InvalidateProfile(ctx context.Context, registry *cache.Registry, userRef in
 // sqlc result types. sqlc generates a distinct type per query so we
 // adapt both into this shared shape before rendering.
 type publicRow struct {
-	RsUserID              int64
+	UserRef              int64
 	Username              *string
 	Fullname              *string
 	CreatedAt             pgtype.Timestamptz
@@ -121,7 +207,7 @@ type publicRow struct {
 
 func fromByRef(r GetUserPublicByRefRow) publicRow {
 	return publicRow{
-		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
+		UserRef: r.UserRef, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
@@ -131,7 +217,7 @@ func fromByRef(r GetUserPublicByRefRow) publicRow {
 
 func fromByUsername(r GetUserPublicByUsernameRow) publicRow {
 	return publicRow{
-		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
+		UserRef: r.UserRef, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
@@ -296,18 +382,61 @@ func (h *Handler) UpdateUserProfile(
 		}
 	}
 
-	if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
-		RsUserID:    req.Ref,
-		DisplayName: &displayName,
-		Bio:         bio,
-		AvatarUrl:   avatarURL,
-		Location:    location,
-		WebsiteUrl:  websiteURL,
-		SocialLinks: socialLinks,
-		Language:    language,
-		Theme:       theme,
-	}); err != nil {
-		return nil, fmt.Errorf("users: upsert profile: %w", err)
+	// Gold-standard path: UpsertUserProfile + Update(Actor)
+	// activity in one tx per AP §6.3 / §7.3. Only fires when the
+	// caller is editing their OWN profile — admin-as-someone-else
+	// edits get logged via audit, not activity (that's not a
+	// federated social action by the caller; it's an
+	// administrative override of someone else's data).
+	if h.activities != nil && caller.UserRef == req.Ref && h.baseURLFn != nil {
+		actorCtx := emit.ActorContext{
+			UserRef:  caller.UserRef,
+			Username: caller.Username,
+			BaseURL:  h.baseURLFn(ctx),
+		}
+		snap := emit.ProfileSnapshot{
+			DisplayName: derefOrEmpty(&displayName),
+			Bio:         bio,
+			AvatarURL:   derefOrEmpty(avatarURL),
+			Location:    location,
+			WebsiteURL:  derefOrEmpty(websiteURL),
+		}
+		em := emit.UpdateProfile(actorCtx, snap)
+		err := h.activities.WithEmission(ctx, activities.EmissionInput{
+			Activity: em.Activity,
+		}, func(tx pgx.Tx) error {
+			_, err := New(tx).UpsertUserProfile(ctx, UpsertUserProfileParams{
+				UserRef:    req.Ref,
+				DisplayName: &displayName,
+				Bio:         bio,
+				AvatarUrl:   avatarURL,
+				Location:    location,
+				WebsiteUrl:  websiteURL,
+				SocialLinks: socialLinks,
+				Language:    language,
+				Theme:       theme,
+			})
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("users: upsert profile: %w", err)
+		}
+	} else {
+		// Legacy fallback: admin-edits-other (no activity) + the
+		// test path (no activities writer wired).
+		if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
+			UserRef:    req.Ref,
+			DisplayName: &displayName,
+			Bio:         bio,
+			AvatarUrl:   avatarURL,
+			Location:    location,
+			WebsiteUrl:  websiteURL,
+			SocialLinks: socialLinks,
+			Language:    language,
+			Theme:       theme,
+		}); err != nil {
+			return nil, fmt.Errorf("users: upsert profile: %w", err)
+		}
 	}
 
 	// The cached entry (if any) just went stale. Local-evict +
@@ -352,10 +481,10 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 		display = *r.Username
 	}
 	if display == "" {
-		display = fmt.Sprintf("user %d", r.RsUserID)
+		display = fmt.Sprintf("user %d", r.UserRef)
 	}
 
-	postCount, err := q.CountPostsByAuthor(ctx, r.RsUserID)
+	postCount, err := q.CountPostsByAuthor(ctx, r.UserRef)
 	if err != nil {
 		return nil, fmt.Errorf("users: count posts: %w", err)
 	}
@@ -371,7 +500,7 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 	}
 
 	out := openapi.UserPublic{
-		Ref:         r.RsUserID,
+		Ref:         r.UserRef,
 		DisplayName: display,
 		Bio:         &r.Bio,
 		Location:    &r.Location,

@@ -198,3 +198,107 @@ sql:
         emit_interface: false
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/userprefs/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: userprefs
+        out: internal/userprefs
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/notifications/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: notifications
+        out: internal/notifications
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/messages/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: messages
+        out: internal/messages
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/activities/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: activities
+        out: internal/activities
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/peer/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: peer
+        out: internal/federation/peer
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/directory/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: directory
+        out: internal/federation/directory
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/p2p/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: p2p
+        out: internal/federation/p2p
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/shares/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: shares
+        out: internal/federation/shares
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
