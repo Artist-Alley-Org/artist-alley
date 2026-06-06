@@ -137,28 +137,10 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.baseURLFn = baseURLFn
 }
 
-// fireNotification is the legacy direct-call helper for the pre-
-// ADR-0044 wiring path. Still used by handlers that haven't been
-// migrated to the activities.WithEmission flow yet; new emits
-// route through h.activities and fire notifications from inside
-// the dispatch helper after the activity row commits.
-//
-// nil-safe + logs + swallows errors (notifications are best-effort
-// — a transient notification-table failure must NEVER block the
-// comment / like / follow it accompanies). The Writer itself logs
-// structured errors; this helper just keeps the call sites short.
-func (h *Handler) fireNotification(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) {
-	if h.notifier == nil {
-		return
-	}
-	if err := h.notifier.Notify(ctx, recipient, actor, verb, targetKind, targetID, payload); err != nil && h.Logger != nil {
-		h.Logger.Warn("social.notify.error",
-			slog.Int64("recipient", recipient),
-			slog.String("verb", verb),
-			slog.String("err", err.Error()),
-		)
-	}
-}
+// errSocialFederationNotWired surfaces in tests that forget to
+// call SetActivitiesWriter on the social handler. Production
+// never sees it: api.go always wires the writer at boot.
+var errSocialFederationNotWired = fmt.Errorf("social: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // actorContext builds an emit.ActorContext from the authenticated
 // caller + the configured baseURL. Returns the zero value when
@@ -278,40 +260,23 @@ func (h *Handler) LikePost(
 
 	// Gold-standard path: WithEmission wraps the LikeTarget insert
 	// + activity row in one transaction. Notification fires AFTER
-	// commit through the writer's notifier.
-	if h.activities != nil {
-		em := emit.Like(h.actorContext(ctx, caller), postRef)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity:      em.Activity,
-			Notifications: convertNotifications(em.Notifications),
-		}, func(tx pgx.Tx) error {
-			return New(tx).LikeTarget(ctx, LikeTargetParams{
-				TargetKind: "post",
-				TargetID:   pgID,
-				RsUserID:   caller.UserRef,
-			})
-		})
-		if err != nil {
-			return nil, fmt.Errorf("social: like: %w", err)
-		}
-		return openapi.LikePost204Response{}, nil
+	// commit through the writer's notifier. 1.22.B-cleanup made
+	// activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
 	}
-
-	// Legacy fallback path (tests don't wire activities). Same
-	// behaviour as pre-ADR-0044.
-	q := New(h.Pool)
-	if err := q.LikeTarget(ctx, LikeTargetParams{
-		TargetKind: "post",
-		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+	em := emit.Like(h.actorContext(ctx, caller), postRef)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity:      em.Activity,
+		Notifications: convertNotifications(em.Notifications),
+	}, func(tx pgx.Tx) error {
+		return New(tx).LikeTarget(ctx, LikeTargetParams{
+			TargetKind: "post",
+			TargetID:   pgID,
+			RsUserID:   caller.UserRef,
+		})
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
-	}
-	if postRef.AuthorUserRef != 0 {
-		actor := caller.UserRef
-		h.fireNotification(ctx, postRef.AuthorUserRef, &actor, "like_on_my_post", "post", postRef.ID, map[string]any{
-			"post_title": postRef.Title,
-		})
 	}
 	return openapi.LikePost204Response{}, nil
 }
@@ -379,56 +344,40 @@ func (h *Handler) UnlikePost(
 	// UnlikeTarget rows-affected count inside the tx and skip the
 	// Undo emission (returning a sentinel error) when there was
 	// no like to remove — the tx rolls back, no spurious activity.
-	if h.activities != nil {
-		// Look up the original Like's activity_uri BEFORE the tx
-		// so the Undo's object_uri is correctly populated. Empty
-		// string when no prior activity exists (pre-ADR-0044 like)
-		// — emit a "synthetic" Undo with no object reference.
-		originalURI := h.activities.LookupMostRecent(ctx, caller.UserRef, federation.ActivityLike, activities.ObjectKindPost, postIDStr)
+	// 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
+	}
+	// Look up the original Like's activity_uri BEFORE the tx
+	// so the Undo's object_uri is correctly populated.
+	originalURI := h.activities.LookupMostRecent(ctx, caller.UserRef, federation.ActivityLike, activities.ObjectKindPost, postIDStr)
 
-		var notFound bool
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
-				TargetKind: "post",
-				TargetID:   pgID,
-				RsUserID:   caller.UserRef,
-			})
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
-			}
-			if rows == 0 {
-				notFound = true
-				return activities.EmissionInput{}, errLikeAbsent
-			}
-			em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, postIDStr)
-			return activities.EmissionInput{
-				Activity: em.Activity,
-			}, nil
+	var notFound bool
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
+			TargetKind: "post",
+			TargetID:   pgID,
+			RsUserID:   caller.UserRef,
 		})
-		if notFound {
-			return openapi.UnlikePost404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "no like to remove"},
-			}, nil
-		}
 		if err != nil {
-			return nil, err
+			return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
 		}
-		return openapi.UnlikePost204Response{}, nil
-	}
-
-	// Legacy fallback (tests).
-	rows, err := New(h.Pool).UnlikeTarget(ctx, UnlikeTargetParams{
-		TargetKind: "post",
-		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+		if rows == 0 {
+			notFound = true
+			return activities.EmissionInput{}, errLikeAbsent
+		}
+		em := emit.UndoLike(h.actorContext(ctx, caller), originalURI, postIDStr)
+		return activities.EmissionInput{
+			Activity: em.Activity,
+		}, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("social: unlike: %w", err)
-	}
-	if rows == 0 {
+	if notFound {
 		return openapi.UnlikePost404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "no like to remove"},
 		}, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	return openapi.UnlikePost204Response{}, nil
 }
@@ -626,75 +575,39 @@ func (h *Handler) CreatePostComment(
 	// Gold-standard path: WithEmissionFn wraps CreateComment +
 	// activity row in one tx. Both notifications (post-author +
 	// parent-comment-author for replies) fire AFTER commit.
-	if h.activities != nil {
-		var savedRow Comment
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			r, err := New(tx).CreateComment(ctx, CreateCommentParams{
-				ID:             newID,
-				TargetKind:     "post",
-				TargetID:       pgPostID,
-				ParentID:       parentID,
-				RootID:         rootID,
-				Depth:          depth,
-				AuthorUserRef:  caller.UserRef,
-				Body:           body,
-				BodyHtml:       "",
-				AnnotationType: nil,
-				AnnotationData: nil,
-			})
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("social: create comment: %w", err)
-			}
-			savedRow = r
-			em := emit.CreateComment(h.actorContext(ctx, caller), commentRef)
-			return activities.EmissionInput{
-				Activity:      em.Activity,
-				Notifications: convertNotifications(em.Notifications),
-			}, nil
+	// 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
+	}
+	var savedRow Comment
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+			ID:             newID,
+			TargetKind:     "post",
+			TargetID:       pgPostID,
+			ParentID:       parentID,
+			RootID:         rootID,
+			Depth:          depth,
+			AuthorUserRef:  caller.UserRef,
+			Body:           body,
+			BodyHtml:       "",
+			AnnotationType: nil,
+			AnnotationData: nil,
 		})
 		if err != nil {
-			return nil, err
+			return activities.EmissionInput{}, fmt.Errorf("social: create comment: %w", err)
 		}
-		return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
-	}
-
-	// Legacy fallback (test path): pre-ADR-0044 behaviour.
-	q := New(h.Pool)
-	row, err := q.CreateComment(ctx, CreateCommentParams{
-		ID:             newID,
-		TargetKind:     "post",
-		TargetID:       pgPostID,
-		ParentID:       parentID,
-		RootID:         rootID,
-		Depth:          depth,
-		AuthorUserRef:  caller.UserRef,
-		Body:           body,
-		BodyHtml:       "",
-		AnnotationType: nil,
-		AnnotationData: nil,
+		savedRow = r
+		em := emit.CreateComment(h.actorContext(ctx, caller), commentRef)
+		return activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("social: create comment: %w", err)
+		return nil, err
 	}
-	actor := caller.UserRef
-	excerpt := commentRef.Excerpt()
-	if commentRef.PostAuthorRef != 0 {
-		h.fireNotification(ctx, commentRef.PostAuthorRef, &actor, "comment_on_my_post", "post", commentRef.PostID, map[string]any{
-			"post_title":    commentRef.PostTitle,
-			"excerpt":       excerpt,
-			"comment_id":    commentRef.ID,
-			"comment_depth": depth + 1,
-		})
-		if commentRef.ParentID != "" && commentRef.ParentAuthorRef != 0 && commentRef.ParentAuthorRef != commentRef.PostAuthorRef {
-			h.fireNotification(ctx, commentRef.ParentAuthorRef, &actor, "reply_to_my_comment", "comment", commentRef.ParentID, map[string]any{
-				"post_title":    commentRef.PostTitle,
-				"excerpt":       excerpt,
-				"comment_id":    commentRef.ID,
-				"comment_depth": depth + 1,
-			})
-		}
-	}
-	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(row)), nil
+	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
 }
 
 func (h *Handler) DeleteComment(
@@ -740,40 +653,30 @@ func (h *Handler) DeleteComment(
 
 	// Gold-standard path: wrap SoftDeleteComment + Delete(Note)
 	// activity in one tx per AP §6.4 (Tombstone semantics).
-	if h.activities != nil {
-		var notFound bool
-		em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			rows, err := New(tx).SoftDeleteComment(ctx, pgID)
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("social: soft delete comment: %w", err)
-			}
-			if rows == 0 {
-				notFound = true
-				return activities.EmissionInput{}, errCommentAbsent
-			}
-			return activities.EmissionInput{Activity: em.Activity}, nil
-		})
-		if notFound {
-			return openapi.DeleteComment404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
-			}, nil
-		}
+	// 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
+	}
+	var notFound bool
+	em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
+	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		rows, err := New(tx).SoftDeleteComment(ctx, pgID)
 		if err != nil {
-			return nil, err
+			return activities.EmissionInput{}, fmt.Errorf("social: soft delete comment: %w", err)
 		}
-		return openapi.DeleteComment204Response{}, nil
-	}
-
-	// Legacy fallback (tests).
-	rows, err := New(h.Pool).SoftDeleteComment(ctx, pgID)
-	if err != nil {
-		return nil, fmt.Errorf("social: soft delete comment: %w", err)
-	}
-	if rows == 0 {
+		if rows == 0 {
+			notFound = true
+			return activities.EmissionInput{}, errCommentAbsent
+		}
+		return activities.EmissionInput{Activity: em.Activity}, nil
+	})
+	if notFound {
 		return openapi.DeleteComment404JSONResponse{
 			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "comment not found"},
 		}, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	return openapi.DeleteComment204Response{}, nil
 }
@@ -903,57 +806,40 @@ func (h *Handler) CreatePostWhiteboard(
 
 	// Gold-standard path: CreateComment row + aa:Annotation
 	// activity per ADR 0043 + comment_on_my_post notification
-	// (annotations surface in the same inbox).
-	if h.activities != nil {
-		var saved Comment
-		em := emit.CreateAnnotation(h.actorContext(ctx, caller), annRef)
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			r, err := New(tx).CreateComment(ctx, CreateCommentParams{
-				ID:             newID,
-				TargetKind:     "post",
-				TargetID:       pgPostID,
-				ParentID:       pgtype.UUID{},
-				RootID:         newID,
-				Depth:          0,
-				AuthorUserRef:  caller.UserRef,
-				Body:           title,
-				BodyHtml:       "",
-				AnnotationType: &annotationType,
-				AnnotationData: contentBytes,
-			})
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("social: create whiteboard: %w", err)
-			}
-			saved = r
-			return activities.EmissionInput{
-				Activity:      em.Activity,
-				Notifications: convertNotifications(em.Notifications),
-			}, nil
+	// (annotations surface in the same inbox). 1.22.B-cleanup
+	// made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
+	}
+	var saved Comment
+	em := emit.CreateAnnotation(h.actorContext(ctx, caller), annRef)
+	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
+			ID:             newID,
+			TargetKind:     "post",
+			TargetID:       pgPostID,
+			ParentID:       pgtype.UUID{},
+			RootID:         newID,
+			Depth:          0,
+			AuthorUserRef:  caller.UserRef,
+			Body:           title,
+			BodyHtml:       "",
+			AnnotationType: &annotationType,
+			AnnotationData: contentBytes,
 		})
 		if err != nil {
-			return nil, err
+			return activities.EmissionInput{}, fmt.Errorf("social: create whiteboard: %w", err)
 		}
-		return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(saved)), nil
-	}
-
-	// Legacy fallback (tests).
-	row, err := New(h.Pool).CreateComment(ctx, CreateCommentParams{
-		ID:             newID,
-		TargetKind:     "post",
-		TargetID:       pgPostID,
-		ParentID:       pgtype.UUID{},
-		RootID:         newID,
-		Depth:          0,
-		AuthorUserRef:  caller.UserRef,
-		Body:           title,
-		BodyHtml:       "",
-		AnnotationType: &annotationType,
-		AnnotationData: contentBytes,
+		saved = r
+		return activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("social: create whiteboard: %w", err)
+		return nil, err
 	}
-	return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(row)), nil
+	return openapi.CreatePostWhiteboard201JSONResponse(commentRowToAPI(saved)), nil
 }
 
 // ---------------------------------------------------------------------------

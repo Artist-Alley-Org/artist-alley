@@ -289,8 +289,12 @@ func (h *Handler) CreatePost(
 	// Record the Create activity in the same tx per ADR 0044. The
 	// federation outbox dispatcher (Phase 1.22.D) reads from the
 	// activities ledger to publish to peers; without this the new
-	// post would be invisible to federation.
-	if h.activities != nil && h.baseURLFn != nil {
+	// post would be invisible to federation. 1.22.B-cleanup made
+	// this required — no more silent skip.
+	if h.activities == nil || h.baseURLFn == nil {
+		return nil, errPostsFederationNotWired
+	}
+	{
 		actorCtx := emit.ActorContext{
 			UserRef:  id.UserRef,
 			Username: id.Username,
@@ -450,7 +454,10 @@ func (h *Handler) UpdatePost(
 	}
 
 	// Record the Update activity in the same tx per ADR 0044.
-	if h.activities != nil && h.baseURLFn != nil {
+	if h.activities == nil || h.baseURLFn == nil {
+		return nil, errPostsFederationNotWired
+	}
+	{
 		actorCtx := emit.ActorContext{
 			UserRef:  caller.UserRef,
 			Username: caller.Username,
@@ -524,8 +531,12 @@ func (h *Handler) DeletePost(
 	}
 	// Wrap SoftDeletePost + Delete activity in one tx per ADR 0044.
 	// Without this the federation outbox can't tell peers the post
-	// is gone (Tombstone per AP §6.4).
-	if h.activities != nil && h.baseURLFn != nil {
+	// is gone (Tombstone per AP §6.4). 1.22.B-cleanup made
+	// activities required.
+	if h.activities == nil || h.baseURLFn == nil {
+		return nil, errPostsFederationNotWired
+	}
+	{
 		actorCtx := emit.ActorContext{
 			UserRef:  caller.UserRef,
 			Username: caller.Username,
@@ -538,11 +549,6 @@ func (h *Handler) DeletePost(
 			return New(tx).SoftDeletePost(ctx, pgID)
 		})
 		if err != nil {
-			return nil, fmt.Errorf("posts: delete: %w", err)
-		}
-	} else {
-		// Legacy fallback (tests don't wire activities).
-		if err := q.SoftDeletePost(ctx, pgID); err != nil {
 			return nil, fmt.Errorf("posts: delete: %w", err)
 		}
 	}
@@ -1187,6 +1193,11 @@ func isFKError(err error, constraint string) bool {
 // ---------------------------------------------------------------------------
 // Compile-time assertion: catches openapi-codegen signature drift.
 // ---------------------------------------------------------------------------
+
+// errPostsFederationNotWired surfaces in tests that forget to
+// call SetActivitiesWriter on the handler. Production never sees
+// it: api.go always wires the writer at boot.
+var errPostsFederationNotWired = fmt.Errorf("posts: activities.Writer + baseURLFn required (call SetActivitiesWriter at boot)")
 
 var _ interface {
 	ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error)

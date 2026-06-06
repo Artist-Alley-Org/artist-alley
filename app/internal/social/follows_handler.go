@@ -91,40 +91,23 @@ func (h *Handler) FollowUser(
 
 	// Gold-standard path: WithEmission wraps FollowUser + activity
 	// row + new_follower notification in one transactional unit.
-	if h.activities != nil {
-		em := emit.Follow(h.actorContext(ctx, id), followeeRef)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity:      em.Activity,
-			Notifications: convertNotifications(em.Notifications),
-		}, func(tx pgx.Tx) error {
-			return New(tx).FollowUser(ctx, FollowUserParams{
-				FollowerUserRef: id.UserRef,
-				FolloweeUserRef: target,
-			})
-		})
-		if err != nil {
-			return nil, fmt.Errorf("social: follow: %w", err)
-		}
-		h.invalidateFollowEdge(ctx, id.UserRef, target)
-		if h.Logger != nil {
-			h.Logger.Info("follow",
-				slog.Int64("follower", id.UserRef),
-				slog.Int64("followee", target),
-			)
-		}
-		return openapi.FollowUser204Response{}, nil
+	// 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
 	}
-
-	// Legacy fallback (tests don't wire activities).
-	if err := q.FollowUser(ctx, FollowUserParams{
-		FollowerUserRef: id.UserRef,
-		FolloweeUserRef: target,
+	em := emit.Follow(h.actorContext(ctx, id), followeeRef)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity:      em.Activity,
+		Notifications: convertNotifications(em.Notifications),
+	}, func(tx pgx.Tx) error {
+		return New(tx).FollowUser(ctx, FollowUserParams{
+			FollowerUserRef: id.UserRef,
+			FolloweeUserRef: target,
+		})
 	}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("social: follow: %w", err)
 	}
 	h.invalidateFollowEdge(ctx, id.UserRef, target)
-	follower := id.UserRef
-	h.fireNotification(ctx, target, &follower, "new_follower", "user", strconv.FormatInt(follower, 10), nil)
 	if h.Logger != nil {
 		h.Logger.Info("follow",
 			slog.Int64("follower", id.UserRef),
@@ -153,34 +136,23 @@ func (h *Handler) UnfollowUser(
 	}
 	// Gold-standard path: wrap UnfollowUser + Undo(Follow) in one
 	// tx. Lookup the original Follow URI before the tx (best-effort).
-	if h.activities != nil {
-		targetIDStr := strconv.FormatInt(req.Ref, 10)
-		originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityFollow, activities.ObjectKindUser, targetIDStr)
-		em := emit.UndoFollow(h.actorContext(ctx, id), originalURI, req.Ref)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity: em.Activity,
-		}, func(tx pgx.Tx) error {
-			_, err := New(tx).UnfollowUser(ctx, UnfollowUserParams{
-				FollowerUserRef: id.UserRef,
-				FolloweeUserRef: req.Ref,
-			})
-			return err
-		})
-		if err != nil {
-			return nil, fmt.Errorf("social: unfollow: %w", err)
-		}
-		h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
-		return openapi.UnfollowUser204Response{}, nil
+	// 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	q := New(h.Pool)
-	_, err := q.UnfollowUser(ctx, UnfollowUserParams{
-		FollowerUserRef: id.UserRef,
-		FolloweeUserRef: req.Ref,
-	})
-	if err != nil {
-		return nil, err
+	targetIDStr := strconv.FormatInt(req.Ref, 10)
+	originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityFollow, activities.ObjectKindUser, targetIDStr)
+	em := emit.UndoFollow(h.actorContext(ctx, id), originalURI, req.Ref)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity: em.Activity,
+	}, func(tx pgx.Tx) error {
+		_, err := New(tx).UnfollowUser(ctx, UnfollowUserParams{
+			FollowerUserRef: id.UserRef,
+			FolloweeUserRef: req.Ref,
+		})
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("social: unfollow: %w", err)
 	}
 	h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
 	return openapi.UnfollowUser204Response{}, nil
@@ -383,66 +355,36 @@ func (h *Handler) BlockUser(
 
 	// Gold-standard path: WithEmission wraps the entire transactional
 	// unit — both auto-unfollows + block insert + activity row.
-	// Cache invalidations + log fire post-commit.
-	if h.activities != nil {
-		em := emit.Block(h.actorContext(ctx, id), blockedRef, reasonStr)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity:      em.Activity,
-			Notifications: convertNotifications(em.Notifications), // empty per AP §6.9
-		}, func(tx pgx.Tx) error {
-			qtx := New(tx)
-			if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
-				FollowerUserRef: id.UserRef,
-				FolloweeUserRef: req.Ref,
-			}); err != nil {
-				return err
-			}
-			if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
-				FollowerUserRef: req.Ref,
-				FolloweeUserRef: id.UserRef,
-			}); err != nil {
-				return err
-			}
-			return qtx.BlockUser(ctx, BlockUserParams{
-				BlockerUserRef: id.UserRef,
-				BlockedUserRef: req.Ref,
-				Reason:         reason,
-			})
+	// Cache invalidations + log fire post-commit. 1.22.B-cleanup
+	// made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
+	}
+	em := emit.Block(h.actorContext(ctx, id), blockedRef, reasonStr)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity:      em.Activity,
+		Notifications: convertNotifications(em.Notifications), // empty per AP §6.9
+	}, func(tx pgx.Tx) error {
+		qtx := New(tx)
+		if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
+			FollowerUserRef: id.UserRef,
+			FolloweeUserRef: req.Ref,
+		}); err != nil {
+			return err
+		}
+		if _, err := qtx.UnfollowUser(ctx, UnfollowUserParams{
+			FollowerUserRef: req.Ref,
+			FolloweeUserRef: id.UserRef,
+		}); err != nil {
+			return err
+		}
+		return qtx.BlockUser(ctx, BlockUserParams{
+			BlockerUserRef: id.UserRef,
+			BlockedUserRef: req.Ref,
+			Reason:         reason,
 		})
-		if err != nil {
-			return nil, fmt.Errorf("social: block: %w", err)
-		}
-		h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
-		h.invalidateFollowEdge(ctx, req.Ref, id.UserRef)
-		h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)
-		if h.Logger != nil {
-			h.Logger.Info("block",
-				slog.Int64("blocker", id.UserRef),
-				slog.Int64("blocked", req.Ref),
-			)
-		}
-		return openapi.BlockUser204Response{}, nil
-	}
-
-	// Legacy fallback (tests).
-	if _, err := q.UnfollowUser(ctx, UnfollowUserParams{
-		FollowerUserRef: id.UserRef,
-		FolloweeUserRef: req.Ref,
 	}); err != nil {
-		return nil, err
-	}
-	if _, err := q.UnfollowUser(ctx, UnfollowUserParams{
-		FollowerUserRef: req.Ref,
-		FolloweeUserRef: id.UserRef,
-	}); err != nil {
-		return nil, err
-	}
-	if err := q.BlockUser(ctx, BlockUserParams{
-		BlockerUserRef: id.UserRef,
-		BlockedUserRef: req.Ref,
-		Reason:         reason,
-	}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("social: block: %w", err)
 	}
 	h.invalidateFollowEdge(ctx, id.UserRef, req.Ref)
 	h.invalidateFollowEdge(ctx, req.Ref, id.UserRef)
@@ -473,34 +415,23 @@ func (h *Handler) UnblockUser(
 	// Gold-standard path: wrap UnblockUser + Undo(Block) in one tx.
 	// Like Block itself, Undo(Block) has no recipients in `to` per
 	// AP §6.9 — the formerly-blocked actor should not learn they
-	// were ever blocked.
-	if h.activities != nil {
-		targetIDStr := strconv.FormatInt(req.Ref, 10)
-		originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityBlock, activities.ObjectKindUser, targetIDStr)
-		em := emit.UndoBlock(h.actorContext(ctx, id), originalURI, req.Ref)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity: em.Activity,
-		}, func(tx pgx.Tx) error {
-			_, err := New(tx).UnblockUser(ctx, UnblockUserParams{
-				BlockerUserRef: id.UserRef,
-				BlockedUserRef: req.Ref,
-			})
-			return err
-		})
-		if err != nil {
-			return nil, fmt.Errorf("social: unblock: %w", err)
-		}
-		h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)
-		return openapi.UnblockUser204Response{}, nil
+	// were ever blocked. 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errSocialFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	q := New(h.Pool)
-	if _, err := q.UnblockUser(ctx, UnblockUserParams{
-		BlockerUserRef: id.UserRef,
-		BlockedUserRef: req.Ref,
+	targetIDStr := strconv.FormatInt(req.Ref, 10)
+	originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityBlock, activities.ObjectKindUser, targetIDStr)
+	em := emit.UndoBlock(h.actorContext(ctx, id), originalURI, req.Ref)
+	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity: em.Activity,
+	}, func(tx pgx.Tx) error {
+		_, err := New(tx).UnblockUser(ctx, UnblockUserParams{
+			BlockerUserRef: id.UserRef,
+			BlockedUserRef: req.Ref,
+		})
+		return err
 	}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("social: unblock: %w", err)
 	}
 	h.invalidateBlockEdge(ctx, id.UserRef, req.Ref)
 	return openapi.UnblockUser204Response{}, nil

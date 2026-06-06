@@ -145,55 +145,39 @@ func (h *Handler) CreateCollection(
 
 	// Gold-standard path: WithEmissionFn so we capture the
 	// generated collection UUID and use it to build the activity's
-	// URI in the same tx.
-	if h.activities != nil {
-		var saved Collection
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			r, err := New(tx).CreateCollection(ctx, CreateCollectionParams{
-				OwnerUserRef: id.UserRef,
-				Name:         name,
-				Description:  strOr(in.Description, ""),
-				Visibility:   visibility,
-				Membership:   membership,
-				ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-				Featured:     boolOr(in.Featured, false),
-				Purpose:      in.Purpose,
-			})
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("collections: create: %w", err)
-			}
-			saved = r
-			em := emit.CreateCollection(h.actorContext(ctx, id), emit.CollectionRef{
-				ID:          uuid.UUID(r.ID.Bytes).String(),
-				Name:        r.Name,
-				Description: r.Description,
-				OwnerRef:    r.OwnerUserRef,
-			})
-			return activities.EmissionInput{Activity: em.Activity}, nil
+	// URI in the same tx. 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errCollectionsFederationNotWired
+	}
+	var saved Collection
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).CreateCollection(ctx, CreateCollectionParams{
+			OwnerUserRef: id.UserRef,
+			Name:         name,
+			Description:  strOr(in.Description, ""),
+			Visibility:   visibility,
+			Membership:   membership,
+			ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
+			Featured:     boolOr(in.Featured, false),
+			Purpose:      in.Purpose,
 		})
 		if err != nil {
-			return nil, err
+			return activities.EmissionInput{}, fmt.Errorf("collections: create: %w", err)
 		}
-		h.cacheAdd(saved)
-		return openapi.CreateCollection201JSONResponse(rowToAPI(saved)), nil
-	}
-
-	// Legacy fallback (tests).
-	row, err := New(h.Pool).CreateCollection(ctx, CreateCollectionParams{
-		OwnerUserRef: id.UserRef,
-		Name:         name,
-		Description:  strOr(in.Description, ""),
-		Visibility:   visibility,
-		Membership:   membership,
-		ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-		Featured:     boolOr(in.Featured, false),
-		Purpose:      in.Purpose,
+		saved = r
+		em := emit.CreateCollection(h.actorContext(ctx, id), emit.CollectionRef{
+			ID:          uuid.UUID(r.ID.Bytes).String(),
+			Name:        r.Name,
+			Description: r.Description,
+			OwnerRef:    r.OwnerUserRef,
+		})
+		return activities.EmissionInput{Activity: em.Activity}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("collections: create: %w", err)
+		return nil, err
 	}
-	h.cacheAdd(row)
-	return openapi.CreateCollection201JSONResponse(rowToAPI(row)), nil
+	h.cacheAdd(saved)
+	return openapi.CreateCollection201JSONResponse(rowToAPI(saved)), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -295,65 +279,44 @@ func (h *Handler) UpdateCollection(
 	// goes through the dedicated query.
 	// Gold-standard path: UpdateCollection + Update activity in
 	// the same tx. WithEmissionFn so the post-write row drives
-	// the activity payload.
-	if h.activities != nil {
-		var saved Collection
-		errRun := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			r, err := New(tx).UpdateCollection(ctx, UpdateCollectionParams{
-				ID:          pgID,
-				Name:        namePtr,
-				Description: in.Description,
-				Visibility:  visPtr,
-				Membership:  memPtr,
-				Featured:    in.Featured,
-				Purpose:     in.Purpose,
-				ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
-			})
-			if err != nil {
-				return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
-			}
-			saved = r
-			em := emit.UpdateCollection(h.actorContext(ctx, caller), emit.CollectionRef{
-				ID:          uuid.UUID(r.ID.Bytes).String(),
-				Name:        r.Name,
-				Description: r.Description,
-				OwnerRef:    r.OwnerUserRef,
-			})
-			return activities.EmissionInput{Activity: em.Activity}, nil
-		})
-		if errRun != nil {
-			if errors.Is(errRun, pgx.ErrNoRows) {
-				return openapi.UpdateCollection404JSONResponse{
-					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
-				}, nil
-			}
-			return nil, errRun
-		}
-		h.cacheAdd(saved)
-		return openapi.UpdateCollection200JSONResponse(rowToAPI(saved)), nil
+	// the activity payload. 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errCollectionsFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	row, err := q.UpdateCollection(ctx, UpdateCollectionParams{
-		ID:          pgID,
-		Name:        namePtr,
-		Description: in.Description,
-		Visibility:  visPtr,
-		Membership:  memPtr,
-		Featured:    in.Featured,
-		Purpose:     in.Purpose,
-		ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
+	var saved Collection
+	errRun := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).UpdateCollection(ctx, UpdateCollectionParams{
+			ID:          pgID,
+			Name:        namePtr,
+			Description: in.Description,
+			Visibility:  visPtr,
+			Membership:  memPtr,
+			Featured:    in.Featured,
+			Purpose:     in.Purpose,
+			ExpiresAt:   pgTimestamptzFromPtr(in.ExpiresAt),
+		})
+		if err != nil {
+			return activities.EmissionInput{}, fmt.Errorf("collections: update: %w", err)
+		}
+		saved = r
+		em := emit.UpdateCollection(h.actorContext(ctx, caller), emit.CollectionRef{
+			ID:          uuid.UUID(r.ID.Bytes).String(),
+			Name:        r.Name,
+			Description: r.Description,
+			OwnerRef:    r.OwnerUserRef,
+		})
+		return activities.EmissionInput{Activity: em.Activity}, nil
 	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if errRun != nil {
+		if errors.Is(errRun, pgx.ErrNoRows) {
 			return openapi.UpdateCollection404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
 			}, nil
 		}
-		return nil, fmt.Errorf("collections: update: %w", err)
+		return nil, errRun
 	}
-	h.cacheAdd(row)
-	return openapi.UpdateCollection200JSONResponse(rowToAPI(row)), nil
+	h.cacheAdd(saved)
+	return openapi.UpdateCollection200JSONResponse(rowToAPI(saved)), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -387,23 +350,18 @@ func (h *Handler) DeleteCollection(
 		}, nil
 	}
 	// Gold-standard path: DeleteCollection + Delete activity in
-	// one tx per AP §6.4 Tombstone semantics.
-	if h.activities != nil {
-		em := emit.DeleteCollection(h.actorContext(ctx, caller), uuid.UUID(pgID.Bytes).String(), cur.Name)
-		err := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity: em.Activity,
-		}, func(tx pgx.Tx) error {
-			return New(tx).DeleteCollection(ctx, pgID)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("collections: delete: %w", err)
-		}
-		h.cacheInvalidate(ctx, pgID)
-		return openapi.DeleteCollection204Response{}, nil
+	// one tx per AP §6.4 Tombstone semantics. 1.22.B-cleanup made
+	// activities required.
+	if h.activities == nil {
+		return nil, errCollectionsFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	if err := q.DeleteCollection(ctx, pgID); err != nil {
+	em := emit.DeleteCollection(h.actorContext(ctx, caller), uuid.UUID(pgID.Bytes).String(), cur.Name)
+	err = h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity: em.Activity,
+	}, func(tx pgx.Tx) error {
+		return New(tx).DeleteCollection(ctx, pgID)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("collections: delete: %w", err)
 	}
 	h.cacheInvalidate(ctx, pgID)
@@ -655,59 +613,41 @@ func (h *Handler) AddCollectionResource(
 	assetIDStr := uuid.UUID(in.AssetId).String()
 
 	// Gold-standard path: Add(object=asset, target=collection)
-	// per AP §6.6 / §7.8.
-	if h.activities != nil {
-		var fkAssetMissing bool
-		em := emit.AddToCollection(
-			h.actorContext(ctx, caller),
-			activities.ObjectKindAsset,
-			assetIDStr,
-			uuid.UUID(pgID.Bytes).String(),
-			cur.Name,
-		)
-		errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity: em.Activity,
-		}, func(tx pgx.Tx) error {
-			err := New(tx).AddCollectionResource(ctx, AddCollectionResourceParams{
-				CollectionID: pgID,
-				AssetID:      pgAsset,
-				SortOrder:    int32Or(in.SortOrder, 0),
-				Pinned:       boolOr(in.Pinned, true),
-				ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-			})
-			if err != nil && strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
-				fkAssetMissing = true
-				return errAssetMissing
-			}
-			return err
-		})
-		if fkAssetMissing {
-			return openapi.AddCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-			}, nil
-		}
-		if errRun != nil {
-			return nil, fmt.Errorf("collections: add resource: %w", errRun)
-		}
-		h.cacheInvalidate(ctx, pgID)
-		return openapi.AddCollectionResource204Response{}, nil
+	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errCollectionsFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	err = q.AddCollectionResource(ctx, AddCollectionResourceParams{
-		CollectionID: pgID,
-		AssetID:      pgAsset,
-		SortOrder:    int32Or(in.SortOrder, 0),
-		Pinned:       boolOr(in.Pinned, true),
-		ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
-			return openapi.AddCollectionResource404JSONResponse{
-				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
-			}, nil
+	var fkAssetMissing bool
+	em := emit.AddToCollection(
+		h.actorContext(ctx, caller),
+		activities.ObjectKindAsset,
+		assetIDStr,
+		uuid.UUID(pgID.Bytes).String(),
+		cur.Name,
+	)
+	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity: em.Activity,
+	}, func(tx pgx.Tx) error {
+		err := New(tx).AddCollectionResource(ctx, AddCollectionResourceParams{
+			CollectionID: pgID,
+			AssetID:      pgAsset,
+			SortOrder:    int32Or(in.SortOrder, 0),
+			Pinned:       boolOr(in.Pinned, true),
+			ExpiresAt:    pgTimestamptzFromPtr(in.ExpiresAt),
+		})
+		if err != nil && strings.Contains(err.Error(), "collection_resources_asset_id_fkey") {
+			fkAssetMissing = true
+			return errAssetMissing
 		}
-		return nil, fmt.Errorf("collections: add resource: %w", err)
+		return err
+	})
+	if fkAssetMissing {
+		return openapi.AddCollectionResource404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+		}, nil
+	}
+	if errRun != nil {
+		return nil, fmt.Errorf("collections: add resource: %w", errRun)
 	}
 	h.cacheInvalidate(ctx, pgID)
 	return openapi.AddCollectionResource204Response{}, nil
@@ -717,6 +657,11 @@ func (h *Handler) AddCollectionResource(
 // asset_id inside the WithEmission closure. Used to roll back +
 // return 404 without surfacing as a 500 server error.
 var errAssetMissing = errors.New("collections: asset row absent")
+
+// errCollectionsFederationNotWired surfaces in tests that forget
+// to call SetActivitiesWriter on the handler. Production never
+// sees it: api.go always wires the writer at boot.
+var errCollectionsFederationNotWired = errors.New("collections: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource
@@ -752,36 +697,27 @@ func (h *Handler) RemoveCollectionResource(
 	pgAsset := pgtype.UUID{Bytes: uuid.UUID(req.AssetId), Valid: true}
 
 	// Gold-standard path: Remove(object=asset, target=collection)
-	// per AP §6.7 / §7.9.
-	if h.activities != nil {
-		em := emit.RemoveFromCollection(
-			h.actorContext(ctx, caller),
-			activities.ObjectKindAsset,
-			assetIDStr,
-			uuid.UUID(pgID.Bytes).String(),
-			cur.Name,
-		)
-		errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
-			Activity: em.Activity,
-		}, func(tx pgx.Tx) error {
-			return New(tx).RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
-				CollectionID: pgID,
-				AssetID:      pgAsset,
-			})
-		})
-		if errRun != nil {
-			return nil, fmt.Errorf("collections: remove resource: %w", errRun)
-		}
-		h.cacheInvalidate(ctx, pgID)
-		return openapi.RemoveCollectionResource204Response{}, nil
+	// per AP §6.7 / §7.9. 1.22.B-cleanup made activities required.
+	if h.activities == nil {
+		return nil, errCollectionsFederationNotWired
 	}
-
-	// Legacy fallback (tests).
-	if err := q.RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
-		CollectionID: pgID,
-		AssetID:      pgAsset,
-	}); err != nil {
-		return nil, fmt.Errorf("collections: remove resource: %w", err)
+	em := emit.RemoveFromCollection(
+		h.actorContext(ctx, caller),
+		activities.ObjectKindAsset,
+		assetIDStr,
+		uuid.UUID(pgID.Bytes).String(),
+		cur.Name,
+	)
+	errRun := h.activities.WithEmission(ctx, activities.EmissionInput{
+		Activity: em.Activity,
+	}, func(tx pgx.Tx) error {
+		return New(tx).RemoveCollectionResource(ctx, RemoveCollectionResourceParams{
+			CollectionID: pgID,
+			AssetID:      pgAsset,
+		})
+	})
+	if errRun != nil {
+		return nil, fmt.Errorf("collections: remove resource: %w", errRun)
 	}
 	h.cacheInvalidate(ctx, pgID)
 	return openapi.RemoveCollectionResource204Response{}, nil

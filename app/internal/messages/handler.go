@@ -364,73 +364,53 @@ func (h *Handler) SendDirectMessage(
 			}, nil
 		}
 	}
-	// Gold-standard path: WithEmissionFn wraps InsertDirectMessage
-	// + Create(Note) activity + direct_message_received notification
-	// in one transactional unit. Cache invalidation fires post-commit.
-	if h.activities != nil {
-		recipientRef := emit.UserRef{
-			UserRef: req.PeerRef,
-			URI:     h.actorURIForUserRef(ctx, req.PeerRef),
-		}
-		var saved DirectMessage
-		err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
-			r, err := New(tx).InsertDirectMessage(ctx, InsertDirectMessageParams{
-				SenderUserRef:    id.UserRef,
-				RecipientUserRef: req.PeerRef,
-				Body:             body,
-			})
-			if err != nil {
-				return activities.EmissionInput{}, err
-			}
-			saved = r
-			em := emit.DirectMessage(
-				h.senderContext(ctx, id),
-				recipientRef,
-				uuid.UUID(r.ID.Bytes).String(),
-				body,
-			)
-			return activities.EmissionInput{
-				Activity:      em.Activity,
-				Notifications: convertNotifications(em.Notifications),
-			}, nil
+	// Gold-standard path (1.22.B-cleanup: legacy fallback removed).
+	// WithEmissionFn wraps InsertDirectMessage + Create(Note)
+	// activity + direct_message_received notification in one
+	// transactional unit. Cache invalidation fires post-commit.
+	if h.activities == nil {
+		return nil, errFederationNotWired
+	}
+	recipientRef := emit.UserRef{
+		UserRef: req.PeerRef,
+		URI:     h.actorURIForUserRef(ctx, req.PeerRef),
+	}
+	var saved DirectMessage
+	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
+		r, err := New(tx).InsertDirectMessage(ctx, InsertDirectMessageParams{
+			SenderUserRef:    id.UserRef,
+			RecipientUserRef: req.PeerRef,
+			Body:             body,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("messages: send dm: %w", err)
+			return activities.EmissionInput{}, err
 		}
-		h.invalidateUnread(ctx, req.PeerRef)
-		return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(saved)), nil
-	}
-
-	// Legacy fallback (tests).
-	row, err := New(h.Pool).InsertDirectMessage(ctx, InsertDirectMessageParams{
-		SenderUserRef:    id.UserRef,
-		RecipientUserRef: req.PeerRef,
-		Body:             body,
+		saved = r
+		em := emit.DirectMessage(
+			h.senderContext(ctx, id),
+			recipientRef,
+			uuid.UUID(r.ID.Bytes).String(),
+			body,
+		)
+		return activities.EmissionInput{
+			Activity:      em.Activity,
+			Notifications: convertNotifications(em.Notifications),
+		}, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("messages: send dm: %w", err)
 	}
 	h.invalidateUnread(ctx, req.PeerRef)
-	if h.notify != nil {
-		actor := id.UserRef
-		excerpt := body
-		if len(excerpt) > 120 {
-			excerpt = excerpt[:120]
-		}
-		if err := h.notify.Notify(ctx, req.PeerRef, &actor, "direct_message_received", "user",
-			strconv.FormatInt(actor, 10),
-			map[string]any{
-				"excerpt":    excerpt,
-				"message_id": uuid.UUID(row.ID.Bytes).String(),
-			}); err != nil && h.Logger != nil {
-			h.Logger.Warn("messages.notify.error",
-				slog.Int64("recipient", req.PeerRef),
-				slog.String("err", err.Error()),
-			)
-		}
-	}
-	return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(row)), nil
+	return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(saved)), nil
 }
+
+// errFederationNotWired indicates the handler was built without
+// an activities.Writer (impossible in production; the api.go boot
+// wires every handler). Tests that exercise this path MUST call
+// SetActivitiesWriter on the handler. Returning a plain error
+// here makes the test failure mode obvious instead of silently
+// running a parallel non-federating path.
+var errFederationNotWired = fmt.Errorf("messages: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // senderContext builds an emit.ActorContext for the authenticated
 // sender. Same shape as social.actorContext but defined here to

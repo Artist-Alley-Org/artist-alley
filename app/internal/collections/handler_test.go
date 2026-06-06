@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -330,6 +331,14 @@ func makeRouter(t *testing.T, pool *pgxpool.Pool, userRef int64, admin bool) (ch
 	// nil registry — cache integration is covered by cache_test.go;
 	// these tests stick to handler logic.
 	h := collections.NewHandler(pool, logger, nil)
+	// Phase 1.22.B-cleanup: handlers no longer carry a legacy
+	// fallback. Tests that exercise Create/Update/Delete/Add/Remove
+	// MUST wire an activities.Writer — otherwise those endpoints
+	// return 503. The wired writer here has no notifier / no
+	// resolver because these tests don't assert on activity
+	// emission; they only need the gold path to run through.
+	actWriter := activities.NewWriter(pool, logger, nil)
+	h.SetActivitiesWriter(actWriter, func(ctx context.Context) string { return "https://test.example" })
 
 	caps := []string{}
 	if admin {
