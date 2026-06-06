@@ -363,6 +363,13 @@
       "summary": "The phases queued behind the current focus.",
       "items": [
         {
+          "id": "pre-mvp-cleanup",
+          "title": "Pre-MVP cleanup — shim drop, migration baseline, name sanitization",
+          "phase": "1.49",
+          "status": "planned",
+          "description": "Foundational debt-clearing sweep landing between Phase 1.22.C (Share access control) and Phase 1.22.D (federation outbox). Three workstreams in one `chore/pre-mvp-cleanup` branch. **1.49.A — Drop the 7-shim panic-stub pattern.** Replace per-package OpenAPI test shims (~1,155 panic stubs across 7 files) with a single shared `internal/openapi/strictservershim.PanicShim`. Domain tests embed the shim and override only the methods they exercise; new OpenAPI operations stop requiring stub creation. **1.49.B — Drop legacy fallback paths in wired handlers.** Every handler currently has two code paths — gold-standard `WithEmission`/`WithEmissionFn` (writes domain row + activity ledger in one tx) and a legacy fallback (just the domain row). The fallback is a real federation-delivery correctness bug once 1.22.D outbox ships. Test fixtures get wired to the gold-standard path; the fallback is deleted. **1.49.C — DB migration baseline.** Per ADR 0046, audit the ~60-migration sequence for orphan tables / columns / redundant indexes / naming inconsistencies (`*_id` UUID vs `*_ref` BIGINT mixed). Audit report at `docs/cleanup-audit-<date>.md` ships in its own commit before the destructive squash. Then `pg_dump`-derived `00001_baseline_v1.sql` replaces the prior sequence; old migration files deleted outright (git preserves history); `app/schema.sql` mirror updated; sqlc regenerated. No upgrade path from the old sequence — developers `docker compose down -v` after pulling. **Pre-v1.0 only**; post-v1.0 migrations are append-only forever. **1.49.D — Product-name sanitization.** Strip direct competitor / inspiration references from source (Go, Svelte, SQL comments, OpenAPI). Reference files, ADR historical notes, and `docs/research/` retain the comparison framing — source code stays neutral per the new coding-standards rule. See ADR 0046 + the coding-standards developer doc."
+        },
+        {
           "id": "identity-teams-extensions",
           "title": "Identity & teams — remaining extensions",
           "phase": "1.18 (feat/user-surfaces)",
