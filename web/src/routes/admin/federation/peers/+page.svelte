@@ -231,12 +231,70 @@
     if (!r.error) await load();
   }
 
-  async function defederate(p: Peer): Promise<void> {
-    if (!confirm(t('admin.federation.confirm_defederate', { name: p.display_name }))) return;
-    const r = await api.DELETE('/admin/federation/peers/{id}', {
+  // Defederation cascade preview state (1.22.C-e). Backed by
+  // GET /admin/federation/peers/{id}/defederation-preview from
+  // 1.22.C-d. Replaces the old browser-confirm() with a real
+  // modal showing exact impact (per-object-kind breakdown,
+  // pending handshakes, suggestions to drop).
+  let cascadeOpenFor = $state<Peer | null>(null);
+  let cascadePreview = $state<{
+    peer_id: string;
+    peer_display_name: string;
+    peer_url: string;
+    total_active_shares: number;
+    shares_by_kind: Record<string, number>;
+    pending_handshakes: number;
+    cached_suggestions: number;
+  } | null>(null);
+  let cascadeLoading = $state(false);
+  let cascadeBusy = $state(false);
+  let cascadeError = $state('');
+
+  async function openDefederateModal(p: Peer): Promise<void> {
+    cascadeOpenFor = p;
+    cascadePreview = null;
+    cascadeError = '';
+    cascadeLoading = true;
+    const r = await api.GET('/admin/federation/peers/{id}/defederation-preview', {
       params: { path: { id: p.id } },
     });
-    if (!r.error) await load();
+    cascadeLoading = false;
+    if (r.error || !r.data) {
+      cascadeError = t('admin.federation.cascade_preview_error');
+      return;
+    }
+    cascadePreview = r.data;
+  }
+
+  function closeDefederateModal(): void {
+    cascadeOpenFor = null;
+    cascadePreview = null;
+    cascadeError = '';
+    cascadeBusy = false;
+  }
+
+  async function confirmDefederate(): Promise<void> {
+    if (!cascadeOpenFor) return;
+    cascadeBusy = true;
+    const r = await api.DELETE('/admin/federation/peers/{id}', {
+      params: { path: { id: cascadeOpenFor.id } },
+    });
+    cascadeBusy = false;
+    if (!r.error) {
+      closeDefederateModal();
+      await load();
+    } else {
+      cascadeError = t('admin.federation.cascade_delete_error');
+    }
+  }
+
+  // Pretty-print the object_kind keys from shares_by_kind. The
+  // backend uses internal catalogue names (post, collection,
+  // brand_kit, etc.); the modal renders them as i18n labels.
+  function kindLabel(kind: string): string {
+    const key = `admin.federation.cascade_kind_${kind}`;
+    const lit = t(key);
+    return lit === key ? kind : lit;
   }
 
   function fingerprintFromPEM(pem: string): string {
@@ -546,7 +604,7 @@
               <button
                 type="button"
                 class="rounded-md border border-danger/40 bg-danger/10 px-2 py-0.5 text-xs text-danger hover:bg-danger/20"
-                onclick={() => defederate(p)}
+                onclick={() => openDefederateModal(p)}
               >{t('admin.federation.defederate')}</button>
             </td>
           </tr>
@@ -596,3 +654,86 @@
     </ul>
   {/if}
 </section>
+
+<!-- Defederation cascade modal (1.22.C-e). Backed by the
+     /admin/federation/peers/{id}/defederation-preview endpoint
+     from 1.22.C-d. Shows exact impact before the destructive
+     DELETE: per-object-kind breakdown, pending handshakes that
+     would be cancelled, suggestions that would be dropped, the
+     "best-effort aa:Unshare per row" caveat. -->
+{#if cascadeOpenFor}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    role="presentation"
+    onclick={(e) => { if (e.target === e.currentTarget) closeDefederateModal(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') closeDefederateModal(); }}
+  >
+    <div
+      class="w-full max-w-2xl rounded-lg border border-border bg-bg p-6 shadow-xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cascade-title"
+    >
+      <h3 id="cascade-title" class="text-lg font-semibold">
+        {t('admin.federation.cascade_title', { name: cascadeOpenFor.display_name })}
+      </h3>
+      <p class="mt-1 text-sm text-fg-muted">
+        {t('admin.federation.cascade_intro', { url: cascadeOpenFor.instance_url })}
+      </p>
+
+      {#if cascadeLoading}
+        <p class="mt-4 text-sm text-fg-muted">{t('admin.federation.cascade_loading')}</p>
+      {:else if cascadeError}
+        <p class="mt-4 text-sm text-danger">{cascadeError}</p>
+      {:else if cascadePreview}
+        <div class="mt-4 space-y-3 rounded border border-border bg-bg-soft p-4 text-sm">
+          <p class="font-medium">
+            {t('admin.federation.cascade_summary_intro')}
+          </p>
+          <ul class="ml-4 list-disc space-y-1">
+            <li>
+              <strong>{cascadePreview.total_active_shares}</strong>
+              {t('admin.federation.cascade_total_shares')}
+              {#if Object.keys(cascadePreview.shares_by_kind || {}).length > 0}
+                <ul class="ml-4 mt-1 list-[circle] text-xs text-fg-muted">
+                  {#each Object.entries(cascadePreview.shares_by_kind) as [kind, count] (kind)}
+                    <li>{count} {kindLabel(kind)}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </li>
+            <li>
+              <strong>{cascadePreview.pending_handshakes}</strong>
+              {t('admin.federation.cascade_pending_handshakes')}
+            </li>
+            <li>
+              <strong>{cascadePreview.cached_suggestions}</strong>
+              {t('admin.federation.cascade_cached_suggestions')}
+            </li>
+            <li class="text-fg-muted">{t('admin.federation.cascade_aa_unshare_note')}</li>
+          </ul>
+          <p class="text-xs text-fg-muted">
+            {t('admin.federation.cascade_irreversible_note')}
+          </p>
+        </div>
+      {/if}
+
+      <div class="mt-6 flex justify-end gap-2">
+        <button
+          type="button"
+          class="rounded border border-border px-4 py-2 text-sm hover:bg-bg-soft disabled:opacity-50"
+          disabled={cascadeBusy}
+          onclick={closeDefederateModal}
+        >{t('common.cancel')}</button>
+        <button
+          type="button"
+          class="rounded bg-danger px-4 py-2 text-sm text-white hover:bg-danger-strong disabled:opacity-50"
+          disabled={cascadeLoading || cascadeBusy || !!cascadeError}
+          onclick={confirmDefederate}
+        >
+          {cascadeBusy ? t('admin.federation.cascade_defederating') : t('admin.federation.defederate')}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

@@ -114,7 +114,7 @@ export interface PostComposeState {
   mode: PostMode;            // when enabled
   title: string;
   description: string;
-  visibility: 'private' | 'followers' | 'public';
+  visibility: 'private' | 'org-only' | 'followers' | 'explicit-share';
   tags: string[];
   /** Optional collection to add the post(s) to. */
   collectionId: string | null;
@@ -162,7 +162,7 @@ class UploadState {
     mode: 'one-post',
     title: '',
     description: '',
-    visibility: 'public',
+    visibility: 'org-only',
     tags: [],
     collectionId: null,
     stateId: null,
@@ -400,7 +400,7 @@ class UploadState {
       mode: 'one-post',
       title: '',
       description: '',
-      visibility: 'public',
+      visibility: 'org-only',
       tags: [],
       collectionId: this.compose.collectionId, // preserve context across resets
       stateId: null,

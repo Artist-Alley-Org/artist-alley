@@ -27,7 +27,7 @@
 
   let name = $state('');
   let description = $state('');
-  let visibility = $state<'private' | 'shared' | 'public'>('private');
+  let visibility = $state<'private' | 'org-only' | 'followers' | 'explicit-share'>('private');
   let featured = $state(false);
   let submitting = $state(false);
   let error = $state<string | null>(null);
@@ -36,7 +36,7 @@
     if (open) {
       name = collection.name;
       description = collection.description;
-      visibility = collection.visibility as 'private' | 'shared' | 'public';
+      visibility = collection.visibility as 'private' | 'org-only' | 'followers' | 'explicit-share';
       featured = collection.featured;
       error = null;
     }
@@ -95,13 +95,13 @@
     </label>
     <fieldset>
       <legend class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.visibility')}</legend>
-      <div class="grid grid-cols-3 gap-2">
-        {#each ['private', 'shared', 'public'] as v}
+      <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {#each ['private', 'org-only', 'followers', 'explicit-share'] as v}
           <label class="cursor-pointer rounded border border-border bg-surface px-3 py-2 text-center text-sm hover:border-border-strong"
                  class:border-accent={visibility === v}
                  class:text-accent={visibility === v}>
             <input type="radio" name="vis_edit" value={v} bind:group={visibility} class="sr-only" />
-            {v === 'private' ? t('collections.vis_private') : v === 'shared' ? t('collections.vis_shared') : t('collections.vis_public')}
+            {t(`collections.vis_${v.replace('-', '_')}`)}
           </label>
         {/each}
       </div>
