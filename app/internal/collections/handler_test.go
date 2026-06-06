@@ -989,3 +989,12 @@ func (collShim) RequestFederationDirectoryPublishChallenge(context.Context, open
 func (collShim) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
 	panic("RegisterFederationDirectoryPublishListing called from collections test shim")
 }
+func (collShim) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	panic("GetFederationPeersVisible called from collections test shim")
+}
+func (collShim) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	panic("ListFederationPeerSuggestions called from collections test shim")
+}
+func (collShim) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	panic("RefreshFederationPeerSuggestions called from collections test shim")
+}

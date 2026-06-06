@@ -276,3 +276,16 @@ sql:
         emit_interface: false
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/p2p/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: p2p
+        out: internal/federation/p2p
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

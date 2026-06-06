@@ -1071,3 +1071,12 @@ func (authOnlyImpl) RequestFederationDirectoryPublishChallenge(context.Context, 
 func (authOnlyImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
 	panic("RegisterFederationDirectoryPublishListing called from auth test shim")
 }
+func (authOnlyImpl) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	panic("GetFederationPeersVisible called from auth test shim")
+}
+func (authOnlyImpl) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	panic("ListFederationPeerSuggestions called from auth test shim")
+}
+func (authOnlyImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	panic("RefreshFederationPeerSuggestions called from auth test shim")
+}

@@ -737,6 +737,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /federation/peers/visible:
+    get:
+      operationId: getFederationPeersVisible
+      summary: Peer-of-peer discovery — list of peers we've opted to share (Phase 1.22.B-d)
+      description: |
+        Public unauthenticated endpoint. Returns the subset of our
+        connected+enabled peers that have `share_in_visible_list`
+        toggled on. Other instances poll this to build their
+        "Suggested peers (via this instance)" feed per ADR 0043.
+
+        Per the spec these are advisory ONLY — a listed peer is
+        a discovery hint, not a trust endorsement. Pairing still
+        goes through the handshake from 1.22.B-b.
+      tags: [federation]
+      responses:
+        "200":
+          description: List of visible peers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationVisiblePeerList" }
+
   /federation/peers/handshake:
     post:
       operationId: postFederationHandshake
@@ -853,6 +874,58 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /admin/federation/suggestions:
+    get:
+      operationId: listFederationPeerSuggestions
+      summary: List cached peer-of-peer suggestions (Phase 1.22.B-d)
+      description: |
+        Returns suggestions from all sources, deduped against our
+        own federation_peers (URLs we already federate with are
+        hidden). Each suggestion carries provenance — which of
+        OUR peers contributed it.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: List of suggestions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerSuggestionList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/suggestions/refresh:
+    post:
+      operationId: refreshFederationPeerSuggestions
+      summary: Force a sweep of all connected peers for fresh suggestions
+      description: |
+        Iterates every connected+enabled peer, fetches their
+        /federation/peers/visible response, and persists the
+        results. Returns per-source feedback (count or error).
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-source refresh outcomes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationPeerSuggestionRefreshResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /admin/federation/peers:
     get:
@@ -7936,8 +8009,84 @@ components:
           format: date-time
           nullable: true
         notes: { type: string }
+        share_in_visible_list:
+          type: boolean
+          description: |
+            Per-peer opt-in for peer-of-peer discovery (Phase
+            1.22.B-d). When true, this peer appears in
+            GET /federation/peers/visible — other peers can
+            then surface it as a discovery suggestion. Default
+            false; explicit opt-in.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    FederationVisiblePeer:
+      type: object
+      description: |
+        Minimal projection of a peer for /federation/peers/visible.
+        Public — no auth required to fetch. Excludes operator-
+        private fields like notes or trust_tier.
+      required: [instance_url, display_name, instance_public_key, fingerprint]
+      properties:
+        instance_url: { type: string }
+        display_name: { type: string }
+        instance_public_key: { type: string }
+        fingerprint: { type: string }
+
+    FederationVisiblePeerList:
+      type: object
+      required: [peers]
+      properties:
+        peers:
+          type: array
+          items: { $ref: "#/components/schemas/FederationVisiblePeer" }
+
+    FederationPeerSuggestion:
+      type: object
+      required:
+        - id
+        - source_peer_id
+        - source_display_name
+        - source_url
+        - suggested_url
+        - suggested_display_name
+        - suggested_public_key
+        - suggested_fingerprint
+        - cached_at
+      properties:
+        id: { type: string, format: uuid }
+        source_peer_id: { type: string, format: uuid }
+        source_display_name: { type: string }
+        source_url: { type: string }
+        suggested_url: { type: string }
+        suggested_display_name: { type: string }
+        suggested_public_key: { type: string }
+        suggested_fingerprint: { type: string }
+        cached_at: { type: string, format: date-time }
+
+    FederationPeerSuggestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationPeerSuggestion" }
+
+    FederationPeerSuggestionRefreshResult:
+      type: object
+      required: [outcomes]
+      properties:
+        outcomes:
+          type: array
+          items:
+            type: object
+            required: [source_peer_id, source_display_name, source_url, count]
+            properties:
+              source_peer_id: { type: string, format: uuid }
+              source_display_name: { type: string }
+              source_url: { type: string }
+              count: { type: integer }
+              error: { type: string }
 
     FederationDirectory:
       type: object
@@ -8215,6 +8364,13 @@ components:
           enum: [plaintext, e2e-encrypted]
         enabled: { type: boolean }
         notes: { type: string }
+        share_in_visible_list:
+          type: boolean
+          description: |
+            Per-peer opt-in for peer-of-peer discovery (Phase
+            1.22.B-d). Toggle this to expose the peer in our
+            /federation/peers/visible response so other peers
+            can surface it as a suggestion.
 
     AdminActivity:
       type: object

@@ -771,6 +771,8 @@ CREATE TABLE federation_peers (
     handshake_by_user_ref    BIGINT       NOT NULL,
     last_seen_at             TIMESTAMPTZ  NULL,
     notes                    TEXT         NOT NULL DEFAULT '',
+    -- Migration 00055: per-peer opt-in for peer-of-peer discovery.
+    share_in_visible_list    BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -785,6 +787,29 @@ CREATE INDEX federation_peers_handshake_at_idx
 CREATE INDEX federation_peers_pending_inbound_idx
     ON federation_peers (handshake_at DESC)
     WHERE status = 'pending_inbound';
+-- Migration 00055: visible-peers snapshot for /federation/peers/visible.
+CREATE INDEX federation_peers_visible_idx
+    ON federation_peers (instance_url)
+    WHERE enabled = TRUE AND status = 'connected' AND share_in_visible_list = TRUE;
+
+-- migrations/00055_federation_peer_of_peer.sql — cached peer-of-peer
+-- suggestions. Each row is "our peer SOURCE_PEER_ID told us about
+-- SUGGESTED_URL; we should consider pairing". Pairing still goes
+-- through the handshake (trust-laundered, not trusted).
+CREATE TABLE federation_peer_suggestions (
+    id                     UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_peer_id         UUID         NOT NULL REFERENCES federation_peers(id) ON DELETE CASCADE,
+    suggested_url          TEXT         NOT NULL,
+    suggested_display_name TEXT         NOT NULL,
+    suggested_public_key   TEXT         NOT NULL,
+    suggested_fingerprint  TEXT         NOT NULL,
+    cached_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (source_peer_id, suggested_url)
+);
+CREATE INDEX federation_peer_suggestions_by_source_idx
+    ON federation_peer_suggestions (source_peer_id, cached_at DESC);
+CREATE INDEX federation_peer_suggestions_by_url_idx
+    ON federation_peer_suggestions (suggested_url);
 
 -- migrations/00053_federation_directories.sql — directory protocol
 -- subscriber tables. federation_directories is the per-instance list

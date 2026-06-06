@@ -714,3 +714,12 @@ func (rtOnly) RequestFederationDirectoryPublishChallenge(context.Context, openap
 func (rtOnly) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
 	panic("RegisterFederationDirectoryPublishListing called from assettype test shim")
 }
+func (rtOnly) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	panic("GetFederationPeersVisible called from assettype test shim")
+}
+func (rtOnly) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	panic("ListFederationPeerSuggestions called from assettype test shim")
+}
+func (rtOnly) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	panic("RefreshFederationPeerSuggestions called from assettype test shim")
+}

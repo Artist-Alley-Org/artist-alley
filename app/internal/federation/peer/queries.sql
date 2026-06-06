@@ -5,7 +5,7 @@
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 ORDER BY handshake_at DESC, id DESC
 LIMIT $1;
@@ -17,7 +17,7 @@ LIMIT $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE status = 'pending_inbound'
 ORDER BY handshake_at DESC, id DESC;
@@ -28,7 +28,7 @@ ORDER BY handshake_at DESC, id DESC;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE id = $1;
 
@@ -41,7 +41,7 @@ WHERE id = $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE instance_url = $1;
 
@@ -55,7 +55,7 @@ WHERE instance_url = $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE enabled = TRUE AND status = 'connected'
 ORDER BY instance_url;
@@ -84,7 +84,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at;
 
 -- name: UpdatePeer :one
 -- Admin edit: change display_name / trust_tier / encryption_policy
@@ -92,17 +92,18 @@ RETURNING id, instance_url, display_name, instance_public_key,
 -- instance_public_key — those require defederate+repair (the
 -- public_key change in particular signals re-handshake).
 UPDATE federation_peers
-SET display_name     = COALESCE(sqlc.narg('display_name')::TEXT,     display_name),
-    trust_tier       = COALESCE(sqlc.narg('trust_tier')::TEXT,       trust_tier),
-    encryption_policy = COALESCE(sqlc.narg('encryption_policy')::TEXT, encryption_policy),
-    enabled          = COALESCE(sqlc.narg('enabled')::BOOLEAN,        enabled),
-    notes            = COALESCE(sqlc.narg('notes')::TEXT,             notes),
-    updated_at       = NOW()
+SET display_name          = COALESCE(sqlc.narg('display_name')::TEXT,       display_name),
+    trust_tier            = COALESCE(sqlc.narg('trust_tier')::TEXT,         trust_tier),
+    encryption_policy     = COALESCE(sqlc.narg('encryption_policy')::TEXT,  encryption_policy),
+    enabled               = COALESCE(sqlc.narg('enabled')::BOOLEAN,          enabled),
+    notes                 = COALESCE(sqlc.narg('notes')::TEXT,               notes),
+    share_in_visible_list = COALESCE(sqlc.narg('share_in_visible_list')::BOOLEAN, share_in_visible_list),
+    updated_at            = NOW()
 WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at;
 
 -- name: CompleteOutboundHandshake :one
 -- Atomically replaces the pending_outbound placeholder pubkey
@@ -119,7 +120,7 @@ WHERE id = $1 AND status = 'pending_outbound'
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at;
 
 -- name: SetPeerStatus :one
 -- Internal handshake state transition: pending_outbound →
@@ -133,7 +134,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at;
 
 -- name: AppendPeerNote :one
 -- Internal: append a timestamped line to the notes column so
@@ -146,7 +147,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at;
 
 -- name: DeletePeer :exec
 -- Defederation. Per ADR 0043 §"Trust model" the receiving side
@@ -164,3 +165,16 @@ DELETE FROM federation_peers WHERE id = $1;
 UPDATE federation_peers
 SET last_seen_at = NOW()
 WHERE instance_url = $1;
+
+-- name: ListVisiblePeers :many
+-- The set returned by GET /federation/peers/visible — peers we've
+-- opted to expose to anyone who asks. Backed by the partial index
+-- federation_peers_visible_idx (enabled AND status=connected AND
+-- share_in_visible_list).
+SELECT id, instance_url, display_name, instance_public_key,
+       trust_tier, encryption_policy, enabled, status,
+       handshake_at, handshake_by_user_ref, last_seen_at,
+       notes, share_in_visible_list, created_at, updated_at
+FROM federation_peers
+WHERE enabled = TRUE AND status = 'connected' AND share_in_visible_list = TRUE
+ORDER BY instance_url;

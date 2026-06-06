@@ -29,6 +29,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
+	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -77,6 +78,8 @@ type apiServer struct {
 	directories      *directory.Registry
 	directoriesAdmin *directory.AdminHandler
 	directoryPoller  *directory.Poller
+	p2pRegistry      *p2p.Registry
+	p2pAdmin         *p2p.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -174,9 +177,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.peersPublic = peer.NewPublicHandler(
 		s.fedIdentity,
 		s.fedEngine,
+		s.peers,
 		sysconfigBaseURLFn(sysCfg),
 		sysconfigSiteNameFn(sysCfg),
 	)
+
+	// Peer-of-peer discovery (Phase 1.22.B-d). Suggestions
+	// registry + admin handler share the peer registry so dedup
+	// against our own peers can happen at query time.
+	s.p2pRegistry = p2p.NewRegistry(pool, logger, s.peers, cacheReg)
+	p2pClient := p2p.NewClient()
+	s.p2pAdmin = p2p.NewAdminHandler(s.p2pRegistry, p2pClient)
 
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
 	// AdminHandler land here; the background Poller starts in
@@ -910,6 +921,18 @@ func (s *apiServer) RegisterFederationDirectoryPublishListing(ctx context.Contex
 
 func (s *apiServer) GetFederationInstance(ctx context.Context, req openapi.GetFederationInstanceRequestObject) (openapi.GetFederationInstanceResponseObject, error) {
 	return s.peersPublic.GetFederationInstance(ctx, req)
+}
+
+func (s *apiServer) GetFederationPeersVisible(ctx context.Context, req openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	return s.peersPublic.GetFederationPeersVisible(ctx, req)
+}
+
+func (s *apiServer) ListFederationPeerSuggestions(ctx context.Context, req openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	return s.p2pAdmin.ListFederationPeerSuggestions(ctx, req)
+}
+
+func (s *apiServer) RefreshFederationPeerSuggestions(ctx context.Context, req openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	return s.p2pAdmin.RefreshFederationPeerSuggestions(ctx, req)
 }
 
 func (s *apiServer) PostFederationHandshake(ctx context.Context, req openapi.PostFederationHandshakeRequestObject) (openapi.PostFederationHandshakeResponseObject, error) {

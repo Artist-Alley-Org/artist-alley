@@ -19,7 +19,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at
+          notes, share_in_visible_list, created_at, updated_at
 `
 
 type AppendPeerNoteParams struct {
@@ -46,6 +46,7 @@ func (q *Queries) AppendPeerNote(ctx context.Context, arg AppendPeerNoteParams) 
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -61,7 +62,7 @@ WHERE id = $1 AND status = 'pending_outbound'
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at
+          notes, share_in_visible_list, created_at, updated_at
 `
 
 type CompleteOutboundHandshakeParams struct {
@@ -91,6 +92,7 @@ func (q *Queries) CompleteOutboundHandshake(ctx context.Context, arg CompleteOut
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -115,7 +117,7 @@ const getPeerByID = `-- name: GetPeerByID :one
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE id = $1
 `
@@ -138,6 +140,7 @@ func (q *Queries) GetPeerByID(ctx context.Context, id pgtype.UUID) (FederationPe
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -148,7 +151,7 @@ const getPeerByInstanceURL = `-- name: GetPeerByInstanceURL :one
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE instance_url = $1
 `
@@ -174,6 +177,7 @@ func (q *Queries) GetPeerByInstanceURL(ctx context.Context, instanceUrl string) 
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -196,7 +200,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at
+          notes, share_in_visible_list, created_at, updated_at
 `
 
 type InsertPeerParams struct {
@@ -245,6 +249,7 @@ func (q *Queries) InsertPeer(ctx context.Context, arg InsertPeerParams) (Federat
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -255,7 +260,7 @@ const listEnabledPeers = `-- name: ListEnabledPeers :many
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE enabled = TRUE AND status = 'connected'
 ORDER BY instance_url
@@ -289,6 +294,7 @@ func (q *Queries) ListEnabledPeers(ctx context.Context) ([]FederationPeer, error
 			&i.HandshakeByUserRef,
 			&i.LastSeenAt,
 			&i.Notes,
+			&i.ShareInVisibleList,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -306,7 +312,7 @@ const listPeers = `-- name: ListPeers :many
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 ORDER BY handshake_at DESC, id DESC
 LIMIT $1
@@ -337,6 +343,7 @@ func (q *Queries) ListPeers(ctx context.Context, limit int32) ([]FederationPeer,
 			&i.HandshakeByUserRef,
 			&i.LastSeenAt,
 			&i.Notes,
+			&i.ShareInVisibleList,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -354,7 +361,7 @@ const listPendingInboundPeers = `-- name: ListPendingInboundPeers :many
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at
 FROM federation_peers
 WHERE status = 'pending_inbound'
 ORDER BY handshake_at DESC, id DESC
@@ -385,6 +392,57 @@ func (q *Queries) ListPendingInboundPeers(ctx context.Context) ([]FederationPeer
 			&i.HandshakeByUserRef,
 			&i.LastSeenAt,
 			&i.Notes,
+			&i.ShareInVisibleList,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVisiblePeers = `-- name: ListVisiblePeers :many
+SELECT id, instance_url, display_name, instance_public_key,
+       trust_tier, encryption_policy, enabled, status,
+       handshake_at, handshake_by_user_ref, last_seen_at,
+       notes, share_in_visible_list, created_at, updated_at
+FROM federation_peers
+WHERE enabled = TRUE AND status = 'connected' AND share_in_visible_list = TRUE
+ORDER BY instance_url
+`
+
+// The set returned by GET /federation/peers/visible — peers we've
+// opted to expose to anyone who asks. Backed by the partial index
+// federation_peers_visible_idx (enabled AND status=connected AND
+// share_in_visible_list).
+func (q *Queries) ListVisiblePeers(ctx context.Context) ([]FederationPeer, error) {
+	rows, err := q.db.Query(ctx, listVisiblePeers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FederationPeer
+	for rows.Next() {
+		var i FederationPeer
+		if err := rows.Scan(
+			&i.ID,
+			&i.InstanceUrl,
+			&i.DisplayName,
+			&i.InstancePublicKey,
+			&i.TrustTier,
+			&i.EncryptionPolicy,
+			&i.Enabled,
+			&i.Status,
+			&i.HandshakeAt,
+			&i.HandshakeByUserRef,
+			&i.LastSeenAt,
+			&i.Notes,
+			&i.ShareInVisibleList,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -406,7 +464,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at
+          notes, share_in_visible_list, created_at, updated_at
 `
 
 type SetPeerStatusParams struct {
@@ -434,6 +492,7 @@ func (q *Queries) SetPeerStatus(ctx context.Context, arg SetPeerStatusParams) (F
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -457,26 +516,28 @@ func (q *Queries) TouchPeerLastSeen(ctx context.Context, instanceUrl string) err
 
 const updatePeer = `-- name: UpdatePeer :one
 UPDATE federation_peers
-SET display_name     = COALESCE($2::TEXT,     display_name),
-    trust_tier       = COALESCE($3::TEXT,       trust_tier),
-    encryption_policy = COALESCE($4::TEXT, encryption_policy),
-    enabled          = COALESCE($5::BOOLEAN,        enabled),
-    notes            = COALESCE($6::TEXT,             notes),
-    updated_at       = NOW()
+SET display_name          = COALESCE($2::TEXT,       display_name),
+    trust_tier            = COALESCE($3::TEXT,         trust_tier),
+    encryption_policy     = COALESCE($4::TEXT,  encryption_policy),
+    enabled               = COALESCE($5::BOOLEAN,          enabled),
+    notes                 = COALESCE($6::TEXT,               notes),
+    share_in_visible_list = COALESCE($7::BOOLEAN, share_in_visible_list),
+    updated_at            = NOW()
 WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, created_at, updated_at
+          notes, share_in_visible_list, created_at, updated_at
 `
 
 type UpdatePeerParams struct {
-	ID               pgtype.UUID
-	DisplayName      *string
-	TrustTier        *string
-	EncryptionPolicy *string
-	Enabled          *bool
-	Notes            *string
+	ID                 pgtype.UUID
+	DisplayName        *string
+	TrustTier          *string
+	EncryptionPolicy   *string
+	Enabled            *bool
+	Notes              *string
+	ShareInVisibleList *bool
 }
 
 // Admin edit: change display_name / trust_tier / encryption_policy
@@ -491,6 +552,7 @@ func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (Federat
 		arg.EncryptionPolicy,
 		arg.Enabled,
 		arg.Notes,
+		arg.ShareInVisibleList,
 	)
 	var i FederationPeer
 	err := row.Scan(
@@ -506,6 +568,7 @@ func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (Federat
 		&i.HandshakeByUserRef,
 		&i.LastSeenAt,
 		&i.Notes,
+		&i.ShareInVisibleList,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

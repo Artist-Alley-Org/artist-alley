@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
@@ -30,6 +31,7 @@ import (
 type PublicHandler struct {
 	identity *identity.Manager
 	engine   *Engine
+	registry *Registry // needed for /federation/peers/visible
 
 	// localBaseURLFn + localDisplayNameFn read live values per
 	// request — sysconfig is the source of truth + already cached
@@ -44,15 +46,56 @@ type PublicHandler struct {
 func NewPublicHandler(
 	idMgr *identity.Manager,
 	eng *Engine,
+	reg *Registry,
 	baseURL func(ctx context.Context) string,
 	displayName func(ctx context.Context) string,
 ) *PublicHandler {
 	return &PublicHandler{
 		identity:           idMgr,
 		engine:             eng,
+		registry:           reg,
 		localBaseURLFn:     baseURL,
 		localDisplayNameFn: displayName,
 	}
+}
+
+// GetFederationPeersVisible — GET /federation/peers/visible.
+// Public unauthenticated endpoint (1.22.B-d). Returns the union
+// of peers we've opted to expose via share_in_visible_list.
+//
+// Per ADR 0043 these are advisory — the receiving peer treats
+// them as discovery hints, not trust statements.
+func (h *PublicHandler) GetFederationPeersVisible(
+	ctx context.Context,
+	_ openapi.GetFederationPeersVisibleRequestObject,
+) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	visible, err := h.registry.VisibleSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationVisiblePeer, 0, len(visible))
+	for _, p := range visible {
+		items = append(items, openapi.FederationVisiblePeer{
+			InstanceUrl:       p.InstanceURL,
+			DisplayName:       p.DisplayName,
+			InstancePublicKey: p.InstancePublicKey,
+			Fingerprint:       fingerprintFromPEM(p.InstancePublicKey),
+		})
+	}
+	return openapi.GetFederationPeersVisible200JSONResponse(openapi.FederationVisiblePeerList{
+		Peers: items,
+	}), nil
+}
+
+// fingerprintFromPEM extracts the Ed25519 fingerprint by parsing
+// the PEM. Empty string on parse failure (legacy/placeholder
+// keys for in-flight pairings).
+func fingerprintFromPEM(pem string) string {
+	pub, err := federation.PublicKeyFromPEM([]byte(pem))
+	if err != nil {
+		return ""
+	}
+	return federation.PublicKeyFingerprint(pub)
 }
 
 // GetFederationInstance — GET /federation/instance.

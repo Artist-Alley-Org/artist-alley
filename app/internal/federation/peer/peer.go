@@ -53,6 +53,12 @@ const (
 	// it drops the whole set on any peer mutation.
 	cacheDomainEnabledSnapshot = "peer.enabled_snapshot"
 	enabledSnapshotKey         = "all"
+
+	// cacheDomainVisibleSnapshot keys the "peers we expose for
+	// peer-of-peer discovery" snapshot. Same single-slot pattern;
+	// different predicate. 1.22.B-d.
+	cacheDomainVisibleSnapshot = "peer.visible_snapshot"
+	visibleSnapshotKey         = "all"
 )
 
 // Errors callers may distinguish on.
@@ -93,6 +99,10 @@ type Peer struct {
 	HandshakeByUserRef int64
 	LastSeenAt         pgtype.Timestamptz
 	Notes              string
+	// ShareInVisibleList — opt-in for peer-of-peer discovery
+	// per migration 00055. When TRUE this peer appears in
+	// GET /federation/peers/visible responses.
+	ShareInVisibleList bool
 }
 
 // AddInput is the typed argument to Registry.Add.
@@ -119,11 +129,12 @@ type AddInput struct {
 // UpdateInput is the typed PATCH argument to Registry.Update.
 // All fields optional — nil means "leave unchanged".
 type UpdateInput struct {
-	DisplayName      *string
-	TrustTier        *federation.TrustTier
-	EncryptionPolicy *federation.EncryptionPolicy
-	Enabled          *bool
-	Notes            *string
+	DisplayName        *string
+	TrustTier          *federation.TrustTier
+	EncryptionPolicy   *federation.EncryptionPolicy
+	Enabled            *bool
+	Notes              *string
+	ShareInVisibleList *bool
 }
 
 // Registry is the package's central state. Constructed once at
@@ -134,6 +145,7 @@ type Registry struct {
 
 	byURL           *cache.Cache[Peer]
 	enabledSnapshot *cache.Cache[enabledSnapshot]
+	visibleSnapshot *cache.Cache[enabledSnapshot]
 }
 
 // enabledSnapshot is the cached list of all enabled peers —
@@ -153,6 +165,7 @@ func NewRegistry(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Regist
 	if registry != nil {
 		r.byURL = cache.Register[Peer](registry, cacheDomainByURL, 1_000)
 		r.enabledSnapshot = cache.Register[enabledSnapshot](registry, cacheDomainEnabledSnapshot, 1)
+		r.visibleSnapshot = cache.Register[enabledSnapshot](registry, cacheDomainVisibleSnapshot, 1)
 	}
 	return r
 }
@@ -316,10 +329,11 @@ func (r *Registry) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*P
 		return nil, fmt.Errorf("%w: %q", ErrEncryptionPolicyInvalid, *in.EncryptionPolicy)
 	}
 	params := UpdatePeerParams{
-		ID:           pgtype.UUID{Bytes: id, Valid: true},
-		DisplayName:  in.DisplayName,
-		Enabled:      in.Enabled,
-		Notes:        in.Notes,
+		ID:                 pgtype.UUID{Bytes: id, Valid: true},
+		DisplayName:        in.DisplayName,
+		Enabled:            in.Enabled,
+		Notes:              in.Notes,
+		ShareInVisibleList: in.ShareInVisibleList,
 	}
 	if in.TrustTier != nil {
 		s := string(*in.TrustTier)
@@ -395,6 +409,14 @@ func (r *Registry) invalidate(ctx context.Context, url string) {
 			)
 		}
 	}
+	if r.visibleSnapshot != nil {
+		if err := r.visibleSnapshot.Invalidate(ctx, visibleSnapshotKey); err != nil && r.Logger != nil {
+			r.Logger.LogAttrs(ctx, slog.LevelWarn, "peer.cache.invalidate.error",
+				slog.String("domain", cacheDomainVisibleSnapshot),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
 }
 
 // --- helpers -------------------------------------------------------------
@@ -415,7 +437,36 @@ func rowToPeer(r FederationPeer) *Peer {
 		HandshakeByUserRef: r.HandshakeByUserRef,
 		LastSeenAt:         r.LastSeenAt,
 		Notes:              r.Notes,
+		ShareInVisibleList: r.ShareInVisibleList,
 	}
+}
+
+// VisibleSnapshot returns the cached snapshot of peers we've
+// opted to share in the public /federation/peers/visible response.
+// Single-slot LRU per the enabled-snapshot pattern; invalidated
+// on every peer mutation (the snapshot represents a whole filter).
+//
+// Separate from EnabledSnapshot because the predicate differs:
+// EnabledSnapshot is for outbound delivery (everyone we can
+// reach); VisibleSnapshot is for "what we expose to OTHER peers".
+func (r *Registry) VisibleSnapshot(ctx context.Context) ([]Peer, error) {
+	if r.visibleSnapshot != nil {
+		if hit, ok := r.visibleSnapshot.Get(visibleSnapshotKey); ok {
+			return append([]Peer(nil), hit.Peers...), nil
+		}
+	}
+	rows, err := New(r.Pool).ListVisiblePeers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	peers := make([]Peer, len(rows))
+	for i, row := range rows {
+		peers[i] = *rowToPeer(row)
+	}
+	if r.visibleSnapshot != nil {
+		r.visibleSnapshot.Add(visibleSnapshotKey, enabledSnapshot{Peers: peers})
+	}
+	return append([]Peer(nil), peers...), nil
 }
 
 // --- handshake-internal helpers (called only by handshake.go) -----------

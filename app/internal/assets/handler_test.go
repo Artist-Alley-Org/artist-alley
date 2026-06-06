@@ -999,3 +999,12 @@ func (shimImpl) RequestFederationDirectoryPublishChallenge(context.Context, open
 func (shimImpl) RegisterFederationDirectoryPublishListing(context.Context, openapi.RegisterFederationDirectoryPublishListingRequestObject) (openapi.RegisterFederationDirectoryPublishListingResponseObject, error) {
 	panic("RegisterFederationDirectoryPublishListing called from assets test shim")
 }
+func (shimImpl) GetFederationPeersVisible(context.Context, openapi.GetFederationPeersVisibleRequestObject) (openapi.GetFederationPeersVisibleResponseObject, error) {
+	panic("GetFederationPeersVisible called from assets test shim")
+}
+func (shimImpl) ListFederationPeerSuggestions(context.Context, openapi.ListFederationPeerSuggestionsRequestObject) (openapi.ListFederationPeerSuggestionsResponseObject, error) {
+	panic("ListFederationPeerSuggestions called from assets test shim")
+}
+func (shimImpl) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
+	panic("RefreshFederationPeerSuggestions called from assets test shim")
+}

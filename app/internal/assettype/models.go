@@ -342,8 +342,19 @@ type FederationPeer struct {
 	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
 	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
 	Notes              string             `json:"notes"`
+	ShareInVisibleList bool               `json:"share_in_visible_list"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationPeerSuggestion struct {
+	ID                   pgtype.UUID        `json:"id"`
+	SourcePeerID         pgtype.UUID        `json:"source_peer_id"`
+	SuggestedUrl         string             `json:"suggested_url"`
+	SuggestedDisplayName string             `json:"suggested_display_name"`
+	SuggestedPublicKey   string             `json:"suggested_public_key"`
+	SuggestedFingerprint string             `json:"suggested_fingerprint"`
+	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
 type FieldDefinition struct {

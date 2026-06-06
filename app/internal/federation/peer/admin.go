@@ -191,9 +191,10 @@ func (h *AdminHandler) UpdateFederationPeer(
 		}, nil
 	}
 	in := UpdateInput{
-		DisplayName: req.Body.DisplayName,
-		Enabled:     req.Body.Enabled,
-		Notes:       req.Body.Notes,
+		DisplayName:        req.Body.DisplayName,
+		Enabled:            req.Body.Enabled,
+		Notes:              req.Body.Notes,
+		ShareInVisibleList: req.Body.ShareInVisibleList,
 	}
 	if req.Body.TrustTier != nil {
 		v := federation.TrustTier(*req.Body.TrustTier)
@@ -252,6 +253,7 @@ func (h *AdminHandler) DeleteFederationPeer(
 // --- helpers -------------------------------------------------------------
 
 func peerToAPI(p Peer) openapi.FederationPeer {
+	share := p.ShareInVisibleList
 	out := openapi.FederationPeer{
 		Id:                 p.ID,
 		InstanceUrl:        p.InstanceURL,
@@ -263,6 +265,7 @@ func peerToAPI(p Peer) openapi.FederationPeer {
 		Enabled:             p.Enabled,
 		HandshakeByUserRef:  p.HandshakeByUserRef,
 		Notes:               p.Notes,
+		ShareInVisibleList:  &share,
 	}
 	if p.HandshakeAt.Valid {
 		out.HandshakeAt = p.HandshakeAt.Time

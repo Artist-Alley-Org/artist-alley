@@ -39,8 +39,21 @@
     handshake_by_user_ref: number;
     last_seen_at?: string | null;
     notes: string;
+    share_in_visible_list?: boolean;
     created_at: string;
     updated_at: string;
+  }
+
+  interface PeerSuggestion {
+    id: string;
+    source_peer_id: string;
+    source_display_name: string;
+    source_url: string;
+    suggested_url: string;
+    suggested_display_name: string;
+    suggested_public_key: string;
+    suggested_fingerprint: string;
+    cached_at: string;
   }
 
   interface InstanceDoc {
@@ -53,9 +66,11 @@
 
   let peers = $state<Peer[]>([]);
   let pendingInbound = $state<Peer[]>([]);
+  let suggestions = $state<PeerSuggestion[]>([]);
   let instance = $state<InstanceDoc | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let refreshingSuggestions = $state(false);
 
   // Pair-by-URL form state.
   let showPair = $state(false);
@@ -85,10 +100,11 @@
     loading = true;
     error = null;
     try {
-      const [peersR, pendingR, instanceR] = await Promise.all([
+      const [peersR, pendingR, instanceR, suggestionsR] = await Promise.all([
         api.GET('/admin/federation/peers'),
         api.GET('/admin/federation/peers/pending-inbound'),
         api.GET('/federation/instance'),
+        api.GET('/admin/federation/suggestions'),
       ]);
       if (peersR.error) {
         error = (peersR.error as { error?: string } | undefined)?.error ?? t('admin.federation.load_error');
@@ -97,9 +113,41 @@
       peers = (peersR.data?.items ?? []) as Peer[];
       pendingInbound = (pendingR.data?.items ?? []) as Peer[];
       if (instanceR.data) instance = instanceR.data as InstanceDoc;
+      suggestions = (suggestionsR.data?.items ?? []) as PeerSuggestion[];
     } finally {
       loading = false;
     }
+  }
+
+  async function refreshSuggestions(): Promise<void> {
+    refreshingSuggestions = true;
+    try {
+      await api.POST('/admin/federation/suggestions/refresh');
+      await load();
+    } finally {
+      refreshingSuggestions = false;
+    }
+  }
+
+  async function toggleShareInVisible(p: Peer): Promise<void> {
+    const r = await api.PATCH('/admin/federation/peers/{id}', {
+      params: { path: { id: p.id } },
+      body: { share_in_visible_list: !p.share_in_visible_list },
+    });
+    if (!r.error) await load();
+  }
+
+  function pairFromSuggestion(s: PeerSuggestion): void {
+    // Pre-fill the existing Pair-by-URL form on this same page
+    // by setting state directly.
+    showPair = true;
+    pairURL = s.suggested_url;
+    pairDisplay = s.suggested_display_name;
+    // Scroll the form into view.
+    setTimeout(() => {
+      const form = document.querySelector('form input[type=url]') as HTMLInputElement | null;
+      form?.focus();
+    }, 200);
   }
 
   async function submitPair(): Promise<void> {
@@ -428,6 +476,7 @@
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_tier')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_enc')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_enabled')}</th>
+          <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_share')}</th>
           <th class="px-3 py-2 text-left font-medium">{t('admin.federation.col_seen')}</th>
           <th class="px-3 py-2 text-right font-medium">{t('admin.federation.col_actions')}</th>
         </tr>
@@ -476,6 +525,20 @@
                 onclick={() => toggleEnabled(p)}
               >{p.enabled ? t('admin.federation.enabled_yes') : t('admin.federation.enabled_no')}</button>
             </td>
+            <td class="px-3 py-2">
+              {#if p.status === 'connected'}
+                <button
+                  type="button"
+                  class={p.share_in_visible_list
+                    ? 'rounded bg-accent-container px-2 py-0.5 text-xs text-on-accent-container'
+                    : 'rounded bg-surface-elevated px-2 py-0.5 text-xs text-fg-muted'}
+                  onclick={() => toggleShareInVisible(p)}
+                  title={t('admin.federation.col_share_help')}
+                >{p.share_in_visible_list ? t('admin.federation.share_yes') : t('admin.federation.share_no')}</button>
+              {:else}
+                <span class="text-xs text-fg-muted">—</span>
+              {/if}
+            </td>
             <td class="px-3 py-2 text-xs text-fg-muted">
               {p.last_seen_at ? new Date(p.last_seen_at).toLocaleString() : t('admin.federation.never_seen')}
             </td>
@@ -492,3 +555,44 @@
     </table>
   </div>
 {/if}
+
+<!-- Suggested peers (peer-of-peer discovery, Phase 1.22.B-d) -->
+<section class="mt-8 rounded-lg border border-border bg-surface">
+  <header class="flex items-center justify-between border-b border-border p-3">
+    <div>
+      <h3 class="text-sm font-semibold">{t('admin.federation.suggestions_title', { count: suggestions.length })}</h3>
+      <p class="text-xs text-fg-muted">{t('admin.federation.suggestions_help')}</p>
+    </div>
+    <button
+      type="button"
+      class="rounded-md border border-border bg-surface px-3 py-1 text-xs hover:bg-state-hover disabled:opacity-50"
+      onclick={refreshSuggestions}
+      disabled={refreshingSuggestions}
+    >{refreshingSuggestions ? t('common.loading') : t('admin.federation.suggestions_refresh')}</button>
+  </header>
+  {#if suggestions.length === 0}
+    <p class="p-4 text-center text-sm text-fg-muted">{t('admin.federation.suggestions_empty')}</p>
+  {:else}
+    <ul class="divide-y divide-border">
+      {#each suggestions as s (s.id)}
+        <li class="flex items-start justify-between gap-3 p-3">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium">{s.suggested_display_name}</div>
+            <div class="font-mono text-xs">{s.suggested_url}</div>
+            <div class="mt-1 text-[11px] text-fg-muted">
+              {t('admin.federation.suggestions_via')}: <span class="font-mono">{s.source_display_name}</span> ({s.source_url})
+            </div>
+            <div class="mt-1 text-[11px] text-fg-muted">
+              {t('admin.federation.dir_fingerprint')}: <span class="font-mono">{s.suggested_fingerprint}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="flex-shrink-0 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent hover:bg-accent/90"
+            onclick={() => pairFromSuggestion(s)}
+          >{t('admin.federation.suggestions_pair')}</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</section>

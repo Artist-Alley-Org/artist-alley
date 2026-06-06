@@ -342,8 +342,19 @@ type FederationPeer struct {
 	HandshakeByUserRef int64
 	LastSeenAt         pgtype.Timestamptz
 	Notes              string
+	ShareInVisibleList bool
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+}
+
+type FederationPeerSuggestion struct {
+	ID                   pgtype.UUID
+	SourcePeerID         pgtype.UUID
+	SuggestedUrl         string
+	SuggestedDisplayName string
+	SuggestedPublicKey   string
+	SuggestedFingerprint string
+	CachedAt             pgtype.Timestamptz
 }
 
 type FieldDefinition struct {
