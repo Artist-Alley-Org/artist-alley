@@ -4,14 +4,14 @@
 -- responds with the zero-value Preferences struct (system defaults
 -- everywhere) rather than 404 — every authenticated caller has
 -- "preferences," even if the row hasn't materialized yet.
-SELECT rs_user_id,
+SELECT user_ref,
        notification_channels,
        default_views,
        origin_server_id,
        created_at,
        updated_at
 FROM user_preferences
-WHERE rs_user_id = $1
+WHERE user_ref = $1
 LIMIT 1;
 
 -- name: UpsertUserPreferences :exec
@@ -21,12 +21,12 @@ LIMIT 1;
 -- service-side via merge before this call), so the JSONB blobs here
 -- are authoritative replacements.
 INSERT INTO user_preferences (
-    rs_user_id,
+    user_ref,
     notification_channels,
     default_views
 )
 VALUES ($1, $2, $3)
-ON CONFLICT (rs_user_id) DO UPDATE
+ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
     updated_at            = NOW();

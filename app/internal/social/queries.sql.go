@@ -269,18 +269,18 @@ func (q *Queries) HasBlockBetween(ctx context.Context, arg HasBlockBetweenParams
 const hasUserLikedTarget = `-- name: HasUserLikedTarget :one
 SELECT EXISTS (
     SELECT 1 FROM likes
-    WHERE target_kind = $1 AND target_id = $2 AND rs_user_id = $3
+    WHERE target_kind = $1 AND target_id = $2 AND user_ref = $3
 ) AS value
 `
 
 type HasUserLikedTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 }
 
 func (q *Queries) HasUserLikedTarget(ctx context.Context, arg HasUserLikedTargetParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasUserLikedTarget, arg.TargetKind, arg.TargetID, arg.RsUserID)
+	row := q.db.QueryRow(ctx, hasUserLikedTarget, arg.TargetKind, arg.TargetID, arg.UserRef)
 	var value bool
 	err := row.Scan(&value)
 	return value, err
@@ -336,7 +336,7 @@ func (q *Queries) IsFollowing(ctx context.Context, arg IsFollowingParams) (bool,
 const likeTarget = `-- name: LikeTarget :exec
 
 
-INSERT INTO likes (target_kind, target_id, rs_user_id)
+INSERT INTO likes (target_kind, target_id, user_ref)
 VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
 `
@@ -344,7 +344,7 @@ ON CONFLICT DO NOTHING
 type LikeTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 }
 
 // Comments + likes queries. Polymorphic across (target_kind, target_id),
@@ -353,11 +353,11 @@ type LikeTargetParams struct {
 // ---------------------------------------------------------------------------
 // Likes
 // ---------------------------------------------------------------------------
-// Idempotent. The PRIMARY KEY (target_kind, target_id, rs_user_id)
+// Idempotent. The PRIMARY KEY (target_kind, target_id, user_ref)
 // means re-inserting a row the same user already liked is a no-op,
 // and the counter trigger doesn't fire a second time.
 func (q *Queries) LikeTarget(ctx context.Context, arg LikeTargetParams) error {
-	_, err := q.db.Exec(ctx, likeTarget, arg.TargetKind, arg.TargetID, arg.RsUserID)
+	_, err := q.db.Exec(ctx, likeTarget, arg.TargetKind, arg.TargetID, arg.UserRef)
 	return err
 }
 
@@ -426,7 +426,7 @@ SELECT u.ref,
        b.created_at
 FROM user_blocks b
 JOIN "user" u             ON u.ref = b.blocked_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE b.blocker_user_ref = $1
 ORDER BY b.created_at DESC, b.blocked_user_ref DESC
 LIMIT $2
@@ -543,7 +543,7 @@ SELECT u.ref,
        f.created_at
 FROM user_follows f
 JOIN "user" u             ON u.ref = f.follower_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE f.followee_user_ref = $1
 ORDER BY f.created_at DESC, f.follower_user_ref DESC
 LIMIT $2
@@ -600,7 +600,7 @@ SELECT u.ref,
        f.created_at
 FROM user_follows f
 JOIN "user" u             ON u.ref = f.followee_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE f.follower_user_ref = $1
 ORDER BY f.created_at DESC, f.followee_user_ref DESC
 LIMIT $2
@@ -647,10 +647,10 @@ func (q *Queries) ListFollowing(ctx context.Context, arg ListFollowingParams) ([
 }
 
 const listLikersOfTarget = `-- name: ListLikersOfTarget :many
-SELECT rs_user_id, liked_at
+SELECT user_ref, liked_at
 FROM likes
 WHERE target_kind = $1 AND target_id = $2
-ORDER BY liked_at DESC, rs_user_id ASC
+ORDER BY liked_at DESC, user_ref ASC
 LIMIT $3 OFFSET $4
 `
 
@@ -662,8 +662,8 @@ type ListLikersOfTargetParams struct {
 }
 
 type ListLikersOfTargetRow struct {
-	RsUserID int64
-	LikedAt  pgtype.Timestamptz
+	UserRef int64
+	LikedAt pgtype.Timestamptz
 }
 
 // Used by the post modal's "liked by X, Y, and 17 others" surface.
@@ -683,7 +683,7 @@ func (q *Queries) ListLikersOfTarget(ctx context.Context, arg ListLikersOfTarget
 	var items []ListLikersOfTargetRow
 	for rows.Next() {
 		var i ListLikersOfTargetRow
-		if err := rows.Scan(&i.RsUserID, &i.LikedAt); err != nil {
+		if err := rows.Scan(&i.UserRef, &i.LikedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -957,20 +957,20 @@ func (q *Queries) UnfollowUser(ctx context.Context, arg UnfollowUserParams) (int
 
 const unlikeTarget = `-- name: UnlikeTarget :execrows
 DELETE FROM likes
-WHERE target_kind = $1 AND target_id = $2 AND rs_user_id = $3
+WHERE target_kind = $1 AND target_id = $2 AND user_ref = $3
 `
 
 type UnlikeTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 }
 
 // Returns 1 if a row was removed (and the trigger decremented the
 // counter), 0 if the user didn't have a like to remove. Handler maps
 // 0 to a 404 so the client knows its optimistic update was wrong.
 func (q *Queries) UnlikeTarget(ctx context.Context, arg UnlikeTargetParams) (int64, error) {
-	result, err := q.db.Exec(ctx, unlikeTarget, arg.TargetKind, arg.TargetID, arg.RsUserID)
+	result, err := q.db.Exec(ctx, unlikeTarget, arg.TargetKind, arg.TargetID, arg.UserRef)
 	if err != nil {
 		return 0, err
 	}

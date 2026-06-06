@@ -544,7 +544,7 @@ func (h *Handler) GetCurrentUser(
 	// in which case both prefs default to empty (= "follow system").
 	var lang, theme string
 	err := h.Pool.QueryRow(ctx,
-		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE rs_user_id = $1`,
+		`SELECT COALESCE(language, ''), COALESCE(theme, '') FROM user_profiles WHERE user_ref = $1`,
 		id.UserRef,
 	).Scan(&lang, &theme)
 	if err == nil {
@@ -628,7 +628,7 @@ func (h *Handler) CreateApiToken(
 		scopes = *req.Body.Scopes
 	}
 	params := CreateApiTokenParams{
-		RsUserID:  id.UserRef,
+		UserRef:  id.UserRef,
 		Name:      strings.TrimSpace(req.Body.Name),
 		TokenHash: HashAPIToken(plaintext),
 		Scopes:    scopes,
@@ -671,7 +671,7 @@ func (h *Handler) RevokeApiToken(
 	q := New(h.Pool)
 	n, err := q.RevokeApiToken(ctx, RevokeApiTokenParams{
 		ID:       pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
-		RsUserID: id.UserRef,
+		UserRef: id.UserRef,
 	})
 	if err != nil {
 		return nil, err
@@ -800,11 +800,11 @@ func (h *Handler) GetMyCapabilities(
 		break
 	}
 
-	grants, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_grants WHERE rs_user_id = $1 ORDER BY capability_code`, id.UserRef)
+	grants, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_grants WHERE user_ref = $1 ORDER BY capability_code`, id.UserRef)
 	if err != nil {
 		return nil, err
 	}
-	revokes, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_revokes WHERE rs_user_id = $1 ORDER BY capability_code`, id.UserRef)
+	revokes, err := h.fetchSimpleCapList(ctx, `SELECT capability_code FROM user_capability_revokes WHERE user_ref = $1 ORDER BY capability_code`, id.UserRef)
 	if err != nil {
 		return nil, err
 	}
@@ -855,9 +855,9 @@ func (h *Handler) SetUserRole(
 	// assignment; leaves team-scoped assignments intact). The admin
 	// endpoint shape hasn't changed; only the storage semantics did.
 	if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
-		RsUserID:           req.Ref,
+		UserRef:           req.Ref,
 		RoleID:             roleUUID,
-		AssignedByRsUserID: &id.UserRef,
+		AssignedByUserRef: &id.UserRef,
 	}); err != nil {
 		return nil, err
 	}

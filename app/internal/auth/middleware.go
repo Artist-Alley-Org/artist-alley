@@ -414,7 +414,7 @@ func (r *Resolver) resolveByToken(ctx context.Context, q *Queries, plaintext str
 		_ = tq.TouchApiToken(ctx2, id)
 	}(row.ID)
 
-	user, err := r.loadUser(ctx, q, row.RsUserID)
+	user, err := r.loadUser(ctx, q, row.UserRef)
 	if err != nil {
 		return nil, err
 	}

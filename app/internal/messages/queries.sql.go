@@ -105,7 +105,7 @@ SELECT
     ) AS unread_count
 FROM dms d
 JOIN "user" u             ON u.ref = d.peer_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = d.peer_user_ref
+LEFT JOIN user_profiles up ON up.user_ref = d.peer_user_ref
 WHERE d.rn = 1
 ORDER BY d.sent_at DESC
 LIMIT $2

@@ -74,7 +74,7 @@ func (h *Handler) ListAssetTypeAcls(
 			PrincipalId:       r.PrincipalID,
 			Permission:        openapi.AclEntryPermission(r.Permission),
 			GrantedAt:         r.GrantedAt.Time,
-			GrantedByRsUserId: r.GrantedByRsUserID,
+			GrantedByRsUserId: r.GrantedByUserRef,
 			ExpiresAt:         tsToTimePtr(r.ExpiresAt),
 		})
 	}
@@ -142,7 +142,7 @@ func (h *Handler) AddAssetTypeAcl(
 		PrincipalType:     pt,
 		PrincipalID:       body.PrincipalId,
 		Permission:        perm,
-		GrantedByRsUserID: &id.UserRef,
+		GrantedByUserRef: &id.UserRef,
 		ExpiresAt:         expires,
 	}); err != nil {
 		return nil, fmt.Errorf("assettype: insert acl: %w", err)

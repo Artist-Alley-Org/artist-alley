@@ -13,7 +13,7 @@
 -- separately via dedicated queries so the cache strategy can differ
 -- per metric (post counts cache for minutes; following lists can
 -- change between fetches).
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.created                                        AS created_at,
@@ -27,12 +27,12 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE u.ref = $1;
 
 -- name: GetUserPublicByUsername :one
 -- Same as above but keyed by username. Used by /@username URL pattern.
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.created                                        AS created_at,
@@ -46,7 +46,7 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE u.username = $1;
 
 -- name: CountPostsByAuthor :one
@@ -69,7 +69,7 @@ WHERE author_user_ref = $1 AND deleted_at IS NULL;
 -- assignment (team_id IS NULL). Per-team role assignments don't
 -- show on this list; they live on the user detail page where the
 -- team picker can scope them.
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.email,
@@ -85,12 +85,12 @@ SELECT u.ref                                            AS rs_user_id,
          SELECT r.name
          FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
-         WHERE ur.rs_user_id = u.ref AND ur.team_id IS NULL
+         WHERE ur.user_ref = u.ref AND ur.team_id IS NULL
          ORDER BY r.name
          LIMIT 1
        ), '')::TEXT                                     AS primary_role
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE
   -- status filter: 'active' = approved=1, 'pending' = approved=0,
   -- 'disabled' = approved=2. NULL filter = any.
@@ -146,7 +146,7 @@ updated AS (
      AND (SELECT approved FROM prior) <> sqlc.arg('new_status')::BIGINT
   RETURNING ref
 )
-SELECT prior.ref       AS rs_user_id,
+SELECT prior.ref       AS user_ref,
        prior.username,
        prior.approved  AS prev_status,
        sqlc.arg('new_status')::BIGINT AS new_status,
@@ -157,7 +157,7 @@ FROM prior;
 -- Lightweight status-only read used by the handler's pre-write
 -- short-circuit + the per-user cache invalidation. Doesn't touch
 -- user_profiles.
-SELECT ref AS rs_user_id, username, approved
+SELECT ref AS user_ref, username, approved
 FROM "user"
 WHERE ref = $1;
 
@@ -166,11 +166,11 @@ WHERE ref = $1;
 -- The handler picks whether COALESCE-style PATCH or full overwrite
 -- semantics apply; the query accepts the values to write.
 INSERT INTO user_profiles (
-    rs_user_id, display_name, bio, avatar_url, location, website_url,
+    user_ref, display_name, bio, avatar_url, location, website_url,
     social_links, language, theme
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (rs_user_id) DO UPDATE SET
+ON CONFLICT (user_ref) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     bio          = EXCLUDED.bio,
     avatar_url   = EXCLUDED.avatar_url,
@@ -180,7 +180,7 @@ ON CONFLICT (rs_user_id) DO UPDATE SET
     language     = EXCLUDED.language,
     theme        = EXCLUDED.theme,
     updated_at   = NOW()
-RETURNING rs_user_id, display_name, bio, avatar_url, location,
+RETURNING user_ref, display_name, bio, avatar_url, location,
           website_url, social_links, language, theme,
           origin_server_id, created_at, updated_at;
 

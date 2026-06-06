@@ -209,7 +209,7 @@ func (s *Service) Transition(
 		ResourceID:     pgResID,
 		FromStateID:    fromState,
 		ToStateID:      pgToID,
-		ActorRsUserID:  &actor,
+		ActorUserRef:  &actor,
 		Note:           note,
 	}); err != nil {
 		return fmt.Errorf("workflow: insert audit: %w", err)

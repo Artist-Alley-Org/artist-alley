@@ -114,7 +114,7 @@ func TestSetupFlow_HappyPath(t *testing.T) {
 		var roleName string
 		if err := fx.pool.QueryRow(ctx,
 			`SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-			 JOIN "user" u ON u.ref = ur.rs_user_id WHERE u.username = $1`,
+			 JOIN "user" u ON u.ref = ur.user_ref WHERE u.username = $1`,
 			fx.adminUsername).Scan(&roleName); err != nil {
 			t.Fatalf("lookup role: %v", err)
 		}
@@ -256,8 +256,8 @@ type fixture struct {
 }
 
 type savedUserRole struct {
-	rsUserID int64
-	roleID   string
+	userRef int64
+	roleID  string
 }
 
 func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
@@ -330,7 +330,7 @@ func (f *fixture) installHandler() {
 // --go` left the developer's interactive admin demoted.
 func (f *fixture) snapshotAdmins(ctx context.Context) {
 	rows, err := f.pool.Query(ctx, `
-		SELECT ur.rs_user_id, ur.role_id::text
+		SELECT ur.user_ref, ur.role_id::text
 		FROM user_roles ur
 		WHERE ur.role_id IN (
 		    SELECT DISTINCT rc.role_id FROM role_capabilities rc
@@ -343,7 +343,7 @@ func (f *fixture) snapshotAdmins(ctx context.Context) {
 	defer rows.Close()
 	for rows.Next() {
 		var r savedUserRole
-		if err := rows.Scan(&r.rsUserID, &r.roleID); err != nil {
+		if err := rows.Scan(&r.userRef, &r.roleID); err != nil {
 			continue
 		}
 		f.savedAdmins = append(f.savedAdmins, r)
@@ -358,10 +358,10 @@ func (f *fixture) snapshotAdmins(ctx context.Context) {
 func (f *fixture) restoreAdmins(ctx context.Context) {
 	for _, r := range f.savedAdmins {
 		_, _ = f.pool.Exec(ctx, `
-			INSERT INTO user_roles (rs_user_id, role_id)
+			INSERT INTO user_roles (user_ref, role_id)
 			VALUES ($1, $2::uuid)
 			ON CONFLICT DO NOTHING
-		`, r.rsUserID, r.roleID)
+		`, r.userRef, r.roleID)
 	}
 }
 

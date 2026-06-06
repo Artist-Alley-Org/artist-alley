@@ -48,21 +48,21 @@ func (q *Queries) AddCollectionPost(ctx context.Context, arg AddCollectionPostPa
 
 const addPostAcl = `-- name: AddPostAcl :exec
 INSERT INTO post_acls (post_id, principal_type, principal_id, permission,
-                       granted_by_rs_user_id, expires_at)
+                       granted_by_user_ref, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (post_id, principal_type, principal_id, permission) DO UPDATE SET
     granted_at            = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     expires_at            = EXCLUDED.expires_at
 `
 
 type AddPostAclParams struct {
-	PostID            pgtype.UUID
-	PrincipalType     string
-	PrincipalID       string
-	Permission        string
-	GrantedByRsUserID *int64
-	ExpiresAt         pgtype.Timestamptz
+	PostID           pgtype.UUID
+	PrincipalType    string
+	PrincipalID      string
+	Permission       string
+	GrantedByUserRef *int64
+	ExpiresAt        pgtype.Timestamptz
 }
 
 // Idempotent on the full (post, principal, permission) PK. Adding the
@@ -73,7 +73,7 @@ func (q *Queries) AddPostAcl(ctx context.Context, arg AddPostAclParams) error {
 		arg.PrincipalType,
 		arg.PrincipalID,
 		arg.Permission,
-		arg.GrantedByRsUserID,
+		arg.GrantedByUserRef,
 		arg.ExpiresAt,
 	)
 	return err
@@ -344,7 +344,7 @@ func (q *Queries) ListCollectionPostsPage(ctx context.Context, arg ListCollectio
 const listPostAcls = `-- name: ListPostAcls :many
 
 SELECT post_id, principal_type, principal_id, permission,
-       granted_at, granted_by_rs_user_id, expires_at
+       granted_at, granted_by_user_ref, expires_at
 FROM post_acls
 WHERE post_id = $1
 ORDER BY granted_at DESC, principal_type, principal_id, permission
@@ -371,7 +371,7 @@ func (q *Queries) ListPostAcls(ctx context.Context, postID pgtype.UUID) ([]PostA
 			&i.PrincipalID,
 			&i.Permission,
 			&i.GrantedAt,
-			&i.GrantedByRsUserID,
+			&i.GrantedByUserRef,
 			&i.ExpiresAt,
 		); err != nil {
 			return nil, err

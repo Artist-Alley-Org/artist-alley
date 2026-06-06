@@ -260,10 +260,10 @@ func (h *Handler) ListAdminUsers(
 			createdAt = r.CreatedAt.Time
 			lastCreated = createdAt
 		}
-		lastRef = r.RsUserID
+		lastRef = r.UserRef
 
 		row := openapi.AdminUser{
-			Ref:         r.RsUserID,
+			Ref:         r.UserRef,
 			Username:    username,
 			DisplayName: display,
 			Status:      statusFromApproved(r.Approved),

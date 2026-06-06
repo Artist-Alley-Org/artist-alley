@@ -213,7 +213,7 @@ func (h *Handler) GetPostLike(
 	liked, err := New(h.Pool).HasUserLikedTarget(ctx, HasUserLikedTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
-		RsUserID:   caller.UserRef,
+		UserRef:   caller.UserRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: has liked: %w", err)
@@ -266,7 +266,7 @@ func (h *Handler) LikePost(
 		return New(tx).LikeTarget(ctx, LikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			RsUserID:   caller.UserRef,
+			UserRef:   caller.UserRef,
 		})
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
@@ -347,7 +347,7 @@ func (h *Handler) UnlikePost(
 		rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			RsUserID:   caller.UserRef,
+			UserRef:   caller.UserRef,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)

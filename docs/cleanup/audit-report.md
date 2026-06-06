@@ -44,7 +44,7 @@ that no current sqlc query selects and no Go field-access path touches.
 | `hit_count` | RS-derived | analytics column; never written |
 | `new_hit_count` | RS-derived | rolling-window analytics; never written |
 | `request_count` | RS-derived | RS-only feature (request workflow); not ported |
-| `archive_state` | RS-derived | RS lifecycle state machine; we use `deleted_at` instead |
+| `archive_state` | RS-derived | superseded by the `workflow_states` table; redundant |
 | `thumb_width` | RS-derived | pre-thumbnail-as-asset; superseded by `cover_thumbnail_asset_id` shape |
 | `thumb_height` | RS-derived | same as above |
 | `image_red` | RS-derived | dominant-color analytics; never computed |

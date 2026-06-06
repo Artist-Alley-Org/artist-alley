@@ -182,7 +182,7 @@ func (h *Handler) ChangeMyPassword(
 
 	// Reuse check — compare against the last N hashes.
 	prevHashes, err := q.ListRecentPasswordHashes(ctx, ListRecentPasswordHashesParams{
-		RsUserID: caller.UserRef,
+		UserRef: caller.UserRef,
 		Limit:    reuseWindow,
 	})
 	if err != nil {
@@ -224,7 +224,7 @@ func (h *Handler) ChangeMyPassword(
 		return nil, fmt.Errorf("auth: update password: %w", err)
 	}
 	if err := q.InsertPasswordHistory(ctx, InsertPasswordHistoryParams{
-		RsUserID:     caller.UserRef,
+		UserRef:     caller.UserRef,
 		PasswordHash: newHash,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert history: %w", err)
@@ -301,7 +301,7 @@ func (h *Handler) AdminResetUserPassword(
 		return nil, fmt.Errorf("auth: update password: %w", err)
 	}
 	if err := q.InsertPasswordHistory(ctx, InsertPasswordHistoryParams{
-		RsUserID:     req.Ref,
+		UserRef:     req.Ref,
 		PasswordHash: hash,
 	}); err != nil {
 		// History is best-effort here — the password is already

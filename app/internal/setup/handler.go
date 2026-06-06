@@ -246,9 +246,9 @@ func (h *Handler) CompleteSetup(
 		return nil, fmt.Errorf("setup: lookup admin role: %w", err)
 	}
 	if err := q.SetUserGlobalRole(ctx, auth.SetUserGlobalRoleParams{
-		RsUserID:           userRow.Ref,
+		UserRef:           userRow.Ref,
 		RoleID:             adminRole.ID,
-		AssignedByRsUserID: nil, // bootstrap; no actor
+		AssignedByUserRef: nil, // bootstrap; no actor
 	}); err != nil {
 		return nil, fmt.Errorf("setup: assign admin role: %w", err)
 	}

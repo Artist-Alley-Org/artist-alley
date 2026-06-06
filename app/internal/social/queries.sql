@@ -7,10 +7,10 @@
 -- ---------------------------------------------------------------------------
 
 -- name: LikeTarget :exec
--- Idempotent. The PRIMARY KEY (target_kind, target_id, rs_user_id)
+-- Idempotent. The PRIMARY KEY (target_kind, target_id, user_ref)
 -- means re-inserting a row the same user already liked is a no-op,
 -- and the counter trigger doesn't fire a second time.
-INSERT INTO likes (target_kind, target_id, rs_user_id)
+INSERT INTO likes (target_kind, target_id, user_ref)
 VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING;
 
@@ -19,22 +19,22 @@ ON CONFLICT DO NOTHING;
 -- counter), 0 if the user didn't have a like to remove. Handler maps
 -- 0 to a 404 so the client knows its optimistic update was wrong.
 DELETE FROM likes
-WHERE target_kind = $1 AND target_id = $2 AND rs_user_id = $3;
+WHERE target_kind = $1 AND target_id = $2 AND user_ref = $3;
 
 -- name: HasUserLikedTarget :one
 SELECT EXISTS (
     SELECT 1 FROM likes
-    WHERE target_kind = $1 AND target_id = $2 AND rs_user_id = $3
+    WHERE target_kind = $1 AND target_id = $2 AND user_ref = $3
 ) AS value;
 
 -- name: ListLikersOfTarget :many
 -- Used by the post modal's "liked by X, Y, and 17 others" surface.
 -- Newest likes first; the handler caps at the limit and offers an
 -- offset cursor for "show more".
-SELECT rs_user_id, liked_at
+SELECT user_ref, liked_at
 FROM likes
 WHERE target_kind = $1 AND target_id = $2
-ORDER BY liked_at DESC, rs_user_id ASC
+ORDER BY liked_at DESC, user_ref ASC
 LIMIT $3 OFFSET $4;
 
 -- ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ SELECT u.ref,
        f.created_at
 FROM user_follows f
 JOIN "user" u             ON u.ref = f.follower_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE f.followee_user_ref = $1
 ORDER BY f.created_at DESC, f.follower_user_ref DESC
 LIMIT $2;
@@ -283,7 +283,7 @@ SELECT u.ref,
        f.created_at
 FROM user_follows f
 JOIN "user" u             ON u.ref = f.followee_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE f.follower_user_ref = $1
 ORDER BY f.created_at DESC, f.followee_user_ref DESC
 LIMIT $2;
@@ -328,7 +328,7 @@ SELECT u.ref,
        b.created_at
 FROM user_blocks b
 JOIN "user" u             ON u.ref = b.blocked_user_ref
-LEFT JOIN user_profiles up ON up.rs_user_id = u.ref
+LEFT JOIN user_profiles up ON up.user_ref = u.ref
 WHERE b.blocker_user_ref = $1
 ORDER BY b.created_at DESC, b.blocked_user_ref DESC
 LIMIT $2;

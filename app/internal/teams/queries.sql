@@ -71,26 +71,26 @@ DELETE FROM team_parents
 WHERE child_id = $1 AND parent_id = $2;
 
 -- name: ListTeamMembers :many
-SELECT team_id, rs_user_id, added_at, added_by_rs_user_id
+SELECT team_id, user_ref, added_at, added_by_user_ref
 FROM team_memberships
 WHERE team_id = $1
-ORDER BY added_at DESC, rs_user_id ASC;
+ORDER BY added_at DESC, user_ref ASC;
 
 -- name: AddTeamMember :exec
-INSERT INTO team_memberships (team_id, rs_user_id, added_by_rs_user_id)
+INSERT INTO team_memberships (team_id, user_ref, added_by_user_ref)
 VALUES ($1, $2, $3)
-ON CONFLICT (team_id, rs_user_id) DO NOTHING;
+ON CONFLICT (team_id, user_ref) DO NOTHING;
 
 -- name: RemoveTeamMember :execrows
 DELETE FROM team_memberships
-WHERE team_id = $1 AND rs_user_id = $2;
+WHERE team_id = $1 AND user_ref = $2;
 
 -- name: ListUserTeams :many
--- Direct team memberships for the caller's rs_user_id. Used by
+-- Direct team memberships for the caller's user_ref. Used by
 -- /auth/me/teams to render the upload modal's team picker.
 SELECT t.id, t.slug, t.name, t.description, t.origin_server_id,
        t.created_at, t.updated_at, t.deleted_at
 FROM team_memberships tm
 JOIN teams t ON t.id = tm.team_id
-WHERE tm.rs_user_id = $1 AND t.deleted_at IS NULL
+WHERE tm.user_ref = $1 AND t.deleted_at IS NULL
 ORDER BY t.name ASC, t.id ASC;

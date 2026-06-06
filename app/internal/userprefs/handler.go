@@ -189,7 +189,7 @@ func (h *Handler) PatchAccountPreferences(
 
 	q := New(h.pool)
 	if err := q.UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
-		RsUserID:             id.UserRef,
+		UserRef:             id.UserRef,
 		NotificationChannels: channelsJSON,
 		DefaultViews:         viewsJSON,
 	}); err != nil {
@@ -204,7 +204,7 @@ func (h *Handler) PatchAccountPreferences(
 	if h.byUser != nil {
 		if err := h.byUser.Invalidate(ctx, userKey(id.UserRef)); err != nil && h.logger != nil {
 			h.logger.LogAttrs(ctx, slog.LevelWarn, "userprefs.cache.invalidate.error",
-				slog.Int64("rs_user_id", id.UserRef),
+				slog.Int64("user_ref", id.UserRef),
 				slog.String("err", err.Error()),
 			)
 		}
@@ -212,7 +212,7 @@ func (h *Handler) PatchAccountPreferences(
 
 	if h.logger != nil {
 		h.logger.Info("user preferences saved",
-			slog.Int64("rs_user_id", id.UserRef),
+			slog.Int64("user_ref", id.UserRef),
 			slog.Int("channel_event_count", len(prefs.NotificationChannels)),
 		)
 	}

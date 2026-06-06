@@ -58,7 +58,7 @@ type Handler struct {
 	Logger *slog.Logger
 
 	// byRef caches the closure-resolved openapi.UserPublic by
-	// rs_user_id. nil-safe — nil means "no cache", every request
+	// user_ref. nil-safe — nil means "no cache", every request
 	// hits the DB. The by-username path doesn't cache (rare URL,
 	// not worth the second-key bookkeeping); it always queries.
 	byRef *cache.Cache[openapi.UserPublic]
@@ -190,7 +190,7 @@ func InvalidateProfile(ctx context.Context, registry *cache.Registry, userRef in
 // sqlc result types. sqlc generates a distinct type per query so we
 // adapt both into this shared shape before rendering.
 type publicRow struct {
-	RsUserID              int64
+	UserRef              int64
 	Username              *string
 	Fullname              *string
 	CreatedAt             pgtype.Timestamptz
@@ -207,7 +207,7 @@ type publicRow struct {
 
 func fromByRef(r GetUserPublicByRefRow) publicRow {
 	return publicRow{
-		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
+		UserRef: r.UserRef, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
@@ -217,7 +217,7 @@ func fromByRef(r GetUserPublicByRefRow) publicRow {
 
 func fromByUsername(r GetUserPublicByUsernameRow) publicRow {
 	return publicRow{
-		RsUserID: r.RsUserID, Username: r.Username, Fullname: r.Fullname,
+		UserRef: r.UserRef, Username: r.Username, Fullname: r.Fullname,
 		CreatedAt: r.CreatedAt, DisplayName: r.DisplayName, Bio: r.Bio,
 		AvatarURL: r.AvatarUrl, Location: r.Location, WebsiteURL: r.WebsiteUrl,
 		SocialLinks: r.SocialLinks, Language: r.Language, Theme: r.Theme,
@@ -406,7 +406,7 @@ func (h *Handler) UpdateUserProfile(
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
 			_, err := New(tx).UpsertUserProfile(ctx, UpsertUserProfileParams{
-				RsUserID:    req.Ref,
+				UserRef:    req.Ref,
 				DisplayName: &displayName,
 				Bio:         bio,
 				AvatarUrl:   avatarURL,
@@ -425,7 +425,7 @@ func (h *Handler) UpdateUserProfile(
 		// Legacy fallback: admin-edits-other (no activity) + the
 		// test path (no activities writer wired).
 		if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
-			RsUserID:    req.Ref,
+			UserRef:    req.Ref,
 			DisplayName: &displayName,
 			Bio:         bio,
 			AvatarUrl:   avatarURL,
@@ -481,10 +481,10 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 		display = *r.Username
 	}
 	if display == "" {
-		display = fmt.Sprintf("user %d", r.RsUserID)
+		display = fmt.Sprintf("user %d", r.UserRef)
 	}
 
-	postCount, err := q.CountPostsByAuthor(ctx, r.RsUserID)
+	postCount, err := q.CountPostsByAuthor(ctx, r.UserRef)
 	if err != nil {
 		return nil, fmt.Errorf("users: count posts: %w", err)
 	}
@@ -500,7 +500,7 @@ func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*opena
 	}
 
 	out := openapi.UserPublic{
-		Ref:         r.RsUserID,
+		Ref:         r.UserRef,
 		DisplayName: display,
 		Bio:         &r.Bio,
 		Location:    &r.Location,

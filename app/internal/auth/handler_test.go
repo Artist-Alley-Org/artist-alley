@@ -367,10 +367,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	// from a previously-killed run (panic, ^C) doesn't trip PK
 	// constraints inside the test body.
 	for _, sql := range []string{
-		`DELETE FROM api_tokens             WHERE rs_user_id = $1`,
-		`DELETE FROM user_capability_grants WHERE rs_user_id = $1`,
-		`DELETE FROM user_capability_revokes WHERE rs_user_id = $1`,
-		`DELETE FROM user_roles              WHERE rs_user_id = $1`,
+		`DELETE FROM api_tokens             WHERE user_ref = $1`,
+		`DELETE FROM user_capability_grants WHERE user_ref = $1`,
+		`DELETE FROM user_capability_revokes WHERE user_ref = $1`,
+		`DELETE FROM user_roles              WHERE user_ref = $1`,
 		`DELETE FROM sessions               WHERE user_ref   = $1`,
 	} {
 		if _, err := pool.Exec(ctx, sql, userRef); err != nil {
@@ -380,10 +380,10 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	t.Cleanup(func() {
 		// Best-effort: remove the user and any rows that reference them.
 		cleanCtx := context.Background()
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE rs_user_id = $1`, userRef)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE rs_user_id = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM api_tokens WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_grants WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_capability_revokes WHERE user_ref = $1`, userRef)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM user_roles WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM sessions WHERE user_ref = $1`, userRef)
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM "user" WHERE ref = $1`, userRef)
 	})

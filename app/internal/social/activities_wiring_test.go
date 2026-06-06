@@ -114,7 +114,7 @@ func setupActivitiesFixture(t *testing.T) *activitiesFixture {
 	// Grant the user the capabilities each handler checks.
 	for _, cap := range []string{"posts.like", "posts.comment"} {
 		if _, err := pool.Exec(ctx,
-			`INSERT INTO user_capability_grants (rs_user_id, capability_code, granted_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
+			`INSERT INTO user_capability_grants (user_ref, capability_code, granted_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING`,
 			ref, cap,
 		); err != nil {
 			t.Logf("grant %s: %v (continuing)", cap, err)
@@ -125,9 +125,9 @@ func setupActivitiesFixture(t *testing.T) *activitiesFixture {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM activities WHERE actor_user_ref = $1`, ref)
 		_, _ = pool.Exec(c, `DELETE FROM notifications WHERE recipient_user_ref = $1 OR actor_user_ref = $1`, ref)
-		_, _ = pool.Exec(c, `DELETE FROM likes WHERE rs_user_id = $1`, ref)
+		_, _ = pool.Exec(c, `DELETE FROM likes WHERE user_ref = $1`, ref)
 		_, _ = pool.Exec(c, `DELETE FROM user_follows WHERE follower_user_ref = $1 OR followee_user_ref = $1`, ref)
-		_, _ = pool.Exec(c, `DELETE FROM user_capability_grants WHERE rs_user_id = $1`, ref)
+		_, _ = pool.Exec(c, `DELETE FROM user_capability_grants WHERE user_ref = $1`, ref)
 		_, _ = pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, ref)
 	})
 	return &activitiesFixture{
@@ -233,7 +233,7 @@ func TestLikePost_EmitsActivity(t *testing.T) {
 	// Domain row exists.
 	var likeCount int
 	if err := fx.pool.QueryRow(fx.ctx,
-		`SELECT COUNT(*) FROM likes WHERE rs_user_id=$1 AND target_kind='post' AND target_id=$2`,
+		`SELECT COUNT(*) FROM likes WHERE user_ref=$1 AND target_kind='post' AND target_id=$2`,
 		fx.userRef, pgtype.UUID{Bytes: postID, Valid: true},
 	).Scan(&likeCount); err != nil {
 		t.Fatal(err)

@@ -16,7 +16,7 @@ const assignedRolesForUser = `-- name: AssignedRolesForUser :many
 SELECT r.id, r.name, r.description, r.parent_id, ur.team_id
 FROM roles r
 JOIN user_roles ur ON ur.role_id = r.id
-WHERE ur.rs_user_id = $1
+WHERE ur.user_ref = $1
 ORDER BY ur.team_id NULLS FIRST, r.name
 `
 
@@ -32,8 +32,8 @@ type AssignedRolesForUserRow struct {
 // team scope. NULL team_id = global assignment. Replaces the old
 // AssignedRoleForUser (:one) — multi-role per user is supported as of
 // migration 00016.
-func (q *Queries) AssignedRolesForUser(ctx context.Context, rsUserID int64) ([]AssignedRolesForUserRow, error) {
-	rows, err := q.db.Query(ctx, assignedRolesForUser, rsUserID)
+func (q *Queries) AssignedRolesForUser(ctx context.Context, userRef int64) ([]AssignedRolesForUserRow, error) {
+	rows, err := q.db.Query(ctx, assignedRolesForUser, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +89,10 @@ func (q *Queries) ClearUserSessionByToken(ctx context.Context, session *string) 
 
 const countSystemAdmins = `-- name: CountSystemAdmins :one
 
-SELECT COUNT(DISTINCT ur.rs_user_id)::BIGINT AS value
+SELECT COUNT(DISTINCT ur.user_ref)::BIGINT AS value
 FROM user_roles ur
 JOIN role_capabilities rc ON rc.role_id = ur.role_id
-JOIN "user" u             ON u.ref     = ur.rs_user_id
+JOIN "user" u             ON u.ref     = ur.user_ref
 WHERE rc.capability_code = 'system.admin'
   AND ur.team_id IS NULL
 `
@@ -114,13 +114,13 @@ func (q *Queries) CountSystemAdmins(ctx context.Context) (int64, error) {
 }
 
 const createApiToken = `-- name: CreateApiToken :one
-INSERT INTO api_tokens (rs_user_id, name, token_hash, scopes, expires_at)
+INSERT INTO api_tokens (user_ref, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, rs_user_id, name, scopes, expires_at, last_used_at, created_at
+RETURNING id, user_ref, name, scopes, expires_at, last_used_at, created_at
 `
 
 type CreateApiTokenParams struct {
-	RsUserID  int64
+	UserRef   int64
 	Name      string
 	TokenHash []byte
 	Scopes    []string
@@ -129,7 +129,7 @@ type CreateApiTokenParams struct {
 
 type CreateApiTokenRow struct {
 	ID         pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 	Name       string
 	Scopes     []string
 	ExpiresAt  pgtype.Timestamptz
@@ -139,7 +139,7 @@ type CreateApiTokenRow struct {
 
 func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) (CreateApiTokenRow, error) {
 	row := q.db.QueryRow(ctx, createApiToken,
-		arg.RsUserID,
+		arg.UserRef,
 		arg.Name,
 		arg.TokenHash,
 		arg.Scopes,
@@ -148,7 +148,7 @@ func (q *Queries) CreateApiToken(ctx context.Context, arg CreateApiTokenParams) 
 	var i CreateApiTokenRow
 	err := row.Scan(
 		&i.ID,
-		&i.RsUserID,
+		&i.UserRef,
 		&i.Name,
 		&i.Scopes,
 		&i.ExpiresAt,
@@ -211,22 +211,22 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 
 const deleteUserGrant = `-- name: DeleteUserGrant :execrows
 DELETE FROM user_capability_grants
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND capability_code = $2
   AND team_id IS NOT DISTINCT FROM $3
 `
 
 type DeleteUserGrantParams struct {
-	RsUserID       int64
+	UserRef        int64
 	CapabilityCode string
 	TeamID         pgtype.UUID
 }
 
-// Ownership-checked delete. The (rs_user_id, cap, team_id) tuple is
+// Ownership-checked delete. The (user_ref, cap, team_id) tuple is
 // the natural key — team_id may be NULL (global grant). Returns
 // rows-affected so the handler can 404 cleanly.
 func (q *Queries) DeleteUserGrant(ctx context.Context, arg DeleteUserGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteUserGrant, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	result, err := q.db.Exec(ctx, deleteUserGrant, arg.UserRef, arg.CapabilityCode, arg.TeamID)
 	if err != nil {
 		return 0, err
 	}
@@ -235,19 +235,19 @@ func (q *Queries) DeleteUserGrant(ctx context.Context, arg DeleteUserGrantParams
 
 const deleteUserRevoke = `-- name: DeleteUserRevoke :execrows
 DELETE FROM user_capability_revokes
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND capability_code = $2
   AND team_id IS NOT DISTINCT FROM $3
 `
 
 type DeleteUserRevokeParams struct {
-	RsUserID       int64
+	UserRef        int64
 	CapabilityCode string
 	TeamID         pgtype.UUID
 }
 
 func (q *Queries) DeleteUserRevoke(ctx context.Context, arg DeleteUserRevokeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteUserRevoke, arg.RsUserID, arg.CapabilityCode, arg.TeamID)
+	result, err := q.db.Exec(ctx, deleteUserRevoke, arg.UserRef, arg.CapabilityCode, arg.TeamID)
 	if err != nil {
 		return 0, err
 	}
@@ -303,7 +303,7 @@ WITH RECURSIVE role_chain AS (
     SELECT r.id, r.parent_id, 0 AS depth
     FROM roles r
     JOIN user_roles ur ON ur.role_id = r.id
-    WHERE ur.rs_user_id = $1
+    WHERE ur.user_ref = $1
       AND ur.team_id IS NULL
 
     UNION ALL
@@ -323,7 +323,7 @@ all_caps AS (
     UNION
     SELECT g.capability_code AS code
     FROM user_capability_grants g
-    WHERE g.rs_user_id = $1
+    WHERE g.user_ref = $1
       AND g.team_id IS NULL
 )
 SELECT ac.code
@@ -331,7 +331,7 @@ FROM all_caps ac
 WHERE ac.code NOT IN (
     SELECT v.capability_code
     FROM user_capability_revokes v
-    WHERE v.rs_user_id = $1
+    WHERE v.user_ref = $1
       AND v.team_id IS NULL
 )
 ORDER BY ac.code
@@ -347,8 +347,8 @@ ORDER BY ac.code
 // assignments. This query intentionally ignores team_id so existing
 // handlers that only ask for global caps continue to get the right
 // answer with no behavioural change.
-func (q *Queries) EffectiveCapabilitiesForUser(ctx context.Context, rsUserID int64) ([]string, error) {
-	rows, err := q.db.Query(ctx, effectiveCapabilitiesForUser, rsUserID)
+func (q *Queries) EffectiveCapabilitiesForUser(ctx context.Context, userRef int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, effectiveCapabilitiesForUser, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +372,7 @@ WITH RECURSIVE role_chain(role_id, team_id, depth) AS (
     -- Seed: every role assignment, preserving its team scope.
     SELECT ur.role_id, ur.team_id, 0
     FROM user_roles ur
-    WHERE ur.rs_user_id = $1
+    WHERE ur.user_ref = $1
 
     UNION ALL
 
@@ -390,7 +390,7 @@ role_caps AS (
 grant_caps AS (
     SELECT g.capability_code AS code, g.team_id AS team_id
     FROM user_capability_grants g
-    WHERE g.rs_user_id = $1
+    WHERE g.user_ref = $1
 ),
 all_caps AS (
     SELECT code, team_id FROM role_caps
@@ -402,7 +402,7 @@ non_revoked AS (
     FROM all_caps a
     WHERE NOT EXISTS (
         SELECT 1 FROM user_capability_revokes v
-        WHERE v.rs_user_id = $1
+        WHERE v.user_ref = $1
           AND v.capability_code = a.code
           AND v.team_id IS NOT DISTINCT FROM a.team_id
     )
@@ -450,8 +450,8 @@ type EffectiveScopedCapabilitiesForUserRow struct {
 // Revokes are matched with NULLs-not-distinct: a revoke at the same
 // (code, team_id) pair removes that effective row exactly. Revokes
 // DON'T expand through closure — they target the specific scope.
-func (q *Queries) EffectiveScopedCapabilitiesForUser(ctx context.Context, rsUserID int64) ([]EffectiveScopedCapabilitiesForUserRow, error) {
-	rows, err := q.db.Query(ctx, effectiveScopedCapabilitiesForUser, rsUserID)
+func (q *Queries) EffectiveScopedCapabilitiesForUser(ctx context.Context, userRef int64) ([]EffectiveScopedCapabilitiesForUserRow, error) {
+	rows, err := q.db.Query(ctx, effectiveScopedCapabilitiesForUser, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +472,7 @@ func (q *Queries) EffectiveScopedCapabilitiesForUser(ctx context.Context, rsUser
 
 const findActiveApiToken = `-- name: FindActiveApiToken :one
 SELECT id,
-       rs_user_id,
+       user_ref,
        name,
        scopes,
        expires_at,
@@ -487,7 +487,7 @@ LIMIT 1
 
 type FindActiveApiTokenRow struct {
 	ID         pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 	Name       string
 	Scopes     []string
 	ExpiresAt  pgtype.Timestamptz
@@ -502,7 +502,7 @@ func (q *Queries) FindActiveApiToken(ctx context.Context, tokenHash []byte) (Fin
 	var i FindActiveApiTokenRow
 	err := row.Scan(
 		&i.ID,
-		&i.RsUserID,
+		&i.UserRef,
 		&i.Name,
 		&i.Scopes,
 		&i.ExpiresAt,
@@ -726,13 +726,13 @@ func (q *Queries) GetRole(ctx context.Context, id pgtype.UUID) (GetRoleRow, erro
 }
 
 const getUserPasswordHashByRef = `-- name: GetUserPasswordHashByRef :one
-SELECT ref AS rs_user_id, username, password
+SELECT ref AS user_ref, username, password
 FROM "user"
 WHERE ref = $1
 `
 
 type GetUserPasswordHashByRefRow struct {
-	RsUserID int64
+	UserRef  int64
 	Username *string
 	Password *string
 }
@@ -743,17 +743,17 @@ type GetUserPasswordHashByRefRow struct {
 func (q *Queries) GetUserPasswordHashByRef(ctx context.Context, ref int64) (GetUserPasswordHashByRefRow, error) {
 	row := q.db.QueryRow(ctx, getUserPasswordHashByRef, ref)
 	var i GetUserPasswordHashByRefRow
-	err := row.Scan(&i.RsUserID, &i.Username, &i.Password)
+	err := row.Scan(&i.UserRef, &i.Username, &i.Password)
 	return i, err
 }
 
 const insertPasswordHistory = `-- name: InsertPasswordHistory :exec
-INSERT INTO user_password_history (rs_user_id, password_hash)
+INSERT INTO user_password_history (user_ref, password_hash)
 VALUES ($1, $2)
 `
 
 type InsertPasswordHistoryParams struct {
-	RsUserID     int64
+	UserRef      int64
 	PasswordHash string
 }
 
@@ -761,7 +761,7 @@ type InsertPasswordHistoryParams struct {
 // successful UpdateUserPassword (whether self-service or admin
 // reset) so the reuse-prevention check has the data it needs.
 func (q *Queries) InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error {
-	_, err := q.db.Exec(ctx, insertPasswordHistory, arg.RsUserID, arg.PasswordHash)
+	_, err := q.db.Exec(ctx, insertPasswordHistory, arg.UserRef, arg.PasswordHash)
 	return err
 }
 
@@ -814,32 +814,32 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 
 const insertUserGrant = `-- name: InsertUserGrant :exec
 INSERT INTO user_capability_grants (
-    rs_user_id, capability_code, team_id, granted_by_rs_user_id, note
+    user_ref, capability_code, team_id, granted_by_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     granted_at = NOW(),
-    granted_by_rs_user_id = EXCLUDED.granted_by_rs_user_id,
+    granted_by_user_ref = EXCLUDED.granted_by_user_ref,
     note = EXCLUDED.note
 `
 
 type InsertUserGrantParams struct {
-	RsUserID          int64
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	GrantedByRsUserID *int64
-	Note              string
+	UserRef          int64
+	CapabilityCode   string
+	TeamID           pgtype.UUID
+	GrantedByUserRef *int64
+	Note             string
 }
 
-// Upsert a grant. The UNIQUE NULLS NOT DISTINCT (rs_user_id, cap,
+// Upsert a grant. The UNIQUE NULLS NOT DISTINCT (user_ref, cap,
 // team_id) means re-granting the same (cap, team_id) is a no-op
 // update of granted_at + note + granter — useful when an admin
 // refreshes a stale grant.
 func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams) error {
 	_, err := q.db.Exec(ctx, insertUserGrant,
-		arg.RsUserID,
+		arg.UserRef,
 		arg.CapabilityCode,
 		arg.TeamID,
-		arg.GrantedByRsUserID,
+		arg.GrantedByUserRef,
 		arg.Note,
 	)
 	return err
@@ -847,28 +847,28 @@ func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams
 
 const insertUserRevoke = `-- name: InsertUserRevoke :exec
 INSERT INTO user_capability_revokes (
-    rs_user_id, capability_code, team_id, revoked_by_rs_user_id, note
+    user_ref, capability_code, team_id, revoked_by_user_ref, note
 ) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (rs_user_id, capability_code, team_id) DO UPDATE SET
+ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     revoked_at = NOW(),
-    revoked_by_rs_user_id = EXCLUDED.revoked_by_rs_user_id,
+    revoked_by_user_ref = EXCLUDED.revoked_by_user_ref,
     note = EXCLUDED.note
 `
 
 type InsertUserRevokeParams struct {
-	RsUserID          int64
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	RevokedByRsUserID *int64
-	Note              string
+	UserRef          int64
+	CapabilityCode   string
+	TeamID           pgtype.UUID
+	RevokedByUserRef *int64
+	Note             string
 }
 
 func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokeParams) error {
 	_, err := q.db.Exec(ctx, insertUserRevoke,
-		arg.RsUserID,
+		arg.UserRef,
 		arg.CapabilityCode,
 		arg.TeamID,
-		arg.RevokedByRsUserID,
+		arg.RevokedByUserRef,
 		arg.Note,
 	)
 	return err
@@ -876,21 +876,21 @@ func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokePara
 
 const listApiTokensForUser = `-- name: ListApiTokensForUser :many
 SELECT id,
-       rs_user_id,
+       user_ref,
        name,
        scopes,
        expires_at,
        last_used_at,
        created_at
 FROM api_tokens
-WHERE rs_user_id = $1
+WHERE user_ref = $1
   AND revoked_at IS NULL
 ORDER BY created_at DESC
 `
 
 type ListApiTokensForUserRow struct {
 	ID         pgtype.UUID
-	RsUserID   int64
+	UserRef    int64
 	Name       string
 	Scopes     []string
 	ExpiresAt  pgtype.Timestamptz
@@ -900,8 +900,8 @@ type ListApiTokensForUserRow struct {
 
 // Lists the caller's tokens. Excludes revoked ones; expired ones are
 // still shown so the user can see why an old token stopped working.
-func (q *Queries) ListApiTokensForUser(ctx context.Context, rsUserID int64) ([]ListApiTokensForUserRow, error) {
-	rows, err := q.db.Query(ctx, listApiTokensForUser, rsUserID)
+func (q *Queries) ListApiTokensForUser(ctx context.Context, userRef int64) ([]ListApiTokensForUserRow, error) {
+	rows, err := q.db.Query(ctx, listApiTokensForUser, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -911,7 +911,7 @@ func (q *Queries) ListApiTokensForUser(ctx context.Context, rsUserID int64) ([]L
 		var i ListApiTokensForUserRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.RsUserID,
+			&i.UserRef,
 			&i.Name,
 			&i.Scopes,
 			&i.ExpiresAt,
@@ -960,14 +960,14 @@ func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, 
 const listRecentPasswordHashes = `-- name: ListRecentPasswordHashes :many
 SELECT password_hash
 FROM user_password_history
-WHERE rs_user_id = $1
+WHERE user_ref = $1
 ORDER BY changed_at DESC
 LIMIT $2
 `
 
 type ListRecentPasswordHashesParams struct {
-	RsUserID int64
-	Limit    int32
+	UserRef int64
+	Limit   int32
 }
 
 // Most recent N hashes for reuse-prevention. The handler iterates +
@@ -975,7 +975,7 @@ type ListRecentPasswordHashesParams struct {
 // because RS-style hashing has a per-call HMAC step (the candidate
 // plaintext needs to be re-hashed and compared in code).
 func (q *Queries) ListRecentPasswordHashes(ctx context.Context, arg ListRecentPasswordHashesParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listRecentPasswordHashes, arg.RsUserID, arg.Limit)
+	rows, err := q.db.Query(ctx, listRecentPasswordHashes, arg.UserRef, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1120,28 +1120,28 @@ const listUserGrants = `-- name: ListUserGrants :many
 SELECT g.capability_code,
        g.team_id,
        g.granted_at,
-       g.granted_by_rs_user_id,
+       g.granted_by_user_ref,
        g.note,
        t.name AS team_name
 FROM user_capability_grants g
 LEFT JOIN teams t ON t.id = g.team_id
-WHERE g.rs_user_id = $1
+WHERE g.user_ref = $1
 ORDER BY g.capability_code, g.team_id NULLS FIRST
 `
 
 type ListUserGrantsRow struct {
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	GrantedAt         pgtype.Timestamptz
-	GrantedByRsUserID *int64
-	Note              string
-	TeamName          *string
+	CapabilityCode   string
+	TeamID           pgtype.UUID
+	GrantedAt        pgtype.Timestamptz
+	GrantedByUserRef *int64
+	Note             string
+	TeamName         *string
 }
 
 // Per-user capability grants (Phase 1.17.F). Returns rows ordered
 // by (cap, team_id) so the UI displays a stable list across reloads.
-func (q *Queries) ListUserGrants(ctx context.Context, rsUserID int64) ([]ListUserGrantsRow, error) {
-	rows, err := q.db.Query(ctx, listUserGrants, rsUserID)
+func (q *Queries) ListUserGrants(ctx context.Context, userRef int64) ([]ListUserGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listUserGrants, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -1153,7 +1153,7 @@ func (q *Queries) ListUserGrants(ctx context.Context, rsUserID int64) ([]ListUse
 			&i.CapabilityCode,
 			&i.TeamID,
 			&i.GrantedAt,
-			&i.GrantedByRsUserID,
+			&i.GrantedByUserRef,
 			&i.Note,
 			&i.TeamName,
 		); err != nil {
@@ -1171,28 +1171,28 @@ const listUserRevokes = `-- name: ListUserRevokes :many
 SELECT r.capability_code,
        r.team_id,
        r.revoked_at,
-       r.revoked_by_rs_user_id,
+       r.revoked_by_user_ref,
        r.note,
        t.name AS team_name
 FROM user_capability_revokes r
 LEFT JOIN teams t ON t.id = r.team_id
-WHERE r.rs_user_id = $1
+WHERE r.user_ref = $1
 ORDER BY r.capability_code, r.team_id NULLS FIRST
 `
 
 type ListUserRevokesRow struct {
-	CapabilityCode    string
-	TeamID            pgtype.UUID
-	RevokedAt         pgtype.Timestamptz
-	RevokedByRsUserID *int64
-	Note              string
-	TeamName          *string
+	CapabilityCode   string
+	TeamID           pgtype.UUID
+	RevokedAt        pgtype.Timestamptz
+	RevokedByUserRef *int64
+	Note             string
+	TeamName         *string
 }
 
 // Per-user capability revokes (subtractive overrides). Same shape
 // as ListUserGrants — front-end renders both lists in one section.
-func (q *Queries) ListUserRevokes(ctx context.Context, rsUserID int64) ([]ListUserRevokesRow, error) {
-	rows, err := q.db.Query(ctx, listUserRevokes, rsUserID)
+func (q *Queries) ListUserRevokes(ctx context.Context, userRef int64) ([]ListUserRevokesRow, error) {
+	rows, err := q.db.Query(ctx, listUserRevokes, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -1204,7 +1204,7 @@ func (q *Queries) ListUserRevokes(ctx context.Context, rsUserID int64) ([]ListUs
 			&i.CapabilityCode,
 			&i.TeamID,
 			&i.RevokedAt,
-			&i.RevokedByRsUserID,
+			&i.RevokedByUserRef,
 			&i.Note,
 			&i.TeamName,
 		); err != nil {
@@ -1259,19 +1259,19 @@ const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()
 WHERE id = $1
-  AND rs_user_id = $2
+  AND user_ref = $2
   AND revoked_at IS NULL
 `
 
 type RevokeApiTokenParams struct {
-	ID       pgtype.UUID
-	RsUserID int64
+	ID      pgtype.UUID
+	UserRef int64
 }
 
 // Returns the number of rows updated so the handler can tell 404 from
 // success without a separate SELECT.
 func (q *Queries) RevokeApiToken(ctx context.Context, arg RevokeApiTokenParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeApiToken, arg.ID, arg.RsUserID)
+	result, err := q.db.Exec(ctx, revokeApiToken, arg.ID, arg.UserRef)
 	if err != nil {
 		return 0, err
 	}
@@ -1361,19 +1361,19 @@ func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionFor
 const setUserGlobalRole = `-- name: SetUserGlobalRole :exec
 WITH _del AS (
     DELETE FROM user_roles
-     WHERE rs_user_id = $1 AND team_id IS NULL
+     WHERE user_ref = $1 AND team_id IS NULL
 )
-INSERT INTO user_roles (rs_user_id, role_id, assigned_by_rs_user_id)
+INSERT INTO user_roles (user_ref, role_id, assigned_by_user_ref)
 VALUES ($1, $2, $3)
 ON CONFLICT ON CONSTRAINT user_roles_unique DO UPDATE SET
     assigned_at            = NOW(),
-    assigned_by_rs_user_id = EXCLUDED.assigned_by_rs_user_id
+    assigned_by_user_ref = EXCLUDED.assigned_by_user_ref
 `
 
 type SetUserGlobalRoleParams struct {
-	RsUserID           int64
-	RoleID             pgtype.UUID
-	AssignedByRsUserID *int64
+	UserRef           int64
+	RoleID            pgtype.UUID
+	AssignedByUserRef *int64
 }
 
 // Replaces the user's *global* role assignment(s) with the supplied
@@ -1385,7 +1385,7 @@ type SetUserGlobalRoleParams struct {
 // the statement level (a single SQL statement runs in one snapshot),
 // so there's no window where the user has zero roles.
 func (q *Queries) SetUserGlobalRole(ctx context.Context, arg SetUserGlobalRoleParams) error {
-	_, err := q.db.Exec(ctx, setUserGlobalRole, arg.RsUserID, arg.RoleID, arg.AssignedByRsUserID)
+	_, err := q.db.Exec(ctx, setUserGlobalRole, arg.UserRef, arg.RoleID, arg.AssignedByUserRef)
 	return err
 }
 

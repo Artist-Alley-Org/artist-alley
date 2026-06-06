@@ -70,7 +70,7 @@ func (h *Handler) ListAssetTypes(
 	id := auth.IdentityFromContext(ctx)
 	if id == nil || !id.Can(auth.SuperAdminCapability) {
 		// Anonymous callers and authenticated non-admins both go
-		// through the filter; the query handles rs_user_id=0 as
+		// through the filter; the query handles user_ref=0 as
 		// "no roles, no teams" (sees only unrestricted types).
 		var userRef int64
 		if id != nil {
@@ -158,7 +158,7 @@ func (h *Handler) HasTypeAccess(ctx context.Context, id *auth.Identity, typeRef 
 		return true, nil
 	}
 	return h.queries.HasAssetTypeAccess(ctx, HasAssetTypeAccessParams{
-		RsUserID:     userRef,
+		UserRef:     userRef,
 		AssetTypeRef: typeRef,
 		Permission:   permission,
 	})

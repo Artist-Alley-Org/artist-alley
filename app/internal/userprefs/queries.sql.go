@@ -10,14 +10,14 @@ import (
 )
 
 const getUserPreferences = `-- name: GetUserPreferences :one
-SELECT rs_user_id,
+SELECT user_ref,
        notification_channels,
        default_views,
        origin_server_id,
        created_at,
        updated_at
 FROM user_preferences
-WHERE rs_user_id = $1
+WHERE user_ref = $1
 LIMIT 1
 `
 
@@ -26,11 +26,11 @@ LIMIT 1
 // responds with the zero-value Preferences struct (system defaults
 // everywhere) rather than 404 — every authenticated caller has
 // "preferences," even if the row hasn't materialized yet.
-func (q *Queries) GetUserPreferences(ctx context.Context, rsUserID int64) (UserPreference, error) {
-	row := q.db.QueryRow(ctx, getUserPreferences, rsUserID)
+func (q *Queries) GetUserPreferences(ctx context.Context, userRef int64) (UserPreference, error) {
+	row := q.db.QueryRow(ctx, getUserPreferences, userRef)
 	var i UserPreference
 	err := row.Scan(
-		&i.RsUserID,
+		&i.UserRef,
 		&i.NotificationChannels,
 		&i.DefaultViews,
 		&i.OriginServerID,
@@ -42,19 +42,19 @@ func (q *Queries) GetUserPreferences(ctx context.Context, rsUserID int64) (UserP
 
 const upsertUserPreferences = `-- name: UpsertUserPreferences :exec
 INSERT INTO user_preferences (
-    rs_user_id,
+    user_ref,
     notification_channels,
     default_views
 )
 VALUES ($1, $2, $3)
-ON CONFLICT (rs_user_id) DO UPDATE
+ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
     updated_at            = NOW()
 `
 
 type UpsertUserPreferencesParams struct {
-	RsUserID             int64
+	UserRef              int64
 	NotificationChannels []byte
 	DefaultViews         []byte
 }
@@ -65,6 +65,6 @@ type UpsertUserPreferencesParams struct {
 // service-side via merge before this call), so the JSONB blobs here
 // are authoritative replacements.
 func (q *Queries) UpsertUserPreferences(ctx context.Context, arg UpsertUserPreferencesParams) error {
-	_, err := q.db.Exec(ctx, upsertUserPreferences, arg.RsUserID, arg.NotificationChannels, arg.DefaultViews)
+	_, err := q.db.Exec(ctx, upsertUserPreferences, arg.UserRef, arg.NotificationChannels, arg.DefaultViews)
 	return err
 }

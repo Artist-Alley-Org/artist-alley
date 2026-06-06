@@ -814,8 +814,8 @@ func (h *Handler) ListPostAcls(
 			Permission:    openapi.AclEntryPermission(r.Permission),
 			GrantedAt:     r.GrantedAt.Time,
 		}
-		if r.GrantedByRsUserID != nil {
-			e.GrantedByRsUserId = r.GrantedByRsUserID
+		if r.GrantedByUserRef != nil {
+			e.GrantedByRsUserId = r.GrantedByUserRef
 		}
 		if r.ExpiresAt.Valid {
 			t := r.ExpiresAt.Time
@@ -867,7 +867,7 @@ func (h *Handler) AddPostAcl(
 		PrincipalType:       string(req.Body.PrincipalType),
 		PrincipalID:         req.Body.PrincipalId,
 		Permission:          string(req.Body.Permission),
-		GrantedByRsUserID:   &caller.UserRef,
+		GrantedByUserRef:   &caller.UserRef,
 		ExpiresAt:           expires,
 	}); err != nil {
 		return nil, fmt.Errorf("posts: add acl: %w", err)

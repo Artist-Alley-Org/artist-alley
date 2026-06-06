@@ -91,7 +91,7 @@ func (q *Queries) GetActorKeyMaterial(ctx context.Context, ref int64) (GetActorK
 
 const getUserPublicByRef = `-- name: GetUserPublicByRef :one
 
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.created                                        AS created_at,
@@ -105,12 +105,12 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE u.ref = $1
 `
 
 type GetUserPublicByRefRow struct {
-	RsUserID              int64
+	UserRef               int64
 	Username              *string
 	Fullname              *string
 	CreatedAt             pgtype.Timestamptz
@@ -142,7 +142,7 @@ func (q *Queries) GetUserPublicByRef(ctx context.Context, ref int64) (GetUserPub
 	row := q.db.QueryRow(ctx, getUserPublicByRef, ref)
 	var i GetUserPublicByRefRow
 	err := row.Scan(
-		&i.RsUserID,
+		&i.UserRef,
 		&i.Username,
 		&i.Fullname,
 		&i.CreatedAt,
@@ -160,7 +160,7 @@ func (q *Queries) GetUserPublicByRef(ctx context.Context, ref int64) (GetUserPub
 }
 
 const getUserPublicByUsername = `-- name: GetUserPublicByUsername :one
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.created                                        AS created_at,
@@ -174,12 +174,12 @@ SELECT u.ref                                            AS rs_user_id,
        COALESCE(p.theme, '')                            AS theme,
        p.origin_server_id                               AS profile_origin_server_id
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE u.username = $1
 `
 
 type GetUserPublicByUsernameRow struct {
-	RsUserID              int64
+	UserRef               int64
 	Username              *string
 	Fullname              *string
 	CreatedAt             pgtype.Timestamptz
@@ -199,7 +199,7 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 	row := q.db.QueryRow(ctx, getUserPublicByUsername, username)
 	var i GetUserPublicByUsernameRow
 	err := row.Scan(
-		&i.RsUserID,
+		&i.UserRef,
 		&i.Username,
 		&i.Fullname,
 		&i.CreatedAt,
@@ -217,13 +217,13 @@ func (q *Queries) GetUserPublicByUsername(ctx context.Context, username *string)
 }
 
 const getUserStatusByRef = `-- name: GetUserStatusByRef :one
-SELECT ref AS rs_user_id, username, approved
+SELECT ref AS user_ref, username, approved
 FROM "user"
 WHERE ref = $1
 `
 
 type GetUserStatusByRefRow struct {
-	RsUserID int64
+	UserRef  int64
 	Username *string
 	Approved int64
 }
@@ -234,12 +234,12 @@ type GetUserStatusByRefRow struct {
 func (q *Queries) GetUserStatusByRef(ctx context.Context, ref int64) (GetUserStatusByRefRow, error) {
 	row := q.db.QueryRow(ctx, getUserStatusByRef, ref)
 	var i GetUserStatusByRefRow
-	err := row.Scan(&i.RsUserID, &i.Username, &i.Approved)
+	err := row.Scan(&i.UserRef, &i.Username, &i.Approved)
 	return i, err
 }
 
 const listAdminUsers = `-- name: ListAdminUsers :many
-SELECT u.ref                                            AS rs_user_id,
+SELECT u.ref                                            AS user_ref,
        u.username,
        u.fullname,
        u.email,
@@ -255,12 +255,12 @@ SELECT u.ref                                            AS rs_user_id,
          SELECT r.name
          FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
-         WHERE ur.rs_user_id = u.ref AND ur.team_id IS NULL
+         WHERE ur.user_ref = u.ref AND ur.team_id IS NULL
          ORDER BY r.name
          LIMIT 1
        ), '')::TEXT                                     AS primary_role
 FROM "user" u
-LEFT JOIN user_profiles p ON p.rs_user_id = u.ref
+LEFT JOIN user_profiles p ON p.user_ref = u.ref
 WHERE
   -- status filter: 'active' = approved=1, 'pending' = approved=0,
   -- 'disabled' = approved=2. NULL filter = any.
@@ -294,7 +294,7 @@ type ListAdminUsersParams struct {
 }
 
 type ListAdminUsersRow struct {
-	RsUserID              int64
+	UserRef               int64
 	Username              *string
 	Fullname              *string
 	Email                 *string
@@ -337,7 +337,7 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 	for rows.Next() {
 		var i ListAdminUsersRow
 		if err := rows.Scan(
-			&i.RsUserID,
+			&i.UserRef,
 			&i.Username,
 			&i.Fullname,
 			&i.Email,
@@ -407,7 +407,7 @@ updated AS (
      AND (SELECT approved FROM prior) <> $1::BIGINT
   RETURNING ref
 )
-SELECT prior.ref       AS rs_user_id,
+SELECT prior.ref       AS user_ref,
        prior.username,
        prior.approved  AS prev_status,
        $1::BIGINT AS new_status,
@@ -421,7 +421,7 @@ type UpdateUserStatusParams struct {
 }
 
 type UpdateUserStatusRow struct {
-	RsUserID   int64
+	UserRef    int64
 	Username   *string
 	PrevStatus int64
 	NewStatus  int64
@@ -439,7 +439,7 @@ func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusPara
 	row := q.db.QueryRow(ctx, updateUserStatus, arg.NewStatus, arg.UserRef)
 	var i UpdateUserStatusRow
 	err := row.Scan(
-		&i.RsUserID,
+		&i.UserRef,
 		&i.Username,
 		&i.PrevStatus,
 		&i.NewStatus,
@@ -450,11 +450,11 @@ func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusPara
 
 const upsertUserProfile = `-- name: UpsertUserProfile :one
 INSERT INTO user_profiles (
-    rs_user_id, display_name, bio, avatar_url, location, website_url,
+    user_ref, display_name, bio, avatar_url, location, website_url,
     social_links, language, theme
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (rs_user_id) DO UPDATE SET
+ON CONFLICT (user_ref) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     bio          = EXCLUDED.bio,
     avatar_url   = EXCLUDED.avatar_url,
@@ -464,13 +464,13 @@ ON CONFLICT (rs_user_id) DO UPDATE SET
     language     = EXCLUDED.language,
     theme        = EXCLUDED.theme,
     updated_at   = NOW()
-RETURNING rs_user_id, display_name, bio, avatar_url, location,
+RETURNING user_ref, display_name, bio, avatar_url, location,
           website_url, social_links, language, theme,
           origin_server_id, created_at, updated_at
 `
 
 type UpsertUserProfileParams struct {
-	RsUserID    int64
+	UserRef     int64
 	DisplayName *string
 	Bio         string
 	AvatarUrl   *string
@@ -481,12 +481,27 @@ type UpsertUserProfileParams struct {
 	Theme       string
 }
 
+type UpsertUserProfileRow struct {
+	UserRef        int64
+	DisplayName    *string
+	Bio            string
+	AvatarUrl      *string
+	Location       string
+	WebsiteUrl     *string
+	SocialLinks    []byte
+	Language       string
+	Theme          string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 // Caller's own profile edit. Idempotent — overwrites existing fields.
 // The handler picks whether COALESCE-style PATCH or full overwrite
 // semantics apply; the query accepts the values to write.
-func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfileParams) (UserProfile, error) {
+func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfileParams) (UpsertUserProfileRow, error) {
 	row := q.db.QueryRow(ctx, upsertUserProfile,
-		arg.RsUserID,
+		arg.UserRef,
 		arg.DisplayName,
 		arg.Bio,
 		arg.AvatarUrl,
@@ -496,9 +511,9 @@ func (q *Queries) UpsertUserProfile(ctx context.Context, arg UpsertUserProfilePa
 		arg.Language,
 		arg.Theme,
 	)
-	var i UserProfile
+	var i UpsertUserProfileRow
 	err := row.Scan(
-		&i.RsUserID,
+		&i.UserRef,
 		&i.DisplayName,
 		&i.Bio,
 		&i.AvatarUrl,
