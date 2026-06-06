@@ -368,9 +368,6 @@ func (h *Handler) SendDirectMessage(
 	// WithEmissionFn wraps InsertDirectMessage + Create(Note)
 	// activity + direct_message_received notification in one
 	// transactional unit. Cache invalidation fires post-commit.
-	if h.activities == nil {
-		return nil, errFederationNotWired
-	}
 	recipientRef := emit.UserRef{
 		UserRef: req.PeerRef,
 		URI:     h.actorURIForUserRef(ctx, req.PeerRef),
@@ -403,14 +400,6 @@ func (h *Handler) SendDirectMessage(
 	h.invalidateUnread(ctx, req.PeerRef)
 	return openapi.SendDirectMessage201JSONResponse(dmRowToAPI(saved)), nil
 }
-
-// errFederationNotWired indicates the handler was built without
-// an activities.Writer (impossible in production; the api.go boot
-// wires every handler). Tests that exercise this path MUST call
-// SetActivitiesWriter on the handler. Returning a plain error
-// here makes the test failure mode obvious instead of silently
-// running a parallel non-federating path.
-var errFederationNotWired = fmt.Errorf("messages: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // senderContext builds an emit.ActorContext for the authenticated
 // sender. Same shape as social.actorContext but defined here to

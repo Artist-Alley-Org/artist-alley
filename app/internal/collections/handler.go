@@ -146,9 +146,6 @@ func (h *Handler) CreateCollection(
 	// Gold-standard path: WithEmissionFn so we capture the
 	// generated collection UUID and use it to build the activity's
 	// URI in the same tx. 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errCollectionsFederationNotWired
-	}
 	var saved Collection
 	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
 		r, err := New(tx).CreateCollection(ctx, CreateCollectionParams{
@@ -280,9 +277,6 @@ func (h *Handler) UpdateCollection(
 	// Gold-standard path: UpdateCollection + Update activity in
 	// the same tx. WithEmissionFn so the post-write row drives
 	// the activity payload. 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errCollectionsFederationNotWired
-	}
 	var saved Collection
 	errRun := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
 		r, err := New(tx).UpdateCollection(ctx, UpdateCollectionParams{
@@ -352,9 +346,6 @@ func (h *Handler) DeleteCollection(
 	// Gold-standard path: DeleteCollection + Delete activity in
 	// one tx per AP §6.4 Tombstone semantics. 1.22.B-cleanup made
 	// activities required.
-	if h.activities == nil {
-		return nil, errCollectionsFederationNotWired
-	}
 	em := emit.DeleteCollection(h.actorContext(ctx, caller), uuid.UUID(pgID.Bytes).String(), cur.Name)
 	err = h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity: em.Activity,
@@ -621,9 +612,6 @@ func (h *Handler) AddCollectionResource(
 
 	// Gold-standard path: Add(object=asset, target=collection)
 	// per AP §6.6 / §7.8. 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errCollectionsFederationNotWired
-	}
 	var fkAssetMissing bool
 	em := emit.AddToCollection(
 		h.actorContext(ctx, caller),
@@ -665,10 +653,6 @@ func (h *Handler) AddCollectionResource(
 // return 404 without surfacing as a 500 server error.
 var errAssetMissing = errors.New("collections: asset row absent")
 
-// errCollectionsFederationNotWired surfaces in tests that forget
-// to call SetActivitiesWriter on the handler. Production never
-// sees it: api.go always wires the writer at boot.
-var errCollectionsFederationNotWired = errors.New("collections: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource
@@ -705,9 +689,6 @@ func (h *Handler) RemoveCollectionResource(
 
 	// Gold-standard path: Remove(object=asset, target=collection)
 	// per AP §6.7 / §7.9. 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errCollectionsFederationNotWired
-	}
 	em := emit.RemoveFromCollection(
 		h.actorContext(ctx, caller),
 		activities.ObjectKindAsset,

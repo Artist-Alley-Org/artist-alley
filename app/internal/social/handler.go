@@ -137,10 +137,6 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.baseURLFn = baseURLFn
 }
 
-// errSocialFederationNotWired surfaces in tests that forget to
-// call SetActivitiesWriter on the social handler. Production
-// never sees it: api.go always wires the writer at boot.
-var errSocialFederationNotWired = fmt.Errorf("social: activities.Writer not configured (call SetActivitiesWriter at boot)")
 
 // actorContext builds an emit.ActorContext from the authenticated
 // caller + the configured baseURL. Returns the zero value when
@@ -262,9 +258,6 @@ func (h *Handler) LikePost(
 	// + activity row in one transaction. Notification fires AFTER
 	// commit through the writer's notifier. 1.22.B-cleanup made
 	// activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	em := emit.Like(h.actorContext(ctx, caller), postRef)
 	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity:      em.Activity,
@@ -345,9 +338,6 @@ func (h *Handler) UnlikePost(
 	// Undo emission (returning a sentinel error) when there was
 	// no like to remove — the tx rolls back, no spurious activity.
 	// 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	// Look up the original Like's activity_uri BEFORE the tx
 	// so the Undo's object_uri is correctly populated.
 	originalURI := h.activities.LookupMostRecent(ctx, caller.UserRef, federation.ActivityLike, activities.ObjectKindPost, postIDStr)
@@ -576,9 +566,6 @@ func (h *Handler) CreatePostComment(
 	// activity row in one tx. Both notifications (post-author +
 	// parent-comment-author for replies) fire AFTER commit.
 	// 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	var savedRow Comment
 	err := h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
 		r, err := New(tx).CreateComment(ctx, CreateCommentParams{
@@ -654,9 +641,6 @@ func (h *Handler) DeleteComment(
 	// Gold-standard path: wrap SoftDeleteComment + Delete(Note)
 	// activity in one tx per AP §6.4 (Tombstone semantics).
 	// 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	var notFound bool
 	em := emit.DeleteComment(h.actorContext(ctx, caller), commentIDStr, postIDStr)
 	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {
@@ -808,9 +792,6 @@ func (h *Handler) CreatePostWhiteboard(
 	// activity per ADR 0043 + comment_on_my_post notification
 	// (annotations surface in the same inbox). 1.22.B-cleanup
 	// made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	var saved Comment
 	em := emit.CreateAnnotation(h.actorContext(ctx, caller), annRef)
 	err = h.activities.WithEmissionFn(ctx, func(tx pgx.Tx) (activities.EmissionInput, error) {

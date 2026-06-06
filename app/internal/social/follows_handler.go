@@ -92,9 +92,6 @@ func (h *Handler) FollowUser(
 	// Gold-standard path: WithEmission wraps FollowUser + activity
 	// row + new_follower notification in one transactional unit.
 	// 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	em := emit.Follow(h.actorContext(ctx, id), followeeRef)
 	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity:      em.Activity,
@@ -137,9 +134,6 @@ func (h *Handler) UnfollowUser(
 	// Gold-standard path: wrap UnfollowUser + Undo(Follow) in one
 	// tx. Lookup the original Follow URI before the tx (best-effort).
 	// 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	targetIDStr := strconv.FormatInt(req.Ref, 10)
 	originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityFollow, activities.ObjectKindUser, targetIDStr)
 	em := emit.UndoFollow(h.actorContext(ctx, id), originalURI, req.Ref)
@@ -357,9 +351,6 @@ func (h *Handler) BlockUser(
 	// unit — both auto-unfollows + block insert + activity row.
 	// Cache invalidations + log fire post-commit. 1.22.B-cleanup
 	// made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	em := emit.Block(h.actorContext(ctx, id), blockedRef, reasonStr)
 	if err := h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity:      em.Activity,
@@ -416,9 +407,6 @@ func (h *Handler) UnblockUser(
 	// Like Block itself, Undo(Block) has no recipients in `to` per
 	// AP §6.9 — the formerly-blocked actor should not learn they
 	// were ever blocked. 1.22.B-cleanup made activities required.
-	if h.activities == nil {
-		return nil, errSocialFederationNotWired
-	}
 	targetIDStr := strconv.FormatInt(req.Ref, 10)
 	originalURI := h.activities.LookupMostRecent(ctx, id.UserRef, federation.ActivityBlock, activities.ObjectKindUser, targetIDStr)
 	em := emit.UndoBlock(h.actorContext(ctx, id), originalURI, req.Ref)
