@@ -115,6 +115,28 @@ ORDER BY
     END
 LIMIT 1;
 
+-- name: ListActiveSharesByObject :many
+-- Returns ALL active shares for one object — the per-object
+-- snapshot the cache stores + the decision function iterates in
+-- memory to find a peer+user+scope match. Bounded by the
+-- federation_shares_lookup_idx partial index.
+SELECT id, grantor_user_ref, object_kind, object_id,
+       peer_id, target_user_url, scope, expires_at, notes,
+       granted_activity_id, granted_at, revoked_at,
+       revoked_activity_id, created_at, updated_at
+FROM federation_shares
+WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
+ORDER BY id;
+
+-- name: FindContainingCollections :many
+-- Container fallback for assets: which collections contain this
+-- asset? Used by the inbox-filter when a direct asset share lookup
+-- misses — we check if any container collection has a share that
+-- covers the requesting peer/user.
+SELECT collection_id::UUID AS collection_id
+FROM collection_resources
+WHERE asset_id = $1;
+
 -- name: ListExpiringShares :many
 -- Expiry sweeper (Phase 1.22.C-d job) input. Returns active
 -- shares whose expires_at has passed in the last `lookback`

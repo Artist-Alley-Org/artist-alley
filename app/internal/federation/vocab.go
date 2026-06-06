@@ -47,6 +47,14 @@ const (
 	// federation_shares row (Phase 1.22.C).
 	ActivityAAShare              ActivityType = "aa:Share"
 	ActivityAAUnshare            ActivityType = "aa:Unshare"
+	// ActivityAARevokeShare is RESERVED per the 1.22.C design
+	// proposal §12.5 #3. v1 implementations MUST treat any inbound
+	// aa:RevokeShare as an aa:Unshare (forward-compat parsing).
+	// Distinct semantic (scope-narrow-without-gap) ships in a
+	// future moderation phase. The constant is present so the
+	// catalogue is forward-compatible; the inbox dispatcher maps
+	// it to the Unshare handler.
+	ActivityAARevokeShare        ActivityType = "aa:RevokeShare"
 	ActivityAAApprove            ActivityType = "aa:Approve"
 	ActivityAARequestChanges     ActivityType = "aa:RequestChanges"
 	ActivityAAMarkReviewed       ActivityType = "aa:MarkReviewed"
@@ -78,6 +86,7 @@ var KnownActivityTypes = map[ActivityType]struct{}{
 	ActivityRemove:               {},
 	ActivityAAShare:              {},
 	ActivityAAUnshare:            {},
+	ActivityAARevokeShare:        {},
 	ActivityAAApprove:            {},
 	ActivityAARequestChanges:     {},
 	ActivityAAMarkReviewed:       {},

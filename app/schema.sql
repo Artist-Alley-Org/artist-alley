@@ -710,7 +710,7 @@ CREATE TABLE activities (
         'Follow', 'Accept', 'Reject',
         'Undo', 'Like', 'Announce', 'Block',
         'Add', 'Remove',
-        'aa:Share', 'aa:Unshare',
+        'aa:Share', 'aa:Unshare', 'aa:RevokeShare',
         'aa:Approve', 'aa:RequestChanges', 'aa:MarkReviewed',
         'aa:Annotation', 'aa:WorkflowTransition', 'aa:AssetVersion',
         'aa:Subscribe', 'aa:Mention'

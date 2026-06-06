@@ -26,8 +26,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
+
+// cacheDomainByObject keys the per-object active-shares snapshot
+// cache (the inbox-filter hot path read). 5,000-slot LRU sized
+// for v1's "thousands of active shares per install" expected
+// scale; per-object snapshots are bounded by the share-count for
+// that object (typically single-digit). Invalidation hooks live
+// in Insert + Revoke + the future RevokeAllByPeer batch.
+const cacheDomainByObject = "shares.by_object"
+
+// byObjectSnapshot is the cached active-share set for ONE object,
+// keyed by "{kind}:{uuid}". Value-typed so the LRU holds a single
+// copy without pointer-aliasing surprises.
+type byObjectSnapshot struct {
+	Shares []Share
+}
 
 // Errors callers may distinguish on.
 var (
@@ -123,15 +139,30 @@ func (in InsertInput) Validate() error {
 }
 
 // Registry is the package's central state. Constructed once at
-// boot; safe for concurrent use. Caching wiring lands in 1.22.C-b.
+// boot; safe for concurrent use.
 type Registry struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
+
+	// byObject is the per-object active-shares snapshot cache
+	// (1.22.C-b). Inbox-filter reads it on every inbound
+	// activity; CanPeerAccess + the container-fallback lookup
+	// both go through this slot. Invalidated on every Insert +
+	// Revoke for the affected (kind, id). Nil-safe — registry
+	// nil means no cross-process broadcast, every lookup falls
+	// through to DB.
+	byObject *cache.Cache[byObjectSnapshot]
 }
 
-// NewRegistry wires the package.
-func NewRegistry(pool *pgxpool.Pool, logger *slog.Logger) *Registry {
-	return &Registry{Pool: pool, Logger: logger}
+// NewRegistry wires the package. registry can be nil for tests
+// that don't want the LISTEN goroutine; production wires it via
+// the shared cache.Registry.
+func NewRegistry(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Registry {
+	r := &Registry{Pool: pool, Logger: logger}
+	if registry != nil {
+		r.byObject = cache.Register[byObjectSnapshot](registry, cacheDomainByObject, 5_000)
+	}
+	return r
 }
 
 // Insert persists a new share. Caller MUST already have
@@ -170,7 +201,13 @@ func (r *Registry) Insert(ctx context.Context, in InsertInput) (*Share, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rowToShare(row), nil
+	share := rowToShare(row)
+	// Cache invariant: any write to (kind, id) drops the cached
+	// share-set so the next CanPeerAccess sees the fresh state.
+	// Cross-process: cache.Registry NOTIFY ensures federated
+	// replicas drop too.
+	r.invalidateObject(ctx, share.ObjectKind, share.ObjectID)
+	return share, nil
 }
 
 // ByID looks up a share by primary key.
@@ -210,7 +247,9 @@ func (r *Registry) Revoke(ctx context.Context, id uuid.UUID, revokedActivityID u
 		}
 		return nil, err
 	}
-	return rowToShare(row), nil
+	share := rowToShare(row)
+	r.invalidateObject(ctx, share.ObjectKind, share.ObjectID)
+	return share, nil
 }
 
 // ListByObject returns active shares for one object (admin

@@ -93,6 +93,36 @@ func (q *Queries) FindActiveShare(ctx context.Context, arg FindActiveShareParams
 	return i, err
 }
 
+const findContainingCollections = `-- name: FindContainingCollections :many
+SELECT collection_id::UUID AS collection_id
+FROM collection_resources
+WHERE asset_id = $1
+`
+
+// Container fallback for assets: which collections contain this
+// asset? Used by the inbox-filter when a direct asset share lookup
+// misses — we check if any container collection has a share that
+// covers the requesting peer/user.
+func (q *Queries) FindContainingCollections(ctx context.Context, assetID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, findContainingCollections, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var collection_id pgtype.UUID
+		if err := rows.Scan(&collection_id); err != nil {
+			return nil, err
+		}
+		items = append(items, collection_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getShareByID = `-- name: GetShareByID :one
 SELECT id, grantor_user_ref, object_kind, object_id,
        peer_id, target_user_url, scope, expires_at, notes,
@@ -191,6 +221,61 @@ func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) (Feder
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listActiveSharesByObject = `-- name: ListActiveSharesByObject :many
+SELECT id, grantor_user_ref, object_kind, object_id,
+       peer_id, target_user_url, scope, expires_at, notes,
+       granted_activity_id, granted_at, revoked_at,
+       revoked_activity_id, created_at, updated_at
+FROM federation_shares
+WHERE object_kind = $1 AND object_id = $2 AND revoked_at IS NULL
+ORDER BY id
+`
+
+type ListActiveSharesByObjectParams struct {
+	ObjectKind string
+	ObjectID   pgtype.UUID
+}
+
+// Returns ALL active shares for one object — the per-object
+// snapshot the cache stores + the decision function iterates in
+// memory to find a peer+user+scope match. Bounded by the
+// federation_shares_lookup_idx partial index.
+func (q *Queries) ListActiveSharesByObject(ctx context.Context, arg ListActiveSharesByObjectParams) ([]FederationShare, error) {
+	rows, err := q.db.Query(ctx, listActiveSharesByObject, arg.ObjectKind, arg.ObjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FederationShare
+	for rows.Next() {
+		var i FederationShare
+		if err := rows.Scan(
+			&i.ID,
+			&i.GrantorUserRef,
+			&i.ObjectKind,
+			&i.ObjectID,
+			&i.PeerID,
+			&i.TargetUserUrl,
+			&i.Scope,
+			&i.ExpiresAt,
+			&i.Notes,
+			&i.GrantedActivityID,
+			&i.GrantedAt,
+			&i.RevokedAt,
+			&i.RevokedActivityID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listActiveSharesByPeerChunk = `-- name: ListActiveSharesByPeerChunk :many

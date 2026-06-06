@@ -51,6 +51,26 @@ ALTER TABLE collections
     ADD CONSTRAINT collections_visibility_check
         CHECK (visibility IN ('private', 'org-only', 'followers', 'explicit-share'));
 
+-- --- activities catalogue extension --------------------------------------
+
+-- aa:RevokeShare reserved per the 1.22.C design proposal §12.5 #3:
+-- v1 implementations MUST treat any inbound aa:RevokeShare as
+-- aa:Unshare, but the value needs to be CHECK-valid so we can
+-- record + forward the originating activity without rewriting
+-- the type. Drop + re-add the CHECK constraint to include it.
+ALTER TABLE activities DROP CONSTRAINT activities_activity_type_check;
+ALTER TABLE activities ADD CONSTRAINT activities_activity_type_check
+    CHECK (activity_type IN (
+        'Create', 'Update', 'Delete',
+        'Follow', 'Accept', 'Reject',
+        'Undo', 'Like', 'Announce', 'Block',
+        'Add', 'Remove',
+        'aa:Share', 'aa:Unshare', 'aa:RevokeShare',
+        'aa:Approve', 'aa:RequestChanges', 'aa:MarkReviewed',
+        'aa:Annotation', 'aa:WorkflowTransition', 'aa:AssetVersion',
+        'aa:Subscribe', 'aa:Mention'
+    ));
+
 -- --- federation_shares table ----------------------------------------------
 
 CREATE TABLE federation_shares (
@@ -174,6 +194,20 @@ CREATE INDEX federation_shares_by_grantor_idx
 -- +goose Down
 
 DROP TABLE federation_shares;
+
+-- Restore the activities CHECK (drop aa:RevokeShare).
+ALTER TABLE activities DROP CONSTRAINT activities_activity_type_check;
+ALTER TABLE activities ADD CONSTRAINT activities_activity_type_check
+    CHECK (activity_type IN (
+        'Create', 'Update', 'Delete',
+        'Follow', 'Accept', 'Reject',
+        'Undo', 'Like', 'Announce', 'Block',
+        'Add', 'Remove',
+        'aa:Share', 'aa:Unshare',
+        'aa:Approve', 'aa:RequestChanges', 'aa:MarkReviewed',
+        'aa:Annotation', 'aa:WorkflowTransition', 'aa:AssetVersion',
+        'aa:Subscribe', 'aa:Mention'
+    ));
 
 -- Restore legacy visibility CHECK constraints. Data migration is
 -- non-reversible (the 'public'/'shared' semantic information is
