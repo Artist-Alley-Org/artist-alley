@@ -10,7 +10,7 @@
 //	queries.sql            -- sqlc input
 //	queries.sql.go,        -- sqlc generated; regenerate via
 //	  db.go, models.go         scripts/generate.sh
-//	password.go            -- RS-compatible HMAC-then-bcrypt hashing
+//	password.go            -- legacy-compatible HMAC-then-bcrypt hashing
 //	session.go             -- session-token + API-token generation
 //	                          and the rs_session cookie helpers
 //	middleware.go          -- ResolveIdentity + RequireAuth middlewares,
@@ -43,7 +43,7 @@ type Handler struct {
 	Pool        *pgxpool.Pool
 	Logger      *slog.Logger
 	ScrambleKey string
-	SessionDays int // how long the session cookie lives; matches RS default
+	SessionDays int // how long the session cookie lives; matches legacy default
 
 	Sessions *SessionManager
 	Limiter  *LoginLimiter
@@ -146,7 +146,7 @@ func (nopAudit) CapabilityRevokeRemoved(context.Context, *http.Request, int64, i
 }
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
-// default of 7 days (matching RS's rs_setcookie default) is used. The
+// default of 7 days (matching the legacy rs_setcookie default) is used. The
 // session manager, login limiter, and audit recorder are required for
 // production wiring; pass nil for any of them in tests to get a no-op
 // fallback.

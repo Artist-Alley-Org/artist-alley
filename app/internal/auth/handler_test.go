@@ -323,8 +323,8 @@ func (f *fixture) callWithBearer(t *testing.T, method, path string, body any, to
 
 // withFixture spins up a real-DB-backed fixture, calls fn, then rolls
 // back the transaction so the run leaves no trace. It also makes sure
-// the "user" table exists (creates a minimal version if RS hasn't
-// installed yet) so tests aren't coupled to install state.
+// the "user" table exists (creates a minimal version if the legacy
+// installer hasn't run yet) so tests aren't coupled to install state.
 func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 	t.Helper()
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -780,7 +780,7 @@ func mustDecode(t *testing.T, resp *http.Response, v any) {
 }
 
 // ensureUserTable creates a minimal "user" table if it doesn't exist.
-// In a real install RS's CheckDBStruct will have done this already
+// In a real install the legacy CheckDBStruct will have done this already
 // with the full set of columns; for test environments we synthesise
 // the few columns the auth tests touch.
 func ensureUserTable(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

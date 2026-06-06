@@ -23,7 +23,7 @@ import (
 // coexistence) and the audit emission stay consistent.
 //
 // During the PHP cutover window, every issue/revoke also updates the
-// RS user.session/logged_in columns. Once PHP is gone, those writes
+// legacy user.session/logged_in columns. Once PHP is gone, those writes
 // become dead code and are deleted in a follow-up.
 type SessionManager struct {
 	Pool *pgxpool.Pool
@@ -36,13 +36,13 @@ type SessionManager struct {
 
 	// DefaultLifetime is the hard cap baked into expires_at on new
 	// sessions. Zero means "no hard cap" — only IdleTimeout enforces
-	// session age. RS's default is 30 minutes of idle, no hard cap;
+	// session age. The legacy default is 30 minutes of idle, no hard cap;
 	// we match that out of the box.
 	DefaultLifetime time.Duration
 }
 
 // NewSessionManager returns a manager with sensible defaults matching
-// RS's behaviour ($session_length = 30 minutes idle, no hard cap).
+// the legacy behaviour ($session_length = 30 minutes idle, no hard cap).
 func NewSessionManager(pool *pgxpool.Pool) *SessionManager {
 	return &SessionManager{
 		Pool:            pool,
@@ -67,7 +67,7 @@ type SessionInfo struct {
 // cookie value to set on the response. The plaintext never reaches
 // the DB — only its sha256 lives there.
 //
-// The dual-write to "user".session keeps RS's PHP pages able to see
+// The dual-write to "user".session keeps the legacy PHP pages able to see
 // the login. Remove that branch once PHP is fully retired.
 func (m *SessionManager) Issue(ctx context.Context, userRef int64, r *http.Request) (token string, info SessionInfo, err error) {
 	token, err = NewSessionToken()
@@ -94,7 +94,7 @@ func (m *SessionManager) Issue(ctx context.Context, userRef int64, r *http.Reque
 		return "", SessionInfo{}, fmt.Errorf("auth: insert session: %w", err)
 	}
 
-	// PHP compatibility: RS's authenticate.php reads cookie "user" and
+	// PHP compatibility: the legacy authenticate.php reads cookie "user" and
 	// matches against "user".session = <plaintext>. Write the plaintext
 	// here so PHP pages see this user as logged in too.
 	if err := q.SetUserSession(ctx, SetUserSessionParams{
@@ -152,7 +152,7 @@ func (m *SessionManager) Lookup(ctx context.Context, plaintext string) (*Session
 		return nil, err
 	}
 
-	// PHP-issued fallback. RS's login.php writes plaintext into
+	// PHP-issued fallback. The legacy login.php writes plaintext into
 	// "user".session; a session-table miss may just mean the user
 	// authenticated via the legacy form. Materialize a sessions row
 	// so future requests hit the fast path.
@@ -160,7 +160,7 @@ func (m *SessionManager) Lookup(ctx context.Context, plaintext string) (*Session
 	if err != nil {
 		return nil, err
 	}
-	// Idle check against "user".last_active. RS touches it on each
+	// Idle check against "user".last_active. The legacy code touches it on each
 	// authenticate.php call, so if the row hasn't been touched in
 	// IdleTimeout it's stale by either side's definition.
 	// We don't have last_active in the FindUserBySession row; skip

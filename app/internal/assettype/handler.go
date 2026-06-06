@@ -1,7 +1,7 @@
 // Package assettype implements the artist-alley asset-type
-// catalog endpoints (formerly RS's hand-rolled
-// `pages/team/team_asset_types.php` and the relevant slices of
-// `include/resource_functions.php`).
+// catalog endpoints (replacing the prior generation of hand-rolled
+// PHP at `pages/team/team_asset_types.php` and the relevant slices
+// of `include/resource_functions.php`).
 //
 // The HTTP contract is defined in `app/api/openapi.yaml`. The
 // `app/internal/openapi` package contains code generated from that

@@ -39,7 +39,7 @@ const (
 const PostDomain = "post"
 
 // AssetDomain returns the workflow domain string for an asset of the
-// given RS asset_type. Format: "asset:<ref>". A future plugin asset
+// given asset_type. Format: "asset:<ref>". A future plugin asset
 // kind could extend this convention (e.g. "asset:plugin:custom").
 func AssetDomain(resourceTypeRef int64) string {
 	return "asset:" + strconv.FormatInt(resourceTypeRef, 10)

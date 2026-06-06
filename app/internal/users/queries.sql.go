@@ -127,7 +127,7 @@ type GetUserPublicByRefRow struct {
 
 // User profile read + write queries. Owned by app/internal/users.
 //
-// The "user" table is RS's; we don't write to its sensitive columns
+// The "user" table is legacy; we don't write to its sensitive columns
 // here. user_profiles is ours (migration 00021).
 // Returns the join of (user, user_profile) with profile defaults
 // substituted when no profile row exists. The handler computes
@@ -311,7 +311,7 @@ type ListAdminUsersRow struct {
 
 // Admin user list (Phase 1.17.A). Joins `user` + user_profiles + the
 // user's primary role for the display row. Filters: `status` mirrors
-// the RS `approved` column (1=active, 0=pending, 2=disabled — see
+// the legacy `approved` column (1=active, 0=pending, 2=disabled — see
 // Phase 1.17.B), `q` runs case-insensitive prefix-ish match against
 // username / fullname / email. Cursor pagination keys on
 // (created_at DESC, ref DESC) — newest accounts first; admins

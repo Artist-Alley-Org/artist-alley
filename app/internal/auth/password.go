@@ -10,7 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// HashPassword produces a hash compatible with RS's rs_password_hash():
+// HashPassword produces a hash compatible with the legacy rs_password_hash():
 // HMAC-SHA256(password, scrambleKey) — encoded as lowercase hex —
 // then bcrypt that.
 //
@@ -31,7 +31,7 @@ func HashPassword(password, scrambleKey string) (string, error) {
 }
 
 // VerifyPassword compares a candidate password against a stored hash
-// using RS's HMAC-then-bcrypt scheme. Returns nil on a successful
+// using the legacy HMAC-then-bcrypt scheme. Returns nil on a successful
 // match; bcrypt.ErrMismatchedHashAndPassword on a mismatch; any other
 // error indicates a corrupted hash or bad input.
 func VerifyPassword(candidate, storedHash, scrambleKey string) error {

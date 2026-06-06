@@ -171,7 +171,7 @@ func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	return pool
 }
 
-// ensureAssetTypeSeed makes sure the four canonical RS asset
+// ensureAssetTypeSeed makes sure the four canonical legacy asset
 // types exist. Defensive — the table is normally created and seeded by
 // CheckDBStruct on the PHP side during install.
 func ensureAssetTypeSeed(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

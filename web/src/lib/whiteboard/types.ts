@@ -239,7 +239,7 @@ export interface ImageItem {
 }
 
 /** A connector endpoint — either pinned to a free world point OR
- *  attached to another item's anchor. The AFFiNE pattern: store
+ *  attached to another item's anchor. The element-typed pattern: store
  *  the anchor as a fraction (u, v) of the target's bbox so the
  *  endpoint follows when the target moves/resizes, without any
  *  listener wiring. resolveEndpoint() recomputes the absolute
@@ -258,8 +258,8 @@ export interface ConnectorEndpoint {
 }
 
 /** Connector — line linking two endpoints. Either / both endpoints
- *  may be attached to another item (the AFFiNE blueprint feature
- *  for Phase 1.22). The line auto-reroutes when the attached item
+ *  may be attached to another item (the blueprint feature for
+ *  Phase 1.22). The line auto-reroutes when the attached item
  *  moves because the endpoint is stored relative; the existing
  *  render-on-doc-change loop picks up the new position for free. */
 export interface ConnectorItem {
@@ -287,7 +287,7 @@ export interface ConnectorItem {
 // ── Frames + sticky notes (Phase 1.23) ─────────────────────────────
 //
 // FRAME: a boundary box that acts as a visual container + a move-
-// together unit. Like Figma frames / Miro frames / slide pages.
+// together unit. Like Figma frames or slide pages.
 // The contained-items semantics live in the move gesture: when a
 // frame is translated, every item whose bbox falls inside the
 // frame's OLD bbox is translated by the same delta. We use the
@@ -320,8 +320,8 @@ export interface StickyNoteItem {
   w: number;
   h: number;
   body: string;
-  /** Background card color. Default ='#fef08a' (Photoshop / Miro
-   *  default yellow). */
+  /** Background card color. Default ='#fef08a' (the classic
+   *  sticky-note yellow). */
   background?: string;
   /** Text color — auto-picked at render time from the background's
    *  perceived luminance when not set. */
@@ -404,7 +404,7 @@ export interface Layer {
 
 // ── Element comments / annotations (Phase 1.27) ───────────────────
 //
-// AFFiNE pattern: comments on elements. Each comment is a thread
+// Element-typed pattern: comments on elements. Each comment is a thread
 // attached to an element id (per-layer item index). Threads live
 // on `BrushContent.comments[]` (top-level) so the renderer can
 // look up "does this item have comments?" in O(1) without walking

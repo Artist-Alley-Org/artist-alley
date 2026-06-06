@@ -43,7 +43,7 @@ LIMIT 1;
 
 -- name: SetUserSession :exec
 -- Writes a freshly minted session token to the user's row. Also
--- bumps last_active so RS-side "active users" lists notice. Used at
+-- bumps last_active so legacy-side "active users" lists notice. Used at
 -- the end of /auth/login.
 UPDATE "user"
 SET session     = $1,
@@ -237,7 +237,7 @@ VALUES ($1, $2);
 -- name: ListRecentPasswordHashes :many
 -- Most recent N hashes for reuse-prevention. The handler iterates +
 -- VerifyPasswords against each — we can't WHERE on the hash directly
--- because RS-style hashing has a per-call HMAC step (the candidate
+-- because the legacy-style hashing has a per-call HMAC step (the candidate
 -- plaintext needs to be re-hashed and compared in code).
 SELECT password_hash
 FROM user_password_history
@@ -289,8 +289,8 @@ LIMIT 1;
 
 -- name: CreateUser :one
 -- Used by setup (initial admin) and later by the admin user-management
--- endpoints. usergroup is the RS-side permission group: while the Go
--- side authorises via roles+capabilities, RS-rendered pages still gate
+-- endpoints. usergroup is the legacy-side permission group: while the Go
+-- side authorises via roles+capabilities, legacy-rendered pages still gate
 -- on the `permissions` string of the assigned usergroup. Pass NULL to
 -- omit (Go-only user); pass 3 for the seeded Super Admin row.
 -- approved defaults to 1.

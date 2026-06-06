@@ -1,6 +1,6 @@
 // Package users implements the public user-profile surface.
 //
-// The RS "user" table carries auth-bearing data we never expose;
+// The legacy "user" table carries auth-bearing data we never expose;
 // user_profiles (migration 00021) carries display-layer fields. Reads
 // merge both; defaults substitute when no profile row exists. Federation:
 // the profile row is what gets mirrored to peer sites.

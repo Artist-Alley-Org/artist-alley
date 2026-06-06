@@ -139,7 +139,7 @@ interface OpenContext {
 
 const CONCURRENCY = 3;
 
-// Default asset_type. RS Photo = 1; we don't have a smarter
+// Default asset_type. Photo = 1 (legacy convention); we don't have a smarter
 // MIME-to-asset_type mapping yet, so everything goes in as Photo
 // for the MVP. The processing pipeline will set the right one once
 // it lands.
@@ -465,9 +465,9 @@ class UploadState {
         file_hash: row.hash,
         file_extension: extensionOf(row.file.name),
         tags: row.tags,
-        // RS-derived: stuff the upload context into the asset's
+        // Legacy-derived: stuff the upload context into the asset's
         // metadata JSONB so it's preserved even before the proper
-        // field_value extraction lands. This is what RS's
+        // field_value extraction lands. This mirrors what the legacy
         // resource_log + autocomplete macros capture at upload
         // time (filename, size). Real EXIF / IPTC / XMP parsing
         // lives in the async pipeline (Phase 1.15).

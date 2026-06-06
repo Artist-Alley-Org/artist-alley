@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// SessionCookieName matches RS's PHP-side cookie. RS reads/writes a
-// cookie named exactly "user" (see include/authenticate.php and
+// SessionCookieName matches the legacy PHP-side cookie. The legacy code
+// reads/writes a cookie named exactly "user" (see include/authenticate.php and
 // include/login_functions.php::set_login_cookies). Keeping the name
 // identical is what makes login interoperable between Go and PHP
 // during the transition; after PHP is retired we may rename to

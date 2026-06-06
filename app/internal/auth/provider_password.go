@@ -17,7 +17,7 @@ import (
 // (back-compat) or sets it to "password".
 //
 // Lookups go through queries.sql / FindUserByUsername; the credential
-// check uses the same RS-compatible HMAC-then-bcrypt scheme as the
+// check uses the same legacy-compatible HMAC-then-bcrypt scheme as the
 // pre-existing handler (see password.go). This struct deliberately
 // holds zero additional state — it's a thin shim that lets the
 // password path satisfy IdentityProvider so the registry has one

@@ -128,7 +128,7 @@
 
     <script>
         (async function () {
-            // If the user is already signed in, bounce to the RS
+            // If the user is already signed in, bounce to the home
             // landing — no point showing the form.
             try {
                 const me = await fetch('/api/v1/auth/me', { credentials: 'same-origin' });
@@ -183,8 +183,8 @@
                     });
 
                     if (resp.ok) {
-                        // Respect ?url= param if present (matches RS's login.php behaviour);
-                        // fall back to "/" which RS serves via index.php.
+                        // Respect ?url= param if present (matches the legacy login.php behaviour);
+                        // fall back to "/" which the legacy stack serves via index.php.
                         const params = new URLSearchParams(location.search);
                         const next = params.get('url') || '/';
                         location.href = next.startsWith('/') ? next : '/';

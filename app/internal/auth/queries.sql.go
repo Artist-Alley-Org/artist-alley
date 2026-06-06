@@ -183,8 +183,8 @@ type CreateUserRow struct {
 }
 
 // Used by setup (initial admin) and later by the admin user-management
-// endpoints. usergroup is the RS-side permission group: while the Go
-// side authorises via roles+capabilities, RS-rendered pages still gate
+// endpoints. usergroup is the legacy-side permission group: while the Go
+// side authorises via roles+capabilities, legacy-rendered pages still gate
 // on the `permissions` string of the assigned usergroup. Pass NULL to
 // omit (Go-only user); pass 3 for the seeded Super Admin row.
 // approved defaults to 1.
@@ -972,7 +972,7 @@ type ListRecentPasswordHashesParams struct {
 
 // Most recent N hashes for reuse-prevention. The handler iterates +
 // VerifyPasswords against each — we can't WHERE on the hash directly
-// because RS-style hashing has a per-call HMAC step (the candidate
+// because the legacy-style hashing has a per-call HMAC step (the candidate
 // plaintext needs to be re-hashed and compared in code).
 func (q *Queries) ListRecentPasswordHashes(ctx context.Context, arg ListRecentPasswordHashesParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, listRecentPasswordHashes, arg.UserRef, arg.Limit)
@@ -1403,7 +1403,7 @@ type SetUserSessionParams struct {
 }
 
 // Writes a freshly minted session token to the user's row. Also
-// bumps last_active so RS-side "active users" lists notice. Used at
+// bumps last_active so legacy-side "active users" lists notice. Used at
 // the end of /auth/login.
 func (q *Queries) SetUserSession(ctx context.Context, arg SetUserSessionParams) error {
 	_, err := q.db.Exec(ctx, setUserSession, arg.Session, arg.Ref)

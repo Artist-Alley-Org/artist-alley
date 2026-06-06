@@ -1,5 +1,5 @@
 <script lang="ts">
-  // WhiteboardMinimap — Miro / Figma-style bird's-eye view of the
+  // WhiteboardMinimap — Figma-style bird's-eye view of the
   // whole whiteboard. Lives in the top-right corner of the canvas
   // surface and gives the user three things:
   //   1. Spatial reference — at deep zoom-out or far pan, where is

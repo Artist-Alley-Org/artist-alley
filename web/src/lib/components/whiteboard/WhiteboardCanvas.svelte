@@ -108,7 +108,7 @@
       e.preventDefault();
       session.swapColors();
     }
-    // F = fit to content (Miro / Figma's "I got lost, take me home").
+    // F = fit to content (Figma's "I got lost, take me home").
     // stopImmediatePropagation so the playlist's F=Fullscreen
     // window handler doesn't also fire — when the whiteboard is up
     // F means fit-to-content, full stop.
@@ -167,7 +167,7 @@
     Exit whiteboard
   </button>
 
-  <!-- Zoom controls — bottom-right, Miro / Figma corner pattern.
+  <!-- Zoom controls — bottom-right, Figma corner pattern.
        Shows the live zoom % so users can dial in to "100% = export
        size" without guessing. The "Fit" button (or F key) bails
        them out if they pan off-canvas. -->

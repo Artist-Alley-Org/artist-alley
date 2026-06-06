@@ -9,7 +9,7 @@
 // Reads through GetCollection are cached via an in-process LRU
 // fronted by Postgres LISTEN/NOTIFY (cache.Registry) so peers see
 // invalidations from any writer — including PHP, once a trigger is
-// wired up alongside RS's collection table.
+// wired up alongside the legacy collection table.
 package collections
 
 import (

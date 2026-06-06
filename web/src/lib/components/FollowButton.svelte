@@ -9,7 +9,7 @@
   // Three rendered states:
   //   - is_self          → renders nothing (the viewer is the target)
   //   - is_blocked_by_*  → renders a disabled "Blocked" label,
-  //                        no click affordance (matches Twitter/Mastodon)
+  //                        no click affordance (matches common social UX)
   //   - is_following     → "Following" pill with hover→"Unfollow"
   //   - default          → "Follow" pill
   //
@@ -23,7 +23,7 @@
   import { t } from '$stores/lang.svelte';
 
   interface Props {
-    /** Target user's RS ref. The viewer's own ref is inferred from
+    /** Target user's ref. The viewer's own ref is inferred from
         the auth store; passing the same value renders nothing. */
     targetRef: number;
     /** Optional callback after a successful follow/unfollow. Lets the

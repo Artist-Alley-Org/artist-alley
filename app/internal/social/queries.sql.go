@@ -27,8 +27,7 @@ type BlockUserParams struct {
 // Upserts the block edge with an optional reason. The handler also
 // runs UnfollowUser in both directions before BlockUser — blocking
 // and continuing to follow is a contradictory state, and modern
-// platforms (Twitter, Mastodon, ArtStation) all auto-unfollow on
-// block.
+// social platforms all auto-unfollow on block.
 func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) error {
 	_, err := q.db.Exec(ctx, blockUser, arg.BlockerUserRef, arg.BlockedUserRef, arg.Reason)
 	return err
@@ -447,7 +446,7 @@ type ListBlockedRow struct {
 }
 
 // "Users I've blocked" management page (/account/blocked). Only the
-// blocker's perspective — RS-style "show me who blocked me" is
+// blocker's perspective — legacy-style "show me who blocked me" is
 // deliberately NOT exposed (most platforms hide this for the
 // blocker's privacy).
 func (q *Queries) ListBlocked(ctx context.Context, arg ListBlockedParams) ([]ListBlockedRow, error) {

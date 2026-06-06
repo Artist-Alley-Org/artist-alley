@@ -42,7 +42,7 @@ const CapReadUsers = "users.read"
 const CapApproveUsers = "users.approve"
 
 // approvedFromStatus maps the API status enum onto the underlying
-// user.approved column (1=active, 0=pending, 2=disabled per RS
+// user.approved column (1=active, 0=pending, 2=disabled per legacy
 // convention; preserved verbatim so the Phase 1.17.B lifecycle
 // migration is additive rather than rewriting old rows).
 //

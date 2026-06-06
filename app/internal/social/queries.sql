@@ -292,8 +292,7 @@ LIMIT $2;
 -- Upserts the block edge with an optional reason. The handler also
 -- runs UnfollowUser in both directions before BlockUser — blocking
 -- and continuing to follow is a contradictory state, and modern
--- platforms (Twitter, Mastodon, ArtStation) all auto-unfollow on
--- block.
+-- social platforms all auto-unfollow on block.
 INSERT INTO user_blocks (blocker_user_ref, blocked_user_ref, reason)
 VALUES ($1, $2, $3)
 ON CONFLICT (blocker_user_ref, blocked_user_ref) DO UPDATE
@@ -317,7 +316,7 @@ SELECT EXISTS (
 
 -- name: ListBlocked :many
 -- "Users I've blocked" management page (/account/blocked). Only the
--- blocker's perspective — RS-style "show me who blocked me" is
+-- blocker's perspective — legacy-style "show me who blocked me" is
 -- deliberately NOT exposed (most platforms hide this for the
 -- blocker's privacy).
 SELECT u.ref,

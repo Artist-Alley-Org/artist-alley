@@ -197,12 +197,12 @@ export interface WhiteboardSession {
   viewX: number;
   viewY: number;
   /** Zoom factor. 1 = source pixel = CSS pixel; 0.1 = zoomed way
-   *  out (Miro / Figma typical floor); 8 = max zoom in. Clamped on
+   *  out (typical infinite-canvas floor); 8 = max zoom in. Clamped on
    *  every setter so callers can't push beyond the useful range. */
   viewZoom: number;
   /** Zoom by `factor` around the viewport-space anchor (cssX, cssY)
    *  so the world point under the cursor stays under the cursor —
-   *  Miro / Figma wheel-zoom behaviour. */
+   *  standard wheel-zoom behaviour. */
   zoomBy: (factor: number, anchorCssX: number, anchorCssY: number) => void;
   /** Pan in CSS pixels (positive dx → world moves right under the
    *  viewport). */
@@ -303,7 +303,7 @@ export function createWhiteboardSession(
   });
 
   // Zoom bounds. 0.05 = 5% (fits a huge sketch in a postcard
-  // viewport — Miro's floor); 16 = 1600% (pixel-grid pixel-poking).
+  // viewport); 16 = 1600% (pixel-grid pixel-poking).
   const ZOOM_MIN = 0.05;
   const ZOOM_MAX = 16;
   function clampZoom(z: number): number {

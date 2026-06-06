@@ -36,7 +36,7 @@ import (
 )
 
 // reuseWindow — how many previous hashes the change handler compares
-// against. RS doesn't ship this; we cap at 5 (NIST 800-63B's typical
+// against. The legacy stack doesn't ship this; we cap at 5 (NIST 800-63B's typical
 // guidance) so a user can roll through a few passwords without
 // running out of options, but can't immediately re-use the one they
 // just rotated away from.
@@ -193,7 +193,7 @@ func (h *Handler) ChangeMyPassword(
 			VerifyPassword(req.Body.NewPassword, h, "") == nil {
 			// Two probes because old hashes might pre-date the
 			// scramble-key rotation. VerifyPassword without the key
-			// is allowed (RS strips the HMAC step when scrambleKey
+			// is allowed (the legacy code strips the HMAC step when scrambleKey
 			// is empty).
 		}
 	}
