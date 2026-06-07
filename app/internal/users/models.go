@@ -315,6 +315,28 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz
 }
 
+type FederationInbox struct {
+	ID                    pgtype.UUID
+	ActivityUri           string
+	PeerID                pgtype.UUID
+	ActorUri              string
+	ActivityType          string
+	ObjectKind            *string
+	ObjectID              pgtype.UUID
+	EnvelopeJson          []byte
+	HttpSigKey            string
+	ReceivedAt            pgtype.Timestamptz
+	Status                string
+	RejectReason          *string
+	DispatchAttempts      int32
+	LastAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ProcessedAt           pgtype.Timestamptz
+	CorrelationActivityID pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type FederationPeer struct {
 	ID                 pgtype.UUID
 	InstanceUrl        string

@@ -3584,6 +3584,36 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
+-- Migration 00003 — federation_inbox (Phase 1.22.D-a).
+CREATE TABLE public.federation_inbox (
+    id                       uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    activity_uri             text         NOT NULL UNIQUE,
+    peer_id                  uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    actor_uri                text         NOT NULL,
+    activity_type            text         NOT NULL,
+    object_kind              text         NULL,
+    object_id                uuid         NULL,
+    envelope_json            jsonb        NOT NULL,
+    http_sig_key             text         NOT NULL,
+    received_at              timestamptz  NOT NULL DEFAULT now(),
+    status                   text         NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processed', 'rejected', 'failed')),
+    reject_reason            text         NULL,
+    dispatch_attempts        int          NOT NULL DEFAULT 0,
+    last_attempt_at          timestamptz  NULL,
+    last_error               text         NOT NULL DEFAULT '',
+    processed_at             timestamptz  NULL,
+    correlation_activity_id  uuid         NULL REFERENCES public.activities(id) ON DELETE SET NULL,
+    created_at               timestamptz  NOT NULL DEFAULT now(),
+    updated_at               timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX federation_inbox_pending_idx
+    ON public.federation_inbox (received_at) WHERE status = 'pending';
+CREATE INDEX federation_inbox_by_peer_idx
+    ON public.federation_inbox (peer_id, received_at DESC);
+CREATE INDEX federation_inbox_by_status_idx
+    ON public.federation_inbox (status, received_at DESC);
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);
