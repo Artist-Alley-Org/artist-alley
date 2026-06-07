@@ -2,9 +2,13 @@ package http
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strings"
 	"time"
 	"log/slog"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -94,6 +98,7 @@ type apiServer struct {
 	inboxHandler     *inbox.Handler
 	inboxDispatcher  *inbox.Dispatcher
 	outboxDispatcher *outbox.Dispatcher
+	outboxDelivery   *outbox.Worker
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -292,6 +297,29 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	)
 	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
 	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+
+	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
+	// Drains federation_outbox rows → POST /federation/inbox on
+	// the recipient peer. HTTP/2 connection pooling +
+	// HTTP-Signature signed by the instance Ed25519 key.
+	//
+	// Signer is resolved LAZILY via a deferred-signer wrapper —
+	// the instance identity is loaded by the identity manager
+	// AFTER newAPIServer runs (first-run setup may have to
+	// generate it). The worker skips delivery cycles when the
+	// signer is unavailable + retries on the next tick.
+	baseURLFn := sysconfigBaseURLFn(sysCfg)
+	signer := &deferredIdentitySigner{
+		identity: s.fedIdentity,
+		baseURL:  baseURLFn,
+	}
+	s.outboxDelivery = outbox.NewWorker(
+		outbox.DefaultDeliveryConfig(),
+		pool,
+		signer,
+		outboxDeliveryPeerLookup(s.peers),
+		logger,
+	)
 	// Cross-package "who owns this post?" lookup so inbound
 	// Like/Comment can fire the post-author notification
 	// without social importing posts (which already imports
@@ -516,6 +544,54 @@ func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbo
 		Enabled:           p.Enabled,
 		Connected:         p.Status == federation.PeerStatusConnected,
 	}, nil
+}
+
+// deferredIdentitySigner resolves the instance identity at Sign
+// time rather than at boot time, so the delivery worker can be
+// constructed before the identity manager has loaded the key.
+// First-run setup generates the identity AFTER newAPIServer
+// runs; the worker just no-ops cycles until it shows up.
+type deferredIdentitySigner struct {
+	identity *identity.Manager
+	baseURL  func(ctx context.Context) string
+}
+
+func (s *deferredIdentitySigner) Sign(req *http.Request, body []byte) error {
+	id, err := s.identity.Get()
+	if err != nil || id == nil {
+		return fmt.Errorf("federation identity not yet loaded: %w", err)
+	}
+	if req.Header.Get("Host") == "" {
+		req.Header.Set("Host", req.URL.Host)
+	}
+	return httpsig.SignAndAttach(req, body, s.keyURL(req.Context()), id.PrivateKey())
+}
+
+func (s *deferredIdentitySigner) KeyID() string {
+	return s.keyURL(context.Background())
+}
+
+func (s *deferredIdentitySigner) keyURL(ctx context.Context) string {
+	base := s.baseURL(ctx)
+	return strings.TrimRight(base, "/") + "/federation/instance#main-key"
+}
+
+// outboxDeliveryPeerLookup returns the closure the delivery
+// worker uses to resolve a peer's URL + enabled/connected
+// status at send time. Wraps peer.Registry.ByID.
+func outboxDeliveryPeerLookup(reg *peer.Registry) outbox.PeerLookup {
+	return func(ctx context.Context, peerID uuid.UUID) (outbox.PeerInfo, error) {
+		p, err := reg.ByID(ctx, peerID)
+		if err != nil {
+			return outbox.PeerInfo{}, err
+		}
+		return outbox.PeerInfo{
+			ID:          p.ID,
+			InstanceURL: p.InstanceURL,
+			Enabled:     p.Enabled,
+			Connected:   p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
 }
 
 // outboxVisibilityLookup returns the per-object visibility

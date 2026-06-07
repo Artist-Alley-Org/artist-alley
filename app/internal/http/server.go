@@ -426,6 +426,15 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.dispatcher.start")
 	}
 
+	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
+	// Drains federation_outbox rows + POSTs to recipient peer's
+	// /federation/inbox. nil when the instance identity hasn't
+	// been generated yet (first-run before /setup completes).
+	if s.api != nil && s.api.outboxDelivery != nil {
+		go s.api.outboxDelivery.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.delivery.start")
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

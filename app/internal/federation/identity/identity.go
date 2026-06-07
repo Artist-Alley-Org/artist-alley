@@ -97,6 +97,13 @@ func (id *Identity) Sign(msg []byte) []byte {
 	return federation.Sign(id.privateKey, msg)
 }
 
+// PrivateKey returns the in-memory ed25519 private key. Exposed
+// for callers that need to integrate with libraries expecting
+// the raw key type (e.g. httpsig.SignAndAttach). Internal
+// package — boot wiring is the only call site outside this
+// package; everything else should prefer Sign() above.
+func (id *Identity) PrivateKey() ed25519.PrivateKey { return id.privateKey }
+
 // Verify is a convenience for callers verifying signatures
 // against THIS instance's public key (e.g. self-test paths).
 // Production paths verifying PEER signatures should call
