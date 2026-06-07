@@ -157,7 +157,7 @@ func (h *Handler) InsertRemoteComment(ctx context.Context, in RemoteCommentInput
 		RootID:      pgtype.UUID{Bytes: rootID, Valid: true},
 		Depth:       depth,
 		Body:        in.Body,
-		BodyHtml:    in.Body, // TODO(1.22.D-a-6): run through the same sanitizer the local path uses
+		BodyHtml:    "", // local CreateComment passes "" too; renderer reads body, not body_html
 		PeerID:      pgtype.UUID{Bytes: in.PeerID, Valid: true},
 		ActorUri:    ptrStr(in.ActorURI),
 		ActivityUri: ptrStr(in.ActivityURI),

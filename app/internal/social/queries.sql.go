@@ -969,9 +969,11 @@ SELECT c.id, c.target_kind, c.target_id, c.parent_id, c.root_id, c.depth,
        c.annotation_type, c.annotation_data,
        c.like_count, c.edited_at, c.deleted_at,
        c.origin_server_id, c.created_at, c.updated_at,
-       c.peer_id, c.actor_uri, c.activity_uri
+       c.peer_id, c.actor_uri, c.activity_uri,
+       fra.display_name::text AS remote_display_name
 FROM comments c
 JOIN thread_roots tr ON tr.id = c.root_id
+LEFT JOIN federation_remote_actors fra ON fra.actor_uri = c.actor_uri
 WHERE c.deleted_at IS NULL
 ORDER BY tr.created_at DESC, tr.id ASC, c.depth ASC, c.created_at ASC
 `
@@ -983,6 +985,30 @@ type ListThreadForTargetParams struct {
 	ThreadLimit         int32
 }
 
+type ListThreadForTargetRow struct {
+	ID                pgtype.UUID
+	TargetKind        string
+	TargetID          pgtype.UUID
+	ParentID          pgtype.UUID
+	RootID            pgtype.UUID
+	Depth             int32
+	AuthorUserRef     *int64
+	Body              string
+	BodyHtml          string
+	AnnotationType    *string
+	AnnotationData    []byte
+	LikeCount         int64
+	EditedAt          pgtype.Timestamptz
+	DeletedAt         pgtype.Timestamptz
+	OriginServerID    pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	PeerID            pgtype.UUID
+	ActorUri          *string
+	ActivityUri       *string
+	RemoteDisplayName string
+}
+
 // Returns every LIVE comment on (kind, id), sorted by root then
 // depth-first within root (so replies appear under their parent).
 // The cursor pagination is on root_id alone — we always return a
@@ -991,7 +1017,7 @@ type ListThreadForTargetParams struct {
 // Ordering: root_created_at DESC (newest threads first), then within
 // a thread by (depth ASC, created_at ASC) so the root is first and
 // replies follow in chronological order.
-func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTargetParams) ([]Comment, error) {
+func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTargetParams) ([]ListThreadForTargetRow, error) {
 	rows, err := q.db.Query(ctx, listThreadForTarget,
 		arg.TargetKind,
 		arg.TargetID,
@@ -1002,9 +1028,9 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Comment
+	var items []ListThreadForTargetRow
 	for rows.Next() {
-		var i Comment
+		var i ListThreadForTargetRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TargetKind,
@@ -1026,6 +1052,7 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 			&i.PeerID,
 			&i.ActorUri,
 			&i.ActivityUri,
+			&i.RemoteDisplayName,
 		); err != nil {
 			return nil, err
 		}

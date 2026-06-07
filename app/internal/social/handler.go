@@ -466,7 +466,7 @@ func (h *Handler) ListPostComments(
 			rootsSeen[rootID] = struct{}{}
 			rootCount++
 		}
-		out = append(out, commentRowToAPI(r))
+		out = append(out, threadRowToAPI(r))
 		// The created_at on the LAST included row will be on the
 		// last included root (since rows within a root come together).
 		// For cursor purposes we want the root's created_at; the root
@@ -1041,29 +1041,32 @@ func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error)
 // both ListThreadForTarget and CreateComment — sqlc returns the same
 // shape for both queries) into the openapi response shape.
 func commentRowToAPI(r Comment) openapi.Comment {
-	// TODO(1.22.D-a-6): extend openapi.Comment with peer_id +
-	// actor_uri + display_name so remote-authored rows surface
-	// honest provenance to clients. For now AuthorUserRef=0
-	// signals "no local author" (remote row); the upcoming
-	// share-UI banner work is the natural place to add the
-	// API extension + the rendering changes together.
-	var authorRef int64
-	if r.AuthorUserRef != nil {
-		authorRef = *r.AuthorUserRef
-	}
+	// Federation: local-authored rows have AuthorUserRef set +
+	// PeerID/ActorUri NULL. Remote-authored rows (per phase
+	// 1.22.D) have AuthorUserRef NULL + PeerID + ActorUri
+	// populated. The display_name comes from the per-thread
+	// query's LEFT JOIN against federation_remote_actors —
+	// commentRowToAPI doesn't see it directly, so the caller
+	// (commentThreadRowToAPI for ListThreadForTarget) overrides
+	// after this builder runs.
 	out := openapi.Comment{
 		Id:            openapi_types.UUID(r.ID.Bytes),
 		TargetKind:    openapi.CommentTargetKind(r.TargetKind),
 		TargetId:      openapi_types.UUID(r.TargetID.Bytes),
 		RootId:        openapi_types.UUID(r.RootID.Bytes),
 		Depth:         int(r.Depth),
-		AuthorUserRef: authorRef,
+		AuthorUserRef: r.AuthorUserRef,
 		Body:          r.Body,
 		BodyHtml:      r.BodyHtml,
 		LikeCount:     r.LikeCount,
 		CreatedAt:     r.CreatedAt.Time,
 		UpdatedAt:     r.UpdatedAt.Time,
 	}
+	if r.PeerID.Valid {
+		pid := openapi_types.UUID(r.PeerID.Bytes)
+		out.PeerId = &pid
+	}
+	out.ActorUri = r.ActorUri
 	if r.ParentID.Valid {
 		v := openapi_types.UUID(r.ParentID.Bytes)
 		out.ParentId = &v
@@ -1084,6 +1087,42 @@ func commentRowToAPI(r Comment) openapi.Comment {
 	if r.EditedAt.Valid {
 		t := r.EditedAt.Time
 		out.EditedAt = &t
+	}
+	return out
+}
+
+// threadRowToAPI projects a ListThreadForTargetRow (the per-
+// thread query that LEFT-JOINs federation_remote_actors for
+// display_name) onto openapi.Comment. Mirrors commentRowToAPI
+// but also populates DisplayName for remote-authored rows so
+// the UI can render "<display_name> @ <peer host>" without a
+// follow-up fetch.
+func threadRowToAPI(r ListThreadForTargetRow) openapi.Comment {
+	out := commentRowToAPI(Comment{
+		ID:             r.ID,
+		TargetKind:     r.TargetKind,
+		TargetID:       r.TargetID,
+		ParentID:       r.ParentID,
+		RootID:         r.RootID,
+		Depth:          r.Depth,
+		AuthorUserRef:  r.AuthorUserRef,
+		Body:           r.Body,
+		BodyHtml:       r.BodyHtml,
+		AnnotationType: r.AnnotationType,
+		AnnotationData: r.AnnotationData,
+		LikeCount:      r.LikeCount,
+		EditedAt:       r.EditedAt,
+		DeletedAt:      r.DeletedAt,
+		OriginServerID: r.OriginServerID,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+		PeerID:         r.PeerID,
+		ActorUri:       r.ActorUri,
+		ActivityUri:    r.ActivityUri,
+	})
+	if r.RemoteDisplayName != "" {
+		dn := r.RemoteDisplayName
+		out.DisplayName = &dn
 	}
 	return out
 }

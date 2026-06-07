@@ -8857,8 +8857,16 @@ components:
         root_id + depth (caller renders nested replies indented by
         depth). annotation_* fields are NULL for plain comments; the
         review-mode feature reuses the same row shape.
+
+        Federation: exactly one of {author_user_ref} XOR
+        {peer_id + actor_uri} is set per row. Local-authored
+        comments have author_user_ref set + peer_id NULL.
+        Remote-authored comments (from a paired peer per
+        ADR 0043 / phase 1.22.D) have author_user_ref NULL +
+        peer_id + actor_uri + display_name populated. Clients
+        render "<display_name> @ <peer's host>" for remote rows.
       required:
-        [id, target_kind, target_id, root_id, depth, author_user_ref,
+        [id, target_kind, target_id, root_id, depth,
          body, body_html, like_count, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -8872,7 +8880,11 @@ components:
           nullable: true
         root_id: { type: string, format: uuid }
         depth: { type: integer }
-        author_user_ref: { type: integer, format: int64 }
+        author_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: Local author user.ref. NULL for remote-authored comments (see peer_id / actor_uri).
         body: { type: string }
         body_html:
           type: string
@@ -8892,6 +8904,31 @@ components:
           nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        peer_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The federation peer that originated this comment. NULL
+            for local-authored rows. Set in tandem with actor_uri
+            + display_name when the comment came in via the
+            federation inbox (Phase 1.22.D).
+        actor_uri:
+          type: string
+          nullable: true
+          description: |
+            The remote actor's URI on their home instance (e.g.
+            https://studio-b.example/users/bob). NULL for
+            local-authored rows.
+        display_name:
+          type: string
+          nullable: true
+          description: |
+            Display name resolved from federation_remote_actors
+            cache for remote-authored comments. May be empty if
+            the remote instance hasn't shipped display hints yet;
+            clients should fall back to the actor_uri's host +
+            local-part when this is empty.
 
     CommentList:
       type: object
