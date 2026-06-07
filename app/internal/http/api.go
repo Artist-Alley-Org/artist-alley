@@ -36,6 +36,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -90,6 +91,7 @@ type apiServer struct {
 	sharesAdmin      *shares.AdminHandler
 	sharesSweeper    *shares.Sweeper
 	inboxHandler     *inbox.Handler
+	inboxDispatcher  *inbox.Dispatcher
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -244,11 +246,35 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// parsing, and Retry-After response control which the
 	// strict-server shape hides.
 	s.inboxHandler = inbox.NewHandler(inbox.HandlerDeps{
-		Pool:        inbox.New(pool),
-		Lookup:      inboxPeerLookupFor(s.peers),
-		Logger:      logger,
-		RejectAudit: inboxRejectAuditFor(auditRec),
+		Pool:         inbox.New(pool),
+		Lookup:       inboxPeerLookupFor(s.peers),
+		Logger:       logger,
+		LocalBaseURL: sysconfigBaseURLFn(sysCfg),
+		RejectAudit:  inboxRejectAuditFor(auditRec),
 	})
+
+	// Federation inbox dispatcher (1.22.D-a-4). Worker
+	// goroutine that drains pending federation_inbox rows +
+	// invokes the per-verb handler. Started in Server.Run
+	// alongside the directory poller + shares sweeper. The
+	// SocialPoster + RemoteActorUpserter contracts are wired
+	// AFTER construction so the import edges stay clean
+	// (inbox does NOT import social).
+	s.inboxDispatcher = inbox.NewDispatcher(
+		inbox.DefaultDispatcherConfig(),
+		inbox.New(pool),
+		inboxDispatchPeerLookup(s.peers),
+		nil,
+		logger,
+	)
+	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
+	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
+	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
+	// Cross-package "who owns this post?" lookup so inbound
+	// Like/Comment can fire the post-author notification
+	// without social importing posts (which already imports
+	// social for the follow checker → cycle if reversed).
+	s.social.SetPostTargetLookup(postTargetLookupFor(pool))
 
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
 	// AdminHandler land here; the background Poller starts in
@@ -468,6 +494,78 @@ func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbo
 		Enabled:           p.Enabled,
 		Connected:         p.Status == federation.PeerStatusConnected,
 	}, nil
+}
+
+// inboxSocialPosterAdapter bridges inbox.SocialPoster (which
+// uses inbox.RemoteCommentInput) to social.Handler's
+// equivalent shape. The two types are structurally identical;
+// duplicated because social can't import inbox (the dispatcher
+// already imports social via the SocialPoster contract;
+// reversing the edge would cycle).
+type inboxSocialPosterAdapter struct{ h *social.Handler }
+
+func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI string) (bool, error) {
+	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI)
+}
+
+func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
+	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
+		TargetKind:  in.TargetKind,
+		TargetID:    in.TargetID,
+		ParentID:    in.ParentID,
+		PeerID:      in.PeerID,
+		ActorURI:    in.ActorURI,
+		ActivityURI: in.ActivityURI,
+		Body:        in.Body,
+	})
+}
+
+// inboxDispatchPeerLookup wraps peer.Registry.ByID with the
+// inbox.PeerInfo projection the dispatcher needs (URL +
+// instance public key — the latter unused by the dispatcher
+// for now but kept for future per-actor signature verify in
+// 1.22.I).
+func inboxDispatchPeerLookup(reg *peer.Registry) func(ctx context.Context, peerID uuid.UUID) (inbox.PeerInfo, error) {
+	return func(ctx context.Context, peerID uuid.UUID) (inbox.PeerInfo, error) {
+		p, err := reg.ByID(ctx, peerID)
+		if err != nil {
+			return inbox.PeerInfo{}, err
+		}
+		var pub []byte
+		// PEM parse can fail (placeholder during pending
+		// handshake). Tolerate — the dispatcher doesn't need
+		// the pubkey for 1.22.D-a-4.
+		return inbox.PeerInfo{
+			ID:                p.ID,
+			InstanceURL:       p.InstanceURL,
+			InstancePublicKey: pub,
+			Enabled:           p.Enabled,
+			Connected:         p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
+}
+
+// postTargetLookupFor returns the "who owns this post?" closure
+// the inbound Like/Comment handlers use for notification routing.
+// Implemented as a direct SQL read so social doesn't import
+// posts (cycle: posts imports social for the follow checker).
+func postTargetLookupFor(pool *pgxpool.Pool) social.PostTargetLookup {
+	return func(ctx context.Context, postID uuid.UUID) (int64, bool, error) {
+		var ref int64
+		err := pool.QueryRow(ctx,
+			`SELECT author_user_ref FROM posts WHERE id = $1 AND deleted_at IS NULL`,
+			postID,
+		).Scan(&ref)
+		if err != nil {
+			// pgx.ErrNoRows → just "not found"; bubble other
+			// errors to the caller (they treat them as transient).
+			if err.Error() == "no rows in result set" {
+				return 0, false, nil
+			}
+			return 0, false, err
+		}
+		return ref, true, nil
+	}
 }
 
 // inboxRejectAuditFor wraps audit.Recorder.ActivityRejected to

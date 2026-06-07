@@ -527,7 +527,8 @@ const (
 	InboxStatusUnknownActor        InboxStatus = "unknown_actor"          // actor does not resolve
 	InboxStatusUnknownPeer         InboxStatus = "unknown_peer"           // sender instance not in federation_peers
 	InboxStatusPeerDisabled        InboxStatus = "peer_disabled"          // peer known but disabled
-	InboxStatusUnsharedObject      InboxStatus = "unshared_object"        // no current federation_shares row
+	InboxStatusUnknownObject       InboxStatus = "unknown_object"         // object URL does not resolve to a local row (wrong host OR unknown UUID)
+	InboxStatusUnsharedObject      InboxStatus = "unshared_object"        // local row exists but no current federation_shares grant
 	InboxStatusEnvelopeSigMissing    InboxStatus = "envelope_sig_missing"     // structural: signature field absent/malformed (distinct from SigInvalid which is crypto failure with present-but-bad)
 	InboxStatusEncryptionRequired    InboxStatus = "encryption_required"      // SENDER violated a MUST-encrypt rule (inverse of EncryptionNotSupported)
 	InboxStatusEncryptionNotSupported InboxStatus = "encryption_not_supported" // RECEIVER hasn't shipped 1.22.I X25519 decode yet (inverse of EncryptionRequired)
@@ -557,6 +558,7 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusUnknownActor:          {},
 	InboxStatusUnknownPeer:           {},
 	InboxStatusPeerDisabled:          {},
+	InboxStatusUnknownObject:         {},
 	InboxStatusUnsharedObject:        {},
 	InboxStatusEnvelopeSigMissing:    {},
 	InboxStatusEncryptionRequired:    {},

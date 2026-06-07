@@ -409,6 +409,14 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")
 	}
 
+	// Federation inbox dispatcher (Phase 1.22.D-a-4). Drains
+	// pending federation_inbox rows + invokes the per-verb
+	// handler. Stop via ctx cancellation.
+	if s.api != nil && s.api.inboxDispatcher != nil {
+		go s.api.inboxDispatcher.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.dispatcher.start")
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

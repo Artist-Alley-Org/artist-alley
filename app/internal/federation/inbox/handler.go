@@ -88,6 +88,18 @@ type PeerInfo struct {
 // peer matches the supplied keyId URL.
 var ErrPeerNotFound = errors.New("inbox: peer not found for keyId")
 
+// ErrUnknownObject is returned by extractObjectRef when the
+// envelope's object URL does not resolve to a local row on
+// this instance — either the host portion doesn't match our
+// base URL or the URL shape isn't `<base>/<kind>/<uuid>` per
+// spec §8.2. Maps to the §12.1 unknown_object reject reason.
+//
+// Distinct from ErrUnsharedObject (which means "I have the
+// local row but the sender doesn't have a share grant") —
+// see the spec §12.1 entry for the operator-remediation
+// distinction.
+var ErrUnknownObject = errors.New("inbox: object URL does not resolve to a local row")
+
 // Handler is the chi-mountable handler for POST /federation/inbox.
 // All dependencies are injected so tests can wire stubs.
 type Handler struct {
@@ -97,6 +109,12 @@ type Handler struct {
 	replayCache  *ReplayCache
 	logger       *slog.Logger
 	clock        func() time.Time
+	// localBaseURL resolves the receiver instance's canonical
+	// base URL (e.g. https://studio-a.example). The inbox-stage
+	// object-ref check compares envelope.object's host against
+	// this — a host mismatch → unknown_object reject (per
+	// spec §12.1: sender's outbox built a foreign URL).
+	localBaseURL func(ctx context.Context) string
 	rejectAudit  func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string)
 }
 
@@ -110,6 +128,10 @@ type HandlerDeps struct {
 	Logger       *slog.Logger
 	// Clock override for tests. Defaults to time.Now if nil.
 	Clock        func() time.Time
+	// LocalBaseURL resolves the receiver instance's canonical
+	// base URL (used by the object-ref host check). nil → host
+	// check is skipped (tests that don't care about it).
+	LocalBaseURL func(ctx context.Context) string
 	// Audit hook. Called whenever the pipeline rejects an
 	// envelope post-peer-resolution. Production wires
 	// audit.Recorder.ActivityRejected. nil-safe (skipped).
@@ -131,13 +153,14 @@ func NewHandler(deps HandlerDeps) *Handler {
 		cache = NewReplayCache(16_384, 30*time.Second)
 	}
 	return &Handler{
-		pool:        deps.Pool,
-		lookup:      deps.Lookup,
-		limiter:     limiter,
-		replayCache: cache,
-		logger:      deps.Logger,
-		clock:       clock,
-		rejectAudit: deps.RejectAudit,
+		pool:         deps.Pool,
+		lookup:       deps.Lookup,
+		limiter:      limiter,
+		replayCache:  cache,
+		logger:       deps.Logger,
+		clock:        clock,
+		localBaseURL: deps.LocalBaseURL,
+		rejectAudit:  deps.RejectAudit,
 	}
 }
 
@@ -321,7 +344,27 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	// the authoritative dedup; cache miss + duplicate envelope
 	// surfaces here as a constraint violation → return 200 OK
 	// no-op per the idempotent-receipt invariant.
-	objectKindPtr, objectIDPtr := extractObjectRef(env)
+	//
+	// extractObjectRef is also where we surface the §12.1
+	// unknown_object rejection: the envelope's object URL has
+	// to resolve to a local row (host matches + URL shape
+	// matches §8.2). Distinct from unshared_object — that
+	// fires LATER at dispatch time when the gate checks the
+	// federation_shares table; this fires NOW because we can't
+	// even classify the object.
+	objectKindPtr, objectIDPtr, err := h.extractObjectRef(ctx, env)
+	if err != nil {
+		if errors.Is(err, ErrUnknownObject) {
+			h.auditReject(ctx, peer.ID, federation.InboxStatusUnknownObject, activityURI,
+				"object URL does not resolve to a local row")
+			writeRejection(w, r, h.logger, reject(federation.InboxStatusUnknownObject, http.StatusNotFound,
+				"object URL does not resolve to a local row on this instance"))
+			return
+		}
+		h.logErr(ctx, "inbox.extract_object.error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	row, err := h.pool.InsertInbox(ctx, InsertInboxParams{
 		ActivityUri:   activityURI,
 		PeerID:        pgtype.UUID{Bytes: peer.ID, Valid: true},
@@ -401,51 +444,86 @@ func peekActivityID(body []byte) (string, error) {
 }
 
 // extractObjectRef pulls (kind, uuid) from the envelope's Object
-// when it's a known kind. Stored on the inbox row for admin
-// filtering; nil + nil when the activity doesn't target an object
-// we can classify (Follow, Block, aa:Subscribe etc.).
-func extractObjectRef(env *federation.Envelope) (*string, pgtype.UUID) {
+// per spec §8.2 (`<base>/<kind>/<uuid>`). Returns three outcomes:
+//
+//   - (kind, uuid, nil)        — known kind, well-formed URL.
+//                                Stored on the inbox row for
+//                                admin filtering.
+//   - (nil, zero, nil)         — activity has no Object field
+//                                (Follow, Block, Subscribe etc.)
+//                                OR the kind is one we don't
+//                                index on the inbox row. The
+//                                row still lands; dispatch
+//                                handles it.
+//   - (nil, zero, ErrUnknownObject) — object URL is present but
+//                                doesn't resolve to a local row.
+//                                Wrong host, or URL shape isn't
+//                                `<base>/<kind>/<uuid>`, or UUID
+//                                portion unparseable. Caller
+//                                rejects with §12.1 unknown_object.
+//
+// The host check uses localBaseURL (passed at construction).
+// nil-safe — when localBaseURL isn't wired the host check
+// is skipped (tests that don't care about it).
+func (h *Handler) extractObjectRef(ctx context.Context, env *federation.Envelope) (*string, pgtype.UUID, error) {
 	if env.Object == "" {
-		return nil, pgtype.UUID{}
+		return nil, pgtype.UUID{}, nil
 	}
-	// The envelope's Object is a URL. We parse host + path to
-	// detect "<host>/<kind>/<uuid>" shapes per spec §8.2.
 	parsed, err := url.Parse(env.Object)
 	if err != nil {
-		return nil, pgtype.UUID{}
+		// URL itself doesn't parse — sender shipped a malformed
+		// object URL. Maps to unknown_object since we can't
+		// extract any useful local reference.
+		return nil, pgtype.UUID{}, ErrUnknownObject
+	}
+	// Host check: if we know our local base URL, the envelope's
+	// object MUST point at us. A foreign host means the sender's
+	// outbox built the URL wrong (or is referencing a different
+	// instance's object), neither of which we can dispatch
+	// against.
+	if h.localBaseURL != nil {
+		if base, err := url.Parse(h.localBaseURL(ctx)); err == nil && base.Host != "" {
+			if !strings.EqualFold(parsed.Host, base.Host) {
+				return nil, pgtype.UUID{}, ErrUnknownObject
+			}
+		}
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) != 2 {
-		return nil, pgtype.UUID{}
+		return nil, pgtype.UUID{}, ErrUnknownObject
 	}
 	kind := parts[0]
 	id, err := uuid.Parse(parts[1])
 	if err != nil {
-		return nil, pgtype.UUID{}
+		return nil, pgtype.UUID{}, ErrUnknownObject
 	}
 	// Singular kinds in URLs (per spec §8.2: /posts/, /assets/
 	// etc.) translate to our singular catalogue values.
 	switch kind {
 	case "posts":
 		k := "post"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	case "assets":
 		k := "asset"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	case "collections":
 		k := "collection"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	case "workspaces":
 		k := "workspace"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	case "brand_kits":
 		k := "brand_kit"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	case "users":
 		k := "user"
-		return &k, pgtype.UUID{Bytes: id, Valid: true}
+		return &k, pgtype.UUID{Bytes: id, Valid: true}, nil
 	}
-	return nil, pgtype.UUID{}
+	// Known URL shape but the kind segment isn't one we index.
+	// This is fine — the row still lands without an object_kind/id
+	// and dispatch handles it (e.g. Follow doesn't target an
+	// object).
+	return nil, pgtype.UUID{}, nil
 }
 
 // mapHTTPSigErr translates a httpsig package error into the

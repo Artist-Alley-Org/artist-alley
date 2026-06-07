@@ -365,6 +365,86 @@ func TestPostInbox_StaleRequest_400(t *testing.T) {
 	assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusStaleRequest)
 }
 
+func TestPostInbox_UnknownObject_WrongHost_404(t *testing.T) {
+	// Object URL has a host that doesn't match our local base
+	// URL → §12.1 unknown_object. Distinct from unshared_object
+	// (which fires at dispatch time when the gate finds no
+	// share row). Sender's outbox built a foreign URL.
+	fx := newFixture(t)
+	localBase := "https://local.example"
+	fx.handler = inbox.NewHandler(inbox.HandlerDeps{
+		Pool: fx.q,
+		Lookup: &staticPeerLookup{
+			peerID: fx.peerID, peerURL: fx.peerURL, keyID: fx.peerKeyID,
+			pubKey: fx.peerPub, enabled: true, connected: true,
+		},
+		LocalBaseURL: func(_ context.Context) string { return localBase },
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RejectAudit:  fx.rejects.audit,
+	})
+	// Build an envelope whose object URL points at fx.peerURL
+	// (sender's host) instead of localBase — outbox-built-wrong.
+	env := map[string]any{
+		"@context":  federation.ContextV1,
+		"type":      "Like",
+		"id":        fx.peerURL + "/activities/" + uuid.NewString(),
+		"actor":     fx.peerURL + "/users/alice",
+		"published": time.Now().UTC().Format(time.RFC3339),
+		"object":    fx.peerURL + "/posts/" + uuid.NewString(),
+		"signature": map[string]string{
+			"type":      "Ed25519",
+			"publicKey": fx.peerURL + "/users/alice#main-key",
+			"value":     "AAAAAAAAAAAA",
+		},
+	}
+	body, _ := json.Marshal(env)
+	req := fx.newSignedRequest(body)
+	rr := httptest.NewRecorder()
+	fx.handler.PostInbox(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown_object (wrong host): got %d want 404; body=%s", rr.Code, rr.Body.String())
+	}
+	assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusUnknownObject)
+}
+
+func TestPostInbox_UnknownObject_BadURLShape_404(t *testing.T) {
+	// Object URL is on our host but doesn't match §8.2's
+	// <base>/<kind>/<uuid> shape — also unknown_object.
+	fx := newFixture(t)
+	localBase := "https://local.example"
+	fx.handler = inbox.NewHandler(inbox.HandlerDeps{
+		Pool: fx.q,
+		Lookup: &staticPeerLookup{
+			peerID: fx.peerID, peerURL: fx.peerURL, keyID: fx.peerKeyID,
+			pubKey: fx.peerPub, enabled: true, connected: true,
+		},
+		LocalBaseURL: func(_ context.Context) string { return localBase },
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RejectAudit:  fx.rejects.audit,
+	})
+	env := map[string]any{
+		"@context":  federation.ContextV1,
+		"type":      "Like",
+		"id":        fx.peerURL + "/activities/" + uuid.NewString(),
+		"actor":     fx.peerURL + "/users/alice",
+		"published": time.Now().UTC().Format(time.RFC3339),
+		"object":    localBase + "/posts/not-a-uuid",
+		"signature": map[string]string{
+			"type":      "Ed25519",
+			"publicKey": fx.peerURL + "/users/alice#main-key",
+			"value":     "AAAAAAAAAAAA",
+		},
+	}
+	body, _ := json.Marshal(env)
+	req := fx.newSignedRequest(body)
+	rr := httptest.NewRecorder()
+	fx.handler.PostInbox(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown_object (bad URL shape): got %d want 404", rr.Code)
+	}
+	assertReasonInBody(t, rr.Body.Bytes(), federation.InboxStatusUnknownObject)
+}
+
 func TestPostInbox_EncryptionNotSupported_422(t *testing.T) {
 	fx := newFixture(t)
 	// Envelope with `encrypted` field present.

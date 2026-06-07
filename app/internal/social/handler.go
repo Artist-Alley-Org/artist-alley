@@ -105,6 +105,14 @@ type Handler struct {
 	// no-ops — the comment / like / follow itself still lands.
 	notifier Notifier
 
+	// postTargetLookup is the cross-package author lookup used
+	// by inbound-federation handlers to fire post-author
+	// notifications without importing the posts package
+	// (would be a cycle: posts already imports social for
+	// the follow checker). Boot wires it via SetPostTargetLookup.
+	// Phase 1.22.D-a-4.
+	postTargetLookup PostTargetLookup
+
 	// Activities ledger writer + baseURL resolver (Phase 1.22.A-bis-2
 	// per ADR 0044). When wired, social handlers route their domain
 	// writes through h.activities.WithEmission so the activity row
