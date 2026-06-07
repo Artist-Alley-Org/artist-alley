@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"strings"
 	"time"
 	"log/slog"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
@@ -87,6 +89,7 @@ type apiServer struct {
 	sharesRegistry   *shares.Registry
 	sharesAdmin      *shares.AdminHandler
 	sharesSweeper    *shares.Sweeper
+	inboxHandler     *inbox.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -233,6 +236,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		usernameResolverFor(s.users),
 		logger,
 	)
+
+	// Federation inbox handler (Phase 1.22.D-a). Mounted via a
+	// direct chi route in routes.go (not via openapi/strict-
+	// server) — the inbox handler needs raw http.Request +
+	// ResponseWriter for body draining, Signature-header
+	// parsing, and Retry-After response control which the
+	// strict-server shape hides.
+	s.inboxHandler = inbox.NewHandler(inbox.HandlerDeps{
+		Pool:        inbox.New(pool),
+		Lookup:      inboxPeerLookupFor(s.peers),
+		Logger:      logger,
+		RejectAudit: inboxRejectAuditFor(auditRec),
+	})
 
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
 	// AdminHandler land here; the background Poller starts in
@@ -409,6 +425,68 @@ func suggestionCounterFor(pool *pgxpool.Pool) shares.SuggestionCounter {
 			return 0, err
 		}
 		return n, nil
+	}
+}
+
+// --- 1.22.D-a federation inbox adapters --------------------------------
+
+// inboxPeerLookupFor wraps peer.Registry's URL-based lookup into
+// the inbox handler's PeerLookup contract. The httpsig keyId is
+// typically a URL like `https://peer.example/instance#main-key`
+// — we trim the fragment + match against the peer's instance_url
+// via the existing cache-fronted ByInstanceURL.
+func inboxPeerLookupFor(reg *peer.Registry) inbox.PeerLookup {
+	return inboxPeerLookupAdapter{reg: reg}
+}
+
+type inboxPeerLookupAdapter struct{ reg *peer.Registry }
+
+func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbox.PeerInfo, error) {
+	// Strip the fragment (the "#main-key" part) to recover the
+	// base instance URL the peer is registered as.
+	base := keyID
+	if idx := strings.Index(keyID, "#"); idx >= 0 {
+		base = keyID[:idx]
+	}
+	// Optional /instance suffix — some peers publish their key
+	// at `<instance_url>/instance` while their instance_url in
+	// federation_peers is just `<instance_url>`.
+	base = strings.TrimSuffix(base, "/instance")
+
+	p, err := a.reg.ByInstanceURL(ctx, base)
+	if err != nil {
+		return inbox.PeerInfo{}, inbox.ErrPeerNotFound
+	}
+	pub, err := federation.PublicKeyFromPEM([]byte(p.InstancePublicKey))
+	if err != nil {
+		return inbox.PeerInfo{}, inbox.ErrPeerNotFound
+	}
+	return inbox.PeerInfo{
+		ID:                p.ID,
+		InstanceURL:       p.InstanceURL,
+		InstancePublicKey: pub,
+		Enabled:           p.Enabled,
+		Connected:         p.Status == federation.PeerStatusConnected,
+	}, nil
+}
+
+// inboxRejectAuditFor wraps audit.Recorder.ActivityRejected to
+// match the inbox handler's hook signature. activityType is
+// pulled from the env when we have it (post-stage-8 rejections);
+// for early-stage rejections (stages 2-7) it'd be unknown — we
+// pass the reason itself as a fallback so the audit row is still
+// queryable.
+func inboxRejectAuditFor(rec *audit.Recorder) func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string) {
+	return func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string) {
+		rec.ActivityRejected(ctx,
+			peerID.String(),
+			"", // sourceUserURL — not yet extracted in the inbox path
+			"", // activityType — same
+			"", // objectKind
+			"", // objectID
+			string(reason),
+			activityURI,
+		)
 	}
 }
 

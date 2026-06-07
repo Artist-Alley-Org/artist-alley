@@ -258,6 +258,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Post("/auth/saml/acs", samlRouter.ConsumeAssertion)
 		r.Get("/auth/saml/metadata", samlRouter.Metadata)
 
+		// Federation inbox (Phase 1.22.D-a) — direct chi mount,
+		// not openapi/strict-server. Handler needs raw
+		// http.Request + ResponseWriter for body draining +
+		// Signature header parsing + Retry-After response
+		// control which the strict-server shape hides. Public
+		// endpoint authed via HTTP-Signature on the request
+		// itself, not session/bearer.
+		if impl.inboxHandler != nil {
+			r.Post("/federation/inbox", impl.inboxHandler.PostInbox)
+		}
+
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
 		// openapi-derived handler streams the whole body in one

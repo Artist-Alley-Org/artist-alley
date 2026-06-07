@@ -169,7 +169,10 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusInvalidActor, federation.InboxStatusInvalidObject,
 		federation.InboxStatusInvalidPublished, federation.InboxStatusUnknownActor,
 		federation.InboxStatusUnknownPeer, federation.InboxStatusPeerDisabled,
-		federation.InboxStatusUnsharedObject, federation.InboxStatusEncryptionRequired,
+		federation.InboxStatusUnsharedObject,
+		federation.InboxStatusEnvelopeSigMissing,
+		federation.InboxStatusEncryptionRequired,
+		federation.InboxStatusEncryptionNotSupported,
 		federation.InboxStatusPlaintextTypeMismatch, federation.InboxStatusStaleRequest,
 		federation.InboxStatusReplay, federation.InboxStatusError,
 	}

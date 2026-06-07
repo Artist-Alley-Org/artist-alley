@@ -528,7 +528,9 @@ const (
 	InboxStatusUnknownPeer         InboxStatus = "unknown_peer"           // sender instance not in federation_peers
 	InboxStatusPeerDisabled        InboxStatus = "peer_disabled"          // peer known but disabled
 	InboxStatusUnsharedObject      InboxStatus = "unshared_object"        // no current federation_shares row
-	InboxStatusEncryptionRequired  InboxStatus = "encryption_required"    // plaintext over e2e-only peer link
+	InboxStatusEnvelopeSigMissing    InboxStatus = "envelope_sig_missing"     // structural: signature field absent/malformed (distinct from SigInvalid which is crypto failure with present-but-bad)
+	InboxStatusEncryptionRequired    InboxStatus = "encryption_required"      // SENDER violated a MUST-encrypt rule (inverse of EncryptionNotSupported)
+	InboxStatusEncryptionNotSupported InboxStatus = "encryption_not_supported" // RECEIVER hasn't shipped 1.22.I X25519 decode yet (inverse of EncryptionRequired)
 	InboxStatusPlaintextTypeMismatch InboxStatus = "plaintext_type_mismatch" // decrypted type ≠ envelope type
 	InboxStatusStaleRequest        InboxStatus = "stale_request"          // HTTP-Sig date out of window
 	InboxStatusReplay              InboxStatus = "replay"                 // activity id already seen
@@ -556,7 +558,9 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusUnknownPeer:           {},
 	InboxStatusPeerDisabled:          {},
 	InboxStatusUnsharedObject:        {},
+	InboxStatusEnvelopeSigMissing:    {},
 	InboxStatusEncryptionRequired:    {},
+	InboxStatusEncryptionNotSupported: {},
 	InboxStatusPlaintextTypeMismatch: {},
 	InboxStatusStaleRequest:          {},
 	InboxStatusReplay:                {},
