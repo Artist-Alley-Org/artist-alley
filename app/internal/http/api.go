@@ -34,6 +34,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
+	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
@@ -92,6 +93,7 @@ type apiServer struct {
 	sharesSweeper    *shares.Sweeper
 	inboxHandler     *inbox.Handler
 	inboxDispatcher  *inbox.Dispatcher
+	outboxDispatcher *outbox.Dispatcher
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -270,6 +272,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
 	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
 	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
+
+	// Federation OUTBOX dispatcher (Phase 1.22.D-b). Drains
+	// activities ledger rows into per-recipient federation_outbox
+	// rows via LISTEN/NOTIFY (sub-100ms latency) + 30s ticker
+	// backstop. Started in Server.Run alongside the inbox
+	// dispatcher.
+	//
+	// Encryption-supported is hard-false until Phase 1.22.I
+	// ships X25519 keypair-per-user; restricted/embargo
+	// sensitivity activities emission-skip with audit.
+	outboxResolver := outbox.NewResolver(pool, cacheReg,
+		func(context.Context) bool { return false })
+	s.outboxDispatcher = outbox.NewDispatcher(
+		outbox.DefaultDispatcherConfig(),
+		pool,
+		outboxResolver,
+		logger,
+	)
+	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
+	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
 	// Cross-package "who owns this post?" lookup so inbound
 	// Like/Comment can fire the post-author notification
 	// without social importing posts (which already imports
@@ -494,6 +516,30 @@ func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbo
 		Enabled:           p.Enabled,
 		Connected:         p.Status == federation.PeerStatusConnected,
 	}, nil
+}
+
+// outboxVisibilityLookup returns the per-object visibility
+// closure the outbox dispatcher uses to drive the resolver.
+// Currently only handles posts; extends per-domain when assets
+// + collections grow visibility surfaces.
+func outboxVisibilityLookup(pool *pgxpool.Pool) outbox.VisibilityLookup {
+	return func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
+		switch kind {
+		case "post":
+			var v string
+			err := pool.QueryRow(ctx,
+				`SELECT visibility FROM posts WHERE id = $1 AND deleted_at IS NULL`,
+				id,
+			).Scan(&v)
+			if err != nil {
+				return "", nil // unknown post → no recipients
+			}
+			return outbox.Visibility(v), nil
+		}
+		// Unknown / unsupported kind → caller treats as
+		// VisibilityPrivate (local-only).
+		return "", nil
+	}
 }
 
 // inboxSocialPosterAdapter bridges inbox.SocialPoster (which

@@ -417,6 +417,15 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.dispatcher.start")
 	}
 
+	// Federation OUTBOX dispatcher (Phase 1.22.D-b). LISTEN/
+	// NOTIFY-driven fan-out from activities → federation_outbox.
+	// Sub-100ms latency via the trigger from migration 00005;
+	// 30s ticker is correctness backstop only.
+	if s.api != nil && s.api.outboxDispatcher != nil {
+		go s.api.outboxDispatcher.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.dispatcher.start")
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

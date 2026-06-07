@@ -46,6 +46,13 @@ const (
 	EventFederationShareGranted    = "federation.share.granted"
 	EventFederationShareRevoked    = "federation.share.revoked"
 	EventFederationActivityRejected = "federation.activity.rejected"
+
+	// 1.22.D-b outbox-dispatcher emission events. emission.skipped
+	// fires when the sender-side resolver refuses to enqueue an
+	// activity (sensitivity-without-encryption per ADR 0020, or
+	// recipient set is empty, or peer is mid-defederation). See
+	// spec §12.3 for the reason catalogue.
+	EventFederationEmissionSkipped = "federation.emission.skipped"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -243,6 +250,32 @@ func (r *Recorder) writeWith(ctx context.Context, q *Queries, eventType string, 
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// EmissionSkipped records a federation.emission.skipped event
+// per the 1.22.D-b design proposal §3.9 — the outbox dispatcher
+// calls this whenever the recipient resolver refuses to enqueue
+// an activity. activityID is the local activities row UUID;
+// reason is from spec §12.3 (encryption_required_but_not_
+// supported / recipient_set_empty / defederation_in_progress).
+//
+// Pool-bound (NOT tx-bound) because the dispatcher's cursor
+// advance has already committed by the time we audit; the
+// emission decision is the audit's own write.
+func (r *Recorder) EmissionSkipped(
+	ctx context.Context,
+	activityID, activityType, objectKind, objectID, visibility, sensitivity, reason string,
+) {
+	meta := map[string]any{
+		"activity_id":   activityID,
+		"activity_type": activityType,
+		"object_kind":   objectKind,
+		"object_id":     objectID,
+		"visibility":    visibility,
+		"sensitivity":   sensitivity,
+		"reason":        reason,
+	}
+	r.write(ctx, EventFederationEmissionSkipped, nil, nil, reqContext{}, meta)
 }
 
 // ActivityRejected records a federation.activity.rejected event
