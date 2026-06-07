@@ -187,11 +187,12 @@
           "status": "planned",
           "bullets": [
             "Presentation is a global capability — image, video, 3D, PDF, any asset that can be shown. The player / viewer is a host; the 'presentation room' is a separate concern that wraps any host.",
-            "WebSocket presence room keyed on `(post_id or asset_id)`: live cursor, live scrub position, who's watching.",
+            "**Transport: SSE (Server-Sent Events)** keyed on `(post_id or asset_id)`: live cursor, live scrub position, who's watching. SSE chosen over WebSocket because it's the right tool for server-pushes-many-clients within a single trust boundary, has natural reconnect semantics, and matches the project's SSE-as-canonical-real-time pattern (per ADR 0043 §Transport mechanism).",
             "Synchronous mode: a presenter drives the playhead / camera / page. Observers follow. Offline = solo (default).",
             "Shared chat + reactions alongside whatever's being shown.",
             "Mobile + tablet observers via the same UI.",
-            "The protocol is asset-type-agnostic: a frame number, a 3D camera matrix, a PDF page index — all 'anchor' objects the host sends on each tick. Observers' viewers replay them."
+            "The protocol is asset-type-agnostic: a frame number, a 3D camera matrix, a PDF page index — all 'anchor' objects the host sends on each tick. Observers' viewers replay them.",
+            "**Deferred future extension — cross-instance presentation rooms over SSE.** Studio A presenting; Studio B has remote viewers federated through ADR 0043's walled-garden protocol. Per-tick presentation events (cursor + frame + camera matrix) flow over an SSE channel scoped to the shared room rather than per-activity federation POSTs. Activities like aa:Annotation still POST through the canonical federation transport; ephemeral presence ticks flow via SSE. Documented in ADR 0043 §Transport mechanism; tracked as a future enhancement (not in 1.22 federation scope, not in 1.18.B-5 v1)."
           ]
         },
         {

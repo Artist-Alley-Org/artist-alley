@@ -3661,6 +3661,56 @@ CREATE TABLE public.federation_remote_actors (
 CREATE INDEX federation_remote_actors_by_peer_idx
     ON public.federation_remote_actors (peer_id, last_seen_at DESC);
 
+-- Migration 00005 — federation_outbox + cursor state + LISTEN/NOTIFY
+-- trigger (Phase 1.22.D-b-1).
+CREATE TABLE public.federation_outbox (
+    id                     uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    activity_id            uuid         NOT NULL REFERENCES public.activities(id) ON DELETE CASCADE,
+    peer_id                uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    target_user_url        text         NULL,
+    status                 text         NOT NULL DEFAULT 'queued',
+    CONSTRAINT federation_outbox_status_check CHECK (
+        status IN ('queued', 'sent', 'failed', 'cancelled')
+    ),
+    attempts               smallint     NOT NULL DEFAULT 0,
+    next_attempt_at        timestamptz  NOT NULL DEFAULT NOW(),
+    last_attempt_at        timestamptz  NULL,
+    last_error             text         NOT NULL DEFAULT '',
+    sent_at                timestamptz  NULL,
+    delivered_with_key_id  text         NULL,
+    created_at             timestamptz  NOT NULL DEFAULT NOW(),
+    updated_at             timestamptz  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX federation_outbox_dedup_targeted_idx
+    ON public.federation_outbox (activity_id, peer_id, target_user_url)
+    WHERE target_user_url IS NOT NULL;
+CREATE UNIQUE INDEX federation_outbox_dedup_broadcast_idx
+    ON public.federation_outbox (activity_id, peer_id)
+    WHERE target_user_url IS NULL;
+CREATE INDEX federation_outbox_due_idx
+    ON public.federation_outbox (next_attempt_at)
+    WHERE status = 'queued';
+CREATE INDEX federation_outbox_by_peer_idx
+    ON public.federation_outbox (peer_id, created_at DESC);
+CREATE TABLE public.federation_dispatch_state (
+    id                            int          PRIMARY KEY CHECK (id = 1),
+    last_dispatched_activity_id   uuid         NULL,
+    last_dispatched_at            timestamptz  NULL,
+    updated_at                    timestamptz  NOT NULL DEFAULT NOW()
+);
+INSERT INTO public.federation_dispatch_state (id) VALUES (1);
+CREATE OR REPLACE FUNCTION public.federation_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_dispatch_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_dispatch_notify_trg
+    AFTER INSERT ON public.activities
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_dispatch_notify();
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);

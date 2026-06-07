@@ -318,6 +318,13 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz
 }
 
+type FederationDispatchState struct {
+	ID                       int32
+	LastDispatchedActivityID pgtype.UUID
+	LastDispatchedAt         pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
 type FederationInbox struct {
 	ID                    pgtype.UUID
 	ActivityUri           string
@@ -338,6 +345,22 @@ type FederationInbox struct {
 	CorrelationActivityID pgtype.UUID
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+}
+
+type FederationOutbox struct {
+	ID                 pgtype.UUID
+	ActivityID         pgtype.UUID
+	PeerID             pgtype.UUID
+	TargetUserUrl      *string
+	Status             string
+	Attempts           int16
+	NextAttemptAt      pgtype.Timestamptz
+	LastAttemptAt      pgtype.Timestamptz
+	LastError          string
+	SentAt             pgtype.Timestamptz
+	DeliveredWithKeyID *string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type FederationPeer struct {

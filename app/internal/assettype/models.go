@@ -318,6 +318,13 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz `json:"cached_at"`
 }
 
+type FederationDispatchState struct {
+	ID                       int32              `json:"id"`
+	LastDispatchedActivityID pgtype.UUID        `json:"last_dispatched_activity_id"`
+	LastDispatchedAt         pgtype.Timestamptz `json:"last_dispatched_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FederationInbox struct {
 	ID                    pgtype.UUID        `json:"id"`
 	ActivityUri           string             `json:"activity_uri"`
@@ -338,6 +345,22 @@ type FederationInbox struct {
 	CorrelationActivityID pgtype.UUID        `json:"correlation_activity_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationOutbox struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ActivityID         pgtype.UUID        `json:"activity_id"`
+	PeerID             pgtype.UUID        `json:"peer_id"`
+	TargetUserUrl      *string            `json:"target_user_url"`
+	Status             string             `json:"status"`
+	Attempts           int16              `json:"attempts"`
+	NextAttemptAt      pgtype.Timestamptz `json:"next_attempt_at"`
+	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
+	LastError          string             `json:"last_error"`
+	SentAt             pgtype.Timestamptz `json:"sent_at"`
+	DeliveredWithKeyID *string            `json:"delivered_with_key_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FederationPeer struct {
