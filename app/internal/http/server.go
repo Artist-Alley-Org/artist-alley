@@ -267,6 +267,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// itself, not session/bearer.
 		if impl.inboxHandler != nil {
 			r.Post("/federation/inbox", impl.inboxHandler.PostInbox)
+			// Batched variant per spec §10.4 — same handler;
+			// amortises HTTP-Sig + TLS overhead across up to 50
+			// envelopes per request. Phase 1.22.D-b-5.
+			r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
 		}
 
 		// /assets/{id}/file with Range support so <audio>/<video>

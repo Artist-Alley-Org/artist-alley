@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -273,6 +274,170 @@ func TestDelivery_EnvelopeIsSignedAndWellFormed(t *testing.T) {
 	}
 	_ = pool // imported for the QueryRow helper; assertion above is on capture
 	_ = pgtype.UUID{}
+}
+
+func TestDelivery_TwoQueuedForSamePeer_UseBatchEndpoint(t *testing.T) {
+	// Two outbox rows for the same peer → delivery worker
+	// fires ONE POST to /federation/inbox/batch with both
+	// envelopes. Receiver returns per-envelope status array.
+	pool := openTestPool(t)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	var (
+		mu          sync.Mutex
+		batchHits   int
+		singleHits  int
+		batchBodies [][]byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		switch r.URL.Path {
+		case "/federation/inbox/batch":
+			batchHits++
+			batchBodies = append(batchBodies, body)
+			// Parse envelopes and reply with accepted status for each.
+			var batch struct {
+				Envelopes []struct {
+					ID string `json:"id"`
+				} `json:"envelopes"`
+			}
+			_ = json.Unmarshal(body, &batch)
+			type result struct {
+				ActivityURI string `json:"activity_uri"`
+				Status      string `json:"status"`
+				Reason      string `json:"reason"`
+			}
+			out := struct {
+				Results []result `json:"results"`
+			}{}
+			for _, env := range batch.Envelopes {
+				out.Results = append(out.Results, result{
+					ActivityURI: env.ID, Status: "accepted",
+				})
+			}
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case "/federation/inbox":
+			singleHits++
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			mu.Unlock()
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// Seed user / peer / post + 2 activities + 2 outbox rows.
+	username := "delivery-batch-" + randHex(4)
+	var grantorRef int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO "user" (username, fullname, approved) VALUES ($1, 'Delivery Batch Test', 1) RETURNING ref`,
+		username,
+	).Scan(&grantorRef); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	var peerID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO federation_peers (instance_url, display_name, instance_public_key,
+		    trust_tier, encryption_policy, enabled, status, handshake_by_user_ref)
+		 VALUES ($1, 'Delivery Batch Peer', '', 'connected', 'plaintext', TRUE, 'connected', $2)
+		 RETURNING id`,
+		srv.URL, grantorRef,
+	).Scan(&peerID); err != nil {
+		t.Fatalf("seed peer: %v", err)
+	}
+	postID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO posts (id, author_user_ref, title, visibility) VALUES ($1, $2, 'Batch', 'explicit-share')`,
+		postID, grantorRef,
+	); err != nil {
+		t.Fatalf("seed post: %v", err)
+	}
+	postIDStr := postID.String()
+	// Two activities + two outbox rows targeting the same peer.
+	for i := 0; i < 2; i++ {
+		var activityID uuid.UUID
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO activities (activity_uri, activity_type, actor_uri, actor_user_ref,
+			    object_uri, object_kind, object_local_id, to_uris, payload)
+			 VALUES ($1, 'Like', $2, $3, $4, 'post', $5, '[]'::jsonb, '{}'::jsonb)
+			 RETURNING id`,
+			"https://local.example/activities/"+randHex(8),
+			"https://local.example/users/alice", grantorRef,
+			"https://local.example/posts/"+postIDStr, postIDStr,
+		).Scan(&activityID); err != nil {
+			t.Fatalf("seed activity: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO federation_outbox (activity_id, peer_id, target_user_url)
+			 VALUES ($1, $2, $3)`,
+			activityID, peerID,
+			"https://"+srv.URL[7:]+"/users/bob",
+		); err != nil {
+			t.Fatalf("seed outbox: %v", err)
+		}
+	}
+
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM federation_outbox WHERE peer_id = $1`, peerID)
+		_, _ = pool.Exec(c, `DELETE FROM activities WHERE actor_user_ref = $1`, grantorRef)
+		_, _ = pool.Exec(c, `DELETE FROM posts WHERE id = $1`, postID)
+		_, _ = pool.Exec(c, `DELETE FROM federation_peers WHERE id = $1`, peerID)
+		_, _ = pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, grantorRef)
+	})
+
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	signer := &outbox.IdentitySigner{
+		PrivateKey: priv,
+		KeyURL:     "https://local.example/instance#main-key",
+	}
+	worker := outbox.NewWorker(
+		outbox.DeliveryConfig{Interval: time.Hour, BatchSize: 100, RequestTimeout: 5 * time.Second},
+		pool, signer,
+		func(_ context.Context, id uuid.UUID) (outbox.PeerInfo, error) {
+			return outbox.PeerInfo{ID: id, InstanceURL: srv.URL, Enabled: true, Connected: true}, nil
+		},
+		logger,
+	)
+
+	sent, _, _ := worker.RunOnce(context.Background())
+	if sent != 2 {
+		t.Errorf("sent count: got %d want 2", sent)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if batchHits != 1 {
+		t.Errorf("batch endpoint hits: got %d want 1 (both envelopes in one POST)", batchHits)
+	}
+	if singleHits != 0 {
+		t.Errorf("singleton endpoint hits: got %d want 0 (everything should've batched)", singleHits)
+	}
+	if len(batchBodies) == 1 {
+		// Confirm both envelopes made it into the batched body.
+		var got struct {
+			Envelopes []struct{ ID string } `json:"envelopes"`
+		}
+		_ = json.Unmarshal(batchBodies[0], &got)
+		if len(got.Envelopes) != 2 {
+			t.Errorf("batch body envelope count: got %d want 2", len(got.Envelopes))
+		}
+	}
+
+	// Both outbox rows transitioned to 'sent'.
+	var n int
+	_ = pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM federation_outbox WHERE peer_id = $1 AND status = 'sent'`,
+		peerID,
+	).Scan(&n)
+	if n != 2 {
+		t.Errorf("federation_outbox sent count: got %d want 2", n)
+	}
 }
 
 func contains(s, sub string) bool {

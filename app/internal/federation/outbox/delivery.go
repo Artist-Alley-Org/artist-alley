@@ -43,6 +43,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -208,6 +209,11 @@ func (w *Worker) Run(ctx context.Context) {
 
 // RunOnce processes a single batch of due rows. Exported so
 // tests can drive deterministically.
+//
+// Per-peer batching per spec §10.4 + design §3.10: rows are
+// grouped by peer_id; per peer with >1 row we POST the batch to
+// /federation/inbox/batch in one signed request. Solo activity →
+// singleton POST to /federation/inbox (no batching overhead).
 func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 	rows, err := w.q.ListDueOutbox(ctx, w.cfg.BatchSize)
 	if err != nil {
@@ -218,14 +224,32 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 		return 0, 0, 0
 	}
 
+	// Group by peer for the batched-POST optimisation.
+	byPeer := make(map[uuid.UUID][]FederationOutbox, 4)
 	for i := range rows {
-		switch w.deliverOne(ctx, rows[i]) {
-		case deliveryOutcomeSent:
-			sent++
-		case deliveryOutcomeFailedTerminal:
-			failed++
-		case deliveryOutcomeFailedTransient:
-			deferred++
+		pid := uuid.UUID(rows[i].PeerID.Bytes)
+		byPeer[pid] = append(byPeer[pid], rows[i])
+	}
+
+	for _, peerRows := range byPeer {
+		if len(peerRows) == 1 {
+			// Solo activity — singleton POST.
+			switch w.deliverOne(ctx, peerRows[0]) {
+			case deliveryOutcomeSent:
+				sent++
+			case deliveryOutcomeFailedTerminal:
+				failed++
+			case deliveryOutcomeFailedTransient:
+				deferred++
+			}
+		} else {
+			// Batched POST. The receiver returns 200 with per-
+			// envelope status; we transition each row
+			// individually based on its result.
+			s, f, d := w.deliverBatched(ctx, peerRows)
+			sent += s
+			failed += f
+			deferred += d
 		}
 	}
 
@@ -237,6 +261,190 @@ func (w *Worker) RunOnce(ctx context.Context) (sent, failed, deferred int) {
 		)
 	}
 	return sent, failed, deferred
+}
+
+// deliverBatched POSTs N outbox rows for the SAME peer in one
+// /federation/inbox/batch request. The receiver returns a
+// per-envelope results array; we transition each row based on
+// its individual status.
+//
+// Caps at 50 envelopes per batch per spec §10.4; if peerRows
+// has more than 50 we split into multiple batched POSTs.
+func (w *Worker) deliverBatched(ctx context.Context, peerRows []FederationOutbox) (sent, failed, deferred int) {
+	const batchCap = 50
+	for start := 0; start < len(peerRows); start += batchCap {
+		end := start + batchCap
+		if end > len(peerRows) {
+			end = len(peerRows)
+		}
+		s, f, d := w.deliverOneBatch(ctx, peerRows[start:end])
+		sent += s
+		failed += f
+		deferred += d
+	}
+	return sent, failed, deferred
+}
+
+// deliverOneBatch POSTs a single batch of up to 50 outbox rows
+// to /federation/inbox/batch on the shared peer.
+func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (sent, failed, deferred int) {
+	if len(rows) == 0 {
+		return 0, 0, 0
+	}
+	peerID := uuid.UUID(rows[0].PeerID.Bytes)
+	peer, err := w.lookupPeer(ctx, peerID)
+	if err != nil {
+		for _, row := range rows {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("peer lookup: %w", err))
+			deferred++
+		}
+		return
+	}
+	if !peer.Enabled || !peer.Connected {
+		for _, row := range rows {
+			_, _ = w.q.MarkOutboxFailedTerminal(ctx, MarkOutboxFailedTerminalParams{
+				ID:        row.ID,
+				LastError: "peer disabled or not connected at delivery time",
+			})
+			failed++
+		}
+		return
+	}
+
+	// Build the batch body. activity_uri → outbox row id so we
+	// can look up the right row when the per-envelope result
+	// arrives.
+	envelopes := make([]json.RawMessage, 0, len(rows))
+	uriToRow := make(map[string]FederationOutbox, len(rows))
+	for _, row := range rows {
+		env, err := w.buildEnvelope(ctx, uuid.UUID(row.ActivityID.Bytes))
+		if err != nil {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
+			deferred++
+			continue
+		}
+		b, err := json.Marshal(env)
+		if err != nil {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("marshal envelope: %w", err))
+			deferred++
+			continue
+		}
+		envelopes = append(envelopes, b)
+		uriToRow[env.ID] = row
+	}
+	if len(envelopes) == 0 {
+		return
+	}
+
+	batchBody, err := json.Marshal(map[string]any{"envelopes": envelopes})
+	if err != nil {
+		for _, row := range uriToRow {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("marshal batch: %w", err))
+			deferred++
+		}
+		return
+	}
+
+	endpoint := strings.TrimRight(peer.InstanceURL, "/") + "/federation/inbox/batch"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(batchBody))
+	if err != nil {
+		for _, row := range uriToRow {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("build request: %w", err))
+			deferred++
+		}
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := w.signer.Sign(req, batchBody); err != nil {
+		for _, row := range uriToRow {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("sign: %w", err))
+			deferred++
+		}
+		return
+	}
+
+	resp, err := w.http.Do(req)
+	if err != nil {
+		for _, row := range uriToRow {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("POST %s: %w", endpoint, err))
+			deferred++
+		}
+		return
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// Top-level HTTP failure → defer every row.
+	if resp.StatusCode != 200 {
+		errMsg := fmt.Sprintf("HTTP %d from %s", resp.StatusCode, endpoint)
+		terminal := resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429
+		for _, row := range uriToRow {
+			if terminal {
+				_, _ = w.q.MarkOutboxFailedTerminal(ctx, MarkOutboxFailedTerminalParams{
+					ID:        row.ID,
+					LastError: errMsg + " (batch endpoint rejected; non-retryable)",
+				})
+				failed++
+			} else {
+				w.markAttemptFailed(ctx, row, errors.New(errMsg))
+				deferred++
+			}
+		}
+		return
+	}
+
+	// Parse per-envelope results.
+	var parsed struct {
+		Results []struct {
+			ActivityURI string `json:"activity_uri"`
+			Status      string `json:"status"`
+			Reason      string `json:"reason"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		// Receiver claimed 200 but body is malformed — treat as
+		// transient (something broke between transports).
+		for _, row := range uriToRow {
+			w.markAttemptFailed(ctx, row, fmt.Errorf("parse batch response: %w", err))
+			deferred++
+		}
+		return
+	}
+
+	seen := make(map[string]bool, len(parsed.Results))
+	for _, res := range parsed.Results {
+		seen[res.ActivityURI] = true
+		row, ok := uriToRow[res.ActivityURI]
+		if !ok {
+			continue
+		}
+		switch res.Status {
+		case "accepted", "replayed":
+			_, _ = w.q.MarkOutboxSent(ctx, MarkOutboxSentParams{
+				ID:                 row.ID,
+				DeliveredWithKeyID: ptrStr(w.signer.KeyID()),
+			})
+			sent++
+		case "rejected":
+			// Terminal — the receiver gave a typed §12.1 reason.
+			_, _ = w.q.MarkOutboxFailedTerminal(ctx, MarkOutboxFailedTerminalParams{
+				ID:        row.ID,
+				LastError: "receiver rejected: " + res.Reason,
+			})
+			failed++
+		default:
+			w.markAttemptFailed(ctx, row, fmt.Errorf("unknown batch status %q", res.Status))
+			deferred++
+		}
+	}
+	// Rows the receiver didn't acknowledge → transient retry.
+	for uri, row := range uriToRow {
+		if !seen[uri] {
+			w.markAttemptFailed(ctx, row, errors.New("receiver omitted activity from batch response"))
+			deferred++
+		}
+	}
+	return
 }
 
 type deliveryOutcome int
