@@ -7,12 +7,24 @@
 -- ---------------------------------------------------------------------------
 
 -- name: LikeTarget :exec
--- Idempotent. The PRIMARY KEY (target_kind, target_id, user_ref)
--- means re-inserting a row the same user already liked is a no-op,
--- and the counter trigger doesn't fire a second time.
+-- Idempotent. The partial-UNIQUE index
+-- likes_local_uniq_idx on (target_kind, target_id, user_ref)
+-- WHERE user_ref IS NOT NULL means re-inserting a row the same
+-- LOCAL user already liked is a no-op, and the counter trigger
+-- doesn't fire a second time.
 INSERT INTO likes (target_kind, target_id, user_ref)
 VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (target_kind, target_id, user_ref) WHERE user_ref IS NOT NULL DO NOTHING;
+
+-- name: InsertRemoteLike :execrows
+-- Inbound federation Like from a remote actor on a target the
+-- local instance owns. Idempotent via likes_remote_uniq_idx
+-- on (target_kind, target_id, peer_id, actor_uri) WHERE peer_id
+-- IS NOT NULL. ON CONFLICT clause must repeat the partial-index
+-- WHERE predicate so Postgres can match the right index.
+INSERT INTO likes (target_kind, target_id, peer_id, actor_uri)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (target_kind, target_id, peer_id, actor_uri) WHERE peer_id IS NOT NULL DO NOTHING;
 
 -- name: UnlikeTarget :execrows
 -- Returns 1 if a row was removed (and the trigger decremented the
@@ -55,16 +67,51 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at;
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri;
 
 -- name: GetComment :one
 SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE id = $1;
+
+-- name: InsertRemoteComment :one
+-- Inbound federation Create(Note) — the remote actor posted a
+-- comment on a target the local instance owns. Idempotent via
+-- comments_activity_uri_uniq_idx UNIQUE (activity_uri) WHERE
+-- NOT NULL — a retried dispatch lands as a constraint-violation
+-- we map to "already saved" rather than a new row.
+--
+-- author_user_ref is NULL for remote rows per the origin CHECK;
+-- peer_id + actor_uri + activity_uri together identify the
+-- remote authorship.
+INSERT INTO comments (
+    id, target_kind, target_id, parent_id, root_id, depth,
+    body, body_html,
+    peer_id, actor_uri, activity_uri
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, target_kind, target_id, parent_id, root_id, depth,
+          author_user_ref, body, body_html,
+          annotation_type, annotation_data,
+          like_count, edited_at, deleted_at,
+          origin_server_id, peer_id, actor_uri, activity_uri,
+          created_at, updated_at;
+
+-- name: GetCommentByActivityURI :one
+-- Used by the inbox dispatcher to detect a retried delivery —
+-- if a row already exists for this activity_uri, the dispatcher
+-- treats it as "already processed" without re-firing the
+-- notification.
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       peer_id, actor_uri, activity_uri,
+       created_at, updated_at
+FROM comments
+WHERE activity_uri = $1;
 
 -- name: UpdateComment :one
 -- PATCH-style. body update sets edited_at; body_html is recomputed
@@ -81,7 +128,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at;
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri;
 
 -- name: SoftDeleteComment :execrows
 -- Sets deleted_at + clears body so a soft-deleted comment doesn't
@@ -118,7 +165,8 @@ SELECT c.id, c.target_kind, c.target_id, c.parent_id, c.root_id, c.depth,
        c.author_user_ref, c.body, c.body_html,
        c.annotation_type, c.annotation_data,
        c.like_count, c.edited_at, c.deleted_at,
-       c.origin_server_id, c.created_at, c.updated_at
+       c.origin_server_id, c.created_at, c.updated_at,
+       c.peer_id, c.actor_uri, c.activity_uri
 FROM comments c
 JOIN thread_roots tr ON tr.id = c.root_id
 WHERE c.deleted_at IS NULL
@@ -130,7 +178,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE author_user_ref = $1
   AND deleted_at IS NULL
@@ -146,7 +194,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'asset'
   AND target_id = $1
@@ -164,7 +212,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'asset'
   AND target_id = $1
@@ -190,7 +238,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at;
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri;
 
 -- name: ListWhiteboardsForPost :many
 -- Sidebar "Whiteboards" surface — every whiteboard sketch on a post,
@@ -204,7 +252,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'post'
   AND target_id = $1

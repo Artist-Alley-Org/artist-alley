@@ -245,7 +245,7 @@ type Comment struct {
 	ParentID       pgtype.UUID
 	RootID         pgtype.UUID
 	Depth          int32
-	AuthorUserRef  int64
+	AuthorUserRef  *int64
 	Body           string
 	BodyHtml       string
 	AnnotationType *string
@@ -256,6 +256,9 @@ type Comment struct {
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	PeerID         pgtype.UUID
+	ActorUri       *string
+	ActivityUri    *string
 }
 
 type DirectMessage struct {
@@ -365,6 +368,16 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz
 }
 
+type FederationRemoteActor struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type FederationShare struct {
 	ID                pgtype.UUID
 	GrantorUserRef    int64
@@ -431,8 +444,11 @@ type Job struct {
 type Like struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	UserRef    int64
+	UserRef    *int64
 	LikedAt    pgtype.Timestamptz
+	ID         pgtype.UUID
+	PeerID     pgtype.UUID
+	ActorUri   *string
 }
 
 type Notification struct {

@@ -213,7 +213,7 @@ func (h *Handler) GetPostLike(
 	liked, err := New(h.Pool).HasUserLikedTarget(ctx, HasUserLikedTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
-		UserRef:   caller.UserRef,
+		UserRef:   &caller.UserRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: has liked: %w", err)
@@ -266,7 +266,7 @@ func (h *Handler) LikePost(
 		return New(tx).LikeTarget(ctx, LikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			UserRef:   caller.UserRef,
+			UserRef:   &caller.UserRef,
 		})
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
@@ -347,7 +347,7 @@ func (h *Handler) UnlikePost(
 		rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			UserRef:   caller.UserRef,
+			UserRef:   &caller.UserRef,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
@@ -557,8 +557,13 @@ func (h *Handler) CreatePostComment(
 	if parentID.Valid {
 		if parentInfo, err := New(h.Pool).GetCommentAuthorAndContext(ctx, parentID); err == nil {
 			commentRef.ParentID = uuid.UUID(parentID.Bytes).String()
-			commentRef.ParentAuthorRef = parentInfo.AuthorUserRef
-			commentRef.ParentAuthorURI = h.actorURIForUserRef(ctx, parentInfo.AuthorUserRef)
+			// AuthorUserRef is nullable (remote comments don't
+			// have one); we only fire the parent-author-reply
+			// notification + URI when it's a local author.
+			if parentInfo.AuthorUserRef != nil {
+				commentRef.ParentAuthorRef = *parentInfo.AuthorUserRef
+				commentRef.ParentAuthorURI = h.actorURIForUserRef(ctx, *parentInfo.AuthorUserRef)
+			}
 		}
 	}
 
@@ -575,7 +580,7 @@ func (h *Handler) CreatePostComment(
 			ParentID:       parentID,
 			RootID:         rootID,
 			Depth:          depth,
-			AuthorUserRef:  caller.UserRef,
+			AuthorUserRef:  &caller.UserRef,
 			Body:           body,
 			BodyHtml:       "",
 			AnnotationType: nil,
@@ -625,8 +630,9 @@ func (h *Handler) DeleteComment(
 	}
 
 	// Authorization: own (with the .own cap) OR any (moderator) OR
-	// system.admin.
-	isOwn := row.AuthorUserRef == caller.UserRef
+	// system.admin. Remote-author rows (AuthorUserRef == nil)
+	// can never be "own" for a local caller.
+	isOwn := row.AuthorUserRef != nil && *row.AuthorUserRef == caller.UserRef
 	canDeleteOwn := isOwn && caller.Can(CapCommentsDeleteOwn)
 	canDeleteAny := caller.Can(CapCommentsDeleteAny) || caller.Can(CapSystemAdmin)
 	if !canDeleteOwn && !canDeleteAny {
@@ -802,7 +808,7 @@ func (h *Handler) CreatePostWhiteboard(
 			ParentID:       pgtype.UUID{},
 			RootID:         newID,
 			Depth:          0,
-			AuthorUserRef:  caller.UserRef,
+			AuthorUserRef:  &caller.UserRef,
 			Body:           title,
 			BodyHtml:       "",
 			AnnotationType: &annotationType,
@@ -909,7 +915,7 @@ func (h *Handler) CreateAssetTextAnnotation(
 		ParentID:       pgtype.UUID{},
 		RootID:         newID,
 		Depth:          0,
-		AuthorUserRef:  caller.UserRef,
+		AuthorUserRef:  &caller.UserRef,
 		Body:           body,
 		BodyHtml:       "",
 		AnnotationType: &annotationType,
@@ -959,7 +965,7 @@ func (h *Handler) UpdateTextAnnotation(
 	// Author can always update; moderators (comments.delete.any holders)
 	// can also update — we treat the moderator cap as "manage any
 	// comment" for now since we don't have a separate update gate.
-	isAuthor := existing.AuthorUserRef == caller.UserRef
+	isAuthor := existing.AuthorUserRef != nil && *existing.AuthorUserRef == caller.UserRef
 	isMod := caller.Can(CapCommentsDeleteAny) || caller.Can(CapSystemAdmin)
 	if !isAuthor && !isMod {
 		return openapi.UpdateTextAnnotation403JSONResponse{
@@ -1027,13 +1033,23 @@ func (h *Handler) assetExists(ctx context.Context, id pgtype.UUID) (bool, error)
 // both ListThreadForTarget and CreateComment — sqlc returns the same
 // shape for both queries) into the openapi response shape.
 func commentRowToAPI(r Comment) openapi.Comment {
+	// TODO(1.22.D-a-6): extend openapi.Comment with peer_id +
+	// actor_uri + display_name so remote-authored rows surface
+	// honest provenance to clients. For now AuthorUserRef=0
+	// signals "no local author" (remote row); the upcoming
+	// share-UI banner work is the natural place to add the
+	// API extension + the rendering changes together.
+	var authorRef int64
+	if r.AuthorUserRef != nil {
+		authorRef = *r.AuthorUserRef
+	}
 	out := openapi.Comment{
 		Id:            openapi_types.UUID(r.ID.Bytes),
 		TargetKind:    openapi.CommentTargetKind(r.TargetKind),
 		TargetId:      openapi_types.UUID(r.TargetID.Bytes),
 		RootId:        openapi_types.UUID(r.RootID.Bytes),
 		Depth:         int(r.Depth),
-		AuthorUserRef: r.AuthorUserRef,
+		AuthorUserRef: authorRef,
 		Body:          r.Body,
 		BodyHtml:      r.BodyHtml,
 		LikeCount:     r.LikeCount,

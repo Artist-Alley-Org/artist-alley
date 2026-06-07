@@ -3614,6 +3614,53 @@ CREATE INDEX federation_inbox_by_peer_idx
 CREATE INDEX federation_inbox_by_status_idx
     ON public.federation_inbox (status, received_at DESC);
 
+-- Migration 00004 — inbound-federation columns on likes + comments
+-- + federation_remote_actors display cache (Phase 1.22.D-a-4).
+ALTER TABLE public.likes
+    ADD COLUMN id          uuid         NOT NULL DEFAULT gen_random_uuid(),
+    ADD COLUMN peer_id     uuid         NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    ADD COLUMN actor_uri   text         NULL,
+    ALTER COLUMN user_ref  DROP NOT NULL;
+ALTER TABLE public.likes DROP CONSTRAINT likes_pkey;
+ALTER TABLE public.likes ADD CONSTRAINT likes_pkey PRIMARY KEY (id);
+CREATE UNIQUE INDEX likes_local_uniq_idx
+    ON public.likes (target_kind, target_id, user_ref)
+    WHERE user_ref IS NOT NULL;
+CREATE UNIQUE INDEX likes_remote_uniq_idx
+    ON public.likes (target_kind, target_id, peer_id, actor_uri)
+    WHERE peer_id IS NOT NULL;
+ALTER TABLE public.likes ADD CONSTRAINT likes_origin_check
+    CHECK (
+        (user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
+        OR
+        (user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
+    );
+ALTER TABLE public.comments
+    ADD COLUMN peer_id            uuid NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    ADD COLUMN actor_uri          text NULL,
+    ADD COLUMN activity_uri       text NULL,
+    ALTER COLUMN author_user_ref  DROP NOT NULL;
+CREATE UNIQUE INDEX comments_activity_uri_uniq_idx
+    ON public.comments (activity_uri)
+    WHERE activity_uri IS NOT NULL;
+ALTER TABLE public.comments ADD CONSTRAINT comments_origin_check
+    CHECK (
+        (author_user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
+        OR
+        (author_user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
+    );
+CREATE TABLE public.federation_remote_actors (
+    actor_uri         text         PRIMARY KEY,
+    peer_id           uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    display_name      text         NOT NULL DEFAULT '',
+    avatar_url        text         NOT NULL DEFAULT '',
+    first_seen_at     timestamptz  NOT NULL DEFAULT now(),
+    last_seen_at      timestamptz  NOT NULL DEFAULT now(),
+    updated_at        timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX federation_remote_actors_by_peer_idx
+    ON public.federation_remote_actors (peer_id, last_seen_at DESC);
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);

@@ -245,7 +245,7 @@ type Comment struct {
 	ParentID       pgtype.UUID        `json:"parent_id"`
 	RootID         pgtype.UUID        `json:"root_id"`
 	Depth          int32              `json:"depth"`
-	AuthorUserRef  int64              `json:"author_user_ref"`
+	AuthorUserRef  *int64             `json:"author_user_ref"`
 	Body           string             `json:"body"`
 	BodyHtml       string             `json:"body_html"`
 	AnnotationType *string            `json:"annotation_type"`
@@ -256,6 +256,9 @@ type Comment struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	PeerID         pgtype.UUID        `json:"peer_id"`
+	ActorUri       *string            `json:"actor_uri"`
+	ActivityUri    *string            `json:"activity_uri"`
 }
 
 type DirectMessage struct {
@@ -365,6 +368,16 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
+type FederationRemoteActor struct {
+	ActorUri    string             `json:"actor_uri"`
+	PeerID      pgtype.UUID        `json:"peer_id"`
+	DisplayName string             `json:"display_name"`
+	AvatarUrl   string             `json:"avatar_url"`
+	FirstSeenAt pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FederationShare struct {
 	ID                pgtype.UUID        `json:"id"`
 	GrantorUserRef    int64              `json:"grantor_user_ref"`
@@ -431,8 +444,11 @@ type Job struct {
 type Like struct {
 	TargetKind string             `json:"target_kind"`
 	TargetID   pgtype.UUID        `json:"target_id"`
-	UserRef    int64              `json:"user_ref"`
+	UserRef    *int64             `json:"user_ref"`
 	LikedAt    pgtype.Timestamptz `json:"liked_at"`
+	ID         pgtype.UUID        `json:"id"`
+	PeerID     pgtype.UUID        `json:"peer_id"`
+	ActorUri   *string            `json:"actor_uri"`
 }
 
 type Notification struct {
