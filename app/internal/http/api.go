@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -46,6 +47,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -103,6 +105,7 @@ type apiServer struct {
 	outboxDispatcher *outbox.Dispatcher
 	outboxDelivery   *outbox.Worker
 	outboxAdmin      *outbox.AdminHandler
+	seedAdmin        *seed.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -316,6 +319,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		auditRec.OutboxRequeued,
 		auditRec.PeerCascadeCancelled,
 		logger,
+	)
+
+	// Demo-seed loader admin endpoints (post-1.22.D dogfood
+	// unblock). Gated on system.admin; not surfaced in admin UI.
+	// Apply-side script (seed/SEED_INSTRUCTIONS.md) is the only
+	// expected caller.
+	s.seedAdmin = seed.NewAdminHandler(
+		pool,
+		auditRec.SeedTimestampsBackfilled,
+		auditRec.SeedCommentCreated,
 	)
 
 	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
@@ -1627,6 +1640,150 @@ func adminInboxToAPI(r outbox.AdminInboxRow) openapi.FederationInboxRow {
 	if r.CorrelationActivityID != nil {
 		cid := openapi_types.UUID(*r.CorrelationActivityID)
 		out.CorrelationActivityId = &cid
+	}
+	return out
+}
+
+// --- demo-seed loader (post-1.22.D dogfood unblock) -------------------
+
+func (s *apiServer) SeedBackfillTimestamps(ctx context.Context, req openapi.SeedBackfillTimestampsRequestObject) (openapi.SeedBackfillTimestampsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedBackfillTimestamps401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedBackfillTimestamps403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || len(req.Body.Items) == 0 {
+		return openapi.SeedBackfillTimestamps400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "items required"},
+		}, nil
+	}
+	items := make([]seed.TimestampItem, 0, len(req.Body.Items))
+	for _, it := range req.Body.Items {
+		row := seed.TimestampItem{
+			Kind:      seed.TimestampKind(it.Kind),
+			ID:        uuid.UUID(it.Id),
+			CreatedAt: it.CreatedAt,
+		}
+		if it.UpdatedAt != nil {
+			row.UpdatedAt = it.UpdatedAt
+		}
+		items = append(items, row)
+	}
+	result, err := s.seedAdmin.BackfillTimestamps(ctx, nil, caller.UserRef, items)
+	if err != nil {
+		if errors.Is(err, seed.ErrTimestampsBatchTooLarge) {
+			return openapi.SeedBackfillTimestamps400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.SeedBackfillTimestamps200JSONResponse{
+		AssetUpdated:     result.AssetUpdated,
+		PostUpdated:      result.PostUpdated,
+		CommentUpdated:   result.CommentUpdated,
+		SkippedUnknownId: result.SkippedUnknownID,
+	}, nil
+}
+
+func (s *apiServer) SeedCreateComment(ctx context.Context, req openapi.SeedCreateCommentRequestObject) (openapi.SeedCreateCommentResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedCreateComment401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedCreateComment403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || req.Body.Body == "" {
+		return openapi.SeedCreateComment400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "body required"},
+		}, nil
+	}
+	in := seed.CommentInput{
+		TargetKind:    seed.CommentTargetKind(req.Body.TargetKind),
+		TargetID:      uuid.UUID(req.Body.TargetId),
+		AuthorUserRef: req.Body.AuthorUserRef,
+		Body:          req.Body.Body,
+	}
+	if req.Body.Id != nil {
+		id := uuid.UUID(*req.Body.Id)
+		in.ID = &id
+	}
+	if req.Body.ParentId != nil {
+		pid := uuid.UUID(*req.Body.ParentId)
+		in.ParentID = &pid
+	}
+	if req.Body.BodyHtml != nil {
+		in.BodyHTML = *req.Body.BodyHtml
+	}
+	if req.Body.AnnotationType != nil {
+		s := string(*req.Body.AnnotationType)
+		in.AnnotationType = &s
+	}
+	if req.Body.AnnotationData != nil {
+		// AnnotationData is a freeform map per the openapi spec.
+		// Re-marshal to []byte for sqlc's jsonb column.
+		if b, err := json.Marshal(*req.Body.AnnotationData); err == nil {
+			in.AnnotationData = b
+		}
+	}
+	if req.Body.CreatedAt != nil {
+		in.CreatedAt = req.Body.CreatedAt
+	}
+	result, err := s.seedAdmin.CreateComment(ctx, nil, caller.UserRef, in)
+	if err != nil {
+		switch {
+		case errors.Is(err, seed.ErrTargetNotFound):
+			return openapi.SeedCreateComment404JSONResponse{Error: "comment target not found"}, nil
+		case errors.Is(err, seed.ErrAuthorNotFound):
+			return openapi.SeedCreateComment404JSONResponse{Error: "forged author user not found"}, nil
+		}
+		return nil, err
+	}
+	apiComment := seedResultToAPI(result)
+	if result.AlreadyExisted {
+		return openapi.SeedCreateComment200JSONResponse(apiComment), nil
+	}
+	return openapi.SeedCreateComment201JSONResponse(apiComment), nil
+}
+
+func seedResultToAPI(r seed.CommentResult) openapi.Comment {
+	out := openapi.Comment{
+		Id:            openapi_types.UUID(r.ID),
+		TargetKind:    openapi.CommentTargetKind(r.TargetKind),
+		TargetId:      openapi_types.UUID(r.TargetID),
+		RootId:        openapi_types.UUID(r.RootID),
+		Depth:         int(r.Depth),
+		AuthorUserRef: r.AuthorUserRef,
+		Body:          r.Body,
+		BodyHtml:      r.BodyHTML,
+		LikeCount:     r.LikeCount,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}
+	if r.ParentID != nil {
+		pid := openapi_types.UUID(*r.ParentID)
+		out.ParentId = &pid
+	}
+	if r.AnnotationType != nil {
+		at := openapi.CommentAnnotationType(*r.AnnotationType)
+		out.AnnotationType = &at
+	}
+	if len(r.AnnotationData) > 0 {
+		var m map[string]interface{}
+		if err := json.Unmarshal(r.AnnotationData, &m); err == nil {
+			out.AnnotationData = &m
+		}
 	}
 	return out
 }

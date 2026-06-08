@@ -59,6 +59,13 @@ const (
 	// the audit records the operator decision after commit.
 	EventFederationOutboxRequeued         = "federation.outbox.requeued"
 	EventFederationPeerCascadeCancelled   = "federation.peer.cascade_cancelled"
+
+	// Demo-seed loader events (post-1.22.D dogfood unblock).
+	// Both gated on system.admin; emitted by the apply-side
+	// script the seed agent owns. Visible in the admin audit
+	// log so operators can see what was rewritten vs created.
+	EventAdminSeedTimestampsBackfilled = "admin.seed.timestamps_backfilled"
+	EventAdminSeedCommentCreated       = "admin.seed.comment_created"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -300,6 +307,46 @@ func (r *Recorder) PeerCascadeCancelled(
 		"cancelled_count": cancelledCount,
 	}
 	r.write(ctx, EventFederationPeerCascadeCancelled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedTimestampsBackfilled records an
+// admin.seed.timestamps_backfilled event. One per call;
+// captures per-kind counts so operators can later answer
+// "what rows did the seed loader rewrite?" without scanning
+// every row.
+func (r *Recorder) SeedTimestampsBackfilled(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	assetN, postN, commentN, skippedN int,
+) {
+	meta := map[string]any{
+		"asset_updated":      assetN,
+		"post_updated":       postN,
+		"comment_updated":    commentN,
+		"skipped_unknown_id": skippedN,
+	}
+	r.write(ctx, EventAdminSeedTimestampsBackfilled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedCommentCreated records an admin.seed.comment_created
+// event. One per forged comment. Helps operators distinguish
+// seeded vs organic comments in the audit log when
+// investigating later.
+func (r *Recorder) SeedCommentCreated(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	commentID, targetKind, targetID string,
+	forgedAuthorRef int64,
+) {
+	meta := map[string]any{
+		"comment_id":        commentID,
+		"target_kind":       targetKind,
+		"target_id":         targetID,
+		"forged_author_ref": forgedAuthorRef,
+	}
+	r.write(ctx, EventAdminSeedCommentCreated, nil, &actorUserRef, ctxFromRequest(req), meta)
 }
 
 // EmissionSkipped records a federation.emission.skipped event

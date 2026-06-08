@@ -1758,6 +1758,104 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/seed/timestamps:
+    post:
+      operationId: seedBackfillTimestamps
+      summary: Bulk-backfill created_at / updated_at for seeded entities
+      description: |
+        Operator-tooling endpoint for the demo-seed loader
+        (see `seed/SEED_INSTRUCTIONS.md`). NOT for general
+        operator use — gated on `system.admin`; not surfaced
+        in the admin UI.
+
+        Accepts an array of (kind, id, created_at, updated_at,
+        last_reviewed_at?) tuples and bulk-updates the
+        corresponding rows in `assets` / `posts` / `comments`.
+        Idempotent: re-running the same payload produces the
+        same end state (UPDATE stamps the same value twice).
+
+        Cap: 1,000 items per request. Larger seeds split into
+        multiple calls.
+
+        Emits ONE `admin.seed.timestamps_backfilled` audit
+        event per call summarising per-kind counts.
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedTimestampsRequest" }
+      responses:
+        "200":
+          description: Backfill applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedTimestampsResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/seed/comments:
+    post:
+      operationId: seedCreateComment
+      summary: Create a comment with forged author + optional created_at
+      description: |
+        Operator-tooling endpoint for the demo-seed loader.
+        NOT for general operator use — gated on `system.admin`;
+        not surfaced in the admin UI.
+
+        Creates a single comment with author_user_ref forged to
+        the supplied user (the regular `POST /posts/{id}/comments`
+        stamps the caller as author, which is wrong for seeding
+        per-post reviewer voices).
+
+        Idempotent when the caller supplies a stable `id`: a
+        re-run with the same id returns 200 with the existing
+        row instead of 409 — apply scripts can re-run safely.
+
+        Emits one `admin.seed.comment_created` audit per call.
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedCommentRequest" }
+      responses:
+        "201":
+          description: Comment created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "200":
+          description: |
+            Idempotent re-run — the supplied `id` already
+            exists; the existing row is returned unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Either the target object (post / asset / collection)
+            or the supplied author user does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /account/password:
     put:
       operationId: changeMyPassword
@@ -8573,6 +8671,102 @@ components:
         cancelled_count:
           type: integer
           description: Number of outbox rows transitioned from queued to cancelled.
+
+    SeedTimestampsItem:
+      type: object
+      required: [kind, id, created_at]
+      properties:
+        kind:
+          type: string
+          enum: [asset, post, comment]
+          description: Domain table to UPDATE.
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Defaults to created_at when omitted.
+
+    SeedTimestampsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/SeedTimestampsItem" }
+
+    SeedTimestampsResult:
+      type: object
+      required: [asset_updated, post_updated, comment_updated, skipped_unknown_id]
+      properties:
+        asset_updated: { type: integer }
+        post_updated: { type: integer }
+        comment_updated: { type: integer }
+        skipped_unknown_id:
+          type: integer
+          description: |
+            Items whose `id` didn't match any existing row.
+            Apply scripts treat this as a soft failure
+            (operator log + continue).
+
+    SeedCommentRequest:
+      type: object
+      required: [target_kind, target_id, author_user_ref, body]
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional stable UUID for idempotent re-runs. When
+            omitted the server generates one.
+        target_kind:
+          type: string
+          enum: [post, asset, collection]
+        target_id: { type: string, format: uuid }
+        author_user_ref:
+          type: integer
+          format: int64
+          description: |
+            Forged author. Must reference an existing
+            `user.ref`. The seed loader uses this to attribute
+            comments to per-post reviewer voices distinct from
+            the operator running apply.
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional parent comment. When set, depth +
+            root_id are derived from the parent (same logic
+            as the public CreateComment path).
+        body: { type: string, minLength: 1 }
+        body_html:
+          type: string
+          nullable: true
+          description: |
+            Defaults to empty (matches the local CreateComment
+            path; the frontend renders `body` directly with
+            whitespace-pre-wrap).
+        annotation_type:
+          type: string
+          enum: [point, rect, timestamp, frame, whiteboard, text-range]
+          nullable: true
+        annotation_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Optional creation timestamp. Defaults to NOW()
+            when omitted. The seed loader uses this to align
+            comment timeline with the 14-month interlaced feed.
 
     FederationShareCreate:
       type: object

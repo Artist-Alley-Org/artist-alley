@@ -260,6 +260,16 @@ func (*PanicShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLic
 	panic("PanicShim: ValidateAdminLicense called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SeedCreateComment panics by default; test shims override.
+func (*PanicShim) SeedCreateComment(context.Context, openapi.SeedCreateCommentRequestObject) (openapi.SeedCreateCommentResponseObject, error) {
+	panic("PanicShim: SeedCreateComment called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SeedBackfillTimestamps panics by default; test shims override.
+func (*PanicShim) SeedBackfillTimestamps(context.Context, openapi.SeedBackfillTimestampsRequestObject) (openapi.SeedBackfillTimestampsResponseObject, error) {
+	panic("PanicShim: SeedBackfillTimestamps called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAIConfig panics by default; test shims override.
 func (*PanicShim) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
 	panic("PanicShim: GetAIConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
