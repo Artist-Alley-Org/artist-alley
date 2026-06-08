@@ -66,6 +66,7 @@ const (
 	// log so operators can see what was rewritten vs created.
 	EventAdminSeedTimestampsBackfilled = "admin.seed.timestamps_backfilled"
 	EventAdminSeedCommentCreated       = "admin.seed.comment_created"
+	EventAdminSeedUserCreated          = "admin.seed.user_created"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -327,6 +328,23 @@ func (r *Recorder) SeedTimestampsBackfilled(
 		"skipped_unknown_id": skippedN,
 	}
 	r.write(ctx, EventAdminSeedTimestampsBackfilled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedUserCreated records an admin.seed.user_created event.
+// One per forged user. Helps operators distinguish seeded vs
+// organic users in the audit log when investigating later.
+func (r *Recorder) SeedUserCreated(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	userRef int64,
+	username string,
+) {
+	meta := map[string]any{
+		"user_ref": userRef,
+		"username": username,
+	}
+	r.write(ctx, EventAdminSeedUserCreated, nil, &actorUserRef, ctxFromRequest(req), meta)
 }
 
 // SeedCommentCreated records an admin.seed.comment_created

@@ -40,6 +40,26 @@ UPDATE comments c
             updated_at timestamptz)
  WHERE c.id = u.id;
 
+-- name: SeedInsertUser :one
+-- Forged username + optional password (NULL when omitted —
+-- user can't log in but can be referenced as an actor on
+-- posts/comments) + optional created_at. ON CONFLICT
+-- (username) DO NOTHING + caller re-fetches via
+-- SeedGetUserByUsername when 0 rows returned — that's how
+-- idempotent re-runs surface the existing row to the client.
+INSERT INTO "user" (
+    username, password, fullname, email, usergroup, approved, created
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (username) DO NOTHING
+RETURNING ref, username, fullname, email, usergroup, approved, created;
+
+-- name: SeedGetUserByUsername :one
+-- Re-fetch path for idempotent SeedInsertUser conflicts.
+SELECT ref, username, fullname, email, usergroup, approved, created
+FROM "user"
+WHERE username = $1;
+
 -- name: SeedAuthorExists :one
 SELECT 1 AS ok FROM "user" WHERE ref = $1;
 

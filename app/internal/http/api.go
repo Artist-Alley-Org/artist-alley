@@ -329,6 +329,13 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		pool,
 		auditRec.SeedTimestampsBackfilled,
 		auditRec.SeedCommentCreated,
+		auditRec.SeedUserCreated,
+		// Password hasher closes over the legacy scramble key
+		// — same path the setup flow + the bootstrap package
+		// use for the initial admin's password.
+		func(plaintext string) (string, error) {
+			return auth.HashPassword(plaintext, cfg.ScrambleKey)
+		},
 	)
 
 	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
@@ -1690,6 +1697,66 @@ func (s *apiServer) SeedBackfillTimestamps(ctx context.Context, req openapi.Seed
 		CommentUpdated:   result.CommentUpdated,
 		SkippedUnknownId: result.SkippedUnknownID,
 	}, nil
+}
+
+func (s *apiServer) SeedCreateUser(ctx context.Context, req openapi.SeedCreateUserRequestObject) (openapi.SeedCreateUserResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedCreateUser401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedCreateUser403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || req.Body.Username == "" {
+		return openapi.SeedCreateUser400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "username required"},
+		}, nil
+	}
+	in := seed.UserInput{
+		Username: req.Body.Username,
+		Approved: true,
+	}
+	if req.Body.Fullname != nil {
+		in.Fullname = req.Body.Fullname
+	}
+	if req.Body.Email != nil {
+		s := string(*req.Body.Email)
+		in.Email = &s
+	}
+	if req.Body.Password != nil {
+		in.Password = req.Body.Password
+	}
+	if req.Body.Usergroup != nil {
+		in.Usergroup = req.Body.Usergroup
+	}
+	if req.Body.Approved != nil {
+		in.Approved = *req.Body.Approved
+	}
+	if req.Body.CreatedAt != nil {
+		in.CreatedAt = req.Body.CreatedAt
+	}
+	result, err := s.seedAdmin.CreateUser(ctx, nil, caller.UserRef, in)
+	if err != nil {
+		if errors.Is(err, seed.ErrPasswordHasherNotWired) {
+			return openapi.SeedCreateUser400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		return nil, err
+	}
+	resp := openapi.SeedUserResult{
+		Ref:            result.Ref,
+		Username:       result.Username,
+		AlreadyExisted: result.AlreadyExisted,
+	}
+	if result.AlreadyExisted {
+		return openapi.SeedCreateUser200JSONResponse(resp), nil
+	}
+	return openapi.SeedCreateUser201JSONResponse(resp), nil
 }
 
 func (s *apiServer) SeedCreateComment(ctx context.Context, req openapi.SeedCreateCommentRequestObject) (openapi.SeedCreateCommentResponseObject, error) {

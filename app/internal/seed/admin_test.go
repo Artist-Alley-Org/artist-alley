@@ -106,7 +106,7 @@ func seedFixture(t *testing.T, pool *pgxpool.Pool) (userRef int64, postID, asset
 func TestBackfillTimestamps_HappyPath_PerKindCountsCorrect(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, assetID := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 	res, err := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -141,7 +141,7 @@ func TestBackfillTimestamps_HappyPath_PerKindCountsCorrect(t *testing.T) {
 func TestBackfillTimestamps_Idempotent_SameEndStateAfterRerun(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 
 	first, _ := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -158,7 +158,7 @@ func TestBackfillTimestamps_Idempotent_SameEndStateAfterRerun(t *testing.T) {
 func TestBackfillTimestamps_UnknownID_CountedAsSkipped_NoError(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, _, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 
 	bogus := uuid.New()
 	res, err := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -174,7 +174,7 @@ func TestBackfillTimestamps_UnknownID_CountedAsSkipped_NoError(t *testing.T) {
 
 func TestBackfillTimestamps_BatchOverCap_ReturnsErr(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	items := make([]seed.TimestampItem, 1001)
 	for i := range items {
 		items[i] = seed.TimestampItem{Kind: seed.TimestampKindPost, ID: uuid.New(), CreatedAt: time.Now()}
@@ -190,7 +190,7 @@ func TestBackfillTimestamps_BatchOverCap_ReturnsErr(t *testing.T) {
 func TestCreateComment_HappyPath_RespectsForcedAuthorAndCreatedAt(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 
 	res, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
@@ -217,7 +217,7 @@ func TestCreateComment_HappyPath_RespectsForcedAuthorAndCreatedAt(t *testing.T) 
 func TestCreateComment_IdempotentOnSuppliedID(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	commentID := uuid.New()
 
 	first, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
@@ -258,7 +258,7 @@ func TestCreateComment_IdempotentOnSuppliedID(t *testing.T) {
 func TestCreateComment_UnknownAuthor_ReturnsErrAuthorNotFound(t *testing.T) {
 	pool := openTestPool(t)
 	_, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	_, err := h.CreateComment(context.Background(), nil, 0, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
 		TargetID:      postID,
@@ -273,7 +273,7 @@ func TestCreateComment_UnknownAuthor_ReturnsErrAuthorNotFound(t *testing.T) {
 func TestCreateComment_UnknownTarget_ReturnsErrTargetNotFound(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, _, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 	_, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
 		TargetID:      uuid.New(), // never seeded
@@ -288,7 +288,7 @@ func TestCreateComment_UnknownTarget_ReturnsErrTargetNotFound(t *testing.T) {
 func TestCreateComment_ReplyToParent_RootIDAndDepthDerived(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
 
 	root, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
@@ -315,5 +315,154 @@ func TestCreateComment_ReplyToParent_RootIDAndDepthDerived(t *testing.T) {
 	}
 	if reply.Depth != 1 || reply.RootID != root.ID {
 		t.Errorf("reply: depth=%d root_id=%v want depth=1 root_id=%v", reply.Depth, reply.RootID, root.ID)
+	}
+}
+
+// --- user forge ------------------------------------------------------
+
+// fakeHasher exposes a known-input/known-output hash so the
+// test can verify the password column landed via the hash
+// path (not as plaintext).
+func fakeHasher(plaintext string) (string, error) {
+	return "hashed:" + plaintext, nil
+}
+
+func TestCreateUser_HappyPath_PasswordHashedAndPersisted(t *testing.T) {
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher)
+	username := "seed-user-" + randHex(4)
+	pw := "Sup3rs3cret"
+	fullname := "Sofia Hernandez"
+
+	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: username,
+		Fullname: &fullname,
+		Password: &pw,
+		Approved: true,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, res.Ref)
+	})
+	if res.AlreadyExisted {
+		t.Error("fresh insert; AlreadyExisted should be false")
+	}
+	if res.Username != username {
+		t.Errorf("username: got %q want %q", res.Username, username)
+	}
+	if res.Ref == 0 {
+		t.Error("ref: should be assigned")
+	}
+
+	// Verify the password column carries the hash, NOT the
+	// plaintext. The seed pattern is "operator-supplied plaintext
+	// → hash via the configured hasher → persist hash."
+	var got *string
+	_ = pool.QueryRow(context.Background(),
+		`SELECT password FROM "user" WHERE ref = $1`, res.Ref,
+	).Scan(&got)
+	if got == nil || *got != "hashed:"+pw {
+		t.Errorf("password column: got %v want %q", got, "hashed:"+pw)
+	}
+}
+
+func TestCreateUser_NoPassword_PersistsNULL(t *testing.T) {
+	// Fictional seed users that exist only as actors (never log
+	// in) should have password=NULL — the seed loader's common
+	// case.
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil) // hasher unused → no password
+	username := "seed-actor-" + randHex(4)
+
+	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: username,
+		Approved: true,
+		// No Password
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, res.Ref)
+	})
+
+	var got *string
+	_ = pool.QueryRow(context.Background(),
+		`SELECT password FROM "user" WHERE ref = $1`, res.Ref,
+	).Scan(&got)
+	if got != nil {
+		t.Errorf("password column: got %q want NULL", *got)
+	}
+}
+
+func TestCreateUser_PasswordWithoutHasher_ReturnsErr(t *testing.T) {
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil) // hasher nil
+	pw := "Sup3rs3cret"
+
+	_, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: "seed-user-" + randHex(4),
+		Password: &pw,
+		Approved: true,
+	})
+	if err != seed.ErrPasswordHasherNotWired {
+		t.Errorf("err: got %v want ErrPasswordHasherNotWired", err)
+	}
+}
+
+func TestCreateUser_IdempotentOnUsername(t *testing.T) {
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher)
+	username := "seed-user-idem-" + randHex(4)
+
+	first, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: username,
+		Approved: true,
+	})
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, first.Ref)
+	})
+	if first.AlreadyExisted {
+		t.Error("first insert; AlreadyExisted should be false")
+	}
+
+	second, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: username,
+		Approved: true,
+	})
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if !second.AlreadyExisted {
+		t.Error("re-run; AlreadyExisted should be true")
+	}
+	if second.Ref != first.Ref {
+		t.Errorf("idempotent ref: got %d want %d", second.Ref, first.Ref)
+	}
+}
+
+func TestCreateUser_RespectsCreatedAt(t *testing.T) {
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	pastT := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+
+	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username:  "seed-user-pastt-" + randHex(4),
+		Approved:  true,
+		CreatedAt: &pastT,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, res.Ref)
+	})
+	if !res.CreatedAt.Equal(pastT) {
+		t.Errorf("created_at: got %v want %v", res.CreatedAt, pastT)
 	}
 }

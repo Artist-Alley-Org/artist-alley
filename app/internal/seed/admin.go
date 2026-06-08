@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,20 +32,44 @@ type AuditTimestampsHook func(ctx context.Context, req *http.Request, actorUserR
 // audit.Recorder.SeedCommentCreated. nil-safe.
 type AuditCommentHook func(ctx context.Context, req *http.Request, actorUserRef int64, commentID, targetKind, targetID string, forgedAuthorRef int64)
 
-// AdminHandler owns POST /admin/seed/timestamps + /comments.
+// AuditUserHook is the cross-package contract for the
+// user-created audit. Boot wires to
+// audit.Recorder.SeedUserCreated. nil-safe.
+type AuditUserHook func(ctx context.Context, req *http.Request, actorUserRef int64, userRef int64, username string)
+
+// PasswordHasher is the cross-package contract the seed
+// handler uses to hash plaintext passwords supplied via
+// SeedUserRequest.Password. Boot wires it to a closure over
+// auth.HashPassword + the legacy scramble key (the same path
+// the setup flow uses for the initial admin). nil-safe — when
+// not wired AND a password is supplied, the handler returns a
+// clear error rather than silently writing the plaintext.
+type PasswordHasher func(plaintext string) (string, error)
+
+// AdminHandler owns POST /admin/seed/timestamps + /comments + /users.
 type AdminHandler struct {
 	pool       *pgxpool.Pool
 	q          *Queries
 	auditTimes AuditTimestampsHook
 	auditComm  AuditCommentHook
+	auditUser  AuditUserHook
+	hashPwd    PasswordHasher
 }
 
-func NewAdminHandler(pool *pgxpool.Pool, auditTimes AuditTimestampsHook, auditComm AuditCommentHook) *AdminHandler {
+func NewAdminHandler(
+	pool *pgxpool.Pool,
+	auditTimes AuditTimestampsHook,
+	auditComm AuditCommentHook,
+	auditUser AuditUserHook,
+	hashPwd PasswordHasher,
+) *AdminHandler {
 	return &AdminHandler{
 		pool:       pool,
 		q:          New(pool),
 		auditTimes: auditTimes,
 		auditComm:  auditComm,
+		auditUser:  auditUser,
+		hashPwd:    hashPwd,
 	}
 }
 
@@ -334,6 +359,148 @@ func (h *AdminHandler) CreateComment(ctx context.Context, req *http.Request, act
 	}
 	// Convert the insert RETURNING row to the result shape.
 	return seedInsertRowToResult(row), nil
+}
+
+// --- user forge ------------------------------------------------------
+
+// UserInput is the typed argument shape for CreateUser.
+// Username is the idempotency key — re-runs with the same
+// username return the existing row with AlreadyExisted=true.
+type UserInput struct {
+	Username  string
+	Fullname  *string
+	Email     *string
+	Password  *string // nil → user has no password (can't log in)
+	Usergroup *int64  // nil → defaults to 2 (regular user) inside the query
+	Approved  bool    // defaults to true in handler when not explicitly false
+	CreatedAt *time.Time
+}
+
+// UserResult mirrors the existing user row.
+type UserResult struct {
+	Ref            int64
+	Username       string
+	Fullname       *string
+	Email          *string
+	Usergroup      *int64
+	Approved       bool
+	CreatedAt      time.Time
+	AlreadyExisted bool
+}
+
+// ErrPasswordHasherNotWired is returned when the caller supplies
+// a plaintext password but the handler wasn't constructed with a
+// hasher. Fails loud rather than silently writing plaintext.
+var ErrPasswordHasherNotWired = errors.New("seed: password hasher not wired; cannot persist password")
+
+// CreateUser forges a user with the supplied username + optional
+// password + optional created_at. Idempotent on username — re-
+// runs return the existing row with AlreadyExisted=true.
+//
+// When Password is non-nil, the configured PasswordHasher
+// hashes it; the on-disk column carries the hash (matches the
+// regular CreateUser path). When nil, the password column is
+// NULL → the user can't log in but can be referenced as an
+// actor on posts / comments / activities.
+func (h *AdminHandler) CreateUser(ctx context.Context, req *http.Request, actorUserRef int64, in UserInput) (UserResult, error) {
+	if strings.TrimSpace(in.Username) == "" {
+		return UserResult{}, errors.New("seed: username is required")
+	}
+
+	var passwordHash *string
+	if in.Password != nil && *in.Password != "" {
+		if h.hashPwd == nil {
+			return UserResult{}, ErrPasswordHasherNotWired
+		}
+		hash, err := h.hashPwd(*in.Password)
+		if err != nil {
+			return UserResult{}, fmt.Errorf("seed: hash password: %w", err)
+		}
+		passwordHash = &hash
+	}
+
+	usergroup := in.Usergroup
+	if usergroup == nil {
+		ug := int64(2) // regular user — admin-tier (3) is for the bootstrap admin only
+		usergroup = &ug
+	}
+
+	approved := int64(1)
+	if !in.Approved {
+		approved = 0
+	}
+
+	created := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	if in.CreatedAt != nil {
+		created = pgtype.Timestamptz{Time: *in.CreatedAt, Valid: true}
+	}
+
+	username := in.Username
+	row, err := h.q.SeedInsertUser(ctx, SeedInsertUserParams{
+		Username:  &username,
+		Password:  passwordHash,
+		Fullname:  in.Fullname,
+		Email:     in.Email,
+		Usergroup: usergroup,
+		Approved:  approved,
+		Created:   created,
+	})
+	already := false
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return UserResult{}, fmt.Errorf("seed: insert user: %w", err)
+		}
+		// ON CONFLICT DO NOTHING returned 0 rows — re-fetch the
+		// existing row so the response shape is consistent with
+		// a fresh insert.
+		already = true
+		existing, err := h.q.SeedGetUserByUsername(ctx, &username)
+		if err != nil {
+			return UserResult{}, fmt.Errorf("seed: re-read after username conflict: %w", err)
+		}
+		return seedUserRowToResult(existing, true), nil
+	}
+
+	if !already && h.auditUser != nil {
+		h.auditUser(ctx, req, actorUserRef, row.Ref, username)
+	}
+	return seedInsertUserRowToResult(row), nil
+}
+
+func seedInsertUserRowToResult(r SeedInsertUserRow) UserResult {
+	out := UserResult{
+		Ref:            r.Ref,
+		Fullname:       r.Fullname,
+		Email:          r.Email,
+		Usergroup:      r.Usergroup,
+		Approved:       r.Approved == 1,
+		AlreadyExisted: false,
+	}
+	if r.Username != nil {
+		out.Username = *r.Username
+	}
+	if r.Created.Valid {
+		out.CreatedAt = r.Created.Time
+	}
+	return out
+}
+
+func seedUserRowToResult(r SeedGetUserByUsernameRow, already bool) UserResult {
+	out := UserResult{
+		Ref:            r.Ref,
+		Fullname:       r.Fullname,
+		Email:          r.Email,
+		Usergroup:      r.Usergroup,
+		Approved:       r.Approved == 1,
+		AlreadyExisted: already,
+	}
+	if r.Username != nil {
+		out.Username = *r.Username
+	}
+	if r.Created.Valid {
+		out.CreatedAt = r.Created.Time
+	}
+	return out
 }
 
 // --- helpers ---------------------------------------------------------

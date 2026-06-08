@@ -173,6 +173,38 @@ func (q *Queries) SeedGetCommentParentInfo(ctx context.Context, id pgtype.UUID) 
 	return i, err
 }
 
+const seedGetUserByUsername = `-- name: SeedGetUserByUsername :one
+SELECT ref, username, fullname, email, usergroup, approved, created
+FROM "user"
+WHERE username = $1
+`
+
+type SeedGetUserByUsernameRow struct {
+	Ref       int64
+	Username  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Approved  int64
+	Created   pgtype.Timestamptz
+}
+
+// Re-fetch path for idempotent SeedInsertUser conflicts.
+func (q *Queries) SeedGetUserByUsername(ctx context.Context, username *string) (SeedGetUserByUsernameRow, error) {
+	row := q.db.QueryRow(ctx, seedGetUserByUsername, username)
+	var i SeedGetUserByUsernameRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Approved,
+		&i.Created,
+	)
+	return i, err
+}
+
 const seedInsertComment = `-- name: SeedInsertComment :one
 INSERT INTO comments (
     id, target_kind, target_id, parent_id, root_id, depth,
@@ -246,6 +278,64 @@ func (q *Queries) SeedInsertComment(ctx context.Context, arg SeedInsertCommentPa
 		&i.PeerID,
 		&i.ActorUri,
 		&i.ActivityUri,
+	)
+	return i, err
+}
+
+const seedInsertUser = `-- name: SeedInsertUser :one
+INSERT INTO "user" (
+    username, password, fullname, email, usergroup, approved, created
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (username) DO NOTHING
+RETURNING ref, username, fullname, email, usergroup, approved, created
+`
+
+type SeedInsertUserParams struct {
+	Username  *string
+	Password  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Approved  int64
+	Created   pgtype.Timestamptz
+}
+
+type SeedInsertUserRow struct {
+	Ref       int64
+	Username  *string
+	Fullname  *string
+	Email     *string
+	Usergroup *int64
+	Approved  int64
+	Created   pgtype.Timestamptz
+}
+
+// Forged username + optional password (NULL when omitted —
+// user can't log in but can be referenced as an actor on
+// posts/comments) + optional created_at. ON CONFLICT
+// (username) DO NOTHING + caller re-fetches via
+// SeedGetUserByUsername when 0 rows returned — that's how
+// idempotent re-runs surface the existing row to the client.
+func (q *Queries) SeedInsertUser(ctx context.Context, arg SeedInsertUserParams) (SeedInsertUserRow, error) {
+	row := q.db.QueryRow(ctx, seedInsertUser,
+		arg.Username,
+		arg.Password,
+		arg.Fullname,
+		arg.Email,
+		arg.Usergroup,
+		arg.Approved,
+		arg.Created,
+	)
+	var i SeedInsertUserRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Fullname,
+		&i.Email,
+		&i.Usergroup,
+		&i.Approved,
+		&i.Created,
 	)
 	return i, err
 }

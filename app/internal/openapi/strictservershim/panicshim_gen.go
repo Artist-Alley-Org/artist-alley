@@ -270,6 +270,11 @@ func (*PanicShim) SeedBackfillTimestamps(context.Context, openapi.SeedBackfillTi
 	panic("PanicShim: SeedBackfillTimestamps called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SeedCreateUser panics by default; test shims override.
+func (*PanicShim) SeedCreateUser(context.Context, openapi.SeedCreateUserRequestObject) (openapi.SeedCreateUserResponseObject, error) {
+	panic("PanicShim: SeedCreateUser called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAIConfig panics by default; test shims override.
 func (*PanicShim) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
 	panic("PanicShim: GetAIConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

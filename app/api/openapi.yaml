@@ -1819,6 +1819,58 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/seed/users:
+    post:
+      operationId: seedCreateUser
+      summary: Create a user with optional password + created_at
+      description: |
+        Operator-tooling endpoint for the demo-seed loader.
+        NOT for general operator use — gated on `system.admin`;
+        not surfaced in the admin UI.
+
+        Creates a single user. Idempotency key is the supplied
+        `username` (UNIQUE in the user table) — a re-run with
+        the same username returns 200 with the existing row
+        instead of 409, so apply scripts can re-run safely
+        without first checking for prior state.
+
+        Apply scripts build a local username→ref map from the
+        returned `ref` and use it when seeding posts /
+        collections / comments that reference users by ref.
+
+        Emits one `admin.seed.user_created` audit per actual
+        insert (re-runs skip the audit — same pattern as
+        `/admin/seed/comments`).
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedUserRequest" }
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedUserResult" }
+        "200":
+          description: |
+            Idempotent re-run — the supplied `username` already
+            exists; the existing row's ref is returned
+            unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedUserResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/seed/comments:
     post:
       operationId: seedCreateComment
@@ -8729,6 +8781,77 @@ components:
             Items whose `id` didn't match any existing row.
             Apply scripts treat this as a soft failure
             (operator log + continue).
+
+    SeedUserRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: |
+            Stable identifier across apply-script re-runs.
+            UNIQUE in the `user` table — duplicate request
+            returns 200 with the existing row instead of 409.
+        fullname:
+          type: string
+          maxLength: 100
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        password:
+          type: string
+          nullable: true
+          description: |
+            Optional plaintext password to hash + persist. When
+            omitted, the user is created with no password (the
+            `password` column is NULL) so they can't log in —
+            useful for fictional seed users who exist as actors
+            on posts/comments but never sign in.
+        usergroup:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Legacy permission group. Defaults to 2 (regular
+            user) when omitted. Set to 3 only for admin-tier
+            seed users; the seed loader uses 2 for everything
+            else by convention.
+        approved:
+          type: boolean
+          default: true
+          description: |
+            When true, the user is approved at create time
+            (matching the regular CreateUser path). Seed users
+            should almost always be approved; pending-approval
+            state is a normal signup-flow concern, not a seed
+            concern.
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Optional creation timestamp. Defaults to NOW() when
+            omitted. The seed loader uses this to align user
+            "joined" dates with the 14-month interlaced timeline.
+
+    SeedUserResult:
+      type: object
+      required: [ref, username, already_existed]
+      properties:
+        ref:
+          type: integer
+          format: int64
+          description: Server-assigned `user.ref` PK.
+        username: { type: string }
+        already_existed:
+          type: boolean
+          description: |
+            true on idempotent re-run (response status 200),
+            false on fresh insert (response status 201).
 
     SeedCommentRequest:
       type: object
