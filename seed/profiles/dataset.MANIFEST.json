@@ -1,40 +1,40 @@
 {
-  "generated_at": "2026-06-08T04:44:01Z",
-  "asset_count": 1269,
-  "total_bytes": 1008153415,
+  "generated_at": "2026-06-08T06:29:39Z",
+  "asset_count": 2026,
+  "total_bytes": 1211134312,
   "by_studio": {
-    "b": 563,
-    "a": 706,
-    "shared": 0
+    "b": 1109,
+    "shared": 107,
+    "a": 810
   },
   "by_layer": {
-    "A": 1007,
-    "B": 262
+    "A": 1609,
+    "B": 417
   },
   "by_type": {
-    "image": 800,
-    "3d": 200,
-    "font": 30,
-    "audio": 200,
+    "image": 1202,
+    "audio": 350,
+    "3d": 395,
+    "font": 35,
     "comic": 6,
-    "document": 28,
-    "video": 5
+    "document": 32,
+    "video": 6
   },
   "by_tier": {
-    "team": 787,
-    "restricted": 395,
-    "public": 87
+    "team": 1226,
+    "restricted": 623,
+    "public": 177
   },
   "studio_a": {
-    "asset_count": 706,
-    "bytes": 355175663
+    "asset_count": 917,
+    "bytes": 155476579
   },
   "studio_b": {
-    "asset_count": 563,
-    "bytes": 652977752
+    "asset_count": 1216,
+    "bytes": 1199432319
   },
   "demo": {
-    "asset_count": 1007,
-    "bytes": 17721061
+    "asset_count": 917,
+    "bytes": 155476579
   }
 }

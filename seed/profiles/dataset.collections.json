@@ -3,15 +3,15 @@
     "id": "d474272c-81ee-f3e4-c67b-352a06b9580c",
     "name": "Art Research",
     "studio_membership": [
-      "a"
+      "b"
     ]
   },
   {
     "id": "b116564d-e13c-83e4-5819-d46d23d7255c",
     "name": "Engine Core",
     "studio_membership": [
-      "a",
-      "b"
+      "b",
+      "shared"
     ]
   },
   {
@@ -26,6 +26,13 @@
     "name": "Heroes Archive",
     "studio_membership": [
       "b"
+    ]
+  },
+  {
+    "id": "0cbe1dc5-5b9b-5180-da79-e6c683a8161e",
+    "name": "Internet Reference",
+    "studio_membership": [
+      "shared"
     ]
   },
   {
@@ -60,7 +67,8 @@
     "id": "e6b21c7c-bb16-ca67-9fd1-0139261bd457",
     "name": "Project Echo",
     "studio_membership": [
-      "a"
+      "a",
+      "shared"
     ]
   },
   {
@@ -102,14 +110,13 @@
     "id": "b670fbbd-f2d5-34fc-9a66-cb1b39f33f51",
     "name": "Snapdex",
     "studio_membership": [
-      "a"
+      "b"
     ]
   },
   {
     "id": "adc26c86-7da1-2452-bf18-b5cc96bee204",
     "name": "Studio Library",
     "studio_membership": [
-      "a",
       "b"
     ]
   }

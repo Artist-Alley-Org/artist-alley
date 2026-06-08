@@ -89,15 +89,23 @@ from typing import Any
 # Studio split — by project
 # -----------------------------------------------------------------------------
 
+# site_a is dual-purpose: (1) Studio A in federation dogfood, (2) source for
+# the Phase 1.48 public demo sandboxes. That second purpose forces site_a
+# to be Layer A only (CC0 / CC-BY / OFL / public-domain) — no game-rip
+# references, no TCG IPs, no personal photos, no proprietary fonts.
+#
+# So Studio A's projects are limited to ORIGINAL work that's safe to ship
+# publicly. Reference material (Art Research, Snapdex) moves to Studio B.
 STUDIO_A_PROJECTS = {
     "Project Mirror",
     "Project Echo",
     "Project Citylight",
     "Project Compass",
-    "Art Research",
-    "Snapdex",
 }
 
+# Studio B is local-only: dogfood peer + your dev re-seed source. Carries
+# the IP-referenced and personal content (game rips, TCG cards, comics,
+# personal photos). Never shipped publicly.
 STUDIO_B_PROJECTS = {
     "Project Heroes",
     "Project Zoo",
@@ -107,11 +115,38 @@ STUDIO_B_PROJECTS = {
     "Hearthstone Archive",
     "MTG Archive",
     "Heroes Archive",
+    "Art Research",     # moved from A — game-rip references are Layer B
+    "Snapdex",          # moved from A — Pokemon IP, Layer B
 }
 
 # Engine Core is split — each studio takes a subset. Studio Library is split
 # by filename heuristic in `_split_engine_or_library`.
 SPLIT_PROJECTS = {"Engine Core", "Studio Library"}
+
+# Shared pack patterns — assets whose file_path matches any of these flow
+# to BOTH site_a and site_b as byte-identical duplicates. This is what
+# exercises CAS content-hash dedup across federation: same SHA-256 on both
+# instances, recognized as the same content when shared.
+#
+# CRITICAL: every pattern here must be Layer A (CC0 / CC-BY / OFL /
+# public domain). Shared content lands on site_a, which is the public
+# demo source — proprietary fonts ("Licensed from type foundry") and
+# unknown-license assets MUST stay out of this set.
+#
+# Removed from a prior iteration of this set:
+#   BOOKmanOpti-Bold/             "Licensed from type foundry" — proprietary
+#   cheltenham-condensed-bold_*/  license unclear
+#   Ultrawide/                    license unclear
+SHARED_PACK_PATTERNS: list[str] = [
+    "unpacked/kenney_prototype-textures",   # Kenney CC0
+    "unpacked/kenney_development-essentials",  # Kenney CC0
+    "unpacked/kenney_kenney-fonts",         # Kenney CC0
+    "unpacked/kenney_rpg-audio",            # Kenney CC0
+    "epub/",                                # Project Gutenberg PD
+    "Playwrite_DE_Grund/",                  # Google Fonts OFL
+    "Sono/",                                # Google Fonts OFL
+    "Wellfleet/",                           # Google Fonts OFL
+]
 
 # Brand workspaces: only Echo + Mirror become full workspaces (per ADR 0025);
 # the rest are tags only.
@@ -166,15 +201,61 @@ LARGE_FILE_WHITELIST: list[str] = [
 # Per-asset-type budget caps — applied AFTER pack trims. Enforces format-
 # coverage balance: keeps a representative sample of each viewer kind without
 # letting image-heavy Kenney packs dominate the demo experience.
+#
+# Caps are global (across all studios). Shared assets count toward each
+# studio's profile, so the per-site count = unique-to-site + shared.
 ASSET_TYPE_CAPS: dict[str, int] = {
-    "image": 800,        # was ~5,000; ~200 from each major pack source
-    "audio": 200,        # was ~412
-    "3d": 200,           # was ~392
-    "video": 15,
-    "comic": 6,
-    "document": 50,
-    "font": 30,
+    "image": 1200,
+    "audio": 350,
+    "3d": 400,
+    "video": 25,
+    "comic": 10,
+    "document": 100,
+    "font": 60,
 }
+
+# Asset bytes are reorganized by type on the destination archive. This map
+# turns the AA `asset_type` into the destination top-level folder. Original
+# pack structure is preserved under the type folder so attribution + source
+# context isn't lost.
+#
+#   unpacked/kenney_animal-pack-remastered/PNG/Pancakes/lion-walk1.png
+#                    ↓
+#   images/kenney_animal-pack-remastered/PNG/Pancakes/lion-walk1.png
+TYPE_FOLDER_MAP: dict[str, str] = {
+    "image": "images",
+    "audio": "audio",
+    "3d": "3d",
+    "video": "videos",       # plural — dodges a stale SMB cache entry on
+                             # /mnt/blackbox_archives/.../site_b/video that
+                             # showed up as a ghost dir after a failed run
+    "document": "documents",
+    "font": "fonts",
+    "comic": "comics",
+}
+
+# When the source path lives under "unpacked/" (Kenney packs), strip that
+# prefix on reorganization — it's noise from how the source dataset was
+# organized, not meaningful attribution.
+STRIPPABLE_PREFIXES: list[str] = [
+    "unpacked/",
+]
+
+
+def reorganize_path(asset_type: str, original_path: str) -> str:
+    """Compute the destination path under the typed-folder layout.
+
+    Drops any STRIPPABLE_PREFIXES from the start of the original path, then
+    prepends the asset_type's destination folder. Internet-fetched content
+    follows the same shape with its own subdirectories.
+    """
+    cleaned = original_path
+    for prefix in STRIPPABLE_PREFIXES:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+            break
+    type_folder = TYPE_FOLDER_MAP.get(asset_type, asset_type)
+    return f"{type_folder}/{cleaned}"
 
 # Project-level row caps applied AFTER per-pack TRIMS. Keeps Studio Library
 # (personal photos + reference docs + comics) from dominating the seed.
@@ -285,7 +366,12 @@ class AssetRecord:
     asset_type: str
     title: str
     description: str
-    file_path: str
+    file_path: str        # destination path under the typed-folder layout
+    source_path: str      # where the bytes live in the source dataset
+                          # (for populate_archive to copy from). For
+                          # internet-fetched, points at the local cache.
+    source_root: str      # 'local' or 'internet' — selects which root
+                          # populate_archive resolves source_path against
     file_extension: str
     file_size_bytes: int
     sensitivity_tier: str
@@ -396,12 +482,15 @@ def transform_row(row: dict[str, str]) -> AssetRecord | None:
     if file_size == 0:
         return None  # Skip zero-byte rows
 
+    source_path = row["file_path"]
     return AssetRecord(
         id=stable_uuid("asset", row["asset_id"]),
         asset_type=asset_type,
         title=(row.get("title") or "").strip() or row.get("filename", "untitled"),
         description=(row.get("description") or "").strip(),
-        file_path=row["file_path"],
+        file_path=reorganize_path(asset_type, source_path),
+        source_path=source_path,
+        source_root="local",
         file_extension=(row.get("file_format") or "").strip(),
         file_size_bytes=file_size,
         sensitivity_tier=sensitivity,
@@ -436,14 +525,25 @@ def transform_row(row: dict[str, str]) -> AssetRecord | None:
 
 
 def assign_studio(row: dict[str, str]) -> str:
+    # Shared-pack patterns take precedence: these assets flow to BOTH sites
+    # to exercise CAS dedup. Patterns are Layer A only — site_a can only
+    # hold Layer A content.
+    path = row.get("file_path", "")
+    if any(p in path for p in SHARED_PACK_PATTERNS):
+        return "shared"
+
     project = (row.get("project") or "").strip()
     if project in STUDIO_A_PROJECTS:
         return "a"
     if project in STUDIO_B_PROJECTS:
         return "b"
-    if project in SPLIT_PROJECTS:
-        return _split_engine_or_library(row)
-    return "shared"
+    # SPLIT_PROJECTS (Engine Core, Studio Library) and any unmapped project
+    # land on site_b. Engine Core has a mix of CC0 Kenney (already caught
+    # by SHARED_PACK_PATTERNS above) and proprietary fonts (BOOKmanOpti etc.
+    # — Layer B). Studio Library has personal photos + Dresden Files
+    # comics + non-PD reference docs (Layer B). All of that belongs on
+    # site_b only.
+    return "b"
 
 
 def _split_engine_or_library(row: dict[str, str]) -> str:
@@ -606,6 +706,78 @@ def derive_brand_workspaces(rows: list[AssetRecord]) -> list[dict[str, Any]]:
 
 
 # -----------------------------------------------------------------------------
+# Internet-fetched ingestion
+# -----------------------------------------------------------------------------
+
+def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
+    """Read seed/internet-fetched/MANIFEST.json (produced by fetch_gaps.py)
+    and turn each entry into an AssetRecord marked studio='shared' + layer='A'.
+
+    Returns empty list if the manifest doesn't exist yet (fetch_gaps not run)."""
+    manifest_path = internet_dir / "MANIFEST.json"
+    if not manifest_path.is_file():
+        print(f"  no internet manifest at {manifest_path}; skipping", file=sys.stderr)
+        return []
+
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entries = data.get("assets", [])
+    records: list[AssetRecord] = []
+
+    for entry in entries:
+        asset_type = entry.get("asset_type", "image")
+        local_path = entry["path"]
+        size = int(entry["size_bytes"])
+        title = entry["name"]
+        ext = Path(local_path).suffix.lstrip(".") or "bin"
+        # All internet content goes under <type>/internet/<original-filename>
+        # so it's easy to identify the provenance at a glance.
+        dest_path = f"{TYPE_FOLDER_MAP.get(asset_type, asset_type)}/internet/{Path(local_path).name}"
+
+        records.append(AssetRecord(
+            id=stable_uuid("asset", "internet", entry.get("sha256", local_path)),
+            asset_type=asset_type,
+            title=title,
+            description=entry.get("notes", "") or f"{title} — public-safe reference content.",
+            file_path=dest_path,
+            source_path=local_path,
+            source_root="internet",
+            file_extension=ext,
+            file_size_bytes=size,
+            sensitivity_tier="public",
+            archive_state="active",
+            owner_username="seed.bot",
+            collection_name="Internet Reference",
+            team_name="Reference",
+            brand_workspace=None,
+            tags=["reference", "public-domain", f"source:{entry.get('source', 'unknown').lower().replace(' ', '-')}"],
+            workflow_state="approved",
+            metadata={
+                "filename": Path(local_path).name,
+                "kind": asset_type,
+                "license": entry.get("license", ""),
+                "usage_rights": "All Use",
+                "acquisition_source": entry.get("source", ""),
+                "attribution": entry.get("attribution", ""),
+                "group_id": "",
+                "sha256": entry.get("sha256", ""),
+            },
+            field_values={},
+            external_id="",
+            review_notes=None,
+            reviewer_username=None,
+            created_at="2026-06-07T00:00:00Z",
+            updated_at="2026-06-07T00:00:00Z",
+            last_reviewed_at="2026-06-07T00:00:00Z",
+            license=entry.get("license", ""),
+            attribution=entry.get("attribution", ""),
+            layer="A",
+            studio="shared",
+        ))
+
+    return records
+
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -615,6 +787,9 @@ def main() -> int:
                         help="Path to artist-alley_dataset directory containing metadata.csv")
     parser.add_argument("--out", required=True, type=Path,
                         help="Output directory for profile JSONs")
+    parser.add_argument("--internet", type=Path,
+                        default=Path("seed/internet-fetched"),
+                        help="Directory containing internet-fetched MANIFEST.json")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print summary stats; don't write files")
     args = parser.parse_args()
@@ -682,6 +857,12 @@ def main() -> int:
     balanced.sort(key=lambda a: a.external_id or a.id)
     assets = balanced
 
+    # Append internet-fetched content (all studio="shared", layer="A")
+    print(f"loading internet-fetched assets from {args.internet}", file=sys.stderr)
+    internet_assets = load_internet_assets(args.internet)
+    print(f"  appending {len(internet_assets)} internet asset records", file=sys.stderr)
+    assets.extend(internet_assets)
+
     # Compute summary stats
     total_bytes = sum(a.file_size_bytes for a in assets)
     by_studio: dict[str, int] = defaultdict(int)
@@ -728,10 +909,19 @@ def main() -> int:
     brand_workspaces = derive_brand_workspaces(assets)
 
     # Write per-profile files
-    studio_a_assets = [a for a in assets if a.studio in ("a", "shared")]
+    # site_a is the demo source — Layer A only (CC0 / CC-BY / OFL / PD).
+    # site_b is everything (dogfood peer + local dev re-seed source).
+    # Shared assets are Layer A by construction (see SHARED_PACK_PATTERNS),
+    # so they all land on site_a too.
+    studio_a_assets = [
+        a for a in assets
+        if a.studio in ("a", "shared") and a.layer == "A"
+    ]
     studio_b_assets = [a for a in assets if a.studio in ("b", "shared")]
-    dev_assets = assets
-    demo_assets = [a for a in assets if a.layer == "A"]
+    # `dev` and `demo` profiles are aliases for site_b and site_a
+    # respectively — same content, just named for their purpose.
+    dev_assets = studio_b_assets
+    demo_assets = studio_a_assets
 
     out = args.out
     write_json(out / "dataset.MANIFEST.json", {

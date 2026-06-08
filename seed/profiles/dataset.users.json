@@ -21,7 +21,7 @@
     "full_name": "Anya Volkov",
     "email": "anya.volkov@studio.local",
     "role": "reviewer",
-    "primary_team": "UI"
+    "primary_team": "Audio"
   },
   {
     "id": "5996acc0-3543-775b-74ec-226a228ef1ff",
@@ -53,7 +53,7 @@
     "full_name": "Diego Vasquez",
     "email": "diego.vasquez@studio.local",
     "role": "artist",
-    "primary_team": "Reference"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "9fd83924-19d9-690a-a93e-1441bb0f0a28",
@@ -77,7 +77,7 @@
     "full_name": "Felipe Costa",
     "email": "felipe.costa@studio.local",
     "role": "reviewer",
-    "primary_team": "Environment"
+    "primary_team": "UI"
   },
   {
     "id": "a17d2280-c830-342c-42d8-3566e62cf24b",
@@ -93,7 +93,7 @@
     "full_name": "Imani Williams",
     "email": "imani.williams@studio.local",
     "role": "artist",
-    "primary_team": "Props"
+    "primary_team": "Characters"
   },
   {
     "id": "b00f61a9-59c9-3081-a88f-3cc42533e53b",
@@ -109,7 +109,7 @@
     "full_name": "Kai Nakamura",
     "email": "kai.nakamura@studio.local",
     "role": "artist",
-    "primary_team": "Props"
+    "primary_team": "Environment"
   },
   {
     "id": "a407071d-d676-8267-44b5-30dadd12b106",
@@ -117,7 +117,7 @@
     "full_name": "Layla Hassan",
     "email": "layla.hassan@studio.local",
     "role": "artist",
-    "primary_team": "Reference"
+    "primary_team": "UI"
   },
   {
     "id": "dc21666b-ab71-3e81-c691-11bf99a9821e",
@@ -125,7 +125,7 @@
     "full_name": "Lucas Lefebvre",
     "email": "lucas.lefebvre@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "08888044-5896-4c68-43aa-d8e1271df82f",
@@ -133,7 +133,7 @@
     "full_name": "Maja Novak",
     "email": "maja.novak@studio.local",
     "role": "artist",
-    "primary_team": "Marketing Art"
+    "primary_team": "Reference"
   },
   {
     "id": "3428b354-fc83-5133-403a-84660ec7cbf9",
@@ -141,15 +141,15 @@
     "full_name": "Marcus Johnson",
     "email": "marcus.johnson@studio.local",
     "role": "reviewer",
-    "primary_team": "Characters"
+    "primary_team": "UI"
   },
   {
     "id": "5e68a6b0-0f73-6a65-5908-6bfea8c1db8f",
     "username": "maya.okonkwo",
     "full_name": "Maya Okonkwo",
     "email": "maya.okonkwo@studio.local",
-    "role": "reviewer",
-    "primary_team": "UI"
+    "role": "artist",
+    "primary_team": "Characters"
   },
   {
     "id": "a083c7c0-9c6f-3344-933a-43705b8ccddc",
@@ -173,7 +173,7 @@
     "full_name": "Olaf Lindgren",
     "email": "olaf.lindgren@studio.local",
     "role": "reviewer",
-    "primary_team": "UI"
+    "primary_team": "Characters"
   },
   {
     "id": "5e7d4a50-1750-1e10-a1cc-d0637e90d996",
@@ -206,6 +206,14 @@
     "email": "sam.obrien@studio.local",
     "role": "artist",
     "primary_team": "Marketing Art"
+  },
+  {
+    "id": "065faa33-e9b3-3433-f4a6-999f2887c155",
+    "username": "seed.bot",
+    "full_name": "Seed Bot",
+    "email": "seed.bot@studio.local",
+    "role": "artist",
+    "primary_team": "Reference"
   },
   {
     "id": "36c890e0-89f4-3c4f-0a6b-3970e1c240ba",
