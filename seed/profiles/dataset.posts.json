@@ -1,0 +1,3852 @@
+[
+  {
+    "id": "e4ca0b8f-9f46-d3fd-9836-9cd844a7dfcf",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 5 audio assets pulled together.",
+    "author_username": "sam.obrien",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "4f046b70-d10e-fa01-48c6-ab5565429770",
+      "0eb3694e-7ced-b958-aef6-3232fda282db",
+      "0ef77676-3a58-f1fd-0f7e-639b8290be50",
+      "1114944f-d111-8d71-6290-b0d3ae04a41e",
+      "11b037cd-e780-ceb1-a8df-3487b2a66920"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-04-09T03:28:28Z",
+    "updated_at": "2026-05-24T12:43:16Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "f5b54351-5932-9254-a1dd-73149a485ad7",
+    "title": "Project Echo: Environment model pass",
+    "description": "Environment drop for Project Echo. 3 3d assets pulled together.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly"
+    ],
+    "asset_ids": [
+      "4a36bbcb-fc27-9f53-ef3a-475536a4b956",
+      "00db1076-a11b-3540-6b98-a394ce1a6c75",
+      "00df6bff-36a0-0cb2-c349-92eba5e55551"
+    ],
+    "asset_types_in_post": [
+      "3d"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-04-11T22:27:53Z",
+    "updated_at": "2026-05-25T05:56:50Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "9cc85cb5-2501-caef-7de4-65fad0b0b9fa",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "e0f20756-f275-730c-ea2c-9af1eb99a61d",
+      "0a036d2c-ff3b-1a9a-d593-f1356c3b2344"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-04-13T11:01:07Z",
+    "updated_at": "2025-09-30T19:16:07Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "f82975db-7f56-4542-9c5c-21995bce2e31",
+    "title": "Project Compass: Environment reference",
+    "description": "Environment drop for Project Compass. 3 image assets pulled together.",
+    "author_username": "wren.carter",
+    "collection_name": "Project Compass",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "icon",
+      "minimap",
+      "ui"
+    ],
+    "asset_ids": [
+      "e38c3cfa-5349-36e5-0d9e-c25c3f057b57",
+      "30382779-644e-6903-b066-8c4a8daf8312",
+      "34a22a06-51c6-8106-20ae-f7664731e62f"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2025-04-16T19:57:09Z",
+    "updated_at": "2026-03-28T18:59:58Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "eb748a28-107a-71cd-415f-b233ca5db379",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 2 audio assets pulled together.",
+    "author_username": "sam.obrien",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "rpg",
+      "sfx"
+    ],
+    "asset_ids": [
+      "d76d64a5-8f99-5f44-5db8-7c9da39244bc",
+      "057607a6-7ea4-727f-a8d8-309076796311"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2025-04-22T23:23:05Z",
+    "updated_at": "2026-05-25T17:14:17Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "81cf450e-350b-71cc-1dd4-3aa41ff724f5",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "4471568a-9fe7-f789-0dca-3e5cd1789675",
+      "1b95b5f6-0cc3-eb42-baf1-556c94d8109f"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-04-26T20:10:07Z",
+    "updated_at": "2026-05-22T19:42:55Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "496dd20e-cd2c-ad76-1183-8240dec63ad3",
+    "title": "Project Echo: Props model pass + audio bundle",
+    "description": "Props working pass for Project Echo. Bundles 2 assets across 3d, audio — concept, references, and supporting media in one post.",
+    "author_username": "sam.obrien",
+    "collection_name": "Project Echo",
+    "team_name": "Props",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "props",
+      "rpg",
+      "sfx"
+    ],
+    "asset_ids": [
+      "78e372dd-53d4-ef67-6b62-2dca3d3c2291",
+      "08c3e131-4e99-c5f6-2f4e-217e2c86f990"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-04-29T10:11:39Z",
+    "updated_at": "2026-02-16T04:07:52Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "014f35b9-87e2-8566-2a4b-3c5f05b88ed3",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 4 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "card",
+      "component",
+      "data_table",
+      "digital",
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylus",
+      "switch_enabled",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "f2534b3f-01ae-5e60-78c2-934cfce0bbe3",
+      "26c91451-69cf-09df-269f-fcc74eb044ca",
+      "26ed9761-c673-1689-d9b7-6f100ae32fe7",
+      "285bfc90-20ee-35a4-1026-107ce87f176d"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-05-01T03:29:26Z",
+    "updated_at": "2026-01-28T09:01:59Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "194d4b83-704a-37d1-969b-959f0ca2570a",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 3 image assets pulled together.",
+    "author_username": "imani.williams",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "30ea549a-edf9-1b3d-25d4-de7cadfa6684",
+      "172f1606-0dfd-931c-c125-84030b197fef",
+      "1e27f8aa-310b-911b-2427-1491032a3fd4"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-05-14T14:22:47Z",
+    "updated_at": "2026-04-13T12:47:32Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "b9804367-c206-2f40-b784-a20cd24b109d",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "e052b0f2-ad97-b84a-5027-705a610df86a",
+      "11a8e9dc-4def-ed38-3842-b27376b8d5e7"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-05-18T13:57:17Z",
+    "updated_at": "2026-04-23T09:58:53Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "22a3291b-7f39-55f4-777d-09d5298c3a2f",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 5 image assets pulled together.",
+    "author_username": "ahmed.khalil",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "c882b919-6691-f24d-df2a-7bf918e60804",
+      "18fd726e-1500-0c25-f4c3-30828955adbb",
+      "195bdee2-cac3-927a-ec3d-393277b214c2",
+      "253fcdf0-f92e-1310-c097-77afb4b3e87e",
+      "28bcde3b-191d-b9e1-76b4-e75bb9332cd4"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-05-24T21:24:53Z",
+    "updated_at": "2026-05-17T21:33:59Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "77e6c7b1-3826-1a61-e4d9-dcca3328bd36",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 4 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "0c4133d2-4f2c-ec17-b8b4-de6c040c108c",
+      "026f301d-d8e1-60d5-db14-a0ea0ab3ae4b",
+      "03556914-7744-5701-c821-472e6dcc2a58",
+      "039c996d-2f81-9e68-f838-6f035ff1bdef"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-05-29T08:26:59Z",
+    "updated_at": "2026-05-14T20:29:29Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "3c6df18d-d1ed-4c4a-acc4-a2c342abb232",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "3a6761c0-1d9c-3a1e-faba-08e30289e6a6",
+      "066c675e-cf8f-a498-c4d6-781c5fabbc10",
+      "0728bc7b-979c-3783-2593-2a79dd1eaff9"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-05-30T00:39:56Z",
+    "updated_at": "2026-03-10T23:11:14Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "2efba993-d647-a82c-def7-c346954a3c66",
+    "title": "Project Citylight: Environment reference",
+    "description": "Environment drop for Project Citylight. 4 image assets pulled together.",
+    "author_username": "anya.volkov",
+    "collection_name": "Project Citylight",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "tilemap",
+      "topdown",
+      "urban"
+    ],
+    "asset_ids": [
+      "29ef827c-229b-3293-9237-4ff87f672a08",
+      "0f2355e9-3ddb-00d7-b5d4-fc85f2750c7e",
+      "10090f01-dac0-ef70-79a9-54a307c1324f",
+      "17216fec-a878-af1a-a77d-bcc06acbddb1"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-06-03T00:35:36Z",
+    "updated_at": "2026-03-13T00:30:24Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "6145e8e2-b18f-d82a-1dc9-fdd162c52719",
+    "title": "Project Heroes: Characters model pass + reference",
+    "description": "Characters working pass for Project Heroes. Bundles 4 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "character",
+      "characters",
+      "lowpoly",
+      "rigged"
+    ],
+    "asset_ids": [
+      "8b55446f-a87f-83f4-8131-93d7afb96dd9",
+      "0fa3fc22-4e41-fced-47eb-819d5787e4df",
+      "1a19717f-e141-fdd2-efcb-91c287ffb4d6",
+      "215390f8-cb55-0670-367d-b644d7628a1f"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-06-12T17:28:49Z",
+    "updated_at": "2026-04-08T06:52:41Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "fb22be9e-97fa-e42b-2287-b713bfeb39b2",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "993abbb7-e3f3-ceb9-fb52-cd26daf4e401",
+      "71d3492c-083d-1204-6386-06c403c37b90",
+      "7dfa4eaa-12bd-5dfa-dcb5-2038d1656b8a"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-06-12T19:17:41Z",
+    "updated_at": "2026-04-07T22:54:56Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "6105dad7-6a52-5ab3-c65e-8b42783573f8",
+    "title": "Project Echo: UI reference",
+    "description": "UI drop for Project Echo. 3 image assets pulled together.",
+    "author_username": "priya.sharma",
+    "collection_name": "Project Echo",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "frames",
+      "rpg",
+      "ui"
+    ],
+    "asset_ids": [
+      "e9617e5c-52f0-4a10-8530-b36df1ae5a7a",
+      "2b44ede6-a044-35dd-a06d-d55247c4c877",
+      "3929960b-4b11-5182-1a12-901c521e579a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-06-14T16:43:38Z",
+    "updated_at": "2026-03-30T11:36:32Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "5f726ac5-4551-6752-34e9-1bcc8e4890e7",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 5 image assets pulled together.",
+    "author_username": "imani.williams",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "bace343c-44c0-b5fa-8bd7-dece2032397c",
+      "1ed2383c-393f-a99b-c6cf-85e5c20e8ff7",
+      "2013dff5-e100-29e6-b1a1-359a8d64c045",
+      "2925e397-90f2-106a-9b99-ca604234fd91",
+      "2bdfb63f-7e48-dfad-f926-ffdb06fd68e6"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-06-15T22:51:04Z",
+    "updated_at": "2026-02-28T00:35:58Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "9a19189f-7884-8aba-38a2-28910ae41a2c",
+    "title": "Art Research: Environment model pass + reference",
+    "description": "Environment working pass for Art Research. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "chen.wei",
+    "collection_name": "Art Research",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+      "environment",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "9b8fd58b-c7ab-7095-ce0c-168d97ef76ff",
+      "0477ce13-808c-1161-da88-0b5a5d24b629"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-06-23T07:22:05Z",
+    "updated_at": "2026-04-30T10:13:11Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "8cdaa151-1766-f597-dea4-31b06bc64fc7",
+    "title": "Project Adventure: UI reference",
+    "description": "UI drop for Project Adventure. 5 image assets pulled together.",
+    "author_username": "mira.patel",
+    "collection_name": "Project Adventure",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "adventure",
+      "buttons",
+      "ui"
+    ],
+    "asset_ids": [
+      "40e8167f-1d37-efac-f775-6ac2cacb3881",
+      "0111bd0d-7615-3319-402e-cc98cd10df9f",
+      "0329333a-81c8-595e-01d0-5c99bde19f6a",
+      "048d7b8e-7722-886e-b52f-df9075285732",
+      "06b20c66-b40f-5da2-bbed-f2175d16af62"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-06-26T02:44:22Z",
+    "updated_at": "2026-05-25T02:39:45Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "bfd0077f-58a2-7be0-4b46-269bb51309b0",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "8262e26b-1267-e49f-25e9-252c271a9719",
+      "1dc5604c-c987-2a28-9c71-45830e708dae",
+      "1e0826ec-394f-e2bb-bbd2-dba6bee85cde"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "draft",
+    "sensitivity_tier": "public",
+    "created_at": "2025-06-27T11:15:49Z",
+    "updated_at": "2026-02-14T19:32:40Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "ebf8fc49-c382-3312-7038-706be0f17258",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "cc53fbe6-398f-3832-4dcb-c350093f1b53",
+      "1ee92054-34ca-ca0b-2a58-f56e6c956f5d"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-06-29T07:14:22Z",
+    "updated_at": "2025-12-20T10:08:15Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "ba1e9a53-b4c3-5adf-9520-f4edaacd50b7",
+    "title": "Project Citylight: Environment reference",
+    "description": "Environment drop for Project Citylight. 4 image assets pulled together.",
+    "author_username": "kai.nakamura",
+    "collection_name": "Project Citylight",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "tilemap",
+      "topdown",
+      "urban"
+    ],
+    "asset_ids": [
+      "2b6a09a5-4387-580e-28e8-f933a4dad2bb",
+      "1790e227-315f-182c-fef4-d40ea7a63fc4",
+      "1a9ca62a-ed9a-ba56-51e3-21699c20cbc6",
+      "20301da2-b3a1-e31b-3821-f3f15e909b6e"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-07-09T15:51:19Z",
+    "updated_at": "2026-05-12T17:56:50Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "969d3185-5f1d-1e18-3f36-753fa1e2e21d",
+    "title": "Art Research: Characters model pass + reference",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "marcus.johnson",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "d7f7251e-f91d-301f-1cbb-6f51ad8187cd",
+      "0b1de1fc-6a50-c8e2-02b5-10851234e7e4"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-07-20T04:27:19Z",
+    "updated_at": "2026-05-02T02:42:53Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "7b560220-326c-754d-b0c4-b11af0977546",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 4 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "9fe9c63d-47f0-ee76-00a9-3be07ef9d7bb",
+      "38485cc2-6902-fe77-372f-184489635586",
+      "38ff9292-ac28-38da-49b6-bedf6eae34b5",
+      "42648318-fcc9-c0f4-3390-2a436370f01f"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-07-21T23:22:50Z",
+    "updated_at": "2026-05-02T10:22:21Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "27c34fc3-ac07-8710-8f2b-e8f69d21cbb1",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 4 image assets pulled together.",
+    "author_username": "imani.williams",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "bf810b28-b6fa-f966-36a3-fc7144c8d845",
+      "2c8141b5-ba5c-5f91-013c-f5256c23ee8a",
+      "2ce5bac5-07fb-4610-956a-e138d9d54524",
+      "375014de-16bc-b8ea-07e7-48bbdd647551"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-07-22T22:18:58Z",
+    "updated_at": "2026-04-18T07:14:52Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "cf35ba05-89f4-4f34-c434-1d09dfd99f86",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "d51193a3-d48c-e79c-5fd6-3d65cc45b040",
+      "1c3847e4-7edc-5b0b-5312-bbcaf3f212fd"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-07-26T01:34:49Z",
+    "updated_at": "2026-01-17T17:24:08Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "702e2fea-4192-41ab-b129-ee7deabb9bf1",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "mira.patel",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "checkbox_checked",
+      "component",
+      "digital",
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylus",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "99e9ee98-32aa-14d1-4b9d-b6de21cc0897",
+      "1cfdbea5-992a-ec38-b7ba-9ec097fa4282",
+      "1d02c007-743f-be6d-3f01-6b5e3dbb0d73",
+      "1d16bcd8-0df4-3193-ac64-a4e8c4b01837",
+      "1d6d07c5-74d1-33d8-31ab-2f5f4f81cb13"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-07-30T12:33:57Z",
+    "updated_at": "2026-05-16T01:03:07Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "47b05d38-54f5-c759-895b-6e228e48eb8d",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "component",
+      "digital",
+      "franchise:engine",
+      "pixel",
+      "radio_button_checked",
+      "scifi",
+      "sketch",
+      "stylus",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "e4787687-7386-5dc8-7424-55447a1ea697",
+      "00ecd533-e3a6-eadc-5337-5b26393bcdc0",
+      "00f415b7-e937-7986-0195-a8b7d568993e"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-08-01T04:27:17Z",
+    "updated_at": "2026-04-29T21:36:15Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "fda8e2e1-4b6f-a8e8-995e-779a0d3bc8cb",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "component",
+      "digital",
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylized",
+      "stylus",
+      "tooltip",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "62efa3ea-acee-5ce4-1819-7f6a3303ac76",
+      "10878d2a-e3f6-9db2-84aa-5af24f02762e",
+      "10a318e2-fef0-c124-27c1-5599900a31c6",
+      "112b597c-1b49-d97a-fe66-5e38e92c0c73",
+      "119bcbfd-b307-068b-fdd9-93bc2b1969ca"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-08-02T06:54:35Z",
+    "updated_at": "2026-05-09T06:04:05Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "01ffd564-5900-ce41-c593-a10010b2fa3a",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "alert",
+      "card",
+      "component",
+      "digital",
+      "franchise:engine",
+      "icon",
+      "paper",
+      "pencil",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylized",
+      "stylus",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "c82b14aa-cfc0-93e4-bf19-303bb08ea2f0",
+      "0dfff156-bb0a-6958-69ae-c2c861954391",
+      "0f85084e-a0dd-29c1-7290-3467cd485db0",
+      "102f406d-d4a8-4ede-0fcc-9577dbcfe5cb",
+      "106b3697-82ff-7b7f-776c-c0c80d312c4a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-08-02T19:06:55Z",
+    "updated_at": "2026-04-15T08:17:17Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "b681c70e-4b5b-0aef-2343-55fa082762eb",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 2 image assets pulled together.",
+    "author_username": "olaf.lindgren",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "3c31b74b-8ced-b381-6f23-da32efed4fc2",
+      "390d26bc-3e51-8c21-f8c9-db0edc0a17fd"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2025-08-08T13:26:53Z",
+    "updated_at": "2026-01-06T23:34:00Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "c4ee3a41-06c0-6278-e07e-94d832eb08c0",
+    "title": "Project Echo: UI reference",
+    "description": "UI drop for Project Echo. 4 image assets pulled together.",
+    "author_username": "priya.sharma",
+    "collection_name": "Project Echo",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "frames",
+      "rpg",
+      "ui"
+    ],
+    "asset_ids": [
+      "df05bd13-2938-f214-67bf-e704b94924ed",
+      "0a97b01a-9a9e-4710-59fc-082cf5049d4d",
+      "0ef24be1-0b7e-6fab-521d-c341c8a46a4c",
+      "27acadc0-9b91-d7af-0111-ec6f7d9b4007"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-08-09T06:42:46Z",
+    "updated_at": "2026-05-06T03:06:47Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "39be63eb-6543-7002-ce1c-f6f8fed69725",
+    "title": "Art Research: Props audio bundle + reference",
+    "description": "Props working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Props",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:reference",
+      "props"
+    ],
+    "asset_ids": [
+      "fc3ec4de-307c-9bea-d4d1-80909e693e1a",
+      "510b51b6-421e-7d93-d331-b3b15db0425f"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-08-15T09:16:04Z",
+    "updated_at": "2025-12-03T11:52:41Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "6a90c257-e054-9d62-ed68-81815ac54328",
+    "title": "Project Citylight: Environment reference",
+    "description": "Environment drop for Project Citylight. 5 image assets pulled together.",
+    "author_username": "ravi.patel",
+    "collection_name": "Project Citylight",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "tilemap",
+      "topdown",
+      "urban"
+    ],
+    "asset_ids": [
+      "d78ef410-01a8-d265-d6b8-ca62c5fb1db1",
+      "03bacdff-e7ff-927f-1a83-cfeac5e08a0a",
+      "04d6c815-4c93-ada9-e0c0-b9432da3da5d",
+      "05676089-504e-7a66-ac74-ee0847dbf8b0",
+      "06fa8469-2320-bcf1-9cfe-03b39d28d6ad"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-08-22T16:47:14Z",
+    "updated_at": "2026-05-25T00:18:25Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "c2fa2e9c-933e-4b4f-978a-c9b11e3dffa8",
+    "title": "Project Heroes: Characters model pass + reference",
+    "description": "Characters working pass for Project Heroes. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "character",
+      "characters",
+      "lowpoly",
+      "rigged"
+    ],
+    "asset_ids": [
+      "0146a059-6bec-3954-fe46-4a293ff84ac4",
+      "50669420-6799-bd1f-8ec4-3844631d298c",
+      "66f62704-cf6f-f850-57bb-da9b679968bd"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2025-08-25T06:56:51Z",
+    "updated_at": "2026-03-17T23:58:16Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "733c9d43-ab63-46fc-4f98-20d6a2e090ac",
+    "title": "Hearthstone Archive: Marketing Art reference",
+    "description": "Marketing Art drop for Hearthstone Archive. 5 image assets pulled together.",
+    "author_username": "quinn.schmidt",
+    "collection_name": "Hearthstone Archive",
+    "team_name": "Marketing Art",
+    "brand_workspace": null,
+    "tags": [
+      "alterac_valley",
+      "blizzard",
+      "card",
+      "common",
+      "druid",
+      "epic",
+      "franchise:hearthstone",
+      "hearthstone",
+      "mage",
+      "marketing",
+      "marketing-art",
+      "minion",
+      "neutral",
+      "rare",
+      "spell",
+      "tcg",
+      "tgt",
+      "the_barrens"
+    ],
+    "asset_ids": [
+      "33fefd19-acab-c641-ceb7-d6cecb1844f0",
+      "01ea735d-e214-1ab6-5b3f-65bf0025bd7a",
+      "18b0fd34-0870-5a6a-7bea-5e779140d3e0",
+      "1baed2ce-f791-3022-5068-a341dda60504",
+      "302f47dd-5d75-e882-78f3-a2a567ad0d8a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-08-29T10:19:18Z",
+    "updated_at": "2026-04-28T13:47:09Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "20c1d856-4d9d-779a-efa6-b46221317555",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "b9b92211-7065-52aa-8f7d-09068fcc01e1",
+      "408880ca-0b1b-499e-0b26-1fc7108a2477"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-08-29T19:19:37Z",
+    "updated_at": "2026-04-23T18:09:56Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "34dff4d6-3ac2-7f63-4c07-16d8df7f95ac",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 3 image assets pulled together.",
+    "author_username": "devon.reeves",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "69e87c8f-4908-1ef8-4be0-a2eacc76ef7a",
+      "296d6037-b217-304a-08b9-1d199075631b",
+      "29ddb454-bc7f-78c2-6280-c2a10acd1c4a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-09-09T04:55:16Z",
+    "updated_at": "2026-05-20T18:01:14Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "faafea3a-aebd-13a6-f651-2d2082825c23",
+    "title": "Project Echo: Props model pass + audio bundle",
+    "description": "Props working pass for Project Echo. Bundles 2 assets across 3d, audio — concept, references, and supporting media in one post.",
+    "author_username": "felipe.costa",
+    "collection_name": "Project Echo",
+    "team_name": "Props",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "props",
+      "rpg",
+      "sfx"
+    ],
+    "asset_ids": [
+      "19a6a99e-11c7-a488-cfbd-245a99a7d7c3",
+      "22517402-d87f-9150-3032-348b508faa61"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-09T09:57:03Z",
+    "updated_at": "2026-02-16T04:07:52Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "183e43f3-1544-39f2-a89f-9c3473967e6c",
+    "title": "Project Echo: Environment model pass + audio bundle + reference",
+    "description": "Environment working pass for Project Echo. Bundles 5 assets across 3d, audio, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "f802cfcb-cd86-c86e-3c8b-48b7cf0d75a1",
+      "9dd7da77-90b8-a97e-3b62-13e2ddb88532",
+      "ad7e40b6-da9a-c5b0-31f3-06ef113e1f83",
+      "c03a9b0f-ab50-dfab-19bc-74766ceaaab0",
+      "c34edec8-5020-dd0f-95b0-f5fab91fe10a"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-16T03:42:21Z",
+    "updated_at": "2026-05-27T05:39:43Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "a7df9e1f-f365-fd90-f5de-8a316b9b7a7d",
+    "title": "Project Jumpstart: Environment reference",
+    "description": "Environment drop for Project Jumpstart. 2 image assets pulled together.",
+    "author_username": "ravi.patel",
+    "collection_name": "Project Jumpstart",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "pixel",
+      "platformer",
+      "tilemap"
+    ],
+    "asset_ids": [
+      "56ffbef4-6e9b-2e9b-47f3-f882a9e41e01",
+      "2eda7b0a-673f-2a2f-a366-d68558e1a7d1"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-09-24T00:07:26Z",
+    "updated_at": "2026-02-27T04:10:42Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "03e6e4e6-c8c1-f8c8-2e40-d40bf3a8f860",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "6ce146a6-87e0-c17e-dd2f-0c7d47cc31ef",
+      "07d885dd-7a1a-0fc0-cdf4-110db49feb9a",
+      "08c5b926-d02c-183f-1194-2aa8911d7c44"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "draft",
+    "sensitivity_tier": "public",
+    "created_at": "2025-09-24T04:11:07Z",
+    "updated_at": "2026-03-27T00:38:36Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "de3c2cb7-80ce-b1e1-e868-95e801b09d33",
+    "title": "Project Echo: Environment model pass + audio bundle + reference",
+    "description": "Environment working pass for Project Echo. Bundles 4 assets across 3d, audio, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "df29c4fc-f3eb-be12-ee49-dbe169feb0a3",
+      "1e24d01c-2f64-782f-94bb-ebe10cd1402e",
+      "21e17384-f75a-6a01-e614-a7501cd954d9",
+      "2e7f6ea5-3c7c-6481-03a6-38881f9c25dc"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-24T15:49:09Z",
+    "updated_at": "2026-05-24T20:30:20Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "a384e1bc-475d-5abd-3b54-2d7f58f2df77",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 3 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "2a866f8b-5f44-0a07-e6f9-4b377e051037",
+      "0b9bdf8c-1f74-fb4d-8b27-9306a48a4c10",
+      "14a658a8-8a4d-9b2d-f54f-515539128f58"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-09-26T20:28:02Z",
+    "updated_at": "2026-04-15T12:05:51Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "d4e39c5a-fe70-49f9-e0d8-9c6fac7932ee",
+    "title": "Project Adventure: UI reference",
+    "description": "UI drop for Project Adventure. 2 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Adventure",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "adventure",
+      "buttons",
+      "ui"
+    ],
+    "asset_ids": [
+      "f49064a9-3f50-f25b-3c79-c5ae998471d5",
+      "2e6d71ef-85a4-38e0-af55-19d1ee535c55"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-27T02:49:47Z",
+    "updated_at": "2026-02-21T18:41:34Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "14fcf8cc-6695-930e-0afe-afad61b36262",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 2 audio assets pulled together.",
+    "author_username": "lucas.lefebvre",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "rpg",
+      "sfx",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "d7a5652d-0783-542e-6c54-a516bca4b544",
+      "18b8fbbf-44a8-12e7-c078-195b4557f5be"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-27T16:40:41Z",
+    "updated_at": "2026-05-22T01:59:00Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "7d705723-41c3-695f-5f3a-7abff32b020e",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "45ab5e42-e8f1-d281-daee-72ee8f8a6196",
+      "0c122da0-ed5a-cb92-bc8e-a3296f82ebb1",
+      "0cae4b08-a6eb-00fd-b46d-51be73fc559a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-09-29T23:00:39Z",
+    "updated_at": "2026-05-20T17:44:58Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "5c290b26-e93e-323b-e8ef-f3af1f95f90f",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 4 image assets pulled together.",
+    "author_username": "ahmed.khalil",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "781eaee1-533e-2606-0e31-c5c002fcf1f6",
+      "0fa7adc9-e3aa-5d96-c399-f31c96a94416",
+      "0fcb03b5-4b6f-1199-cc2f-0dc5b8424500",
+      "1224d8ea-c8d2-2587-9c1d-6bc96244b6e8"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "draft",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-06T01:43:02Z",
+    "updated_at": "2026-05-26T09:30:05Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "318acf8a-8343-173a-6272-ec52d781d563",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 3 image assets pulled together.",
+    "author_username": "olaf.lindgren",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "d8bc02e8-31b8-8ce7-cedc-f16a4bc7e178",
+      "2b050ce4-57b2-ad26-fa9a-6a009e4e3726",
+      "31f01582-65dd-5687-3e97-8a96c4f3f356"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-06T03:35:12Z",
+    "updated_at": "2026-05-15T19:42:38Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "d67b0b7d-adad-7d37-2b65-b818c5453f66",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 5 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "akira.tanaka",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "57886385-799f-71b6-500c-1dbfc8a62cfc",
+      "0d57373a-0933-4a1b-006b-6bea3d3a380d",
+      "1126dc47-53f2-74b3-a56c-9a46a432a739",
+      "121d5227-eb8a-1b02-7365-876e426de7d3",
+      "147a09cd-7f8b-eed2-d070-c1734f4ecd57"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-10-11T13:03:06Z",
+    "updated_at": "2026-05-27T02:22:44Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "ae320a27-b578-6323-d9e4-1bce0ead606d",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 3 audio assets pulled together.",
+    "author_username": "lucas.lefebvre",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "7e95f8bb-8e57-b323-18c4-311aed4e3616",
+      "0b567ed3-aa34-9d97-7fac-607924a8a868",
+      "0bdc5839-2df3-7763-2710-db81e2ba32ac"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-15T07:52:57Z",
+    "updated_at": "2026-05-17T15:37:01Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "98adc956-d816-91d1-6a9f-bcf50a14fb51",
+    "title": "Project Compass: Environment reference",
+    "description": "Environment drop for Project Compass. 4 image assets pulled together.",
+    "author_username": "kai.nakamura",
+    "collection_name": "Project Compass",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "icon",
+      "minimap",
+      "ui"
+    ],
+    "asset_ids": [
+      "f21bfdaa-7c39-b748-e760-532e19303e8b",
+      "35d09846-0ecd-f286-4950-3fcd7246c17f",
+      "372dc469-f8cb-2587-32f8-cd07be75738d",
+      "38b79cc4-1e0b-0d27-17b4-9ad51f4d1886"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-16T17:45:40Z",
+    "updated_at": "2026-05-21T23:17:21Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "81275e90-2afe-3248-f7b7-f114c9b442ec",
+    "title": "Engine Core: UI briefing + type kit",
+    "description": "UI working pass for Engine Core. Bundles 2 assets across document, font — concept, references, and supporting media in one post.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Engine Core",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "font",
+      "franchise:engine",
+      "monospace",
+      "typeface",
+      "ui"
+    ],
+    "asset_ids": [
+      "8d7fcfd4-3891-427a-b694-a17210c586e9",
+      "0a5926ff-22fa-a80e-9343-0bdf37149dab"
+    ],
+    "asset_types_in_post": [
+      "document",
+      "font"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-16T21:10:05Z",
+    "updated_at": "2026-03-30T07:52:31Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "d3d1842a-5eea-c1b5-fe85-f1d4cec0b744",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "component",
+      "franchise:engine",
+      "paper",
+      "pencil",
+      "pixel",
+      "scifi",
+      "sketch",
+      "switch_disabled",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "2c5607ff-6e9d-81da-47e0-f918711bdab8",
+      "16f50d37-600d-ad06-29fc-95d2ff079e0f",
+      "1829e7a1-5f5c-2fa9-2397-c82b7ce6e62c",
+      "18627f7c-dbcf-f126-c15b-38bbadef78ba",
+      "1a7136fc-6080-e62c-15ec-0537ba46df64"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-19T13:40:36Z",
+    "updated_at": "2026-04-26T16:26:52Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "f6d80bc5-fc4b-0087-ef3a-f71af23531a2",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "fdcb331f-22dc-f3b4-ff9d-171986224e47",
+      "143b056f-1ea3-5cf5-014f-e9cbce80c4eb",
+      "14dd48e0-9452-e630-a940-3ff1911edebd",
+      "14e88cd3-5317-549d-c084-478535c1c672",
+      "167f8016-2721-cb9c-20ab-6ff7c7f0342a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2025-10-20T03:00:18Z",
+    "updated_at": "2026-03-08T23:01:08Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "30c4cc00-6d1b-48d1-8798-b680a76fea5b",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 4 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "878e6940-7400-9c89-41d7-44f65705b199",
+      "03f29515-9388-a553-d024-3e8c457eaaba",
+      "04bab97c-445d-58a8-775b-b19b55752fbf",
+      "04bb5b18-7a9c-c63c-3de6-e70a46073080"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-21T12:54:14Z",
+    "updated_at": "2026-05-10T02:34:46Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "5f10c96a-de1e-0993-7fa9-a2255101aa8d",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "component",
+      "data_table",
+      "digital",
+      "floating_action_button",
+      "franchise:engine",
+      "icon",
+      "paper",
+      "pencil",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylized",
+      "stylus",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "a490c36b-2f60-ccb9-e60f-71bf8614eaaa",
+      "0cbfb179-c1c4-949c-6a2c-9b165bc43840",
+      "0d35232d-9f8b-55ae-baed-97859b22cd00",
+      "0d8413b9-5c62-8e11-9b12-94336a952755",
+      "0d9efeea-5df6-f821-5324-ab558fde15b8"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-22T00:42:02Z",
+    "updated_at": "2026-04-03T08:41:09Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "dd5882f8-d09a-9ff6-bc7e-b618ad3e34a3",
+    "title": "Project Toybox: Props reference",
+    "description": "Props drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "Props",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "props",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "b57f4dcf-1050-59b1-4788-572ec5e54b7a",
+      "2fe957d7-a5c4-93a1-a406-4c3559171bf5",
+      "34196b4f-ebff-e284-076d-71dd0485e24b",
+      "48f46812-2105-90b9-55b3-fabd3ed7d56c",
+      "54f51ed2-f2b5-ecfb-46fb-e7eded7fe166"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-23T10:49:09Z",
+    "updated_at": "2026-05-17T03:36:53Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "ed369993-bf9c-dd47-9806-e5ada9b5ea24",
+    "title": "Project Heroes: Characters model pass + reference",
+    "description": "Characters working pass for Project Heroes. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "character",
+      "characters",
+      "lowpoly",
+      "rigged"
+    ],
+    "asset_ids": [
+      "a67d8a63-4db3-e676-890b-17cffd9dd733",
+      "00d37400-c60a-ee2a-0922-3102a68f782d"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2025-10-28T12:59:13Z",
+    "updated_at": "2026-04-27T07:25:51Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "78bb6629-af98-6685-7695-a193c0edd06c",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "c804a670-22f5-7a04-5fac-78d991405d19",
+      "1cc66bf0-d5b0-01b5-6afb-ee480f90c8c2"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-29T09:31:57Z",
+    "updated_at": "2026-05-02T22:59:40Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "ce341eae-9261-61f2-6c84-4939a08e9f6e",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 4 audio assets pulled together.",
+    "author_username": "kai.nakamura",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "97e5f032-0ed8-2162-1c8e-8e3181e0eaa5",
+      "0024373f-af12-9884-6d71-de2a5cb60a54",
+      "01faf4e2-3dd7-96b9-76e6-d1d931646c0e",
+      "04425584-de3e-7c9a-0991-8a6074b6a7f5"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-10-31T01:37:18Z",
+    "updated_at": "2026-05-27T04:04:51Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "be995bb0-90c2-98c4-6c00-0298a5a9f05e",
+    "title": "MTG Archive: Marketing Art reference",
+    "description": "Marketing Art drop for MTG Archive. 3 image assets pulled together.",
+    "author_username": "quinn.schmidt",
+    "collection_name": "MTG Archive",
+    "team_name": "Marketing Art",
+    "brand_workspace": null,
+    "tags": [
+      "avacyn restored",
+      "b",
+      "card",
+      "common",
+      "double masters 2022",
+      "franchise:magic: the gathering",
+      "g",
+      "magic",
+      "marketing",
+      "marketing-art",
+      "mtg",
+      "r",
+      "rare",
+      "tcg",
+      "uncommon",
+      "w",
+      "wizards"
+    ],
+    "asset_ids": [
+      "1203bf06-8240-ab1a-2a90-82ce831c0c2e",
+      "016bd2f3-4089-5eb7-045b-f9674c1b0cde",
+      "0f75ae9e-6665-1924-ceb1-c3e03b2c3533"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-10-31T12:27:56Z",
+    "updated_at": "2026-01-23T09:13:34Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "0b9b9624-90b7-f174-1c79-2d01bc2a33ab",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "esther.adeyemi",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly"
+    ],
+    "asset_ids": [
+      "b5f3b751-3797-0d54-412e-d5895816189e",
+      "0a751bfe-9fc7-c756-89f4-4c5b8dcca0a7",
+      "0cf7bbe9-ecfe-e3f4-9513-84e984e548af"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-07T04:18:22Z",
+    "updated_at": "2026-02-05T16:02:37Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "21dfac20-7e40-21d4-960e-d127e8ea9383",
+    "title": "Art Research: Characters model pass + audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 5 assets across 3d, audio, image — concept, references, and supporting media in one post.",
+    "author_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "f2f1fc80-1b74-b590-d7ec-9758ca4044b7",
+      "23d29a85-ebae-5e1f-2d8e-cf6db9d5ee86",
+      "259da313-27bb-215a-5671-9caf1a7e29f6",
+      "2650baa0-e4d7-c21f-b800-b112dfad039d",
+      "27b4289a-f1de-e4d3-f752-16cc00192269"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-11-20T08:34:06Z",
+    "updated_at": "2026-05-20T01:14:42Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "1b3570b6-2f32-a239-c80f-94ce90b78944",
+    "title": "Project Compass: Environment briefing + reference",
+    "description": "Environment working pass for Project Compass. Bundles 4 assets across document, image — concept, references, and supporting media in one post.",
+    "author_username": "chen.wei",
+    "collection_name": "Project Compass",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "icon",
+      "minimap",
+      "ui"
+    ],
+    "asset_ids": [
+      "14b115fa-e3c1-2350-13a5-ed884ad1bb52",
+      "6f88fc10-2b66-5adf-c16a-955ddd92b375",
+      "03a34d7f-bc5b-a276-f422-beddc30cea2d",
+      "10656ebb-9adc-4959-edc4-149797cac6dd"
+    ],
+    "asset_types_in_post": [
+      "document",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-20T19:57:49Z",
+    "updated_at": "2026-02-25T00:08:18Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "98e4d358-dad9-42f7-827c-1aef664631fa",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 5 image assets pulled together.",
+    "author_username": "hana.kim",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "ca019c2e-335c-ffde-b922-2b6379edb716",
+      "0508295c-ab62-ceb1-b786-fe84283c88c0",
+      "058e5c0d-8bcf-f097-2831-5e34dcd6fb4e",
+      "1186e9a6-8f6f-b14e-9258-925b5293ee63",
+      "12a5782d-42aa-5e55-3c93-c60e3da52937"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-23T16:22:44Z",
+    "updated_at": "2026-05-03T03:25:41Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "f103b990-3313-e6e4-a5b6-42313c8465ee",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 4 image assets pulled together.",
+    "author_username": "felipe.costa",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "65452b0b-18e7-30ef-86fe-f90b72f5b99e",
+      "234f3ea8-e095-801f-0e26-3516a2965a7c",
+      "24217ae8-0019-1eba-9658-b7deba4cdace",
+      "24fadd73-8489-d779-4011-e3691dba8a54"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-24T09:10:46Z",
+    "updated_at": "2026-05-05T20:36:13Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "8f7b6323-643b-7615-db32-5aef1f46aaf6",
+    "title": "Internet Reference: Reference model pass + briefing + reference + cinematic pass",
+    "description": "Reference working pass for Internet Reference. Bundles 5 assets across 3d, document, image, video — concept, references, and supporting media in one post.",
+    "author_username": "seed.bot",
+    "collection_name": "Internet Reference",
+    "team_name": "Reference",
+    "brand_workspace": null,
+    "tags": [
+      "public-domain",
+      "reference",
+      "source:khronos-sample-models",
+      "source:met-museum",
+      "source:project-gutenberg",
+      "source:wikimedia-commons"
+    ],
+    "asset_ids": [
+      "89fc34b8-1791-dc48-79c7-861861571469",
+      "052e6603-0d37-abd4-7fe7-0d4872adbabd",
+      "0c46c219-a537-d5ab-0a30-3de93801bb8f",
+      "0edeb219-def7-ee14-66af-f0882e2563be",
+      "106ef546-a908-ef81-7c73-a62bfa305d9f"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "document",
+      "image",
+      "video"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2025-11-24T23:25:09Z",
+    "updated_at": "2026-04-17T06:41:20Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "3481d224-b19c-f717-1683-8ec21ff2a854",
+    "title": "Engine Core: Tech Art reference",
+    "description": "Tech Art drop for Engine Core. 5 image assets pulled together.",
+    "author_username": "wren.carter",
+    "collection_name": "Engine Core",
+    "team_name": "Tech Art",
+    "brand_workspace": null,
+    "tags": [
+      "checker",
+      "devart",
+      "franchise:engine",
+      "placeholder",
+      "prototype",
+      "tech-art"
+    ],
+    "asset_ids": [
+      "0c00bb51-7388-ae28-bc39-0cf993d45479",
+      "02e024df-ca98-41f3-bae4-f7b4270adad7",
+      "03ef36e5-8970-ccba-311c-0d0c835d2517",
+      "09a33631-cd09-464d-57f5-a4af5e084f3d",
+      "0a80eecb-59cb-37f3-b623-74ab7fb602c5"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-26T06:38:18Z",
+    "updated_at": "2026-01-01T11:04:09Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "b04a48a4-4614-2dd7-1d35-7b758e5c562d",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 5 image assets pulled together.",
+    "author_username": "tatiana.ivanova",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "bf636935-6a74-fa29-4e4d-1e0ef74622b5",
+      "34115708-fe21-7726-a930-dd7e8e485a92",
+      "345250a7-52fe-4d4a-ca6c-40779dda726d",
+      "35a580cd-1dca-0ea9-81d1-344485b9075f",
+      "36255f87-89ec-21e6-80bc-786e831aac06"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-28T07:21:53Z",
+    "updated_at": "2026-05-27T01:33:20Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "15224d47-5b1e-fe6b-8670-b7bf7d3c3cfd",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "wren.carter",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "d177247e-0620-5ff5-b131-d1a615221306",
+      "26300486-c7e1-7758-cb61-ab94568290b5",
+      "268ef9d0-e432-d9c0-a23b-0ed081cdefa2"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-11-29T01:18:10Z",
+    "updated_at": "2026-05-14T15:50:32Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "5a43f0ea-d687-4f00-d964-91645507873a",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "81ebdf67-cafd-aa3f-c397-dc28e89f20d2",
+      "1e123905-6e8f-050c-21a5-59793e2cefff"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-12-01T02:13:22Z",
+    "updated_at": "2026-04-14T12:37:26Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "eb9d72fe-c207-8937-4ed6-176fbbe1c939",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "daf559dd-1c1a-45e0-0760-a375c7f7a260",
+      "7e080878-cb47-005b-6bcf-985500fc5803"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-12-04T18:40:05Z",
+    "updated_at": "2026-04-02T05:07:02Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "2964096c-bbdf-af06-6b82-74d4901c11d6",
+    "title": "Project Citylight: Environment reference",
+    "description": "Environment drop for Project Citylight. 2 image assets pulled together.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Citylight",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "tilemap",
+      "topdown",
+      "urban"
+    ],
+    "asset_ids": [
+      "0133236e-03c6-3c24-ec65-ccc74f535b5c",
+      "00bb95eb-f62c-0052-56cc-9f5a03c0d90a"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2025-12-18T03:48:02Z",
+    "updated_at": "2026-05-17T08:40:21Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "79f125ce-9a7b-5378-e107-cd5559e2b4ea",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "6b371a98-89d8-dbc2-239e-2057918f4577",
+      "09248c3f-f3d6-61fb-c04e-770ae8fffdc0"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2025-12-19T14:30:28Z",
+    "updated_at": "2026-05-12T18:50:19Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "c40f04ea-1151-86b8-9600-897be66a34ec",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 4 image assets pulled together.",
+    "author_username": "marcus.johnson",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "d97ab9ea-4b01-3b23-6e7f-7372922cf227",
+      "01e3c9b7-0c04-726e-f224-9f0073b98a15",
+      "0209c652-2e04-1cca-b947-7abcd8dc1148",
+      "077a526c-6804-239a-53f3-f56a23bd39da"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-12-23T17:19:29Z",
+    "updated_at": "2026-05-15T09:49:58Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "9a417280-28f4-ee49-3994-bb19042e7933",
+    "title": "Project Toybox: Props reference",
+    "description": "Props drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "Props",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "props",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "b25f84fd-e6f3-3ce5-cb2d-8c29339e1ad8",
+      "25c84b75-76e2-1aa6-3d11-0f89acff343f",
+      "27e807aa-0d44-844f-aeaa-05177d8be3a4"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2025-12-30T15:23:52Z",
+    "updated_at": "2026-05-06T11:36:18Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "fab44850-422d-29db-7559-9c8564b97de3",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "97288cd9-56cb-644e-7758-52dcf67163e3",
+      "0a5f5ae8-9f82-a83a-adc3-c0dc0bbc7f96",
+      "0b501f0c-ab1c-e44f-38c7-7e9b5c3341fb",
+      "0bd73be4-3261-fcca-9903-3b0391e03673",
+      "0c03e434-8a9c-5c19-49ce-b2f054aa183c"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-05T22:54:52Z",
+    "updated_at": "2026-05-18T00:32:32Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "b3f07b06-1e45-d983-1b5c-74b10dd973bf",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "cc7e0081-4cc5-bbec-961a-335ac17bb4f0",
+      "1b8a9f71-79b6-d906-40b7-875c39c2f31d"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2026-01-12T19:21:59Z",
+    "updated_at": "2026-04-28T04:31:08Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "4c00c19d-a635-9ed7-2479-67917f8eb0f6",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 2 audio assets pulled together.",
+    "author_username": "lucas.lefebvre",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "rpg",
+      "sfx",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "34d7da3f-2dec-f2cb-bd04-01139c063bc4",
+      "04f6486c-bafa-676b-bbe7-6c8c9040e290"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-14T17:39:43Z",
+    "updated_at": "2026-03-02T00:38:56Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "24cfa1b5-ce5c-6c35-8165-8a2433238357",
+    "title": "Project Adventure: UI reference",
+    "description": "UI drop for Project Adventure. 2 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Adventure",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "adventure",
+      "buttons",
+      "ui"
+    ],
+    "asset_ids": [
+      "91d96ed2-ac69-ac31-2eef-099077ee303c",
+      "2d0ee8d7-bb53-691f-d4fe-75f0bf19240e"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2026-01-19T15:16:43Z",
+    "updated_at": "2026-04-15T05:21:14Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "d1cb5c2e-6898-a542-b1ef-e77e9d087263",
+    "title": "Project Echo: Environment model pass + audio bundle + reference",
+    "description": "Environment working pass for Project Echo. Bundles 4 assets across 3d, audio, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "dd5764ab-6e62-8819-c259-4f18e073e4b1",
+      "d20fc59e-c901-ea93-aa2a-e7e0852992b5",
+      "de4420a9-d5c9-cb97-bcc1-9f5b402b5ccd",
+      "e539f9dc-b60f-1498-76c4-db2149823cc7"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-22T20:09:07Z",
+    "updated_at": "2026-04-21T01:55:30Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "6834a2b2-364f-4db4-a24e-ce3b541853d4",
+    "title": "Project Adventure: UI reference",
+    "description": "UI drop for Project Adventure. 5 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Adventure",
+    "team_name": "UI",
+    "brand_workspace": "Echo",
+    "tags": [
+      "adventure",
+      "buttons",
+      "ui"
+    ],
+    "asset_ids": [
+      "e4d34104-a3fc-f1f9-9829-167ffe4d3393",
+      "078ba8d8-b9cb-9bbb-1fc2-33721872fc59",
+      "0be47e73-862e-c797-a292-c9964de52087",
+      "22ee6fda-c721-38de-7fd4-b439ea8d9e06",
+      "29172e76-b097-cfe9-cce0-bd7be891b438"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-25T06:10:50Z",
+    "updated_at": "2026-04-23T11:01:16Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "db267b4b-8c4d-99e5-7fac-7f596e5a13ad",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "2a172515-8762-501a-f5b5-ce6274f0a3e9",
+      "08db55bd-8bba-e94b-6dd3-abf7cee63fb1"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "draft",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-01-26T07:51:42Z",
+    "updated_at": "2026-02-07T17:09:50Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "2ba7afdf-8370-f913-97d5-6c04bb552a92",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "chen.wei",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly"
+    ],
+    "asset_ids": [
+      "7a8a353c-cddc-824a-bc5c-1ace141b3903",
+      "3651754d-febc-45ee-0281-7c07104ba125",
+      "368aefb1-f214-3441-7d37-7e907d345d6b"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-26T16:10:45Z",
+    "updated_at": "2026-03-27T09:59:40Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "b05ec5f7-bafe-4816-324f-b5c4c59126d2",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "priya.sharma",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "icon",
+      "pixel",
+      "scifi",
+      "stylized",
+      "ui"
+    ],
+    "asset_ids": [
+      "b45cceb2-4d50-34c6-5503-477fc5d14a38",
+      "1f3a2ebd-95b5-efb1-0709-7720933295b0"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2026-01-27T00:05:04Z",
+    "updated_at": "2026-04-11T19:54:34Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "fd239a4d-6ca2-500b-35c4-bf86bbd91588",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "99174495-4c14-e9e2-ae95-82de290a20de",
+      "35ab1034-ff15-3908-ea3e-d4a1f2dcad5c"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-01-31T09:13:00Z",
+    "updated_at": "2026-05-15T03:46:04Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "807453c4-ae6a-28e6-3a7d-b77687bcab79",
+    "title": "Art Research: Characters audio bundle + briefing + reference",
+    "description": "Characters working pass for Art Research. Bundles 3 assets across audio, document, image — concept, references, and supporting media in one post.",
+    "author_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "08905c55-45e7-e8be-c3e3-74fd6a476170",
+      "034df3b9-671d-c292-32da-54f55d3d09ec",
+      "052a6492-3820-253c-edbe-60b9307f23b3"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "document",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-02-01T14:10:17Z",
+    "updated_at": "2026-04-15T10:42:46Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "bca5a481-109a-b275-70fb-816a573e2497",
+    "title": "Art Research: Characters model pass + audio bundle + briefing + reference",
+    "description": "Characters working pass for Art Research. Bundles 5 assets across 3d, audio, document, image — concept, references, and supporting media in one post.",
+    "author_username": "yuki.sato",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "c824dca3-9a95-b23f-5172-b34ab02aef03",
+      "296a4be1-802b-73cc-0e85-beab35e17118",
+      "377db7c9-60c4-b99f-a933-e2394b30515b",
+      "3ae50b01-b5a1-cb50-1770-687631909f1f",
+      "3d8a3491-b7d0-4928-a896-efbfc30c8123"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio",
+      "document",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-02-07T23:07:22Z",
+    "updated_at": "2026-04-15T13:53:55Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "0203cdb8-9433-33e4-fff5-f7f042bf9bb5",
+    "title": "Project Heroes: Characters model pass + reference",
+    "description": "Characters working pass for Project Heroes. Bundles 2 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "character",
+      "characters",
+      "lowpoly",
+      "rigged"
+    ],
+    "asset_ids": [
+      "d3b4c539-223c-0a6f-b5e4-5fade088ffee",
+      "452356b9-e90d-7fc4-f4bd-f60f47b8e51f"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-02-11T15:36:01Z",
+    "updated_at": "2026-05-24T03:15:20Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "9a283641-3894-a356-9509-e23da0aa9d51",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 5 audio assets pulled together.",
+    "author_username": "marcus.johnson",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "70624d6f-f43e-53f6-47d4-59485bb62ad6",
+      "05c58c38-3b85-4905-d562-05ab3e860a01",
+      "0606999c-490e-decd-3f4b-b9c6cf99996e",
+      "0716ea07-c3bc-cb25-bb8b-0a604a8f864d",
+      "07b93d5d-5152-9c53-28fc-c8f2148a6333"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2026-02-15T11:31:04Z",
+    "updated_at": "2026-04-28T06:15:13Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "d4210f81-bb30-54e6-c92b-d9686f39e304",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 4 audio assets pulled together.",
+    "author_username": "lucas.lefebvre",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "8157c398-97e4-39db-6cb2-92b5155f3c94",
+      "13f9a50f-b7f2-b665-2ccb-40632e5c8671",
+      "142a7faf-cd88-b86f-2893-36d979de2f13",
+      "165e0f5d-77f6-5332-1b4f-bfb3864eefea"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-02-22T19:49:08Z",
+    "updated_at": "2026-05-26T21:41:51Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "e6a4c6d3-a0d8-dcf3-63f5-4ca9d45452ff",
+    "title": "Project Mirror: VFX reference",
+    "description": "VFX drop for Project Mirror. 4 image assets pulled together.",
+    "author_username": "marcus.johnson",
+    "collection_name": "Project Mirror",
+    "team_name": "VFX",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "lighting",
+      "mask",
+      "vfx"
+    ],
+    "asset_ids": [
+      "4a829795-f33f-064e-c629-d49797be9569",
+      "13e5fc10-bcd1-33aa-eadb-3e0b48c62ff7",
+      "1578efb9-1597-7f03-5add-d1d210f20239",
+      "18023882-b3ec-2358-f316-0b4fd1d852ff"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-02-23T14:34:08Z",
+    "updated_at": "2026-05-24T22:51:26Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "09d889f5-ba4c-ee17-0463-3b11942a75c8",
+    "title": "Project Toybox: Environment reference",
+    "description": "Environment drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "bea.marquez",
+    "collection_name": "Project Toybox",
+    "team_name": "Environment",
+    "brand_workspace": null,
+    "tags": [
+      "environment",
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "ca53a286-0efb-1801-4cad-67b64935c9c8",
+      "02f5454c-fb75-0511-6edb-ec9118e3e476",
+      "079a949e-646a-a720-7868-bae0ab3f83fa",
+      "1a529b54-66cf-0992-8662-ac69c48b52a6",
+      "25934b13-3b6b-510a-cc93-522b066d254b"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-02-25T02:39:31Z",
+    "updated_at": "2026-04-24T14:33:17Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "67c33b6e-740f-6653-2dab-4fdabeae9584",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 4 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "f6f931c6-42b2-461a-b54e-71c2feee58c2",
+      "c5d31d3d-332b-2722-0a98-0146b9230e05",
+      "ce77c257-436e-cfda-0fff-5025c936741d",
+      "d0f0ad86-d1ac-194a-0940-4a36fec66238"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2026-03-01T11:50:21Z",
+    "updated_at": "2026-05-02T08:44:49Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "7d069999-92b5-f7d5-cc8c-c3a017085d86",
+    "title": "Art Research: Characters audio bundle + briefing",
+    "description": "Characters working pass for Art Research. Bundles 3 assets across audio, document — concept, references, and supporting media in one post.",
+    "author_username": "hana.kim",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "dd718da9-8499-a35d-d43e-ee8614beb284",
+      "01849d05-3b68-36ba-3b52-be0d5cfcc835",
+      "07a80662-5776-3dec-4d89-93e56c90a5aa"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "document"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "archived",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-03-14T01:12:16Z",
+    "updated_at": "2026-05-19T03:24:09Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "f6fd61df-a2a9-f087-f152-274e39bc0d42",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 3 image assets pulled together.",
+    "author_username": "akira.tanaka",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "f97f0b06-af80-0f96-a602-1c2da948fd68",
+      "0015ea10-8cdd-c95d-1196-bf54ddab49f8",
+      "02a5e4e9-d41e-8dd3-1bc0-4b55446c343c"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2026-03-14T16:41:42Z",
+    "updated_at": "2026-03-23T01:18:23Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "e92e0c10-4273-d172-2cb6-0d06e7a1db72",
+    "title": "Project Citylight: Environment briefing + reference",
+    "description": "Environment working pass for Project Citylight. Bundles 4 assets across document, image — concept, references, and supporting media in one post.",
+    "author_username": "esther.adeyemi",
+    "collection_name": "Project Citylight",
+    "team_name": "Environment",
+    "brand_workspace": "Mirror",
+    "tags": [
+      "environment",
+      "tilemap",
+      "topdown",
+      "urban"
+    ],
+    "asset_ids": [
+      "9c3b1df5-e5c0-faad-f35c-432ad3f62f8a",
+      "c6db4545-2e77-8b36-0d46-b68bd99612ec",
+      "00460834-21d9-23e2-b815-e53fa978a2f6",
+      "009172f9-682a-caae-3c68-ac597d0b7710"
+    ],
+    "asset_types_in_post": [
+      "document",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-03-19T06:26:47Z",
+    "updated_at": "2026-05-24T20:22:38Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "cb1455dc-88e1-6776-2ade-b1fc97fa0b47",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 4 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "20ca2e4c-0b83-64d4-3def-eb36e640c673",
+      "5d6f0d87-5a21-3915-4784-a224dc5eae93",
+      "6bed3326-ca95-26f5-2981-4e7dba751252",
+      "71361375-396e-2ebc-0eac-4f561916ae99"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "public",
+    "created_at": "2026-03-24T19:48:06Z",
+    "updated_at": "2026-05-02T14:43:59Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "3bd255ba-21d7-6d8b-bd64-16238630aae6",
+    "title": "Project Zoo: Characters reference",
+    "description": "Characters drop for Project Zoo. 5 image assets pulled together.",
+    "author_username": "yuki.sato",
+    "collection_name": "Project Zoo",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "animal",
+      "characters",
+      "icon",
+      "stylized"
+    ],
+    "asset_ids": [
+      "97684abb-068c-6d03-d480-c1d25c853e35",
+      "3a43f7a2-2cca-24ac-b563-cd1048c18377",
+      "3af4d19a-4479-9550-28dd-014e15a05135",
+      "3d04dfda-cca9-8fc9-6bde-ee31e95d0716",
+      "3d7b972b-7428-d082-fe32-e5f1fd6a734e"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-03-26T09:22:42Z",
+    "updated_at": "2026-05-11T11:21:06Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "c9c731a9-6f4d-6b90-aa5e-13fcf632afc8",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 5 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "20f75899-327e-4fa6-e585-38a1068fd7ca",
+      "1c65b23f-bfe4-73b7-fa4f-b060560c5238",
+      "1e4b27b3-07de-711c-016c-429f9c9a787e",
+      "23307a45-3436-0535-50c8-bfa0331b11eb",
+      "2391c35c-f7ca-c8ab-63e9-bff337f7d4be"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-03-29T13:23:24Z",
+    "updated_at": "2026-04-30T10:11:53Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "614026df-15df-c2a1-60b0-3e8f69bd85a6",
+    "title": "Project Jumpstart: Environment reference",
+    "description": "Environment drop for Project Jumpstart. 4 image assets pulled together.",
+    "author_username": "ravi.patel",
+    "collection_name": "Project Jumpstart",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "pixel",
+      "platformer",
+      "tilemap"
+    ],
+    "asset_ids": [
+      "318243a1-6db2-7bc6-9cca-c86886af2f97",
+      "475976e1-16dc-136c-89c0-7c7120cb60c1",
+      "8a270bd3-1274-4c9e-e582-94522271bcbb",
+      "92ae9fcc-51e6-cea3-46db-5cf8820174c1"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "final",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-01T10:19:35Z",
+    "updated_at": "2026-04-22T17:28:36Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "82c4e2e0-102e-853e-01dc-8c1a2f37ad26",
+    "title": "Project Toybox: Props reference",
+    "description": "Props drop for Project Toybox. 3 image assets pulled together.",
+    "author_username": "sofia.hernandez",
+    "collection_name": "Project Toybox",
+    "team_name": "Props",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "props",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "ee1a9f6f-ad7c-dd8d-8dbd-621fef754163",
+      "16d9a661-2218-75af-9f7f-56be7433d7c4",
+      "1f2dc623-5a37-17b6-f311-fcf8cccdf9b5"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-03T14:44:35Z",
+    "updated_at": "2026-04-29T05:50:48Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "1d257998-faea-3ef0-48e9-1ff7f705302e",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "a1e8fa76-e85b-6448-ba2b-f76cce697619",
+      "49304f4e-14d8-2729-359e-2f126309a0d1",
+      "4f786abb-bbac-9234-b654-33d6f3b42d2c"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-04-06T20:50:29Z",
+    "updated_at": "2026-04-18T07:18:47Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "e16da18c-c57d-2ecc-625b-5c8d6eec0813",
+    "title": "Studio Library: Reference storyboards + briefing + reference",
+    "description": "Reference working pass for Studio Library. Bundles 5 assets across comic, document, image — concept, references, and supporting media in one post.",
+    "author_username": "maya.okonkwo",
+    "collection_name": "Studio Library",
+    "team_name": "Reference",
+    "brand_workspace": null,
+    "tags": [
+      "comic",
+      "franchise:reference",
+      "mixed",
+      "narrative",
+      "reference",
+      "studio"
+    ],
+    "asset_ids": [
+      "53fdc2f0-4e85-92df-bf53-21f016914499",
+      "1181aec7-0df4-5ce8-6bb3-a429679e9ee0",
+      "149a050a-3bc8-8b7c-8856-7d24f87c963b",
+      "1a3b7b67-28af-1075-2d9d-1fab33e2f519",
+      "214c145f-b98f-51f1-4768-bcf505e116d0"
+    ],
+    "asset_types_in_post": [
+      "comic",
+      "document",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-07T02:23:57Z",
+    "updated_at": "2026-05-10T14:48:42Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "7d06c6af-7b42-8ddf-91f3-2dbf9ca22f75",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 5 image assets pulled together.",
+    "author_username": "emma.andersen",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "component",
+      "digital",
+      "franchise:engine",
+      "image",
+      "pixel",
+      "scifi",
+      "sketch",
+      "stylus",
+      "ui",
+      "ui-component",
+      "uisketch",
+      "wireframe"
+    ],
+    "asset_ids": [
+      "caa27db0-b7c9-3501-9c1f-8111354edef0",
+      "123b2f82-13cf-f670-eb67-a791405b4f93",
+      "12a7f066-200d-e4ce-0872-d83446731939",
+      "133f0d50-c5fb-7d95-d48c-ea64204049bb",
+      "13ba945f-f733-56fe-4d07-e171bce49cd0"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-07T09:16:42Z",
+    "updated_at": "2026-05-20T02:56:56Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "155a96a6-8868-185f-75af-8278201833f8",
+    "title": "Art Research: Props audio bundle + reference",
+    "description": "Props working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "imani.williams",
+    "collection_name": "Art Research",
+    "team_name": "Props",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:reference",
+      "props"
+    ],
+    "asset_ids": [
+      "17daa456-bee1-2d68-d1c8-439c3f8c10bf",
+      "8cf00952-c351-495f-ce93-95d9ab4e8b32"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-04-10T07:09:16Z",
+    "updated_at": "2026-05-08T04:37:50Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "5b2b649c-0613-09d7-3c7b-9f69aa8e75bd",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 5 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "kai.nakamura",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "05693adc-c91d-4597-08dc-862314d2c031",
+      "ea595f07-1610-b223-a317-276474de49b0",
+      "ebcce34b-3225-898d-c5d6-d926be62f359",
+      "fdda0ed7-7c6e-aaf6-6996-363f82af751f",
+      "ffb912e8-7529-af43-9a29-5e4c835c3055"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-10T07:58:03Z",
+    "updated_at": "2026-05-09T18:40:41Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "443890c4-a3e1-d8f8-b561-77f2b3e4baab",
+    "title": "Art Research: Characters audio bundle + reference",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across audio, image — concept, references, and supporting media in one post.",
+    "author_username": "felipe.costa",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "68e9d2c1-7748-e4f9-20e1-59be6e989c41",
+      "14b183b3-cad4-26a0-9ce3-aef26d0e9d19"
+    ],
+    "asset_types_in_post": [
+      "audio",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-04-11T19:06:29Z",
+    "updated_at": "2026-04-28T05:33:01Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "62502838-113c-5d50-e538-e0bf269a25fa",
+    "title": "Project Toybox: UI reference",
+    "description": "UI drop for Project Toybox. 2 image assets pulled together.",
+    "author_username": "jin.liu",
+    "collection_name": "Project Toybox",
+    "team_name": "UI",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:engine",
+      "pixel",
+      "scifi",
+      "ui"
+    ],
+    "asset_ids": [
+      "6369351e-f335-da8b-d46b-db5850991a22",
+      "00e4d4d6-5ed7-5df0-174e-075e421ca809"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-04-17T22:33:31Z",
+    "updated_at": "2026-05-08T00:51:46Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "03ea38ac-5a92-8c38-1a9e-11671814ae10",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 5 audio assets pulled together.",
+    "author_username": "sam.obrien",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "rpg",
+      "sfx",
+      "vocal",
+      "voiceover"
+    ],
+    "asset_ids": [
+      "e9b231c5-ad67-e613-d255-bea59ae47572",
+      "19497f8c-28b3-9b43-f24e-ca076ef57ec0",
+      "1a471ffb-7ef0-e15c-e8dc-ab25d0956fd6",
+      "1a9de57b-c501-2cfe-09f8-ca8b1ff137f6",
+      "1d50649d-6533-aee2-2f8a-1319d5fab7f0"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "draft",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-18T17:39:26Z",
+    "updated_at": "2026-05-04T16:17:48Z",
+    "studio": "shared",
+    "layer": "A"
+  },
+  {
+    "id": "92909433-afa9-4c51-bb3f-1e0b8f51a3b4",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "51de9167-c116-0902-4e71-3af2ceeb56d2",
+      "02252038-fbd8-f6b1-2f0c-9411a01cfa79",
+      "096ddb9e-5e53-bc4f-bd45-170749c6ae41"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "final",
+    "sensitivity_tier": "public",
+    "created_at": "2026-04-25T16:07:52Z",
+    "updated_at": "2026-05-14T15:11:48Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "c6271bfe-8965-3110-d26e-828b7c6fb78c",
+    "title": "Project Echo: Audio audio bundle",
+    "description": "Audio drop for Project Echo. 2 audio assets pulled together.",
+    "author_username": "ahmed.khalil",
+    "collection_name": "Project Echo",
+    "team_name": "Audio",
+    "brand_workspace": "Echo",
+    "tags": [
+      "audio",
+      "jingle",
+      "music",
+      "rpg",
+      "sfx"
+    ],
+    "asset_ids": [
+      "5a250036-de98-9cb0-3bde-31bfe8975681",
+      "16849e9a-5d46-93e6-fc6a-1203007a6baa"
+    ],
+    "asset_types_in_post": [
+      "audio"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-04-29T21:45:58Z",
+    "updated_at": "2026-05-06T11:03:43Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "ce63c942-f68e-866e-75e3-6bc669952ee0",
+    "title": "Project Heroes: Characters model pass + reference",
+    "description": "Characters working pass for Project Heroes. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "layla.hassan",
+    "collection_name": "Project Heroes",
+    "team_name": "Characters",
+    "brand_workspace": "Echo",
+    "tags": [
+      "character",
+      "characters",
+      "lowpoly",
+      "rigged"
+    ],
+    "asset_ids": [
+      "7d73ba7a-c6c2-3b45-2503-58bdd12883c2",
+      "249308ea-a6b9-5477-4e96-45967cb085f6",
+      "3766e608-02ff-2ca3-de6f-8917cd32c882"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-05-02T18:04:44Z",
+    "updated_at": "2026-05-19T00:14:48Z",
+    "studio": "b",
+    "layer": "A"
+  },
+  {
+    "id": "f0d78d54-31f1-8c40-6b02-ae2e1a93caaa",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 3 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "diego.vasquez",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly"
+    ],
+    "asset_ids": [
+      "83c32a1b-032c-21bd-756d-20345421cad6",
+      "53f5230a-a2c2-2716-832f-a2901230d864",
+      "5ac2e90c-ae6c-33a8-65b5-d2ab51d00f33"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "in_review",
+    "sensitivity_tier": "public",
+    "created_at": "2026-05-06T08:35:57Z",
+    "updated_at": "2026-05-17T17:54:48Z",
+    "studio": "a",
+    "layer": "A"
+  },
+  {
+    "id": "4543bd54-e0b3-fc54-a42b-0b7012b1123d",
+    "title": "Studio Library: Reference storyboards + briefing",
+    "description": "Reference working pass for Studio Library. Bundles 2 assets across comic, document — concept, references, and supporting media in one post.",
+    "author_username": "yuki.sato",
+    "collection_name": "Studio Library",
+    "team_name": "Reference",
+    "brand_workspace": null,
+    "tags": [
+      "comic",
+      "franchise:reference",
+      "mixed",
+      "narrative",
+      "reference",
+      "studio"
+    ],
+    "asset_ids": [
+      "bcff30a9-3eff-28fd-0173-e46662f07075",
+      "08b49041-539b-3acc-1721-7a70b198c749"
+    ],
+    "asset_types_in_post": [
+      "comic",
+      "document"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-05-08T04:38:24Z",
+    "updated_at": "2026-05-25T09:25:01Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "b190f45f-ed5a-7105-9b57-6acb64a528a1",
+    "title": "Snapdex: Marketing Art reference",
+    "description": "Marketing Art drop for Snapdex. 5 image assets pulled together.",
+    "author_username": "sam.obrien",
+    "collection_name": "Snapdex",
+    "team_name": "Marketing Art",
+    "brand_workspace": null,
+    "tags": [
+      "franchise:pokemon tcg",
+      "marketing",
+      "marketing-art",
+      "tcg",
+      "trading-card"
+    ],
+    "asset_ids": [
+      "c4790a14-e241-31e4-fde1-bc465163bc91",
+      "209cdedd-25a0-c71e-4065-b008aa34eede",
+      "21f91b98-781e-9d1c-c8ed-b74b975e6e79",
+      "77654fa2-9178-83f7-8da9-7d469a5dbc88",
+      "a1212c9d-8ced-8d46-15ec-58ae1e5c74b1"
+    ],
+    "asset_types_in_post": [
+      "image"
+    ],
+    "is_mixed_type": false,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-05-13T06:31:31Z",
+    "updated_at": "2026-05-26T16:50:01Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "c8d94ba5-d2ff-8312-5f9f-6813f7cfcd1d",
+    "title": "Art Research: Characters model pass + audio bundle",
+    "description": "Characters working pass for Art Research. Bundles 2 assets across 3d, audio — concept, references, and supporting media in one post.",
+    "author_username": "maya.okonkwo",
+    "collection_name": "Art Research",
+    "team_name": "Characters",
+    "brand_workspace": null,
+    "tags": [
+      "characters",
+      "franchise:reference"
+    ],
+    "asset_ids": [
+      "46a1da09-df9d-e933-1c96-a087cd31b2fa",
+      "0b43dd18-d7f0-4e9a-c505-5ebfdfc44502"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "audio"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "restricted",
+    "created_at": "2026-05-17T03:36:38Z",
+    "updated_at": "2026-05-22T23:33:52Z",
+    "studio": "b",
+    "layer": "B"
+  },
+  {
+    "id": "c769df42-a6db-ec6d-cc68-b52a7bcbd203",
+    "title": "Project Echo: Environment model pass + reference",
+    "description": "Environment working pass for Project Echo. Bundles 5 assets across 3d, image — concept, references, and supporting media in one post.",
+    "author_username": "anya.volkov",
+    "collection_name": "Project Echo",
+    "team_name": "Environment",
+    "brand_workspace": "Echo",
+    "tags": [
+      "environment",
+      "fantasy",
+      "kit",
+      "lowpoly",
+      "texture",
+      "tiling"
+    ],
+    "asset_ids": [
+      "0d419de6-e858-f51b-29da-961e12436d9b",
+      "81f9546d-72ef-6563-6e73-279c361751cb",
+      "82f60225-37ee-c55a-1fdf-f7cc4980d01d",
+      "9857f11b-4296-7f2a-d43f-33c1c83d9c6f",
+      "9b97665e-0b61-05db-914e-c01c8ab0d0be"
+    ],
+    "asset_types_in_post": [
+      "3d",
+      "image"
+    ],
+    "is_mixed_type": true,
+    "workflow_state": "approved",
+    "sensitivity_tier": "team",
+    "created_at": "2026-05-21T17:23:26Z",
+    "updated_at": "2026-05-22T22:54:40Z",
+    "studio": "a",
+    "layer": "A"
+  }
+]

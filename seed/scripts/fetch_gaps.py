@@ -200,6 +200,28 @@ GAPS: list[GapAsset] = [
         source="Wikimedia Commons",
         asset_type="video",
     ),
+    GapAsset(
+        name="Hedgewars gameplay (open-source artillery game)",
+        url="https://upload.wikimedia.org/wikipedia/commons/c/ca/Hedgewars_gameplay.webm",
+        target_dir="video",
+        target_filename="hedgewars-gameplay.webm",
+        license="CC-BY-SA 4.0",
+        attribution="Hedgewars — open-source artillery game",
+        source="Wikimedia Commons",
+        asset_type="video",
+        notes="Turn-based artillery game",
+    ),
+    GapAsset(
+        name="OpenArena 0.8.8 gameplay (open-source FPS)",
+        url="https://upload.wikimedia.org/wikipedia/commons/6/60/OpenArena_0.8.8_gameplay.webm",
+        target_dir="video",
+        target_filename="openarena-gameplay.webm",
+        license="CC-BY-SA 4.0",
+        attribution="OpenArena — open-source FPS (Quake III Arena derivative)",
+        source="Wikimedia Commons",
+        asset_type="video",
+        notes="First-person shooter gameplay",
+    ),
 
     # =========================================================================
     # AUDIO — LibriVox readings + NASA recordings

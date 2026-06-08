@@ -705,6 +705,109 @@ def derive_brand_workspaces(rows: list[AssetRecord]) -> list[dict[str, Any]]:
     ]
 
 
+def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, Any]]:
+    """Generate ~count mixed-asset posts from the pool. Each post anchors
+    on one asset and pulls 1-4 related ones from the same team+project,
+    preferring different asset_types so the demo's post feed shows the
+    multi-asset UI working (concept render + 3D model + reference image +
+    audio bundle, etc.).
+
+    Posts inherit author, collection, and workflow_state from the
+    anchor. created_at comes from the anchor too — that keeps the post
+    feed time-realistic alongside the asset feed.
+    """
+    import random
+    rng = random.Random("artist-alley.posts.v1")
+
+    # Group assets by (team, project) for related-asset lookup
+    by_team_project: dict[tuple[str, str], list[AssetRecord]] = defaultdict(list)
+    for a in assets:
+        by_team_project[(a.team_name, a.collection_name)].append(a)
+
+    # Anchor candidates — prefer groups with 3+ assets (so we have something
+    # to attach), and bias toward original work (not just Kenney sprite floods)
+    candidates = [
+        a for a in assets
+        if len(by_team_project[(a.team_name, a.collection_name)]) >= 3
+    ]
+    rng.shuffle(candidates)
+
+    posts: list[dict[str, Any]] = []
+    used_anchors: set[str] = set()
+    theme_by_type = {
+        "image": "reference",
+        "3d": "model pass",
+        "audio": "audio bundle",
+        "video": "cinematic pass",
+        "document": "briefing",
+        "font": "type kit",
+        "comic": "storyboards",
+    }
+
+    for anchor in candidates:
+        if anchor.id in used_anchors:
+            continue
+        siblings = by_team_project[(anchor.team_name, anchor.collection_name)]
+        # Eligible companions: same team+project, not the anchor, not used
+        eligible = [s for s in siblings if s.id != anchor.id and s.id not in used_anchors]
+        # Sort by type-diversity (different type from anchor preferred) +
+        # deterministic tiebreaker (hash of id)
+        eligible.sort(key=lambda x: (x.asset_type == anchor.asset_type, x.id))
+
+        n_companions = rng.randint(1, 4)
+        chosen = eligible[:n_companions]
+        if not chosen:
+            continue
+
+        post_assets = [anchor] + chosen
+        used_anchors.update(a.id for a in post_assets)
+
+        types_in_post = sorted({a.asset_type for a in post_assets})
+        theme_parts = [theme_by_type.get(t, t) for t in types_in_post]
+        title = f"{anchor.collection_name}: {anchor.team_name} {' + '.join(theme_parts)}"
+
+        # Description varies based on the asset mix
+        if len(types_in_post) > 1:
+            desc = (f"{anchor.team_name} working pass for {anchor.collection_name}. "
+                    f"Bundles {len(post_assets)} assets across "
+                    f"{', '.join(types_in_post)} — concept, references, and supporting media in one post.")
+        else:
+            desc = (f"{anchor.team_name} drop for {anchor.collection_name}. "
+                    f"{len(post_assets)} {types_in_post[0]} assets pulled together.")
+
+        # Aggregate tags from all included assets, dedup
+        all_tags = sorted({t for a in post_assets for t in (a.tags or [])})
+
+        # updated_at = max across the post's assets
+        last_updated = max((a.updated_at for a in post_assets), default=anchor.updated_at)
+
+        posts.append({
+            "id": stable_uuid("post", anchor.id),
+            "title": title,
+            "description": desc,
+            "author_username": anchor.owner_username,
+            "collection_name": anchor.collection_name,
+            "team_name": anchor.team_name,
+            "brand_workspace": anchor.brand_workspace,
+            "tags": all_tags,
+            "asset_ids": [a.id for a in post_assets],
+            "asset_types_in_post": types_in_post,
+            "is_mixed_type": len(types_in_post) > 1,
+            "workflow_state": anchor.workflow_state,
+            "sensitivity_tier": anchor.sensitivity_tier,
+            "created_at": anchor.created_at,
+            "updated_at": last_updated,
+            "studio": anchor.studio,
+            "layer": "A" if all(a.layer == "A" for a in post_assets) else "B",
+        })
+        if len(posts) >= count:
+            break
+
+    # Sort by created_at for interlaced feed appearance
+    posts.sort(key=lambda p: p["created_at"])
+    return posts
+
+
 # -----------------------------------------------------------------------------
 # Internet-fetched ingestion
 # -----------------------------------------------------------------------------
@@ -923,6 +1026,10 @@ def main() -> int:
     teams = derive_teams(assets)
     collections = derive_collections(assets)
     brand_workspaces = derive_brand_workspaces(assets)
+    posts = derive_posts(assets, count=120)
+    mixed_type_posts = [p for p in posts if p["is_mixed_type"]]
+    print(f"\nDerived {len(posts)} posts ({len(mixed_type_posts)} mixed-type)",
+          file=sys.stderr)
 
     # Write per-profile files
     # site_a is the demo source — Layer A only (CC0 / CC-BY / OFL / PD).
@@ -965,6 +1072,26 @@ def main() -> int:
     write_json(out / "studio-b.assets.json", [asdict(a) for a in studio_b_assets])
     write_json(out / "dev.assets.json", [asdict(a) for a in dev_assets])
     write_json(out / "demo.assets.json", [asdict(a) for a in demo_assets])
+
+    # Per-site post filtering: a post belongs to a site if ALL its assets
+    # are in that site (otherwise the post would reference unseeded
+    # records). For site_a (Layer A only), additionally require post.layer
+    # == "A".
+    asset_ids_a = {a.id for a in studio_a_assets}
+    asset_ids_b = {a.id for a in studio_b_assets}
+    site_a_posts = [
+        p for p in posts
+        if all(aid in asset_ids_a for aid in p["asset_ids"]) and p["layer"] == "A"
+    ]
+    site_b_posts = [
+        p for p in posts
+        if all(aid in asset_ids_b for aid in p["asset_ids"])
+    ]
+    write_json(out / "dataset.posts.json", posts)
+    write_json(out / "studio-a.posts.json", site_a_posts)
+    write_json(out / "studio-b.posts.json", site_b_posts)
+    print(f"posts per site: site_a={len(site_a_posts)}, site_b={len(site_b_posts)}",
+          file=sys.stderr)
 
     print(f"\nwrote {len(list(out.glob('*.json')))} files to {out}", file=sys.stderr)
     return 0
