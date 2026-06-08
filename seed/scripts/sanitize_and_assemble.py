@@ -1107,6 +1107,68 @@ def _spread_timestamp(seed_hex: str, base_iso: str = "2025-04-01T00:00:00Z",
     return (base + timedelta(seconds=offset_seconds)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def load_torrent_imports(json_path: Path) -> list[AssetRecord]:
+    """Read seed/scripts/torrent_imports.json and emit AssetRecord
+    entries for torrent-imported content. These files are pre-copied
+    on the Synology directly into site_a/site_b at the indicated
+    file_path — populate_archive treats source_root='torrent_import'
+    as preexisting (skips copy attempt; just verifies the file
+    exists at the dest path)."""
+    if not json_path.is_file():
+        return []
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    records: list[AssetRecord] = []
+    for entry in data.get("assets", []):
+        asset_type = entry.get("asset_type", "video")
+        file_path = entry["file_path"]
+        size = int(entry["file_size_bytes"])
+        title = entry["name"]
+        ext = Path(file_path).suffix.lstrip(".") or "bin"
+        sha_seed = entry.get("sha_seed") or hashlib.sha256(f"{title}|{size}".encode()).hexdigest()
+        records.append(AssetRecord(
+            id=stable_uuid("asset", "torrent", sha_seed),
+            asset_type=asset_type,
+            title=title,
+            description=entry.get("notes", f"{title} — Blender Foundation open content."),
+            file_path=file_path,
+            source_path=file_path,
+            source_root="torrent_import",
+            file_extension=ext,
+            file_size_bytes=size,
+            sensitivity_tier="public",
+            archive_state="active",
+            owner_username="seed.bot",
+            collection_name="Cinematics Reference",
+            team_name="Marketing Art",
+            brand_workspace=None,
+            tags=["reference", "public-domain", "cinematic", "torrent-imported",
+                  f"source:{entry.get('source', 'unknown').lower().replace(' ', '-')}"],
+            workflow_state="approved",
+            metadata={
+                "filename": Path(file_path).name,
+                "kind": asset_type,
+                "license": entry.get("license", ""),
+                "usage_rights": "All Use",
+                "acquisition_source": entry.get("source", ""),
+                "attribution": entry.get("attribution", ""),
+                "group_id": "",
+                "import_source": "torrent",
+            },
+            field_values={},
+            external_id="",
+            review_notes=None,
+            reviewer_username=None,
+            created_at=_spread_timestamp(sha_seed),
+            updated_at=_spread_timestamp(sha_seed),
+            last_reviewed_at=_spread_timestamp(sha_seed),
+            license=entry.get("license", ""),
+            attribution=entry.get("attribution", ""),
+            layer="A",
+            studio="shared",
+        ))
+    return records
+
+
 def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
     """Read seed/internet-fetched/MANIFEST.json (produced by fetch_gaps.py)
     and turn each entry into an AssetRecord marked studio='shared' + layer='A'.
@@ -1264,6 +1326,16 @@ def main() -> int:
     internet_assets = load_internet_assets(args.internet)
     print(f"  appending {len(internet_assets)} internet asset records", file=sys.stderr)
     assets.extend(internet_assets)
+
+    # Append torrent-imported content (pre-copied on Synology — populate
+    # won't re-copy these; it'll just verify the file is present at the
+    # destination file_path)
+    torrent_manifest = Path(__file__).resolve().parent / "torrent_imports.json"
+    torrent_assets = load_torrent_imports(torrent_manifest)
+    if torrent_assets:
+        print(f"  appending {len(torrent_assets)} torrent-imported asset records",
+              file=sys.stderr)
+        assets.extend(torrent_assets)
 
     # Compute summary stats
     total_bytes = sum(a.file_size_bytes for a in assets)

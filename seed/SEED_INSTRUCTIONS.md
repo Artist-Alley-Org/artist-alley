@@ -185,6 +185,58 @@ to verify the targets.
 - **Don't drop Layer B from site_b.** That's the local dev set; it has
   to keep the IP/personal content. Only site_a is Layer A only.
 
+## Operational gotchas (from the federation agent, 2026-06-08)
+
+These came back from the agent that shipped 1.22.D-a/b/c — flag them
+in your apply script's logging or you'll hit them once paired-instance
+dogfood starts.
+
+### 1. Federation tests vs running app — mutually exclusive
+
+`scripts/test.sh` stops the dev app container before running federation
+tests (1.22.D-b-6 requirement — the listen/notify dispatcher can't
+share a database with a federation test that's manipulating it). If
+your apply script runs while the app is up AND a federation test sweeps
+concurrently, the test will skip or race.
+
+If your apply script triggers any `scripts/test.sh` invocations as part
+of post-seed validation, do it before the dispatcher is running, or
+expect skips. Otherwise just don't trigger tests inside apply.
+
+### 2. AA_MASTER_KEY must be identical across both instances (for 1.22.I)
+
+Today (pre-1.22.I) the master key is per-instance and only used for
+at-rest encryption of secrets. It can differ between site_a and site_b.
+
+When 1.22.I lands (X25519 keypair-per-user + cross-instance encrypted
+federation), the at-rest key wraps the private keys — so site_a and
+site_b need the SAME `AA_MASTER_KEY` to decrypt each other's wrapped
+peer keys, OR operators need a documented rotation/reconciliation
+flow.
+
+If your apply script generates `AA_MASTER_KEY` at first-time
+provisioning, **persist it where operators can read it back**. Don't
+make it auto-generated-and-forgotten. The dogfood operator will need
+to set both instances to the same value when 1.22.I ships, or do a
+documented rotation.
+
+### 3. Initial activities dispatch — seed-before-boot vs after
+
+If your apply script seeds posts/users **after** the app boots,
+the dispatcher's first LISTEN/NOTIFY catches each insert naturally
+(one notify per row, small batches).
+
+If your apply script seeds **before** the app boots, the dispatcher's
+initial `RunOnce` startup probe will see a populated activities table
+and process hundreds of rows in one sweep before catching up. The
+operator log will show a single large "dispatch backlog" burst on
+first boot.
+
+Neither is wrong. Just document which mode you're using in your apply
+script's README so operators don't think the burst is a bug. The
+"seed-before-boot" path is also slightly faster end-to-end (no per-row
+notify overhead).
+
 ## If something goes wrong
 
 - Asset file not found: the manifest had a path that doesn't exist on

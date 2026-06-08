@@ -199,7 +199,24 @@ def main() -> int:
     bytes_copied = 0
     progress_every = max(1, len(path_map) // 20)
     items = sorted(path_map.items(), key=lambda x: x[1])  # sort by dest path
+    preexisting = 0
     for i, ((root, source_path), dest_rel) in enumerate(items):
+        # 'torrent_import' is a special source_root: the bytes were
+        # pre-copied on the destination (Synology-to-Synology copy from
+        # /volume1/torrents/). We don't have access to the source bytes
+        # from this side, so just verify the dest file exists with a
+        # reasonable size.
+        if root == "torrent_import":
+            dest_file = args.dest / dest_rel
+            if dest_file.is_file() and dest_file.stat().st_size > 0:
+                preexisting += 1
+            else:
+                missing += 1
+                if missing <= 5:
+                    print(f"  MISSING [torrent_import]: {dest_rel} — not pre-copied?",
+                          file=sys.stderr)
+            continue
+
         src_file = sources[root] / source_path
         if not src_file.is_file():
             missing += 1
@@ -245,9 +262,11 @@ def main() -> int:
         print(f"  pruned {pruned:,} stale files", file=sys.stderr)
 
     print(f"\n=== Summary ===", file=sys.stderr)
-    print(f"  copied:  {copied:,} files ({bytes_copied / 2**30:.2f} GB)", file=sys.stderr)
-    print(f"  skipped: {skipped:,} (already present, same size)", file=sys.stderr)
-    print(f"  missing: {missing:,} (not found in source)", file=sys.stderr)
+    print(f"  copied:      {copied:,} files ({bytes_copied / 2**30:.2f} GB)", file=sys.stderr)
+    print(f"  skipped:     {skipped:,} (already present, same size)", file=sys.stderr)
+    print(f"  preexisting: {preexisting:,} (torrent_import — bytes already in place)",
+          file=sys.stderr)
+    print(f"  missing:     {missing:,} (not found in source)", file=sys.stderr)
     if args.prune:
         print(f"  pruned:  {pruned:,} stale files removed", file=sys.stderr)
     if missing > 5:
