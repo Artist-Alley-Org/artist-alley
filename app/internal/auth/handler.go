@@ -851,6 +851,21 @@ func (h *Handler) SetUserRole(
 		return nil, err
 	}
 
+	// Last-admin invariant: if the new role does NOT grant
+	// system.admin AND the target user is the last admin,
+	// refuse. Swap to a role that ALSO grants system.admin is
+	// allowed (the admin count stays >= 1).
+	if grants, err := q.RoleGrantsSystemAdmin(ctx, roleUUID); err != nil {
+		return nil, err
+	} else if grants == 0 {
+		if err := EnsureNotLastAdmin(ctx, q, req.Ref); err != nil {
+			if errors.Is(err, ErrLastAdmin) {
+				return openapi.SetUserRole400JSONResponse{Error: err.Error()}, nil
+			}
+			return nil, err
+		}
+	}
+
 	// Sets the user's GLOBAL role (replaces any existing global
 	// assignment; leaves team-scoped assignments intact). The admin
 	// endpoint shape hasn't changed; only the storage semantics did.

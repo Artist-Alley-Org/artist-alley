@@ -318,6 +318,15 @@ paths:
       responses:
         "204":
           description: Role assigned
+        "400":
+          description: |
+            Role change refused — would leave the system with
+            zero users holding `system.admin` (last-admin
+            invariant guard). Grant the capability to another
+            user first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -421,6 +430,15 @@ paths:
       responses:
         "204":
           description: Grant removed.
+        "400":
+          description: |
+            Grant removal refused — would leave the system with
+            zero users holding `system.admin` (last-admin
+            invariant guard). Applies to global system.admin
+            grants only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

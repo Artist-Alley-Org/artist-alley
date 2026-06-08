@@ -335,6 +335,22 @@ func (h *Handler) SetAdminUserStatus(
 		}, nil
 	}
 
+	// Last-admin invariant: refuse to deactivate the user when
+	// they're the last system.admin holder. The bootstrap admin
+	// (created on first boot by internal/bootstrap) guarantees
+	// at least one admin always exists; the guard ensures admin
+	// management endpoints can't undo that.
+	if newApproved == 0 {
+		if err := auth.EnsureNotLastAdmin(ctx, auth.New(h.Pool), req.Ref); err != nil {
+			if errors.Is(err, auth.ErrLastAdmin) {
+				return openapi.SetAdminUserStatus400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+				}, nil
+			}
+			return nil, fmt.Errorf("users: last-admin guard: %w", err)
+		}
+	}
+
 	q := New(h.Pool)
 	row, err := q.UpdateUserStatus(ctx, UpdateUserStatusParams{
 		UserRef:   req.Ref,

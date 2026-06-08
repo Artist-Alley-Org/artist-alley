@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
+	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
@@ -72,6 +73,18 @@ func run() error {
 	}
 	defer pool.Close()
 	logger.Info("db connected")
+
+	// First-boot bootstrap: create the default admin when none
+	// exists. Idempotent — no-op on subsequent boots. Runs
+	// AFTER migrations + the DB pool are up so we have the
+	// schema + a working connection.
+	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
+		ScrambleKey:         cfg.ScrambleKey,
+		AdminPath:           cfg.BootstrapAdminPath,
+		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
+	}, logger); err != nil {
+		return err
+	}
 
 	srv, err := aahttp.New(cfg, logger, pool, Version)
 	if err != nil {

@@ -51,6 +51,12 @@ services:
       # and by per-user encryption keys (1.22.A). Hex-encoded
       # 32 bytes; bootstrap.sh generates one if missing.
       AA_MASTER_KEY: ${AA_MASTER_KEY:?AA_MASTER_KEY is required; see scripts/bootstrap.sh}
+      # Dev/demo: use the documented default admin
+      # (admin/ArtistAlleyMogul) so the seed loader + manual
+      # poking against the dev stack don't need to fish a
+      # random password out of the boot log. PRODUCTION DEPLOYS
+      # MUST OMIT THIS — see internal/bootstrap/bootstrap.go.
+      AA_BOOTSTRAP_DEFAULT_ADMIN: ${AA_BOOTSTRAP_DEFAULT_ADMIN:-1}
       # Storage root for the fs backend. Mounted as a named volume below
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.
