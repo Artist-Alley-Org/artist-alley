@@ -709,6 +709,18 @@ def derive_brand_workspaces(rows: list[AssetRecord]) -> list[dict[str, Any]]:
 # Internet-fetched ingestion
 # -----------------------------------------------------------------------------
 
+def _spread_timestamp(seed_hex: str, base_iso: str = "2025-04-01T00:00:00Z",
+                      window_days: int = 420) -> str:
+    """Deterministic timestamp in [base, base + window_days). Internet
+    assets need realistic per-asset timestamps spread over the same
+    ~14-month window as the local content, so the seeded feed looks
+    interlaced rather than all bunched at one fetch date."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime.fromisoformat(base_iso.replace("Z", "+00:00"))
+    offset_seconds = int(seed_hex[:12], 16) % (window_days * 86400)
+    return (base + timedelta(seconds=offset_seconds)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
     """Read seed/internet-fetched/MANIFEST.json (produced by fetch_gaps.py)
     and turn each entry into an AssetRecord marked studio='shared' + layer='A'.
@@ -765,9 +777,9 @@ def load_internet_assets(internet_dir: Path) -> list[AssetRecord]:
             external_id="",
             review_notes=None,
             reviewer_username=None,
-            created_at="2026-06-07T00:00:00Z",
-            updated_at="2026-06-07T00:00:00Z",
-            last_reviewed_at="2026-06-07T00:00:00Z",
+            created_at=_spread_timestamp(entry.get("sha256", local_path)),
+            updated_at=_spread_timestamp(entry.get("sha256", local_path)),
+            last_reviewed_at=_spread_timestamp(entry.get("sha256", local_path)),
             license=entry.get("license", ""),
             attribution=entry.get("attribution", ""),
             layer="A",
@@ -852,9 +864,13 @@ def main() -> int:
         ), file=sys.stderr)
     print(f"  kept {len(balanced):,} after balance", file=sys.stderr)
 
-    # Re-sort by external_id (CSV asset_id) so the output is stable across
-    # runs even though we shuffled.
-    balanced.sort(key=lambda a: a.external_id or a.id)
+    # Sort by created_at so when apply.sh ingests these in order, AA's
+    # "recent uploads" feed shows interlaced variety (not all 3D first,
+    # all audio second, etc.). The source CSV has realistic per-asset
+    # timestamps spread over ~14 months — using them as the seed order
+    # makes the demo look like an organic migration rather than a
+    # type-by-type bulk import.
+    balanced.sort(key=lambda a: (a.created_at, a.external_id or a.id))
     assets = balanced
 
     # Append internet-fetched content (all studio="shared", layer="A")

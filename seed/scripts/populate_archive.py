@@ -42,9 +42,39 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+
+def safe_mkdir(path: Path, max_retries: int = 3) -> None:
+    """Robust mkdir for SMB / network mounts. Python's pathlib.mkdir
+    sometimes raises FileExistsError with exist_ok=True when the mount
+    returns weird errnos. Tries multiple strategies + a brief retry
+    loop to let SMB caches settle. Raises RuntimeError if the directory
+    still isn't usable after all attempts."""
+    import time
+    for attempt in range(max_retries):
+        # Strategy 1: pathlib mkdir
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, OSError):
+            pass
+        # Strategy 2: shell mkdir -p (more forgiving on SMB)
+        try:
+            subprocess.run(["mkdir", "-p", str(path)], check=False,
+                           timeout=10, capture_output=True)
+        except Exception:
+            pass
+        # Probe: is the directory actually usable now?
+        if path.is_dir():
+            return
+        # Wait briefly for SMB cache to sync, then retry
+        time.sleep(0.5 + attempt * 0.5)
+    # Final failure
+    raise RuntimeError(f"could not create directory after {max_retries} attempts: {path}")
 
 
 def main() -> int:
@@ -101,20 +131,20 @@ def main() -> int:
     print(f"  {len(wanted_group_ids):,} group_ids", file=sys.stderr)
 
     if not args.dry_run:
-        args.dest.mkdir(parents=True, exist_ok=True)
+        safe_mkdir(args.dest)
         # Pre-create every typed-folder root we'll write into. The SMB
         # mount sometimes returns stale "directory exists" info after a
         # half-completed run; doing this upfront with a fresh stat avoids
         # the per-file mkdir race that bit us earlier.
         type_roots = {dp.split("/", 1)[0] for dp in wanted_dest_paths if "/" in dp}
         for tr in sorted(type_roots):
-            (args.dest / tr).mkdir(parents=True, exist_ok=True)
+            safe_mkdir(args.dest / tr)
         # Also pre-create the per-pack subdirs (one level deeper) for the
         # same reason — gets all the directory creation out of the way
         # before any file copies start.
         pack_dirs = {str(Path(dp).parent) for dp in wanted_dest_paths if "/" in dp}
         for pd in sorted(pack_dirs):
-            (args.dest / pd).mkdir(parents=True, exist_ok=True)
+            safe_mkdir(args.dest / pd)
 
     # Filter + rewrite metadata.csv — keep rows whose original file_path
     # belongs to this site; rewrite the file_path column to the new layout
@@ -184,15 +214,7 @@ def main() -> int:
             copied += 1
             bytes_copied += src_file.stat().st_size
             continue
-        # SMB / network mounts sometimes return FileExistsError even with
-        # exist_ok=True (the mount returns ENOTDIR or similar quirks).
-        # Guard with an existence check + swallow FileExistsError as a
-        # belt-and-braces measure.
-        if not dest_file.parent.is_dir():
-            try:
-                dest_file.parent.mkdir(parents=True, exist_ok=True)
-            except FileExistsError:
-                pass  # raced with another mkdir; the dir is there now
+        safe_mkdir(dest_file.parent)
         shutil.copyfile(src_file, dest_file)
         copied += 1
         bytes_copied += src_file.stat().st_size

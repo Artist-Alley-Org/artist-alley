@@ -5,14 +5,14 @@
     "full_name": "Ahmed Khalil",
     "email": "ahmed.khalil@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Audio"
   },
   {
     "id": "0e4d9e3c-c646-eb73-a4a7-9dd12fa821dd",
     "username": "akira.tanaka",
     "full_name": "Akira Tanaka",
     "email": "akira.tanaka@studio.local",
-    "role": "artist",
+    "role": "reviewer",
     "primary_team": "UI"
   },
   {
@@ -21,7 +21,7 @@
     "full_name": "Anya Volkov",
     "email": "anya.volkov@studio.local",
     "role": "reviewer",
-    "primary_team": "Audio"
+    "primary_team": "Environment"
   },
   {
     "id": "5996acc0-3543-775b-74ec-226a228ef1ff",
@@ -45,7 +45,7 @@
     "full_name": "Devon Reeves",
     "email": "devon.reeves@studio.local",
     "role": "artist",
-    "primary_team": "Marketing Art"
+    "primary_team": "VFX"
   },
   {
     "id": "8e2ae52a-7149-a5fd-8769-679b412e5e0e",
@@ -53,7 +53,7 @@
     "full_name": "Diego Vasquez",
     "email": "diego.vasquez@studio.local",
     "role": "artist",
-    "primary_team": "Marketing Art"
+    "primary_team": "Environment"
   },
   {
     "id": "9fd83924-19d9-690a-a93e-1441bb0f0a28",
@@ -69,7 +69,7 @@
     "full_name": "Esther Adeyemi",
     "email": "esther.adeyemi@studio.local",
     "role": "artist",
-    "primary_team": "Reference"
+    "primary_team": "Environment"
   },
   {
     "id": "8b390270-9183-5d14-355e-e15a268d8e9d",
@@ -101,7 +101,7 @@
     "full_name": "Jin Liu",
     "email": "jin.liu@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "2b0ef86e-4da9-935a-5093-bbe5800c23ef",
@@ -117,7 +117,7 @@
     "full_name": "Layla Hassan",
     "email": "layla.hassan@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Characters"
   },
   {
     "id": "dc21666b-ab71-3e81-c691-11bf99a9821e",
@@ -125,7 +125,7 @@
     "full_name": "Lucas Lefebvre",
     "email": "lucas.lefebvre@studio.local",
     "role": "artist",
-    "primary_team": "Marketing Art"
+    "primary_team": "Audio"
   },
   {
     "id": "08888044-5896-4c68-43aa-d8e1271df82f",
@@ -133,7 +133,7 @@
     "full_name": "Maja Novak",
     "email": "maja.novak@studio.local",
     "role": "artist",
-    "primary_team": "Reference"
+    "primary_team": "Environment"
   },
   {
     "id": "3428b354-fc83-5133-403a-84660ec7cbf9",
@@ -141,7 +141,7 @@
     "full_name": "Marcus Johnson",
     "email": "marcus.johnson@studio.local",
     "role": "reviewer",
-    "primary_team": "UI"
+    "primary_team": "Environment"
   },
   {
     "id": "5e68a6b0-0f73-6a65-5908-6bfea8c1db8f",
@@ -165,7 +165,7 @@
     "full_name": "Nikolai Petrov",
     "email": "nikolai.petrov@studio.local",
     "role": "reviewer",
-    "primary_team": "UI"
+    "primary_team": "Characters"
   },
   {
     "id": "5d704629-cc75-ed84-ad4b-57b9ea4de75e",
@@ -173,7 +173,7 @@
     "full_name": "Olaf Lindgren",
     "email": "olaf.lindgren@studio.local",
     "role": "reviewer",
-    "primary_team": "Characters"
+    "primary_team": "UI"
   },
   {
     "id": "5e7d4a50-1750-1e10-a1cc-d0637e90d996",
@@ -189,7 +189,7 @@
     "full_name": "Quinn Schmidt",
     "email": "quinn.schmidt@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "65b13a60-1d57-8a95-7b6a-68ba91b4cfe5",
@@ -197,7 +197,7 @@
     "full_name": "Ravi Patel",
     "email": "ravi.patel@studio.local",
     "role": "reviewer",
-    "primary_team": "UI"
+    "primary_team": "Audio"
   },
   {
     "id": "f013c0f4-32a5-b83e-21e3-603dede485f8",
@@ -205,7 +205,7 @@
     "full_name": "Sam Obrien",
     "email": "sam.obrien@studio.local",
     "role": "artist",
-    "primary_team": "Marketing Art"
+    "primary_team": "Audio"
   },
   {
     "id": "065faa33-e9b3-3433-f4a6-999f2887c155",
@@ -221,7 +221,7 @@
     "full_name": "Sofia Hernandez",
     "email": "sofia.hernandez@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "ebd64d3d-04b2-6f2d-23bb-6ba195e21ed6",
@@ -229,7 +229,7 @@
     "full_name": "Tatiana Ivanova",
     "email": "tatiana.ivanova@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "Marketing Art"
   },
   {
     "id": "164e0381-b986-8e16-0e07-a4363caf2b9c",
@@ -237,7 +237,7 @@
     "full_name": "Wren Carter",
     "email": "wren.carter@studio.local",
     "role": "artist",
-    "primary_team": "UI"
+    "primary_team": "Environment"
   },
   {
     "id": "401c9f3f-dd85-5fb2-0fce-0b0e0779888c",
@@ -245,6 +245,6 @@
     "full_name": "Yuki Sato",
     "email": "yuki.sato@studio.local",
     "role": "artist",
-    "primary_team": "Environment"
+    "primary_team": "UI"
   }
 ]
