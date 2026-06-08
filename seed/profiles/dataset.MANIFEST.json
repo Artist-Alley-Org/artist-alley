@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-06-08T04:44:01Z",
+  "asset_count": 1269,
+  "total_bytes": 1008153415,
+  "by_studio": {
+    "b": 563,
+    "a": 706,
+    "shared": 0
+  },
+  "by_layer": {
+    "A": 1007,
+    "B": 262
+  },
+  "by_type": {
+    "image": 800,
+    "3d": 200,
+    "font": 30,
+    "audio": 200,
+    "comic": 6,
+    "document": 28,
+    "video": 5
+  },
+  "by_tier": {
+    "team": 787,
+    "restricted": 395,
+    "public": 87
+  },
+  "studio_a": {
+    "asset_count": 706,
+    "bytes": 355175663
+  },
+  "studio_b": {
+    "asset_count": 563,
+    "bytes": 652977752
+  },
+  "demo": {
+    "asset_count": 1007,
+    "bytes": 17721061
+  }
+}

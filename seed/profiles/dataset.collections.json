@@ -1,0 +1,116 @@
+[
+  {
+    "id": "d474272c-81ee-f3e4-c67b-352a06b9580c",
+    "name": "Art Research",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "b116564d-e13c-83e4-5819-d46d23d7255c",
+    "name": "Engine Core",
+    "studio_membership": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "id": "d1a0739c-9f71-9302-47f7-28fb67f77960",
+    "name": "Hearthstone Archive",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "eed868c3-44e6-b9c5-d420-ed4e6bdfcd47",
+    "name": "Heroes Archive",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "31e1ce3f-daec-ca6b-a8ee-c9c31c8985c7",
+    "name": "MTG Archive",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "8b9104de-9929-ab02-7b0e-2f8a8d7387c1",
+    "name": "Project Adventure",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "aa3e1915-6df0-b636-22d0-0c34b836e1af",
+    "name": "Project Citylight",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "7269d1d3-65bb-6d3e-5f79-11062181e5eb",
+    "name": "Project Compass",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "e6b21c7c-bb16-ca67-9fd1-0139261bd457",
+    "name": "Project Echo",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "bb9fab50-9b44-0f5e-ec0b-f5ca8b757bbc",
+    "name": "Project Heroes",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "0b1b878b-ec1d-e3f0-85f3-30b7c4cd7590",
+    "name": "Project Jumpstart",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "ab69366c-9921-da20-a600-20acf3473f38",
+    "name": "Project Mirror",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "8c44b529-f0ba-7387-649f-3fa83017b207",
+    "name": "Project Toybox",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "7c625729-ce3a-8d55-29f4-b5971bc17cb0",
+    "name": "Project Zoo",
+    "studio_membership": [
+      "b"
+    ]
+  },
+  {
+    "id": "b670fbbd-f2d5-34fc-9a66-cb1b39f33f51",
+    "name": "Snapdex",
+    "studio_membership": [
+      "a"
+    ]
+  },
+  {
+    "id": "adc26c86-7da1-2452-bf18-b5cc96bee204",
+    "name": "Studio Library",
+    "studio_membership": [
+      "a",
+      "b"
+    ]
+  }
+]

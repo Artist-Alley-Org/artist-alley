@@ -1,0 +1,3 @@
+# Internet-fetched cache — bytes, not source-of-truth
+internet-fetched/
+*.tmp
