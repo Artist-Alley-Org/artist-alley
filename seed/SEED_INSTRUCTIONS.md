@@ -1,209 +1,161 @@
-# Seeding instructions for the apply-side agent
+# Seed instructions — how to populate an Artist Alley instance
 
-Read this before writing the apply script. The seed data has been
-assembled and laid out on the Synology archive; your job is to drive
-artist-alley's API to materialize it into a running instance's database.
+This document is for **operators** running the seed loader against a
+running Artist Alley instance. It assumes the seed data has already
+been assembled (see `seed/scripts/sanitize_and_assemble.py` for that
+process) and is sitting on the Synology archive at one of
+`/mnt/blackbox_archives/datasets/artist_alley/{site_a,site_b}`.
 
-## Where the data lives
+The loader is **`seed/scripts/apply.py`** — a gold-standard Python
+script (stdlib + `requests`) that walks the dependency graph and
+populates the target instance via its HTTP API.
 
-The assembled seed sits at one of two paths on the Synology archive
-(mounted at `/mnt/blackbox_archives/datasets/artist_alley/` on the
-developer workstation):
+## Quick start
 
-```
-/mnt/blackbox_archives/datasets/artist_alley/
-├── site_a/                      LAYER A ONLY — public-safe (demo source)
-│   ├── 3d/...                   Khronos glTF + Kenney 3D + game-rip refs
-│   ├── audio/...                Kenney RPG audio packs
-│   ├── documents/...            Project Gutenberg + Vue README + Kenney readmes
-│   ├── fonts/...                OFL fonts (Sono, Wellfleet, Playwrite, Kenney)
-│   ├── images/...               Kenney CC0 + NASA + Polyhaven HDR + Met Museum
-│   ├── videos/...               BBB + Sintel trailer + open-source game videos
-│   ├── comics/                  (empty for now — archive.org blocks us)
-│   ├── metadata.csv             original CSV filtered + path-rewritten
-│   ├── groups.csv               sibling linkage (one row per logical group)
-│   └── MANIFEST.json            **the apply contract** — see schema below
-└── site_b/                      LAYER A + B — local-only (full dataset)
-    ├── (same folder structure)
-    └── ...
+For a freshly-booted AA dev instance (uses `AA_BOOTSTRAP_DEFAULT_ADMIN=1`
+from `docker-compose.yml` so the bootstrap admin is `admin /
+ArtistAlleyMogul`):
+
+```bash
+python3 seed/scripts/apply.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --api http://localhost:8080
 ```
 
-`site_a` is the demo / Studio A federation peer. `site_b` is the local
-dev re-seed / Studio B federation peer. Start with site_a if you're
-seeding one for now (smaller, cleaner, demo-targeted).
+For a production-shape instance (random password lands in the boot
+log + `/var/lib/artist-alley/bootstrap-admin.txt`):
 
-## The MANIFEST.json contract
+```bash
+# Recover the bootstrap admin password
+pw=$(python3 seed/scripts/recover_admin.py \
+        --admin-file /var/lib/artist-alley/bootstrap-admin.txt)
 
-This is the source of truth for what to seed. Each entry is one asset:
-
-```json
-{
-  "id": "7b46896d-6e07-a1cb-f2a3-36d55b66c2f7",
-  "asset_type": "image",
-  "title": "Img Char Clyde Metallic Decoded (raster)",
-  "description": "Raster source for ...",
-  "file_path": "images/Browser Games - Nitro Control - Characters - Clyde/IMG_CHAR_clyde_metallic_decoded.png",
-  "source_path": "Browser Games - .../IMG_CHAR_clyde_metallic_decoded.png",
-  "source_root": "local",
-  "file_extension": "png",
-  "file_size_bytes": 53009,
-  "sensitivity_tier": "restricted",
-  "archive_state": "draft",
-  "owner_username": "akira.tanaka",
-  "collection_name": "Art Research",
-  "team_name": "Characters",
-  "brand_workspace": null,
-  "tags": ["characters", "franchise:reference"],
-  "workflow_state": "approved",
-  "metadata": {
-    "filename": "...",
-    "kind": "raster",
-    "license": "Internal",
-    "usage_rights": "Reference Only",
-    "acquisition_source": "The Models Resource",
-    "attribution": "Community rip — reference use only",
-    "group_id": "grp-00006"
-  },
-  "field_values": {
-    "pipeline_stage": "Final",
-    "version": "v2",
-    "revision_count": 7,
-    "rating": 4,
-    "texture_resolution": "256x256",
-    "color_space": "sRGB",
-    "engine_compatibility": "Unreal 5",
-    "target_platforms": ["PC"],
-    "naming_compliant": true
-  },
-  "external_id": "AA-5653",
-  "review_notes": "Tighten the value contrast in the next iteration.",
-  "reviewer_username": "olaf.lindgren",
-  "created_at": "2025-12-12T21:55:27Z",
-  "updated_at": "2026-05-14T23:08:15Z",
-  "last_reviewed_at": "2026-05-15T06:49:45Z",
-  "license": "Internal",
-  "attribution": "Community rip — reference use only",
-  "layer": "B",
-  "studio": "a"
-}
+# Drop into env + run apply
+AA_ADMIN_PASSWORD=$pw python3 seed/scripts/apply.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --api https://demo.artist-alley.org
 ```
 
-**Key fields:**
-- `id` — pre-generated stable UUID. Use this as the AA `assets.id`.
-- `file_path` — relative to the site root. Resolve as
-  `<archive>/site_<x>/<file_path>` to find the bytes.
-- `created_at` / `updated_at` / `last_reviewed_at` — **preserve these**.
-  Don't let the DB stamp them at insert time. The records are sorted in
-  the MANIFEST by `created_at`, so iterating in order produces a
-  time-realistic ingest pattern.
+For paired-instance dogfood (two AA instances; same seed catalogue,
+different site profiles):
 
-## Supporting catalogues
+```bash
+python3 seed/scripts/apply.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --api http://studio-a.local:8080
 
-At `/mnt/d/Projects/artist-alley/seed/profiles/` (the repo, not the
-archive) there are 7 sidecar JSONs that define the upstream entities
-the assets reference:
+python3 seed/scripts/apply.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_b \
+    --api http://studio-b.local:8080
+```
 
-| File | Contents |
+## What apply.py does
+
+12 dependency-ordered phases (see `apply.py --help` for the full list):
+
+1. **resolve_workflow_states** — `GET /workflow/states`; build the
+   (domain, name) → UUID map. The seed data uses richer state names
+   than AA's pre-seeded states (draft / in_review / approved / final /
+   archived vs draft / pending_review / published / archived); apply
+   collapses them via `WORKFLOW_STATE_ALIASES`. **Not stored
+   server-side — derived at every run from what AA currently has.**
+2. **resolve_asset_types** — `GET /asset_types`; map the seed data's
+   typed-folder names (image / audio / 3d / video / document / font /
+   comic) onto AA's int64 asset_type refs.
+3. **users** — `POST /admin/seed/users` for each fictional user.
+   Idempotent on `username`.
+4. **teams** — `POST /teams` for each team. Slug derived from name.
+5. **team_memberships** — `POST /teams/{id}/members` linking each
+   user to their `primary_team`.
+6. **fields** — `POST /fields` for each custom field definition.
+   Idempotent on `code`.
+7. **collections** — `POST /collections` for each project.
+   Visibility=org-only by default.
+8. **assets** — for each asset (parallel byte uploads, sequential
+   entity creates):
+   - `POST /storage/objects` (raw bytes; AA returns content hash +
+     deduped flag)
+   - `POST /assets` with `file_hash` + `state_id` + tags + metadata
+   - `POST /collections/{id}/resources` to add to collection
+9. **posts** — `POST /posts` with `members` (asset_ids), `tags`,
+   `collection_id`, `state_id`. Posts whose members aren't all
+   already created get skipped (caller logs the count).
+10. **comments** — `POST /admin/seed/comments` for each asset whose
+    `review_notes` is non-empty. Author = `reviewer_username`'s
+    user ref, target = the first post containing that asset.
+    Idempotent via deterministic comment UUID (sha256 of
+    `comment|asset_id|post_id`).
+11. **timestamps** — `POST /admin/seed/timestamps` in batches of
+    1000 to backfill the 14-month interlaced timeline across all
+    seeded assets + posts.
+12. **verify** — re-reads counts from the state tracker + the
+    catalogue + asserts they match within tolerance (default 10%,
+    soft fail; pass `--strict-verify` for hard fail).
+
+## Resume + idempotency
+
+Apply writes per-target state to `./apply-state-<host>-<site>.json` in
+the working directory. Phase completions + per-entity ID maps are
+persisted incrementally.
+
+- **Crashed mid-run:** re-run with the same args. Completed phases are
+  skipped; in-progress phases pick up where they left off (each
+  entity-create checks the state-tracker first).
+- **Want to redo a phase:** `--phases <comma-separated-list>` to limit
+  which phases run. Combine with `--reset-state` to start fresh.
+- **Different target instance:** the state file is keyed by host+site;
+  apply against a different `--api` writes a separate state file
+  automatically.
+
+## Brand workspaces — deferred per ADR 0025
+
+The seed dataset includes `dataset.brand_workspaces.json` (Echo +
+Mirror), but AA's brand-workspace API surface hasn't shipped yet
+(ADR 0025 is its own phase, deferred until post-1.22 federation work
+stabilises). **apply.py currently doesn't try to seed brand
+workspaces**; when the feature ships, the existing catalogue file
+will be ready to use.
+
+Posts that reference `brand_workspace` in the seed data have that
+field preserved in their metadata but no server-side workspace linkage
+is created. Federation Share scenarios involving brand kits (per
+`federation_shares.object_kind` enum value `brand_kit`) will be
+exercised once the feature lands.
+
+## What's where
+
+| File | Purpose |
 |---|---|
-| `dataset.users.json` | 30 fictional users with usernames, full names, roles, primary teams. Seed these first. |
-| `dataset.teams.json` | 9 teams (Animation, Audio, Characters, Environment, Marketing Art, Props, Reference, UI, VFX). |
-| `dataset.collections.json` | 16 projects mapped to AA collections, with `studio_membership` (e.g. `["a","b"]` means both sites have it). |
-| `dataset.brand_workspaces.json` | Echo + Mirror brand workspaces (per ADR 0025). Both owned by studio_a. |
-| `dataset.field_definitions.json` | 12 custom metadata field definitions (pipeline_stage / version / texture_resolution / etc.). |
-| `dataset.workflow.json` | 5 workflow states (draft → in_review → approved → final → archived) + 6 transitions. |
-| `dataset.MANIFEST.json` | Top-level summary stats; not the per-asset data. |
+| `seed/scripts/apply.py` | The loader. Single Python file, ~1200 LOC, stdlib + `requests`. |
+| `seed/scripts/verify.py` | Standalone post-seed validation (re-fetches counts via API, compares to catalogue). |
+| `seed/scripts/recover_admin.py` | Extracts the bootstrap admin password from boot logs or `bootstrap-admin.txt`. |
+| `seed/scripts/test_apply.py` | 36 tests covering state tracker, retry/backoff, content-type mapping, stable UUID, password recovery. Runs in 15ms (no live AA needed). |
+| `seed/profiles/dataset.users.json` | 30 fictional artists + reviewers — usernames, full names, primary team |
+| `seed/profiles/dataset.teams.json` | 9 teams (Characters / Environment / Props / Audio / VFX / UI / Animation / Marketing Art / Reference) |
+| `seed/profiles/dataset.collections.json` | 16 projects mapped to collections with `studio_membership` |
+| `seed/profiles/dataset.brand_workspaces.json` | Echo + Mirror — **not applied yet** (deferred) |
+| `seed/profiles/dataset.field_definitions.json` | 12 custom field defs (pipeline_stage / version / texture_resolution / engine / etc.) |
+| `seed/profiles/dataset.workflow.json` | Documentation of the seed's expected workflow states (apply maps onto AA's actual states at runtime) |
+| `seed/profiles/studio-a.assets.json` / `studio-b.assets.json` | Per-site asset records (used as fallback; `<site>/MANIFEST.json` wins) |
+| `seed/profiles/studio-a.posts.json` / `studio-b.posts.json` | Per-site post records (used as fallback; `<site>/posts.json` wins) |
+| `<site>/MANIFEST.json` | Site-specific asset records (primary source) |
+| `<site>/posts.json` | Site-specific post records (primary source) |
+| `<site>/ATTRIBUTIONS.md` | Per-source licensing for the public Kaggle distribution |
 
-## Recommended seeding order
+## Operational gotchas
 
-The dependency graph dictates the order. Do not parallelize across these
-phases — each later phase reads UUIDs created in an earlier one.
-
-```
-1. Workflow states + transitions       (dataset.workflow.json)
-2. Field definitions                    (dataset.field_definitions.json)
-3. Teams                                (dataset.teams.json)
-4. Users + team memberships             (dataset.users.json)
-5. Brand workspaces                     (dataset.brand_workspaces.json)
-6. Collections                          (dataset.collections.json)
-                                        — filter by studio_membership
-                                          if seeding only one site
-7. Assets (the MANIFEST, in JSON order) — one record at a time:
-   a. Upload bytes via storage API:
-      POST /api/uploads + body = file bytes from <archive>/site_<x>/<file_path>
-   b. Create asset row:
-      POST /api/assets with id, title, description, asset_type,
-           file_extension, file_size_bytes, owner_user_ref,
-           sensitivity_tier, archive_state, metadata
-   c. Set workflow state (PATCH /api/assets/{id}/workflow_state)
-   d. Add to collection (POST /api/collections/{id}/assets)
-   e. Attach to brand workspace if non-null (POST /api/brand_workspaces/{id}/assets)
-   f. Add tags (POST /api/assets/{id}/tags)
-   g. Set custom field values (POST /api/assets/{id}/field_values)
-   h. If review_notes is non-null, create a comment from reviewer_username
-   i. Backfill timestamps (PATCH /api/assets/{id}/timestamps) —
-      override created_at / updated_at / last_reviewed_at with the
-      manifest values so the feed looks time-realistic
-```
-
-## Idempotency
-
-The asset `id` is deterministic — re-running with the same MANIFEST
-should not duplicate. Strategy:
-- Check if the asset id exists → if yes, skip (or update in place)
-- Same for users, teams, collections, brand workspaces (their ids are
-  also stable UUIDs derived from name)
-
-## Verification
-
-After a successful seed, the database should contain:
-
-| Entity | Expected count for site_a |
-|---|---|
-| Users | 30 |
-| Teams | 9 |
-| Collections | 6 (Project Mirror / Echo / Citylight / Compass / Engine Core / Studio Library — though E.C. and S.L. are mostly site_b-only) |
-| Brand workspaces | 2 (Echo, Mirror — both owned by site_a) |
-| Field definitions | 12 |
-| Workflow states | 5 |
-| Assets | 963 (matches `find site_a -type f | wc -l` minus 3 metadata files) |
-
-`MANIFEST.json` at the top level has the same stats — query it post-seed
-to verify the targets.
-
-## Things to NOT do
-
-- **Don't auto-stamp created_at.** The manifest values are the truth.
-- **Don't dedupe assets by content hash at seed time.** site_a +
-  site_b deliberately have 110 byte-identical files for CAS dedup
-  testing across federation. Hash dedup is what AA's storage layer does
-  at upload; the seed script just trusts the manifest.
-- **Don't bulk-upload all images first.** Iterate in MANIFEST order
-  (sorted by created_at) so the seeded feed shows interlaced variety.
-- **Don't follow the `external_id` field.** It's the old CSV-row id
-  (`AA-XXXX` format) — preserve as metadata but use the `id` UUID for
-  the AA row's primary key.
-- **Don't drop Layer B from site_b.** That's the local dev set; it has
-  to keep the IP/personal content. Only site_a is Layer A only.
-
-## Operational gotchas (from the federation agent, 2026-06-08)
-
-These came back from the agent that shipped 1.22.D-a/b/c — flag them
-in your apply script's logging or you'll hit them once paired-instance
-dogfood starts.
+These came back from the 1.22.D federation work. Flag them in your
+runbook or you'll hit them once paired-instance dogfood starts.
 
 ### 1. Federation tests vs running app — mutually exclusive
 
 `scripts/test.sh` stops the dev app container before running federation
 tests (1.22.D-b-6 requirement — the listen/notify dispatcher can't
-share a database with a federation test that's manipulating it). If
-your apply script runs while the app is up AND a federation test sweeps
-concurrently, the test will skip or race.
+share a database with a federation test that's manipulating it). Don't
+run apply.py concurrently with `scripts/test.sh` against the same
+target.
 
-If your apply script triggers any `scripts/test.sh` invocations as part
-of post-seed validation, do it before the dispatcher is running, or
-expect skips. Otherwise just don't trigger tests inside apply.
-
-### 2. AA_MASTER_KEY must be identical across both instances (for 1.22.I)
+### 2. AA_MASTER_KEY must be identical across paired instances (for 1.22.I)
 
 Today (pre-1.22.I) the master key is per-instance and only used for
 at-rest encryption of secrets. It can differ between site_a and site_b.
@@ -211,57 +163,90 @@ at-rest encryption of secrets. It can differ between site_a and site_b.
 When 1.22.I lands (X25519 keypair-per-user + cross-instance encrypted
 federation), the at-rest key wraps the private keys — so site_a and
 site_b need the SAME `AA_MASTER_KEY` to decrypt each other's wrapped
-peer keys, OR operators need a documented rotation/reconciliation
-flow.
+peer keys, or operators need a documented rotation flow.
 
-If your apply script generates `AA_MASTER_KEY` at first-time
-provisioning, **persist it where operators can read it back**. Don't
-make it auto-generated-and-forgotten. The dogfood operator will need
-to set both instances to the same value when 1.22.I ships, or do a
-documented rotation.
+This isn't apply.py's responsibility — it's the operator's. Document
+the values you set on both instances.
 
-### 3. Initial activities dispatch — seed-before-boot vs after
+### 3. Seed-before-boot vs seed-after-boot
 
-If your apply script seeds posts/users **after** the app boots,
-the dispatcher's first LISTEN/NOTIFY catches each insert naturally
-(one notify per row, small batches).
+If apply.py runs **after** the app boots, the dispatcher's
+LISTEN/NOTIFY catches each insert naturally (one notify per row).
 
-If your apply script seeds **before** the app boots, the dispatcher's
-initial `RunOnce` startup probe will see a populated activities table
-and process hundreds of rows in one sweep before catching up. The
+If apply.py runs **before** the app boots (e.g. seed into a fresh DB
+via `seed.sh`, then start the app), the dispatcher's initial
+`RunOnce` startup probe will see a populated activities table and
+process hundreds of rows in one sweep before catching up. The
 operator log will show a single large "dispatch backlog" burst on
 first boot.
 
-Neither is wrong. Just document which mode you're using in your apply
-script's README so operators don't think the burst is a bug. The
-"seed-before-boot" path is also slightly faster end-to-end (no per-row
-notify overhead).
+Neither is wrong. The "seed-after-boot" path is incremental + matches
+production-shape behaviour; the "seed-before-boot" path is faster
+end-to-end (no per-row notify overhead) but the log burst can look
+alarming. apply.py supports both.
 
-## If something goes wrong
+## Verification
 
-- Asset file not found: the manifest had a path that doesn't exist on
-  the archive. Log and skip — don't crash. There shouldn't be any of
-  these (populate_archive.py verified all paths) but defense in depth.
-- Wikimedia / fetch failures landed null bytes: shouldn't happen
-  because fetch_gaps.py verifies size > 0, but a final sanity check
-  on file size is cheap.
-- API rate limits / 5xx: retry with exponential backoff. Don't blast
-  through the seed without backoff or you'll get cut off.
-
-## Site_a quick-start command (when ready)
+After apply.py finishes, run `verify.py` to confirm:
 
 ```bash
-# Adjust to your apply script's invocation
-python3 seed/scripts/apply.sh \
-  --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
-  --catalogue /mnt/d/Projects/artist-alley/seed/profiles \
-  --api http://localhost:8080/api \
-  --token $AA_ADMIN_TOKEN
+python3 seed/scripts/verify.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --api http://localhost:8080
 ```
 
-Open issues to be aware of (tracked in the failed array of
-`internet-fetched/MANIFEST.json`):
-- site_a has 0 comics — no Layer A comic source worked yet
-- site_a has 0 internet audio — LibriVox via archive.org blocked
-- Some classic art / NASA imagery + Wikimedia VG screenshots failed
-  fetch (5–7 items) — won't appear in MANIFEST, no action needed
+verify.py fetches counts via the API + compares to the catalogue with
+a 10% tolerance. Exit code 0 = pass, 1 = divergence.
+
+For a deeper check, also run apply.py's own verify phase only:
+
+```bash
+python3 seed/scripts/apply.py \
+    --site /mnt/blackbox_archives/datasets/artist_alley/site_a \
+    --api http://localhost:8080 \
+    --phases verify
+```
+
+That re-reads the state tracker (so it knows what apply attempted to
+create) + compares against the catalogue. Useful when you want to know
+how many `apply` itself claims to have created, separate from what
+the API listing endpoints report.
+
+## Tests
+
+apply.py + recover_admin.py have 36 unit tests in
+`seed/scripts/test_apply.py`. Run before any change:
+
+```bash
+cd seed/scripts
+python3 -m unittest test_apply -v
+```
+
+The tests cover:
+- State tracker persistence + resume + reset semantics
+- HTTP client retry on 5xx + 429 with Retry-After respect
+- Terminal 4xx errors don't retry
+- Stable UUID matches sanitize_and_assemble.py's algorithm
+- Content-type mapping across image / video / audio / 3D / document
+- Catalogue loader (site MANIFEST.json wins over studio-*.assets.json)
+- Workflow state alias mapping covers all 5 seed states
+- Bootstrap admin password recovery from dev banner + prod log patterns
+
+There's no integration test against a live AA yet — that needs CI
+infrastructure to bring up an AA container per test run, which is
+slow + Phase 1.18-level work. For now: dry-run against the real
+catalogue (`apply.py --dry-run`) is the smoke test.
+
+## Things to NOT do
+
+- **Don't drop Layer B from site_b.** That's the local dev set; it
+  has to keep the IP/personal content. Only site_a is Layer A only.
+- **Don't run apply.py from a directory you can't write to** — it
+  needs to write the state file. Use `--state-file` to override.
+- **Don't dedupe assets by content hash at seed time.** site_a +
+  site_b deliberately have ~110 byte-identical files for CAS dedup
+  testing across federation. Hash dedup is what AA's storage layer
+  does at upload; apply just trusts the manifest.
+- **Don't follow the `external_id` field.** It's the original CSV-row
+  ID (`AA-XXXX` format) — apply preserves it as metadata but the
+  primary key is the `id` UUID.
