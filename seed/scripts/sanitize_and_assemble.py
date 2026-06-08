@@ -705,35 +705,36 @@ def derive_brand_workspaces(rows: list[AssetRecord]) -> list[dict[str, Any]]:
     ]
 
 
-def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, Any]]:
-    """Generate ~count mixed-asset posts from the pool. Each post anchors
-    on one asset and pulls 1-4 related ones from the same team+project,
-    preferring different asset_types so the demo's post feed shows the
-    multi-asset UI working (concept render + 3D model + reference image +
-    audio bundle, etc.).
+def derive_posts(assets: list[AssetRecord], target_per_site: int = 600) -> list[dict[str, Any]]:
+    """Generate posts across multiple shapes to give each site ~500+ posts
+    after per-site filtering. Four pass strategy:
 
-    Posts inherit author, collection, and workflow_state from the
-    anchor. created_at comes from the anchor too — that keeps the post
-    feed time-realistic alongside the asset feed.
+      1. Multi-asset posts — anchor + 1-4 related companions of different
+         asset_types (the "real" mixed-asset post UI exercise).
+      2. Single-asset showcase posts — one post per remaining asset,
+         framed as a solo drop. Boosts count significantly.
+      3. Team roundup posts — periodic "this sprint's <team> output"
+         summaries that link 5-10 assets owned by the same team.
+      4. Project sprint posts — milestone posts that link 5-10 assets
+         from a single project across teams.
+
+    Posts inherit author, collection, brand_workspace, and timestamps
+    from their anchor (or are generated for roundups). Sort order is
+    by created_at across all post types so the feed feels organic.
     """
     import random
-    rng = random.Random("artist-alley.posts.v1")
+    rng = random.Random("artist-alley.posts.v2")
 
     # Group assets by (team, project) for related-asset lookup
     by_team_project: dict[tuple[str, str], list[AssetRecord]] = defaultdict(list)
+    by_team: dict[str, list[AssetRecord]] = defaultdict(list)
+    by_project: dict[str, list[AssetRecord]] = defaultdict(list)
+    by_id: dict[str, AssetRecord] = {a.id: a for a in assets}
     for a in assets:
         by_team_project[(a.team_name, a.collection_name)].append(a)
+        by_team[a.team_name].append(a)
+        by_project[a.collection_name].append(a)
 
-    # Anchor candidates — prefer groups with 3+ assets (so we have something
-    # to attach), and bias toward original work (not just Kenney sprite floods)
-    candidates = [
-        a for a in assets
-        if len(by_team_project[(a.team_name, a.collection_name)]) >= 3
-    ]
-    rng.shuffle(candidates)
-
-    posts: list[dict[str, Any]] = []
-    used_anchors: set[str] = set()
     theme_by_type = {
         "image": "reference",
         "3d": "model pass",
@@ -744,29 +745,37 @@ def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, 
         "comic": "storyboards",
     }
 
-    for anchor in candidates:
-        if anchor.id in used_anchors:
+    posts: list[dict[str, Any]] = []
+
+    # ---------------------------------------------------------------------
+    # Pass 1: Multi-asset posts (the original logic, expanded)
+    # ---------------------------------------------------------------------
+    used_in_multi: set[str] = set()
+    multi_candidates = [
+        a for a in assets
+        if len(by_team_project[(a.team_name, a.collection_name)]) >= 3
+    ]
+    rng.shuffle(multi_candidates)
+
+    multi_target = 250
+    for anchor in multi_candidates:
+        if anchor.id in used_in_multi:
             continue
         siblings = by_team_project[(anchor.team_name, anchor.collection_name)]
-        # Eligible companions: same team+project, not the anchor, not used
-        eligible = [s for s in siblings if s.id != anchor.id and s.id not in used_anchors]
-        # Sort by type-diversity (different type from anchor preferred) +
-        # deterministic tiebreaker (hash of id)
+        eligible = [s for s in siblings if s.id != anchor.id and s.id not in used_in_multi]
         eligible.sort(key=lambda x: (x.asset_type == anchor.asset_type, x.id))
-
         n_companions = rng.randint(1, 4)
         chosen = eligible[:n_companions]
         if not chosen:
             continue
 
         post_assets = [anchor] + chosen
-        used_anchors.update(a.id for a in post_assets)
+        used_in_multi.update(a.id for a in post_assets)
 
         types_in_post = sorted({a.asset_type for a in post_assets})
         theme_parts = [theme_by_type.get(t, t) for t in types_in_post]
         title = f"{anchor.collection_name}: {anchor.team_name} {' + '.join(theme_parts)}"
 
-        # Description varies based on the asset mix
         if len(types_in_post) > 1:
             desc = (f"{anchor.team_name} working pass for {anchor.collection_name}. "
                     f"Bundles {len(post_assets)} assets across "
@@ -775,14 +784,11 @@ def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, 
             desc = (f"{anchor.team_name} drop for {anchor.collection_name}. "
                     f"{len(post_assets)} {types_in_post[0]} assets pulled together.")
 
-        # Aggregate tags from all included assets, dedup
         all_tags = sorted({t for a in post_assets for t in (a.tags or [])})
-
-        # updated_at = max across the post's assets
         last_updated = max((a.updated_at for a in post_assets), default=anchor.updated_at)
 
         posts.append({
-            "id": stable_uuid("post", anchor.id),
+            "id": stable_uuid("post", "multi", anchor.id),
             "title": title,
             "description": desc,
             "author_username": anchor.owner_username,
@@ -793,6 +799,7 @@ def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, 
             "asset_ids": [a.id for a in post_assets],
             "asset_types_in_post": types_in_post,
             "is_mixed_type": len(types_in_post) > 1,
+            "post_kind": "multi_asset",
             "workflow_state": anchor.workflow_state,
             "sensitivity_tier": anchor.sensitivity_tier,
             "created_at": anchor.created_at,
@@ -800,8 +807,284 @@ def derive_posts(assets: list[AssetRecord], count: int = 120) -> list[dict[str, 
             "studio": anchor.studio,
             "layer": "A" if all(a.layer == "A" for a in post_assets) else "B",
         })
-        if len(posts) >= count:
+        if len(posts) >= multi_target:
             break
+
+    # ---------------------------------------------------------------------
+    # Pass 2: Single-asset showcase posts
+    # ---------------------------------------------------------------------
+    # For assets not yet anchoring a multi-post, create a solo showcase
+    # post. Caps at target_per_site / 2 so we don't drown out other types.
+    showcase_solo_titles = {
+        "image": ["new render", "color study", "lighting pass", "reference plate", "concept sketch"],
+        "3d": ["model drop", "topology pass", "PBR test", "WIP turntable", "asset ship"],
+        "audio": ["audio drop", "sfx test", "ambient bed", "score sketch", "VO take"],
+        "video": ["cinematic test", "edit pass", "previs sweep", "playblast", "shot reference"],
+        "document": ["briefing", "style guide", "pipeline note", "research doc", "spec draft"],
+        "font": ["type sample", "kerning check", "char set test", "weight comparison"],
+        "comic": ["storyboard panel", "page rough", "layout pass"],
+    }
+
+    solo_candidates = [a for a in assets if a.id not in used_in_multi]
+    rng.shuffle(solo_candidates)
+    solo_target = 600
+
+    for asset in solo_candidates:
+        if len(posts) - multi_target >= solo_target:
+            break
+
+        title_options = showcase_solo_titles.get(asset.asset_type, ["asset drop"])
+        flavor = rng.choice(title_options)
+        title = f"{asset.title} — {flavor}"
+
+        # Keep description short for solo posts; lean on the asset's
+        # own description rather than re-narrating
+        desc_lead = asset.description or f"{asset.title} from {asset.collection_name}."
+        if len(desc_lead) > 140:
+            desc_lead = desc_lead[:137] + "..."
+
+        posts.append({
+            "id": stable_uuid("post", "solo", asset.id),
+            "title": title,
+            "description": desc_lead,
+            "author_username": asset.owner_username,
+            "collection_name": asset.collection_name,
+            "team_name": asset.team_name,
+            "brand_workspace": asset.brand_workspace,
+            "tags": list(asset.tags or []),
+            "asset_ids": [asset.id],
+            "asset_types_in_post": [asset.asset_type],
+            "is_mixed_type": False,
+            "post_kind": "solo_showcase",
+            "workflow_state": asset.workflow_state,
+            "sensitivity_tier": asset.sensitivity_tier,
+            "created_at": asset.created_at,
+            "updated_at": asset.updated_at,
+            "studio": asset.studio,
+            "layer": asset.layer,
+        })
+
+    # Pass 2b: Revision-stage posts — for a subset of high-rated assets,
+    # generate additional posts framing them at different lifecycle stages
+    # (draft, review pass, final ship). Same asset, different "moments."
+    revision_stages = [
+        ("draft", "Draft drop — {title}",
+         "First-pass draft of {title}. Open for early feedback."),
+        ("review", "Review pass — {title}",
+         "Review pass on {title}. Notes from {owner} attached in the thread."),
+        ("ship", "Ship gate — {title}",
+         "Locking in {title}. Sign-off from approver: {reviewer}."),
+    ]
+    high_rated = [a for a in assets if a.field_values.get("rating", 0) >= 4]
+    rng.shuffle(high_rated)
+    revision_target = 350
+    revision_count = 0
+    for asset in high_rated:
+        if revision_count >= revision_target:
+            break
+        for stage_key, title_tmpl, desc_tmpl in revision_stages:
+            owner = asset.owner_username or "unknown"
+            reviewer = asset.reviewer_username or owner
+            posts.append({
+                "id": stable_uuid("post", "revision", stage_key, asset.id),
+                "title": title_tmpl.format(title=asset.title),
+                "description": desc_tmpl.format(title=asset.title, owner=owner, reviewer=reviewer),
+                "author_username": owner if stage_key != "ship" else reviewer,
+                "collection_name": asset.collection_name,
+                "team_name": asset.team_name,
+                "brand_workspace": asset.brand_workspace,
+                "tags": list(asset.tags or []) + [f"stage:{stage_key}"],
+                "asset_ids": [asset.id],
+                "asset_types_in_post": [asset.asset_type],
+                "is_mixed_type": False,
+                "post_kind": f"revision_{stage_key}",
+                "workflow_state": asset.workflow_state,
+                "sensitivity_tier": asset.sensitivity_tier,
+                "created_at": asset.created_at,
+                "updated_at": asset.updated_at,
+                "studio": asset.studio,
+                "layer": asset.layer,
+            })
+            revision_count += 1
+            if revision_count >= revision_target:
+                break
+
+    # ---------------------------------------------------------------------
+    # Pass 3: Team roundup posts (5-10 assets, same team, varied projects)
+    # ---------------------------------------------------------------------
+    # Periodic "this sprint's <team> output" posts. ~3-4 per team per
+    # studio. Pulls assets across projects within the team.
+    roundup_target = 60
+    teams_pool = list(by_team.keys())
+    rng.shuffle(teams_pool)
+    for team_name in teams_pool * 5:  # multiple sweeps for variety
+        if len([p for p in posts if p.get("post_kind") == "team_roundup"]) >= roundup_target:
+            break
+        team_assets = [a for a in by_team[team_name] if a.id]
+        if len(team_assets) < 5:
+            continue
+        sample_size = rng.randint(5, min(10, len(team_assets)))
+        sample = rng.sample(team_assets, sample_size)
+        # Anchor = the most-recent asset for the team
+        anchor = max(sample, key=lambda x: x.updated_at)
+        types_in_post = sorted({a.asset_type for a in sample})
+        projects_in_post = sorted({a.collection_name for a in sample})
+
+        title = f"{team_name} sprint roundup — {len(sample)} drops"
+        desc = (f"{team_name} team output across {len(projects_in_post)} project(s): "
+                f"{', '.join(projects_in_post[:3])}"
+                f"{'...' if len(projects_in_post) > 3 else ''}. "
+                f"Mix of {', '.join(types_in_post)}.")
+
+        posts.append({
+            "id": stable_uuid("post", "roundup", team_name, anchor.id),
+            "title": title,
+            "description": desc,
+            "author_username": anchor.owner_username,
+            "collection_name": None,  # team-scoped, not collection-scoped
+            "team_name": team_name,
+            "brand_workspace": None,
+            "tags": sorted({t for a in sample for t in (a.tags or [])}),
+            "asset_ids": [a.id for a in sample],
+            "asset_types_in_post": types_in_post,
+            "is_mixed_type": len(types_in_post) > 1,
+            "post_kind": "team_roundup",
+            "workflow_state": anchor.workflow_state,
+            "sensitivity_tier": "team",
+            "created_at": anchor.created_at,
+            "updated_at": max(a.updated_at for a in sample),
+            "studio": anchor.studio,
+            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
+        })
+
+    # ---------------------------------------------------------------------
+    # Pass 4: Project sprint / milestone posts (5-10 assets, same project,
+    #         varied teams)
+    # ---------------------------------------------------------------------
+    project_target = 80
+    projects_pool = list(by_project.keys())
+    rng.shuffle(projects_pool)
+    sprint_labels = ["sprint 12", "sprint 13", "sprint 14", "milestone alpha",
+                     "milestone beta", "review session", "lock-in pass",
+                     "polish week", "final review", "ship gate"]
+    sprint_idx = 0
+    for project_name in projects_pool * 6:
+        if len([p for p in posts if p.get("post_kind") == "project_sprint"]) >= project_target:
+            break
+        proj_assets = by_project[project_name]
+        if len(proj_assets) < 5:
+            continue
+        sample_size = rng.randint(5, min(10, len(proj_assets)))
+        sample = rng.sample(proj_assets, sample_size)
+        anchor = max(sample, key=lambda x: x.updated_at)
+        types_in_post = sorted({a.asset_type for a in sample})
+        teams_in_post = sorted({a.team_name for a in sample})
+
+        label = sprint_labels[sprint_idx % len(sprint_labels)]
+        sprint_idx += 1
+        title = f"{project_name} {label} — {len(sample)} assets across {len(teams_in_post)} team(s)"
+        desc = (f"{label.title()} for {project_name}. "
+                f"Pulls work from {', '.join(teams_in_post[:3])}"
+                f"{'...' if len(teams_in_post) > 3 else ''} — "
+                f"{', '.join(types_in_post)}.")
+
+        posts.append({
+            "id": stable_uuid("post", "sprint", project_name, label, anchor.id),
+            "title": title,
+            "description": desc,
+            "author_username": anchor.owner_username,
+            "collection_name": project_name,
+            "team_name": None,
+            "brand_workspace": anchor.brand_workspace,
+            "tags": sorted({t for a in sample for t in (a.tags or [])}),
+            "asset_ids": [a.id for a in sample],
+            "asset_types_in_post": types_in_post,
+            "is_mixed_type": len(types_in_post) > 1,
+            "post_kind": "project_sprint",
+            "workflow_state": "in_review",
+            "sensitivity_tier": "team",
+            "created_at": anchor.created_at,
+            "updated_at": max(a.updated_at for a in sample),
+            "studio": anchor.studio,
+            "layer": "A" if all(a.layer == "A" for a in sample) else "B",
+        })
+
+    # ---------------------------------------------------------------------
+    # Pass 5: Video boost — videos are scarce in the dataset, so generate
+    # extra video-anchored posts so they're not buried in the feed.
+    # Each video gets 3-5 separate post framings + a "cinematics showreel"
+    # post that bundles multiple videos with related references.
+    # ---------------------------------------------------------------------
+    videos = [a for a in assets if a.asset_type == "video"]
+    video_post_templates = [
+        ("dailies",      "Dailies — {title}",
+         "Today's video pass on {project}. Reviewing pacing, color, and continuity."),
+        ("cinematic_cut", "Cinematic cut — {title}",
+         "Latest cinematic cut for {project}. Compositing and grade approaching final."),
+        ("preview_share", "Preview share — {title}",
+         "Sharing the latest preview for {project} for cross-team feedback."),
+        ("playblast",    "Playblast — {title}",
+         "Raw playblast from {project}. Animation timing pass."),
+        ("reference",    "Reference reel — {title}",
+         "Reference reel pulled for {project}. Annotating motion and staging cues."),
+    ]
+    for video in videos:
+        for template_key, title_tmpl, desc_tmpl in video_post_templates:
+            posts.append({
+                "id": stable_uuid("post", "video", template_key, video.id),
+                "title": title_tmpl.format(title=video.title, project=video.collection_name),
+                "description": desc_tmpl.format(project=video.collection_name, title=video.title),
+                "author_username": video.owner_username,
+                "collection_name": video.collection_name,
+                "team_name": video.team_name,
+                "brand_workspace": video.brand_workspace,
+                "tags": list(video.tags or []) + ["video", "cinematic"],
+                "asset_ids": [video.id],
+                "asset_types_in_post": ["video"],
+                "is_mixed_type": False,
+                "post_kind": f"video_{template_key}",
+                "workflow_state": video.workflow_state,
+                "sensitivity_tier": video.sensitivity_tier,
+                "created_at": video.created_at,
+                "updated_at": video.updated_at,
+                "studio": video.studio,
+                "layer": video.layer,
+            })
+
+    # Cinematics showreel posts — bundle 2-5 videos together with optional
+    # related image/3D references. One per studio that has 3+ videos.
+    for studio_key in ("a", "b"):
+        # Pick videos available on that studio (studio = key OR shared)
+        studio_videos = [v for v in videos if v.studio in (studio_key, "shared")]
+        if len(studio_videos) < 2:
+            continue
+        # Two reels per studio (sample variations) so feeds feel populated
+        for reel_idx, reel_label in enumerate(["Q3 reel", "Q4 reel"]):
+            sample_size = min(len(studio_videos), rng.randint(3, 5))
+            sample = rng.sample(studio_videos, sample_size)
+            anchor = sample[0]
+            posts.append({
+                "id": stable_uuid("post", "showreel", studio_key, reel_label, anchor.id),
+                "title": f"Cinematics {reel_label} — {sample_size} cuts",
+                "description": (f"Studio cinematics roundup. {sample_size} pieces bundled for "
+                               f"the {reel_label.lower()} screening — see for pacing references "
+                               f"and stylistic consistency across active projects."),
+                "author_username": anchor.owner_username,
+                "collection_name": None,
+                "team_name": "Marketing Art",
+                "brand_workspace": None,
+                "tags": sorted({t for v in sample for t in (v.tags or [])}) + ["cinematic", "showreel"],
+                "asset_ids": [v.id for v in sample],
+                "asset_types_in_post": ["video"],
+                "is_mixed_type": False,
+                "post_kind": "cinematics_showreel",
+                "workflow_state": "approved",
+                "sensitivity_tier": "team",
+                "created_at": anchor.created_at,
+                "updated_at": max(v.updated_at for v in sample),
+                "studio": studio_key,
+                "layer": "A" if all(v.layer == "A" for v in sample) else "B",
+            })
 
     # Sort by created_at for interlaced feed appearance
     posts.sort(key=lambda p: p["created_at"])
@@ -1026,7 +1309,7 @@ def main() -> int:
     teams = derive_teams(assets)
     collections = derive_collections(assets)
     brand_workspaces = derive_brand_workspaces(assets)
-    posts = derive_posts(assets, count=120)
+    posts = derive_posts(assets, target_per_site=600)
     mixed_type_posts = [p for p in posts if p["is_mixed_type"]]
     print(f"\nDerived {len(posts)} posts ({len(mixed_type_posts)} mixed-type)",
           file=sys.stderr)

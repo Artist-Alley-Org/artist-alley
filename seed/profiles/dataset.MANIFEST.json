@@ -1,40 +1,40 @@
 {
-  "generated_at": "2026-06-08T14:15:50Z",
-  "asset_count": 2073,
-  "total_bytes": 2305674168,
+  "generated_at": "2026-06-08T15:53:29Z",
+  "asset_count": 2077,
+  "total_bytes": 2369405991,
   "by_studio": {
     "b": 1109,
-    "shared": 154,
+    "shared": 158,
     "a": 810
   },
   "by_layer": {
-    "A": 1656,
+    "A": 1660,
     "B": 417
   },
   "by_type": {
-    "image": 1225,
+    "image": 1227,
     "audio": 350,
     "3d": 405,
     "document": 41,
     "font": 35,
-    "video": 11,
+    "video": 13,
     "comic": 6
   },
   "by_tier": {
     "restricted": 623,
     "team": 1226,
-    "public": 224
+    "public": 228
   },
   "studio_a": {
-    "asset_count": 964,
-    "bytes": 1250016435
+    "asset_count": 968,
+    "bytes": 1313748258
   },
   "studio_b": {
-    "asset_count": 1263,
-    "bytes": 2293972175
+    "asset_count": 1267,
+    "bytes": 2357703998
   },
   "demo": {
-    "asset_count": 964,
-    "bytes": 1250016435
+    "asset_count": 968,
+    "bytes": 1313748258
   }
 }

@@ -127,7 +127,49 @@ Listed roughly in order of effort-to-add vs payoff.
     Blender Studio also has Sprite Fright pre-production assets and
     Snow assets on their CDN that bypass archive.org.
 
-## Torrents (for you to download manually)
+## Direct .torrent file links (confirmed working)
+
+These are stable URLs that return the .torrent file directly (HTTP 302
+redirect to the actual .torrent payload). Drop the URL in your torrent
+client; it'll fetch the metadata + start downloading from Internet
+Archive's seedbox. Most have hundreds of seeders.
+
+### Blender Foundation open films (CC-BY 3.0/4.0)
+
+| Film | .torrent URL | What it includes |
+|---|---|---|
+| **Sintel** | `https://archive.org/download/Sintel/Sintel_archive.torrent` | Full film + production files + reference renders |
+| **Big Buck Bunny** | `https://archive.org/download/BigBuckBunny_124/BigBuckBunny_124_archive.torrent` | Full film + behind-scenes assets |
+| **Tears of Steel** | `https://archive.org/download/tears_of_steel/tears_of_steel_archive.torrent` | Full film + VFX assets |
+| **Caminandes 2: Gran Dillama** | `https://archive.org/download/Caminandes2GranDillama/Caminandes2GranDillama_archive.torrent` | Full film |
+
+Pattern for other Internet Archive items: `https://archive.org/download/<identifier>/<identifier>_archive.torrent` — works for ~80% of items (the rest 503 us; LibriVox + Cosmos Laundromat in particular currently block).
+
+To find more: search archive.org for a topic, click any item, scroll to "DOWNLOAD OPTIONS" → there's always a "TORRENT" link if available.
+
+### Specific items worth grabbing for the seed dataset
+
+These all expand the Layer A pool (public-safe content that could ship in site_a):
+
+| Content | .torrent URL (probe first; some may 503) | Approx unpacked size |
+|---|---|---|
+| Sintel film | `archive.org/download/Sintel/Sintel_archive.torrent` ✓ | ~5 GB |
+| BBB film | `archive.org/download/BigBuckBunny_124/BigBuckBunny_124_archive.torrent` ✓ | ~3 GB |
+| Tears of Steel | `archive.org/download/tears_of_steel/tears_of_steel_archive.torrent` ✓ | ~5 GB |
+| Caminandes 2 | `archive.org/download/Caminandes2GranDillama/Caminandes2GranDillama_archive.torrent` ✓ | ~500 MB |
+| Steamboat Willie 1928 (PD) | `archive.org/download/SteamboatWillie_201803/SteamboatWillie_201803_archive.torrent` (probe) | ~70 MB |
+| Gertie the Dinosaur 1914 (PD) | `archive.org/download/Gertie_the_Dinosaur/Gertie_the_Dinosaur_archive.torrent` (probe) | ~30 MB |
+| LibriVox catalog (per book) | `archive.org/download/<book_librivox>/<book_librivox>_archive.torrent` (most 503 today) | varies |
+
+### How to integrate downloaded torrents
+
+Same as before:
+1. Extract to a directory, e.g., `/mnt/d/Projects/unraid_management/artist-alley_dataset/torrents/<set>/`
+2. Add pattern to `SHARED_PACK_PATTERNS` in `sanitize_and_assemble.py` if Layer A
+3. Add a TRIM entry if the set is big
+4. Re-run sanitize_and_assemble.py + populate_archive.py
+
+## Torrents (other recommended — search to find current URLs)
 
 These are large bulk packages that don't fit a per-file fetch pattern
 but would dramatically expand the seed if you grab them via your usual
