@@ -118,6 +118,35 @@ FROM federation_outbox
 GROUP BY peer_id, status
 ORDER BY peer_id, status;
 
+-- name: ListOutboxForAdmin :many
+-- Filtered + paginated admin list for /admin/federation/outbox
+-- (Phase 1.22.D-c). All filters are optional (NULL = skip).
+-- Pagination uses (created_at, id) tuple via the cursor params
+-- — opaque to the client but deterministic so the next page
+-- doesn't skip or duplicate rows under concurrent inserts.
+SELECT o.id, o.activity_id, o.peer_id, o.target_user_url,
+       o.status, o.attempts, o.next_attempt_at, o.last_attempt_at,
+       o.last_error, o.sent_at, o.delivered_with_key_id,
+       o.created_at, o.updated_at,
+       a.activity_type AS activity_type
+FROM federation_outbox o
+JOIN activities a ON a.id = o.activity_id
+WHERE (sqlc.narg('peer_id')::uuid IS NULL
+       OR o.peer_id = sqlc.narg('peer_id')::uuid)
+  AND (sqlc.narg('status')::text IS NULL
+       OR o.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('activity_type')::text IS NULL
+       OR a.activity_type = sqlc.narg('activity_type')::text)
+  AND (sqlc.narg('since')::timestamptz IS NULL
+       OR o.created_at >= sqlc.narg('since')::timestamptz)
+  AND (sqlc.narg('cursor_created_at')::timestamptz IS NULL
+       OR (o.created_at, o.id) < (
+           sqlc.narg('cursor_created_at')::timestamptz,
+           sqlc.narg('cursor_id')::uuid
+       ))
+ORDER BY o.created_at DESC, o.id DESC
+LIMIT sqlc.arg('limit_n')::int;
+
 -- --- dispatch_state ---------------------------------------------------
 
 -- name: GetDispatchState :one

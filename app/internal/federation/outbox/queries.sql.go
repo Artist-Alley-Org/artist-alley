@@ -326,6 +326,106 @@ func (q *Queries) ListOutboxByPeer(ctx context.Context, arg ListOutboxByPeerPara
 	return items, nil
 }
 
+const listOutboxForAdmin = `-- name: ListOutboxForAdmin :many
+SELECT o.id, o.activity_id, o.peer_id, o.target_user_url,
+       o.status, o.attempts, o.next_attempt_at, o.last_attempt_at,
+       o.last_error, o.sent_at, o.delivered_with_key_id,
+       o.created_at, o.updated_at,
+       a.activity_type AS activity_type
+FROM federation_outbox o
+JOIN activities a ON a.id = o.activity_id
+WHERE ($1::uuid IS NULL
+       OR o.peer_id = $1::uuid)
+  AND ($2::text IS NULL
+       OR o.status = $2::text)
+  AND ($3::text IS NULL
+       OR a.activity_type = $3::text)
+  AND ($4::timestamptz IS NULL
+       OR o.created_at >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL
+       OR (o.created_at, o.id) < (
+           $5::timestamptz,
+           $6::uuid
+       ))
+ORDER BY o.created_at DESC, o.id DESC
+LIMIT $7::int
+`
+
+type ListOutboxForAdminParams struct {
+	PeerID          pgtype.UUID
+	Status          *string
+	ActivityType    *string
+	Since           pgtype.Timestamptz
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        pgtype.UUID
+	LimitN          int32
+}
+
+type ListOutboxForAdminRow struct {
+	ID                 pgtype.UUID
+	ActivityID         pgtype.UUID
+	PeerID             pgtype.UUID
+	TargetUserUrl      *string
+	Status             string
+	Attempts           int16
+	NextAttemptAt      pgtype.Timestamptz
+	LastAttemptAt      pgtype.Timestamptz
+	LastError          string
+	SentAt             pgtype.Timestamptz
+	DeliveredWithKeyID *string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	ActivityType       string
+}
+
+// Filtered + paginated admin list for /admin/federation/outbox
+// (Phase 1.22.D-c). All filters are optional (NULL = skip).
+// Pagination uses (created_at, id) tuple via the cursor params
+// — opaque to the client but deterministic so the next page
+// doesn't skip or duplicate rows under concurrent inserts.
+func (q *Queries) ListOutboxForAdmin(ctx context.Context, arg ListOutboxForAdminParams) ([]ListOutboxForAdminRow, error) {
+	rows, err := q.db.Query(ctx, listOutboxForAdmin,
+		arg.PeerID,
+		arg.Status,
+		arg.ActivityType,
+		arg.Since,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.LimitN,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOutboxForAdminRow
+	for rows.Next() {
+		var i ListOutboxForAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActivityID,
+			&i.PeerID,
+			&i.TargetUserUrl,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastAttemptAt,
+			&i.LastError,
+			&i.SentAt,
+			&i.DeliveredWithKeyID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ActivityType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndispatchedActivities = `-- name: ListUndispatchedActivities :many
 SELECT id, activity_uri, activity_type, actor_uri, actor_user_ref,
        object_uri, object_kind, object_local_id, target_uri,

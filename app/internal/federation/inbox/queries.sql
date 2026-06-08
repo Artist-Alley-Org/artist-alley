@@ -147,3 +147,30 @@ SELECT status, COUNT(*)::BIGINT AS n
 FROM federation_inbox
 WHERE peer_id = $1
 GROUP BY status;
+
+-- name: ListInboxForAdmin :many
+-- Filtered + paginated admin list for /admin/federation/inbox
+-- (Phase 1.22.D-c). All filters optional (NULL = skip). Cursor
+-- pagination by (received_at, id) tuple — opaque to clients,
+-- deterministic under concurrent inserts.
+SELECT id, activity_uri, peer_id, actor_uri, activity_type,
+       object_kind, object_id, envelope_json, http_sig_key,
+       received_at, status, reject_reason, dispatch_attempts,
+       last_attempt_at, last_error, processed_at,
+       correlation_activity_id
+FROM federation_inbox
+WHERE (sqlc.narg('peer_id')::uuid IS NULL
+       OR peer_id = sqlc.narg('peer_id')::uuid)
+  AND (sqlc.narg('status')::text IS NULL
+       OR status = sqlc.narg('status')::text)
+  AND (sqlc.narg('activity_type')::text IS NULL
+       OR activity_type = sqlc.narg('activity_type')::text)
+  AND (sqlc.narg('since')::timestamptz IS NULL
+       OR received_at >= sqlc.narg('since')::timestamptz)
+  AND (sqlc.narg('cursor_received_at')::timestamptz IS NULL
+       OR (received_at, id) < (
+           sqlc.narg('cursor_received_at')::timestamptz,
+           sqlc.narg('cursor_id')::uuid
+       ))
+ORDER BY received_at DESC, id DESC
+LIMIT sqlc.arg('limit_n')::int;

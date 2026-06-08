@@ -160,6 +160,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'federation',   status: 'live',   href: '/admin/federation/peers' },
       { key: 'directories',  status: 'live',   href: '/admin/federation/directories' },
       { key: 'fed_shares',   status: 'live',   href: '/admin/federation/shares' },
+      { key: 'fed_outbox',   status: 'live',   href: '/admin/federation/outbox' },
+      { key: 'fed_inbox',    status: 'live',   href: '/admin/federation/inbox' },
       { key: 'themes',       status: 'live',   href: '/admin/system/themes' },
       { key: 'maintenance',  status: 'future', phase: '1.19' },
       { key: 'feature_flags', status: 'future', phase: '1.20' },

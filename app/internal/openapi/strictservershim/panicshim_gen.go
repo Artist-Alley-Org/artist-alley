@@ -155,6 +155,21 @@ func (*PanicShim) RegisterFederationDirectoryPublishListing(context.Context, ope
 	panic("PanicShim: RegisterFederationDirectoryPublishListing called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListFederationInbox panics by default; test shims override.
+func (*PanicShim) ListFederationInbox(context.Context, openapi.ListFederationInboxRequestObject) (openapi.ListFederationInboxResponseObject, error) {
+	panic("PanicShim: ListFederationInbox called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListFederationOutbox panics by default; test shims override.
+func (*PanicShim) ListFederationOutbox(context.Context, openapi.ListFederationOutboxRequestObject) (openapi.ListFederationOutboxResponseObject, error) {
+	panic("PanicShim: ListFederationOutbox called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RequeueFederationOutbox panics by default; test shims override.
+func (*PanicShim) RequeueFederationOutbox(context.Context, openapi.RequeueFederationOutboxRequestObject) (openapi.RequeueFederationOutboxResponseObject, error) {
+	panic("PanicShim: RequeueFederationOutbox called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListFederationPeers panics by default; test shims override.
 func (*PanicShim) ListFederationPeers(context.Context, openapi.ListFederationPeersRequestObject) (openapi.ListFederationPeersResponseObject, error) {
 	panic("PanicShim: ListFederationPeers called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -193,6 +208,11 @@ func (*PanicShim) UpdateFederationPeer(context.Context, openapi.UpdateFederation
 // AcceptFederationPeer panics by default; test shims override.
 func (*PanicShim) AcceptFederationPeer(context.Context, openapi.AcceptFederationPeerRequestObject) (openapi.AcceptFederationPeerResponseObject, error) {
 	panic("PanicShim: AcceptFederationPeer called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelFederationPeerPending panics by default; test shims override.
+func (*PanicShim) CancelFederationPeerPending(context.Context, openapi.CancelFederationPeerPendingRequestObject) (openapi.CancelFederationPeerPendingResponseObject, error) {
+	panic("PanicShim: CancelFederationPeerPending called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // PreviewFederationPeerDefederation panics by default; test shims override.

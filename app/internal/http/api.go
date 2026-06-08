@@ -2,11 +2,14 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 	"log/slog"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 
@@ -99,6 +102,7 @@ type apiServer struct {
 	inboxDispatcher  *inbox.Dispatcher
 	outboxDispatcher *outbox.Dispatcher
 	outboxDelivery   *outbox.Worker
+	outboxAdmin      *outbox.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -301,6 +305,18 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	)
 	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
 	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+
+	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
+	// Owns /admin/federation/outbox + /inbox + the re-queue +
+	// cascade-cancel actions. Audit hooks wired to the
+	// pool-bound audit.Recorder methods.
+	s.outboxAdmin = outbox.NewAdminHandler(
+		pool,
+		inbox.New(pool),
+		auditRec.OutboxRequeued,
+		auditRec.PeerCascadeCancelled,
+		logger,
+	)
 
 	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
 	// Drains federation_outbox rows → POST /federation/inbox on
@@ -1409,6 +1425,210 @@ func (s *apiServer) GrantFederationShare(ctx context.Context, req openapi.GrantF
 
 func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	return s.sharesAdmin.RevokeFederationShare(ctx, req)
+}
+
+// --- federation outbox + inbox admin (Phase 1.22.D-c) -------------------
+
+func (s *apiServer) ListFederationOutbox(ctx context.Context, req openapi.ListFederationOutboxRequestObject) (openapi.ListFederationOutboxResponseObject, error) {
+	f := outbox.AdminListOutboxFilter{}
+	if req.Params.PeerId != nil {
+		pid := uuid.UUID(*req.Params.PeerId)
+		f.PeerID = &pid
+	}
+	if req.Params.Status != nil {
+		s := string(*req.Params.Status)
+		f.Status = &s
+	}
+	if req.Params.ActivityType != nil {
+		s := *req.Params.ActivityType
+		f.ActivityType = &s
+	}
+	if req.Params.Since != nil {
+		t := *req.Params.Since
+		f.Since = &t
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Cursor != nil {
+		if t, id, ok := outbox.DecodeCursor(*req.Params.Cursor); ok {
+			f.CursorCreatedAt = &t
+			f.CursorID = &id
+		}
+	}
+	rows, nextCursor, err := s.outboxAdmin.ListOutboxForAdmin(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationOutbox, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, adminOutboxToAPI(r))
+	}
+	resp := openapi.ListFederationOutbox200JSONResponse{
+		Items: items,
+	}
+	if nextCursor != "" {
+		resp.NextCursor = &nextCursor
+	}
+	return resp, nil
+}
+
+func (s *apiServer) RequeueFederationOutbox(ctx context.Context, req openapi.RequeueFederationOutboxRequestObject) (openapi.RequeueFederationOutboxResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.RequeueFederationOutbox401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	updated, err := s.outboxAdmin.RequeueOutbox(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
+	if err != nil {
+		switch {
+		case errors.Is(err, outbox.ErrOutboxNotFound):
+			return openapi.RequeueFederationOutbox404JSONResponse{Error: "outbox row not found"}, nil
+		case errors.Is(err, outbox.ErrOutboxNotFailed):
+			return openapi.RequeueFederationOutbox409JSONResponse{Error: "row is not in status=failed; re-queue refused per idempotency guard"}, nil
+		}
+		return nil, err
+	}
+	return openapi.RequeueFederationOutbox200JSONResponse(adminOutboxToAPI(updated)), nil
+}
+
+func (s *apiServer) ListFederationInbox(ctx context.Context, req openapi.ListFederationInboxRequestObject) (openapi.ListFederationInboxResponseObject, error) {
+	f := outbox.AdminListInboxFilter{}
+	if req.Params.PeerId != nil {
+		pid := uuid.UUID(*req.Params.PeerId)
+		f.PeerID = &pid
+	}
+	if req.Params.Status != nil {
+		st := string(*req.Params.Status)
+		f.Status = &st
+	}
+	if req.Params.ActivityType != nil {
+		st := *req.Params.ActivityType
+		f.ActivityType = &st
+	}
+	if req.Params.Since != nil {
+		t := *req.Params.Since
+		f.Since = &t
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Cursor != nil {
+		if t, id, ok := outbox.DecodeCursor(*req.Params.Cursor); ok {
+			f.CursorReceivedAt = &t
+			f.CursorID = &id
+		}
+	}
+	rows, nextCursor, err := s.outboxAdmin.ListInboxForAdmin(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationInboxRow, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, adminInboxToAPI(r))
+	}
+	resp := openapi.ListFederationInbox200JSONResponse{
+		Items: items,
+	}
+	if nextCursor != "" {
+		resp.NextCursor = &nextCursor
+	}
+	return resp, nil
+}
+
+func (s *apiServer) CancelFederationPeerPending(ctx context.Context, req openapi.CancelFederationPeerPendingRequestObject) (openapi.CancelFederationPeerPendingResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.CancelFederationPeerPending401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	count, err := s.outboxAdmin.CancelPendingForPeer(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
+	if err != nil {
+		return nil, err
+	}
+	return openapi.CancelFederationPeerPending200JSONResponse{
+		PeerId:          openapi_types.UUID(req.Id),
+		CancelledCount:  count,
+	}, nil
+}
+
+// nonEmptyStringPtr returns nil for empty strings; otherwise &s.
+// Used to project Go's empty-string defaults to JSON null for
+// optional openapi fields.
+func nonEmptyStringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// adminOutboxToAPI projects the admin row into the openapi shape.
+func adminOutboxToAPI(r outbox.AdminOutboxRow) openapi.FederationOutbox {
+	out := openapi.FederationOutbox{
+		Id:            openapi_types.UUID(r.ID),
+		ActivityId:    openapi_types.UUID(r.ActivityID),
+		PeerId:        openapi_types.UUID(r.PeerID),
+		Status:        openapi.FederationOutboxStatus(r.Status),
+		Attempts:      int(r.Attempts),
+		NextAttemptAt: r.NextAttemptAt,
+		LastError:     nonEmptyStringPtr(r.LastError),
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}
+	if r.TargetUserURL != nil {
+		out.TargetUserUrl = r.TargetUserURL
+	}
+	if r.LastAttemptAt != nil {
+		out.LastAttemptAt = r.LastAttemptAt
+	}
+	if r.SentAt != nil {
+		out.SentAt = r.SentAt
+	}
+	if r.DeliveredWithKeyID != nil {
+		out.DeliveredWithKeyId = r.DeliveredWithKeyID
+	}
+	return out
+}
+
+// adminInboxToAPI projects the admin inbox row into the openapi shape.
+func adminInboxToAPI(r outbox.AdminInboxRow) openapi.FederationInboxRow {
+	out := openapi.FederationInboxRow{
+		Id:               openapi_types.UUID(r.ID),
+		ActivityUri:      r.ActivityURI,
+		PeerId:           openapi_types.UUID(r.PeerID),
+		ActorUri:         r.ActorURI,
+		ActivityType:     r.ActivityType,
+		HttpSigKey:       nonEmptyStringPtr(r.HTTPSigKey),
+		Status:           openapi.FederationInboxRowStatus(r.Status),
+		DispatchAttempts: int(r.DispatchAttempts),
+		ReceivedAt:       r.ReceivedAt,
+	}
+	if r.ObjectKind != nil {
+		out.ObjectKind = r.ObjectKind
+	}
+	if r.ObjectID != nil {
+		oid := openapi_types.UUID(*r.ObjectID)
+		out.ObjectId = &oid
+	}
+	if r.RejectReason != nil {
+		out.RejectReason = r.RejectReason
+	}
+	if r.LastAttemptAt != nil {
+		out.LastAttemptAt = r.LastAttemptAt
+	}
+	if r.LastError != nil {
+		out.LastError = r.LastError
+	}
+	if r.ProcessedAt != nil {
+		out.ProcessedAt = r.ProcessedAt
+	}
+	if r.CorrelationActivityID != nil {
+		cid := openapi_types.UUID(*r.CorrelationActivityID)
+		out.CorrelationActivityId = &cid
+	}
+	return out
 }
 
 func (s *apiServer) PreviewFederationPeerDefederation(ctx context.Context, req openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {

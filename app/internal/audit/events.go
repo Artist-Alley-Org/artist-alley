@@ -53,6 +53,12 @@ const (
 	// recipient set is empty, or peer is mid-defederation). See
 	// spec §12.3 for the reason catalogue.
 	EventFederationEmissionSkipped = "federation.emission.skipped"
+
+	// 1.22.D-c admin operator events. Both pool-bound (NOT tx-
+	// bound) — the admin handler's tx is the state-change unit;
+	// the audit records the operator decision after commit.
+	EventFederationOutboxRequeued         = "federation.outbox.requeued"
+	EventFederationPeerCascadeCancelled   = "federation.peer.cascade_cancelled"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -250,6 +256,50 @@ func (r *Recorder) writeWith(ctx context.Context, q *Queries, eventType string, 
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// OutboxRequeued records a federation.outbox.requeued event
+// per the 1.22.D-c admin re-queue button. The audit fires
+// AFTER the row's status flips queued so the audit trail
+// reflects the state change.
+//
+// actorUserRef is the admin who clicked the button. Last_error
+// is the prior failure reason — captured for the audit so an
+// operator can later see what the prior failure was without
+// joining the outbox row (which may have moved through multiple
+// states since).
+func (r *Recorder) OutboxRequeued(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	outboxID, peerID, activityID, priorLastError string,
+) {
+	meta := map[string]any{
+		"outbox_id":         outboxID,
+		"peer_id":           peerID,
+		"activity_id":       activityID,
+		"prior_last_error":  priorLastError,
+	}
+	r.write(ctx, EventFederationOutboxRequeued, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// PeerCascadeCancelled records a federation.peer.cascade_cancelled
+// event per the 1.22.D-c defederation-cascade hook. ONE audit
+// row per cascade — NOT N — per the single-audit-per-operator-
+// decision invariant (the operator made ONE decision: cancel
+// everything queued for this peer; the audit reflects that).
+func (r *Recorder) PeerCascadeCancelled(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	peerID string,
+	cancelledCount int,
+) {
+	meta := map[string]any{
+		"peer_id":         peerID,
+		"cancelled_count": cancelledCount,
+	}
+	r.write(ctx, EventFederationPeerCascadeCancelled, nil, &actorUserRef, ctxFromRequest(req), meta)
 }
 
 // EmissionSkipped records a federation.emission.skipped event

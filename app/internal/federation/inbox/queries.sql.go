@@ -249,6 +249,110 @@ func (q *Queries) ListInboxByPeer(ctx context.Context, arg ListInboxByPeerParams
 	return items, nil
 }
 
+const listInboxForAdmin = `-- name: ListInboxForAdmin :many
+SELECT id, activity_uri, peer_id, actor_uri, activity_type,
+       object_kind, object_id, envelope_json, http_sig_key,
+       received_at, status, reject_reason, dispatch_attempts,
+       last_attempt_at, last_error, processed_at,
+       correlation_activity_id
+FROM federation_inbox
+WHERE ($1::uuid IS NULL
+       OR peer_id = $1::uuid)
+  AND ($2::text IS NULL
+       OR status = $2::text)
+  AND ($3::text IS NULL
+       OR activity_type = $3::text)
+  AND ($4::timestamptz IS NULL
+       OR received_at >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL
+       OR (received_at, id) < (
+           $5::timestamptz,
+           $6::uuid
+       ))
+ORDER BY received_at DESC, id DESC
+LIMIT $7::int
+`
+
+type ListInboxForAdminParams struct {
+	PeerID           pgtype.UUID
+	Status           *string
+	ActivityType     *string
+	Since            pgtype.Timestamptz
+	CursorReceivedAt pgtype.Timestamptz
+	CursorID         pgtype.UUID
+	LimitN           int32
+}
+
+type ListInboxForAdminRow struct {
+	ID                    pgtype.UUID
+	ActivityUri           string
+	PeerID                pgtype.UUID
+	ActorUri              string
+	ActivityType          string
+	ObjectKind            *string
+	ObjectID              pgtype.UUID
+	EnvelopeJson          []byte
+	HttpSigKey            string
+	ReceivedAt            pgtype.Timestamptz
+	Status                string
+	RejectReason          *string
+	DispatchAttempts      int32
+	LastAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ProcessedAt           pgtype.Timestamptz
+	CorrelationActivityID pgtype.UUID
+}
+
+// Filtered + paginated admin list for /admin/federation/inbox
+// (Phase 1.22.D-c). All filters optional (NULL = skip). Cursor
+// pagination by (received_at, id) tuple — opaque to clients,
+// deterministic under concurrent inserts.
+func (q *Queries) ListInboxForAdmin(ctx context.Context, arg ListInboxForAdminParams) ([]ListInboxForAdminRow, error) {
+	rows, err := q.db.Query(ctx, listInboxForAdmin,
+		arg.PeerID,
+		arg.Status,
+		arg.ActivityType,
+		arg.Since,
+		arg.CursorReceivedAt,
+		arg.CursorID,
+		arg.LimitN,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInboxForAdminRow
+	for rows.Next() {
+		var i ListInboxForAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActivityUri,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityType,
+			&i.ObjectKind,
+			&i.ObjectID,
+			&i.EnvelopeJson,
+			&i.HttpSigKey,
+			&i.ReceivedAt,
+			&i.Status,
+			&i.RejectReason,
+			&i.DispatchAttempts,
+			&i.LastAttemptAt,
+			&i.LastError,
+			&i.ProcessedAt,
+			&i.CorrelationActivityID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingInbox = `-- name: ListPendingInbox :many
 SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
