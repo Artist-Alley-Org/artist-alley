@@ -58,6 +58,32 @@ failed=0
 
 step "Go tests (app/...)"
 
+# Stop the dev app container while tests run. Phase 1.22.D-b-6
+# extended LISTEN/NOTIFY to federation_outbox + federation_inbox
+# (migration 00006), which means the live app's dispatcher +
+# delivery worker now process rows the moment the trigger fires.
+# Federation integration tests (delivery / e2e / dispatcher)
+# need DB isolation — a concurrent live worker would race the
+# test on the shared cursor / row state.
+#
+# We restart the app after the test step regardless of outcome.
+app_was_running=""
+if docker compose ps --status running --format json 2>/dev/null | grep -q '"app"'; then
+    app_was_running="yes"
+    docker compose stop app >/dev/null 2>&1 || true
+fi
+restart_app() {
+    if [ -n "$app_was_running" ]; then
+        docker compose start app >/dev/null 2>&1 || true
+    fi
+}
+trap restart_app EXIT
+# Opt-in flag for the latency-contract e2e test
+# (TestFederation_EndToEnd_ProductionDefaults_SubSecond) —
+# it asserts sub-1s end-to-end with PRODUCTION tick intervals
+# + needs the same isolation we just secured.
+export AA_E2E_ISOLATED=1
+
 # When --with-s3, bring MinIO up in the same compose stack and
 # expose its credentials to the test container so the s3 backend's
 # contract tests run. Otherwise those tests skip cleanly.

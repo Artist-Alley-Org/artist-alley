@@ -46,6 +46,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
@@ -75,13 +76,15 @@ type HandlerFn func(ctx context.Context, env *federation.Envelope, peerID uuid.U
 
 // DispatcherConfig controls the worker's cadence + batch.
 type DispatcherConfig struct {
-	// Interval between batches. 5s matches the design §2.4
-	// default. Tests override.
+	// Interval is the ticker-backstop period. The primary
+	// wake signal is LISTEN/NOTIFY on federation_inbox INSERT
+	// (per migration 00006); the ticker catches missed
+	// notifications under load. Default 30s per the design
+	// proposal §3.1 "correctness backstop only" pattern.
 	Interval time.Duration
 
 	// BatchSize per tick. Default 100 — matches the §5.5 Q2
-	// "1,200 processings/min" envelope at the default 5s
-	// interval.
+	// "1,200 processings/min" envelope target.
 	BatchSize int32
 
 	// MaxAttempts before a transient failure terminal-fails.
@@ -90,9 +93,14 @@ type DispatcherConfig struct {
 }
 
 // DefaultDispatcherConfig returns the boot defaults.
+//
+// Interval = 30s matches the gold-standard correctness-backstop
+// pattern locked in by 1.22.D-b-6 G1. The actual responsiveness
+// comes from LISTEN/NOTIFY on federation_inbox INSERT;
+// production p99 end-to-end is sub-1s in the happy path.
 func DefaultDispatcherConfig() DispatcherConfig {
 	return DispatcherConfig{
-		Interval:    5 * time.Second,
+		Interval:    30 * time.Second,
 		BatchSize:   100,
 		MaxAttempts: 5,
 	}
@@ -104,6 +112,7 @@ func DefaultDispatcherConfig() DispatcherConfig {
 type Dispatcher struct {
 	cfg      DispatcherConfig
 	pool     *Queries
+	rawPool  *pgxpool.Pool // for the LISTEN goroutine — needs Acquire
 	registry map[federation.ActivityType]HandlerFn
 	logger   *slog.Logger
 
@@ -120,6 +129,14 @@ type Dispatcher struct {
 	// unwired (loud misconfiguration).
 	social     SocialPoster
 	actorCache RemoteActorUpserter
+
+	// wake is signalled by the LISTEN goroutine on every
+	// federation_inbox_pending notification. Buffered=1 so the
+	// LISTEN never blocks; main loop drains extras before
+	// re-entering the scan to coalesce bursts. Per 1.22.D-b-6
+	// G1: end-to-end p99 sub-1s is the contract; LISTEN is the
+	// primary signal, ticker is correctness backstop only.
+	wake chan struct{}
 
 	mu      sync.Mutex
 	running bool
@@ -151,8 +168,20 @@ func NewDispatcher(
 		registry:   registry,
 		logger:     logger,
 		lookupPeer: lookupPeer,
+		wake:       make(chan struct{}, 1),
 	}
 }
+
+// SetRawPool wires the underlying pgxpool.Pool so the dispatcher
+// can run a LISTEN goroutine on federation_inbox_pending. nil-
+// safe: when not wired, the dispatcher falls back to ticker-only
+// (the cfg.Interval cadence). Production wires this at boot;
+// tests that use RunOnce directly can skip it.
+//
+// Per 1.22.D-b-6 G1: LISTEN/NOTIFY is the load-bearing signal
+// for sub-1s end-to-end latency; ticker is correctness backstop
+// only at 30s default.
+func (d *Dispatcher) SetRawPool(p *pgxpool.Pool) { d.rawPool = p }
 
 // Run blocks until ctx is cancelled. Safe to call once per
 // process; subsequent calls log + return.
@@ -177,10 +206,20 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		d.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.dispatcher.start",
 			slog.Duration("interval", d.cfg.Interval),
 			slog.Int("batch_size", int(d.cfg.BatchSize)),
+			slog.Bool("listen_enabled", d.rawPool != nil),
 		)
 	}
+
+	// LISTEN goroutine — primary wake signal per 1.22.D-b-6
+	// G1. Survives connection blips via the inner reconnect
+	// loop. nil-safe: when rawPool isn't wired we fall back to
+	// ticker-only.
+	if d.rawPool != nil {
+		go d.listenLoop(ctx)
+	}
+
 	// Run once at startup so rows that landed during downtime
-	// don't wait a full interval.
+	// don't wait a full interval (or a NOTIFY).
 	d.RunOnce(ctx)
 
 	t := time.NewTicker(d.cfg.Interval)
@@ -191,6 +230,65 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			d.RunOnce(ctx)
+		case <-d.wake:
+			// Coalesce: drain any extra signals piled up while
+			// we were running the previous scan. Matches the
+			// outbox dispatcher's pattern.
+			drainInboxWake(d.wake)
+			d.RunOnce(ctx)
+		}
+	}
+}
+
+// listenLoop arms LISTEN federation_inbox_pending on a dedicated
+// connection. On notify, signals d.wake. Survives connection
+// blips via the outer reconnect loop. Per 1.22.D-b-6 G1: this
+// is the load-bearing latency primitive — without LISTEN, the
+// ticker (30s default) sets the worst-case latency.
+func (d *Dispatcher) listenLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := d.listenOnce(ctx); err != nil && d.logger != nil {
+			d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.listen.error",
+				slog.String("err", err.Error()),
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func (d *Dispatcher) listenOnce(ctx context.Context) error {
+	conn, err := d.rawPool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "LISTEN federation_inbox_pending"); err != nil {
+		return err
+	}
+	for {
+		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
+			return err
+		}
+		select {
+		case d.wake <- struct{}{}:
+		default: // already pending; coalesce
+		}
+	}
+}
+
+func drainInboxWake(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }

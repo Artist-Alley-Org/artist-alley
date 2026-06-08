@@ -315,7 +315,16 @@ func Verify(r *http.Request, body []byte, resolve KeyResolver, now time.Time) (k
 	if skew > ReplayWindow || skew < -ReplayWindow {
 		return "", fmt.Errorf("%w: %s skew %v exceeds ±%v", ErrStaleRequest, dateRaw, skew, ReplayWindow)
 	}
-	// Step 7.
+	// Step 7. Build the signing string. Go's http server moves
+	// the inbound Host header to r.Host (it's NOT in r.Header
+	// at the receiver side per RFC 7230 §5.4 + Go's http
+	// convention). The Cavage spec signs the Host header,
+	// so we copy r.Host back into r.Header before building the
+	// canonical signing string. No-op when the caller already
+	// set the header (the signer-side path does).
+	if r.Header.Get("Host") == "" && r.Host != "" {
+		r.Header.Set("Host", r.Host)
+	}
 	target := r.URL.RequestURI() // path + raw query
 	signingStr, err := BuildSigningString(r.Method, target, params.Headers, r.Header)
 	if err != nil {

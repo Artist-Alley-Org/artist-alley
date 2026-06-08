@@ -3711,6 +3711,31 @@ CREATE TRIGGER federation_dispatch_notify_trg
     FOR EACH ROW
     EXECUTE FUNCTION public.federation_dispatch_notify();
 
+-- Migration 00006 — LISTEN/NOTIFY extension to federation_outbox
+-- + federation_inbox (Phase 1.22.D-b-6 G1).
+CREATE OR REPLACE FUNCTION public.federation_outbox_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_outbox_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_outbox_dispatch_notify_trg
+    AFTER INSERT ON public.federation_outbox
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+CREATE OR REPLACE FUNCTION public.federation_inbox_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_inbox_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_inbox_dispatch_notify_trg
+    AFTER INSERT ON public.federation_inbox
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);

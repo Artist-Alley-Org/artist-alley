@@ -62,8 +62,11 @@ import (
 
 // DeliveryConfig controls the worker's cadence + HTTP client.
 type DeliveryConfig struct {
-	// Interval between delivery scans. Default 5s — matches the
-	// inbox dispatcher cadence so operators have one mental model.
+	// Interval is the ticker-backstop period. The primary wake
+	// signal is LISTEN/NOTIFY on federation_outbox INSERT per
+	// migration 00006; the ticker catches missed notifications
+	// under load. Default 30s per 1.22.D-b-6 G1 — same
+	// "correctness backstop only" pattern as the dispatchers.
 	Interval time.Duration
 
 	// BatchSize per tick. Default 100.
@@ -78,9 +81,14 @@ type DeliveryConfig struct {
 }
 
 // DefaultDeliveryConfig returns the boot defaults.
+//
+// Interval = 30s matches the gold-standard correctness-backstop
+// pattern locked in by 1.22.D-b-6 G1. The actual responsiveness
+// comes from LISTEN/NOTIFY on federation_outbox INSERT;
+// production p99 end-to-end is sub-1s in the happy path.
 func DefaultDeliveryConfig() DeliveryConfig {
 	return DeliveryConfig{
-		Interval:            5 * time.Second,
+		Interval:            30 * time.Second,
 		BatchSize:           100,
 		RequestTimeout:      10 * time.Second,
 		MaxIdleConnsPerHost: 10,
@@ -119,6 +127,14 @@ type Worker struct {
 	lookupPeer PeerLookup
 	http       *http.Client
 	logger     *slog.Logger
+
+	// wake is signalled by the LISTEN goroutine on every
+	// federation_outbox_pending notification. Buffered=1 so the
+	// LISTEN never blocks; main loop drains extras before
+	// re-entering the scan to coalesce bursts. Per 1.22.D-b-6
+	// G1: end-to-end p99 sub-1s is the contract; LISTEN is the
+	// primary signal, ticker is correctness backstop only.
+	wake chan struct{}
 
 	mu      sync.Mutex
 	running bool
@@ -163,6 +179,7 @@ func NewWorker(
 			Timeout:   cfg.RequestTimeout,
 		},
 		logger: logger,
+		wake:   make(chan struct{}, 1),
 	}
 }
 
@@ -192,6 +209,10 @@ func (w *Worker) Run(ctx context.Context) {
 		)
 	}
 
+	// LISTEN goroutine — primary wake signal per 1.22.D-b-6 G1.
+	// Survives connection blips via the inner reconnect loop.
+	go w.listenLoop(ctx)
+
 	// Drain at boot.
 	w.RunOnce(ctx)
 
@@ -203,6 +224,63 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			w.RunOnce(ctx)
+		case <-w.wake:
+			drainDeliveryWake(w.wake)
+			w.RunOnce(ctx)
+		}
+	}
+}
+
+// listenLoop arms LISTEN federation_outbox_pending on a
+// dedicated connection. On notify, signals w.wake. Survives
+// connection blips via the outer reconnect loop. Per
+// 1.22.D-b-6 G1: this is the load-bearing latency primitive —
+// without LISTEN, the ticker (30s default) sets the worst-
+// case latency.
+func (w *Worker) listenLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := w.listenOnce(ctx); err != nil && w.logger != nil {
+			w.logger.LogAttrs(ctx, slog.LevelWarn, "outbox.delivery.listen.error",
+				slog.String("err", err.Error()),
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func (w *Worker) listenOnce(ctx context.Context) error {
+	conn, err := w.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "LISTEN federation_outbox_pending"); err != nil {
+		return err
+	}
+	for {
+		if _, err := conn.Conn().WaitForNotification(ctx); err != nil {
+			return err
+		}
+		select {
+		case w.wake <- struct{}{}:
+		default: // already pending; coalesce
+		}
+	}
+}
+
+func drainDeliveryWake(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }

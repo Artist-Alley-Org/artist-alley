@@ -277,6 +277,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
 	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
 	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
+	// LISTEN/NOTIFY on federation_inbox_pending — gold-standard
+	// sub-1s latency per 1.22.D-b-6 G1. The dispatcher's 30s
+	// ticker is correctness backstop only.
+	s.inboxDispatcher.SetRawPool(pool)
 
 	// Federation OUTBOX dispatcher (Phase 1.22.D-b). Drains
 	// activities ledger rows into per-recipient federation_outbox
