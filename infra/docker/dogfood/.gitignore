@@ -1,0 +1,5 @@
+# mkcert-issued per-host certs — never tracked.
+# scripts/dogfood/up.sh regenerates them from the local mkcert CA
+# on each developer's machine; they're per-host, per-CA and
+# carry no semantic value across machines.
+certs/*.pem

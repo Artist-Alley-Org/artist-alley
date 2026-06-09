@@ -184,7 +184,37 @@ func (m *Manager) Load(ctx context.Context) (*Identity, error) {
 
 	id, err := decodeIdentity(row)
 	if err != nil {
-		return nil, err
+		// Auto-regenerate on at-rest auth failure. This happens
+		// when AA_MASTER_KEY has rotated since the row was
+		// written — the row is now permanently unrecoverable, so
+		// continuing to surface it as "broken" leaves the app in
+		// a half-working state where /federation/instance silently
+		// 503s but the healthcheck passes (the misleading-log bug
+		// that ate a dogfood-pairing session). Regenerate, log
+		// LOUD that peers must re-pair, continue.
+		//
+		// Other decode errors (PEM malformed, key-pair mismatch,
+		// etc.) propagate normally — those signal a corrupted row
+		// that bisected investigation is needed for.
+		if errors.Is(err, atrest.ErrBadCiphertext) {
+			if m.logger != nil {
+				m.logger.LogAttrs(ctx, slog.LevelWarn,
+					"federation.identity.regenerated.after.key.drift",
+					slog.String("reason", "stored identity could not be decrypted with current AA_MASTER_KEY — regenerating"),
+					slog.String("impact", "all paired peers must re-pair: this instance's federation fingerprint will change"),
+				)
+			}
+			row, err = m.generateAndStore(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("regenerate after key drift: %w", err)
+			}
+			id, err = decodeIdentity(row)
+			if err != nil {
+				return nil, fmt.Errorf("decode after regenerate: %w", err)
+			}
+		} else {
+			return nil, err
+		}
 	}
 	m.identity = id
 	if m.logger != nil {
