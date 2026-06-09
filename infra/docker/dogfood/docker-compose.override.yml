@@ -1,0 +1,35 @@
+# Dogfood-only compose override.
+#
+# Adds the mkcert root CA into the dev `app` container so its
+# federation HTTP client can verify studio-b's mkcert-issued
+# cert. Without this, TLS verification fails with:
+#
+#   x509: certificate signed by unknown authority
+#
+# and the outbox delivery worker retries forever.
+#
+# Mounted into the dev `app` (which dials studio-b over HTTPS) AND
+# `app-b` (for symmetry; harmless since app-b → dev uses plain HTTP).
+#
+# Apply via:
+#   docker compose -f docker-compose.yml -f infra/docker/dogfood/docker-compose.override.yml --profile dogfood up -d
+# scripts/dogfood/up.sh wraps this.
+
+services:
+  app:
+    volumes:
+      # Read-only bind of the mkcert root CA. up.sh copies it from
+      # `mkcert -CAROOT` into this path so it's portable across hosts.
+      - ./infra/docker/dogfood/certs/mkcert-rootCA.pem:/etc/ssl/dogfood/rootCA.pem:ro
+    environment:
+      # Go's crypto/x509 reads SSL_CERT_DIR as a colon-separated
+      # list of dirs containing trusted PEMs. Adding /etc/ssl/dogfood
+      # makes the mkcert root CA part of the system trust store
+      # for outbound HTTPS calls (federation, /federation/inbox POSTs).
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/ssl/dogfood
+
+  app-b:
+    volumes:
+      - ./infra/docker/dogfood/certs/mkcert-rootCA.pem:/etc/ssl/dogfood/rootCA.pem:ro
+    environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/ssl/dogfood

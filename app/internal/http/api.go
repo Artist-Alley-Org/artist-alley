@@ -564,9 +564,14 @@ func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbo
 	if idx := strings.Index(keyID, "#"); idx >= 0 {
 		base = keyID[:idx]
 	}
-	// Optional /instance suffix — some peers publish their key
-	// at `<instance_url>/instance` while their instance_url in
-	// federation_peers is just `<instance_url>`.
+	// The signer constructs keyURL as
+	//   `<site.base_url>/federation/instance#main-key`
+	// (see deferredIdentitySigner.keyURL). Strip the canonical
+	// path tail in full so the base matches the peer's
+	// instance_url. The longer suffix is tried first; the
+	// shorter `/instance` form is kept for peers that publish
+	// their key at `<instance_url>/instance` directly.
+	base = strings.TrimSuffix(base, "/federation/instance")
 	base = strings.TrimSuffix(base, "/instance")
 
 	p, err := a.reg.ByInstanceURL(ctx, base)

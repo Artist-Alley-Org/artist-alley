@@ -49,7 +49,7 @@ fi
 step "Provisioning mkcert root CA (idempotent)"
 mkcert -install
 
-# --- 2. studio-b cert -------------------------------------------------------
+# --- 2. studio-b cert + mkcert root CA -------------------------------------
 
 step "Issuing studio-b.local cert into ${CERT_DIR}/"
 mkdir -p "$CERT_DIR"
@@ -59,6 +59,15 @@ if [ ! -f "${CERT_DIR}/studio-b.local.pem" ] || \
 else
     echo "  cert already present; skipping issuance"
 fi
+
+# Copy the mkcert root CA into the certs dir so the dogfood compose
+# override can bind-mount it into the app + app-b containers. Without
+# this, Go's TLS verify on outbound federation HTTPS calls fails with
+# `x509: certificate signed by unknown authority`. The path matches
+# infra/docker/dogfood/docker-compose.override.yml.
+mkcert_caroot="$(mkcert -CAROOT)"
+cp -f "${mkcert_caroot}/rootCA.pem" "${CERT_DIR}/mkcert-rootCA.pem"
+echo "  mkcert root CA copied into ${CERT_DIR}/mkcert-rootCA.pem"
 
 # --- 3. /etc/hosts ----------------------------------------------------------
 
@@ -81,7 +90,17 @@ fi
 # --- 4. docker compose ------------------------------------------------------
 
 step "Bringing up the dogfood profile (studio-b alongside dev)"
-docker compose --profile dogfood up -d --build
+# The override file adds the mkcert CA bind-mount + SSL_CERT_DIR
+# env to app + app-b so outbound HTTPS federation calls trust
+# studio-b's mkcert-issued cert. Without it, the delivery worker
+# silently retries forever with "x509: certificate signed by
+# unknown authority" in last_error. See infra/docker/dogfood/
+# docker-compose.override.yml.
+docker compose \
+    -f docker-compose.yml \
+    -f infra/docker/dogfood/docker-compose.override.yml \
+    --profile dogfood up -d --build \
+    --force-recreate app  # pick up the new bind-mount if app was already running
 
 # --- 5. wait for studio-b ready --------------------------------------------
 
