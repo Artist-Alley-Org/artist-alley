@@ -87,8 +87,22 @@
   <title>{t('login.title')} — artist-alley</title>
 </svelte:head>
 
-<div class="flex-1 flex items-center justify-center px-6 py-12">
-  <div class="w-full max-w-sm space-y-8">
+<div class="relative flex-1 flex items-center justify-center px-6 py-12 isolate">
+  <!-- Background hero. Layered: image → darkening overlay → form card.
+       The image is decorative (no semantic content) so it's
+       `aria-hidden`; readability is guaranteed by the overlay +
+       backdrop-blur on the card behind the form. -->
+  <div
+    class="absolute inset-0 -z-10 bg-cover bg-center bg-no-repeat"
+    style="background-image: url('/hero.png');"
+    aria-hidden="true"
+  ></div>
+  <div
+    class="absolute inset-0 -z-10 bg-black/55 backdrop-blur-[2px]"
+    aria-hidden="true"
+  ></div>
+
+  <div class="w-full max-w-sm space-y-8 rounded-xl border border-white/10 bg-surface/85 p-8 shadow-2xl backdrop-blur-md">
     <div class="text-center space-y-2">
       <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('login.title')}</h1>
@@ -173,3 +187,13 @@
     </p>
   </div>
 </div>
+
+<style>
+  /* Lock the page to fill the viewport — the hero image looks weak if
+     the form is small and the rest of the page bleeds the page bg
+     (instead of the photo) below it. The parent <main> is
+     flex-1 + overflow-y-auto so this height: 100% propagates from there. */
+  :global(main):has(> .relative.isolate) {
+    background: transparent;
+  }
+</style>
