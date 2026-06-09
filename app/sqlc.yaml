@@ -302,3 +302,55 @@ sql:
         emit_interface: false
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/inbox/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: inbox
+        out: internal/federation/inbox
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/remote/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: remote
+        out: internal/federation/remote
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/outbox/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: outbox
+        out: internal/federation/outbox
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/seed/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: seed
+        out: internal/seed
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

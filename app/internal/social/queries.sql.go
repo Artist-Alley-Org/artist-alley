@@ -73,7 +73,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 `
 
 type CreateCommentParams struct {
@@ -83,7 +83,7 @@ type CreateCommentParams struct {
 	ParentID       pgtype.UUID
 	RootID         pgtype.UUID
 	Depth          int32
-	AuthorUserRef  int64
+	AuthorUserRef  *int64
 	Body           string
 	BodyHtml       string
 	AnnotationType *string
@@ -130,6 +130,9 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
 	)
 	return i, err
 }
@@ -162,7 +165,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE id = $1
 `
@@ -188,6 +191,9 @@ func (q *Queries) GetComment(ctx context.Context, id pgtype.UUID) (Comment, erro
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
 	)
 	return i, err
 }
@@ -199,7 +205,7 @@ WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetCommentAuthorAndContextRow struct {
-	AuthorUserRef int64
+	AuthorUserRef *int64
 	ParentID      pgtype.UUID
 	TargetKind    string
 	TargetID      pgtype.UUID
@@ -216,6 +222,58 @@ func (q *Queries) GetCommentAuthorAndContext(ctx context.Context, id pgtype.UUID
 		&i.ParentID,
 		&i.TargetKind,
 		&i.TargetID,
+	)
+	return i, err
+}
+
+const getCommentByActivityURI = `-- name: GetCommentByActivityURI :one
+SELECT id, target_kind, target_id, parent_id, root_id, depth,
+       author_user_ref, body, body_html,
+       peer_id, actor_uri, activity_uri,
+       created_at, updated_at
+FROM comments
+WHERE activity_uri = $1
+`
+
+type GetCommentByActivityURIRow struct {
+	ID            pgtype.UUID
+	TargetKind    string
+	TargetID      pgtype.UUID
+	ParentID      pgtype.UUID
+	RootID        pgtype.UUID
+	Depth         int32
+	AuthorUserRef *int64
+	Body          string
+	BodyHtml      string
+	PeerID        pgtype.UUID
+	ActorUri      *string
+	ActivityUri   *string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// Used by the inbox dispatcher to detect a retried delivery —
+// if a row already exists for this activity_uri, the dispatcher
+// treats it as "already processed" without re-firing the
+// notification.
+func (q *Queries) GetCommentByActivityURI(ctx context.Context, activityUri *string) (GetCommentByActivityURIRow, error) {
+	row := q.db.QueryRow(ctx, getCommentByActivityURI, activityUri)
+	var i GetCommentByActivityURIRow
+	err := row.Scan(
+		&i.ID,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.ParentID,
+		&i.RootID,
+		&i.Depth,
+		&i.AuthorUserRef,
+		&i.Body,
+		&i.BodyHtml,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -275,7 +333,7 @@ SELECT EXISTS (
 type HasUserLikedTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	UserRef    int64
+	UserRef    *int64
 }
 
 func (q *Queries) HasUserLikedTarget(ctx context.Context, arg HasUserLikedTargetParams) (bool, error) {
@@ -283,6 +341,138 @@ func (q *Queries) HasUserLikedTarget(ctx context.Context, arg HasUserLikedTarget
 	var value bool
 	err := row.Scan(&value)
 	return value, err
+}
+
+const insertRemoteComment = `-- name: InsertRemoteComment :one
+INSERT INTO comments (
+    id, target_kind, target_id, parent_id, root_id, depth,
+    body, body_html,
+    peer_id, actor_uri, activity_uri
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, target_kind, target_id, parent_id, root_id, depth,
+          author_user_ref, body, body_html,
+          annotation_type, annotation_data,
+          like_count, edited_at, deleted_at,
+          origin_server_id, peer_id, actor_uri, activity_uri,
+          created_at, updated_at
+`
+
+type InsertRemoteCommentParams struct {
+	ID          pgtype.UUID
+	TargetKind  string
+	TargetID    pgtype.UUID
+	ParentID    pgtype.UUID
+	RootID      pgtype.UUID
+	Depth       int32
+	Body        string
+	BodyHtml    string
+	PeerID      pgtype.UUID
+	ActorUri    *string
+	ActivityUri *string
+}
+
+type InsertRemoteCommentRow struct {
+	ID             pgtype.UUID
+	TargetKind     string
+	TargetID       pgtype.UUID
+	ParentID       pgtype.UUID
+	RootID         pgtype.UUID
+	Depth          int32
+	AuthorUserRef  *int64
+	Body           string
+	BodyHtml       string
+	AnnotationType *string
+	AnnotationData []byte
+	LikeCount      int64
+	EditedAt       pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+	OriginServerID pgtype.UUID
+	PeerID         pgtype.UUID
+	ActorUri       *string
+	ActivityUri    *string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+// Inbound federation Create(Note) — the remote actor posted a
+// comment on a target the local instance owns. Idempotent via
+// comments_activity_uri_uniq_idx UNIQUE (activity_uri) WHERE
+// NOT NULL — a retried dispatch lands as a constraint-violation
+// we map to "already saved" rather than a new row.
+//
+// author_user_ref is NULL for remote rows per the origin CHECK;
+// peer_id + actor_uri + activity_uri together identify the
+// remote authorship.
+func (q *Queries) InsertRemoteComment(ctx context.Context, arg InsertRemoteCommentParams) (InsertRemoteCommentRow, error) {
+	row := q.db.QueryRow(ctx, insertRemoteComment,
+		arg.ID,
+		arg.TargetKind,
+		arg.TargetID,
+		arg.ParentID,
+		arg.RootID,
+		arg.Depth,
+		arg.Body,
+		arg.BodyHtml,
+		arg.PeerID,
+		arg.ActorUri,
+		arg.ActivityUri,
+	)
+	var i InsertRemoteCommentRow
+	err := row.Scan(
+		&i.ID,
+		&i.TargetKind,
+		&i.TargetID,
+		&i.ParentID,
+		&i.RootID,
+		&i.Depth,
+		&i.AuthorUserRef,
+		&i.Body,
+		&i.BodyHtml,
+		&i.AnnotationType,
+		&i.AnnotationData,
+		&i.LikeCount,
+		&i.EditedAt,
+		&i.DeletedAt,
+		&i.OriginServerID,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertRemoteLike = `-- name: InsertRemoteLike :execrows
+INSERT INTO likes (target_kind, target_id, peer_id, actor_uri)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (target_kind, target_id, peer_id, actor_uri) WHERE peer_id IS NOT NULL DO NOTHING
+`
+
+type InsertRemoteLikeParams struct {
+	TargetKind string
+	TargetID   pgtype.UUID
+	PeerID     pgtype.UUID
+	ActorUri   *string
+}
+
+// Inbound federation Like from a remote actor on a target the
+// local instance owns. Idempotent via likes_remote_uniq_idx
+// on (target_kind, target_id, peer_id, actor_uri) WHERE peer_id
+// IS NOT NULL. ON CONFLICT clause must repeat the partial-index
+// WHERE predicate so Postgres can match the right index.
+func (q *Queries) InsertRemoteLike(ctx context.Context, arg InsertRemoteLikeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertRemoteLike,
+		arg.TargetKind,
+		arg.TargetID,
+		arg.PeerID,
+		arg.ActorUri,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const isBlocking = `-- name: IsBlocking :one
@@ -337,13 +527,13 @@ const likeTarget = `-- name: LikeTarget :exec
 
 INSERT INTO likes (target_kind, target_id, user_ref)
 VALUES ($1, $2, $3)
-ON CONFLICT DO NOTHING
+ON CONFLICT (target_kind, target_id, user_ref) WHERE user_ref IS NOT NULL DO NOTHING
 `
 
 type LikeTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	UserRef    int64
+	UserRef    *int64
 }
 
 // Comments + likes queries. Polymorphic across (target_kind, target_id),
@@ -352,9 +542,11 @@ type LikeTargetParams struct {
 // ---------------------------------------------------------------------------
 // Likes
 // ---------------------------------------------------------------------------
-// Idempotent. The PRIMARY KEY (target_kind, target_id, user_ref)
-// means re-inserting a row the same user already liked is a no-op,
-// and the counter trigger doesn't fire a second time.
+// Idempotent. The partial-UNIQUE index
+// likes_local_uniq_idx on (target_kind, target_id, user_ref)
+// WHERE user_ref IS NOT NULL means re-inserting a row the same
+// LOCAL user already liked is a no-op, and the counter trigger
+// doesn't fire a second time.
 func (q *Queries) LikeTarget(ctx context.Context, arg LikeTargetParams) error {
 	_, err := q.db.Exec(ctx, likeTarget, arg.TargetKind, arg.TargetID, arg.UserRef)
 	return err
@@ -365,7 +557,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'asset'
   AND target_id = $1
@@ -405,6 +597,9 @@ func (q *Queries) ListAnnotationsForAsset(ctx context.Context, targetID pgtype.U
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityUri,
 		); err != nil {
 			return nil, err
 		}
@@ -481,7 +676,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE author_user_ref = $1
   AND deleted_at IS NULL
@@ -490,7 +685,7 @@ LIMIT $2 OFFSET $3
 `
 
 type ListCommentsByAuthorParams struct {
-	AuthorUserRef int64
+	AuthorUserRef *int64
 	Limit         int32
 	Offset        int32
 }
@@ -523,6 +718,9 @@ func (q *Queries) ListCommentsByAuthor(ctx context.Context, arg ListCommentsByAu
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityUri,
 		); err != nil {
 			return nil, err
 		}
@@ -661,7 +859,7 @@ type ListLikersOfTargetParams struct {
 }
 
 type ListLikersOfTargetRow struct {
-	UserRef int64
+	UserRef *int64
 	LikedAt pgtype.Timestamptz
 }
 
@@ -698,7 +896,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'asset'
   AND target_id = $1
@@ -740,6 +938,9 @@ func (q *Queries) ListTextAnnotationsForAsset(ctx context.Context, targetID pgty
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityUri,
 		); err != nil {
 			return nil, err
 		}
@@ -767,9 +968,12 @@ SELECT c.id, c.target_kind, c.target_id, c.parent_id, c.root_id, c.depth,
        c.author_user_ref, c.body, c.body_html,
        c.annotation_type, c.annotation_data,
        c.like_count, c.edited_at, c.deleted_at,
-       c.origin_server_id, c.created_at, c.updated_at
+       c.origin_server_id, c.created_at, c.updated_at,
+       c.peer_id, c.actor_uri, c.activity_uri,
+       fra.display_name::text AS remote_display_name
 FROM comments c
 JOIN thread_roots tr ON tr.id = c.root_id
+LEFT JOIN federation_remote_actors fra ON fra.actor_uri = c.actor_uri
 WHERE c.deleted_at IS NULL
 ORDER BY tr.created_at DESC, tr.id ASC, c.depth ASC, c.created_at ASC
 `
@@ -781,6 +985,30 @@ type ListThreadForTargetParams struct {
 	ThreadLimit         int32
 }
 
+type ListThreadForTargetRow struct {
+	ID                pgtype.UUID
+	TargetKind        string
+	TargetID          pgtype.UUID
+	ParentID          pgtype.UUID
+	RootID            pgtype.UUID
+	Depth             int32
+	AuthorUserRef     *int64
+	Body              string
+	BodyHtml          string
+	AnnotationType    *string
+	AnnotationData    []byte
+	LikeCount         int64
+	EditedAt          pgtype.Timestamptz
+	DeletedAt         pgtype.Timestamptz
+	OriginServerID    pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	PeerID            pgtype.UUID
+	ActorUri          *string
+	ActivityUri       *string
+	RemoteDisplayName string
+}
+
 // Returns every LIVE comment on (kind, id), sorted by root then
 // depth-first within root (so replies appear under their parent).
 // The cursor pagination is on root_id alone — we always return a
@@ -789,7 +1017,7 @@ type ListThreadForTargetParams struct {
 // Ordering: root_created_at DESC (newest threads first), then within
 // a thread by (depth ASC, created_at ASC) so the root is first and
 // replies follow in chronological order.
-func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTargetParams) ([]Comment, error) {
+func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTargetParams) ([]ListThreadForTargetRow, error) {
 	rows, err := q.db.Query(ctx, listThreadForTarget,
 		arg.TargetKind,
 		arg.TargetID,
@@ -800,9 +1028,9 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Comment
+	var items []ListThreadForTargetRow
 	for rows.Next() {
-		var i Comment
+		var i ListThreadForTargetRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TargetKind,
@@ -821,6 +1049,10 @@ func (q *Queries) ListThreadForTarget(ctx context.Context, arg ListThreadForTarg
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityUri,
+			&i.RemoteDisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -837,7 +1069,7 @@ SELECT id, target_kind, target_id, parent_id, root_id, depth,
        author_user_ref, body, body_html,
        annotation_type, annotation_data,
        like_count, edited_at, deleted_at,
-       origin_server_id, created_at, updated_at
+       origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 FROM comments
 WHERE target_kind = 'post'
   AND target_id = $1
@@ -881,6 +1113,9 @@ func (q *Queries) ListWhiteboardsForPost(ctx context.Context, targetID pgtype.UU
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PeerID,
+			&i.ActorUri,
+			&i.ActivityUri,
 		); err != nil {
 			return nil, err
 		}
@@ -962,7 +1197,7 @@ WHERE target_kind = $1 AND target_id = $2 AND user_ref = $3
 type UnlikeTargetParams struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	UserRef    int64
+	UserRef    *int64
 }
 
 // Returns 1 if a row was removed (and the trigger decremented the
@@ -987,7 +1222,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 `
 
 type UpdateAnnotationDataParams struct {
@@ -1023,6 +1258,9 @@ func (q *Queries) UpdateAnnotationData(ctx context.Context, arg UpdateAnnotation
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
 	)
 	return i, err
 }
@@ -1040,7 +1278,7 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           author_user_ref, body, body_html,
           annotation_type, annotation_data,
           like_count, edited_at, deleted_at,
-          origin_server_id, created_at, updated_at
+          origin_server_id, created_at, updated_at, peer_id, actor_uri, activity_uri
 `
 
 type UpdateCommentParams struct {
@@ -1080,6 +1318,9 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PeerID,
+		&i.ActorUri,
+		&i.ActivityUri,
 	)
 	return i, err
 }

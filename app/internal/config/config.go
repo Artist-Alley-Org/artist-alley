@@ -42,6 +42,17 @@ type Config struct {
 	// from the same config value the legacy PHP reads as $scramble_key.
 	ScrambleKey string
 
+	// First-boot bootstrap. The bootstrap package runs on every
+	// startup; it's a no-op when admins exist already. AdminPath
+	// is where bootstrap-admin.txt gets written in secure mode
+	// (random password); empty defaults to /var/lib/artist-alley.
+	// DefaultAdminEnabled mirrors AA_BOOTSTRAP_DEFAULT_ADMIN=1 —
+	// when set, the documented literal admin/ArtistAlleyMogul is
+	// used instead of a random password + a loud WARN banner is
+	// printed. DEVELOPMENT ONLY.
+	BootstrapAdminPath     string
+	BootstrapDefaultAdmin  bool
+
 	// Storage. Backend selects which storage.Backend implementation
 	// the app constructs at boot. The other fields are backend-specific
 	// — only the ones for the selected backend need to be set.
@@ -115,6 +126,10 @@ func Load() (Config, error) {
 		LogLevel:          envStr("AA_LOG_LEVEL", "info"),
 		LogFormat:         envStr("AA_LOG_FORMAT", "json"),
 		ScrambleKey:       envStr("AA_SCRAMBLE_KEY", ""),
+
+		BootstrapAdminPath:    envStr("AA_BOOTSTRAP_ADMIN_PATH", "/var/lib/artist-alley"),
+		BootstrapDefaultAdmin: envBool("AA_BOOTSTRAP_DEFAULT_ADMIN", false),
+
 		StorageBackend:        envStr("AA_STORAGE_BACKEND", "fs"),
 		StorageFSRoot:         envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),
 		StorageS3Endpoint:     envStr("AA_STORAGE_S3_ENDPOINT", ""),

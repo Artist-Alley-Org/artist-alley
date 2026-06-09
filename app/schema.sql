@@ -3584,6 +3584,158 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
+-- Migration 00003 — federation_inbox (Phase 1.22.D-a).
+CREATE TABLE public.federation_inbox (
+    id                       uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    activity_uri             text         NOT NULL UNIQUE,
+    peer_id                  uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    actor_uri                text         NOT NULL,
+    activity_type            text         NOT NULL,
+    object_kind              text         NULL,
+    object_id                uuid         NULL,
+    envelope_json            jsonb        NOT NULL,
+    http_sig_key             text         NOT NULL,
+    received_at              timestamptz  NOT NULL DEFAULT now(),
+    status                   text         NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processed', 'rejected', 'failed')),
+    reject_reason            text         NULL,
+    dispatch_attempts        int          NOT NULL DEFAULT 0,
+    last_attempt_at          timestamptz  NULL,
+    last_error               text         NOT NULL DEFAULT '',
+    processed_at             timestamptz  NULL,
+    correlation_activity_id  uuid         NULL REFERENCES public.activities(id) ON DELETE SET NULL,
+    created_at               timestamptz  NOT NULL DEFAULT now(),
+    updated_at               timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX federation_inbox_pending_idx
+    ON public.federation_inbox (received_at) WHERE status = 'pending';
+CREATE INDEX federation_inbox_by_peer_idx
+    ON public.federation_inbox (peer_id, received_at DESC);
+CREATE INDEX federation_inbox_by_status_idx
+    ON public.federation_inbox (status, received_at DESC);
+
+-- Migration 00004 — inbound-federation columns on likes + comments
+-- + federation_remote_actors display cache (Phase 1.22.D-a-4).
+ALTER TABLE public.likes
+    ADD COLUMN id          uuid         NOT NULL DEFAULT gen_random_uuid(),
+    ADD COLUMN peer_id     uuid         NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    ADD COLUMN actor_uri   text         NULL,
+    ALTER COLUMN user_ref  DROP NOT NULL;
+ALTER TABLE public.likes DROP CONSTRAINT likes_pkey;
+ALTER TABLE public.likes ADD CONSTRAINT likes_pkey PRIMARY KEY (id);
+CREATE UNIQUE INDEX likes_local_uniq_idx
+    ON public.likes (target_kind, target_id, user_ref)
+    WHERE user_ref IS NOT NULL;
+CREATE UNIQUE INDEX likes_remote_uniq_idx
+    ON public.likes (target_kind, target_id, peer_id, actor_uri)
+    WHERE peer_id IS NOT NULL;
+ALTER TABLE public.likes ADD CONSTRAINT likes_origin_check
+    CHECK (
+        (user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
+        OR
+        (user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
+    );
+ALTER TABLE public.comments
+    ADD COLUMN peer_id            uuid NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    ADD COLUMN actor_uri          text NULL,
+    ADD COLUMN activity_uri       text NULL,
+    ALTER COLUMN author_user_ref  DROP NOT NULL;
+CREATE UNIQUE INDEX comments_activity_uri_uniq_idx
+    ON public.comments (activity_uri)
+    WHERE activity_uri IS NOT NULL;
+ALTER TABLE public.comments ADD CONSTRAINT comments_origin_check
+    CHECK (
+        (author_user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
+        OR
+        (author_user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
+    );
+CREATE TABLE public.federation_remote_actors (
+    actor_uri         text         PRIMARY KEY,
+    peer_id           uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    display_name      text         NOT NULL DEFAULT '',
+    avatar_url        text         NOT NULL DEFAULT '',
+    first_seen_at     timestamptz  NOT NULL DEFAULT now(),
+    last_seen_at      timestamptz  NOT NULL DEFAULT now(),
+    updated_at        timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX federation_remote_actors_by_peer_idx
+    ON public.federation_remote_actors (peer_id, last_seen_at DESC);
+
+-- Migration 00005 — federation_outbox + cursor state + LISTEN/NOTIFY
+-- trigger (Phase 1.22.D-b-1).
+CREATE TABLE public.federation_outbox (
+    id                     uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    activity_id            uuid         NOT NULL REFERENCES public.activities(id) ON DELETE CASCADE,
+    peer_id                uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
+    target_user_url        text         NULL,
+    status                 text         NOT NULL DEFAULT 'queued',
+    CONSTRAINT federation_outbox_status_check CHECK (
+        status IN ('queued', 'sent', 'failed', 'cancelled')
+    ),
+    attempts               smallint     NOT NULL DEFAULT 0,
+    next_attempt_at        timestamptz  NOT NULL DEFAULT NOW(),
+    last_attempt_at        timestamptz  NULL,
+    last_error             text         NOT NULL DEFAULT '',
+    sent_at                timestamptz  NULL,
+    delivered_with_key_id  text         NULL,
+    created_at             timestamptz  NOT NULL DEFAULT NOW(),
+    updated_at             timestamptz  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX federation_outbox_dedup_targeted_idx
+    ON public.federation_outbox (activity_id, peer_id, target_user_url)
+    WHERE target_user_url IS NOT NULL;
+CREATE UNIQUE INDEX federation_outbox_dedup_broadcast_idx
+    ON public.federation_outbox (activity_id, peer_id)
+    WHERE target_user_url IS NULL;
+CREATE INDEX federation_outbox_due_idx
+    ON public.federation_outbox (next_attempt_at)
+    WHERE status = 'queued';
+CREATE INDEX federation_outbox_by_peer_idx
+    ON public.federation_outbox (peer_id, created_at DESC);
+CREATE TABLE public.federation_dispatch_state (
+    id                            int          PRIMARY KEY CHECK (id = 1),
+    last_dispatched_activity_id   uuid         NULL,
+    last_dispatched_at            timestamptz  NULL,
+    updated_at                    timestamptz  NOT NULL DEFAULT NOW()
+);
+INSERT INTO public.federation_dispatch_state (id) VALUES (1);
+CREATE OR REPLACE FUNCTION public.federation_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_dispatch_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_dispatch_notify_trg
+    AFTER INSERT ON public.activities
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_dispatch_notify();
+
+-- Migration 00006 — LISTEN/NOTIFY extension to federation_outbox
+-- + federation_inbox (Phase 1.22.D-b-6 G1).
+CREATE OR REPLACE FUNCTION public.federation_outbox_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_outbox_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_outbox_dispatch_notify_trg
+    AFTER INSERT ON public.federation_outbox
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+CREATE OR REPLACE FUNCTION public.federation_inbox_dispatch_notify()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('federation_inbox_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER federation_inbox_dispatch_notify_trg
+    AFTER INSERT ON public.federation_inbox
+    FOR EACH ROW
+    EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);

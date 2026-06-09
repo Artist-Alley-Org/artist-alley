@@ -46,6 +46,27 @@ const (
 	EventFederationShareGranted    = "federation.share.granted"
 	EventFederationShareRevoked    = "federation.share.revoked"
 	EventFederationActivityRejected = "federation.activity.rejected"
+
+	// 1.22.D-b outbox-dispatcher emission events. emission.skipped
+	// fires when the sender-side resolver refuses to enqueue an
+	// activity (sensitivity-without-encryption per ADR 0020, or
+	// recipient set is empty, or peer is mid-defederation). See
+	// spec §12.3 for the reason catalogue.
+	EventFederationEmissionSkipped = "federation.emission.skipped"
+
+	// 1.22.D-c admin operator events. Both pool-bound (NOT tx-
+	// bound) — the admin handler's tx is the state-change unit;
+	// the audit records the operator decision after commit.
+	EventFederationOutboxRequeued         = "federation.outbox.requeued"
+	EventFederationPeerCascadeCancelled   = "federation.peer.cascade_cancelled"
+
+	// Demo-seed loader events (post-1.22.D dogfood unblock).
+	// Both gated on system.admin; emitted by the apply-side
+	// script the seed agent owns. Visible in the admin audit
+	// log so operators can see what was rewritten vs created.
+	EventAdminSeedTimestampsBackfilled = "admin.seed.timestamps_backfilled"
+	EventAdminSeedCommentCreated       = "admin.seed.comment_created"
+	EventAdminSeedUserCreated          = "admin.seed.user_created"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -243,6 +264,133 @@ func (r *Recorder) writeWith(ctx context.Context, q *Queries, eventType string, 
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// OutboxRequeued records a federation.outbox.requeued event
+// per the 1.22.D-c admin re-queue button. The audit fires
+// AFTER the row's status flips queued so the audit trail
+// reflects the state change.
+//
+// actorUserRef is the admin who clicked the button. Last_error
+// is the prior failure reason — captured for the audit so an
+// operator can later see what the prior failure was without
+// joining the outbox row (which may have moved through multiple
+// states since).
+func (r *Recorder) OutboxRequeued(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	outboxID, peerID, activityID, priorLastError string,
+) {
+	meta := map[string]any{
+		"outbox_id":         outboxID,
+		"peer_id":           peerID,
+		"activity_id":       activityID,
+		"prior_last_error":  priorLastError,
+	}
+	r.write(ctx, EventFederationOutboxRequeued, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// PeerCascadeCancelled records a federation.peer.cascade_cancelled
+// event per the 1.22.D-c defederation-cascade hook. ONE audit
+// row per cascade — NOT N — per the single-audit-per-operator-
+// decision invariant (the operator made ONE decision: cancel
+// everything queued for this peer; the audit reflects that).
+func (r *Recorder) PeerCascadeCancelled(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	peerID string,
+	cancelledCount int,
+) {
+	meta := map[string]any{
+		"peer_id":         peerID,
+		"cancelled_count": cancelledCount,
+	}
+	r.write(ctx, EventFederationPeerCascadeCancelled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedTimestampsBackfilled records an
+// admin.seed.timestamps_backfilled event. One per call;
+// captures per-kind counts so operators can later answer
+// "what rows did the seed loader rewrite?" without scanning
+// every row.
+func (r *Recorder) SeedTimestampsBackfilled(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	assetN, postN, commentN, skippedN int,
+) {
+	meta := map[string]any{
+		"asset_updated":      assetN,
+		"post_updated":       postN,
+		"comment_updated":    commentN,
+		"skipped_unknown_id": skippedN,
+	}
+	r.write(ctx, EventAdminSeedTimestampsBackfilled, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedUserCreated records an admin.seed.user_created event.
+// One per forged user. Helps operators distinguish seeded vs
+// organic users in the audit log when investigating later.
+func (r *Recorder) SeedUserCreated(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	userRef int64,
+	username string,
+) {
+	meta := map[string]any{
+		"user_ref": userRef,
+		"username": username,
+	}
+	r.write(ctx, EventAdminSeedUserCreated, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// SeedCommentCreated records an admin.seed.comment_created
+// event. One per forged comment. Helps operators distinguish
+// seeded vs organic comments in the audit log when
+// investigating later.
+func (r *Recorder) SeedCommentCreated(
+	ctx context.Context,
+	req *http.Request,
+	actorUserRef int64,
+	commentID, targetKind, targetID string,
+	forgedAuthorRef int64,
+) {
+	meta := map[string]any{
+		"comment_id":        commentID,
+		"target_kind":       targetKind,
+		"target_id":         targetID,
+		"forged_author_ref": forgedAuthorRef,
+	}
+	r.write(ctx, EventAdminSeedCommentCreated, nil, &actorUserRef, ctxFromRequest(req), meta)
+}
+
+// EmissionSkipped records a federation.emission.skipped event
+// per the 1.22.D-b design proposal §3.9 — the outbox dispatcher
+// calls this whenever the recipient resolver refuses to enqueue
+// an activity. activityID is the local activities row UUID;
+// reason is from spec §12.3 (encryption_required_but_not_
+// supported / recipient_set_empty / defederation_in_progress).
+//
+// Pool-bound (NOT tx-bound) because the dispatcher's cursor
+// advance has already committed by the time we audit; the
+// emission decision is the audit's own write.
+func (r *Recorder) EmissionSkipped(
+	ctx context.Context,
+	activityID, activityType, objectKind, objectID, visibility, sensitivity, reason string,
+) {
+	meta := map[string]any{
+		"activity_id":   activityID,
+		"activity_type": activityType,
+		"object_kind":   objectKind,
+		"object_id":     objectID,
+		"visibility":    visibility,
+		"sensitivity":   sensitivity,
+		"reason":        reason,
+	}
+	r.write(ctx, EventFederationEmissionSkipped, nil, nil, reqContext{}, meta)
 }
 
 // ActivityRejected records a federation.activity.rejected event

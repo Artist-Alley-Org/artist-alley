@@ -245,7 +245,7 @@ type Comment struct {
 	ParentID       pgtype.UUID        `json:"parent_id"`
 	RootID         pgtype.UUID        `json:"root_id"`
 	Depth          int32              `json:"depth"`
-	AuthorUserRef  int64              `json:"author_user_ref"`
+	AuthorUserRef  *int64             `json:"author_user_ref"`
 	Body           string             `json:"body"`
 	BodyHtml       string             `json:"body_html"`
 	AnnotationType *string            `json:"annotation_type"`
@@ -256,6 +256,9 @@ type Comment struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	PeerID         pgtype.UUID        `json:"peer_id"`
+	ActorUri       *string            `json:"actor_uri"`
+	ActivityUri    *string            `json:"activity_uri"`
 }
 
 type DirectMessage struct {
@@ -315,6 +318,51 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz `json:"cached_at"`
 }
 
+type FederationDispatchState struct {
+	ID                       int32              `json:"id"`
+	LastDispatchedActivityID pgtype.UUID        `json:"last_dispatched_activity_id"`
+	LastDispatchedAt         pgtype.Timestamptz `json:"last_dispatched_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationInbox struct {
+	ID                    pgtype.UUID        `json:"id"`
+	ActivityUri           string             `json:"activity_uri"`
+	PeerID                pgtype.UUID        `json:"peer_id"`
+	ActorUri              string             `json:"actor_uri"`
+	ActivityType          string             `json:"activity_type"`
+	ObjectKind            *string            `json:"object_kind"`
+	ObjectID              pgtype.UUID        `json:"object_id"`
+	EnvelopeJson          []byte             `json:"envelope_json"`
+	HttpSigKey            string             `json:"http_sig_key"`
+	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
+	Status                string             `json:"status"`
+	RejectReason          *string            `json:"reject_reason"`
+	DispatchAttempts      int32              `json:"dispatch_attempts"`
+	LastAttemptAt         pgtype.Timestamptz `json:"last_attempt_at"`
+	LastError             string             `json:"last_error"`
+	ProcessedAt           pgtype.Timestamptz `json:"processed_at"`
+	CorrelationActivityID pgtype.UUID        `json:"correlation_activity_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FederationOutbox struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ActivityID         pgtype.UUID        `json:"activity_id"`
+	PeerID             pgtype.UUID        `json:"peer_id"`
+	TargetUserUrl      *string            `json:"target_user_url"`
+	Status             string             `json:"status"`
+	Attempts           int16              `json:"attempts"`
+	NextAttemptAt      pgtype.Timestamptz `json:"next_attempt_at"`
+	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
+	LastError          string             `json:"last_error"`
+	SentAt             pgtype.Timestamptz `json:"sent_at"`
+	DeliveredWithKeyID *string            `json:"delivered_with_key_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type FederationPeer struct {
 	ID                 pgtype.UUID        `json:"id"`
 	InstanceUrl        string             `json:"instance_url"`
@@ -341,6 +389,16 @@ type FederationPeerSuggestion struct {
 	SuggestedPublicKey   string             `json:"suggested_public_key"`
 	SuggestedFingerprint string             `json:"suggested_fingerprint"`
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
+}
+
+type FederationRemoteActor struct {
+	ActorUri    string             `json:"actor_uri"`
+	PeerID      pgtype.UUID        `json:"peer_id"`
+	DisplayName string             `json:"display_name"`
+	AvatarUrl   string             `json:"avatar_url"`
+	FirstSeenAt pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type FederationShare struct {
@@ -409,8 +467,11 @@ type Job struct {
 type Like struct {
 	TargetKind string             `json:"target_kind"`
 	TargetID   pgtype.UUID        `json:"target_id"`
-	UserRef    int64              `json:"user_ref"`
+	UserRef    *int64             `json:"user_ref"`
 	LikedAt    pgtype.Timestamptz `json:"liked_at"`
+	ID         pgtype.UUID        `json:"id"`
+	PeerID     pgtype.UUID        `json:"peer_id"`
+	ActorUri   *string            `json:"actor_uri"`
 }
 
 type Notification struct {

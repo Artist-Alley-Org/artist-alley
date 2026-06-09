@@ -173,6 +173,20 @@ func (h *Handler) RemoveAdminUserGrant(
 
 	q := New(h.Pool)
 	teamUUID := openAPIToPgUUID(req.Params.TeamId)
+
+	// Last-admin invariant: removing a global system.admin
+	// grant may strip the user of admin powers (if they don't
+	// hold it via a role). Check BEFORE the delete so the
+	// pre-deletion count is meaningful.
+	if req.Capability == "system.admin" && !teamUUID.Valid {
+		if err := EnsureNotLastAdmin(ctx, q, req.Ref); err != nil {
+			if errors.Is(err, ErrLastAdmin) {
+				return openapi.RemoveAdminUserGrant400JSONResponse{Error: err.Error()}, nil
+			}
+			return nil, fmt.Errorf("auth: last-admin guard: %w", err)
+		}
+	}
+
 	n, err := q.DeleteUserGrant(ctx, DeleteUserGrantParams{
 		UserRef:       req.Ref,
 		CapabilityCode: req.Capability,
@@ -232,6 +246,24 @@ func (h *Handler) AddAdminUserRevoke(
 	}
 
 	teamUUID := openAPIToPgUUID(req.Body.TeamId)
+
+	// Last-admin invariant: adding a REVOKE for system.admin
+	// nullifies the user's admin powers (per resolution: any
+	// active revoke overrides both role-derived + grant-derived).
+	// Refuse when this would leave zero admins. Only the global-
+	// scope revoke (team_id IS NULL) affects the global
+	// system.admin count; team-scoped revokes don't.
+	if req.Body.Capability == "system.admin" && !teamUUID.Valid {
+		if err := EnsureNotLastAdmin(ctx, q, req.Ref); err != nil {
+			if errors.Is(err, ErrLastAdmin) {
+				return openapi.AddAdminUserRevoke400JSONResponse{
+					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+				}, nil
+			}
+			return nil, fmt.Errorf("auth: last-admin guard: %w", err)
+		}
+	}
+
 	note := ""
 	if req.Body.Note != nil {
 		note = *req.Body.Note

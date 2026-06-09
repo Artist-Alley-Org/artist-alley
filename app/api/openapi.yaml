@@ -318,6 +318,15 @@ paths:
       responses:
         "204":
           description: Role assigned
+        "400":
+          description: |
+            Role change refused — would leave the system with
+            zero users holding `system.admin` (last-admin
+            invariant guard). Grant the capability to another
+            user first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -421,6 +430,15 @@ paths:
       responses:
         "204":
           description: Grant removed.
+        "400":
+          description: |
+            Grant removal refused — would leave the system with
+            zero users holding `system.admin` (last-admin
+            invariant guard). Applies to global system.admin
+            grants only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1056,6 +1074,217 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/FederationShare" }
 
+  /admin/federation/outbox:
+    get:
+      operationId: listFederationOutbox
+      summary: List federation outbox rows (Phase 1.22.D-c)
+      description: |
+        Returns per-recipient queued / sent / failed / cancelled
+        rows from federation_outbox. Filterable by peer + status
+        + activity type + date range; paginated. Gated on
+        `system.admin`.
+
+        Each row carries the activity_id back-reference so the
+        admin UI can render the originating envelope alongside
+        the delivery state.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [queued, sent, failed, cancelled]
+        - name: activity_type
+          in: query
+          required: false
+          description: Filter by the originating activity's verb (Like / Create / aa:Share etc.).
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: RFC3339 timestamp; only rows created at or after this.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          description: Pagination cursor from a prior response (opaque).
+          schema: { type: string }
+      responses:
+        "200":
+          description: Outbox rows matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationOutboxList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/outbox/{id}/requeue:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: requeueFederationOutbox
+      summary: Re-queue a failed outbox row (Phase 1.22.D-c)
+      description: |
+        Resets a failed row to status=queued + attempts=0 + next_
+        attempt_at=NOW(). The delivery worker picks it up on the
+        next LISTEN/NOTIFY wake (sub-100ms in the happy path).
+
+        Refuses (409) if the row is NOT in status=failed — re-
+        queuing a queued row is a no-op race; re-queuing a sent
+        row would duplicate-deliver. The admin UI's confirmation
+        prompt SHOULD warn before re-queueing rows whose
+        last_error references a non-retriable §12.1 reason
+        (unknown_object, sig_invalid, encryption_required, etc.)
+        since those will fail again — see the design proposal
+        §3.4 retriable-flag mapping.
+
+        Emits federation.outbox.requeued audit event.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Row re-queued; the updated outbox state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationOutbox" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Outbox row not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Row not in status=failed (idempotency guard).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/federation/inbox:
+    get:
+      operationId: listFederationInbox
+      summary: List federation inbox rows (Phase 1.22.D-c)
+      description: |
+        Returns inbound activities from federation_inbox in their
+        landed state (pending / processed / rejected / failed).
+        Filterable by peer + status + activity type + date range;
+        paginated. Gated on `system.admin`.
+
+        Read-only — inbox rows can't be re-queued in the same
+        way as outbox rows; the activity_uri UNIQUE constraint
+        means a re-delivered envelope just lands on the existing
+        row idempotently. Admins investigating rejections need
+        to coordinate with the sender's outbox queue instead.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: peer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, processed, rejected, failed]
+        - name: activity_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Inbox rows matching the filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationInboxList" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/peers/{id}/cancel-pending:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: cancelFederationPeerPending
+      summary: Cancel all queued outbox rows for a peer (Phase 1.22.D-c)
+      description: |
+        Defederation-cascade hook. Marks every queued
+        federation_outbox row for the peer as status=cancelled
+        + last_error='peer defederation cascade' in ONE
+        transaction. Emits a SINGLE
+        federation.peer.cascade_cancelled audit event carrying
+        the total cancellation count — NOT N audit events per
+        the design proposal §7.4 single-audit invariant.
+
+        Caller MUST also disable the peer separately (this
+        endpoint does NOT alter the federation_peers row) —
+        cancelling queued rows on an active peer would just race
+        the new ones the dispatcher enqueues. The admin UI
+        sequences disable → cancel-pending in one click.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cascade complete; count of cancelled rows in body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CascadeCancelResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Peer not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/federation/peers:
     get:
       operationId: listFederationPeers
@@ -1546,6 +1775,156 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /admin/seed/timestamps:
+    post:
+      operationId: seedBackfillTimestamps
+      summary: Bulk-backfill created_at / updated_at for seeded entities
+      description: |
+        Operator-tooling endpoint for the demo-seed loader
+        (see `seed/SEED_INSTRUCTIONS.md`). NOT for general
+        operator use — gated on `system.admin`; not surfaced
+        in the admin UI.
+
+        Accepts an array of (kind, id, created_at, updated_at,
+        last_reviewed_at?) tuples and bulk-updates the
+        corresponding rows in `assets` / `posts` / `comments`.
+        Idempotent: re-running the same payload produces the
+        same end state (UPDATE stamps the same value twice).
+
+        Cap: 1,000 items per request. Larger seeds split into
+        multiple calls.
+
+        Emits ONE `admin.seed.timestamps_backfilled` audit
+        event per call summarising per-kind counts.
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedTimestampsRequest" }
+      responses:
+        "200":
+          description: Backfill applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedTimestampsResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/seed/users:
+    post:
+      operationId: seedCreateUser
+      summary: Create a user with optional password + created_at
+      description: |
+        Operator-tooling endpoint for the demo-seed loader.
+        NOT for general operator use — gated on `system.admin`;
+        not surfaced in the admin UI.
+
+        Creates a single user. Idempotency key is the supplied
+        `username` (UNIQUE in the user table) — a re-run with
+        the same username returns 200 with the existing row
+        instead of 409, so apply scripts can re-run safely
+        without first checking for prior state.
+
+        Apply scripts build a local username→ref map from the
+        returned `ref` and use it when seeding posts /
+        collections / comments that reference users by ref.
+
+        Emits one `admin.seed.user_created` audit per actual
+        insert (re-runs skip the audit — same pattern as
+        `/admin/seed/comments`).
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedUserRequest" }
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedUserResult" }
+        "200":
+          description: |
+            Idempotent re-run — the supplied `username` already
+            exists; the existing row's ref is returned
+            unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SeedUserResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/seed/comments:
+    post:
+      operationId: seedCreateComment
+      summary: Create a comment with forged author + optional created_at
+      description: |
+        Operator-tooling endpoint for the demo-seed loader.
+        NOT for general operator use — gated on `system.admin`;
+        not surfaced in the admin UI.
+
+        Creates a single comment with author_user_ref forged to
+        the supplied user (the regular `POST /posts/{id}/comments`
+        stamps the caller as author, which is wrong for seeding
+        per-post reviewer voices).
+
+        Idempotent when the caller supplies a stable `id`: a
+        re-run with the same id returns 200 with the existing
+        row instead of 409 — apply scripts can re-run safely.
+
+        Emits one `admin.seed.comment_created` audit per call.
+      tags: [admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SeedCommentRequest" }
+      responses:
+        "201":
+          description: Comment created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "200":
+          description: |
+            Idempotent re-run — the supplied `id` already
+            exists; the existing row is returned unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            Either the target object (post / asset / collection)
+            or the supplied author user does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /account/password:
     put:
@@ -8224,6 +8603,312 @@ components:
           type: array
           items: { $ref: "#/components/schemas/FederationShare" }
 
+    FederationOutbox:
+      type: object
+      description: |
+        One row in the per-recipient federation_outbox queue
+        (Phase 1.22.D-b). Derived from the activities ledger by
+        the dispatcher per design §3.1; delivered by the worker
+        per §3.3. The admin UI surfaces queued / sent / failed /
+        cancelled rows for operator visibility into outbound
+        federation traffic.
+      required:
+        [id, activity_id, peer_id, status, attempts,
+         next_attempt_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        peer_id: { type: string, format: uuid }
+        target_user_url:
+          type: string
+          nullable: true
+          description: Per-recipient actor URL within the peer; null = broadcast.
+        status:
+          type: string
+          enum: [queued, sent, failed, cancelled]
+        attempts:
+          type: integer
+          description: Delivery attempt count (caps at 5 before terminal-fail).
+        next_attempt_at:
+          type: string
+          format: date-time
+          description: Wall-clock time of the next attempt per the §3.4 backoff schedule.
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          description: |
+            Failure detail captured on the most recent attempt.
+            For failed rows, may carry a §12.1 reject reason
+            from the receiver — the admin UI maps these to
+            retriable / non-retriable warnings on the re-queue
+            confirmation prompt.
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        delivered_with_key_id:
+          type: string
+          nullable: true
+          description: HTTP-Sig keyId used on the successful delivery (forensics).
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FederationOutboxList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationOutbox" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    FederationInboxRow:
+      type: object
+      description: |
+        One row in federation_inbox (Phase 1.22.D-a). Captures
+        what arrived from a peer + how the inbox + dispatcher
+        chain treated it (pending / processed / rejected /
+        failed). Read-only via the admin UI — the activity_uri
+        UNIQUE constraint means re-delivery is idempotent on
+        the existing row.
+      required:
+        [id, activity_uri, peer_id, actor_uri, activity_type,
+         status, dispatch_attempts, received_at]
+      properties:
+        id: { type: string, format: uuid }
+        activity_uri: { type: string }
+        peer_id: { type: string, format: uuid }
+        actor_uri: { type: string }
+        activity_type: { type: string }
+        object_kind:
+          type: string
+          nullable: true
+        object_id:
+          type: string
+          format: uuid
+          nullable: true
+        http_sig_key: { type: string }
+        status:
+          type: string
+          enum: [pending, processed, rejected, failed]
+        reject_reason:
+          type: string
+          nullable: true
+          description: §12.1 reject reason when status=rejected.
+        dispatch_attempts:
+          type: integer
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+        correlation_activity_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Local activities row the dispatcher created for this inbound envelope.
+
+    FederationInboxList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FederationInboxRow" }
+        next_cursor:
+          type: string
+          nullable: true
+
+    CascadeCancelResult:
+      type: object
+      required: [peer_id, cancelled_count]
+      properties:
+        peer_id: { type: string, format: uuid }
+        cancelled_count:
+          type: integer
+          description: Number of outbox rows transitioned from queued to cancelled.
+
+    SeedTimestampsItem:
+      type: object
+      required: [kind, id, created_at]
+      properties:
+        kind:
+          type: string
+          enum: [asset, post, comment]
+          description: Domain table to UPDATE.
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Defaults to created_at when omitted.
+
+    SeedTimestampsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/SeedTimestampsItem" }
+
+    SeedTimestampsResult:
+      type: object
+      required: [asset_updated, post_updated, comment_updated, skipped_unknown_id]
+      properties:
+        asset_updated: { type: integer }
+        post_updated: { type: integer }
+        comment_updated: { type: integer }
+        skipped_unknown_id:
+          type: integer
+          description: |
+            Items whose `id` didn't match any existing row.
+            Apply scripts treat this as a soft failure
+            (operator log + continue).
+
+    SeedUserRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: |
+            Stable identifier across apply-script re-runs.
+            UNIQUE in the `user` table — duplicate request
+            returns 200 with the existing row instead of 409.
+        fullname:
+          type: string
+          maxLength: 100
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        password:
+          type: string
+          nullable: true
+          description: |
+            Optional plaintext password to hash + persist. When
+            omitted, the user is created with no password (the
+            `password` column is NULL) so they can't log in —
+            useful for fictional seed users who exist as actors
+            on posts/comments but never sign in.
+        usergroup:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Legacy permission group. Defaults to 2 (regular
+            user) when omitted. Set to 3 only for admin-tier
+            seed users; the seed loader uses 2 for everything
+            else by convention.
+        approved:
+          type: boolean
+          default: true
+          description: |
+            When true, the user is approved at create time
+            (matching the regular CreateUser path). Seed users
+            should almost always be approved; pending-approval
+            state is a normal signup-flow concern, not a seed
+            concern.
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Optional creation timestamp. Defaults to NOW() when
+            omitted. The seed loader uses this to align user
+            "joined" dates with the 14-month interlaced timeline.
+
+    SeedUserResult:
+      type: object
+      required: [ref, username, already_existed]
+      properties:
+        ref:
+          type: integer
+          format: int64
+          description: Server-assigned `user.ref` PK.
+        username: { type: string }
+        already_existed:
+          type: boolean
+          description: |
+            true on idempotent re-run (response status 200),
+            false on fresh insert (response status 201).
+
+    SeedCommentRequest:
+      type: object
+      required: [target_kind, target_id, author_user_ref, body]
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional stable UUID for idempotent re-runs. When
+            omitted the server generates one.
+        target_kind:
+          type: string
+          enum: [post, asset, collection]
+        target_id: { type: string, format: uuid }
+        author_user_ref:
+          type: integer
+          format: int64
+          description: |
+            Forged author. Must reference an existing
+            `user.ref`. The seed loader uses this to attribute
+            comments to per-post reviewer voices distinct from
+            the operator running apply.
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional parent comment. When set, depth +
+            root_id are derived from the parent (same logic
+            as the public CreateComment path).
+        body: { type: string, minLength: 1 }
+        body_html:
+          type: string
+          nullable: true
+          description: |
+            Defaults to empty (matches the local CreateComment
+            path; the frontend renders `body` directly with
+            whitespace-pre-wrap).
+        annotation_type:
+          type: string
+          enum: [point, rect, timestamp, frame, whiteboard, text-range]
+          nullable: true
+        annotation_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Optional creation timestamp. Defaults to NOW()
+            when omitted. The seed loader uses this to align
+            comment timeline with the 14-month interlaced feed.
+
     FederationShareCreate:
       type: object
       required: [object_kind, object_id, peer_id, scope]
@@ -8857,8 +9542,16 @@ components:
         root_id + depth (caller renders nested replies indented by
         depth). annotation_* fields are NULL for plain comments; the
         review-mode feature reuses the same row shape.
+
+        Federation: exactly one of {author_user_ref} XOR
+        {peer_id + actor_uri} is set per row. Local-authored
+        comments have author_user_ref set + peer_id NULL.
+        Remote-authored comments (from a paired peer per
+        ADR 0043 / phase 1.22.D) have author_user_ref NULL +
+        peer_id + actor_uri + display_name populated. Clients
+        render "<display_name> @ <peer's host>" for remote rows.
       required:
-        [id, target_kind, target_id, root_id, depth, author_user_ref,
+        [id, target_kind, target_id, root_id, depth,
          body, body_html, like_count, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -8872,7 +9565,11 @@ components:
           nullable: true
         root_id: { type: string, format: uuid }
         depth: { type: integer }
-        author_user_ref: { type: integer, format: int64 }
+        author_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: Local author user.ref. NULL for remote-authored comments (see peer_id / actor_uri).
         body: { type: string }
         body_html:
           type: string
@@ -8892,6 +9589,31 @@ components:
           nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        peer_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The federation peer that originated this comment. NULL
+            for local-authored rows. Set in tandem with actor_uri
+            + display_name when the comment came in via the
+            federation inbox (Phase 1.22.D).
+        actor_uri:
+          type: string
+          nullable: true
+          description: |
+            The remote actor's URI on their home instance (e.g.
+            https://studio-b.example/users/bob). NULL for
+            local-authored rows.
+        display_name:
+          type: string
+          nullable: true
+          description: |
+            Display name resolved from federation_remote_actors
+            cache for remote-authored comments. May be empty if
+            the remote instance hasn't shipped display hints yet;
+            clients should fall back to the actor_uri's host +
+            local-part when this is empty.
 
     CommentList:
       type: object

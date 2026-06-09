@@ -30,7 +30,7 @@ The model **generalises beyond production studios**. Anywhere a team catalogs it
 - Archives keeping document collections with scan provenance.
 - Studios managing physical props, scripts, costumes, set pieces — each with their digital companion files.
 
-The feature set is tuned for production studios first; the foundation is general.
+The feature set is tuned for production studios first; the foundation is general — and physical-archive operators get **explicit first-party support** through the `physical_archive` feature flag ([Phase 1.51](/roadmap/#phase-1.51), [ADR 0048](/adr/0048-physical-archive-mode/)). Flipping the flag turns on per-collection accession-number formats with auto-increment, a hierarchical location tree (building → room → cabinet → shelf → bin), a loan-management system (loans-in and loans-out with the standard 7-state workflow + insurance + signed-agreement attachments + condition reports before and after handoff), provenance chain-of-custody tracking, and standards interop (Spectrum 5.0 procedure crosswalk, LIDO XML import/export, Dublin Core projection, CIDOC CRM crosswalk document, optional Getty Vocabulary auto-complete). The flag is default-off — game and animation studios never see the additional surfaces. Museums, galleries, libraries, archives, and studios with prop archives flip it on at install time.
 
 By role:
 

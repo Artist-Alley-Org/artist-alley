@@ -258,6 +258,21 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Post("/auth/saml/acs", samlRouter.ConsumeAssertion)
 		r.Get("/auth/saml/metadata", samlRouter.Metadata)
 
+		// Federation inbox (Phase 1.22.D-a) — direct chi mount,
+		// not openapi/strict-server. Handler needs raw
+		// http.Request + ResponseWriter for body draining +
+		// Signature header parsing + Retry-After response
+		// control which the strict-server shape hides. Public
+		// endpoint authed via HTTP-Signature on the request
+		// itself, not session/bearer.
+		if impl.inboxHandler != nil {
+			r.Post("/federation/inbox", impl.inboxHandler.PostInbox)
+			// Batched variant per spec §10.4 — same handler;
+			// amortises HTTP-Sig + TLS overhead across up to 50
+			// envelopes per request. Phase 1.22.D-b-5.
+			r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
+		}
+
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
 		// openapi-derived handler streams the whole body in one
@@ -396,6 +411,32 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.api != nil && s.api.sharesSweeper != nil {
 		go s.api.sharesSweeper.Run(ctx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "shares.sweeper.start")
+	}
+
+	// Federation inbox dispatcher (Phase 1.22.D-a-4). Drains
+	// pending federation_inbox rows + invokes the per-verb
+	// handler. Stop via ctx cancellation.
+	if s.api != nil && s.api.inboxDispatcher != nil {
+		go s.api.inboxDispatcher.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "inbox.dispatcher.start")
+	}
+
+	// Federation OUTBOX dispatcher (Phase 1.22.D-b). LISTEN/
+	// NOTIFY-driven fan-out from activities → federation_outbox.
+	// Sub-100ms latency via the trigger from migration 00005;
+	// 30s ticker is correctness backstop only.
+	if s.api != nil && s.api.outboxDispatcher != nil {
+		go s.api.outboxDispatcher.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.dispatcher.start")
+	}
+
+	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
+	// Drains federation_outbox rows + POSTs to recipient peer's
+	// /federation/inbox. nil when the instance identity hasn't
+	// been generated yet (first-run before /setup completes).
+	if s.api != nil && s.api.outboxDelivery != nil {
+		go s.api.outboxDelivery.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.delivery.start")
 	}
 
 	listenErr := make(chan error, 1)

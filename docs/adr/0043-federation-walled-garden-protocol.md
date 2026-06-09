@@ -644,6 +644,125 @@ CHECK constraints above.
   federation is proven; the manual `aa:Share` flow is the v1
   default.
 
+### Transport mechanism
+
+The wire-level question — "how do envelopes physically travel between
+peers" — has a specific shape driven by what federation actually is.
+Each instance is independently active, peers go offline and come
+back asynchronously, and the public-fediverse escape hatch
+(Mastodon / PeerTube / Pixelfed all POST to inbox endpoints) is one
+of the design commitments this ADR preserves.
+
+#### HTTP POST per envelope is canonical
+
+`POST /federation/inbox` (and `POST /federation/inbox/batch` —
+below) is the only canonical delivery transport. Each request
+carries one envelope (or a small batch) + the HTTP-Signature
+authenticating the sender. Per-envelope auth, queueable at the
+sender when the receiver is offline, debuggable with `curl`, and
+compatible with the future-public-fediverse translator should we
+ever flip that switch.
+
+#### Efficiency comes from HTTP/2 connection reuse, not protocol change
+
+Go's `net/http` client reuses TCP+TLS connections automatically.
+With HTTP/2 multiplexing, N parallel POSTs to one peer share one
+TLS handshake AND run on the same connection without head-of-line
+blocking. The delivery worker raises
+`http.Transport.MaxIdleConnsPerHost` to ~10 (default is 2) so the
+outbox can saturate a peer's HTTP/2 connection during high-traffic
+windows.
+
+HPACK header compression amortises the per-envelope HTTP-Sig +
+Digest + Date headers across multiplexed requests. No additional
+configuration; HTTP/2 gives this for free.
+
+#### Batched inbox endpoint — `POST /federation/inbox/batch`
+
+A small protocol addition: a peer may submit a JSON array of
+envelopes in one POST. The receiver processes them in order,
+returning per-envelope status in a structured response
+(accepted / replayed / rejected with §12.1 reason per envelope).
+The delivery worker groups pending outbox rows targeting the same
+peer into one batch (default max 50 envelopes or 1 MB body,
+whichever fires first); solo activities still use the per-envelope
+endpoint.
+
+Trade-off: per-envelope auth still works (signature on the batch
+body covers all envelopes — one verification cost amortised across
+the batch). The receiver MUST process all envelopes in batch
+order; a malformed envelope mid-batch is rejected individually
+without aborting the rest.
+
+#### Why not SSE for federation
+
+Server-Sent Events is single-direction server-pushes-to-client. In
+federation every peer is both sender and receiver — symmetric.
+Mapping SSE onto this requires every peer to maintain a persistent
+outbound SSE connection to every peer it federates with, with
+reconnect logic on every drop, ambiguous per-event authentication
+(signing the channel rather than each event), and operational
+requirement that peers stay continuously online together.
+
+The public fediverse rejected this for the same reasons; HTTP POST
+to inbox endpoints is the universal pattern. Adopting SSE for
+federation would break the future-compat escape hatch AND
+introduce real operational fragility for marginal latency
+improvement (which HTTP/2 reuse already covers in the happy path).
+
+#### Where SSE actually fits (adjacent surfaces, not federation)
+
+Server-Sent Events is the right tool for **server-to-many-clients
+push within a single trust boundary**. Three places in the project
+where it's the canonical transport:
+
+- **Phase 1.18.B-5 — Presentation rooms.** Live presence, cursor
+  position, scrub state. Internal to a single instance.
+- **`/admin/logs/tail`** (Phase 1.41 observability). Admin live-tail
+  of structured logs.
+- **In-app notifications** stream (partially shipped via the
+  userprefs notification path).
+
+Two **deferred** federation-adjacent uses where SSE could complement
+the HTTP POST transport (not replace it):
+
+- **Cross-instance presentation rooms.** Studio A presenting; Studio
+  B has remote viewers. Per-tick presentation events (cursor +
+  frame + camera matrix) flow over an SSE channel scoped to the
+  shared room rather than per-activity POSTs. Activities like
+  `aa:Annotation` still POST through the canonical transport;
+  ephemeral presence ticks flow via SSE. Future extension of
+  Phase 1.18.B-5; not in 1.22.
+- **Admin federation activity feed.** Internal SSE stream surfacing
+  outbox dispatch + inbox receipt events in real time. Useful for
+  the 1.22.D-c admin observability surface.
+
+Both are documented here so the SSE-vs-HTTP-POST decision is on
+record + the extensions are reserved.
+
+#### Longer-horizon transport options (not v1, tracked)
+
+- **HTTP/3 / QUIC.** 0-RTT connection re-establishment for known
+  peers; better packet-loss recovery. Go's HTTP/3
+  (`golang.org/x/net/http3`) is still maturing. When production-
+  grade, the federation client can switch with no protocol changes
+  — different transport layer, same wire format. Track for ~2027.
+- **Brotli body compression** on envelope JSON. Marginal win on
+  single envelopes; real win on batched POSTs with repeated
+  structure. Low-risk addition when delivery-worker perf becomes
+  a concern.
+
+#### Locked-in for 1.22.D
+
+- `POST /federation/inbox` (per envelope) — canonical.
+- `POST /federation/inbox/batch` (array of envelopes) — added in
+  1.22.D-b alongside the delivery worker; default-on for queues
+  with > 1 pending activity per peer.
+- HTTP/2 connection reuse via raised `MaxIdleConnsPerHost`.
+- No SSE in the federation transport layer at v1; SSE remains the
+  canonical transport for the in-instance live surfaces named
+  above.
+
 ## Consequences
 
 ### Positive

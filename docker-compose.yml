@@ -51,6 +51,12 @@ services:
       # and by per-user encryption keys (1.22.A). Hex-encoded
       # 32 bytes; bootstrap.sh generates one if missing.
       AA_MASTER_KEY: ${AA_MASTER_KEY:?AA_MASTER_KEY is required; see scripts/bootstrap.sh}
+      # Dev/demo: use the documented default admin
+      # (admin/ArtistAlleyMogul) so the seed loader + manual
+      # poking against the dev stack don't need to fish a
+      # random password out of the boot log. PRODUCTION DEPLOYS
+      # MUST OMIT THIS — see internal/bootstrap/bootstrap.go.
+      AA_BOOTSTRAP_DEFAULT_ADMIN: ${AA_BOOTSTRAP_DEFAULT_ADMIN:-1}
       # Storage root for the fs backend. Mounted as a named volume below
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.
@@ -77,9 +83,11 @@ services:
   # both /api/v1 and the SPA bundle, preserving the locked "one binary,
   # three containers" target architecture.
   #
-  # Opt-in via `docker compose --profile web up` (or run all services
-  # with `docker compose --profile web up -d`). Defaults to off so
-  # backend-only iterations don't need Node in the loop.
+  # Starts with the stack by default — the dev frontend at
+  # http://localhost:5173 is the primary surface for iterating on
+  # UI changes and the seed apply script proxies API calls through
+  # Vite. Stop manually (`docker compose stop web`) when iterating
+  # backend-only and not wanting Node in the loop.
   web:
     build:
       context: .
@@ -106,7 +114,6 @@ services:
       # straight at an `aa` binary on localhost:8080).
       AA_API_PROXY_TARGET: http://nginx:80
       AA_OPENAPI_SPEC: /opt/openapi.yaml
-    profiles: ["web"]
     depends_on:
       - app
     restart: unless-stopped

@@ -266,18 +266,80 @@ ORDER BY last_used_at DESC;
 -- ---------------------------------------------------------------------------
 
 -- name: CountSystemAdmins :one
--- Returns the number of real (still-existing) users whose assigned role
--- grants system.admin. The join against "user" filters out dangling
--- user_roles rows left over from deleted users — the user table doesn't
--- cascade. Counts only global role assignments (team_id IS NULL);
--- team-scoped system.admin would be a misconfiguration anyway since
--- system.admin is a global wildcard.
-SELECT COUNT(DISTINCT ur.user_ref)::BIGINT AS value
-FROM user_roles ur
-JOIN role_capabilities rc ON rc.role_id = ur.role_id
-JOIN "user" u             ON u.ref     = ur.user_ref
-WHERE rc.capability_code = 'system.admin'
-  AND ur.team_id IS NULL;
+-- Returns the number of APPROVED users who currently hold the
+-- system.admin capability, via EITHER a global role assignment
+-- whose role grants it OR an explicit grant — minus anyone with
+-- an explicit revoke (which nullifies role-derived + grant-
+-- derived powers per the user_capability_revokes contract).
+--
+-- The DISTINCT + UNION + LEFT JOIN shape is the full identity
+-- resolution mirror — same logic the Identity.Can check uses.
+-- Used by the bootstrap package (to skip on re-runs) AND by the
+-- last-admin invariant guard in the admin user-mutation paths.
+WITH admin_candidates AS (
+    SELECT u.ref
+    FROM user_roles ur
+    JOIN role_capabilities rc ON rc.role_id = ur.role_id
+    JOIN "user" u             ON u.ref     = ur.user_ref
+    WHERE rc.capability_code = 'system.admin'
+      AND ur.team_id IS NULL
+      AND u.approved = 1
+    UNION
+    SELECT u.ref
+    FROM user_capability_grants g
+    JOIN "user" u ON u.ref = g.user_ref
+    WHERE g.capability_code = 'system.admin'
+      AND g.team_id IS NULL
+      AND u.approved = 1
+)
+SELECT COUNT(*)::BIGINT AS value
+FROM admin_candidates c
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_capability_revokes r
+    WHERE r.user_ref = c.ref
+      AND r.capability_code = 'system.admin'
+      AND r.team_id IS NULL
+);
+
+-- name: RoleGrantsSystemAdmin :one
+-- Returns 1 when the role's capability set includes
+-- system.admin (directly OR via parent inheritance is NOT
+-- considered — system.admin is always direct in v1).
+SELECT COUNT(*)::BIGINT AS value
+FROM role_capabilities
+WHERE role_id = $1 AND capability_code = 'system.admin';
+
+-- name: UserHoldsSystemAdmin :one
+-- Returns 1 when the supplied user currently holds system.admin
+-- per the full resolution above, 0 otherwise. Used by the last-
+-- admin invariant guard: combined with CountSystemAdmins == 1
+-- it tells the guard "this user IS the last admin" so the
+-- guarded operation can refuse with a clear error.
+SELECT COUNT(*)::BIGINT AS value
+FROM (
+    SELECT u.ref
+    FROM user_roles ur
+    JOIN role_capabilities rc ON rc.role_id = ur.role_id
+    JOIN "user" u             ON u.ref     = ur.user_ref
+    WHERE rc.capability_code = 'system.admin'
+      AND ur.team_id IS NULL
+      AND u.approved = 1
+      AND u.ref = $1
+    UNION
+    SELECT u.ref
+    FROM user_capability_grants g
+    JOIN "user" u ON u.ref = g.user_ref
+    WHERE g.capability_code = 'system.admin'
+      AND g.team_id IS NULL
+      AND u.approved = 1
+      AND u.ref = $1
+) AS holders
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_capability_revokes r
+    WHERE r.user_ref = $1
+      AND r.capability_code = 'system.admin'
+      AND r.team_id IS NULL
+);
 
 -- name: FindRoleByName :one
 -- Used by setup to look up the seeded "Admin" role without hardcoding

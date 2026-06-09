@@ -1,0 +1,60 @@
+{
+  "states": [
+    {
+      "name": "draft",
+      "label": "Draft",
+      "color": "#6b7280",
+      "order": 0
+    },
+    {
+      "name": "in_review",
+      "label": "In Review",
+      "color": "#f59e0b",
+      "order": 1
+    },
+    {
+      "name": "approved",
+      "label": "Approved",
+      "color": "#10b981",
+      "order": 2
+    },
+    {
+      "name": "final",
+      "label": "Final",
+      "color": "#2563eb",
+      "order": 3
+    },
+    {
+      "name": "archived",
+      "label": "Archived",
+      "color": "#9ca3af",
+      "order": 4
+    }
+  ],
+  "transitions": [
+    {
+      "from": "draft",
+      "to": "in_review"
+    },
+    {
+      "from": "in_review",
+      "to": "approved"
+    },
+    {
+      "from": "in_review",
+      "to": "draft"
+    },
+    {
+      "from": "approved",
+      "to": "final"
+    },
+    {
+      "from": "final",
+      "to": "archived"
+    },
+    {
+      "from": "approved",
+      "to": "archived"
+    }
+  ]
+}

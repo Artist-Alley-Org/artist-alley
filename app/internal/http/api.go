@@ -2,8 +2,17 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 	"log/slog"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
+	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,9 +41,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mscrnt/artist-alley/app/internal/federation"
+	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
+	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/p2p"
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
+	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -87,6 +100,12 @@ type apiServer struct {
 	sharesRegistry   *shares.Registry
 	sharesAdmin      *shares.AdminHandler
 	sharesSweeper    *shares.Sweeper
+	inboxHandler     *inbox.Handler
+	inboxDispatcher  *inbox.Dispatcher
+	outboxDispatcher *outbox.Dispatcher
+	outboxDelivery   *outbox.Worker
+	outboxAdmin      *outbox.AdminHandler
+	seedAdmin        *seed.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -233,6 +252,119 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		usernameResolverFor(s.users),
 		logger,
 	)
+
+	// Federation inbox handler (Phase 1.22.D-a). Mounted via a
+	// direct chi route in routes.go (not via openapi/strict-
+	// server) — the inbox handler needs raw http.Request +
+	// ResponseWriter for body draining, Signature-header
+	// parsing, and Retry-After response control which the
+	// strict-server shape hides.
+	s.inboxHandler = inbox.NewHandler(inbox.HandlerDeps{
+		Pool:         inbox.New(pool),
+		Lookup:       inboxPeerLookupFor(s.peers),
+		Logger:       logger,
+		LocalBaseURL: sysconfigBaseURLFn(sysCfg),
+		RejectAudit:  inboxRejectAuditFor(auditRec),
+	})
+
+	// Federation inbox dispatcher (1.22.D-a-4). Worker
+	// goroutine that drains pending federation_inbox rows +
+	// invokes the per-verb handler. Started in Server.Run
+	// alongside the directory poller + shares sweeper. The
+	// SocialPoster + RemoteActorUpserter contracts are wired
+	// AFTER construction so the import edges stay clean
+	// (inbox does NOT import social).
+	s.inboxDispatcher = inbox.NewDispatcher(
+		inbox.DefaultDispatcherConfig(),
+		inbox.New(pool),
+		inboxDispatchPeerLookup(s.peers),
+		nil,
+		logger,
+	)
+	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
+	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
+	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
+	// LISTEN/NOTIFY on federation_inbox_pending — gold-standard
+	// sub-1s latency per 1.22.D-b-6 G1. The dispatcher's 30s
+	// ticker is correctness backstop only.
+	s.inboxDispatcher.SetRawPool(pool)
+
+	// Federation OUTBOX dispatcher (Phase 1.22.D-b). Drains
+	// activities ledger rows into per-recipient federation_outbox
+	// rows via LISTEN/NOTIFY (sub-100ms latency) + 30s ticker
+	// backstop. Started in Server.Run alongside the inbox
+	// dispatcher.
+	//
+	// Encryption-supported is hard-false until Phase 1.22.I
+	// ships X25519 keypair-per-user; restricted/embargo
+	// sensitivity activities emission-skip with audit.
+	outboxResolver := outbox.NewResolver(pool, cacheReg,
+		func(context.Context) bool { return false })
+	s.outboxDispatcher = outbox.NewDispatcher(
+		outbox.DefaultDispatcherConfig(),
+		pool,
+		outboxResolver,
+		logger,
+	)
+	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
+	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+
+	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
+	// Owns /admin/federation/outbox + /inbox + the re-queue +
+	// cascade-cancel actions. Audit hooks wired to the
+	// pool-bound audit.Recorder methods.
+	s.outboxAdmin = outbox.NewAdminHandler(
+		pool,
+		inbox.New(pool),
+		auditRec.OutboxRequeued,
+		auditRec.PeerCascadeCancelled,
+		logger,
+	)
+
+	// Demo-seed loader admin endpoints (post-1.22.D dogfood
+	// unblock). Gated on system.admin; not surfaced in admin UI.
+	// Apply-side script (seed/SEED_INSTRUCTIONS.md) is the only
+	// expected caller.
+	s.seedAdmin = seed.NewAdminHandler(
+		pool,
+		auditRec.SeedTimestampsBackfilled,
+		auditRec.SeedCommentCreated,
+		auditRec.SeedUserCreated,
+		// Password hasher closes over the legacy scramble key
+		// — same path the setup flow + the bootstrap package
+		// use for the initial admin's password.
+		func(plaintext string) (string, error) {
+			return auth.HashPassword(plaintext, cfg.ScrambleKey)
+		},
+	)
+
+	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).
+	// Drains federation_outbox rows → POST /federation/inbox on
+	// the recipient peer. HTTP/2 connection pooling +
+	// HTTP-Signature signed by the instance Ed25519 key.
+	//
+	// Signer is resolved LAZILY via a deferred-signer wrapper —
+	// the instance identity is loaded by the identity manager
+	// AFTER newAPIServer runs (first-run setup may have to
+	// generate it). The worker skips delivery cycles when the
+	// signer is unavailable + retries on the next tick.
+	baseURLFn := sysconfigBaseURLFn(sysCfg)
+	signer := &deferredIdentitySigner{
+		identity: s.fedIdentity,
+		baseURL:  baseURLFn,
+	}
+	s.outboxDelivery = outbox.NewWorker(
+		outbox.DefaultDeliveryConfig(),
+		pool,
+		signer,
+		outboxDeliveryPeerLookup(s.peers),
+		logger,
+	)
+	// Cross-package "who owns this post?" lookup so inbound
+	// Like/Comment can fire the post-author notification
+	// without social importing posts (which already imports
+	// social for the follow checker → cycle if reversed).
+	s.social.SetPostTargetLookup(postTargetLookupFor(pool))
 
 	// Directory subscriber (Phase 1.22.B-c). The Registry +
 	// AdminHandler land here; the background Poller starts in
@@ -409,6 +541,212 @@ func suggestionCounterFor(pool *pgxpool.Pool) shares.SuggestionCounter {
 			return 0, err
 		}
 		return n, nil
+	}
+}
+
+// --- 1.22.D-a federation inbox adapters --------------------------------
+
+// inboxPeerLookupFor wraps peer.Registry's URL-based lookup into
+// the inbox handler's PeerLookup contract. The httpsig keyId is
+// typically a URL like `https://peer.example/instance#main-key`
+// — we trim the fragment + match against the peer's instance_url
+// via the existing cache-fronted ByInstanceURL.
+func inboxPeerLookupFor(reg *peer.Registry) inbox.PeerLookup {
+	return inboxPeerLookupAdapter{reg: reg}
+}
+
+type inboxPeerLookupAdapter struct{ reg *peer.Registry }
+
+func (a inboxPeerLookupAdapter) ByKeyID(ctx context.Context, keyID string) (inbox.PeerInfo, error) {
+	// Strip the fragment (the "#main-key" part) to recover the
+	// base instance URL the peer is registered as.
+	base := keyID
+	if idx := strings.Index(keyID, "#"); idx >= 0 {
+		base = keyID[:idx]
+	}
+	// Optional /instance suffix — some peers publish their key
+	// at `<instance_url>/instance` while their instance_url in
+	// federation_peers is just `<instance_url>`.
+	base = strings.TrimSuffix(base, "/instance")
+
+	p, err := a.reg.ByInstanceURL(ctx, base)
+	if err != nil {
+		return inbox.PeerInfo{}, inbox.ErrPeerNotFound
+	}
+	pub, err := federation.PublicKeyFromPEM([]byte(p.InstancePublicKey))
+	if err != nil {
+		return inbox.PeerInfo{}, inbox.ErrPeerNotFound
+	}
+	return inbox.PeerInfo{
+		ID:                p.ID,
+		InstanceURL:       p.InstanceURL,
+		InstancePublicKey: pub,
+		Enabled:           p.Enabled,
+		Connected:         p.Status == federation.PeerStatusConnected,
+	}, nil
+}
+
+// deferredIdentitySigner resolves the instance identity at Sign
+// time rather than at boot time, so the delivery worker can be
+// constructed before the identity manager has loaded the key.
+// First-run setup generates the identity AFTER newAPIServer
+// runs; the worker just no-ops cycles until it shows up.
+type deferredIdentitySigner struct {
+	identity *identity.Manager
+	baseURL  func(ctx context.Context) string
+}
+
+func (s *deferredIdentitySigner) Sign(req *http.Request, body []byte) error {
+	id, err := s.identity.Get()
+	if err != nil || id == nil {
+		return fmt.Errorf("federation identity not yet loaded: %w", err)
+	}
+	if req.Header.Get("Host") == "" {
+		req.Header.Set("Host", req.URL.Host)
+	}
+	return httpsig.SignAndAttach(req, body, s.keyURL(req.Context()), id.PrivateKey())
+}
+
+func (s *deferredIdentitySigner) KeyID() string {
+	return s.keyURL(context.Background())
+}
+
+func (s *deferredIdentitySigner) keyURL(ctx context.Context) string {
+	base := s.baseURL(ctx)
+	return strings.TrimRight(base, "/") + "/federation/instance#main-key"
+}
+
+// outboxDeliveryPeerLookup returns the closure the delivery
+// worker uses to resolve a peer's URL + enabled/connected
+// status at send time. Wraps peer.Registry.ByID.
+func outboxDeliveryPeerLookup(reg *peer.Registry) outbox.PeerLookup {
+	return func(ctx context.Context, peerID uuid.UUID) (outbox.PeerInfo, error) {
+		p, err := reg.ByID(ctx, peerID)
+		if err != nil {
+			return outbox.PeerInfo{}, err
+		}
+		return outbox.PeerInfo{
+			ID:          p.ID,
+			InstanceURL: p.InstanceURL,
+			Enabled:     p.Enabled,
+			Connected:   p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
+}
+
+// outboxVisibilityLookup returns the per-object visibility
+// closure the outbox dispatcher uses to drive the resolver.
+// Currently only handles posts; extends per-domain when assets
+// + collections grow visibility surfaces.
+func outboxVisibilityLookup(pool *pgxpool.Pool) outbox.VisibilityLookup {
+	return func(ctx context.Context, kind string, id uuid.UUID) (outbox.Visibility, error) {
+		switch kind {
+		case "post":
+			var v string
+			err := pool.QueryRow(ctx,
+				`SELECT visibility FROM posts WHERE id = $1 AND deleted_at IS NULL`,
+				id,
+			).Scan(&v)
+			if err != nil {
+				return "", nil // unknown post → no recipients
+			}
+			return outbox.Visibility(v), nil
+		}
+		// Unknown / unsupported kind → caller treats as
+		// VisibilityPrivate (local-only).
+		return "", nil
+	}
+}
+
+// inboxSocialPosterAdapter bridges inbox.SocialPoster (which
+// uses inbox.RemoteCommentInput) to social.Handler's
+// equivalent shape. The two types are structurally identical;
+// duplicated because social can't import inbox (the dispatcher
+// already imports social via the SocialPoster contract;
+// reversing the edge would cycle).
+type inboxSocialPosterAdapter struct{ h *social.Handler }
+
+func (a inboxSocialPosterAdapter) InsertRemoteLike(ctx context.Context, targetKind string, targetID uuid.UUID, peerID uuid.UUID, actorURI string) (bool, error) {
+	return a.h.InsertRemoteLike(ctx, targetKind, targetID, peerID, actorURI)
+}
+
+func (a inboxSocialPosterAdapter) InsertRemoteComment(ctx context.Context, in inbox.RemoteCommentInput) (uuid.UUID, bool, error) {
+	return a.h.InsertRemoteComment(ctx, social.RemoteCommentInput{
+		TargetKind:  in.TargetKind,
+		TargetID:    in.TargetID,
+		ParentID:    in.ParentID,
+		PeerID:      in.PeerID,
+		ActorURI:    in.ActorURI,
+		ActivityURI: in.ActivityURI,
+		Body:        in.Body,
+	})
+}
+
+// inboxDispatchPeerLookup wraps peer.Registry.ByID with the
+// inbox.PeerInfo projection the dispatcher needs (URL +
+// instance public key — the latter unused by the dispatcher
+// for now but kept for future per-actor signature verify in
+// 1.22.I).
+func inboxDispatchPeerLookup(reg *peer.Registry) func(ctx context.Context, peerID uuid.UUID) (inbox.PeerInfo, error) {
+	return func(ctx context.Context, peerID uuid.UUID) (inbox.PeerInfo, error) {
+		p, err := reg.ByID(ctx, peerID)
+		if err != nil {
+			return inbox.PeerInfo{}, err
+		}
+		var pub []byte
+		// PEM parse can fail (placeholder during pending
+		// handshake). Tolerate — the dispatcher doesn't need
+		// the pubkey for 1.22.D-a-4.
+		return inbox.PeerInfo{
+			ID:                p.ID,
+			InstanceURL:       p.InstanceURL,
+			InstancePublicKey: pub,
+			Enabled:           p.Enabled,
+			Connected:         p.Status == federation.PeerStatusConnected,
+		}, nil
+	}
+}
+
+// postTargetLookupFor returns the "who owns this post?" closure
+// the inbound Like/Comment handlers use for notification routing.
+// Implemented as a direct SQL read so social doesn't import
+// posts (cycle: posts imports social for the follow checker).
+func postTargetLookupFor(pool *pgxpool.Pool) social.PostTargetLookup {
+	return func(ctx context.Context, postID uuid.UUID) (int64, bool, error) {
+		var ref int64
+		err := pool.QueryRow(ctx,
+			`SELECT author_user_ref FROM posts WHERE id = $1 AND deleted_at IS NULL`,
+			postID,
+		).Scan(&ref)
+		if err != nil {
+			// pgx.ErrNoRows → just "not found"; bubble other
+			// errors to the caller (they treat them as transient).
+			if err.Error() == "no rows in result set" {
+				return 0, false, nil
+			}
+			return 0, false, err
+		}
+		return ref, true, nil
+	}
+}
+
+// inboxRejectAuditFor wraps audit.Recorder.ActivityRejected to
+// match the inbox handler's hook signature. activityType is
+// pulled from the env when we have it (post-stage-8 rejections);
+// for early-stage rejections (stages 2-7) it'd be unknown — we
+// pass the reason itself as a fallback so the audit row is still
+// queryable.
+func inboxRejectAuditFor(rec *audit.Recorder) func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string) {
+	return func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string) {
+		rec.ActivityRejected(ctx,
+			peerID.String(),
+			"", // sourceUserURL — not yet extracted in the inbox path
+			"", // activityType — same
+			"", // objectKind
+			"", // objectID
+			string(reason),
+			activityURI,
+		)
 	}
 }
 
@@ -1107,6 +1445,414 @@ func (s *apiServer) GrantFederationShare(ctx context.Context, req openapi.GrantF
 
 func (s *apiServer) RevokeFederationShare(ctx context.Context, req openapi.RevokeFederationShareRequestObject) (openapi.RevokeFederationShareResponseObject, error) {
 	return s.sharesAdmin.RevokeFederationShare(ctx, req)
+}
+
+// --- federation outbox + inbox admin (Phase 1.22.D-c) -------------------
+
+func (s *apiServer) ListFederationOutbox(ctx context.Context, req openapi.ListFederationOutboxRequestObject) (openapi.ListFederationOutboxResponseObject, error) {
+	f := outbox.AdminListOutboxFilter{}
+	if req.Params.PeerId != nil {
+		pid := uuid.UUID(*req.Params.PeerId)
+		f.PeerID = &pid
+	}
+	if req.Params.Status != nil {
+		s := string(*req.Params.Status)
+		f.Status = &s
+	}
+	if req.Params.ActivityType != nil {
+		s := *req.Params.ActivityType
+		f.ActivityType = &s
+	}
+	if req.Params.Since != nil {
+		t := *req.Params.Since
+		f.Since = &t
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Cursor != nil {
+		if t, id, ok := outbox.DecodeCursor(*req.Params.Cursor); ok {
+			f.CursorCreatedAt = &t
+			f.CursorID = &id
+		}
+	}
+	rows, nextCursor, err := s.outboxAdmin.ListOutboxForAdmin(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationOutbox, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, adminOutboxToAPI(r))
+	}
+	resp := openapi.ListFederationOutbox200JSONResponse{
+		Items: items,
+	}
+	if nextCursor != "" {
+		resp.NextCursor = &nextCursor
+	}
+	return resp, nil
+}
+
+func (s *apiServer) RequeueFederationOutbox(ctx context.Context, req openapi.RequeueFederationOutboxRequestObject) (openapi.RequeueFederationOutboxResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.RequeueFederationOutbox401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	updated, err := s.outboxAdmin.RequeueOutbox(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
+	if err != nil {
+		switch {
+		case errors.Is(err, outbox.ErrOutboxNotFound):
+			return openapi.RequeueFederationOutbox404JSONResponse{Error: "outbox row not found"}, nil
+		case errors.Is(err, outbox.ErrOutboxNotFailed):
+			return openapi.RequeueFederationOutbox409JSONResponse{Error: "row is not in status=failed; re-queue refused per idempotency guard"}, nil
+		}
+		return nil, err
+	}
+	return openapi.RequeueFederationOutbox200JSONResponse(adminOutboxToAPI(updated)), nil
+}
+
+func (s *apiServer) ListFederationInbox(ctx context.Context, req openapi.ListFederationInboxRequestObject) (openapi.ListFederationInboxResponseObject, error) {
+	f := outbox.AdminListInboxFilter{}
+	if req.Params.PeerId != nil {
+		pid := uuid.UUID(*req.Params.PeerId)
+		f.PeerID = &pid
+	}
+	if req.Params.Status != nil {
+		st := string(*req.Params.Status)
+		f.Status = &st
+	}
+	if req.Params.ActivityType != nil {
+		st := *req.Params.ActivityType
+		f.ActivityType = &st
+	}
+	if req.Params.Since != nil {
+		t := *req.Params.Since
+		f.Since = &t
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Cursor != nil {
+		if t, id, ok := outbox.DecodeCursor(*req.Params.Cursor); ok {
+			f.CursorReceivedAt = &t
+			f.CursorID = &id
+		}
+	}
+	rows, nextCursor, err := s.outboxAdmin.ListInboxForAdmin(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.FederationInboxRow, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, adminInboxToAPI(r))
+	}
+	resp := openapi.ListFederationInbox200JSONResponse{
+		Items: items,
+	}
+	if nextCursor != "" {
+		resp.NextCursor = &nextCursor
+	}
+	return resp, nil
+}
+
+func (s *apiServer) CancelFederationPeerPending(ctx context.Context, req openapi.CancelFederationPeerPendingRequestObject) (openapi.CancelFederationPeerPendingResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.CancelFederationPeerPending401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	count, err := s.outboxAdmin.CancelPendingForPeer(ctx, nil, caller.UserRef, uuid.UUID(req.Id))
+	if err != nil {
+		return nil, err
+	}
+	return openapi.CancelFederationPeerPending200JSONResponse{
+		PeerId:          openapi_types.UUID(req.Id),
+		CancelledCount:  count,
+	}, nil
+}
+
+// nonEmptyStringPtr returns nil for empty strings; otherwise &s.
+// Used to project Go's empty-string defaults to JSON null for
+// optional openapi fields.
+func nonEmptyStringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// adminOutboxToAPI projects the admin row into the openapi shape.
+func adminOutboxToAPI(r outbox.AdminOutboxRow) openapi.FederationOutbox {
+	out := openapi.FederationOutbox{
+		Id:            openapi_types.UUID(r.ID),
+		ActivityId:    openapi_types.UUID(r.ActivityID),
+		PeerId:        openapi_types.UUID(r.PeerID),
+		Status:        openapi.FederationOutboxStatus(r.Status),
+		Attempts:      int(r.Attempts),
+		NextAttemptAt: r.NextAttemptAt,
+		LastError:     nonEmptyStringPtr(r.LastError),
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}
+	if r.TargetUserURL != nil {
+		out.TargetUserUrl = r.TargetUserURL
+	}
+	if r.LastAttemptAt != nil {
+		out.LastAttemptAt = r.LastAttemptAt
+	}
+	if r.SentAt != nil {
+		out.SentAt = r.SentAt
+	}
+	if r.DeliveredWithKeyID != nil {
+		out.DeliveredWithKeyId = r.DeliveredWithKeyID
+	}
+	return out
+}
+
+// adminInboxToAPI projects the admin inbox row into the openapi shape.
+func adminInboxToAPI(r outbox.AdminInboxRow) openapi.FederationInboxRow {
+	out := openapi.FederationInboxRow{
+		Id:               openapi_types.UUID(r.ID),
+		ActivityUri:      r.ActivityURI,
+		PeerId:           openapi_types.UUID(r.PeerID),
+		ActorUri:         r.ActorURI,
+		ActivityType:     r.ActivityType,
+		HttpSigKey:       nonEmptyStringPtr(r.HTTPSigKey),
+		Status:           openapi.FederationInboxRowStatus(r.Status),
+		DispatchAttempts: int(r.DispatchAttempts),
+		ReceivedAt:       r.ReceivedAt,
+	}
+	if r.ObjectKind != nil {
+		out.ObjectKind = r.ObjectKind
+	}
+	if r.ObjectID != nil {
+		oid := openapi_types.UUID(*r.ObjectID)
+		out.ObjectId = &oid
+	}
+	if r.RejectReason != nil {
+		out.RejectReason = r.RejectReason
+	}
+	if r.LastAttemptAt != nil {
+		out.LastAttemptAt = r.LastAttemptAt
+	}
+	if r.LastError != nil {
+		out.LastError = r.LastError
+	}
+	if r.ProcessedAt != nil {
+		out.ProcessedAt = r.ProcessedAt
+	}
+	if r.CorrelationActivityID != nil {
+		cid := openapi_types.UUID(*r.CorrelationActivityID)
+		out.CorrelationActivityId = &cid
+	}
+	return out
+}
+
+// --- demo-seed loader (post-1.22.D dogfood unblock) -------------------
+
+func (s *apiServer) SeedBackfillTimestamps(ctx context.Context, req openapi.SeedBackfillTimestampsRequestObject) (openapi.SeedBackfillTimestampsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedBackfillTimestamps401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedBackfillTimestamps403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || len(req.Body.Items) == 0 {
+		return openapi.SeedBackfillTimestamps400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "items required"},
+		}, nil
+	}
+	items := make([]seed.TimestampItem, 0, len(req.Body.Items))
+	for _, it := range req.Body.Items {
+		row := seed.TimestampItem{
+			Kind:      seed.TimestampKind(it.Kind),
+			ID:        uuid.UUID(it.Id),
+			CreatedAt: it.CreatedAt,
+		}
+		if it.UpdatedAt != nil {
+			row.UpdatedAt = it.UpdatedAt
+		}
+		items = append(items, row)
+	}
+	result, err := s.seedAdmin.BackfillTimestamps(ctx, nil, caller.UserRef, items)
+	if err != nil {
+		if errors.Is(err, seed.ErrTimestampsBatchTooLarge) {
+			return openapi.SeedBackfillTimestamps400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.SeedBackfillTimestamps200JSONResponse{
+		AssetUpdated:     result.AssetUpdated,
+		PostUpdated:      result.PostUpdated,
+		CommentUpdated:   result.CommentUpdated,
+		SkippedUnknownId: result.SkippedUnknownID,
+	}, nil
+}
+
+func (s *apiServer) SeedCreateUser(ctx context.Context, req openapi.SeedCreateUserRequestObject) (openapi.SeedCreateUserResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedCreateUser401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedCreateUser403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || req.Body.Username == "" {
+		return openapi.SeedCreateUser400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "username required"},
+		}, nil
+	}
+	in := seed.UserInput{
+		Username: req.Body.Username,
+		Approved: true,
+	}
+	if req.Body.Fullname != nil {
+		in.Fullname = req.Body.Fullname
+	}
+	if req.Body.Email != nil {
+		s := string(*req.Body.Email)
+		in.Email = &s
+	}
+	if req.Body.Password != nil {
+		in.Password = req.Body.Password
+	}
+	if req.Body.Usergroup != nil {
+		in.Usergroup = req.Body.Usergroup
+	}
+	if req.Body.Approved != nil {
+		in.Approved = *req.Body.Approved
+	}
+	if req.Body.CreatedAt != nil {
+		in.CreatedAt = req.Body.CreatedAt
+	}
+	result, err := s.seedAdmin.CreateUser(ctx, nil, caller.UserRef, in)
+	if err != nil {
+		if errors.Is(err, seed.ErrPasswordHasherNotWired) {
+			return openapi.SeedCreateUser400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		return nil, err
+	}
+	resp := openapi.SeedUserResult{
+		Ref:            result.Ref,
+		Username:       result.Username,
+		AlreadyExisted: result.AlreadyExisted,
+	}
+	if result.AlreadyExisted {
+		return openapi.SeedCreateUser200JSONResponse(resp), nil
+	}
+	return openapi.SeedCreateUser201JSONResponse(resp), nil
+}
+
+func (s *apiServer) SeedCreateComment(ctx context.Context, req openapi.SeedCreateCommentRequestObject) (openapi.SeedCreateCommentResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.SeedCreateComment401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.SeedCreateComment403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil || req.Body.Body == "" {
+		return openapi.SeedCreateComment400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "body required"},
+		}, nil
+	}
+	in := seed.CommentInput{
+		TargetKind:    seed.CommentTargetKind(req.Body.TargetKind),
+		TargetID:      uuid.UUID(req.Body.TargetId),
+		AuthorUserRef: req.Body.AuthorUserRef,
+		Body:          req.Body.Body,
+	}
+	if req.Body.Id != nil {
+		id := uuid.UUID(*req.Body.Id)
+		in.ID = &id
+	}
+	if req.Body.ParentId != nil {
+		pid := uuid.UUID(*req.Body.ParentId)
+		in.ParentID = &pid
+	}
+	if req.Body.BodyHtml != nil {
+		in.BodyHTML = *req.Body.BodyHtml
+	}
+	if req.Body.AnnotationType != nil {
+		s := string(*req.Body.AnnotationType)
+		in.AnnotationType = &s
+	}
+	if req.Body.AnnotationData != nil {
+		// AnnotationData is a freeform map per the openapi spec.
+		// Re-marshal to []byte for sqlc's jsonb column.
+		if b, err := json.Marshal(*req.Body.AnnotationData); err == nil {
+			in.AnnotationData = b
+		}
+	}
+	if req.Body.CreatedAt != nil {
+		in.CreatedAt = req.Body.CreatedAt
+	}
+	result, err := s.seedAdmin.CreateComment(ctx, nil, caller.UserRef, in)
+	if err != nil {
+		switch {
+		case errors.Is(err, seed.ErrTargetNotFound):
+			return openapi.SeedCreateComment404JSONResponse{Error: "comment target not found"}, nil
+		case errors.Is(err, seed.ErrAuthorNotFound):
+			return openapi.SeedCreateComment404JSONResponse{Error: "forged author user not found"}, nil
+		}
+		return nil, err
+	}
+	apiComment := seedResultToAPI(result)
+	if result.AlreadyExisted {
+		return openapi.SeedCreateComment200JSONResponse(apiComment), nil
+	}
+	return openapi.SeedCreateComment201JSONResponse(apiComment), nil
+}
+
+func seedResultToAPI(r seed.CommentResult) openapi.Comment {
+	out := openapi.Comment{
+		Id:            openapi_types.UUID(r.ID),
+		TargetKind:    openapi.CommentTargetKind(r.TargetKind),
+		TargetId:      openapi_types.UUID(r.TargetID),
+		RootId:        openapi_types.UUID(r.RootID),
+		Depth:         int(r.Depth),
+		AuthorUserRef: r.AuthorUserRef,
+		Body:          r.Body,
+		BodyHtml:      r.BodyHTML,
+		LikeCount:     r.LikeCount,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}
+	if r.ParentID != nil {
+		pid := openapi_types.UUID(*r.ParentID)
+		out.ParentId = &pid
+	}
+	if r.AnnotationType != nil {
+		at := openapi.CommentAnnotationType(*r.AnnotationType)
+		out.AnnotationType = &at
+	}
+	if len(r.AnnotationData) > 0 {
+		var m map[string]interface{}
+		if err := json.Unmarshal(r.AnnotationData, &m); err == nil {
+			out.AnnotationData = &m
+		}
+	}
+	return out
 }
 
 func (s *apiServer) PreviewFederationPeerDefederation(ctx context.Context, req openapi.PreviewFederationPeerDefederationRequestObject) (openapi.PreviewFederationPeerDefederationResponseObject, error) {

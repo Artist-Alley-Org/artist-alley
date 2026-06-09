@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RestrictedShareBanner from '$lib/components/federation/RestrictedShareBanner.svelte';
   // Admin federation shares — Phase 1.22.C-e.
   //
   // Lists active federation_shares rows with a mutually-
@@ -159,6 +160,10 @@
   <h2 class="text-2xl font-semibold">{t('admin.federation.shares.title')}</h2>
   <p class="text-sm text-fg-muted">{t('admin.federation.shares.intro')}</p>
 </header>
+
+<div class="mb-4">
+  <RestrictedShareBanner mode="page" />
+</div>
 
 <section class="mb-6 rounded border border-border bg-bg-soft p-4">
   <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-fg-muted">

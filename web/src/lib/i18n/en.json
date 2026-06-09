@@ -653,6 +653,8 @@
           "federation":   { "title": "Federation peers","blurb": "Paired instances + handshake state. Pairing alone shares no content." },
           "directories":  { "title": "Directories",   "blurb": "Subscribed federation directories used for peer discovery." },
           "fed_shares":   { "title": "Federation shares","blurb": "Active aa:Share grants across all paired peers." },
+          "fed_outbox":   { "title": "Federation outbox","blurb": "Per-recipient delivery queue. Re-queue failed rows; sub-1s p99 via LISTEN/NOTIFY." },
+          "fed_inbox":    { "title": "Federation inbox", "blurb": "Inbound activities from paired peers + their dispatch state. Read-only." },
           "themes":       { "title": "Themes & branding","blurb": "Brand colors and custom CSS hooks." },
           "maintenance":  { "title": "Maintenance mode","blurb": "Read-only mode and the banner shown to users." },
           "feature_flags":{ "title": "Feature flags", "blurb": "Per-flag rollout toggles." },
@@ -938,7 +940,9 @@
         "activities": "Federation activity ledger — every Create/Update/Delete/Like/Follow/etc emitted by this instance + received from peers.",
         "federation": "Trusted artist-alley instances this install will exchange activities with. Pairing alone shares no content (1.22.C aa:Share is the access-control layer).",
         "directories": "Subscribed federation directories — opt-in discovery surfaces listing other artist-alley instances you might want to pair with. Discovery only; pairing still goes through the handshake.",
-        "fed_shares": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views."
+        "fed_shares": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views.",
+        "fed_outbox": "Per-recipient federation delivery queue. Failed rows can be re-queued from the row's action; queued + sent + cancelled rows are surfaced for observability. LISTEN/NOTIFY drives sub-1s p99 latency.",
+        "fed_inbox": "Inbound federation activities + their dispatch state (pending / processed / rejected / failed). Read-only — re-delivered envelopes land idempotently on the existing row via the activity_uri UNIQUE constraint."
       },
       "site": {
         "title": "Site",

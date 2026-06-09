@@ -121,7 +121,6 @@
   const spriteCols = $derived(assetIs3D ? 6 : 10);
   const spriteRows = $derived(assetIs3D ? 6 : 10);
   const spriteCells = $derived(spriteCols * spriteRows);
-
   let hovering = $state(false);
   let spriteFrame = $state(0);
   let spriteInterval: ReturnType<typeof setInterval> | null = null;
@@ -176,17 +175,31 @@
         alt={asset.title}
         loading="lazy"
         decoding="async"
-        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-200 group-hover:scale-[1.02]"
+        class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 group-hover:scale-[1.02]"
         class:opacity-0={!imgLoaded}
         class:opacity-100={imgLoaded}
         onload={onLoad}
         onerror={onError}
       />
       {#if assetHasSpriteScrub && hovering}
-        <div
-          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-        ></div>
+        {#if assetIsVideo}
+          <!-- Video scrub: 16:9 sprite cells letterboxed in the 1:1
+               slot. Black backdrop + inner aspect-video div renders
+               the cell at native ratio (same shape RS uses in
+               pages/search_views/thumbs.php). -->
+          <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
+            <div
+              class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
+              style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+            ></div>
+          </div>
+        {:else}
+          <!-- 3D turntable: 1:1 cells in 1:1 slot — no letterbox. -->
+          <div
+            class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
+            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+          ></div>
+        {/if}
       {/if}
       {#if assetIsVideo}
         <div class="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">

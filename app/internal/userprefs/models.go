@@ -245,7 +245,7 @@ type Comment struct {
 	ParentID       pgtype.UUID
 	RootID         pgtype.UUID
 	Depth          int32
-	AuthorUserRef  int64
+	AuthorUserRef  *int64
 	Body           string
 	BodyHtml       string
 	AnnotationType *string
@@ -256,6 +256,9 @@ type Comment struct {
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	PeerID         pgtype.UUID
+	ActorUri       *string
+	ActivityUri    *string
 }
 
 type DirectMessage struct {
@@ -315,6 +318,51 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz
 }
 
+type FederationDispatchState struct {
+	ID                       int32
+	LastDispatchedActivityID pgtype.UUID
+	LastDispatchedAt         pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
+type FederationInbox struct {
+	ID                    pgtype.UUID
+	ActivityUri           string
+	PeerID                pgtype.UUID
+	ActorUri              string
+	ActivityType          string
+	ObjectKind            *string
+	ObjectID              pgtype.UUID
+	EnvelopeJson          []byte
+	HttpSigKey            string
+	ReceivedAt            pgtype.Timestamptz
+	Status                string
+	RejectReason          *string
+	DispatchAttempts      int32
+	LastAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ProcessedAt           pgtype.Timestamptz
+	CorrelationActivityID pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type FederationOutbox struct {
+	ID                 pgtype.UUID
+	ActivityID         pgtype.UUID
+	PeerID             pgtype.UUID
+	TargetUserUrl      *string
+	Status             string
+	Attempts           int16
+	NextAttemptAt      pgtype.Timestamptz
+	LastAttemptAt      pgtype.Timestamptz
+	LastError          string
+	SentAt             pgtype.Timestamptz
+	DeliveredWithKeyID *string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type FederationPeer struct {
 	ID                 pgtype.UUID
 	InstanceUrl        string
@@ -341,6 +389,16 @@ type FederationPeerSuggestion struct {
 	SuggestedPublicKey   string
 	SuggestedFingerprint string
 	CachedAt             pgtype.Timestamptz
+}
+
+type FederationRemoteActor struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type FederationShare struct {
@@ -409,8 +467,11 @@ type Job struct {
 type Like struct {
 	TargetKind string
 	TargetID   pgtype.UUID
-	UserRef    int64
+	UserRef    *int64
 	LikedAt    pgtype.Timestamptz
+	ID         pgtype.UUID
+	PeerID     pgtype.UUID
+	ActorUri   *string
 }
 
 type Notification struct {
