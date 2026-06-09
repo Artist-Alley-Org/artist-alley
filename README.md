@@ -14,13 +14,15 @@ A self-hosted **art review and archival tool for game studios**. Artist-first UX
 
 ## Why this exists
 
-Game studios review art and archive it across Slack, Miro, Teams, and shared drives. Knowledge fragments across tools, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap.
+Game studios review art and archive it across Slack, Miro, Teams, and shared drives. Knowledge fragments across tools, review is inconsistent, and assets become hard to find a few years later. No good self-hosted tool fills the gap — and no DAM at all, open-source or commercial, federates between independently-operated instances. artist-alley is the first that does.
 
 artist-alley is built around three pillars:
 
 1. **Artist-first, not archive-first.** Artists upload-and-forget. Metadata happens automatically where possible. UX target: [ArtStation](https://www.artstation.com/) levels of simplicity.
 2. **Review mode.** Tracks unreviewed assets since the last session, remembers your spot, supports both async commenting (Frame.io-style) and live presenter sessions over SSE.
 3. **Three-click rule.** Any common action reachable in three clicks or fewer.
+
+Supporting all three: artist-alley implements [**ArchivePub**](docs/protocol/archivepub.md), an open federation protocol built on the ActivityPub data model with DAM-shaped extensions for asset sharing, workflow state, and brand workspaces. Studios share work with partners without paying SaaS rent; the protocol is open to any DAM that wants to implement it.
 
 ---
 
@@ -36,7 +38,7 @@ Three production containers: `nginx`, `app`, `postgres`. No microservices, no me
 
 Storage is pluggable — filesystem by default, S3-compatible (S3 / R2 / Backblaze / MinIO) optional. Heavier capabilities (CLIP embeddings, Whisper transcription, Tesseract OCR, Blender-rendered thumbnails, Stable Diffusion / Flux / ComfyUI runtimes) ship as out-of-band **capability add-ons** that operators install separately — never baked into the binary. The plugin model for third-party extensions is WASM via [Extism](https://extism.org/), deferred until external authors arrive.
 
-ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0017](docs/adr/0017-monetization-and-licensing.md) (licensing + enterprise gates), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model).
+ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decisions. Start with [ADR 0006](docs/adr/0006-go-as-target-backend.md) (architecture), [ADR 0008](docs/adr/0008-storage-architecture.md) (storage), [ADR 0017](docs/adr/0017-monetization-and-licensing.md) (licensing + enterprise gates), [ADR 0034](docs/adr/0034-capability-add-ons.md) (add-on layer), [ADR 0038](docs/adr/0038-premium-add-on-layer.md) (commercial model), and [ADR 0043](docs/adr/0043-federation-walled-garden-protocol.md) (federation — the ArchivePub reference spec lives at [`docs/protocol/archivepub.md`](docs/protocol/archivepub.md)).
 
 ---
 
