@@ -191,7 +191,13 @@ SELECT c.id, c.target_kind, c.target_id, c.parent_id, c.root_id, c.depth,
        c.like_count, c.edited_at, c.deleted_at,
        c.origin_server_id, c.created_at, c.updated_at,
        c.peer_id, c.actor_uri, c.activity_uri,
-       fra.display_name::text AS remote_display_name
+       -- COALESCE to empty string so sqlc generates a `string`
+       -- (not `*string`) field — and so local comments without a
+       -- federation_remote_actors row don't crash the scanner on
+       -- NULL. Empty string is the UI's "no remote attribution"
+       -- signal; rows with author_user_ref set are rendered via
+       -- the local user-lookup path anyway.
+       COALESCE(fra.display_name, '')::text AS remote_display_name
 FROM comments c
 JOIN thread_roots tr ON tr.id = c.root_id
 LEFT JOIN federation_remote_actors fra ON fra.actor_uri = c.actor_uri
