@@ -90,7 +90,7 @@
 <div class="flex-1 flex items-center justify-center px-6 py-12">
   <div class="w-full max-w-sm space-y-8">
     <div class="text-center space-y-2">
-      <div class="inline-block h-10 w-10 rounded-lg bg-accent" aria-hidden="true"></div>
+      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('login.title')}</h1>
       <p class="text-sm text-fg-muted">artist-alley</p>
     </div>

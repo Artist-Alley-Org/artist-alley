@@ -105,7 +105,7 @@
     <header class="shrink-0 border-b border-border bg-surface-elevated text-base">
       <div class="flex items-center gap-4 px-6 py-3">
         <a href="/" class="font-brand flex items-center gap-2 text-2xl tracking-tight shrink-0">
-          <span class="inline-block h-6 w-6 rounded bg-accent"></span>
+          <img src="/logo.svg" alt="" class="h-7 w-7" aria-hidden="true" />
           artist-alley
         </a>
 

@@ -134,7 +134,7 @@
 <div class="flex-1 flex items-center justify-center px-6 py-10">
   <div class="w-full max-w-2xl space-y-8">
     <div class="text-center space-y-2">
-      <div class="inline-block h-10 w-10 rounded-lg bg-accent" aria-hidden="true"></div>
+      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
       <h1 class="text-2xl font-semibold tracking-tight">First-run setup</h1>
       <p class="text-sm text-fg-muted">
         Create the first administrator and configure your site. You can change any of this later.
