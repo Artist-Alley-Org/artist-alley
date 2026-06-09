@@ -219,7 +219,12 @@ jobs:
           docker network prune -f || true
 
       - name: Build and start the stack
-        run: docker compose up -d --build
+        # --scale web=0 because the Vite dev container fails with
+        # EACCES on `/app/.svelte-kit` in CI — the bind-mount UID
+        # doesn't match the container's app user. Backend tests
+        # don't need the frontend; the prod build step (a separate
+        # job) catches frontend regressions on its own.
+        run: docker compose up -d --build --scale web=0
 
       - name: Wait for postgres to be ready
         run: |
@@ -232,6 +237,36 @@ jobs:
           done
           echo "postgres never became ready" >&2
           docker compose logs postgres
+          exit 1
+
+      - name: Wait for app to finish migrations
+        # Tests connect directly to the compose postgres but DO NOT
+        # run migrations themselves — the app does that at boot.
+        # Without this gate, a fast CI runner races the app and
+        # tests see an empty schema (relation "user" does not exist).
+        # Polling `goose_db_version` is the ground-truth signal that
+        # goose.UpContext finished — cheaper + more direct than
+        # waiting on an HTTP healthcheck.
+        run: |
+          target_version=$(ls app/internal/db/migrations/*.sql \
+              | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
+          echo "target migration version: ${target_version}"
+          for i in $(seq 1 60); do
+            current=$(docker compose exec -T postgres \
+                psql -U artist_alley -d artist_alley -tAc \
+                "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version" \
+                2>/dev/null || echo 0)
+            if [ "${current}" = "${target_version}" ]; then
+              echo "migrations at version ${current} after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "migrations never reached target ${target_version} (last seen: ${current})" >&2
+          echo "--- postgres log ---"
+          docker compose logs postgres --tail=40 || true
+          echo "--- app log ---"
+          docker compose logs app --tail=40 || true
           exit 1
 
       - name: Run artist-alley integration tests

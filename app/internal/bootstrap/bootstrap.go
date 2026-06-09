@@ -143,24 +143,32 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 	email := DefaultEmail
 	usergroup := int64(3) // legacy "Super Admin" group seeded by migration 00002
 	fullname := "Bootstrap Admin"
-	userRow, err := qtx.CreateUser(ctx, auth.CreateUserParams{
-		Username:  &username,
-		Password:  &hash,
-		Fullname:  &fullname,
-		Email:     &email,
-		Usergroup: &usergroup,
-	})
-	if err != nil {
-		// Username collision with no admin role assignment is a
-		// partial-bootstrap state (test fixtures, aborted boots,
-		// manual operator DELETE on user_roles only). Surface a
-		// clear remediation step rather than retry-loop forever.
-		if strings.Contains(err.Error(), "user_username_uniq_idx") ||
-			strings.Contains(err.Error(), "duplicate key") {
-			return fmt.Errorf("bootstrap: username %q already exists but no admin role is assigned — partial bootstrap state. Either DELETE the orphan row (DELETE FROM \"user\" WHERE username='%s') or assign the Admin role manually before restart",
-				username, username)
+
+	// Recover when the `admin` user already exists but has no admin
+	// role — common after a test run that DELETEs `user_roles` for
+	// cleanup. The previous behaviour FATAL-exited here, which put
+	// the container in a restart loop. Re-assigning the Admin role
+	// to the existing user IS the recovery action the operator would
+	// have taken manually, so just do it.
+	var adminRef int64
+	existing, err := qtx.FindUserByUsername(ctx, &username)
+	switch {
+	case err == nil:
+		adminRef = existing.Ref
+	case errors.Is(err, pgx.ErrNoRows):
+		userRow, err := qtx.CreateUser(ctx, auth.CreateUserParams{
+			Username:  &username,
+			Password:  &hash,
+			Fullname:  &fullname,
+			Email:     &email,
+			Usergroup: &usergroup,
+		})
+		if err != nil {
+			return fmt.Errorf("bootstrap: create user: %w", err)
 		}
-		return fmt.Errorf("bootstrap: create user: %w", err)
+		adminRef = userRow.Ref
+	default:
+		return fmt.Errorf("bootstrap: lookup admin user: %w", err)
 	}
 
 	role, err := qtx.FindRoleByName(ctx, adminRoleName)
@@ -171,7 +179,7 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 		return fmt.Errorf("bootstrap: lookup admin role: %w", err)
 	}
 	if err := qtx.SetUserGlobalRole(ctx, auth.SetUserGlobalRoleParams{
-		UserRef: userRow.Ref,
+		UserRef: adminRef,
 		RoleID:  role.ID,
 		// AssignedByUserRef nil — bootstrap has no actor.
 	}); err != nil {

@@ -68,10 +68,14 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
-      interval: 10s
+      # Runtime image (debian-slim) has curl but not wget — see
+      # infra/docker/app/Dockerfile. Hit /healthz once the app
+      # listens; the HTTP server is only started after migrations
+      # apply, so a healthy app means the schema is in place.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz >/dev/null || exit 1"]
+      interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 24
       start_period: 5s
     restart: unless-stopped
 

@@ -87,7 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
  && ln -s /opt/blender/blender /usr/local/bin/blender \
  && rm /tmp/blender.tar.xz \
- && apt-get purge -y curl xz-utils \
+ && apt-get purge -y xz-utils \
  && apt-get autoremove -y \
  && groupadd --gid "${GID}" app \
  && useradd --uid "${UID}" --gid app --no-create-home app \
