@@ -134,7 +134,7 @@ WORKFLOW_STATE_ALIASES = {
 SEED_ASSET_TYPE_HINT_NAMES = {
     "image":    ["image", "raster", "picture"],
     "audio":    ["audio", "sound"],
-    "3d":       ["3d", "model"],
+    "3d":       ["3d object", "3d", "model"],
     "video":    ["video", "movie"],
     "document": ["document", "doc", "pdf"],
     "font":     ["font", "typeface"],
@@ -161,6 +161,7 @@ PHASES: list[Phase] = [
     Phase("fields",                  "Seed field definitions",              "phase_apply_fields"),
     Phase("collections",             "Seed collections",                    "phase_apply_collections"),
     Phase("assets",                  "Seed assets (upload + create + tag)", "phase_apply_assets"),
+    Phase("asset_fields",            "Apply per-asset typed field values",  "phase_apply_asset_fields"),
     Phase("posts",                   "Seed posts",                          "phase_apply_posts"),
     Phase("comments",                "Seed forged comments",                "phase_apply_comments"),
     Phase("timestamps",              "Backfill timestamps",                 "phase_apply_timestamps"),
@@ -499,8 +500,18 @@ class Catalogues:
 
 def phase_resolve_workflow_states(client: AAClient, cat: Catalogues, state: State,
                                   args: argparse.Namespace) -> None:
-    resp = client.get("/workflow/states")
-    items = resp if isinstance(resp, list) else resp.get("items", [])
+    # GET /workflow/states requires the `domain` query param per the
+    # current API. Iterate over the known v1 domains so the seed
+    # picks up state UUIDs for both asset + post workflows.
+    items: list[dict] = []
+    for domain in ("post", "asset"):
+        resp = client.get("/workflow/states", params={"domain": domain})
+        page = resp if isinstance(resp, list) else resp.get("items", [])
+        for it in page:
+            # The API doesn't echo `domain` on each state row when filtered
+            # — stamp it in ourselves so the indexing below stays uniform.
+            it.setdefault("domain", domain)
+            items.append(it)
     LOG.info("found %d workflow states", len(items))
     # Index by (domain, name) and (domain_prefix, name)
     for it in items:
@@ -872,6 +883,107 @@ def phase_apply_assets(client: AAClient, cat: Catalogues, state: State,
             prog.tick(failed=1)
     state.save()
     prog.done_msg()
+
+
+def phase_apply_asset_fields(client: AAClient, cat: Catalogues, state: State,
+                             args: argparse.Namespace) -> None:
+    """For each asset, PUT each `field_values` entry against the matching
+    field definition via /assets/{id}/fields/{field_id}. Without this
+    phase, the details panel reads empty even though the field
+    definitions are seeded — the per-asset value rows in
+    `asset_field_value` would never get created."""
+    # Build a code → (field_id, field_type) lookup from the cat.fields
+    # catalogue (apply.py's phase_apply_fields already populated
+    # state.entities["fields"][code] → field_id).
+    field_meta: dict[str, tuple[str, str]] = {}
+    for f in cat.fields:
+        code = f["name"]
+        fid = state.get_entity("fields", code)
+        if fid:
+            field_meta[code] = (fid, f.get("type", "text"))
+
+    # Count work upfront so progress is honest. Skip assets that have
+    # no field_values OR whose server-side asset wasn't created.
+    work = []
+    for asset in cat.assets:
+        vals = asset.get("field_values") or {}
+        if not vals:
+            continue
+        server_id = state.get_entity("assets", asset["id"])
+        if not server_id:
+            continue
+        for code, raw in vals.items():
+            if code not in field_meta:
+                continue
+            work.append((server_id, field_meta[code][0], field_meta[code][1], raw))
+
+    if not work:
+        LOG.info("no per-asset field values to apply")
+        return
+
+    LOG.info("applying %d field-value rows across %d assets",
+             len(work), len({w[0] for w in work}))
+    prog = Progress("asset_fields", len(work))
+    for asset_id, field_id, ftype, raw in work:
+        body = _field_value_body(ftype, raw)
+        if body is None:
+            prog.tick(skipped=1)
+            continue
+        try:
+            client.put(f"/assets/{asset_id}/fields/{field_id}", json=body)
+            prog.tick(done=1)
+        except APIError as e:
+            # Field-value PUTs are best-effort: a single bad value
+            # shouldn't abort the seed. Log + continue.
+            LOG.debug("set field %s on asset %s failed: %s",
+                      field_id, asset_id, e)
+            prog.tick(failed=1)
+    prog.done_msg()
+
+
+def _field_value_body(ftype: str, raw: T.Any) -> dict | None:
+    """Translate a seed `field_values` raw value into the
+    AssetFieldValueWrite body shape based on the field's declared
+    type. Mapping mirrors app/internal/metadata/handler.go's
+    typeFromFieldDef switch — single source of truth.
+
+    Returns None when the value can't be coerced (caller skips
+    that entry rather than POSTing garbage)."""
+    if raw is None:
+        return None
+    t = (ftype or "text").lower()
+    body: dict = {"set_by": "import"}
+    # text/longtext/rich_text/select/tree — all use value_text per
+    # handler.go:675. select stores a single chosen option AS TEXT,
+    # not as a one-element value_options array.
+    if t in ("text", "longtext", "rich_text", "select", "tree"):
+        body["value_text"] = str(raw)
+    elif t == "number":
+        try:
+            body["value_num"] = float(raw)
+        except (TypeError, ValueError):
+            return None
+    elif t == "boolean":
+        # handler.go:687 — boolean requires value_num 0 or 1.
+        body["value_num"] = 1 if bool(raw) else 0
+    elif t in ("date", "datetime"):
+        body["value_date"] = str(raw)
+    elif t == "multi_select":
+        # Must be non-empty array of strings.
+        if isinstance(raw, list):
+            opts = [str(x) for x in raw if x is not None]
+        else:
+            opts = [str(raw)]
+        if not opts:
+            return None
+        body["value_options"] = opts
+    elif t == "reference":
+        body["value_ref"] = str(raw)
+    else:
+        # Unknown type — fall back to text so we don't drop the value
+        # entirely. The API will 400 on a real mismatch; logged.
+        body["value_text"] = str(raw)
+    return body
 
 
 def phase_apply_posts(client: AAClient, cat: Catalogues, state: State,

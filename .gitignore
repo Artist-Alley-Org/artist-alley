@@ -89,6 +89,12 @@ Thumbs.db
 *.pid
 .docker-data/
 
+# --- Seed apply runtime state ---
+# Created by seed/scripts/apply.py, one per target instance (e.g.
+# apply-state-localhost-b.json). Local to each dogfood run; never
+# tracked.
+apply-state-*.json
+
 # --- Reference-only plugin dirs (kept locally, used as blueprints) ---
 barts_grouping/
 barts_annotations/

@@ -64,17 +64,37 @@ def parse_args() -> argparse.Namespace:
 
 
 def count_endpoint(client: AAClient, path: str) -> int | None:
-    """Fetch a count from a listing endpoint. Returns None on error."""
+    """Fetch a count from a listing endpoint. Returns None on error.
+
+    AA's list endpoints don't expose a `total` field — they return
+    `{items: [...], next_cursor: <opaque>}`. We page through with
+    the max limit (500) and tally; works fine for seeded scale
+    (~2k entities per kind) and avoids the prior bug where
+    `limit=1` made every count come back as 1.
+    """
+    total = 0
+    cursor: str | None = None
     try:
-        resp = client.get(path, params={"limit": 1})
+        while True:
+            params: dict = {"limit": 500}
+            if cursor:
+                params["cursor"] = cursor
+            resp = client.get(path, params=params)
+            if isinstance(resp, dict):
+                items = resp.get("items", [])
+                total += len(items)
+                cursor = resp.get("next_cursor")
+                if not cursor:
+                    break
+            elif isinstance(resp, list):
+                total += len(resp)
+                break
+            else:
+                return None
     except APIError as e:
         LOG.warning("count fetch failed for %s: %s", path, e)
         return None
-    if isinstance(resp, dict):
-        return resp.get("total") or resp.get("count") or len(resp.get("items", []))
-    if isinstance(resp, list):
-        return len(resp)
-    return None
+    return total
 
 
 def check(label: str, expected: int, actual: int | None, tolerance: float) -> bool:
