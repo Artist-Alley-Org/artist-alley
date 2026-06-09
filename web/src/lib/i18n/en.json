@@ -531,8 +531,6 @@
           "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
           "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
           "sessions":           { "title": "Sessions",             "blurb": "Active sessions across all users; revoke at will." },
-          "audit":              { "title": "Audit log",            "blurb": "Trail of admin actions, separate from workflow audit." },
-          "workflow":           { "title": "Workflow states",      "blurb": "Per-domain state machines and their transitions." },
           "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." }
         }
       },
@@ -617,15 +615,15 @@
       },
       "federation": {
         "title": "Federation",
-        "intro": "Peer servers, sync state, and the policy that governs both.",
+        "intro": "Paired instances, the activities they exchange, and the policy that governs both.",
         "tiles": {
-          "peers":       { "title": "Peer servers",   "blurb": "Federated instances and handshake state." },
-          "inbound":     { "title": "Inbound feeds",  "blurb": "Subscriptions to peer content." },
-          "outbound":    { "title": "Outbound feeds", "blurb": "What this instance publishes to peers." },
-          "sync_status": { "title": "Sync status",    "blurb": "Last-seen and lag per peer." },
-          "conflicts":   { "title": "Conflict resolution","blurb": "Edits that diverged across instances." },
-          "activitypub": { "title": "ActivityPub config","blurb": "AP-specific federation settings." },
-          "blocklist":   { "title": "Block list",     "blurb": "Peers this instance refuses to federate with." }
+          "peers":       { "title": "Peers",          "blurb": "Paired instances + handshake state. Pairing alone shares no content (1.22.C aa:Share is the access-control layer)." },
+          "directories": { "title": "Directories",    "blurb": "Subscribed federation directories used for peer discovery. Discovery only; pairing still goes through the handshake." },
+          "shares":      { "title": "Shares",         "blurb": "Active aa:Share grants across all paired peers. Revoke from here OR from the per-peer / per-object views." },
+          "outbox":      { "title": "Outbox",         "blurb": "Per-recipient delivery queue. Re-queue failed rows; LISTEN/NOTIFY drives sub-1s p99 latency." },
+          "inbox":       { "title": "Inbox",          "blurb": "Inbound activities from paired peers + their dispatch state. Read-only." },
+          "blocklist":   { "title": "Block list",     "blurb": "Peers this instance refuses to federate with. Lands with the moderation hooks in Phase 1.22.G." },
+          "activitypub": { "title": "Public fediverse compatibility", "blurb": "webfinger + nodeinfo + per-user inbox URLs so Mastodon-shaped clients can discover this instance. Opt-in; walled-garden installs stay instance-level." }
         }
       },
       "integrations": {
@@ -649,12 +647,7 @@
           "auth":         { "title": "Authentication","blurb": "Password policy and SSO providers." },
           "ai":           { "title": "AI providers",  "blurb": "Provider list and the default selection." },
           "log":          { "title": "System log",    "blurb": "Audit trail of admin actions." },
-          "activities":   { "title": "Activity ledger","blurb": "Federation activity ledger — every Create/Update/Delete/Like/Follow emitted and received." },
-          "federation":   { "title": "Federation peers","blurb": "Paired instances + handshake state. Pairing alone shares no content." },
-          "directories":  { "title": "Directories",   "blurb": "Subscribed federation directories used for peer discovery." },
-          "fed_shares":   { "title": "Federation shares","blurb": "Active aa:Share grants across all paired peers." },
-          "fed_outbox":   { "title": "Federation outbox","blurb": "Per-recipient delivery queue. Re-queue failed rows; sub-1s p99 via LISTEN/NOTIFY." },
-          "fed_inbox":    { "title": "Federation inbox", "blurb": "Inbound activities from paired peers + their dispatch state. Read-only." },
+          "activities":   { "title": "Activity ledger","blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)." },
           "themes":       { "title": "Themes & branding","blurb": "Brand colors and custom CSS hooks." },
           "maintenance":  { "title": "Maintenance mode","blurb": "Read-only mode and the banner shown to users." },
           "feature_flags":{ "title": "Feature flags", "blurb": "Per-flag rollout toggles." },
