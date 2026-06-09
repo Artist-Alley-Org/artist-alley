@@ -65,6 +65,14 @@ The current release stream covers the foundations:
   formats (MD2 / MD3 / MDL / MS3D — 1.18.C-2 / C-3). Asset companion
   files (textures, `.mtl`, `.bin`) resolved per-asset so 3D loaders
   can pull their sidecars.
+- **Federation v1 — walled-garden protocol** (Phase 1.22.D). Per-actor
+  HTTP inbox + outbox with HTTP-Sig + Ed25519 envelope verify; share-list
+  access control; outbox dispatcher with LISTEN/NOTIFY; HTTP/2 delivery
+  worker with batched per-peer POST + signing + exponential backoff;
+  recipient resolver against `federation_shares`; admin queue UI with
+  re-queue + cascade-cancel + audit. Sub-1s p99 end-to-end against
+  production defaults. See ADR 0043. Encrypted federation + key
+  distribution coming in 1.22.I, gated on paired-instance dogfood signal.
 
 ## In flight
 

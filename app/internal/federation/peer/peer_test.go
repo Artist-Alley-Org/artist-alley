@@ -341,16 +341,21 @@ func TestAdd_InvalidatesEnabledSnapshot(t *testing.T) {
 	defer reg.Stop()
 	r := peer.NewRegistry(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), reg)
 
-	// Prime the enabled-snapshot cache.
+	// Prime the enabled-snapshot cache + remember a URL not in
+	// it so the post-Add check is robust to concurrent writes
+	// from sibling-package tests (go test ./... runs packages in
+	// parallel; a count-delta assertion races with their inserts
+	// and deletes). We care that the SPECIFIC peer we added is
+	// present after Add — that's the cache-invalidation signal.
 	pre, err := r.EnabledSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	preLen := len(pre)
 
-	// Add a peer.
+	addedURL := "https://invalidates-" + randHex(t, 4) + ".example"
 	if _, err := r.Add(ctx, peer.AddInput{
-		InstanceURL:        "https://invalidates-" + randHex(t, 4) + ".example",
+		InstanceURL:        addedURL,
 		DisplayName:        "Invalidates",
 		InstancePublicKey:  freshPEM(t),
 		TrustTier:          federation.TrustConnected,
@@ -360,14 +365,23 @@ func TestAdd_InvalidatesEnabledSnapshot(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	// EnabledSnapshot should now return ONE more peer than the
-	// prior call (the invalidation evicted the cache + the next
-	// read repopulated from DB).
+	// EnabledSnapshot should now include the URL we just added.
+	// A cache that didn't invalidate would return the prior list
+	// (no addedURL); an invalidated cache re-queries the DB and
+	// includes it.
 	post, err := r.EnabledSnapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(post) != preLen+1 {
-		t.Errorf("enabled snapshot didn't refresh after Add: pre=%d post=%d (cache stale?)", preLen, len(post))
+	found := false
+	for _, p := range post {
+		if p.InstanceURL == addedURL {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("enabled snapshot didn't refresh after Add: pre=%d post=%d, added URL %q not in post (cache stale?)",
+			preLen, len(post), addedURL)
 	}
 }

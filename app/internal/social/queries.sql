@@ -150,6 +150,30 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- Ordering: root_created_at DESC (newest threads first), then within
 -- a thread by (depth ASC, created_at ASC) so the root is first and
 -- replies follow in chronological order.
+--
+-- ## Caching note (post-1.22.D audit, 2026-06-09)
+--
+-- The LEFT JOIN against federation_remote_actors below denormalises
+-- the remote actor's display_name into each comment row in one
+-- query instead of N+1 row-level GetRemoteActor lookups. This is
+-- the correct pattern when the joined table is:
+--   - small (one row per ever-seen remote actor),
+--   - indexed (federation_remote_actors uses actor_uri as PK),
+--   - low-churn (display fields refresh on inbound activity only),
+--   - hot enough to live in Postgres shared_buffers.
+--
+-- A row-level cache on GetRemoteActor would add invalidation
+-- surface without saving query work — the planner collapses the
+-- JOIN into a hash lookup against the indexed actor_uri. The
+-- GetRemoteActor query in federation/remote/queries.sql is
+-- currently unused; future row-level callers should re-check this
+-- comment before adding a cache.
+--
+-- If the comments-list endpoint becomes a perf bottleneck during
+-- dogfood, the right cache then is the COMMENTS-BY-POST page
+-- result (one entry per target_id + cursor), not the per-actor
+-- row. Track via cache.Registry following the cacheDomainPostByID
+-- pattern in posts/handler.go.
 WITH thread_roots AS (
     SELECT cr.id, cr.created_at
     FROM comments cr
