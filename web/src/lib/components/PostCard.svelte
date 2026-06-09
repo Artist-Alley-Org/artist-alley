@@ -146,7 +146,6 @@
   const spriteCols = $derived(coverIs3D ? 6 : 10);
   const spriteRows = $derived(coverIs3D ? 6 : 10);
   const spriteCells = $derived(spriteCols * spriteRows);
-
   function onHoverEnter() {
     hovering = true;
     if (!coverHasSpriteScrub) return;
@@ -223,20 +222,35 @@
         alt={post.title}
         loading="lazy"
         decoding="async"
-        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-200 group-hover:scale-[1.02]"
+        class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 group-hover:scale-[1.02]"
         class:opacity-0={!imgLoaded}
         class:opacity-100={imgLoaded}
         onload={onLoad}
         onerror={onError}
       />
       {#if coverHasSpriteScrub && hovering}
-        <!-- Sprite-sheet scrub preview. Video covers walk a 10×10
-             timeline grid; 3D covers walk a 6×6 turntable grid. Same
-             code path either way — we just pick the divisor. -->
-        <div
-          class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
-          style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
-        ></div>
+        {#if coverIsVideo}
+          <!-- Video scrub: 16:9 sprite cells in a 1:1 slot. Letterbox
+               with a black backdrop + an inner `aspect-video` div that
+               renders the cell at its native ratio. RS does the same
+               thing (pages/search_views/thumbs.php swaps the <img>
+               src and lets the browser preserve the natural aspect).
+               The original even-distribution background-position
+               formula is correct here because the inner div IS 16:9. -->
+          <div class="pointer-events-none absolute inset-0 bg-black/95 transition-opacity duration-150">
+            <div
+              class="absolute left-0 right-0 top-1/2 aspect-video -translate-y-1/2 bg-no-repeat"
+              style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+            ></div>
+          </div>
+        {:else}
+          <!-- 3D turntable: cells 1:1 in a 1:1 slot. No letterbox
+               needed — the cell fills the square cleanly. -->
+          <div
+            class="pointer-events-none absolute inset-0 bg-cover bg-no-repeat transition-opacity duration-150"
+            style="background-image: url({spriteUrl}); background-size: {spriteCols * 100}% {spriteRows * 100}%; background-position: {(spriteFrame % spriteCols) * (100 / (spriteCols - 1))}% {Math.floor(spriteFrame / spriteCols) * (100 / (spriteRows - 1))}%;"
+          ></div>
+        {/if}
       {/if}
       {#if coverIsVideo}
         <!-- Play-glyph badge to advertise "this is a video". -->
