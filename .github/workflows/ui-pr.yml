@@ -183,7 +183,13 @@ jobs:
           # docker DNS, not the host-published port. Same shape as
           # the dev `web` service points its proxy at
           # `http://nginx:80` in the source.
-          AA_API_BASE: http://app:8080
+          #
+          # /api/v1 in the base because apply.py's `_do` does
+          # `urljoin(self.api_base + "/", path)` and the seed paths
+          # are `/auth/login`, `/users`, etc. without a version
+          # prefix — Go's chi router mounts every API surface
+          # under /api/v1/, so api_base has to include it.
+          AA_API_BASE: http://app:8080/api/v1
           # /datasets is the read-only mount added to the runner
           # container template (Unraid Docker tab → AristAlley-
           # Github-Actions-Runner → BLACKBOX datasets). Source on
