@@ -1,8 +1,9 @@
 # UI dogfood — fast PR / branch validation.
 #
-# Runs the Playwright `standalone` project against the dev stack
-# on every PR + every push to a long-lived branch. Self-hosted
-# only because:
+# Runs the Playwright `standalone` project against the production
+# artifact on every PR + every push to a long-lived branch.
+#
+# Self-hosted only because:
 #   1. The `site_a` seed dataset lives at
 #      /mnt/blackbox_archives/datasets/artist_alley/site_a on the
 #      runner's mount. ~30 of the 133 standalone tests walk seeded
@@ -10,9 +11,22 @@
 #      fail on empty result sets, not on the regression they're
 #      meant to catch.
 #   2. Standard docker on the self-hosted runner publishes ports
-#      normally. github-hosted runners on `ubuntu-latest` show the
-#      ports as mapped via `docker port` but don't actually bind a
-#      host listener — verified across 6 prior iterations.
+#      normally.
+#
+# We test the PROD image, not the dev `vite dev` stack, because:
+#   1. Vite cold-boot in a fresh container runs the full dep
+#      optimizer (~600 Svelte modules across two passes against
+#      an empty .vite/deps/ cache) and consistently takes ~5
+#      minutes wall before the dev server binds. Six prior
+#      iterations of "wait longer for Vite" lost the race within
+#      a second or two of the cap each time.
+#   2. The prod image embeds the pre-built SPA via go:embed; the
+#      Go binary serves both the SPA and the API on one port
+#      with no dep-optimization step. Container ready in seconds.
+#   3. The artifact tested is what ships. Catches embed_web-only
+#      bugs the dev path would skip.
+#   4. Single hop. No nginx + Vite proxy chain to debug when a
+#      test fails.
 #
 # Federation tests run in ui-nightly.yml — they additionally need
 # the dogfood compose profile + mkcert + /etc/hosts + pair.sh.
@@ -67,13 +81,8 @@ jobs:
 
       # Remap to high ports — the self-hosted runner has the user's
       # local dev stack (or another postgres) bound on the defaults.
-      # First attempt at "use the same ports as local for less
-      # divergence" hit `Bind for 0.0.0.0:5432 failed: port is
-      # already allocated` because another service was holding the
-      # default. concurrency.group prevents two CI runs from
-      # racing each other; it can't prevent CI vs. local-dev.
-      # Vite is still 5173 because nothing on the runner conflicts
-      # with that one and the test STUDIO_A_HOST default expects it.
+      # NGINX_HTTP_PORT also doubles as the prod-image app's host
+      # port: the CI override maps app:8080 → host:${NGINX_HTTP_PORT}.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
@@ -93,28 +102,59 @@ jobs:
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
-      - name: Bring up the dev stack (standalone)
-        run: ./scripts/dogfood/up.sh --standalone
-
-      - name: Wait for the Vite SPA to respond
-        # Even on the self-hosted runner, the first Vite boot after
-        # a fresh `docker compose up --build` runs the full dep
-        # optimizer (client + SSR passes against an empty
-        # `.vite/deps/` cache) and takes ~2 min wall before the
-        # dev server binds. Three prior runs landed Vite ready
-        # within 1 second of the wait expiring. Wait 5 min for
-        # comfortable headroom; success path exits early on the
-        # first 200, so a fast Vite pays no extra wall time.
+      # Replace the dev `app` service with the production image
+      # (built from the root Dockerfile with `-tags embed_web`).
+      # Only `app` + `postgres` are started — the prod image serves
+      # the SPA + API itself, so nginx + the web (Vite) container
+      # aren't needed.
+      - name: Build + start the prod stack
         run: |
-          for i in $(seq 1 150); do
-            if curl -fsS -o /dev/null "http://localhost:5173/"; then
-              echo "Vite ready after ${i} attempts"
+          docker compose \
+            -f docker-compose.yml \
+            -f infra/docker/ci/docker-compose.ci.yml \
+            up -d --build app postgres
+
+      - name: Wait for postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempts"
               exit 0
             fi
             sleep 2
           done
-          echo "Vite never became ready" >&2
-          docker compose logs web --tail=80 || true
+          echo "postgres never became ready" >&2
+          docker compose logs postgres
+          exit 1
+
+      - name: Wait for app to finish migrations + serve the SPA
+        # Polls goose_db_version (migrations are run by the app at
+        # boot) + then a GET /healthz round-trip. The embedded
+        # SPA returns 200 + HTML on / once the Go server is fully
+        # up, which is the signal Playwright will look for too.
+        run: |
+          target_version=$(ls app/internal/db/migrations/*.sql \
+              | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
+          for i in $(seq 1 60); do
+            current=$(docker compose exec -T postgres \
+                psql -U artist_alley -d artist_alley -tAc \
+                "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version" \
+                2>/dev/null || echo 0)
+            if [ "${current}" = "${target_version}" ]; then
+              echo "migrations at version ${current} after ${i} attempts"
+              break
+            fi
+            sleep 2
+          done
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://localhost:18188/healthz"; then
+              echo "app SPA ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "app SPA never became ready" >&2
+          docker compose logs app --tail=80 || true
           exit 1
 
       # apply.py is the gold-standard idempotent loader. First run
@@ -127,9 +167,6 @@ jobs:
       # red tests.
       - name: Seed site_a via apply.py
         env:
-          # 18188 = NGINX_HTTP_PORT remapped above. apply.py talks to
-          # the API directly through nginx — that's the same path
-          # dev's Vite proxies /api/* to, just on the host port.
           AA_API_BASE: http://localhost:18188
           SITE_A_PATH: /mnt/blackbox_archives/datasets/artist_alley/site_a
         run: |
@@ -160,7 +197,7 @@ jobs:
 
       - name: Run UI standalone suite
         env:
-          STUDIO_A_HOST: http://localhost:5173
+          STUDIO_A_HOST: http://localhost:18188
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 

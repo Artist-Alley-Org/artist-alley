@@ -1,0 +1,44 @@
+# Compose override for the CI dogfood UI workflow.
+#
+# Swaps the dev `app` service for the production image (root
+# Dockerfile, built with `-tags embed_web`). The Go binary serves
+# both the API and the SvelteKit SPA on a single port, so the dev
+# `web` (Vite) container can be skipped — saving ~5 min of cold-
+# cache dep optimization per run — and the `nginx` reverse proxy
+# can be skipped too because Playwright talks straight to the app.
+#
+# Use:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f infra/docker/ci/docker-compose.ci.yml \
+#     up -d --build app postgres
+#
+# The result is one app container + postgres, with the SPA served
+# from / and the API from /api/v1 on the same host port.
+#
+# Why the prod image instead of the dev image:
+#   1. Cuts a ~5 min Vite cold-start out of every PR run. `vite
+#      dev` first-boot bundles ~600 Svelte modules against an
+#      empty .vite/deps/ cache; CI's `compose down -v` between
+#      runs guarantees cold every run.
+#   2. The artifact tested IS what ships. Catches `embed_web`-
+#      only issues (build flags, embed asset paths, prod-only env
+#      handling) the dev path would skip.
+#   3. Single hop. No nginx → Vite proxy chain to debug when a
+#      test fails.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: ci-${GITHUB_SHA:-dev}
+    # The dev compose uses `expose: [8080]` so only nginx talks to
+    # the app over the docker network. In CI we skip nginx, so
+    # publish the port to the host instead. Reuses the
+    # NGINX_HTTP_PORT env (host port) the workflow already
+    # remaps to 18188 so Playwright + apply.py both point at one
+    # URL.
+    ports:
+      - "${NGINX_HTTP_PORT:-8080}:8080"
