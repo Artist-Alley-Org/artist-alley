@@ -59,9 +59,7 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: |
-            web/package-lock.json
-            scripts/dogfood/ui/package-lock.json
+          cache-dependency-path: scripts/dogfood/ui/package-lock.json
 
       # Playwright's Chromium download is ~150 MB. Cache it across
       # runs so we only re-fetch when Playwright bumps.
@@ -75,6 +73,15 @@ jobs:
 
       # Materialise .env the same shape as ci.yml's `test` job — high
       # ports so the runner's local services don't collide.
+      #
+      # UID + GID match the runner so the `web` (Vite) container's
+      # in-image `app` user can write to the bind-mounted ./web/
+      # tree. Without this match the container fails with EACCES on
+      # /app/.svelte-kit during dev-server boot — same root cause
+      # that's pushed ci.yml/test toward `--scale web=0` for the
+      # backend-only suite. Here we need the dev SPA so the test
+      # browser has something to talk to, so we fix the cause
+      # instead of skipping the container.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
@@ -86,6 +93,8 @@ jobs:
             echo "MINIO_API_PORT=19100"
             echo "MINIO_CONSOLE_PORT=19101"
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+            echo "UID=$(id -u)"
+            echo "GID=$(id -g)"
           } >> .env
 
       - name: Sweep leaked CI containers
@@ -95,17 +104,11 @@ jobs:
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
-      # The `web` (Vite) compose service fails in CI with EACCES on
-      # `/app/.svelte-kit` — the bind-mount UID doesn't match the
-      # container's app user. Same constraint ci.yml's `test` job
-      # works around with `--scale web=0`. We do the same here, but
-      # then run Vite directly on the runner so the Playwright
-      # tests still have a SPA to talk to. Vite proxies /api/* to
-      # the docker'd nginx port (NGINX_HTTP_PORT=18188), same
-      # convention as local dev — just with the proxy target swapped
-      # from `http://nginx:80` to `http://localhost:18188`.
-      - name: Bring up the backend stack (no `web` container)
-        run: docker compose up -d --build --scale web=0
+      - name: Bring up the full stack (including web)
+        # Builds the web container with UID/GID = runner so the
+        # bind-mounted ./web/ tree is writable from inside the
+        # container.
+        run: docker compose up -d --build
 
       - name: Wait for postgres to be ready
         run: |
@@ -121,9 +124,8 @@ jobs:
           exit 1
 
       - name: Wait for app to finish migrations
-        # Same gate as ci.yml — polls goose_db_version because the
-        # app runs migrations at boot and tests need the schema
-        # before they hit the API.
+        # Polls goose_db_version because the app runs migrations at
+        # boot. Same gate ci.yml uses for the integration suite.
         run: |
           target_version=$(ls app/internal/db/migrations/*.sql \
               | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
@@ -142,49 +144,17 @@ jobs:
           docker compose logs app --tail=40 || true
           exit 1
 
-      # Install the SvelteKit frontend deps + generate the TypeScript
-      # API schema. Same rolldown lockfile-nuke as ci.yml/frontend-check
-      # because the committed lockfile only pins the musl rolldown
-      # binding and an ubuntu (glibc) runner needs the gnu one.
-      - name: Install web deps + generate API schema
-        working-directory: web
-        env:
-          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
-        run: |
-          rm -f package-lock.json
-          npm install --no-audit
-          npm run generate:api
-
-      - name: Start Vite on the runner
-        # Background process; we wait for /healthz on it next. The
-        # AA_API_PROXY_TARGET override points Vite's API proxy at
-        # the host-exposed nginx port instead of the in-network
-        # nginx:80 hostname.
-        #
-        # NOTE: target is 127.0.0.1 explicitly, NOT `localhost`.
-        # Node 22+ DNS prefers IPv6 (::1) which docker port-bindings
-        # don't listen on by default — every proxy call would 502
-        # with ECONNREFUSED. Forcing IPv4 keeps the runner-→ docker
-        # bridge stable.
-        working-directory: web
-        env:
-          AA_API_PROXY_TARGET: http://127.0.0.1:18188
-        run: |
-          nohup npm run dev -- --port 15173 --host 0.0.0.0 \
-              > "${GITHUB_WORKSPACE}/vite.log" 2>&1 &
-          echo $! > "${GITHUB_WORKSPACE}/vite.pid"
-
-      - name: Wait for Vite to respond
+      - name: Wait for the Vite SPA to respond
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS -o /dev/null "http://localhost:15173/"; then
+            if curl -fsS -o /dev/null "http://127.0.0.1:15173/"; then
               echo "Vite ready after ${i} attempts"
               exit 0
             fi
             sleep 2
           done
           echo "Vite never became ready" >&2
-          tail -80 "${GITHUB_WORKSPACE}/vite.log" || true
+          docker compose logs web --tail=80 || true
           exit 1
 
       - name: Install Playwright + browsers
@@ -195,7 +165,7 @@ jobs:
 
       - name: Run UI standalone suite
         env:
-          STUDIO_A_HOST: http://localhost:15173
+          STUDIO_A_HOST: http://127.0.0.1:15173
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 
@@ -207,20 +177,12 @@ jobs:
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
-            vite.log
           retention-days: 14
           if-no-files-found: ignore
 
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=200
-
-      - name: Stop Vite
-        if: always()
-        run: |
-          if [ -f "${GITHUB_WORKSPACE}/vite.pid" ]; then
-            kill "$(cat "${GITHUB_WORKSPACE}/vite.pid")" 2>/dev/null || true
-          fi
 
       - name: Stop the stack
         if: always()
