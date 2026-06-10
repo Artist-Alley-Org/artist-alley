@@ -28,6 +28,11 @@ on:
         description: "Branch / tag / SHA to test"
         required: false
         default: "dev"
+  # TEMPORARY: validates the seed step shape on this branch before
+  # merging. Remove before the PR to dev / main lands —
+  # workflow_dispatch is the durable trigger for ad-hoc runs.
+  push:
+    branches: ["feat/dogfood-polish"]
 
 concurrency:
   group: ui-nightly-${{ github.workflow }}
