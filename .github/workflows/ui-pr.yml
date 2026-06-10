@@ -1,13 +1,23 @@
 # UI dogfood — fast PR / branch validation.
 #
-# Runs the Playwright `standalone` project against the dev stack on
-# every PR + every push to a long-lived branch. Brings up just
-# studio-a (no studio-b / no pair.sh / no mkcert) so the cycle is
-# ~4-6 minutes end-to-end.
+# Runs the Playwright `standalone` project against the production
+# artifact on every PR + every push to a long-lived branch.
+#
+# We test the PROD image, not the dev compose's `vite dev` stack.
+# Reasons:
+#   1. Cold-start Vite on a github-hosted runner takes ~6 min
+#      (empty .vite/deps/ → full re-optimization of ~600 Svelte
+#      modules across two passes). The prod image embeds the
+#      pre-built SPA via go:embed; the Go binary serves both the
+#      SPA and the API on :8080 with no dep-optimization step.
+#   2. The artifact tested is what ships. Catches embed_web-only
+#      bugs the dev path would skip.
+#   3. Single hop. No nginx + Vite proxy chain to debug when a
+#      test fails.
 #
 # Federation tests run in ui-nightly.yml — they need the dogfood
-# compose profile + mkcert + /etc/hosts which is too much setup for
-# a PR-blocking workflow.
+# compose profile + mkcert + /etc/hosts which is too much setup
+# for a PR-blocking workflow.
 #
 # Pairs with ci.yml: ci.yml gates Go + frontend correctness; this
 # workflow gates the UI surface (navigation, forms, admin pages
@@ -50,7 +60,7 @@ jobs:
     name: Playwright standalone
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -71,21 +81,23 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # Materialise .env the same shape as ci.yml's `test` job — high
-      # ports so the runner's local services don't collide. UID + GID
-      # left at default 1000 so the heavy `app` image (Blender +
-      # ffmpeg + ImageMagick etc.) stays cache-warm across PR runs —
-      # changing them invalidates the entire app build layer chain.
+      # Buildx + GHA cache for the prod image. First run on a branch
+      # is cold (~3 min), subsequent runs hit the layer cache and
+      # rebuild only the changed layers.
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Materialise .env the same shape as ci.yml's `test` job —
+      # high ports so the runner's local services don't collide.
+      # VITE_HOST_PORT is what the CI override compose binds the
+      # app's :8080 to on the host.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
           {
             echo "POSTGRES_HOST_PORT=15452"
-            echo "NGINX_HTTP_PORT=18188"
             echo "VITE_HOST_PORT=15173"
-            echo "MINIO_API_PORT=19100"
-            echo "MINIO_CONSOLE_PORT=19101"
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
           } >> .env
 
@@ -96,19 +108,17 @@ jobs:
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
-      # The `web` (Vite) container's in-image `node` user is UID
-      # 1000 (default ARG). On a github-hosted runner the workspace
-      # is owned by user `runner` (UID 1001 or similar), so the
-      # bind-mounted ./web/ tree is unwritable to the container's
-      # user → Vite crashes with EACCES on `/app/.svelte-kit` and
-      # the SPA never serves. Chowning ./web/ to 1000 lets the
-      # container write its generated dirs. Workspace is recycled
-      # between jobs so the ownership flip has no follow-on effect.
-      - name: Allow the web container to write its bind-mount
-        run: sudo chown -R 1000:1000 web
-
-      - name: Bring up the full stack (including web)
-        run: docker compose up -d --build
+      # Replace the dev `app` service with the production image
+      # (built from the root Dockerfile with `-tags embed_web`).
+      # Only `app` + `postgres` are started — the prod image serves
+      # the SPA + API itself, so nginx + the web (Vite) container
+      # aren't needed and aren't named here.
+      - name: Build + start the prod stack
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f infra/docker/ci/docker-compose.ci.yml \
+            up -d --build app postgres
 
       - name: Wait for postgres to be ready
         run: |
@@ -123,9 +133,10 @@ jobs:
           docker compose logs postgres
           exit 1
 
-      - name: Wait for app to finish migrations
-        # Polls goose_db_version because the app runs migrations at
-        # boot. Same gate ci.yml uses for the integration suite.
+      - name: Wait for app to finish migrations + serve the SPA
+        # Polls goose_db_version + a GET / round-trip. The embedded
+        # SPA returns 200 + HTML once the Go server is fully up,
+        # which is the signal Playwright will look for too.
         run: |
           target_version=$(ls app/internal/db/migrations/*.sql \
               | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
@@ -136,34 +147,19 @@ jobs:
                 2>/dev/null || echo 0)
             if [ "${current}" = "${target_version}" ]; then
               echo "migrations at version ${current} after ${i} attempts"
+              break
+            fi
+            sleep 2
+          done
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:15173/healthz"; then
+              echo "app SPA ready after ${i} attempts"
               exit 0
             fi
             sleep 2
           done
-          echo "migrations never reached target ${target_version}" >&2
-          docker compose logs app --tail=40 || true
-          exit 1
-
-      - name: Wait for the Vite SPA to respond
-        # Cold-start Vite on a github-hosted runner takes ~6 min
-        # before the dev server binds: two passes of the dep
-        # optimizer (client + SSR) discover ~600 Svelte modules
-        # against an empty `.vite/deps/` cache, then Vite reports
-        # `ready in N ms` and starts listening. Local dev never
-        # hits this because node_modules / .vite / .svelte-kit are
-        # pre-warm. Observed in 3 prior runs: 4 min, 4 min, 6 min.
-        # Wait 10 min so we don't false-alarm on the next variance
-        # bump; the success path still exits early on first 200.
-        run: |
-          for i in $(seq 1 300); do
-            if curl -fsS -o /dev/null "http://127.0.0.1:15173/"; then
-              echo "Vite ready after ${i} attempts"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Vite never became ready" >&2
-          docker compose logs web --tail=80 || true
+          echo "app SPA never became ready" >&2
+          docker compose logs app --tail=80 || true
           exit 1
 
       - name: Install Playwright + browsers

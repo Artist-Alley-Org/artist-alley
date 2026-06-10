@@ -1,0 +1,51 @@
+# Compose override for the CI dogfood UI workflow.
+#
+# Swaps the dev `app` service for the production image (root
+# Dockerfile, built with `-tags embed_web`). The Go binary serves
+# both the API and the SvelteKit SPA, so the dev `web` (Vite)
+# container can be skipped — saving ~6 min of cold-cache dep
+# optimization per run — and the `nginx` reverse proxy can be
+# skipped too because Playwright talks straight to the app's
+# HTTP server.
+#
+# Use:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f infra/docker/ci/docker-compose.ci.yml \
+#     --scale web=0 --scale nginx=0 \
+#     up -d --build
+#
+# The result is one app container + postgres, with the SPA served
+# from / and the API from /api/v1. Playwright runs against
+# http://127.0.0.1:${VITE_HOST_PORT:-15173}/.
+#
+# Why the prod image instead of the dev image:
+#   1. Cuts a ~6 min Vite cold-start out of every PR run. The dev
+#      compose's `web` service runs `vite dev`, which on first boot
+#      bundles ~600 Svelte modules against an empty .vite/deps/
+#      cache. CI starts cold every run.
+#   2. The artifact tested IS what ships. Catches `embed_web`-only
+#      issues (build flags, embed asset paths, prod-only env
+#      handling) that the dev path would skip.
+#   3. Single network hop. No nginx → app → Vite proxy chain to
+#      keep straight; cuts diagnostic surface when a test fails.
+
+services:
+  app:
+    build:
+      # Build the production image from the repo root. The dev
+      # compose's app `build:` block already gets overridden — this
+      # whole block replaces it.
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: ci-${GITHUB_SHA:-dev}
+      cache_from:
+        - type=gha
+      cache_to:
+        - type=gha,mode=max
+    # The dev compose uses `expose: [8080]` so only nginx talks to
+    # the app over the docker network. In CI we skip nginx, so
+    # publish the port to the host instead.
+    ports:
+      - "${VITE_HOST_PORT:-15173}:8080"
