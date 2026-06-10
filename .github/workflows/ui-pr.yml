@@ -3,7 +3,7 @@
 # Runs the Playwright `standalone` project against the dev stack on
 # every PR + every push to a long-lived branch. Brings up just
 # studio-a (no studio-b / no pair.sh / no mkcert) so the cycle is
-# ~3-5 minutes end-to-end.
+# ~4-6 minutes end-to-end.
 #
 # Federation tests run in ui-nightly.yml — they need the dogfood
 # compose profile + mkcert + /etc/hosts which is too much setup for
@@ -58,10 +58,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          # Cache the Playwright npm install. Cache key includes
-          # package-lock so a dependency bump invalidates cleanly.
           cache: "npm"
-          cache-dependency-path: scripts/dogfood/ui/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            scripts/dogfood/ui/package-lock.json
 
       # Playwright's Chromium download is ~150 MB. Cache it across
       # runs so we only re-fetch when Playwright bumps.
@@ -88,21 +88,87 @@ jobs:
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
           } >> .env
 
-      # `run-ui.sh` reads STUDIO_A_HOST so we point it at the
-      # remapped Vite port instead of the default :5173.
       - name: Sweep leaked CI containers
-        # Self-hosted runners can leak compose state across runs;
-        # ubuntu-hosted is a clean slate so this is cheap there.
         run: |
           docker compose down -v --remove-orphans || true
           stale=$(docker ps -aq --filter "name=^artist-alley-")
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
-      - name: Bring up the dev stack (standalone)
-        run: ./scripts/dogfood/up.sh --standalone
+      # The `web` (Vite) compose service fails in CI with EACCES on
+      # `/app/.svelte-kit` — the bind-mount UID doesn't match the
+      # container's app user. Same constraint ci.yml's `test` job
+      # works around with `--scale web=0`. We do the same here, but
+      # then run Vite directly on the runner so the Playwright
+      # tests still have a SPA to talk to. Vite proxies /api/* to
+      # the docker'd nginx port (NGINX_HTTP_PORT=18188), same
+      # convention as local dev — just with the proxy target swapped
+      # from `http://nginx:80` to `http://localhost:18188`.
+      - name: Bring up the backend stack (no `web` container)
+        run: docker compose up -d --build --scale web=0
 
-      - name: Wait for the Vite SPA to respond
+      - name: Wait for postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never became ready" >&2
+          docker compose logs postgres
+          exit 1
+
+      - name: Wait for app to finish migrations
+        # Same gate as ci.yml — polls goose_db_version because the
+        # app runs migrations at boot and tests need the schema
+        # before they hit the API.
+        run: |
+          target_version=$(ls app/internal/db/migrations/*.sql \
+              | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
+          for i in $(seq 1 60); do
+            current=$(docker compose exec -T postgres \
+                psql -U artist_alley -d artist_alley -tAc \
+                "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version" \
+                2>/dev/null || echo 0)
+            if [ "${current}" = "${target_version}" ]; then
+              echo "migrations at version ${current} after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "migrations never reached target ${target_version}" >&2
+          docker compose logs app --tail=40 || true
+          exit 1
+
+      # Install the SvelteKit frontend deps + generate the TypeScript
+      # API schema. Same rolldown lockfile-nuke as ci.yml/frontend-check
+      # because the committed lockfile only pins the musl rolldown
+      # binding and an ubuntu (glibc) runner needs the gnu one.
+      - name: Install web deps + generate API schema
+        working-directory: web
+        env:
+          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit
+          npm run generate:api
+
+      - name: Start Vite on the runner
+        # Background process; we wait for /healthz on it next. The
+        # AA_API_PROXY_TARGET override points Vite's API proxy at
+        # the host-exposed nginx port instead of the in-network
+        # nginx:80 hostname.
+        working-directory: web
+        env:
+          AA_API_PROXY_TARGET: http://localhost:18188
+        run: |
+          nohup npm run dev -- --port 15173 --host 0.0.0.0 \
+              > "${GITHUB_WORKSPACE}/vite.log" 2>&1 &
+          echo $! > "${GITHUB_WORKSPACE}/vite.pid"
+
+      - name: Wait for Vite to respond
         run: |
           for i in $(seq 1 60); do
             if curl -fsS -o /dev/null "http://localhost:15173/"; then
@@ -112,7 +178,7 @@ jobs:
             sleep 2
           done
           echo "Vite never became ready" >&2
-          docker compose logs web --tail=40 || true
+          tail -80 "${GITHUB_WORKSPACE}/vite.log" || true
           exit 1
 
       - name: Install Playwright + browsers
@@ -135,12 +201,20 @@ jobs:
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
+            vite.log
           retention-days: 14
           if-no-files-found: ignore
 
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=200
+
+      - name: Stop Vite
+        if: always()
+        run: |
+          if [ -f "${GITHUB_WORKSPACE}/vite.pid" ]; then
+            kill "$(cat "${GITHUB_WORKSPACE}/vite.pid")" 2>/dev/null || true
+          fi
 
       - name: Stop the stack
         if: always()
