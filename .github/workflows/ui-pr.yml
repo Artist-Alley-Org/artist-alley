@@ -145,8 +145,14 @@ jobs:
           exit 1
 
       - name: Wait for the Vite SPA to respond
+        # Cold-start Vite on a github-hosted runner takes ~2 min
+        # (forced re-optimization of deps + SSR optimizer bundling
+        # + a few hundred Svelte modules). Local dev is faster
+        # because node_modules + .svelte-kit are already populated;
+        # in CI the bind-mounted dir starts empty. Wait 4 min so
+        # we don't false-alarm on a slow runner.
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             if curl -fsS -o /dev/null "http://127.0.0.1:15173/"; then
               echo "Vite ready after ${i} attempts"
               exit 0
