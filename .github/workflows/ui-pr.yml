@@ -114,33 +114,17 @@ jobs:
             -f infra/docker/ci/docker-compose.ci.yml \
             up -d --build app postgres
 
-      - name: Runner network topology (diagnostic)
-        # Establishes whether the runner sees the host's localhost
-        # or whether it's in its own network namespace (e.g.
-        # running inside a container with the docker socket
-        # mounted). If `127.0.0.1:18188` doesn't reach the
-        # published app port, we need to either join the compose
-        # network OR target the container IP directly.
+      # The self-hosted runner runs inside its own docker
+      # container with the docker socket mounted, so containers it
+      # CREATES publish their ports onto the *host*'s localhost —
+      # the runner container itself can't reach `localhost:18188`.
+      # Solution: attach the runner container to the compose
+      # network so it can reach the app via docker DNS (`app:8080`)
+      # without any port-publish gymnastics.
+      - name: Attach runner to the compose network
         run: |
-          echo "=== runner whoami / hostname ==="
-          whoami
-          hostname
-          echo
-          echo "=== /etc/resolv.conf (first 3 lines) ==="
-          head -3 /etc/resolv.conf || true
-          echo
-          echo "=== am I in a container? (presence of /.dockerenv) ==="
-          ls -la /.dockerenv 2>&1 || true
-          echo
-          echo "=== ip addr (just docker bridges + lo) ==="
-          ip -brief addr show 2>/dev/null | head -10 || true
-          echo
-          echo "=== docker compose ps ==="
-          docker compose -f docker-compose.yml -f infra/docker/ci/docker-compose.ci.yml ps
-          echo
-          echo "=== app container IP on its docker network ==="
-          docker inspect artist-alley-app-1 \
-            -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} on {{.NetworkID}}{{"\n"}}{{end}}'
+          docker network connect artist-alley_default "$(hostname)" || \
+            docker network connect artist-alley_default "$(cat /etc/hostname)"
 
       - name: Wait for postgres to be ready
         run: |
@@ -157,9 +141,9 @@ jobs:
 
       - name: Wait for app to finish migrations + serve the SPA
         # Polls goose_db_version (migrations are run by the app at
-        # boot) + then a GET /healthz round-trip. The embedded
-        # SPA returns 200 + HTML on / once the Go server is fully
-        # up, which is the signal Playwright will look for too.
+        # boot) + then a GET /healthz round-trip via docker DNS.
+        # The embedded SPA returns 200 on /healthz once the Go
+        # server is fully up.
         run: |
           target_version=$(ls app/internal/db/migrations/*.sql \
               | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
@@ -175,7 +159,7 @@ jobs:
             sleep 2
           done
           for i in $(seq 1 60); do
-            if curl -fsS -o /dev/null "http://localhost:18188/healthz"; then
+            if curl -fsS -o /dev/null "http://app:8080/healthz"; then
               echo "app SPA ready after ${i} attempts"
               exit 0
             fi
@@ -195,7 +179,11 @@ jobs:
       # red tests.
       - name: Seed site_a via apply.py
         env:
-          AA_API_BASE: http://localhost:18188
+          # Runner is on the compose network — reach the app via
+          # docker DNS, not the host-published port. Same shape as
+          # the dev `web` service points its proxy at
+          # `http://nginx:80` in the source.
+          AA_API_BASE: http://app:8080
           SITE_A_PATH: /mnt/blackbox_archives/datasets/artist_alley/site_a
         run: |
           python3 -m pip install --user --quiet kagglehub requests || true
@@ -225,7 +213,11 @@ jobs:
 
       - name: Run UI standalone suite
         env:
-          STUDIO_A_HOST: http://localhost:18188
+          # Same docker-DNS path as the seed + the wait gate.
+          # Playwright launches Chromium inside the runner
+          # container; the runner is on the compose network so
+          # Chromium can reach the app the same way.
+          STUDIO_A_HOST: http://app:8080
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 
@@ -244,6 +236,14 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=200
+
+      - name: Detach runner from the compose network
+        if: always()
+        # Don't leave stale network attachments on the runner
+        # container across runs (matters for the next workflow if
+        # this run was force-cancelled).
+        run: |
+          docker network disconnect artist-alley_default "$(hostname)" 2>/dev/null || true
 
       - name: Stop the stack
         if: always()
