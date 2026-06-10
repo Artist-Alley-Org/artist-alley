@@ -93,6 +93,92 @@ jobs:
       - name: Bring up the full dogfood stack
         run: ./scripts/dogfood/up.sh
 
+      # Same root cause that pushed ui-pr.yml self-hosted: the
+      # runner runs inside its own docker container (`docker ps`
+      # confirms `/.dockerenv` + a container-ID hostname), so
+      # containers it brings up via the mounted docker.sock
+      # publish their ports onto the *host* — the runner can't
+      # reach them via `localhost`. Attaching the runner to the
+      # compose network gives it docker DNS for `app`, `app-b`,
+      # and the seed step's apply.py calls reach both APIs over
+      # the in-network port.
+      - name: Attach runner to the compose network
+        run: |
+          docker network connect artist-alley_default "$(hostname)" 2>/dev/null \
+            || docker network connect artist-alley_default "$(cat /etc/hostname)"
+
+      # apply.py seeds users + teams + assets + posts + federation
+      # rows from the upstream dataset. Without this, the federation
+      # tests assert against empty result sets and fail for
+      # missing-data reasons that mask any real regression they're
+      # meant to catch — same lesson ui-pr.yml learned.
+      #
+      # Both sites in parallel because each apply.py saturates upload
+      # bandwidth against its own postgres independently — sequential
+      # would be ~10 min, parallel is ~5.5 min wall.
+      #
+      # The [a] / [b] prefix on each output line is the only thing
+      # that makes interleaved parallel output readable in the run
+      # log. Worth four characters.
+      #
+      # `--strict-verify` makes the run fail loudly upstream of
+      # pair.sh + the test step if the dataset is missing /
+      # corrupted / partially uploaded — the verify pass catches
+      # >10% count divergence per phase. Better to know which seed
+      # broke than to chase phantom federation failures.
+      - name: Seed both sites in parallel via apply.py
+        env:
+          # /datasets is the read-only mount the runner template
+          # added (Unraid → AristAlley-Github-Actions-Runner →
+          # BLACKBOX datasets); on the host it points at
+          # /mnt/remotes/192.168.69.145_Archives/datasets.
+          SITE_A_PATH: /datasets/artist_alley/site_a
+          SITE_B_PATH: /datasets/artist_alley/site_b
+          # Both APIs reachable over docker DNS now that the runner
+          # is on the compose network. Includes /api/v1 prefix
+          # because apply.py's path constants are unversioned.
+          STUDIO_A_API: http://app:8080/api/v1
+          STUDIO_B_API: http://app-b:8080/api/v1
+        run: |
+          python3 -m pip install --user --quiet kagglehub requests || true
+
+          ( python3 seed/scripts/apply.py \
+              --site "$SITE_A_PATH" \
+              --catalogue seed/profiles \
+              --api "$STUDIO_A_API" \
+              --workers 16 \
+              --strict-verify 2>&1 | sed 's/^/[a] /' ) &
+          PID_A=$!
+
+          ( python3 seed/scripts/apply.py \
+              --site "$SITE_B_PATH" \
+              --catalogue seed/profiles \
+              --api "$STUDIO_B_API" \
+              --workers 16 \
+              --strict-verify 2>&1 | sed 's/^/[b] /' ) &
+          PID_B=$!
+
+          wait $PID_A; A_RC=$?
+          wait $PID_B; B_RC=$?
+          if [ $A_RC -ne 0 ] || [ $B_RC -ne 0 ]; then
+            echo "::error::seed failed (site_a=$A_RC site_b=$B_RC)"
+            exit 1
+          fi
+
+      - name: Apply state diagnostic on failure
+        if: failure()
+        run: |
+          for tag in a b; do
+            f="apply-state-localhost-${tag}.json"
+            if [ -f "$f" ]; then
+              echo "=== $f ==="
+              jq '.phases_completed, {users: (.users | length), assets: (.assets | length), posts: (.posts | length)}' \
+                "$f" 2>/dev/null || cat "$f"
+            else
+              echo "no $f"
+            fi
+          done
+
       - name: Pair studio-a + studio-b
         # Pair waits for both health endpoints + sets site.base_url
         # on both sides + registers each as a peer of the other.
@@ -126,6 +212,7 @@ jobs:
           path: |
             scripts/dogfood/ui/.pw-report/
             scripts/dogfood/ui/.pw-results/
+            apply-state-*.json
           retention-days: 30
           if-no-files-found: ignore
 
@@ -141,6 +228,15 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker compose logs --tail=300
+
+      - name: Detach runner from the compose network
+        if: always()
+        # Don't leave stale network attachments on the runner
+        # container across runs — a force-cancelled run otherwise
+        # leaves the next workflow attached to a network its
+        # containers no longer belong to.
+        run: |
+          docker network disconnect artist-alley_default "$(hostname)" 2>/dev/null || true
 
       - name: Stop the stack
         if: always()
