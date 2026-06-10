@@ -111,6 +111,19 @@ jobs:
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
+      - name: Sweep stale /etc/hosts entries from previous runs
+        # Older up.sh versions wrote `127.0.0.1 studio-b.local`
+        # into the runner's own /etc/hosts (the runner is root +
+        # has its own filesystem). That entry is wrong inside the
+        # runner — its 127.0.0.1 isn't where nginx-b lives — and
+        # /etc/hosts takes precedence over docker DNS, so the bad
+        # entry breaks `curl https://studio-b.local:9443` even
+        # after we attach to the compose network. Strip the marker
+        # block once per run so the runner falls through to docker
+        # DNS cleanly.
+        run: |
+          sed -i '/# artist-alley dogfood/,/^$/d' /etc/hosts || true
+
       # The runner template bind-mounts /srv/runner-tls (on the host)
       # to /runner-tls inside the runner container — that directory
       # holds the pre-generated mkcert root CA + the studio-b.local

@@ -143,35 +143,36 @@ fi
 
 # --- 2. studio-b.local resolution -------------------------------------------
 
-step "Verifying studio-b.local resolves"
+step "Checking studio-b.local resolution"
 if getent hosts studio-b.local >/dev/null 2>&1; then
-    echo "  studio-b.local already resolves — no /etc/hosts edit needed"
-elif sudo -n true 2>/dev/null || [ "$(id -u)" = "0" ]; then
-    # Capability check above succeeded → we have sudo without
-    # prompting (or we are root). Edit /etc/hosts so the host
-    # browser + this shell can both reach studio-b.local.
-    if grep -q "$HOSTS_BEGIN" /etc/hosts; then
-        echo "  marker block already present; leaving it alone"
-    else
-        sudo bash -c "cat >> /etc/hosts <<EOF
-
-${HOSTS_BEGIN}
-127.0.0.1 studio-b.local
-${HOSTS_END}
-EOF"
-        echo "  added"
-    fi
+    echo "  studio-b.local resolves — nothing to do"
 else
-    # No sudo + studio-b.local doesn't resolve from this shell. CI
-    # path (containerized runner) lands here: the dogfood compose
-    # override registers `studio-b.local` as a network alias on
-    # nginx-b, so anything attached to the artist-alley_default
-    # network resolves it via docker DNS. The host process running
-    # up.sh itself doesn't need to resolve it in that mode.
-    warn "studio-b.local doesn't resolve from this shell + no sudo to edit /etc/hosts.
-       Containers attached to the compose network resolve it via docker DNS
-       (alias on nginx-b). Local-dev browsers would need '127.0.0.1 studio-b.local'
-       in /etc/hosts."
+    # `studio-b.local` is a docker network alias on nginx-b (see
+    # docker-compose.yml), so anything attached to
+    # artist-alley_default resolves it via docker DNS automatically
+    # — that includes both stacks' own containers AND any extra
+    # container that joins the network (e.g. the CI runner via
+    # `docker network connect`).
+    #
+    # The host SHELL running this script is NOT on that network;
+    # `studio-b.local` doesn't resolve from outside docker. We
+    # used to edit /etc/hosts here to paper that over, but that
+    # broke under the containerised CI runner — `127.0.0.1` from
+    # inside the runner container is the runner's own loopback,
+    # NOT the host's, so the entry pointed at nothing.
+    #
+    # New contract: /etc/hosts is HOST state, not script state.
+    # If you want to reach https://studio-b.local:9443 from the
+    # host's browser, add this once to your /etc/hosts:
+    #
+    #     127.0.0.1 studio-b.local
+    #
+    # Documented in infra/runner/README.md (CI case) and in the
+    # dogfood docs (local-dev case).
+    warn "studio-b.local doesn't resolve from this shell.
+       Containers on the compose network reach it via docker DNS automatically;
+       the host browser needs a one-time '/etc/hosts' edit:
+         echo '127.0.0.1 studio-b.local' | sudo tee -a /etc/hosts"
 fi
 
 # --- 4. docker compose ------------------------------------------------------
