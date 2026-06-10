@@ -183,11 +183,22 @@ step "Bringing up the dogfood profile (studio-b alongside dev)"
 # silently retries forever with "x509: certificate signed by
 # unknown authority" in last_error. See infra/docker/dogfood/
 # docker-compose.override.yml.
+#
+# Two compose calls: the first brings every service in the dogfood
+# profile up (creates whatever's missing); the second
+# force-recreates `app` only, so a re-run picks up a freshly-mounted
+# CA without bouncing the whole stack. Passing `app` as a positional
+# arg to compose `up` SCOPES the command to that one service + its
+# deps — without the bare `up` first, postgres-b / app-b / nginx-b
+# would never start on a fresh runner.
 docker compose \
     -f docker-compose.yml \
     -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --build \
-    --force-recreate app  # pick up the new bind-mount if app was already running
+    --profile dogfood up -d --build
+docker compose \
+    -f docker-compose.yml \
+    -f infra/docker/dogfood/docker-compose.override.yml \
+    --profile dogfood up -d --force-recreate app
 
 # --- 5. wait for studio-b ready --------------------------------------------
 
