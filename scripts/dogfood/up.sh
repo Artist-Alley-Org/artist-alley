@@ -47,11 +47,38 @@ fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- 0. preflight -----------------------------------------------------------
 
+# Capability-shaped check, not environment-shaped. The script doesn't
+# care WHERE it's running (bare metal, CI runner, container, etc.) —
+# only what it needs to bring up studio-b's HTTPS surface:
+#
+#   path A:  certs already provisioned at $CERT_DIR.
+#            (CI flow: the runner template bind-mounts pre-generated
+#             certs from the host into the workspace before this
+#             script runs; nothing for up.sh to do.)
+#
+#   path B:  mkcert on PATH. We'll issue + install fresh certs
+#            ourselves.
+#            (Local-dev flow.)
+#
+# This is intentionally NOT `if [ -n "$CI" ]`. Every divergence
+# between "what local dev does" and "what CI does" is a future
+# heisenbug; branching on capability instead keeps both code paths
+# walking the same script.
+
 if [ "$mode" = "full" ]; then
-    if ! command -v mkcert >/dev/null 2>&1; then
-        fail "mkcert is required but not found on PATH. Install per
-       https://github.com/FiloSottile/mkcert#installation
-       then re-run this script."
+    if [ -f "${CERT_DIR}/studio-b.local.pem" ] && \
+       [ -f "${CERT_DIR}/studio-b.local-key.pem" ] && \
+       [ -f "${CERT_DIR}/mkcert-rootCA.pem" ]; then
+        tls_source="pre-existing"
+    elif command -v mkcert >/dev/null 2>&1; then
+        tls_source="mkcert"
+    else
+        fail "No TLS prereqs available. Either:
+       (a) Drop studio-b.local.pem + studio-b.local-key.pem +
+           mkcert-rootCA.pem into ${CERT_DIR}/, or
+       (b) Install mkcert
+           (https://github.com/FiloSottile/mkcert#installation)
+       and re-run this script."
     fi
 fi
 
@@ -85,47 +112,66 @@ if [ "$mode" = "standalone" ]; then
     exit 0
 fi
 
-# --- 1. mkcert CA -----------------------------------------------------------
+# --- 1. TLS certs -----------------------------------------------------------
 
-step "Provisioning mkcert root CA (idempotent)"
-mkcert -install
-
-# --- 2. studio-b cert + mkcert root CA -------------------------------------
-
-step "Issuing studio-b.local cert into ${CERT_DIR}/"
 mkdir -p "$CERT_DIR"
-if [ ! -f "${CERT_DIR}/studio-b.local.pem" ] || \
-   [ ! -f "${CERT_DIR}/studio-b.local-key.pem" ]; then
-    ( cd "$CERT_DIR" && mkcert studio-b.local )
+if [ "$tls_source" = "mkcert" ]; then
+    step "Provisioning mkcert root CA (idempotent)"
+    mkcert -install
+
+    step "Issuing studio-b.local cert into ${CERT_DIR}/"
+    if [ ! -f "${CERT_DIR}/studio-b.local.pem" ] || \
+       [ ! -f "${CERT_DIR}/studio-b.local-key.pem" ]; then
+        ( cd "$CERT_DIR" && mkcert studio-b.local )
+    else
+        echo "  cert already present; skipping issuance"
+    fi
+
+    # Copy the mkcert root CA into the certs dir so the dogfood
+    # compose override can bind-mount it into the app + app-b
+    # containers. Without this, Go's TLS verify on outbound
+    # federation HTTPS calls fails with `x509: certificate signed by
+    # unknown authority`. The path matches infra/docker/dogfood/
+    # docker-compose.override.yml.
+    mkcert_caroot="$(mkcert -CAROOT)"
+    cp -f "${mkcert_caroot}/rootCA.pem" "${CERT_DIR}/mkcert-rootCA.pem"
+    echo "  mkcert root CA copied into ${CERT_DIR}/mkcert-rootCA.pem"
 else
-    echo "  cert already present; skipping issuance"
+    step "Using pre-existing TLS prereqs at ${CERT_DIR}/"
+    echo "  studio-b.local cert + key + mkcert root CA all present"
 fi
 
-# Copy the mkcert root CA into the certs dir so the dogfood compose
-# override can bind-mount it into the app + app-b containers. Without
-# this, Go's TLS verify on outbound federation HTTPS calls fails with
-# `x509: certificate signed by unknown authority`. The path matches
-# infra/docker/dogfood/docker-compose.override.yml.
-mkcert_caroot="$(mkcert -CAROOT)"
-cp -f "${mkcert_caroot}/rootCA.pem" "${CERT_DIR}/mkcert-rootCA.pem"
-echo "  mkcert root CA copied into ${CERT_DIR}/mkcert-rootCA.pem"
+# --- 2. studio-b.local resolution -------------------------------------------
 
-# --- 3. /etc/hosts ----------------------------------------------------------
-
-step "Idempotently writing studio-b.local to /etc/hosts"
-if grep -q "$HOSTS_BEGIN" /etc/hosts; then
-    echo "  marker block already present; leaving it alone"
-else
-    if ! sudo -n true 2>/dev/null; then
-        warn "sudo required to edit /etc/hosts — you may be prompted"
-    fi
-    sudo bash -c "cat >> /etc/hosts <<EOF
+step "Verifying studio-b.local resolves"
+if getent hosts studio-b.local >/dev/null 2>&1; then
+    echo "  studio-b.local already resolves — no /etc/hosts edit needed"
+elif sudo -n true 2>/dev/null || [ "$(id -u)" = "0" ]; then
+    # Capability check above succeeded → we have sudo without
+    # prompting (or we are root). Edit /etc/hosts so the host
+    # browser + this shell can both reach studio-b.local.
+    if grep -q "$HOSTS_BEGIN" /etc/hosts; then
+        echo "  marker block already present; leaving it alone"
+    else
+        sudo bash -c "cat >> /etc/hosts <<EOF
 
 ${HOSTS_BEGIN}
 127.0.0.1 studio-b.local
 ${HOSTS_END}
 EOF"
-    echo "  added"
+        echo "  added"
+    fi
+else
+    # No sudo + studio-b.local doesn't resolve from this shell. CI
+    # path (containerized runner) lands here: the dogfood compose
+    # override registers `studio-b.local` as a network alias on
+    # nginx-b, so anything attached to the artist-alley_default
+    # network resolves it via docker DNS. The host process running
+    # up.sh itself doesn't need to resolve it in that mode.
+    warn "studio-b.local doesn't resolve from this shell + no sudo to edit /etc/hosts.
+       Containers attached to the compose network resolve it via docker DNS
+       (alias on nginx-b). Local-dev browsers would need '127.0.0.1 studio-b.local'
+       in /etc/hosts."
 fi
 
 # --- 4. docker compose ------------------------------------------------------

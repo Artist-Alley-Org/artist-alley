@@ -66,17 +66,16 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # The federation stack assumes mkcert + studio-b.local in
-      # /etc/hosts. Both are host-level state that survives across
-      # runs on a long-lived self-hosted runner. Fail loudly if
-      # they're missing so an operator knows what to fix instead of
-      # chasing a cert-verify error from inside the app container.
-      - name: Verify host prereqs (mkcert + /etc/hosts)
-        run: |
-          command -v mkcert >/dev/null \
-            || { echo "::error::mkcert not on PATH on the self-hosted runner"; exit 1; }
-          grep -q '^127\.0\.0\.1\s\+studio-b\.local' /etc/hosts \
-            || { echo "::error::studio-b.local missing from /etc/hosts on the self-hosted runner"; exit 1; }
+      # No mkcert / /etc/hosts host-prereq check here — both are
+      # neutralised at the workflow level:
+      #   - TLS certs come from the runner template's /srv/runner-tls
+      #     bind-mount (staged below into infra/docker/dogfood/certs/
+      #     so up.sh's capability check skips the mkcert step).
+      #   - studio-b.local resolves through the docker network alias
+      #     on nginx-b (see docker-compose.yml) — works from any
+      #     container attached to artist-alley_default, including
+      #     the runner once we `docker network connect` to it.
+      # See infra/runner/README.md for the runner-provisioning side.
 
       - name: Materialise .env for the stack
         # Federation uses the host's actual ports (5173, 8080,
@@ -94,6 +93,26 @@ jobs:
           stale=$(docker ps -aq --filter "name=^artist-alley-")
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
+
+      # The runner template bind-mounts /srv/runner-tls (on the host)
+      # to /runner-tls inside the runner container — that directory
+      # holds the pre-generated mkcert root CA + the studio-b.local
+      # server cert + key. Copying them into the workspace's certs
+      # dir before up.sh makes up.sh's capability check find them
+      # and skip the mkcert step (which would otherwise fail —
+      # mkcert isn't installed in the runner container).
+      #
+      # See infra/runner/README.md for the runner-provisioning side.
+      - name: Stage TLS prereqs from the runner bind-mount
+        run: |
+          mkdir -p infra/docker/dogfood/certs
+          if [ ! -d /runner-tls ]; then
+            echo "::error::/runner-tls missing — runner template hasn't been re-applied with the TLS bundle bind-mount. See infra/runner/README.md."
+            exit 1
+          fi
+          for f in studio-b.local.pem studio-b.local-key.pem mkcert-rootCA.pem; do
+            cp -f "/runner-tls/$f" "infra/docker/dogfood/certs/$f"
+          done
 
       - name: Bring up the full dogfood stack
         run: ./scripts/dogfood/up.sh
