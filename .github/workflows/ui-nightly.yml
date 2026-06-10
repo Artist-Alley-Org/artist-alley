@@ -78,12 +78,29 @@ jobs:
       # See infra/runner/README.md for the runner-provisioning side.
 
       - name: Materialise .env for the stack
-        # Federation uses the host's actual ports (5173, 8080,
-        # 9443, etc.) because pair.sh + studio-b.conf hard-code
-        # the dogfood-default host. Don't remap them here.
+        # The runner host (Unraid) keeps the user's own dev stack
+        # bound on the dogfood defaults — postgres 5432, nginx
+        # 8080, vite 5173 — so docker can't bind any of them and
+        # `up.sh` fails before the seed runs. Remap every host
+        # port to high values; nothing downstream cares because
+        # the runner reaches the stack via docker DNS (postgres,
+        # app, nginx, studio-b.local — all aliases) after the
+        # `Attach runner to the compose network` step. pair.sh's
+        # studio-b URL is `https://studio-b.local:9443` which is
+        # ALSO docker-internal (nginx-b listens on 9443 inside the
+        # network); the host port binding is just for host-side
+        # operator access.
         run: |
           cp .env.example .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
           {
+            echo "POSTGRES_HOST_PORT=15452"
+            echo "NGINX_HTTP_PORT=18188"
+            echo "VITE_HOST_PORT=15173"
+            echo "MINIO_API_PORT=19100"
+            echo "MINIO_CONSOLE_PORT=19101"
+            echo "STUDIO_B_HTTPS_PORT=19443"
+            echo "STUDIO_B_PG_PORT=15433"
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
           } >> .env
 
