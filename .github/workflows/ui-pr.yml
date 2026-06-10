@@ -160,9 +160,15 @@ jobs:
         # AA_API_PROXY_TARGET override points Vite's API proxy at
         # the host-exposed nginx port instead of the in-network
         # nginx:80 hostname.
+        #
+        # NOTE: target is 127.0.0.1 explicitly, NOT `localhost`.
+        # Node 22+ DNS prefers IPv6 (::1) which docker port-bindings
+        # don't listen on by default — every proxy call would 502
+        # with ECONNREFUSED. Forcing IPv4 keeps the runner-→ docker
+        # bridge stable.
         working-directory: web
         env:
-          AA_API_PROXY_TARGET: http://localhost:18188
+          AA_API_PROXY_TARGET: http://127.0.0.1:18188
         run: |
           nohup npm run dev -- --port 15173 --host 0.0.0.0 \
               > "${GITHUB_WORKSPACE}/vite.log" 2>&1 &
