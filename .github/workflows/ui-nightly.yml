@@ -121,8 +121,17 @@ jobs:
         # after we attach to the compose network. Strip the marker
         # block once per run so the runner falls through to docker
         # DNS cleanly.
+        #
+        # `sed -i` can't be used: docker manages /etc/hosts as a
+        # bind-mount and `sed`'s atomic-rename strategy fails with
+        # "Device or resource busy." Copy-back via temp file
+        # instead — that overwrites the contents in place without
+        # touching the inode.
         run: |
-          sed -i '/# artist-alley dogfood/,/^$/d' /etc/hosts || true
+          tmp=$(mktemp)
+          grep -v -E '(# artist-alley dogfood|studio-b\.local)' /etc/hosts > "$tmp" || true
+          cat "$tmp" > /etc/hosts
+          rm -f "$tmp"
 
       # The runner template bind-mounts /srv/runner-tls (on the host)
       # to /runner-tls inside the runner container — that directory
