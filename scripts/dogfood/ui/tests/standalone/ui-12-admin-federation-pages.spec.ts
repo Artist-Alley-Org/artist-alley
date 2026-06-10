@@ -1,23 +1,27 @@
-// ui-12-admin-federation-pages.spec.ts
+// ui-12-admin-federation-pages.spec.ts (standalone)
 //
 // Federation-section admin surfaces (the five live surfaces
-// shipped in 1.22.D-c). Each page is walked + a sample of its
-// interactive controls is asserted.
+// shipped in 1.22.D-c). Asserts each page renders cleanly with
+// EMPTY tables — no peer / share rows required. Cross-instance
+// assertions (peer row visible, outbox sent, inbox processed)
+// live in tests/federation/ui-21-federation-peer-flow.spec.ts.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
 
-test.describe('UI-12 admin federation pages', () => {
+test.describe('UI-12 admin federation pages (standalone)', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdminViaUI(page);
   });
 
-  test('peers page renders with at least the paired studio-b row', async ({ page }) => {
+  test('peers page renders', async ({ page }) => {
     await page.goto('/admin/federation/peers');
     await expectPageRendersCleanly(page);
-    // pair.sh registered studio-b — its row must be visible.
-    await expect(page.locator('main')).toContainText(/studio-b/);
+    // No row assertion — federation/ui-21 handles cross-instance
+    // visibility. What this catches: a render crash from a missing
+    // i18n key, a schema field the page consumes that the API
+    // dropped, etc.
   });
 
   test('directories page renders', async ({ page }) => {
@@ -33,8 +37,7 @@ test.describe('UI-12 admin federation pages', () => {
   test('outbox page renders + has the queue table heading', async ({ page }) => {
     await page.goto('/admin/federation/outbox');
     await expectPageRendersCleanly(page);
-    // Outbox page should show the queue status — "queued", "sent",
-    // "failed", or similar status filter UI is the marker.
+    // Status filter UI (queued/sent/failed) is the structural marker.
     await expect(page.locator('main')).toContainText(/sent|queued|outbox/i);
   });
 

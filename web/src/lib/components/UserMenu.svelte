@@ -36,7 +36,7 @@
 </script>
 
 {#if u}
-  <Menu align="right">
+  <Menu align="right" triggerTestId="nav-user-menu-trigger" panelTestId="user-menu-panel">
     {#snippet trigger({ open })}
       <span
         class="inline-flex items-center gap-2 rounded-full p-1 pr-3 hover:bg-surface-elevated"
@@ -170,6 +170,7 @@
       type="button"
       role="menuitem"
       onclick={handleSignOut}
+      data-testid="user-menu-sign-out"
       class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
     >
       {t('user_menu.sign_out')}

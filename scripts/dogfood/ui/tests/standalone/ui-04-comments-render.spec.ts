@@ -11,7 +11,7 @@
 // seeded post.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaAPI } from '../helpers/auth';
+import { loginAsAdminViaAPI } from '../../helpers/auth';
 
 test.describe('UI-04 comments endpoint', () => {
   test('GET /posts/{id}/comments returns 2xx for every visible post', async ({ request }) => {

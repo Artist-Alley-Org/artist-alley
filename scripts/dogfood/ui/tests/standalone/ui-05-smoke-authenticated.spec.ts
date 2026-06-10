@@ -13,14 +13,14 @@
 //   - Capability gating regressions on the admin pages
 
 import { test } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
 import {
   ANONYMOUS_ROUTES,
   AUTHENTICATED_USER_ROUTES,
   ADMIN_ROUTES,
   ADMIN_CATCHALL_SECTIONS,
-} from '../helpers/routes';
+} from '../../helpers/routes';
 
 test.describe('UI-05 smoke (authenticated as admin)', () => {
   // Login once per test. Tests run in parallel workers so the

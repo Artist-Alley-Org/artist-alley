@@ -5,7 +5,7 @@
 // data without crashing.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-09 account pages', () => {
   test.beforeEach(async ({ page }) => {

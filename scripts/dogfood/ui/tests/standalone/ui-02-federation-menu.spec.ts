@@ -7,7 +7,7 @@
 // disabled tiles instead of the 5 shipped + 2 future ones.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-02 federation tile grid', () => {
   test.beforeEach(async ({ page }) => {

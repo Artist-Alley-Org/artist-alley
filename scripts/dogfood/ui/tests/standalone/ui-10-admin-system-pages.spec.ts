@@ -5,8 +5,8 @@
 // (a missing field, a renamed key, a 500 on GET).
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
 
 test.describe('UI-10 admin system pages', () => {
   test.beforeEach(async ({ page }) => {

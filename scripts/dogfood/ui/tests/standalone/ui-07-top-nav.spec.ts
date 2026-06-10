@@ -8,7 +8,8 @@
 // menu items.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { tid } from '../../helpers/testids';
 
 test.describe('UI-07 top navbar', () => {
   test.beforeEach(async ({ page }) => {
@@ -34,13 +35,12 @@ test.describe('UI-07 top navbar', () => {
 
   test('search box accepts input and lands on browse with ?q=', async ({ page }) => {
     await page.goto('/admin/federation/peers');
-    const searchbox = page.getByRole('searchbox', { name: 'Search' });
+    const searchbox = page.locator(tid('nav-search'));
     await expect(searchbox).toBeVisible();
     await searchbox.fill('test query');
     await searchbox.press('Enter');
     // Per +layout.svelte's handleSearch: from non-browse pages,
-    // navigate TO browse (/) with the query. (Not /search — that's
-    // the Advanced search link separately.)
+    // navigate TO browse (/) with the query.
     await expect(page).toHaveURL(/\/\?.*q=/);
   });
 
@@ -50,7 +50,7 @@ test.describe('UI-07 top navbar', () => {
   });
 
   test('upload button is visible', async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Upload' })).toBeVisible();
+    await expect(page.locator(tid('nav-upload-button'))).toBeVisible();
   });
 
   test('notifications button is visible', async ({ page }) => {
@@ -62,16 +62,13 @@ test.describe('UI-07 top navbar', () => {
   });
 
   test('user menu opens and contains Sign out', async ({ page }) => {
-    await page.getByRole('button', { name: /Bootstrap Admin/ }).click();
-    await expect(page.getByRole('menuitem', { name: /Sign out/i })).toBeVisible();
+    await page.locator(tid('nav-user-menu-trigger')).click();
+    await expect(page.locator(tid('user-menu-sign-out'))).toBeVisible();
   });
 
   test('admin menu opens and contains every section', async ({ page }) => {
-    // The admin menu button uses aria-label = `admin_menu.title`
-    // which resolves to "Admin" in en.json. Browser locale may pick
-    // up other locales (Spanish — "Administración") so accept both.
-    await page.getByRole('button', { name: /^(Admin|Administración)$/ }).click();
-    // Top-level admin sections — at least these must be there.
+    await page.locator(tid('nav-admin-menu-trigger')).click();
+    await expect(page.locator(tid('admin-menu-panel'))).toBeVisible();
     const expectedSections = [
       'Identity & access',
       'Content & metadata',

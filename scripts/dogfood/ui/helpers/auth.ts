@@ -1,4 +1,5 @@
 import { Page, expect, APIRequestContext } from '@playwright/test';
+import { tid } from './testids';
 
 const ADMIN_USER = process.env.AA_DOGFOOD_ADMIN_USER ?? 'admin';
 const ADMIN_PASS = process.env.AA_DOGFOOD_ADMIN_PASS ?? 'ArtistAlleyMogul';
@@ -7,15 +8,14 @@ const ADMIN_PASS = process.env.AA_DOGFOOD_ADMIN_PASS ?? 'ArtistAlleyMogul';
  * Log in as the bootstrap admin via the UI form.
  *
  * Tests the actual login flow — username field, password field,
- * sign-in button, post-login redirect. Useful for tests that
- * specifically exercise the login surface or that need cookies
- * landed by the SvelteKit handler.
+ * sign-in button, post-login redirect. Uses `data-testid` selectors
+ * so the helper survives i18n / copy / role-name drift.
  */
 export async function loginAsAdminViaUI(page: Page) {
   await page.goto('/login');
-  await page.getByRole('textbox', { name: 'Username or email' }).fill(ADMIN_USER);
-  await page.getByRole('textbox', { name: 'Password' }).fill(ADMIN_PASS);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.locator(tid('login-username')).fill(ADMIN_USER);
+  await page.locator(tid('login-password')).fill(ADMIN_PASS);
+  await page.locator(tid('login-submit')).click();
   // toHaveURL matches against the FULL url; we just want to land
   // on the post-login root (which may carry query params from a
   // ?next= redirect).

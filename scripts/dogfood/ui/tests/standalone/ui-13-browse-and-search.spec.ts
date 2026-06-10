@@ -5,8 +5,9 @@
 // viewer + the details sidebar.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
+import { tid } from '../../helpers/testids';
 
 test.describe('UI-13 browse + search', () => {
   test.beforeEach(async ({ page }) => {
@@ -34,7 +35,7 @@ test.describe('UI-13 browse + search', () => {
 
   test('search box on browse updates the URL with ?q=', async ({ page }) => {
     await page.goto('/');
-    const searchbox = page.getByRole('searchbox', { name: 'Search' });
+    const searchbox = page.locator(tid('nav-search'));
     await searchbox.fill('a');
     await searchbox.press('Enter');
     // From the browse page, handleSearch keeps the user in place

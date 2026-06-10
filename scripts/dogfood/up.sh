@@ -1,26 +1,40 @@
 #!/usr/bin/env bash
 # scripts/dogfood/up.sh — bring up the dogfood stack.
 #
+# Two modes:
+#   default          studio-a (dev) + studio-b (dogfood profile).
+#                    Full federation playground.
+#   --standalone     studio-a only. Skips mkcert + /etc/hosts +
+#                    the docker compose `dogfood` profile. Use this
+#                    for the standalone Playwright runs / PR-fast-
+#                    feedback workflow; cuts ~30s off the cycle.
+#
 # Profile-based: the dev stack at the repo root plays studio-a;
-# this script adds studio-b alongside it. Idempotent — safe to
-# re-run.
+# the default mode adds studio-b alongside it via the `dogfood`
+# compose profile. Idempotent — safe to re-run.
 #
-# What it does (in order):
-#   1. mkcert root CA install (one-time, host trust store).
-#   2. Issue studio-b.local cert into infra/docker/dogfood/certs/.
-#   3. Idempotently write `studio-b.local 127.0.0.1` into
-#      /etc/hosts under a marker block.
-#   4. `docker compose --profile dogfood up -d` so the studio-b
-#      services join the dev stack's network.
-#   5. Wait for studio-b's app to report healthy.
-#
-# After this script returns, studio-b is reachable at
+# After the default mode returns, studio-b is reachable at
 # https://studio-b.local:9443 with a trusted cert.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+# --- arg parsing ----------------------------------------------------------
+
+mode="full"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --standalone) mode="standalone"; shift ;;
+        --full)       mode="full"; shift ;;
+        -h|--help)
+            sed -n '2,18p' "$0"
+            exit 0
+            ;;
+        *) printf 'Unknown arg: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
 
 CERT_DIR="infra/docker/dogfood/certs"
 HOSTS_MARKER="# artist-alley dogfood — managed by scripts/dogfood/up.sh"
@@ -33,15 +47,42 @@ fail() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- 0. preflight -----------------------------------------------------------
 
-if ! command -v mkcert >/dev/null 2>&1; then
-    fail "mkcert is required but not found on PATH. Install per
+if [ "$mode" = "full" ]; then
+    if ! command -v mkcert >/dev/null 2>&1; then
+        fail "mkcert is required but not found on PATH. Install per
        https://github.com/FiloSottile/mkcert#installation
        then re-run this script."
+    fi
 fi
 
 if [ ! -f .env ]; then
     fail ".env not found. Run ./scripts/bootstrap.sh first — the dogfood
        profile reuses the same AA_MASTER_KEY + AA_SCRAMBLE_KEY."
+fi
+
+# --- standalone short-circuit ---------------------------------------------
+# In standalone mode we skip the mkcert / /etc/hosts / dogfood-profile
+# work entirely. Just `docker compose up -d` the dev services and
+# wait for them.
+
+if [ "$mode" = "standalone" ]; then
+    step "Bringing up the dev stack only (standalone mode)"
+    docker compose up -d --build
+    step "Waiting for dev app to report healthy"
+    for i in $(seq 1 30); do
+        if docker compose exec -T app curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+            echo "  ready after ${i} attempts"
+            break
+        fi
+        sleep 2
+        if [ "$i" -eq 30 ]; then
+            fail "dev app did not become healthy in 60s"
+        fi
+    done
+    printf '\n\033[1;32mstandalone up.\033[0m\n\n'
+    printf 'Studio-a UI:  http://localhost:5173/\n'
+    printf 'Run tests:    ./scripts/dogfood/run-ui.sh standalone\n\n'
+    exit 0
 fi
 
 # --- 1. mkcert CA -----------------------------------------------------------

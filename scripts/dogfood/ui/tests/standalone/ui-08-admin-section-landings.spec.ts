@@ -7,7 +7,7 @@
 // instead of the real shipped surfaces.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
 
 const SECTION_LANDINGS = [
   {

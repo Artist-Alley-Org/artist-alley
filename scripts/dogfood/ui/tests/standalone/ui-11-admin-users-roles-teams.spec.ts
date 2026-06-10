@@ -5,8 +5,8 @@
 // search controls render.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
 
 test.describe('UI-11 admin users / roles / teams', () => {
   test.beforeEach(async ({ page }) => {

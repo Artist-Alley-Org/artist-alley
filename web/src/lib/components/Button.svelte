@@ -15,6 +15,9 @@
     children?: import('svelte').Snippet;
     class?: string;
     fullWidth?: boolean;
+    /** `data-testid` for the underlying <button>. Use a value from
+        helpers/testids.ts when the button is a Playwright target. */
+    testId?: string;
   }
 
   let {
@@ -26,6 +29,7 @@
     children,
     class: extra = '',
     fullWidth = false,
+    testId,
   }: Props = $props();
 
   const base =
@@ -42,6 +46,7 @@
   {type}
   disabled={disabled || loading}
   {onclick}
+  data-testid={testId}
   class="{base} {variants[variant]} {fullWidth ? 'w-full' : ''} {extra}"
 >
   {#if loading}

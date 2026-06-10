@@ -5,20 +5,52 @@
 # a summary the same shape as run-all.sh produces for the shell
 # scenarios.
 #
-# First run installs Playwright + Chromium into
-# scripts/dogfood/ui/node_modules/. Subsequent runs reuse the
-# install — ~1s startup vs ~60s.
+# Two test sets:
+#   standalone — works against the dev stack alone. No pair.sh
+#                required. Default; runs as part of every PR /
+#                pre-merge check.
+#   federation — requires both studio-a (dev) and studio-b
+#                (dogfood profile) running AND paired via
+#                scripts/dogfood/pair.sh. Use during dogfood weeks
+#                or before federation-touching merges.
 #
 # Usage:
-#   ./scripts/dogfood/run-ui.sh                  run all UI tests
-#   ./scripts/dogfood/run-ui.sh --project studio-a
-#   ./scripts/dogfood/run-ui.sh --grep federation
+#   ./scripts/dogfood/run-ui.sh [MODE] [-- playwright args...]
+#
+# Modes (positional, first arg):
+#   standalone   standalone tests only (default if omitted)
+#   federation   federation tests only
+#   all          both projects
+#
+# Extra args after the mode are forwarded to `playwright test`
+# verbatim — so `--grep PATTERN`, `--reporter line`, etc. work
+# as usual.
 
 set -uo pipefail
 
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UI_DIR="${ROOT}/scripts/dogfood/ui"
 cd "$UI_DIR"
+
+# --- arg parsing ---------------------------------------------------------
+
+# First positional arg selects the mode (defaults to "standalone").
+# Everything after is passed through to `playwright test`.
+mode="standalone"
+case "${1:-}" in
+    standalone) mode="standalone"; shift ;;
+    federation) mode="federation"; shift ;;
+    all)        mode="all"; shift ;;
+    -h|--help)
+        sed -n '2,26p' "$SCRIPT_PATH"
+        exit 0
+        ;;
+    "" )        ;;  # no arg → default standalone
+    -*)         ;;  # starts with a dash → playwright passthrough, keep mode default
+    *)          printf 'Unknown mode: %s\n' "$1" >&2; exit 2 ;;
+esac
+passthrough=("$@")
 
 step() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
@@ -46,9 +78,20 @@ fi
 
 # --- 2. run tests --------------------------------------------------------
 
-step "Running Playwright UI suite"
+if [ "$mode" = "all" ]; then
+    step "Running Playwright UI suite (both projects)"
+else
+    step "Running Playwright UI suite (mode: $mode)"
+fi
 mkdir -p .pw-results
-npx playwright test "$@"
+pw_args=()
+if [ "$mode" != "all" ]; then
+    pw_args+=(--project "$mode")
+fi
+if [ "${#passthrough[@]}" -gt 0 ]; then
+    pw_args+=("${passthrough[@]}")
+fi
+npx playwright test "${pw_args[@]}"
 rc=$?
 
 # --- 3. summary ----------------------------------------------------------

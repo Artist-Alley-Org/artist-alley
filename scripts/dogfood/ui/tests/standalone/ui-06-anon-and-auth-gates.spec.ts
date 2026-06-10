@@ -7,8 +7,8 @@
 //     redirect)
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
-import { expectPageRendersCleanly } from '../helpers/assertions';
+import { loginAsAdminViaUI } from '../../helpers/auth';
+import { expectPageRendersCleanly } from '../../helpers/assertions';
 
 test.describe('UI-06 auth gates', () => {
   test('anonymous can reach /login', async ({ page }) => {

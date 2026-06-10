@@ -9,7 +9,7 @@
 // breakage that 401s every API call silently.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-01 login + overview', () => {
   test('login form accepts admin / ArtistAlleyMogul and lands on Browse', async ({ page }) => {

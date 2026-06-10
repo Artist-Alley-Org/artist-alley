@@ -20,6 +20,9 @@
     minlength?: number;
     maxlength?: number;
     id?: string;
+    /** `data-testid` for the underlying <input>. Pin one when the
+        field is a stable target for Playwright tests. */
+    testId?: string;
   }
 
   let {
@@ -37,6 +40,7 @@
     minlength,
     maxlength,
     id,
+    testId,
   }: Props = $props();
 
   // Stable id for label/aria-describedby plumbing.
@@ -62,6 +66,7 @@
     {minlength}
     {maxlength}
     {autofocus}
+    data-testid={testId}
     aria-invalid={hasError}
     aria-describedby={helper || hasError ? helperId : undefined}
     bind:value

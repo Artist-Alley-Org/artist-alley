@@ -15,7 +15,7 @@
 // has no UI of its own.
 
 import { test, expect } from '@playwright/test';
-import { loginAsAdminViaUI } from '../helpers/auth';
+import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-03 peers page', () => {
   test('studio-a sees studio-b in its peers list', async ({ page }) => {
