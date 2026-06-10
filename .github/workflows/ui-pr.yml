@@ -72,16 +72,10 @@ jobs:
             ms-playwright-${{ runner.os }}-
 
       # Materialise .env the same shape as ci.yml's `test` job — high
-      # ports so the runner's local services don't collide.
-      #
-      # UID + GID match the runner so the `web` (Vite) container's
-      # in-image `app` user can write to the bind-mounted ./web/
-      # tree. Without this match the container fails with EACCES on
-      # /app/.svelte-kit during dev-server boot — same root cause
-      # that's pushed ci.yml/test toward `--scale web=0` for the
-      # backend-only suite. Here we need the dev SPA so the test
-      # browser has something to talk to, so we fix the cause
-      # instead of skipping the container.
+      # ports so the runner's local services don't collide. UID + GID
+      # left at default 1000 so the heavy `app` image (Blender +
+      # ffmpeg + ImageMagick etc.) stays cache-warm across PR runs —
+      # changing them invalidates the entire app build layer chain.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
@@ -93,8 +87,6 @@ jobs:
             echo "MINIO_API_PORT=19100"
             echo "MINIO_CONSOLE_PORT=19101"
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-            echo "UID=$(id -u)"
-            echo "GID=$(id -g)"
           } >> .env
 
       - name: Sweep leaked CI containers
@@ -104,10 +96,18 @@ jobs:
           if [ -n "$stale" ]; then docker rm -f $stale || true; fi
           docker network prune -f || true
 
+      # The `web` (Vite) container's in-image `node` user is UID
+      # 1000 (default ARG). On a github-hosted runner the workspace
+      # is owned by user `runner` (UID 1001 or similar), so the
+      # bind-mounted ./web/ tree is unwritable to the container's
+      # user → Vite crashes with EACCES on `/app/.svelte-kit` and
+      # the SPA never serves. Chowning ./web/ to 1000 lets the
+      # container write its generated dirs. Workspace is recycled
+      # between jobs so the ownership flip has no follow-on effect.
+      - name: Allow the web container to write its bind-mount
+        run: sudo chown -R 1000:1000 web
+
       - name: Bring up the full stack (including web)
-        # Builds the web container with UID/GID = runner so the
-        # bind-mounted ./web/ tree is writable from inside the
-        # container.
         run: docker compose up -d --build
 
       - name: Wait for postgres to be ready
