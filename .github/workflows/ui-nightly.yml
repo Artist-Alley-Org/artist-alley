@@ -271,11 +271,24 @@ jobs:
         # Wire-level dogfood: synthetic outbox injection, sub-1s
         # dispatch contract, inbox row presence. Outputs a JSON
         # report under scripts/dogfood/.dogfood-runs/<ts>/.
+        #
+        # Same docker-DNS URLs as the pair step (the scenarios'
+        # lib.sh reads STUDIO_A_HOST + STUDIO_B_HOST).
+        env:
+          STUDIO_A_HOST: http://nginx:80
+          STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-all.sh
 
       - name: Run UI suite (all projects)
         env:
           CI: "1"
+          # studio-a.local is the dotted alias on the dev nginx
+          # (declared in docker-compose.yml). Chromium auto-upgrades
+          # single-label hostnames to HTTPS, so `http://nginx` fails
+          # with ERR_SSL_PROTOCOL_ERROR; the dotted form sidesteps
+          # the policy. Same fix as ui-pr.yml's app.aa alias.
+          STUDIO_A_HOST: http://studio-a.local
+          STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-ui.sh all
 
       - name: Upload Playwright report
