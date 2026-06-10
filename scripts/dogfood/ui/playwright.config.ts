@@ -63,5 +63,13 @@ export default defineConfig({
   // waiting for hydration. CI still pins to 1 for repeatability.
   workers: process.env.CI ? 1 : 2,
   timeout: 30_000,
-  expect: { timeout: 5_000 },
+  // Assertion polling timeout. Default 5s; CI runs against the
+  // embedded prod build (adapter-static + SPA fallback) where
+  // initial HTML is the root shell and the client router has to
+  // hydrate + navigate + set <title> + re-render <main>
+  // asynchronously. 5s is sometimes too short for that chain
+  // under load. 15s leaves headroom without slowing the success
+  // path (assertions poll, so a fast page passes in milliseconds
+  // either way).
+  expect: { timeout: 15_000 },
 });
