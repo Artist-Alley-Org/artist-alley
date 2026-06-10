@@ -97,8 +97,16 @@ jobs:
         run: ./scripts/dogfood/up.sh --standalone
 
       - name: Wait for the Vite SPA to respond
+        # Even on the self-hosted runner, the first Vite boot after
+        # a fresh `docker compose up --build` runs the full dep
+        # optimizer (client + SSR passes against an empty
+        # `.vite/deps/` cache) and takes ~2 min wall before the
+        # dev server binds. Three prior runs landed Vite ready
+        # within 1 second of the wait expiring. Wait 5 min for
+        # comfortable headroom; success path exits early on the
+        # first 200, so a fast Vite pays no extra wall time.
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 150); do
             if curl -fsS -o /dev/null "http://localhost:5173/"; then
               echo "Vite ready after ${i} attempts"
               exit 0
