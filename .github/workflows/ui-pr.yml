@@ -81,11 +81,13 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # Buildx + GHA cache for the prod image. First run on a branch
-      # is cold (~3 min), subsequent runs hit the layer cache and
-      # rebuild only the changed layers.
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+      # Note: NOT using setup-buildx-action. Earlier runs showed
+      # buildx-built images getting port-mapping config that the
+      # local docker engine didn't actually publish on the host
+      # (docker compose ps reported 0.0.0.0:15173 → 8080 but
+      # `ss -ltnp` showed no listener and curl from the runner
+      # got Connection refused). The classic builder is plenty
+      # for one-image, one-Dockerfile builds.
 
       # Materialise .env the same shape as ci.yml's `test` job —
       # high ports so the runner's local services don't collide.

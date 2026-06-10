@@ -40,10 +40,11 @@ services:
       dockerfile: Dockerfile
       args:
         BUILD_VERSION: ci-${GITHUB_SHA:-dev}
-      cache_from:
-        - type=gha
-      cache_to:
-        - type=gha,mode=max
+      # No GHA cache_from/cache_to — those work via buildx, and
+      # earlier runs showed buildx-published port mappings didn't
+      # actually bind on the host (no `ss -ltnp` listener, curl
+      # Connection refused). Classic builder is fine; the layer
+      # cache survives in /var/lib/docker between steps anyway.
     # The dev compose uses `expose: [8080]` so only nginx talks to
     # the app over the docker network. In CI we skip nginx, so
     # publish the port to the host instead.
