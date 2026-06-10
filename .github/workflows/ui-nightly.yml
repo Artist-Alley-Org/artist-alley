@@ -223,6 +223,20 @@ jobs:
       - name: Pair studio-a + studio-b
         # Pair waits for both health endpoints + sets site.base_url
         # on both sides + registers each as a peer of the other.
+        #
+        # STUDIO_A_HOST + STUDIO_B_HOST point at docker DNS
+        # endpoints, NOT the runner's localhost:
+        #   - nginx is the dev nginx's network alias; its upstream
+        #     is `app:8080` (the Go server). Same /api/v1 prefix
+        #     pair.sh uses for /api/v1/auth/login etc.
+        #   - studio-b.local is the network alias on nginx-b
+        #     (declared in docker-compose.yml). nginx-b listens
+        #     on :9443 inside the network; pair.sh's curl -sk
+        #     skips cert verify so the studio-b.local cert chain
+        #     doesn't have to be trusted by the runner.
+        env:
+          STUDIO_A_HOST: http://nginx:80
+          STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/pair.sh
 
       - name: Install Playwright + browsers
