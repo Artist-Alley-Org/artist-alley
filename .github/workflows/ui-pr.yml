@@ -120,14 +120,28 @@ jobs:
             -f infra/docker/ci/docker-compose.ci.yml \
             up -d --build app postgres
 
-      - name: Print stack state
-        # Surfaces the published-port column so a port-binding regression
-        # in the compose override doesn't get diagnosed as a generic
-        # "app SPA never became ready" timeout.
+      - name: Print stack state (diagnostic)
         run: |
+          echo "=== docker compose ps ==="
           docker compose -f docker-compose.yml -f infra/docker/ci/docker-compose.ci.yml ps
           echo
-          ss -ltnp 2>/dev/null | grep -E "15173|15452" || echo "(no host listener on the expected ports)"
+          echo "=== ss -ltnp ==="
+          ss -ltnp 2>/dev/null | head -20
+          echo
+          echo "=== docker port app ==="
+          docker port artist-alley-app-1 || true
+          echo
+          echo "=== iptables nat OUTPUT chain (DOCKER target) ==="
+          sudo iptables -t nat -L OUTPUT -n -v 2>/dev/null | head -10
+          echo
+          echo "=== curl from inside container ==="
+          docker compose -f docker-compose.yml -f infra/docker/ci/docker-compose.ci.yml exec -T app sh -c 'curl -fsS -o /dev/null -w "in-container :8080 → %{http_code}\n" http://127.0.0.1:8080/healthz' || true
+          echo
+          echo "=== curl from host on the published port ==="
+          curl -sS -o /dev/null -w "host :15173 → http_code=%{http_code}\n" --max-time 5 http://127.0.0.1:15173/healthz || echo "(curl exit $?)"
+          echo
+          echo "=== app container IP from docker network ==="
+          docker inspect artist-alley-app-1 -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' || true
 
       - name: Wait for postgres to be ready
         run: |
