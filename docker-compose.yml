@@ -111,6 +111,18 @@ services:
         GID: ${GID:-1000}
     ports:
       - "${VITE_HOST_PORT:-5173}:5173"
+    networks:
+      default:
+        aliases:
+          # Dotted alias so Chromium-driven tests on the compose
+          # network can reach Vite without tripping Chromium's
+          # single-label-host policy (which auto-upgrades `web` to
+          # HTTPS and breaks `http://web:5173/...` with
+          # ERR_SSL_PROTOCOL_ERROR). Same pattern as the `app.aa`
+          # alias the CI override on ui-pr.yml uses for the prod
+          # image. Local dev uses localhost:5173 via the published
+          # port and ignores this.
+          - vite.aa
     volumes:
       # Bind-mount the whole web/ tree so file edits trigger Vite HMR.
       # node_modules is masked by an anonymous volume so the image's

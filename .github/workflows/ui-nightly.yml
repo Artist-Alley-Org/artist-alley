@@ -45,7 +45,12 @@ jobs:
   ui-federation:
     name: Playwright federation + shell scenarios
     runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 45
+    # 60 min: build (~3 min) + parallel seed (~5.5 min) + pair
+    # (~30s) + Vite cold-boot (~5 min) + shell scenarios + UI
+    # `all` (133 standalone + 4 federation tests at ~2s each
+    # under load) + teardown. Last run got cancelled at 45 min
+    # halfway through the UI suite.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -261,6 +266,26 @@ jobs:
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/pair.sh
 
+      - name: Wait for Vite dev server (studio-a SPA)
+        # The dev `app` container has no embed_web build, so it
+        # serves the SPA via Vite (web container, port 5173 on the
+        # docker network — `vite.aa` alias). Vite cold-boot
+        # re-optimises dep bundles into the anonymous node_modules
+        # volume and takes ~5 min before the dev server binds.
+        # Wait explicitly so the test step doesn't time out
+        # per-assertion while Vite is still bundling.
+        run: |
+          for i in $(seq 1 180); do
+            if curl -fsS -o /dev/null "http://vite.aa:5173/"; then
+              echo "Vite ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Vite never became ready" >&2
+          docker compose logs web --tail=80 || true
+          exit 1
+
       - name: Install Playwright + browsers
         working-directory: scripts/dogfood/ui
         run: |
@@ -282,12 +307,13 @@ jobs:
       - name: Run UI suite (all projects)
         env:
           CI: "1"
-          # studio-a.local is the dotted alias on the dev nginx
-          # (declared in docker-compose.yml). Chromium auto-upgrades
-          # single-label hostnames to HTTPS, so `http://nginx` fails
-          # with ERR_SSL_PROTOCOL_ERROR; the dotted form sidesteps
-          # the policy. Same fix as ui-pr.yml's app.aa alias.
-          STUDIO_A_HOST: http://studio-a.local
+          # vite.aa is the dotted alias on the `web` (Vite) service
+          # (declared in docker-compose.yml). Dev's nginx routes /
+          # to app:8080, but the dev app has no embed_web build so
+          # the SPA only lives behind Vite — STUDIO_A_HOST has to
+          # point there directly. studio-b stays on its nginx-b
+          # alias; the embedded build is what ships.
+          STUDIO_A_HOST: http://vite.aa:5173
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-ui.sh all
 
