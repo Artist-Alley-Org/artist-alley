@@ -120,6 +120,15 @@ jobs:
             -f infra/docker/ci/docker-compose.ci.yml \
             up -d --build app postgres
 
+      - name: Print stack state
+        # Surfaces the published-port column so a port-binding regression
+        # in the compose override doesn't get diagnosed as a generic
+        # "app SPA never became ready" timeout.
+        run: |
+          docker compose -f docker-compose.yml -f infra/docker/ci/docker-compose.ci.yml ps
+          echo
+          ss -ltnp 2>/dev/null | grep -E "15173|15452" || echo "(no host listener on the expected ports)"
+
       - name: Wait for postgres to be ready
         run: |
           for i in $(seq 1 30); do
