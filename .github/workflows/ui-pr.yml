@@ -1,0 +1,147 @@
+# UI dogfood — fast PR / branch validation.
+#
+# Runs the Playwright `standalone` project against the dev stack on
+# every PR + every push to a long-lived branch. Brings up just
+# studio-a (no studio-b / no pair.sh / no mkcert) so the cycle is
+# ~3-5 minutes end-to-end.
+#
+# Federation tests run in ui-nightly.yml — they need the dogfood
+# compose profile + mkcert + /etc/hosts which is too much setup for
+# a PR-blocking workflow.
+#
+# Pairs with ci.yml: ci.yml gates Go + frontend correctness; this
+# workflow gates the UI surface (navigation, forms, admin pages
+# render against the live API).
+
+name: UI dogfood (standalone)
+
+on:
+  push:
+    branches: [main, dev, "feat/**"]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ui-pr-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # PRs from forks can't run on the self-hosted runner. Trusted
+  # internal pushes route there for speed + warm Docker layer cache.
+  # Mirror of ci.yml's pick-runner job.
+  pick-runner:
+    name: Pick runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'runner="ubuntu-latest"' >> "$GITHUB_OUTPUT"
+          else
+            echo 'runner=["self-hosted","artist-alley"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  ui-standalone:
+    name: Playwright standalone
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          # Cache the Playwright npm install. Cache key includes
+          # package-lock so a dependency bump invalidates cleanly.
+          cache: "npm"
+          cache-dependency-path: scripts/dogfood/ui/package-lock.json
+
+      # Playwright's Chromium download is ~150 MB. Cache it across
+      # runs so we only re-fetch when Playwright bumps.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
+          restore-keys: |
+            ms-playwright-${{ runner.os }}-
+
+      # Materialise .env the same shape as ci.yml's `test` job — high
+      # ports so the runner's local services don't collide.
+      - name: Materialise .env for the stack
+        run: |
+          cp .env.example .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
+          {
+            echo "POSTGRES_HOST_PORT=15452"
+            echo "NGINX_HTTP_PORT=18188"
+            echo "VITE_HOST_PORT=15173"
+            echo "MINIO_API_PORT=19100"
+            echo "MINIO_CONSOLE_PORT=19101"
+            echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          } >> .env
+
+      # `run-ui.sh` reads STUDIO_A_HOST so we point it at the
+      # remapped Vite port instead of the default :5173.
+      - name: Sweep leaked CI containers
+        # Self-hosted runners can leak compose state across runs;
+        # ubuntu-hosted is a clean slate so this is cheap there.
+        run: |
+          docker compose down -v --remove-orphans || true
+          stale=$(docker ps -aq --filter "name=^artist-alley-")
+          if [ -n "$stale" ]; then docker rm -f $stale || true; fi
+          docker network prune -f || true
+
+      - name: Bring up the dev stack (standalone)
+        run: ./scripts/dogfood/up.sh --standalone
+
+      - name: Wait for the Vite SPA to respond
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://localhost:15173/"; then
+              echo "Vite ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Vite never became ready" >&2
+          docker compose logs web --tail=40 || true
+          exit 1
+
+      - name: Install Playwright + browsers
+        working-directory: scripts/dogfood/ui
+        run: |
+          npm install --no-audit
+          npx playwright install --with-deps chromium
+
+      - name: Run UI standalone suite
+        env:
+          STUDIO_A_HOST: http://localhost:15173
+          CI: "1"
+        run: ./scripts/dogfood/run-ui.sh standalone
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pw-report-standalone-${{ github.run_id }}
+          path: |
+            scripts/dogfood/ui/.pw-report/
+            scripts/dogfood/ui/.pw-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v --remove-orphans || true
