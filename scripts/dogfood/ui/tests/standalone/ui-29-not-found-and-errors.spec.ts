@@ -15,12 +15,16 @@ import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-29 404 + error pages', () => {
-  test('authed: bogus top-level route returns a friendly 404', async ({ page }) => {
+  test('authed: bogus top-level route renders a friendly 404 page', async ({ page }) => {
     await loginAsAdminViaUI(page);
     const resp = await page.goto('/this-route-definitely-does-not-exist');
-    // SvelteKit returns 404 from +error.svelte boundaries; the
-    // page itself renders normally.
-    expect(resp?.status()).toBe(404);
+    // Status code differs by serving backend:
+    //   Vite dev: 404 (server knows the route doesn't exist).
+    //   embedded prod (adapter-static + SPA fallback): 200 with the
+    //     SPA shell — the client's +error.svelte boundary renders
+    //     the 404 page.
+    // Either is fine functionally; what we reject is 5xx.
+    expect(resp?.status()).toBeLessThan(500);
     // Scope to main (body matches the entire page incl. nav, which
     // sometimes contains "Account" → matches /account/ on /404
     // and triggers Playwright's strict-mode multi-match).
