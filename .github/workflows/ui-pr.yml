@@ -65,17 +65,24 @@ jobs:
           restore-keys: |
             ms-playwright-${{ runner.os }}-
 
-      # Use the default dev-stack ports (5173 Vite, 8080 nginx,
-      # 5432 postgres) — the self-hosted runner is the same box
-      # where local dev runs, and matching ports keeps "what CI
-      # does" identical to "what I do locally." Concurrency at the
-      # workflow level prevents two runs from racing on the same
-      # box (concurrency.group above).
+      # Remap to high ports — the self-hosted runner has the user's
+      # local dev stack (or another postgres) bound on the defaults.
+      # First attempt at "use the same ports as local for less
+      # divergence" hit `Bind for 0.0.0.0:5432 failed: port is
+      # already allocated` because another service was holding the
+      # default. concurrency.group prevents two CI runs from
+      # racing each other; it can't prevent CI vs. local-dev.
+      # Vite is still 5173 because nothing on the runner conflicts
+      # with that one and the test STUDIO_A_HOST default expects it.
       - name: Materialise .env for the stack
         run: |
           cp .env.example .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
           {
+            echo "POSTGRES_HOST_PORT=15452"
+            echo "NGINX_HTTP_PORT=18188"
+            echo "MINIO_API_PORT=19100"
+            echo "MINIO_CONSOLE_PORT=19101"
             echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
           } >> .env
 
@@ -112,7 +119,10 @@ jobs:
       # red tests.
       - name: Seed site_a via apply.py
         env:
-          AA_API_BASE: http://localhost:8080
+          # 18188 = NGINX_HTTP_PORT remapped above. apply.py talks to
+          # the API directly through nginx — that's the same path
+          # dev's Vite proxies /api/* to, just on the host port.
+          AA_API_BASE: http://localhost:18188
           SITE_A_PATH: /mnt/blackbox_archives/datasets/artist_alley/site_a
         run: |
           python3 -m pip install --user --quiet kagglehub requests || true
