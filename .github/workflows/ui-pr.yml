@@ -184,7 +184,11 @@ jobs:
           # the dev `web` service points its proxy at
           # `http://nginx:80` in the source.
           AA_API_BASE: http://app:8080
-          SITE_A_PATH: /mnt/blackbox_archives/datasets/artist_alley/site_a
+          # /datasets is the read-only mount added to the runner
+          # container template (Unraid Docker tab → AristAlley-
+          # Github-Actions-Runner → BLACKBOX datasets). Source on
+          # the host: /mnt/remotes/192.168.69.145_Archives/datasets.
+          SITE_A_PATH: /datasets/artist_alley/site_a
         run: |
           python3 -m pip install --user --quiet kagglehub requests || true
           python3 seed/scripts/apply.py \
