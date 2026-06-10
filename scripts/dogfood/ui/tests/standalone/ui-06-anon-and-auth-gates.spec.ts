@@ -6,7 +6,7 @@
 //   - authed user hitting /login bounces forward (no infinite-loop
 //     redirect)
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 

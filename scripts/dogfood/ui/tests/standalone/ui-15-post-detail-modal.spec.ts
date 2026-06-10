@@ -10,7 +10,7 @@
 // the test, but a real regression (modal stops opening, sidebar
 // blank) does.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-15 post detail', () => {

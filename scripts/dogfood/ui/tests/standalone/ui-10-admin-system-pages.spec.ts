@@ -4,7 +4,7 @@
 // its primary form/list. Catches drift in the sysconfig endpoints
 // (a missing field, a renamed key, a 500 on GET).
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 

@@ -6,7 +6,7 @@
 // week — where the federation page showed 7 stale "Phase 1.22"
 // disabled tiles instead of the 5 shipped + 2 future ones.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-02 federation tile grid', () => {

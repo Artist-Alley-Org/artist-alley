@@ -14,7 +14,7 @@
 // scripts/dogfood/scenarios/01-like-cross-instance.sh; studio-b
 // has no UI of its own.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-03 peers page', () => {

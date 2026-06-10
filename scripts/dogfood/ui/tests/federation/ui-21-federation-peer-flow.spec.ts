@@ -9,7 +9,7 @@
 // surfaces lives in
 // tests/standalone/ui-12-admin-federation-pages.spec.ts.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-21 federation peer flow (cross-instance)', () => {

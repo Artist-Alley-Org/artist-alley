@@ -11,7 +11,7 @@
 //   - The session cookie is HTTP-only (server-set, not readable
 //     from document.cookie)
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { tid } from '../../helpers/testids';
 
 const ADMIN_USER = process.env.AA_DOGFOOD_ADMIN_USER ?? 'admin';

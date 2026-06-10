@@ -4,7 +4,7 @@
 // teams list. Verifies the list endpoint feeds the UI + filter/
 // search controls render.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 

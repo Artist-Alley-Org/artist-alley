@@ -8,7 +8,7 @@
 // backend dropped), bootstrap-admin login flow drift, navbar
 // breakage that 401s every API call silently.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-01 login + overview', () => {

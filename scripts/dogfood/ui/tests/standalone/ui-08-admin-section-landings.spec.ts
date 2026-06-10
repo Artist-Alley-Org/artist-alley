@@ -6,7 +6,7 @@
 // where /admin/federation showed 7 stale "Phase 1.22" tiles
 // instead of the real shipped surfaces.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 const SECTION_LANDINGS = [

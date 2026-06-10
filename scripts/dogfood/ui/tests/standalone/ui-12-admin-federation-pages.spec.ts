@@ -6,7 +6,7 @@
 // assertions (peer row visible, outbox sent, inbox processed)
 // live in tests/federation/ui-21-federation-peer-flow.spec.ts.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 

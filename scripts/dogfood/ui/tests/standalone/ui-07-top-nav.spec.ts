@@ -7,7 +7,7 @@
 // asserted. The user + admin menus open and contain the documented
 // menu items.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

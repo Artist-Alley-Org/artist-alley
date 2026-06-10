@@ -12,7 +12,7 @@
 //   - i18n key drift that breaks render
 //   - Capability gating regressions on the admin pages
 
-import { test } from '@playwright/test';
+import { test } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 import {

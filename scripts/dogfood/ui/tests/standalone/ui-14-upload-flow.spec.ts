@@ -15,7 +15,7 @@
 // its own test so a slow downstream notification doesn't make
 // the whole flow flaky.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { tid } from '../../helpers/testids';
 

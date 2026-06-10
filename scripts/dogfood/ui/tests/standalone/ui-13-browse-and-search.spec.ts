@@ -4,7 +4,7 @@
 // card opens the post modal/page; the modal renders the asset
 // viewer + the details sidebar.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 import { expectPageRendersCleanly } from '../../helpers/assertions';
 import { tid } from '../../helpers/testids';

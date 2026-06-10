@@ -4,7 +4,7 @@
 // its primary form/control + that the simple read paths return
 // data without crashing.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-09 account pages', () => {

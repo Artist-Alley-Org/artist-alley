@@ -10,7 +10,7 @@
 // content, only that the endpoint doesn't crash on any
 // seeded post.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaAPI } from '../../helpers/auth';
 
 test.describe('UI-04 comments endpoint', () => {

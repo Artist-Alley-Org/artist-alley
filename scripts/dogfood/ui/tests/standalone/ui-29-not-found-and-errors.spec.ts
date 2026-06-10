@@ -11,7 +11,7 @@
 //     flow OR shows the public 404 — both are acceptable; what
 //     we don't want is a raw 500.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../helpers/test';
 import { loginAsAdminViaUI } from '../../helpers/auth';
 
 test.describe('UI-29 404 + error pages', () => {
