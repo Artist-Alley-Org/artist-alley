@@ -223,11 +223,11 @@ jobs:
 
       - name: Run UI standalone suite
         env:
-          # Same docker-DNS path as the seed + the wait gate.
-          # Playwright launches Chromium inside the runner
-          # container; the runner is on the compose network so
-          # Chromium can reach the app the same way.
-          STUDIO_A_HOST: http://app:8080
+          # Playwright drives Chromium which auto-upgrades dotless
+          # hostnames to HTTPS — `http://app:8080` fails with
+          # ERR_SSL_PROTOCOL_ERROR. The CI compose override adds
+          # `app.aa` as a network alias so the SPA URL has a TLD.
+          STUDIO_A_HOST: http://app.aa:8080
           CI: "1"
         run: ./scripts/dogfood/run-ui.sh standalone
 

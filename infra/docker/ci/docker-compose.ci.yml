@@ -42,3 +42,13 @@ services:
     # URL.
     ports:
       - "${NGINX_HTTP_PORT:-8080}:8080"
+    # Chromium auto-upgrades single-label hostnames to HTTPS as
+    # part of its dotless-host policy — `http://app:8080/login`
+    # therefore fails with ERR_SSL_PROTOCOL_ERROR. Adding a
+    # dotted alias on the compose network gives Playwright a
+    # name it'll accept verbatim. apply.py talks plain `app` —
+    # requests + python urllib don't carry the same policy.
+    networks:
+      default:
+        aliases:
+          - app.aa
