@@ -233,7 +233,7 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 		logger,
 	)
 	dispatcher.SetSocialPoster(&socialPosterE2EAdapter{h: socialH})
-	dispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
+	dispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, nil, nil, logger))
 	dispatcher.SetRegistry(inbox.BuildRegistry(dispatcher, logger))
 
 	return &pairedFixture{

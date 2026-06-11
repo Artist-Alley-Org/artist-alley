@@ -14,6 +14,7 @@ package inbox
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -58,12 +59,31 @@ type RemoteCommentInput struct {
 	Body        string
 }
 
+// EncryptionKeyInline is the parsed aa:encryptionPublicKey block
+// from an inbound envelope's Extra map. Nil at the upsert
+// boundary when the envelope didn't carry the block (pre-1.22.I-c
+// peer, or a system-generated activity without an attributable
+// user). Validated at parse time — PublicKey is always 32 bytes
+// when non-nil; Version is always >= 1.
+type EncryptionKeyInline struct {
+	PublicKey []byte
+	Version   int32
+}
+
 // RemoteActorUpserter is the contract for the remote-actor
-// display cache. Boot wires it to federation/remote's
-// UpsertRemoteActor. The dispatch handlers call it on every
-// inbound activity so display fields refresh.
+// display cache + encryption-key store. Boot wires it to
+// federation/remote's Upserter, which composes the display-info
+// upsert with federation/remote.Handler.SetEncryptionKey when
+// EncKey is non-nil. The dispatch handlers call it on every
+// inbound activity so display fields refresh + the latest
+// advertised key lands in federation_remote_actors.
 type RemoteActorUpserter interface {
-	Upsert(ctx context.Context, actorURI string, peerID uuid.UUID, displayName, avatarURL string) error
+	Upsert(ctx context.Context,
+		actorURI string,
+		peerID uuid.UUID,
+		displayName, avatarURL string,
+		encKey *EncryptionKeyInline,
+	) error
 }
 
 // SetRegistry replaces the per-verb handler map. Used at boot
@@ -189,19 +209,86 @@ func CommentHandler(d *Dispatcher) HandlerFn {
 
 // --- helpers -----------------------------------------------------------
 
-// upsertActorBestEffort refreshes the remote-actor display row.
-// Failures log + swallow — the dispatch decision shouldn't hinge
-// on a display-cache write.
+// upsertActorBestEffort refreshes the remote-actor display row +
+// optionally the encryption-key columns. Failures log + swallow —
+// the dispatch decision shouldn't hinge on a display-cache write.
+//
+// Phase 1.22.I-c — also parses the aa:encryptionPublicKey block
+// out of env.Extra (when present) so federation_remote_actors
+// gains the recipient key I-e/I-f need.
 func (d *Dispatcher) upsertActorBestEffort(ctx context.Context, env *federation.Envelope, peerID uuid.UUID) {
 	if d.actorCache == nil || env.Actor == "" {
 		return
 	}
 	displayName, avatarURL := extractActorDisplayHints(env)
-	if err := d.actorCache.Upsert(ctx, env.Actor, peerID, displayName, avatarURL); err != nil && d.logger != nil {
+	encKey := extractEncryptionKey(env, d.logger)
+	if err := d.actorCache.Upsert(ctx, env.Actor, peerID, displayName, avatarURL, encKey); err != nil && d.logger != nil {
 		d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.actor_upsert.error",
 			slog.String("err", err.Error()),
 		)
 	}
+}
+
+// extractEncryptionKey pulls the optional aa:encryptionPublicKey
+// block out of env.Extra. Returns nil if the field is absent OR
+// malformed (with a logged warning); a malformed block does NOT
+// block dispatch — the activity still flows, the receiver just
+// can't encrypt back to the sender until the next envelope
+// carries a clean key.
+//
+// Expected shape (per vocab.go):
+//
+//	"aa:encryptionPublicKey": {
+//	  "type": "aa:X25519PublicKey",
+//	  "publicKeyBase64": "<44 chars, 32-byte key>",
+//	  "version": 1
+//	}
+func extractEncryptionKey(env *federation.Envelope, logger *slog.Logger) *EncryptionKeyInline {
+	raw, ok := env.Extra[federation.PropEncryptionPublicKey]
+	if !ok {
+		return nil
+	}
+	var block struct {
+		Type            string `json:"type"`
+		PublicKeyBase64 string `json:"publicKeyBase64"`
+		Version         int32  `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		if logger != nil {
+			logger.LogAttrs(context.Background(), slog.LevelWarn, "inbox.encryption_key.parse_error",
+				slog.String("actor", env.Actor),
+				slog.String("err", err.Error()),
+			)
+		}
+		return nil
+	}
+	if block.Type != "" && block.Type != federation.TypeX25519PublicKey {
+		// Unknown algorithm token; defer to the future when we
+		// dispatch on it. For v1 we just skip + log so the
+		// inbound activity isn't blocked by a forward-compat
+		// hiccup.
+		if logger != nil {
+			logger.LogAttrs(context.Background(), slog.LevelInfo, "inbox.encryption_key.unknown_type",
+				slog.String("actor", env.Actor),
+				slog.String("type", block.Type),
+			)
+		}
+		return nil
+	}
+	if block.Version < 1 {
+		return nil
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(block.PublicKeyBase64)
+	if err != nil || len(keyBytes) != 32 {
+		if logger != nil {
+			logger.LogAttrs(context.Background(), slog.LevelWarn, "inbox.encryption_key.malformed",
+				slog.String("actor", env.Actor),
+				slog.Int("len", len(keyBytes)),
+			)
+		}
+		return nil
+	}
+	return &EncryptionKeyInline{PublicKey: keyBytes, Version: block.Version}
 }
 
 // extractCommentPayload pulls the Note `content` + `inReplyTo`

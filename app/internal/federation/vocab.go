@@ -172,6 +172,28 @@ const (
 // Valid reports whether a is in the closed catalogue.
 func (a EncryptionAlgorithm) Valid() bool { return a == EncryptionAlgNaClBox }
 
+// --- Phase 1.22.I-c per-user encryption-key advertisement ------------
+
+// PropEncryptionPublicKey is the envelope-extra property name
+// that carries the sender's current X25519 public key on every
+// outbound envelope. Receivers parse + persist via
+// federation/remote.Handler.SetEncryptionKey so I-e's outbox
+// encryption + I-f's inbox decryption have a known recipient key
+// to dispatch against.
+//
+// The field is OPTIONAL — pre-1.22.I-c peers won't emit it, and
+// post-1.22.I-c senders may omit it for system-generated activities
+// without an attributable actor (rare). The I-g sender-refusal
+// flow handles the recipient-side "no key yet" case.
+const PropEncryptionPublicKey = "aa:encryptionPublicKey"
+
+// TypeX25519PublicKey is the discriminator inside the
+// aa:encryptionPublicKey block. Single value in v1; the
+// discriminator exists so a future Hybrid PQ KEM algorithm
+// (Curve25519 + ML-KEM-768 envelope) can land as a sibling type
+// without breaking parsers.
+const TypeX25519PublicKey = "aa:X25519PublicKey"
+
 // ObjectKind is the typed catalogue for the `object_kind`
 // discriminator on aa:Share / aa:Unshare and the
 // federation_shares table. Mirrors the CHECK constraint in
