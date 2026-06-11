@@ -593,3 +593,4 @@ example envelopes from the dogfood week.*
 | Version | Date | Changes |
 |---|---|---|
 | v0.1 | 2026-06-09 | Initial draft created. Captures the state of the reference implementation through commit `929e4a0` (1.22.D shipped). Reserves encryption (v1.0) + capability negotiation (v1.0) + conformance test vectors (v1.0) as future work. |
+| v0.2 | 2026-06-11 | 1.22.I-a (dogfood infrastructure) shipped via PR #110 in the reference implementation: paired-instance loop runs in CI via `ui-nightly.yml` against a containerised self-hosted runner, exercising the existing 1.22.D wire surface. 1.22.I-b (X25519 keypair-per-user) shipped via PR #111: every user account on every running reference-implementation instance now has a current Curve25519 keypair, master-key-wrapped at rest, stored in `federation_user_keys`. No wire-format changes in this revision — key distribution remains reserved for 1.22.I-c, envelope encryption remains reserved for 1.22.I-e + I-f. |
