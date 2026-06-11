@@ -45,7 +45,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 )
 
 // Config bundles the inputs Run needs. Boot wires these from
@@ -95,7 +97,12 @@ const adminRoleName = "Admin"
 // unexpected DB error (a misconfigured ScrambleKey, missing
 // "Admin" role, etc.) — startup should fail loud in those
 // cases.
-func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logger) error {
+// Run executes the first-boot bootstrap. The audit recorder is
+// optional — pass nil to skip the federation.user.key_generated
+// audit row (boot paths that don't have one wired up still get a
+// keypair, just no audit event). Other audit surfaces in this
+// package remain slog-only.
+func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logger, recorder *audit.Recorder) error {
 	q := auth.New(pool)
 	count, err := q.CountSystemAdmins(ctx)
 	if err != nil {
@@ -184,6 +191,24 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg Config, logger *slog.Logge
 		// AssignedByUserRef nil — bootstrap has no actor.
 	}); err != nil {
 		return fmt.Errorf("bootstrap: assign admin role: %w", err)
+	}
+
+	// Federation keypair (Phase 1.22.I-b). Idempotent: backfills
+	// the existing-admin branch and mints for the freshly-created
+	// branch. Lives in the same tx so a user with no keypair never
+	// commits — federation encryption (I-e/I-f) assumes every
+	// user has exactly one current key, so half-creation is worse
+	// than no creation.
+	ukq := userkeys.New(tx)
+	alreadyHadKey, err := userkeys.EnsureCurrentForUser(ctx, ukq, adminRef)
+	if err != nil {
+		return fmt.Errorf("bootstrap: ensure federation user key: %w", err)
+	}
+	if !alreadyHadKey && recorder != nil {
+		// Bootstrap is server-initiated; no human actor. Pass the
+		// same tx so the audit row commits atomically with the
+		// key insert (write-ahead-audit invariant per shares 1.22.C).
+		recorder.FederationUserKeyGenerated(ctx, audit.New(tx), adminRef, nil, 1, userkeys.Algorithm)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

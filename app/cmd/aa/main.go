@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
@@ -82,7 +83,7 @@ func run() error {
 		ScrambleKey:         cfg.ScrambleKey,
 		AdminPath:           cfg.BootstrapAdminPath,
 		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
-	}, logger); err != nil {
+	}, logger, audit.NewRecorder(pool, logger)); err != nil {
 		return err
 	}
 

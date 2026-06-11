@@ -20,8 +20,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 )
+
+// TestMain initialises atrest with a throwaway master key so the
+// SeedCreateUser → EnsureCurrentForUser → Generate path (1.22.I-b)
+// can mint a keypair. Production wires AA_MASTER_KEY from the env;
+// tests don't depend on the operator's real key.
+func TestMain(m *testing.M) {
+	key := make([]byte, atrest.MasterKeyLen)
+	if _, err := rand.Read(key); err != nil {
+		panic("seed_test: seed master key: " + err.Error())
+	}
+	if err := atrest.InitWithKey(key); err != nil {
+		panic("seed_test: atrest init: " + err.Error())
+	}
+	os.Exit(m.Run())
+}
 
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -106,7 +122,7 @@ func seedFixture(t *testing.T, pool *pgxpool.Pool) (userRef int64, postID, asset
 func TestBackfillTimestamps_HappyPath_PerKindCountsCorrect(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, assetID := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 	res, err := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -141,7 +157,7 @@ func TestBackfillTimestamps_HappyPath_PerKindCountsCorrect(t *testing.T) {
 func TestBackfillTimestamps_Idempotent_SameEndStateAfterRerun(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 
 	first, _ := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -158,7 +174,7 @@ func TestBackfillTimestamps_Idempotent_SameEndStateAfterRerun(t *testing.T) {
 func TestBackfillTimestamps_UnknownID_CountedAsSkipped_NoError(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, _, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 
 	bogus := uuid.New()
 	res, err := h.BackfillTimestamps(context.Background(), nil, userRef, []seed.TimestampItem{
@@ -174,7 +190,7 @@ func TestBackfillTimestamps_UnknownID_CountedAsSkipped_NoError(t *testing.T) {
 
 func TestBackfillTimestamps_BatchOverCap_ReturnsErr(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	items := make([]seed.TimestampItem, 1001)
 	for i := range items {
 		items[i] = seed.TimestampItem{Kind: seed.TimestampKindPost, ID: uuid.New(), CreatedAt: time.Now()}
@@ -190,7 +206,7 @@ func TestBackfillTimestamps_BatchOverCap_ReturnsErr(t *testing.T) {
 func TestCreateComment_HappyPath_RespectsForcedAuthorAndCreatedAt(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	pastT := time.Date(2025, 4, 15, 10, 30, 0, 0, time.UTC)
 
 	res, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
@@ -217,7 +233,7 @@ func TestCreateComment_HappyPath_RespectsForcedAuthorAndCreatedAt(t *testing.T) 
 func TestCreateComment_IdempotentOnSuppliedID(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	commentID := uuid.New()
 
 	first, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
@@ -258,7 +274,7 @@ func TestCreateComment_IdempotentOnSuppliedID(t *testing.T) {
 func TestCreateComment_UnknownAuthor_ReturnsErrAuthorNotFound(t *testing.T) {
 	pool := openTestPool(t)
 	_, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	_, err := h.CreateComment(context.Background(), nil, 0, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
 		TargetID:      postID,
@@ -273,7 +289,7 @@ func TestCreateComment_UnknownAuthor_ReturnsErrAuthorNotFound(t *testing.T) {
 func TestCreateComment_UnknownTarget_ReturnsErrTargetNotFound(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, _, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	_, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
 		TargetID:      uuid.New(), // never seeded
@@ -288,7 +304,7 @@ func TestCreateComment_UnknownTarget_ReturnsErrTargetNotFound(t *testing.T) {
 func TestCreateComment_ReplyToParent_RootIDAndDepthDerived(t *testing.T) {
 	pool := openTestPool(t)
 	userRef, postID, _ := seedFixture(t, pool)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 
 	root, err := h.CreateComment(context.Background(), nil, userRef, seed.CommentInput{
 		TargetKind:    seed.CommentTargetPost,
@@ -329,7 +345,7 @@ func fakeHasher(plaintext string) (string, error) {
 
 func TestCreateUser_HappyPath_PasswordHashedAndPersisted(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher, nil)
 	username := "seed-user-" + randHex(4)
 	pw := "Sup3rs3cret"
 	fullname := "Sofia Hernandez"
@@ -366,6 +382,25 @@ func TestCreateUser_HappyPath_PasswordHashedAndPersisted(t *testing.T) {
 	if got == nil || *got != "hashed:"+pw {
 		t.Errorf("password column: got %v want %q", got, "hashed:"+pw)
 	}
+
+	// Verify the federation keypair landed in the same tx as
+	// the user — 1.22.I-b precondition for the encrypted
+	// federation paths I-e/I-f. Exactly one current key,
+	// algorithm pinned.
+	var keyCount int
+	var algorithm string
+	var isCurrent bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COUNT(*), MAX(algorithm), bool_or(is_current)
+		  FROM federation_user_keys
+		 WHERE user_id = $1
+	`, res.Ref).Scan(&keyCount, &algorithm, &isCurrent); err != nil {
+		t.Fatalf("federation_user_keys query: %v", err)
+	}
+	if keyCount != 1 || !isCurrent || algorithm != "naclbox-x25519-v1" {
+		t.Errorf("federation key shape: count=%d current=%v algorithm=%q",
+			keyCount, isCurrent, algorithm)
+	}
 }
 
 func TestCreateUser_NoPassword_PersistsNULL(t *testing.T) {
@@ -373,7 +408,7 @@ func TestCreateUser_NoPassword_PersistsNULL(t *testing.T) {
 	// in) should have password=NULL — the seed loader's common
 	// case.
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil) // hasher unused → no password
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil) // hasher unused → no password
 	username := "seed-actor-" + randHex(4)
 
 	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
@@ -399,7 +434,7 @@ func TestCreateUser_NoPassword_PersistsNULL(t *testing.T) {
 
 func TestCreateUser_PasswordWithoutHasher_ReturnsErr(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil) // hasher nil
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil) // hasher nil
 	pw := "Sup3rs3cret"
 
 	_, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
@@ -414,7 +449,7 @@ func TestCreateUser_PasswordWithoutHasher_ReturnsErr(t *testing.T) {
 
 func TestCreateUser_IdempotentOnUsername(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, fakeHasher, nil)
 	username := "seed-user-idem-" + randHex(4)
 
 	first, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
@@ -444,11 +479,84 @@ func TestCreateUser_IdempotentOnUsername(t *testing.T) {
 	if second.Ref != first.Ref {
 		t.Errorf("idempotent ref: got %d want %d", second.Ref, first.Ref)
 	}
+
+	// Re-run must not duplicate the federation keypair —
+	// EnsureCurrentForUser's idempotency contract (1.22.I-b).
+	var keyCount int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`,
+		first.Ref).Scan(&keyCount); err != nil {
+		t.Fatalf("federation_user_keys count: %v", err)
+	}
+	if keyCount != 1 {
+		t.Errorf("idempotent re-run created duplicate keypair: count = %d, want 1", keyCount)
+	}
+}
+
+// TestCreateUser_BackfillsKeyForPreExistingKeylessUser models the
+// upgrade scenario: a user already exists in the database (created
+// before 1.22.I-b shipped) with no federation keypair. A re-run of
+// the seed loader on the same username must backfill the missing
+// key — gold-standard idempotency means "ensure the state is
+// correct," not "skip if the user exists."
+func TestCreateUser_BackfillsKeyForPreExistingKeylessUser(t *testing.T) {
+	pool := openTestPool(t)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
+	username := "seed-prekey-" + randHex(4)
+
+	// Insert user directly via SQL, bypassing the seed handler so
+	// no key gets generated. Models the pre-upgrade state.
+	var ref int64
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO "user" (username, approved) VALUES ($1, 1) RETURNING ref`,
+		username).Scan(&ref); err != nil {
+		t.Fatalf("pre-insert user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM "user" WHERE ref = $1`, ref)
+	})
+	// Confirm no key exists.
+	var preCount int
+	_ = pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`, ref,
+	).Scan(&preCount)
+	if preCount != 0 {
+		t.Fatalf("test setup: pre-existing user already has key (count=%d)", preCount)
+	}
+
+	// Call CreateUser with the same username — should hit the
+	// ON CONFLICT DO NOTHING + already-existed path AND backfill
+	// the federation key.
+	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
+		Username: username,
+		Approved: true,
+	})
+	if err != nil {
+		t.Fatalf("seed re-run: %v", err)
+	}
+	if !res.AlreadyExisted {
+		t.Error("user existed pre-call; AlreadyExisted should be true")
+	}
+	if res.Ref != ref {
+		t.Errorf("ref: got %d want %d", res.Ref, ref)
+	}
+
+	// Federation key should now exist.
+	var postCount int
+	var isCurrent bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*), bool_or(is_current) FROM federation_user_keys WHERE user_id = $1`,
+		ref).Scan(&postCount, &isCurrent); err != nil {
+		t.Fatalf("post-count: %v", err)
+	}
+	if postCount != 1 || !isCurrent {
+		t.Errorf("backfill failed: count=%d current=%v want 1/true", postCount, isCurrent)
+	}
 }
 
 func TestCreateUser_RespectsCreatedAt(t *testing.T) {
 	pool := openTestPool(t)
-	h := seed.NewAdminHandler(pool, nil, nil, nil, nil)
+	h := seed.NewAdminHandler(pool, nil, nil, nil, nil, nil)
 	pastT := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
 
 	res, err := h.CreateUser(context.Background(), nil, 0, seed.UserInput{
