@@ -371,6 +371,44 @@ func (q *Queries) ListPeers(ctx context.Context, limit int32) ([]FederationPeer,
 	return items, nil
 }
 
+const listPeersMissingCapabilities = `-- name: ListPeersMissingCapabilities :many
+SELECT id, instance_url, display_name
+  FROM federation_peers
+ WHERE capabilities_negotiated_at IS NULL
+ ORDER BY instance_url
+`
+
+type ListPeersMissingCapabilitiesRow struct {
+	ID          pgtype.UUID
+	InstanceUrl string
+	DisplayName string
+}
+
+// Operator observability: peers paired before I-d that haven't
+// been re-negotiated. Surfaced on the admin federation page so
+// the operator can trigger re-pairing. Backed by the
+// federation_peers_unnegotiated_idx partial index from migration
+// 00009 so this query stays cheap regardless of total peer count.
+func (q *Queries) ListPeersMissingCapabilities(ctx context.Context) ([]ListPeersMissingCapabilitiesRow, error) {
+	rows, err := q.db.Query(ctx, listPeersMissingCapabilities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPeersMissingCapabilitiesRow
+	for rows.Next() {
+		var i ListPeersMissingCapabilitiesRow
+		if err := rows.Scan(&i.ID, &i.InstanceUrl, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingInboundPeers = `-- name: ListPendingInboundPeers :many
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
@@ -472,6 +510,31 @@ func (q *Queries) ListVisiblePeers(ctx context.Context) ([]FederationPeer, error
 		return nil, err
 	}
 	return items, nil
+}
+
+const setPeerCapabilities = `-- name: SetPeerCapabilities :exec
+
+UPDATE federation_peers
+   SET capabilities = $2,
+       capabilities_negotiated_at = NOW()
+ WHERE id = $1
+`
+
+type SetPeerCapabilitiesParams struct {
+	ID           pgtype.UUID
+	Capabilities []byte
+}
+
+// --- Phase 1.22.I-d — capability negotiation ------------------------
+// Writes the bilateral intersection produced by the handshake
+// engine. The intersection — NOT either side's raw advertised set
+// — is what we record, so the I-e/I-g dispatch gates can rely on
+// "this peer supports X" without re-doing the intersection at
+// every check site. capabilities_negotiated_at moves to NOW() so
+// ListPeersMissingCapabilities stops surfacing this peer.
+func (q *Queries) SetPeerCapabilities(ctx context.Context, arg SetPeerCapabilitiesParams) error {
+	_, err := q.db.Exec(ctx, setPeerCapabilities, arg.ID, arg.Capabilities)
+	return err
 }
 
 const setPeerStatus = `-- name: SetPeerStatus :one

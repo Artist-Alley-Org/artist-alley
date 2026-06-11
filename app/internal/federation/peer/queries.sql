@@ -178,3 +178,28 @@ SELECT id, instance_url, display_name, instance_public_key,
 FROM federation_peers
 WHERE enabled = TRUE AND status = 'connected' AND share_in_visible_list = TRUE
 ORDER BY instance_url;
+
+-- --- Phase 1.22.I-d — capability negotiation ------------------------
+
+-- name: SetPeerCapabilities :exec
+-- Writes the bilateral intersection produced by the handshake
+-- engine. The intersection — NOT either side's raw advertised set
+-- — is what we record, so the I-e/I-g dispatch gates can rely on
+-- "this peer supports X" without re-doing the intersection at
+-- every check site. capabilities_negotiated_at moves to NOW() so
+-- ListPeersMissingCapabilities stops surfacing this peer.
+UPDATE federation_peers
+   SET capabilities = $2,
+       capabilities_negotiated_at = NOW()
+ WHERE id = $1;
+
+-- name: ListPeersMissingCapabilities :many
+-- Operator observability: peers paired before I-d that haven't
+-- been re-negotiated. Surfaced on the admin federation page so
+-- the operator can trigger re-pairing. Backed by the
+-- federation_peers_unnegotiated_idx partial index from migration
+-- 00009 so this query stays cheap regardless of total peer count.
+SELECT id, instance_url, display_name
+  FROM federation_peers
+ WHERE capabilities_negotiated_at IS NULL
+ ORDER BY instance_url;
