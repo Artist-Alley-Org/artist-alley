@@ -308,6 +308,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// sensitivity activities emission-skip with audit.
 	outboxResolver := outbox.NewResolver(pool, cacheReg,
 		func(context.Context) bool { return false })
+	// Phase 1.22.I-d capability gate. Dormant in production
+	// traffic at I-d (no caller sets Input.RequiresEncryption);
+	// the wiring lands now so I-e can flip the flag without
+	// touching boot.
+	outboxResolver.SetPeerSupportsEncryption(func(ctx context.Context, peerID uuid.UUID) bool {
+		p, err := s.peers.ByID(ctx, peerID)
+		if err != nil {
+			return false
+		}
+		return p.Capabilities.SupportsE2E()
+	})
+	outboxResolver.SetEmissionSkippedForPeer(
+		func(ctx context.Context, peerID uuid.UUID, reason outbox.SkippedReason, verb string) {
+			auditRec.FederationEmissionSkippedForPeer(ctx, peerID.String(), string(reason), verb)
+		})
 	s.outboxDispatcher = outbox.NewDispatcher(
 		outbox.DefaultDispatcherConfig(),
 		pool,

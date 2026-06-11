@@ -77,6 +77,20 @@ const (
 	// would change the inbox dispatcher's correctness story.
 	EventFederationRemoteActorKeyUpdated = "federation.remote_actor.key_updated"
 
+	// 1.22.I-d per-recipient capability-gate skip. Fired by the
+	// outbox resolver when an activity requires encryption AND
+	// the recipient peer hasn't negotiated the required capability
+	// at handshake time. Same event_type string as the existing
+	// instance-level federation.emission.skipped — the new reason
+	// codes (SkippedCapabilityMissing*) live in
+	// federation/outbox/resolver.go's typed catalogue + appear in
+	// the audit metadata's `reason` field. Pool-bound.
+	//
+	// Dormant in production traffic at 1.22.I-d (no caller sets
+	// Input.RequiresEncryption true yet); 1.22.I-e flips the
+	// flag. Scenario 08 exercises the audit path via synthetic
+	// injection.
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -406,6 +420,30 @@ func (r *Recorder) EmissionSkipped(
 		"visibility":    visibility,
 		"sensitivity":   sensitivity,
 		"reason":        reason,
+	}
+	r.write(ctx, EventFederationEmissionSkipped, nil, nil, reqContext{}, meta)
+}
+
+// FederationEmissionSkippedForPeer records a
+// federation.emission.skipped event scoped to a single recipient
+// peer — fired by the outbox resolver's per-recipient capability
+// gate (Phase 1.22.I-d). Distinct call shape from the
+// instance-level [EmissionSkipped] so the metadata reflects the
+// per-peer decision: peer_id + reason + verb, no object metadata
+// because the gate is upstream of resolved-object context.
+//
+// Multiple events may fire per Resolve call when a broadcast
+// activity fans out to several capability-missing peers; each
+// gets its own audit row so the operator can see exactly which
+// peers were dropped.
+func (r *Recorder) FederationEmissionSkippedForPeer(
+	ctx context.Context,
+	peerID, reason, verb string,
+) {
+	meta := map[string]any{
+		"peer_id": peerID,
+		"reason":  reason,
+		"verb":    verb,
 	}
 	r.write(ctx, EventFederationEmissionSkipped, nil, nil, reqContext{}, meta)
 }

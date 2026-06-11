@@ -100,6 +100,20 @@ const (
 	SkippedEncryptionRequiredButNotSupported SkippedReason = "encryption_required_but_not_supported"
 	SkippedRecipientSetEmpty                 SkippedReason = "recipient_set_empty"
 	SkippedDefederationInProgress            SkippedReason = "defederation_in_progress"
+
+	// 1.22.I-d per-recipient capability gate. Emitted by
+	// federation.emission.skipped when a recipient peer hasn't
+	// negotiated the required capability at handshake time.
+	//
+	// Today only [SkippedCapabilityMissingE2E] fires (the gate
+	// is [peer.CapabilitySet.SupportsE2E], a triple-AND on
+	// e2e-encrypted + nacl-box + x25519). The two granular
+	// reasons are reserved for future fine-grained gates
+	// (e.g. a peer that advertises e2e + x25519 but not nacl-box
+	// because they only support a different envelope construction).
+	SkippedCapabilityMissingE2E     SkippedReason = "capability_missing_e2e_encrypted"
+	SkippedCapabilityMissingNaClBox SkippedReason = "capability_missing_nacl_box"
+	SkippedCapabilityMissingX25519  SkippedReason = "capability_missing_x25519"
 )
 
 // Input is the resolver's typed argument. The dispatcher
@@ -127,6 +141,16 @@ type Input struct {
 	// behaviour.
 	Visibility  Visibility
 	Sensitivity Sensitivity
+
+	// RequiresEncryption (Phase 1.22.I-d) drives the per-recipient
+	// capability gate. When true, the resolver consults
+	// [Resolver.peerSupportsEncryption] for each recipient + drops
+	// those that haven't negotiated e2e support. Dormant in
+	// production traffic at 1.22.I-d (no caller sets it true yet);
+	// 1.22.I-e flips the flag when restricted/embargo sensitivity
+	// requires envelope encryption. Scenario 08 exercises the gate
+	// directly via the synthetic-injection path.
+	RequiresEncryption bool
 }
 
 // EncryptionSupported reports whether the local instance can
@@ -136,6 +160,26 @@ type Input struct {
 // boolean instead of touching every call site.
 type EncryptionSupported func(ctx context.Context) bool
 
+// PeerSupportsEncryption (Phase 1.22.I-d) returns whether a peer
+// has negotiated end-to-end encryption support during the
+// handshake. Boot wires it to a closure over the peer registry's
+// ByID + the resulting Peer.Capabilities.SupportsE2E. nil-safe at
+// the Resolver — when unwired the gate stays dormant + every
+// recipient passes through.
+//
+// Lives as a typed callback rather than a direct peer-package
+// import so the import edge stays one-directional (peer/handshake
+// doesn't depend on outbox; outbox doesn't import peer).
+type PeerSupportsEncryption func(ctx context.Context, peerID uuid.UUID) bool
+
+// EmissionSkippedForPeerHook (Phase 1.22.I-d) is the audit
+// callback for per-recipient capability skips. Wired to
+// [audit.Recorder.FederationEmissionSkippedForPeer] at boot.
+// nil-safe — when unwired the gate still drops recipients
+// silently (the production-skip path keeps working; only the
+// audit row is missing).
+type EmissionSkippedForPeerHook func(ctx context.Context, peerID uuid.UUID, reason SkippedReason, verb string)
+
 // Resolver fronts the recipient-resolution SQL with the two
 // caches per §3.6.
 type Resolver struct {
@@ -143,6 +187,10 @@ type Resolver struct {
 	sharesByObject      *cache.Cache[[]Recipient]
 	followsByActor      *cache.Cache[[]Recipient]
 	encryptionSupported EncryptionSupported
+
+	// 1.22.I-d per-recipient capability gate. Both nil-safe.
+	peerSupportsEncryption PeerSupportsEncryption
+	emissionSkippedForPeer EmissionSkippedForPeerHook
 }
 
 const (
@@ -163,6 +211,20 @@ func NewResolver(pool *pgxpool.Pool, reg *cache.Registry, encSupported Encryptio
 		followsByActor:      cache.Register[[]Recipient](reg, cacheDomainFollowsByActor, 5000),
 		encryptionSupported: encSupported,
 	}
+}
+
+// SetPeerSupportsEncryption wires the per-recipient capability
+// gate's lookup. Call once at boot AFTER the peer registry is
+// constructed. Idempotent; nil-safe (passing nil disables the gate).
+func (r *Resolver) SetPeerSupportsEncryption(f PeerSupportsEncryption) {
+	r.peerSupportsEncryption = f
+}
+
+// SetEmissionSkippedForPeer wires the per-recipient audit hook
+// that fires when the capability gate drops a recipient. Call
+// once at boot. Idempotent; nil-safe.
+func (r *Resolver) SetEmissionSkippedForPeer(f EmissionSkippedForPeerHook) {
+	r.emissionSkippedForPeer = f
 }
 
 // InvalidateSharesByObject is the cross-package hook the
@@ -214,6 +276,7 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		recipients = r.applyCapabilityGate(ctx, in, recipients)
 		if len(recipients) == 0 {
 			return Result{Skipped: SkippedRecipientSetEmpty}, nil
 		}
@@ -224,6 +287,7 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		recipients = r.applyCapabilityGate(ctx, in, recipients)
 		if len(recipients) == 0 {
 			return Result{Skipped: SkippedRecipientSetEmpty}, nil
 		}
@@ -231,6 +295,32 @@ func (r *Resolver) Resolve(ctx context.Context, in Input) (Result, error) {
 	}
 
 	return Result{}, fmt.Errorf("unsupported visibility: %q", in.Visibility)
+}
+
+// applyCapabilityGate (Phase 1.22.I-d) filters out recipients
+// whose peer hasn't negotiated end-to-end encryption support when
+// the activity requires it. Dormant when [Input.RequiresEncryption]
+// is false (the default — 1.22.I-e flips it). Dormant when
+// [peerSupportsEncryption] hook is unwired (the boot configuration
+// with cap-checking disabled). Dropped recipients fire the
+// per-peer audit via [emissionSkippedForPeer] when wired;
+// otherwise drop silently — the I-g sender refusal pattern is the
+// load-bearing decision, the audit is observability.
+func (r *Resolver) applyCapabilityGate(ctx context.Context, in Input, recipients []Recipient) []Recipient {
+	if !in.RequiresEncryption || r.peerSupportsEncryption == nil {
+		return recipients
+	}
+	out := make([]Recipient, 0, len(recipients))
+	for _, rec := range recipients {
+		if r.peerSupportsEncryption(ctx, rec.PeerID) {
+			out = append(out, rec)
+			continue
+		}
+		if r.emissionSkippedForPeer != nil {
+			r.emissionSkippedForPeer(ctx, rec.PeerID, SkippedCapabilityMissingE2E, in.Verb)
+		}
+	}
+	return out
 }
 
 // followers reads + caches the follower-share recipients for
