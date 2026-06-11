@@ -22,6 +22,23 @@ export default defineConfig({
     // HMR through the dev container: bind to all interfaces so the
     // host browser can reach the websocket.
     host: '0.0.0.0',
+    // Vite 5+ defaults to rejecting requests whose Host header
+    // isn't on this allowlist (returns 403). Locked-down for prod
+    // is right, but dev is reachable from several names + we want
+    // each enumerated rather than `true` so the list stays the
+    // source of truth for "places dev should be reachable from":
+    //   - localhost / 127.0.0.1 / [::1]   default (already accepted)
+    //   - host.docker.internal            other containers on the host
+    //   - vite.aa                         CI runner via docker DNS
+    //                                     (network alias declared
+    //                                     on `web` in docker-compose.yml)
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      '[::1]',
+      'host.docker.internal',
+      'vite.aa',
+    ],
     hmr: {
       // Vite will infer the client host from the request; no explicit
       // host pin here. If we need it later (cross-network HMR), set
