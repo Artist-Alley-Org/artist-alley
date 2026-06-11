@@ -20,8 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -44,10 +46,19 @@ type Handler struct {
 	// StorageBackendName is "fs" | "s3" | ... — surfaced read-only on
 	// the setup page so the admin can confirm what's wired up.
 	StorageBackendName string
+
+	// Recorder is the optional audit sink for setup-time events
+	// (currently: federation.user.key_generated when the wizard
+	// creates the first admin's federation keypair per 1.22.I-b).
+	// nil-safe — when unset, the keypair still lands; only the
+	// audit row is skipped.
+	Recorder *audit.Recorder
 }
 
-// NewHandler constructs a setup handler.
-func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sys *sysconfig.Store, storageBackend string) *Handler {
+// NewHandler constructs a setup handler. The audit recorder is
+// optional; pass nil to skip the federation.user.key_generated
+// audit row at first-boot. Production wiring passes one in.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sys *sysconfig.Store, storageBackend string, recorder *audit.Recorder) *Handler {
 	return &Handler{
 		Pool:               pool,
 		Logger:             logger,
@@ -55,6 +66,7 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sys 
 		Cfg:                cfg,
 		SysConfig:          sys,
 		StorageBackendName: storageBackend,
+		Recorder:           recorder,
 	}
 }
 
@@ -251,6 +263,23 @@ func (h *Handler) CompleteSetup(
 		AssignedByUserRef: nil, // bootstrap; no actor
 	}); err != nil {
 		return nil, fmt.Errorf("setup: assign admin role: %w", err)
+	}
+
+	// Federation keypair (Phase 1.22.I-b). Lives in the same tx
+	// as the user create + role assignment so the wizard never
+	// commits a user without a current key. Idempotent — re-run
+	// only happens on a setup-flow retry against a re-created
+	// user (rare), and EnsureCurrentForUser is a no-op when a
+	// current key is already present.
+	ukq := userkeys.New(tx)
+	alreadyHadKey, err := userkeys.EnsureCurrentForUser(ctx, ukq, userRow.Ref)
+	if err != nil {
+		return nil, fmt.Errorf("setup: ensure federation user key: %w", err)
+	}
+	if !alreadyHadKey && h.Recorder != nil {
+		// First-boot setup has no prior principal — same convention
+		// the role assignment uses (AssignedByUserRef: nil above).
+		h.Recorder.FederationUserKeyGenerated(ctx, audit.New(tx), userRow.Ref, nil, 1, userkeys.Algorithm)
 	}
 
 	if err := h.SysConfig.SetSiteAndSMTPTx(ctx, tx, sysconfig.Site{

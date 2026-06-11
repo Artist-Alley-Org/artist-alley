@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/openapi/strictservershim"
@@ -23,6 +25,21 @@ import (
 )
 
 const testScrambleKey = "setup-test-scramble-key"
+
+// TestMain initialises atrest with a throwaway master key so the
+// CompleteSetup → EnsureCurrentForUser → Generate path (1.22.I-b)
+// can mint a keypair. Production wires AA_MASTER_KEY from the env;
+// tests don't depend on the operator's real key.
+func TestMain(m *testing.M) {
+	key := make([]byte, atrest.MasterKeyLen)
+	if _, err := rand.Read(key); err != nil {
+		panic("setup_test: seed master key: " + err.Error())
+	}
+	if err := atrest.InitWithKey(key); err != nil {
+		panic("setup_test: atrest init: " + err.Error())
+	}
+	os.Exit(m.Run())
+}
 
 // TestSetupFlow_HappyPath exercises the full create-initial-admin flow
 // end-to-end: status reports needs_setup, complete creates the admin
@@ -120,6 +137,29 @@ func TestSetupFlow_HappyPath(t *testing.T) {
 		}
 		if roleName != "Admin" {
 			t.Errorf("user assigned role %q want Admin", roleName)
+		}
+
+		// 5b. user has exactly one current federation keypair
+		// (1.22.I-b precondition for the encrypted federation
+		// wire that I-c/I-e/I-f will land on top).
+		var keyCount int
+		var algorithm string
+		var isCurrent bool
+		if err := fx.pool.QueryRow(ctx, `
+			SELECT COUNT(*), MAX(algorithm), bool_or(is_current)
+			  FROM federation_user_keys
+			 WHERE user_id = (SELECT ref FROM "user" WHERE username = $1)
+			`, fx.adminUsername).Scan(&keyCount, &algorithm, &isCurrent); err != nil {
+			t.Fatalf("lookup federation_user_keys: %v", err)
+		}
+		if keyCount != 1 {
+			t.Errorf("federation_user_keys count = %d, want 1", keyCount)
+		}
+		if algorithm != "naclbox-x25519-v1" {
+			t.Errorf("federation_user_keys algorithm = %q, want naclbox-x25519-v1", algorithm)
+		}
+		if !isCurrent {
+			t.Errorf("federation_user_keys is_current = false, want true")
 		}
 
 		// 6. repeated complete is 409
@@ -318,7 +358,7 @@ func withFixture(t *testing.T, fn func(ctx context.Context, fx *fixture)) {
 
 func (f *fixture) installHandler() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := setup.NewHandler(f.pool, logger, f.cfg, f.sysCfg, "fs")
+	h := setup.NewHandler(f.pool, logger, f.cfg, f.sysCfg, "fs", nil)
 	router := chi.NewRouter()
 	openapi.HandlerFromMux(openapi.NewStrictHandler(shimImpl{PanicShim: &strictservershim.PanicShim{}, h: h}, nil), router)
 	f.router = router

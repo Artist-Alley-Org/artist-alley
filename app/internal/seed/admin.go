@@ -20,6 +20,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/audit"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 )
 
 // AuditTimestampsHook is the cross-package contract for the
@@ -54,6 +57,14 @@ type AdminHandler struct {
 	auditComm  AuditCommentHook
 	auditUser  AuditUserHook
 	hashPwd    PasswordHasher
+
+	// recorder is the tx-bound audit sink for federation.user.
+	// key_generated events (1.22.I-b). Distinct from the hooks
+	// above — those are pool-bound after-the-fact best-effort
+	// logging; this one needs to commit atomically with the
+	// keypair insert. nil-safe: when unwired the keypair still
+	// lands; only the audit row is skipped.
+	recorder *audit.Recorder
 }
 
 func NewAdminHandler(
@@ -62,6 +73,7 @@ func NewAdminHandler(
 	auditComm AuditCommentHook,
 	auditUser AuditUserHook,
 	hashPwd PasswordHasher,
+	recorder *audit.Recorder,
 ) *AdminHandler {
 	return &AdminHandler{
 		pool:       pool,
@@ -70,6 +82,7 @@ func NewAdminHandler(
 		auditComm:  auditComm,
 		auditUser:  auditUser,
 		hashPwd:    hashPwd,
+		recorder:   recorder,
 	}
 }
 
@@ -436,7 +449,23 @@ func (h *AdminHandler) CreateUser(ctx context.Context, req *http.Request, actorU
 	}
 
 	username := in.Username
-	row, err := h.q.SeedInsertUser(ctx, SeedInsertUserParams{
+
+	// Wrap the whole create flow in a transaction. Before 1.22.I-b
+	// this was a pool-direct INSERT, but the federation keypair
+	// has to land atomically with the user row — a user committed
+	// without a key would violate the I-c/I-e/I-f precondition
+	// that every user has exactly one current key. ON CONFLICT
+	// DO NOTHING + the EnsureCurrentForUser idempotency check
+	// together also backfill keys for users that pre-existed the
+	// seed call.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		return UserResult{}, fmt.Errorf("seed: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.q.WithTx(tx)
+
+	row, err := qtx.SeedInsertUser(ctx, SeedInsertUserParams{
 		Username:  &username,
 		Password:  passwordHash,
 		Fullname:  in.Fullname,
@@ -445,23 +474,71 @@ func (h *AdminHandler) CreateUser(ctx context.Context, req *http.Request, actorU
 		Approved:  approved,
 		Created:   created,
 	})
+	var userRef int64
 	already := false
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return UserResult{}, fmt.Errorf("seed: insert user: %w", err)
 		}
 		// ON CONFLICT DO NOTHING returned 0 rows — re-fetch the
-		// existing row so the response shape is consistent with
-		// a fresh insert.
+		// existing row inside the same tx so the result is
+		// consistent and EnsureCurrentForUser can backfill a key
+		// if this pre-existing user is missing one.
 		already = true
-		existing, err := h.q.SeedGetUserByUsername(ctx, &username)
+		existing, err := qtx.SeedGetUserByUsername(ctx, &username)
 		if err != nil {
 			return UserResult{}, fmt.Errorf("seed: re-read after username conflict: %w", err)
 		}
-		return seedUserRowToResult(existing, true), nil
+		userRef = existing.Ref
+		row = SeedInsertUserRow{
+			Ref:       existing.Ref,
+			Username:  existing.Username,
+			Fullname:  existing.Fullname,
+			Email:     existing.Email,
+			Usergroup: existing.Usergroup,
+			Approved:  existing.Approved,
+			Created:   existing.Created,
+		}
+	} else {
+		userRef = row.Ref
 	}
 
-	if !already && h.auditUser != nil {
+	// Federation keypair (Phase 1.22.I-b). Idempotent — fires
+	// the audit only when a fresh keypair is actually minted.
+	// For users that pre-existed the seed call AND already had
+	// a key, alreadyHadKey=true → silent no-op.
+	ukq := userkeys.New(tx)
+	alreadyHadKey, err := userkeys.EnsureCurrentForUser(ctx, ukq, userRef)
+	if err != nil {
+		return UserResult{}, fmt.Errorf("seed: ensure federation user key: %w", err)
+	}
+	if !alreadyHadKey && h.recorder != nil {
+		// actor = the admin who called the seed endpoint, same
+		// as SeedUserCreated. Same tx so the audit row commits
+		// atomically with the key insert.
+		actor := actorUserRef
+		h.recorder.FederationUserKeyGenerated(ctx, audit.New(tx), userRef, &actor, 1, userkeys.Algorithm)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return UserResult{}, fmt.Errorf("seed: commit: %w", err)
+	}
+
+	if already {
+		return seedUserRowToResult(SeedGetUserByUsernameRow{
+			Ref:       row.Ref,
+			Username:  row.Username,
+			Fullname:  row.Fullname,
+			Email:     row.Email,
+			Usergroup: row.Usergroup,
+			Approved:  row.Approved,
+			Created:   row.Created,
+		}, true), nil
+	}
+
+	// Fresh-insert audit (existing pool-bound, fire-and-forget
+	// hook — distinct from the tx-bound recorder above).
+	if h.auditUser != nil {
 		h.auditUser(ctx, req, actorUserRef, row.Ref, username)
 	}
 	return seedInsertUserRowToResult(row), nil

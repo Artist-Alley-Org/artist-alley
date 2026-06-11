@@ -120,7 +120,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		teams:        teams.NewHandler(pool, logger, cacheReg),
 		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
 		social:       social.NewHandler(pool, logger, cacheReg),
-		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend),
+		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
 		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
 		i18n:         i18n.NewHandler(logger),
@@ -336,6 +336,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		func(plaintext string) (string, error) {
 			return auth.HashPassword(plaintext, cfg.ScrambleKey)
 		},
+		// Recorder is wired so SeedCreateUser's federation
+		// keypair generation (1.22.I-b) lands a tx-bound
+		// federation.user.key_generated audit row alongside the
+		// keypair insert.
+		auditRec,
 	)
 
 	// Federation outbox DELIVERY worker (Phase 1.22.D-b-4).

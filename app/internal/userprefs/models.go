@@ -419,6 +419,17 @@ type FederationShare struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type FederationUserKey struct {
+	UserID        int64
+	Version       int32
+	Algorithm     string
+	PublicKey     []byte
+	PrivateKeyEnc []byte
+	IsCurrent     bool
+	CreatedAt     pgtype.Timestamptz
+	RetainedUntil pgtype.Timestamptz
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID
 	Code                    string

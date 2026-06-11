@@ -60,6 +60,14 @@ const (
 	EventFederationOutboxRequeued         = "federation.outbox.requeued"
 	EventFederationPeerCascadeCancelled   = "federation.peer.cascade_cancelled"
 
+	// 1.22.I-b per-user federation keypair events. Fired from the
+	// three user-create paths (bootstrap, /setup, /admin/seed/users)
+	// when EnsureCurrentForUser actually mints a new keypair — the
+	// "user already had a current key" no-op path stays silent so
+	// idempotent re-runs don't generate audit noise. Tx-bound:
+	// the audit row commits atomically with the keypair insert.
+	EventFederationUserKeyGenerated = "federation.user.key_generated"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -417,6 +425,38 @@ func (r *Recorder) ActivityRejected(
 		meta["source_user_url"] = sourceUserURL
 	}
 	r.write(ctx, EventFederationActivityRejected, nil, nil, reqContext{}, meta)
+}
+
+// FederationUserKeyGenerated records a federation.user.key_generated
+// event per Phase 1.22.I-b. Fires from the three user-create paths
+// (bootstrap, /setup, /admin/seed/users) when EnsureCurrentForUser
+// actually mints a new keypair; the idempotent "already had one"
+// path stays silent so re-runs don't generate audit noise.
+//
+// Tx-bound — the audit row commits atomically with the keypair
+// insert. The pattern shares' grant/revoke established.
+//
+// subjectUserRef is the user whose keypair was generated.
+// actorUserRef is the principal who triggered the create:
+//
+//   - nil for bootstrap (no logged-in principal exists at first-
+//     boot; the system itself is the actor).
+//   - subjectUserRef for the /setup wizard (the new admin is
+//     creating themselves).
+//   - the seed-endpoint caller's user_ref for /admin/seed/users.
+func (r *Recorder) FederationUserKeyGenerated(
+	ctx context.Context,
+	q *Queries,
+	subjectUserRef int64,
+	actorUserRef *int64,
+	version int32,
+	algorithm string,
+) {
+	meta := map[string]any{
+		"version":   version,
+		"algorithm": algorithm,
+	}
+	r.WriteInTx(ctx, q, EventFederationUserKeyGenerated, &subjectUserRef, actorUserRef, meta)
 }
 
 // WriteInTx is the tx-aware public funnel. Callers needing the
