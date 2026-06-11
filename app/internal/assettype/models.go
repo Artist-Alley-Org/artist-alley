@@ -364,21 +364,23 @@ type FederationOutbox struct {
 }
 
 type FederationPeer struct {
-	ID                 pgtype.UUID        `json:"id"`
-	InstanceUrl        string             `json:"instance_url"`
-	DisplayName        string             `json:"display_name"`
-	InstancePublicKey  string             `json:"instance_public_key"`
-	TrustTier          string             `json:"trust_tier"`
-	EncryptionPolicy   string             `json:"encryption_policy"`
-	Enabled            bool               `json:"enabled"`
-	Status             string             `json:"status"`
-	HandshakeAt        pgtype.Timestamptz `json:"handshake_at"`
-	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
-	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
-	Notes              string             `json:"notes"`
-	ShareInVisibleList bool               `json:"share_in_visible_list"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	InstanceUrl              string             `json:"instance_url"`
+	DisplayName              string             `json:"display_name"`
+	InstancePublicKey        string             `json:"instance_public_key"`
+	TrustTier                string             `json:"trust_tier"`
+	EncryptionPolicy         string             `json:"encryption_policy"`
+	Enabled                  bool               `json:"enabled"`
+	Status                   string             `json:"status"`
+	HandshakeAt              pgtype.Timestamptz `json:"handshake_at"`
+	HandshakeByUserRef       int64              `json:"handshake_by_user_ref"`
+	LastSeenAt               pgtype.Timestamptz `json:"last_seen_at"`
+	Notes                    string             `json:"notes"`
+	ShareInVisibleList       bool               `json:"share_in_visible_list"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	Capabilities             []byte             `json:"capabilities"`
+	CapabilitiesNegotiatedAt pgtype.Timestamptz `json:"capabilities_negotiated_at"`
 }
 
 type FederationPeerSuggestion struct {
