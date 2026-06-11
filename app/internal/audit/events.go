@@ -68,6 +68,15 @@ const (
 	// the audit row commits atomically with the keypair insert.
 	EventFederationUserKeyGenerated = "federation.user.key_generated"
 
+	// 1.22.I-c remote-actor encryption-key distribution event.
+	// Fired by federation/remote.Handler.SetEncryptionKey when the
+	// inbound key differs from the previously cached value
+	// (first-time advertisement OR rotation). Pool-bound (NOT
+	// tx-bound) — the remote-actor upsert path is best-effort
+	// and not transactional; pairing the audit to it via a tx
+	// would change the inbox dispatcher's correctness story.
+	EventFederationRemoteActorKeyUpdated = "federation.remote_actor.key_updated"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -425,6 +434,43 @@ func (r *Recorder) ActivityRejected(
 		meta["source_user_url"] = sourceUserURL
 	}
 	r.write(ctx, EventFederationActivityRejected, nil, nil, reqContext{}, meta)
+}
+
+// FederationRemoteActorKeyUpdated records a
+// federation.remote_actor.key_updated event per Phase 1.22.I-c.
+// Fires from federation/remote.Handler.SetEncryptionKey when the
+// inbound key actually changes — first-time advertisement OR a
+// version bump (the remote peer rotated). The no-op refresh path
+// (same key, same version) intentionally does NOT fire to keep
+// the audit log signal-to-noise high.
+//
+// Pool-bound — the inbox dispatcher's actor-cache upsert is
+// best-effort and not transactional, so binding the audit row
+// to a tx would change the dispatcher's failure semantics. The
+// audit row therefore commits independently; the worst case is
+// an audit row without a matching DB write, which the operator
+// can detect by cross-referencing actor_uri against
+// federation_remote_actors.encryption_public_key_updated_at.
+//
+// `actorURI` is the federated actor whose key changed.
+// `peerID` is the parent peer's UUID (audit metadata for the
+// admin federation surface).
+// `previousVersion` is the prior version number; 0 means there
+// was no key before (first-time advertisement).
+// `newVersion` is the version the peer is now advertising.
+func (r *Recorder) FederationRemoteActorKeyUpdated(
+	ctx context.Context,
+	actorURI, peerID string,
+	previousVersion, newVersion int32,
+) {
+	meta := map[string]any{
+		"actor_uri":        actorURI,
+		"peer_id":          peerID,
+		"new_version":      newVersion,
+		"previous_version": previousVersion,
+		"first_time":       previousVersion == 0,
+	}
+	r.write(ctx, EventFederationRemoteActorKeyUpdated, nil, nil, reqContext{}, meta)
 }
 
 // FederationUserKeyGenerated records a federation.user.key_generated
