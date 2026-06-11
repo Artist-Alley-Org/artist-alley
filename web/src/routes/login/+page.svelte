@@ -147,6 +147,7 @@
         autofocus
         bind:value={username}
         disabled={submitting}
+        testId="login-username"
       />
 
       <TextField
@@ -157,9 +158,10 @@
         required
         bind:value={password}
         disabled={submitting}
+        testId="login-password"
       />
 
-      <Button type="submit" variant="primary" fullWidth loading={submitting}>
+      <Button type="submit" variant="primary" fullWidth loading={submitting} testId="login-submit">
         {t('login.submit')}
       </Button>
     </form>

@@ -31,9 +31,23 @@
     align?: 'left' | 'right';
     /** Extra class to apply to the popup container. */
     panelClass?: string;
+    /** `data-testid` for the trigger button — pin one when the
+        dropdown is meant to be a stable target for Playwright /
+        UI dogfood. Optional; menus without it still work, they're
+        just not reachable by testid. See helpers/testids.ts. */
+    triggerTestId?: string;
+    /** `data-testid` for the dropdown panel (rendered when open). */
+    panelTestId?: string;
   }
 
-  let { trigger, children, align = 'right', panelClass = '' }: Props = $props();
+  let {
+    trigger,
+    children,
+    align = 'right',
+    panelClass = '',
+    triggerTestId,
+    panelTestId,
+  }: Props = $props();
 
   let open = $state(false);
   let triggerEl: HTMLElement | undefined = $state();
@@ -124,6 +138,7 @@
     onclick={toggle}
     aria-haspopup="menu"
     aria-expanded={open}
+    data-testid={triggerTestId}
     class="contents"
   >
     {@render trigger({ open })}
@@ -134,6 +149,7 @@
       bind:this={panelEl}
       role="menu"
       onclick={handlePanelClick}
+      data-testid={panelTestId}
       class={`absolute z-40 mt-1 min-w-[12rem] rounded-md border border-border bg-surface py-1 shadow-lg focus:outline-none ${align === 'right' ? 'right-0' : 'left-0'} ${panelClass}`}
     >
       {@render children()}

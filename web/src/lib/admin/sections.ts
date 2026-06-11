@@ -38,8 +38,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'roles',      status: 'live',   href: '/admin/roles' },
       { key: 'groups',     status: 'live',   href: '/admin/teams' },
       { key: 'sessions',   status: 'future', phase: '1.17' },
-      { key: 'audit',      status: 'future', phase: '1.20' },
-      { key: 'workflow',   status: 'live',   href: '/admin/workflow' },
+      // `audit` moved to the automation section (its natural home alongside workflow + triggers).
+      // `workflow` moved to the automation section.
       { key: 'capability_grants', status: 'future', phase: '1.17' },
     ],
   },
@@ -126,13 +126,13 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'federation',
     iconKey: 'federation',
     tiles: [
-      { key: 'peers',         status: 'future', phase: '1.22' },
-      { key: 'inbound',       status: 'future', phase: '1.22' },
-      { key: 'outbound',      status: 'future', phase: '1.22' },
-      { key: 'sync_status',   status: 'future', phase: '1.22' },
-      { key: 'conflicts',     status: 'future', phase: '1.22' },
-      { key: 'activitypub',   status: 'future', phase: '1.22' },
-      { key: 'blocklist',     status: 'future', phase: '1.22' },
+      { key: 'peers',         status: 'live',   href: '/admin/federation/peers' },
+      { key: 'directories',   status: 'live',   href: '/admin/federation/directories' },
+      { key: 'shares',        status: 'live',   href: '/admin/federation/shares' },
+      { key: 'outbox',        status: 'live',   href: '/admin/federation/outbox' },
+      { key: 'inbox',         status: 'live',   href: '/admin/federation/inbox' },
+      { key: 'blocklist',     status: 'future', phase: '1.22.G' },
+      { key: 'activitypub',   status: 'future', phase: '1.22.K' },
     ],
   },
   {
@@ -157,11 +157,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
       { key: 'log',          status: 'stub',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
-      { key: 'federation',   status: 'live',   href: '/admin/federation/peers' },
-      { key: 'directories',  status: 'live',   href: '/admin/federation/directories' },
-      { key: 'fed_shares',   status: 'live',   href: '/admin/federation/shares' },
-      { key: 'fed_outbox',   status: 'live',   href: '/admin/federation/outbox' },
-      { key: 'fed_inbox',    status: 'live',   href: '/admin/federation/inbox' },
+      // Federation tiles moved to the dedicated `federation` section
+      // — duplicating them under system was confusing UX (the
+      // section landing pages would each show partial overlapping
+      // sets).
       { key: 'themes',       status: 'live',   href: '/admin/system/themes' },
       { key: 'maintenance',  status: 'future', phase: '1.19' },
       { key: 'feature_flags', status: 'future', phase: '1.20' },

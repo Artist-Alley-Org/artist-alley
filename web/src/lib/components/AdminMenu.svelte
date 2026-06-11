@@ -21,7 +21,7 @@
 </script>
 
 {#if isAdmin}
-  <Menu align="right">
+  <Menu align="right" triggerTestId="nav-admin-menu-trigger" panelTestId="admin-menu-panel">
     {#snippet trigger({ open })}
       <span
         class="relative inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-state-hover"

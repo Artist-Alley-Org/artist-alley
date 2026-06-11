@@ -34,7 +34,12 @@ The review tool is the centre of gravity. The rest of the product exists so revi
 
 ## Underneath the pillars: posture
 
-The pillars describe how the product behaves. Two postures describe how it lives in the world:
+The pillars describe how the product behaves. Three postures describe how it lives in the world:
 
 - **End-to-end, not glue-code.** A studio shouldn't have to stitch together a DAM, a review tool, a transfer service, a chat bot, and a wiki to do its job. Artist Alley aims to be the one self-hostable system for upload → review → version → archive → ship.
 - **Open by default.** The core is open source. Every feature on the roadmap lives in the AGPL binary an operator can self-host forever. Premium capabilities are *additive*, gated only when an operator is using us to monetize third parties or when we're carrying real operational burden on their behalf.
+- **Federated, no SaaS rent.** Studios working with external partners — co-development teams, marketing agencies, licensing partners, museums on loan — share assets directly between independently-operated instances. No middle vendor, no per-outsider seat licensing, no metadata-stripping export-then-import. The protocol is [ArchivePub](/protocol/archivepub/) — an open, ActivityPub-shaped spec for DAM federation that any other DAM can implement. We built it because nobody else has, and because federation between studios should be a property of the protocol, not a feature you rent.
+
+## Why these three postures together matter
+
+Each posture, alone, has been done before. End-to-end DAMs exist (commercial). Open-source DAMs exist (PHP, archivist-shaped). Federated content platforms exist (Mastodon, Pixelfed, PeerTube — for messaging, photos, video, respectively). What hasn't existed: all three at once, on a single self-hostable binary built this decade rather than the last one. That combination is the durable position. The artist-first pillar is what makes daily users come back; the review-grade pillar is what makes studio leads sign off; the three postures together are why studios can adopt without strategic regret.

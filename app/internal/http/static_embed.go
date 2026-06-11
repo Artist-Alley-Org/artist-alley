@@ -17,12 +17,8 @@ package http
 
 import (
 	"embed"
-	"io"
 	"io/fs"
 	"net/http"
-	"path"
-	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -36,10 +32,9 @@ func hasEmbeddedFrontend() bool { return true }
 // router. Routes the chi mux hasn't already claimed (e.g. /api/v1/*,
 // /healthz) fall through to this handler.
 //
-// Behaviour:
-//   - Exact-match static asset -> serve from the embed.
-//   - Otherwise -> serve index.html and let the SPA router resolve
-//     the path client-side (SvelteKit + adapter-static SPA fallback).
+// Behaviour is implemented in serveSPA (static_spa.go) — that
+// function is intentionally tag-free so the regression tests in
+// static_spa_test.go run regardless of build tag.
 func mountStaticFrontend(r chi.Router) {
 	sub, err := fs.Sub(staticAssetsFS, "static_assets")
 	if err != nil {
@@ -50,37 +45,4 @@ func mountStaticFrontend(r chi.Router) {
 	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		serveSPA(sub, w, req)
 	}))
-}
-
-func serveSPA(root fs.FS, w http.ResponseWriter, r *http.Request) {
-	// chi's NotFound runs after route matching, so anything reaching
-	// here is meant for the frontend. Resolve the requested path
-	// against the embedded FS first.
-	p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-	if p == "" {
-		p = "index.html"
-	}
-
-	if f, err := root.Open(p); err == nil {
-		_ = f.Close()
-		http.FileServer(http.FS(root)).ServeHTTP(w, r)
-		return
-	}
-
-	// Unknown path — hand the SPA shell back, the client router
-	// (SvelteKit) handles it.
-	index, err := root.Open("index.html")
-	if err != nil {
-		http.Error(w, "frontend bundle missing", http.StatusInternalServerError)
-		return
-	}
-	defer index.Close()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	if rs, ok := index.(io.ReadSeeker); ok {
-		http.ServeContent(w, r, "index.html", time.Time{}, rs)
-		return
-	}
-	// Fallback if the FS impl doesn't return a Seeker.
-	_, _ = io.Copy(w, index)
 }

@@ -1,0 +1,14 @@
+{
+  "name": "artist-alley-dogfood-ui",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright-driven UI dogfood suite. Mirrors the shell scenarios in scripts/dogfood/scenarios/ at the UI layer — catches navigation regressions + API↔UI contract drift the shell layer misses.",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report .pw-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

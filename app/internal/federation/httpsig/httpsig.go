@@ -38,6 +38,7 @@
 package httpsig
 
 import (
+
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"

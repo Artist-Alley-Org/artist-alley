@@ -21,6 +21,7 @@
 <button
   type="button"
   onclick={open}
+  data-testid="nav-upload-button"
   class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-accent text-on-accent shadow-sm transition-colors hover:bg-accent/90"
   title="Upload (or drop files anywhere)"
   aria-label="Upload"

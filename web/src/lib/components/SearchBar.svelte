@@ -87,6 +87,7 @@
     oninput={onInput}
     onkeydown={onKey}
     aria-label="Search"
+    data-testid="nav-search"
     class="w-full rounded-full border border-border-strong bg-surface pl-10 pr-10 py-2 text-sm text-fg
            placeholder:text-fg-muted
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

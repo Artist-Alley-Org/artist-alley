@@ -258,21 +258,6 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Post("/auth/saml/acs", samlRouter.ConsumeAssertion)
 		r.Get("/auth/saml/metadata", samlRouter.Metadata)
 
-		// Federation inbox (Phase 1.22.D-a) — direct chi mount,
-		// not openapi/strict-server. Handler needs raw
-		// http.Request + ResponseWriter for body draining +
-		// Signature header parsing + Retry-After response
-		// control which the strict-server shape hides. Public
-		// endpoint authed via HTTP-Signature on the request
-		// itself, not session/bearer.
-		if impl.inboxHandler != nil {
-			r.Post("/federation/inbox", impl.inboxHandler.PostInbox)
-			// Batched variant per spec §10.4 — same handler;
-			// amortises HTTP-Sig + TLS overhead across up to 50
-			// envelopes per request. Phase 1.22.D-b-5.
-			r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
-		}
-
 		// /assets/{id}/file with Range support so <audio>/<video>
 		// can seek into the middle of a large media asset. The
 		// openapi-derived handler streams the whole body in one
@@ -300,6 +285,25 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		archBundleH := handlers.NewArchiveBundleHandler(pool, storageSvc, logger)
 		r.Get("/assets/{id}/archive/bundle.zip", archBundleH.ServeHTTP)
 	})
+
+	// Federation inbox (Phase 1.22.D-a) — mounted at ROOT, not under
+	// /api/v1. The federation delivery worker constructs URLs as
+	// `peer.InstanceURL + "/federation/inbox"` (no /api/v1 prefix —
+	// see internal/federation/outbox/delivery.go); the e2e tests
+	// mount inbox at root via httptest the same way. Direct chi mount
+	// because the handler needs raw http.Request + ResponseWriter for
+	// body draining + Signature header parsing + Retry-After response
+	// control which the strict-server shape hides. Public endpoint
+	// authed via HTTP-Signature on the request itself, not session/
+	// bearer — so it doesn't pick up the /api/v1 ResolveIdentity
+	// middleware.
+	if impl != nil && impl.inboxHandler != nil {
+		r.Post("/federation/inbox", impl.inboxHandler.PostInbox)
+		// Batched variant per spec §10.4 — same handler; amortises
+		// HTTP-Sig + TLS overhead across up to 50 envelopes per
+		// request. Phase 1.22.D-b-5.
+		r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
+	}
 
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request
 	// pipeline on small hosts. Empty Types = drain every registered

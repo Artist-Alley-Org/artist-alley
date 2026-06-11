@@ -64,6 +64,12 @@ One binary. One database. One storage volume — or any S3-compatible bucket. No
 
 Heavier capabilities (CLIP embeddings, Whisper transcription, OCR, Blender-rendered thumbnails, image generation) ship as **optional add-ons** an operator installs separately — never baked into the binary. The core stays small and auditable in an afternoon.
 
+## And federation, built in
+
+Sharing work between independently-operated studios usually means paying SaaS rent (Frame.io, Bynder) or sending a Dropbox link and hoping. Artist Alley is the first DAM — open-source or commercial — that natively federates: each studio runs its own instance, pairs with partner instances, and exchanges assets, posts, comments, brand kits, and workflow events directly. Self-hosted on both ends. No middle vendor.
+
+The protocol is **[ArchivePub](/protocol/archivepub/)** — built on the ActivityPub data model with DAM-shaped extensions for asset sharing, workflow state, and access-controlled brand workspaces. Open spec; any DAM can implement it. We're shipping the reference implementation because nobody else was going to.
+
 ## Ship channels
 
 Artist Alley ships through every channel a self-hosted server can

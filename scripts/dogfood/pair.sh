@@ -44,16 +44,46 @@ A_URL_FROM_B="http://nginx"  # dev's nginx service name on the bridge
 a_cookies=$(mktemp)
 trap 'rm -f "$a_cookies"' EXIT
 
-# --- 1. log into studio-a (admin API needs the session) -------------------
+# --- 1. log into both stacks (admin API needs the session) ---------------
 
-step "Logging in as admin on studio-a"
-code=$(curl -sk -o /dev/null -w "%{http_code}" \
-    -c "$a_cookies" \
-    -X POST "${A_HOST}/api/v1/auth/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}")
-[ "$code" = "200" ] || fail "studio-a login: HTTP ${code}"
-pass "studio-a admin in"
+step "Logging in as admin on both stacks"
+b_cookies=$(mktemp); trap 'rm -f "$a_cookies" "$b_cookies"' EXIT
+for pair in "studio-a:${A_HOST}:${a_cookies}" "studio-b:${B_HOST}:${b_cookies}"; do
+    name="${pair%%:*}"; rest="${pair#*:}"; cookies="${rest##*:}"; host="${rest%:*}"
+    code=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -c "$cookies" \
+        -X POST "${host}/api/v1/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}")
+    [ "$code" = "200" ] || fail "${name} login: HTTP ${code}"
+    pass "${name} admin in"
+done
+
+# --- 1b. set each instance's site.base_url so federation signing
+#         keyIds align with the peer registry's instance_url ------------
+
+step "Setting site.base_url on both stacks"
+# The federation signer builds the HTTP-Sig keyId as
+# `<site.base_url>/federation/instance#main-key`. The receiving
+# peer looks up the signer by URL-prefix-matching keyId against
+# its federation_peers.instance_url. If site.base_url is empty
+# (first boot default), the keyId is just `/federation/instance...`
+# which can't match anything → 401 "unknown_peer". Set it now so
+# the URLs align: studio-a signs as `http://nginx/...` (studio-b's
+# peer-row URL) and studio-b signs as `https://studio-b.local:9443/...`.
+patch_site() {
+    local name="$1" host="$2" cookies="$3" base_url="$4"
+    code=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -b "$cookies" -X PATCH "${host}/api/v1/admin/system/site" \
+        -H "Content-Type: application/json" \
+        -d "{\"name\": \"${name}\", \"base_url\": \"${base_url}\"}")
+    case "$code" in
+        200|204) pass "${name} site.base_url = ${base_url}" ;;
+        *)       fail "${name} PATCH /admin/system/site: HTTP ${code}" ;;
+    esac
+}
+patch_site "studio-a" "$A_HOST" "$a_cookies" "$A_URL_FROM_B"
+patch_site "studio-b" "$B_HOST" "$b_cookies" "$B_URL_FROM_A"
 
 # --- 2. fetch each peer's instance doc (public, unauth) ------------------
 

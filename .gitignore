@@ -138,3 +138,4 @@ app/aa-abr-extract
 /test-*.png
 /firing_squad/
 kaggle.txt
+.dogfood-runs
