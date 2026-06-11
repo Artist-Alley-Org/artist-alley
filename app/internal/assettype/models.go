@@ -392,13 +392,16 @@ type FederationPeerSuggestion struct {
 }
 
 type FederationRemoteActor struct {
-	ActorUri    string             `json:"actor_uri"`
-	PeerID      pgtype.UUID        `json:"peer_id"`
-	DisplayName string             `json:"display_name"`
-	AvatarUrl   string             `json:"avatar_url"`
-	FirstSeenAt pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ActorUri                     string             `json:"actor_uri"`
+	PeerID                       pgtype.UUID        `json:"peer_id"`
+	DisplayName                  string             `json:"display_name"`
+	AvatarUrl                    string             `json:"avatar_url"`
+	FirstSeenAt                  pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt                   pgtype.Timestamptz `json:"last_seen_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	EncryptionPublicKey          []byte             `json:"encryption_public_key"`
+	EncryptionPublicKeyVersion   *int32             `json:"encryption_public_key_version"`
+	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz `json:"encryption_public_key_updated_at"`
 }
 
 type FederationShare struct {

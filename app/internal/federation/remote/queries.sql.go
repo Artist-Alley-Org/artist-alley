@@ -18,9 +18,19 @@ FROM federation_remote_actors
 WHERE actor_uri = $1
 `
 
-func (q *Queries) GetRemoteActor(ctx context.Context, actorUri string) (FederationRemoteActor, error) {
+type GetRemoteActorRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetRemoteActor(ctx context.Context, actorUri string) (GetRemoteActorRow, error) {
 	row := q.db.QueryRow(ctx, getRemoteActor, actorUri)
-	var i FederationRemoteActor
+	var i GetRemoteActorRow
 	err := row.Scan(
 		&i.ActorUri,
 		&i.PeerID,
@@ -47,16 +57,26 @@ type ListRemoteActorsByPeerParams struct {
 	Limit  int32
 }
 
+type ListRemoteActorsByPeerRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 // Admin per-peer view. Most-recent-active first.
-func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActorsByPeerParams) ([]FederationRemoteActor, error) {
+func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActorsByPeerParams) ([]ListRemoteActorsByPeerRow, error) {
 	rows, err := q.db.Query(ctx, listRemoteActorsByPeer, arg.PeerID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []FederationRemoteActor
+	var items []ListRemoteActorsByPeerRow
 	for rows.Next() {
-		var i FederationRemoteActor
+		var i ListRemoteActorsByPeerRow
 		if err := rows.Scan(
 			&i.ActorUri,
 			&i.PeerID,
@@ -98,19 +118,29 @@ type UpsertRemoteActorParams struct {
 	AvatarUrl   string
 }
 
+type UpsertRemoteActorRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 // The inbound dispatch handler upserts on every inbound activity
 // from a remote actor so display info (display_name, avatar_url)
 // refreshes naturally. ON CONFLICT updates display fields +
 // bumps last_seen_at; first_seen_at stays at its original
 // insertion timestamp.
-func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorParams) (FederationRemoteActor, error) {
+func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorParams) (UpsertRemoteActorRow, error) {
 	row := q.db.QueryRow(ctx, upsertRemoteActor,
 		arg.ActorUri,
 		arg.PeerID,
 		arg.DisplayName,
 		arg.AvatarUrl,
 	)
-	var i FederationRemoteActor
+	var i UpsertRemoteActorRow
 	err := row.Scan(
 		&i.ActorUri,
 		&i.PeerID,

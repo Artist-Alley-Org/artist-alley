@@ -392,13 +392,16 @@ type FederationPeerSuggestion struct {
 }
 
 type FederationRemoteActor struct {
-	ActorUri    string
-	PeerID      pgtype.UUID
-	DisplayName string
-	AvatarUrl   string
-	FirstSeenAt pgtype.Timestamptz
-	LastSeenAt  pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ActorUri                     string
+	PeerID                       pgtype.UUID
+	DisplayName                  string
+	AvatarUrl                    string
+	FirstSeenAt                  pgtype.Timestamptz
+	LastSeenAt                   pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+	EncryptionPublicKey          []byte
+	EncryptionPublicKeyVersion   *int32
+	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz
 }
 
 type FederationShare struct {
