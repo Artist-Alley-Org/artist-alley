@@ -419,6 +419,17 @@ type FederationShare struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FederationUserKey struct {
+	UserID        int64              `json:"user_id"`
+	Version       int32              `json:"version"`
+	Algorithm     string             `json:"algorithm"`
+	PublicKey     []byte             `json:"public_key"`
+	PrivateKeyEnc []byte             `json:"private_key_enc"`
+	IsCurrent     bool               `json:"is_current"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RetainedUntil pgtype.Timestamptz `json:"retained_until"`
+}
+
 type FieldDefinition struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Code                    string             `json:"code"`

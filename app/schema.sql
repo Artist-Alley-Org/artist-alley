@@ -3736,6 +3736,35 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg
     FOR EACH ROW
     EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
 
+-- Migration 00007 — federation_user_keys (Phase 1.22.I-b).
+-- Per-user X25519 keypairs for NaCl-box encrypted federation.
+-- Private key column is atrest-wrapped (AES-256-GCM, host master
+-- key per app/internal/atrest). Multi-version retention supports
+-- the I-h rotation flow; the inbox decrypt path (I-f) falls back
+-- from current to retained versions during a peer's catch-up
+-- window. See ADR 0049 §Track B.
+CREATE TABLE public.federation_user_keys (
+    user_id          bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
+    version          integer      NOT NULL CHECK (version >= 1),
+    algorithm        text         NOT NULL DEFAULT 'naclbox-x25519-v1',
+    public_key       bytea        NOT NULL CHECK (octet_length(public_key) = 32),
+    private_key_enc  bytea        NOT NULL CHECK (octet_length(private_key_enc) >= 13),
+    is_current       boolean      NOT NULL,
+    created_at       timestamptz  NOT NULL DEFAULT NOW(),
+    retained_until   timestamptz  NULL,
+    PRIMARY KEY (user_id, version),
+    CONSTRAINT federation_user_keys_current_xor_retained CHECK (
+        (is_current = TRUE  AND retained_until IS NULL)
+     OR (is_current = FALSE AND retained_until IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX federation_user_keys_one_current_idx
+    ON public.federation_user_keys (user_id)
+    WHERE is_current = TRUE;
+CREATE INDEX federation_user_keys_retained_idx
+    ON public.federation_user_keys (retained_until)
+    WHERE retained_until IS NOT NULL;
+
 -- Seeds (from 00002_seeds.sql)
 
 INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);
