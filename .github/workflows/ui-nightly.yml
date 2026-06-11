@@ -271,11 +271,12 @@ jobs:
         # serves the SPA via Vite (web container, port 5173 on the
         # docker network — `vite.aa` alias). Vite cold-boot
         # re-optimises dep bundles into the anonymous node_modules
-        # volume and takes ~5 min before the dev server binds.
-        # Wait explicitly so the test step doesn't time out
-        # per-assertion while Vite is still bundling.
+        # volume; observed wall time 6m04s on this runner.
+        # Wait 10 min for headroom — same number ui-pr.yml settled
+        # on before we abandoned Vite there. Success path exits
+        # early on first 200; only slow paths use the budget.
         run: |
-          for i in $(seq 1 180); do
+          for i in $(seq 1 300); do
             if curl -fsS -o /dev/null "http://vite.aa:5173/"; then
               echo "Vite ready after ${i} attempts"
               exit 0
