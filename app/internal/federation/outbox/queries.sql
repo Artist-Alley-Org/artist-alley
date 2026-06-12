@@ -2,14 +2,22 @@
 -- Idempotent via the partial UNIQUE indexes. ON CONFLICT DO
 -- NOTHING handles both targeted (target_user_url IS NOT NULL)
 -- + broadcast (NULL) flavours.
+--
+-- Phase 1.22.I-g: sensitivity is denormalized from the activities
+-- ledger at INSERT time so the delivery Worker can consult
+-- outbox.ChoosePathFor without a per-row JOIN. NULL passes through
+-- when the resolver dispatcher has no sensitivity lookup wired
+-- (pre-I-g rows or test fixtures); the Worker treats that as
+-- conservative-public per the same default the resolver uses.
 INSERT INTO federation_outbox (
-    activity_id, peer_id, target_user_url, status, next_attempt_at
+    activity_id, peer_id, target_user_url, status, next_attempt_at, sensitivity
 )
-VALUES ($1, $2, $3, 'queued', NOW())
+VALUES ($1, $2, $3, 'queued', NOW(), $4)
 ON CONFLICT DO NOTHING
 RETURNING id, activity_id, peer_id, target_user_url, status,
           attempts, next_attempt_at, last_attempt_at, last_error,
-          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted;
+          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason;
 
 -- name: ListDueOutbox :many
 -- Hot-path read for the delivery worker. Uses
@@ -19,7 +27,8 @@ RETURNING id, activity_id, peer_id, target_user_url, status,
 -- defaults to 100 rows/tick.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -32,7 +41,8 @@ LIMIT $1;
 -- batched POST per the §3.10 batched-delivery optimisation.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -73,6 +83,24 @@ UPDATE federation_outbox
        updated_at = NOW()
  WHERE id = $1 AND status = 'queued';
 
+-- name: MarkOutboxRefused :execrows
+-- Phase 1.22.I-g terminal-refusal path. Worker flips queued →
+-- refused with a catalogue reason when policy.ChoosePathFor
+-- returns EmissionRefused (share sensitivity requires encryption
+-- + capability or recipient key isn't available). The partial-
+-- index federation_outbox_due_idx (status='queued') filters
+-- refused rows out of ListDueOutbox automatically, so refusal is
+-- terminal — no retries, no backoff. Operator action (re-pair →
+-- caps refresh OR move share to a lower tier) is the recovery
+-- path; the protocol does NOT auto-retry after capability
+-- changes.
+UPDATE federation_outbox
+   SET status         = 'refused',
+       refused_reason = $2,
+       last_attempt_at = NOW(),
+       updated_at     = NOW()
+ WHERE id = $1 AND status = 'queued';
+
 -- name: CancelOutboxByPeer :execrows
 -- Defederation cascade: cancel every queued row for a peer.
 -- Returns the count for the audit row.
@@ -96,7 +124,8 @@ UPDATE federation_outbox
 -- name: GetOutboxByID :one
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE id = $1;
 
@@ -104,7 +133,8 @@ WHERE id = $1;
 -- Per-peer admin view. Most-recent first.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE peer_id = $1
 ORDER BY created_at DESC

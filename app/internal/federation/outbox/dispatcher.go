@@ -335,6 +335,19 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 			continue
 		}
 
+		// Phase 1.22.I-g: denormalize sensitivity onto every outbox
+		// row at INSERT time so the delivery Worker can consult
+		// outbox.ChoosePathFor without re-touching the activities
+		// table. NULL flows through unchanged when the resolver
+		// dispatcher has no sensitivity lookup wired (test
+		// fixtures) — the Worker treats absence as the same
+		// conservative-public default the resolver uses.
+		var sensitivityPtr *string
+		if sen != "" {
+			s := string(sen)
+			sensitivityPtr = &s
+		}
+
 		// Insert one outbox row per recipient.
 		for _, rec := range result.Recipients {
 			targetURLPtr := (*string)(nil)
@@ -346,6 +359,7 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, skipped, enqueued 
 				ActivityID:    row.ID,
 				PeerID:        pgtype.UUID{Bytes: rec.PeerID, Valid: true},
 				TargetUserUrl: targetURLPtr,
+				Sensitivity:   sensitivityPtr,
 			})
 			// pgx.ErrNoRows on conflict (RETURNING + DO NOTHING)
 			// is the idempotent-no-op signal; not an error.

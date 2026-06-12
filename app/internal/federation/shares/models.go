@@ -364,6 +364,8 @@ type FederationOutbox struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	WasEncrypted       bool
+	Sensitivity        *string
+	RefusedReason      *string
 }
 
 type FederationPeer struct {

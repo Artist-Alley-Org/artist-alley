@@ -130,6 +130,31 @@ const (
 	EventFederationInboxDecrypted     = "federation.inbox.decrypted"
 	EventFederationInboxDecryptFailed = "federation.inbox.decrypt_failed"
 
+	// 1.22.I-g sender-refusal policy event. Distinct from the
+	// existing federation.emission.skipped: semantically
+	// skipped = "informational, not relevant" (recipient_set_
+	// empty / defederation_in_progress / peer-disabled), refused
+	// = "policy DECISION, blocked an emission that would
+	// otherwise have happened" (the share's sensitivity tier
+	// mandated encryption + the recipient peer or key wasn't
+	// available). Operators grep these differently — two events
+	// = two intent shapes.
+	//
+	// Fired by the outbox delivery Worker once per outbox row
+	// whose [outbox.ChoosePathFor] returned [outbox.EmissionRefused].
+	// Pool-bound; the audit row + the [outbox.MarkOutboxRefused]
+	// commit independently (the audit feed accepts the "DB write
+	// committed, audit row missed" gap as the lesser failure
+	// mode, same contract as I-e/I-f's emission/inbox events).
+	//
+	// Operator analytics: SELECT metadata->>'peer_id',
+	// metadata->>'reason', COUNT(*) FROM audit_events
+	// WHERE event_type = 'federation.emission.refused'
+	// GROUP BY 1, 2 — answers "which peers + reasons are
+	// causing refusals?" — the load-bearing query for the
+	// dogfood validation that follows I-g.
+	EventFederationEmissionRefused = "federation.emission.refused"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -719,4 +744,40 @@ func (r *Recorder) FederationInboxDecryptFailed(
 		"recipient_key_version_attempted": recipientKeyVersionAttempted,
 	}
 	r.write(ctx, EventFederationInboxDecryptFailed, subjectUserRef, nil, reqContext{}, meta)
+}
+
+// FederationEmissionRefused records a federation.emission.refused
+// event per Phase 1.22.I-g. Fires from the outbox delivery
+// Worker when policy.ChoosePathFor returns EmissionRefused — the
+// share sensitivity tier mandated encryption + the recipient
+// peer's capability or pubkey wasn't available, so the row was
+// not POSTed at all.
+//
+// Pool-bound — the dispatcher's MarkOutboxRefused commits
+// independently. Pairing the audit to a tx would change the
+// dispatcher's failure semantics; the audit feed accepts the
+// "DB write committed, audit row missed" gap as the lesser
+// failure mode (same contract as I-e/I-f).
+//
+//   peerID        — recipient peer's UUID. Operator dashboards
+//                   group on this to surface "which peers cause
+//                   the most refusals?"
+//   activityType  — verb (Like / Create / aa:Share / etc.).
+//   sensitivity   — share tier that triggered the refusal
+//                   (restricted / embargo / future tier).
+//   reason        — catalogue value from
+//                   [outbox.RefuseReason]. Today only
+//                   encryption_required_but_unavailable;
+//                   future reasons land here as new constants.
+func (r *Recorder) FederationEmissionRefused(
+	ctx context.Context,
+	peerID, activityType, sensitivity, reason string,
+) {
+	meta := map[string]any{
+		"peer_id":       peerID,
+		"activity_type": activityType,
+		"sensitivity":   sensitivity,
+		"reason":        reason,
+	}
+	r.write(ctx, EventFederationEmissionRefused, nil, nil, reqContext{}, meta)
 }
