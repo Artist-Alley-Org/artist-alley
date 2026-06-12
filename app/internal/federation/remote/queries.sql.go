@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRemoteActorsMissingEncryptionKey = `-- name: CountRemoteActorsMissingEncryptionKey :one
+SELECT count(*) FROM federation_remote_actors
+ WHERE encryption_public_key IS NULL
+`
+
+// Operator observability. Backed by the
+// federation_remote_actors_missing_encryption_key_idx partial
+// index so the count is cheap regardless of total actor volume.
+func (q *Queries) CountRemoteActorsMissingEncryptionKey(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countRemoteActorsMissingEncryptionKey)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getRemoteActor = `-- name: GetRemoteActor :one
 SELECT actor_uri, peer_id, display_name, avatar_url,
        first_seen_at, last_seen_at, updated_at
@@ -18,9 +33,19 @@ FROM federation_remote_actors
 WHERE actor_uri = $1
 `
 
-func (q *Queries) GetRemoteActor(ctx context.Context, actorUri string) (FederationRemoteActor, error) {
+type GetRemoteActorRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetRemoteActor(ctx context.Context, actorUri string) (GetRemoteActorRow, error) {
 	row := q.db.QueryRow(ctx, getRemoteActor, actorUri)
-	var i FederationRemoteActor
+	var i GetRemoteActorRow
 	err := row.Scan(
 		&i.ActorUri,
 		&i.PeerID,
@@ -30,6 +55,34 @@ func (q *Queries) GetRemoteActor(ctx context.Context, actorUri string) (Federati
 		&i.LastSeenAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getRemoteActorEncryptionKey = `-- name: GetRemoteActorEncryptionKey :one
+SELECT encryption_public_key,
+       encryption_public_key_version,
+       encryption_public_key_updated_at
+  FROM federation_remote_actors
+ WHERE actor_uri = $1
+   AND encryption_public_key IS NOT NULL
+`
+
+type GetRemoteActorEncryptionKeyRow struct {
+	EncryptionPublicKey          []byte
+	EncryptionPublicKeyVersion   *int32
+	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz
+}
+
+// Reader path used by I-e outbox encryption + the I-c
+// Handler.GetEncryptionKey cache miss. Returns the actor's
+// current encryption_public_key block when present; pgx.ErrNoRows
+// when the actor row doesn't exist OR the row exists but the key
+// column is NULL. Callers needing to distinguish those cases run
+// GetRemoteActor in tandem.
+func (q *Queries) GetRemoteActorEncryptionKey(ctx context.Context, actorUri string) (GetRemoteActorEncryptionKeyRow, error) {
+	row := q.db.QueryRow(ctx, getRemoteActorEncryptionKey, actorUri)
+	var i GetRemoteActorEncryptionKeyRow
+	err := row.Scan(&i.EncryptionPublicKey, &i.EncryptionPublicKeyVersion, &i.EncryptionPublicKeyUpdatedAt)
 	return i, err
 }
 
@@ -47,16 +100,26 @@ type ListRemoteActorsByPeerParams struct {
 	Limit  int32
 }
 
+type ListRemoteActorsByPeerRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 // Admin per-peer view. Most-recent-active first.
-func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActorsByPeerParams) ([]FederationRemoteActor, error) {
+func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActorsByPeerParams) ([]ListRemoteActorsByPeerRow, error) {
 	rows, err := q.db.Query(ctx, listRemoteActorsByPeer, arg.PeerID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []FederationRemoteActor
+	var items []ListRemoteActorsByPeerRow
 	for rows.Next() {
-		var i FederationRemoteActor
+		var i ListRemoteActorsByPeerRow
 		if err := rows.Scan(
 			&i.ActorUri,
 			&i.PeerID,
@@ -74,6 +137,40 @@ func (q *Queries) ListRemoteActorsByPeer(ctx context.Context, arg ListRemoteActo
 		return nil, err
 	}
 	return items, nil
+}
+
+const setRemoteActorEncryptionKey = `-- name: SetRemoteActorEncryptionKey :execrows
+
+UPDATE federation_remote_actors
+   SET encryption_public_key            = $2,
+       encryption_public_key_version    = $3,
+       encryption_public_key_updated_at = NOW()
+ WHERE actor_uri = $1
+`
+
+type SetRemoteActorEncryptionKeyParams struct {
+	ActorUri                   string
+	EncryptionPublicKey        []byte
+	EncryptionPublicKeyVersion *int32
+}
+
+// --- Phase 1.22.I-c — remote-actor encryption-key cache --------------
+// Writes the encryption-key block on an EXISTING remote_actor
+// row. UpsertRemoteActor (the display-info upsert) is the
+// prerequisite — call it first on every inbound activity so the
+// row exists. Returns rowcount; 0 means the actor URI wasn't in
+// the table (caller surfaces as ErrNoActor).
+//
+// Callers that want change-detection for the audit event read
+// GetRemoteActorEncryptionKey first + compare the result. The
+// atomic CHECK constraint on the table (migration 00008) means
+// all three columns move together — we can't partial-write.
+func (q *Queries) SetRemoteActorEncryptionKey(ctx context.Context, arg SetRemoteActorEncryptionKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setRemoteActorEncryptionKey, arg.ActorUri, arg.EncryptionPublicKey, arg.EncryptionPublicKeyVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertRemoteActor = `-- name: UpsertRemoteActor :one
@@ -98,19 +195,29 @@ type UpsertRemoteActorParams struct {
 	AvatarUrl   string
 }
 
+type UpsertRemoteActorRow struct {
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 // The inbound dispatch handler upserts on every inbound activity
 // from a remote actor so display info (display_name, avatar_url)
 // refreshes naturally. ON CONFLICT updates display fields +
 // bumps last_seen_at; first_seen_at stays at its original
 // insertion timestamp.
-func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorParams) (FederationRemoteActor, error) {
+func (q *Queries) UpsertRemoteActor(ctx context.Context, arg UpsertRemoteActorParams) (UpsertRemoteActorRow, error) {
 	row := q.db.QueryRow(ctx, upsertRemoteActor,
 		arg.ActorUri,
 		arg.PeerID,
 		arg.DisplayName,
 		arg.AvatarUrl,
 	)
-	var i FederationRemoteActor
+	var i UpsertRemoteActorRow
 	err := row.Scan(
 		&i.ActorUri,
 		&i.PeerID,

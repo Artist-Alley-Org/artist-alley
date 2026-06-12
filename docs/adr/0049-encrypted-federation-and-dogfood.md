@@ -257,20 +257,32 @@ fires.
 The dogfood track is sub-phase a (Track A); encryption is sub-
 phases b through i (Track B).
 
-- **1.22.I-a — Dogfood infrastructure** (Track A). `infra/docker/
-  dogfood/` + `scripts/dogfood/` + operational doc + mkcert
-  bootstrap + the Scenario 01-04 scripts (Scenario 05 lands with
-  I-i below). Runs the existing 1.22.D wire surface against
-  itself; reports any surprises from Scenarios 01-04 against the
-  current build before encryption work starts. Gates everything
-  else in 1.22.I.
+- **1.22.I-a — Dogfood infrastructure** (Track A). **Shipped via
+  PR #110.** `scripts/dogfood/` helpers (`up.sh` with
+  `--standalone` mode, `pair.sh`, `seed.sh`, `run-all.sh`,
+  `run-ui.sh`); mkcert bootstrap with capability-shaped TLS
+  prereqs; the dogfood CI loop via `.github/workflows/ui-pr.yml`
+  + `ui-nightly.yml` running on a self-hosted containerised
+  runner. First production-class bug caught by the loop:
+  SPA-fallback directory regression at `063a232`. Runs the
+  existing 1.22.D wire surface against itself; the
+  paired-instance Scenarios 01-04 run from `scripts/dogfood/
+  scenarios/`. Scenario 05 still lands with I-i below. Gates
+  everything else in 1.22.I.
 
-- **1.22.I-b — X25519 keypair-per-user.** Eager generation on
-  user create; at-rest encryption of the private key with the
-  master key per ADR 0017's encrypted credentials pattern; storage
-  table `federation_user_keys` carrying `(user_id, version,
-  public_key, private_key_encrypted, is_current, created_at,
-  retained_until)`; migration + sqlc + tests.
+- **1.22.I-b — X25519 keypair-per-user.** **Shipped via PR #111.**
+  Eager generation on user create across all three caller paths
+  (bootstrap admin, `/setup/complete`, `/admin/seed/users`);
+  at-rest encryption of the private key with the master key per
+  ADR 0017's encrypted credentials pattern; storage table
+  `federation_user_keys` carrying `(user_id, version,
+  public_key, private_key_wrap, is_current, created_at,
+  retained_until)` with a partial unique index `(user_id) WHERE
+  is_current` so each user has exactly one current key; sqlc
+  package at `app/internal/federation/userkeys/` with crypto
+  primitives + EnsureCurrentForUser + audit event. 23 new tests
+  (migration + sqlc round-trip + wrap/unwrap + per-caller
+  integration).
 
 - **1.22.I-c — Public key distribution + actor profile inline.**
   `GET /users/{username}` response gains a `publicKeys` block

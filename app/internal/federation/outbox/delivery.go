@@ -42,6 +42,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -401,7 +402,10 @@ func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (
 			deferred++
 			continue
 		}
-		b, err := json.Marshal(env)
+		// Envelope.Marshal (not json.Marshal) — Extra would be
+		// dropped by reflection-based JSON; see deliverOne for
+		// the longer note.
+		b, err := env.Marshal()
 		if err != nil {
 			w.markAttemptFailed(ctx, row, fmt.Errorf("marshal envelope: %w", err))
 			deferred++
@@ -559,8 +563,14 @@ func (w *Worker) deliverOne(ctx context.Context, row FederationOutbox) deliveryO
 		return deliveryOutcomeFailedTerminal
 	}
 
-	// Build the POST.
-	body, err := json.Marshal(envelope)
+	// Build the POST. Use Envelope.Marshal (not json.Marshal):
+	// the Extra map carries `json:"-"` so the default Go
+	// reflection serializer would drop it on the floor.
+	// Envelope.Marshal expands Extra into top-level fields per
+	// spec §3.1 so e.g. the activity-type payload + the
+	// 1.22.I-c aa:encryptionPublicKey block actually reach the
+	// peer.
+	body, err := envelope.Marshal()
 	if err != nil {
 		w.markAttemptFailed(ctx, row, fmt.Errorf("marshal envelope: %w", err))
 		return deliveryOutcomeFailedTransient
@@ -656,6 +666,16 @@ func nextAttemptAt(n int16) time.Time {
 // buildEnvelope reconstructs the v1 envelope JSON from an
 // activities ledger row. The body is what we POST to the peer
 // + what HTTP-Sig signs.
+//
+// Phase 1.22.I-c: the query LEFT JOINs federation_user_keys for
+// the actor's current X25519 public key, and (when present)
+// injects the aa:encryptionPublicKey block into env.Extra. The
+// receiver's inbox actor-cache upsert harvests the key into
+// federation_remote_actors so the future I-e outbox encryption +
+// I-f inbox decryption have a known recipient key to dispatch
+// against. activities without an actor_user_ref (system-generated
+// activities) skip the block; receivers gracefully fall through
+// the sender-refusal path (I-g) for those.
 func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*federation.Envelope, error) {
 	var (
 		activityURI  string
@@ -668,16 +688,25 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*fede
 		publishedAt  pgtype.Timestamptz
 		sigValue     *string
 		sigPubKey    *string
+
+		encKeyBytes   []byte         // 32 bytes if the actor has a current key, nil otherwise
+		encKeyVersion pgtype.Int4    // matches encKeyBytes — both Valid=false or both Valid=true
 	)
 	err := w.pool.QueryRow(ctx, `
-		SELECT activity_uri, activity_type, actor_uri, object_uri,
-		       to_uris, cc_uris, payload, published_at,
-		       signature_value, signature_pubkey
-		FROM activities WHERE id = $1
+		SELECT a.activity_uri, a.activity_type, a.actor_uri, a.object_uri,
+		       a.to_uris, a.cc_uris, a.payload, a.published_at,
+		       a.signature_value, a.signature_pubkey,
+		       fuk.public_key, fuk.version
+		  FROM activities a
+		  LEFT JOIN federation_user_keys fuk
+		    ON fuk.user_id = a.actor_user_ref
+		   AND fuk.is_current = TRUE
+		 WHERE a.id = $1
 	`, activityID).Scan(
 		&activityURI, &activityType, &actorURI, &objectURI,
 		&toURIs, &ccURIs, &payload, &publishedAt,
 		&sigValue, &sigPubKey,
+		&encKeyBytes, &encKeyVersion,
 	)
 	if err != nil {
 		return nil, err
@@ -728,6 +757,26 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*fede
 		var extra map[string]json.RawMessage
 		if err := json.Unmarshal(payload, &extra); err == nil {
 			env.Extra = extra
+		}
+	}
+
+	// Phase 1.22.I-c — advertise the actor's current encryption
+	// public key inline so receivers can populate their
+	// federation_remote_actors cache without a follow-up fetch.
+	// Skipped when the activity has no actor_user_ref (system-
+	// generated) or the user somehow has no current key (post-I-b
+	// invariant violation; defensive).
+	if len(encKeyBytes) == 32 && encKeyVersion.Valid && encKeyVersion.Int32 >= 1 {
+		if env.Extra == nil {
+			env.Extra = make(map[string]json.RawMessage, 1)
+		}
+		encKeyRaw, err := json.Marshal(map[string]any{
+			"type":            federation.TypeX25519PublicKey,
+			"publicKeyBase64": base64.StdEncoding.EncodeToString(encKeyBytes),
+			"version":         encKeyVersion.Int32,
+		})
+		if err == nil {
+			env.Extra[federation.PropEncryptionPublicKey] = encKeyRaw
 		}
 	}
 	return env, nil

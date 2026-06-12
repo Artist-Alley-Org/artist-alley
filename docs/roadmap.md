@@ -75,8 +75,12 @@ The current release stream covers the foundations:
   against `federation_shares`; admin queue UI with re-queue +
   cascade-cancel + audit. Sub-1s p99 end-to-end against production
   defaults. First federated DAM, open-source or commercial. See
-  ADR 0043. Encrypted federation + key distribution coming in 1.22.I,
-  gated on paired-instance dogfood signal.
+  ADR 0043. Encrypted federation continues in 1.22.I:
+  **1.22.I-a (dogfood infrastructure) shipped via PR #110;
+  1.22.I-b (X25519 keypair-per-user) shipped via PR #111.**
+  Remainder of the encrypted-federation arc (1.22.I-c through
+  1.22.I-i) continues; encrypted-on-wire envelopes land at
+  1.22.I-e.
 
 ## In flight
 

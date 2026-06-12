@@ -3661,6 +3661,32 @@ CREATE TABLE public.federation_remote_actors (
 CREATE INDEX federation_remote_actors_by_peer_idx
     ON public.federation_remote_actors (peer_id, last_seen_at DESC);
 
+-- Migration 00008 — federation_remote_actors gains the inbound
+-- encryption-key cache columns (Phase 1.22.I-c). 32-byte X25519
+-- public key advertised by the remote actor in their envelope's
+-- aa:encryptionPublicKey block; nullable for pre-I-c peers. The
+-- atomic CHECK ensures the three columns move together so the
+-- read path's "has a key?" check is unambiguous.
+-- (Declared next to the table even though the migration runs
+-- after 00005-00007; schema.sql groups by table for readability.)
+ALTER TABLE public.federation_remote_actors
+    ADD COLUMN encryption_public_key            bytea       NULL,
+    ADD COLUMN encryption_public_key_version    integer     NULL,
+    ADD COLUMN encryption_public_key_updated_at timestamptz NULL,
+    ADD CONSTRAINT federation_remote_actors_encryption_key_atomic CHECK (
+        (encryption_public_key IS NULL
+            AND encryption_public_key_version IS NULL
+            AND encryption_public_key_updated_at IS NULL)
+     OR (encryption_public_key IS NOT NULL
+            AND octet_length(encryption_public_key) = 32
+            AND encryption_public_key_version IS NOT NULL
+            AND encryption_public_key_version >= 1
+            AND encryption_public_key_updated_at IS NOT NULL)
+    );
+CREATE INDEX federation_remote_actors_missing_encryption_key_idx
+    ON public.federation_remote_actors (peer_id)
+    WHERE encryption_public_key IS NULL;
+
 -- Migration 00005 — federation_outbox + cursor state + LISTEN/NOTIFY
 -- trigger (Phase 1.22.D-b-1).
 CREATE TABLE public.federation_outbox (

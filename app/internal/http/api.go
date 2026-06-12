@@ -282,7 +282,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		logger,
 	)
 	s.inboxDispatcher.SetSocialPoster(inboxSocialPosterAdapter{h: s.social})
-	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
+	// Phase 1.22.I-c: the upsert path now ALSO persists the
+	// inbound aa:encryptionPublicKey block via remote.Handler.
+	// Boot constructs the Handler with the cache registry so
+	// cross-process invalidation fires on every key write; the
+	// Recorder is the same one shared across federation surfaces
+	// so the resulting federation.remote_actor.key_updated row
+	// lands alongside the existing federation audit events.
+	remoteHandler := remote.NewHandler(pool, logger, cacheReg)
+	s.inboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, remoteHandler, auditRec, logger))
 	s.inboxDispatcher.SetRegistry(inbox.BuildRegistry(s.inboxDispatcher, logger))
 	// LISTEN/NOTIFY on federation_inbox_pending — gold-standard
 	// sub-1s latency per 1.22.D-b-6 G1. The dispatcher's 30s

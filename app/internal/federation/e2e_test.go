@@ -166,7 +166,7 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 		nil, logger,
 	)
 	bInboxDispatcher.SetSocialPoster(&e2eSocialPoster{h: bSocial})
-	bInboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool))
+	bInboxDispatcher.SetRemoteActorUpserter(remote.NewUpserter(pool, nil, nil, logger))
 	bInboxDispatcher.SetRegistry(inbox.BuildRegistry(bInboxDispatcher, logger))
 	bInboxDispatcher.SetRawPool(pool) // ← LISTEN federation_inbox_pending
 	go bInboxDispatcher.Run(ctx)
