@@ -17,14 +17,14 @@ RETURNING id, activity_uri, peer_id, actor_uri, activity_type,
           object_kind, object_id, envelope_json, http_sig_key,
           received_at, status, reject_reason, dispatch_attempts,
           last_attempt_at, last_error, processed_at,
-          correlation_activity_id, created_at, updated_at;
+          correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version;
 
 -- name: GetInboxByID :one
 SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE id = $1;
 
@@ -33,7 +33,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE activity_uri = $1;
 
@@ -45,24 +45,33 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE status = 'pending'
 ORDER BY received_at
 LIMIT $1;
 
 -- name: MarkInboxProcessed :one
--- Worker stage 13: dispatch succeeded.
+-- Worker stage 13: dispatch succeeded. Records the per-row
+-- encryption observability columns (1.22.I-f, migration 00011):
+-- was_encrypted=true when the dispatcher took the stage-4 decrypt
+-- branch; decrypted_with_key_version captures which receiver key
+-- version actually opened the payload (NULL on plaintext rows so
+-- the admin filter `WHERE decrypted_with_key_version IS NOT NULL`
+-- isolates the encrypted-rows view).
 UPDATE federation_inbox
-SET status                  = 'processed',
-    processed_at            = NOW(),
-    last_attempt_at         = NOW(),
-    dispatch_attempts       = dispatch_attempts + 1,
-    correlation_activity_id = $2,
-    last_error              = '',
-    updated_at              = NOW()
+SET status                     = 'processed',
+    processed_at               = NOW(),
+    last_attempt_at            = NOW(),
+    dispatch_attempts          = dispatch_attempts + 1,
+    correlation_activity_id    = $2,
+    was_encrypted              = $3,
+    decrypted_with_key_version = $4,
+    last_error                 = '',
+    updated_at                 = NOW()
 WHERE id = $1
-RETURNING id, status, processed_at, correlation_activity_id;
+RETURNING id, status, processed_at, correlation_activity_id,
+          was_encrypted, decrypted_with_key_version;
 
 -- name: MarkInboxRejected :one
 -- Worker stage 12: gate rejected or domain handler said "permanent
@@ -133,7 +142,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE peer_id = $1
 ORDER BY received_at DESC

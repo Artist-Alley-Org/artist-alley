@@ -76,3 +76,29 @@ ORDER BY version DESC;
 -- Total key versions for a user (current + retained, regardless of
 -- expiry). Test helper + future admin UI; not on any hot path.
 SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1;
+
+-- name: ListUserKeysForDecrypt :many
+-- Phase 1.22.I-f — returns the current + retained-not-expired keys
+-- for a user, full row (public + WRAPPED PRIVATE bytes + version)
+-- so the inbox decrypt path can walk them in order until one
+-- successfully opens the NaCl-box ciphertext. Distinct from
+-- ListPublicKeysByUser (no private bytes there) so the public
+-- read-path can't accidentally leak the private column even
+-- with code drift.
+--
+-- Ordering:
+--   1. is_current DESC — the active key always tried first;
+--      handles the common case (no rotation drift) at attempt #1.
+--   2. version DESC — among retained keys, walk newest-to-oldest
+--      so a sender that's one version behind hits a quick
+--      success; very-stale senders pay the linear walk cost.
+--
+-- The retained_until filter excludes keys past their grace window
+-- — those rows might still be in the table during the I-h sweeper
+-- delay, but the dispatcher must NOT decrypt against them.
+SELECT user_id, version, algorithm, public_key, private_key_enc,
+       is_current, created_at, retained_until
+FROM federation_user_keys
+WHERE user_id = $1
+  AND (is_current = TRUE OR retained_until > NOW())
+ORDER BY is_current DESC, version DESC;

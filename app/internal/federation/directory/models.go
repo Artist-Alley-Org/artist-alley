@@ -326,25 +326,27 @@ type FederationDispatchState struct {
 }
 
 type FederationInbox struct {
-	ID                    pgtype.UUID
-	ActivityUri           string
-	PeerID                pgtype.UUID
-	ActorUri              string
-	ActivityType          string
-	ObjectKind            *string
-	ObjectID              pgtype.UUID
-	EnvelopeJson          []byte
-	HttpSigKey            string
-	ReceivedAt            pgtype.Timestamptz
-	Status                string
-	RejectReason          *string
-	DispatchAttempts      int32
-	LastAttemptAt         pgtype.Timestamptz
-	LastError             string
-	ProcessedAt           pgtype.Timestamptz
-	CorrelationActivityID pgtype.UUID
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
+	ID                      pgtype.UUID
+	ActivityUri             string
+	PeerID                  pgtype.UUID
+	ActorUri                string
+	ActivityType            string
+	ObjectKind              *string
+	ObjectID                pgtype.UUID
+	EnvelopeJson            []byte
+	HttpSigKey              string
+	ReceivedAt              pgtype.Timestamptz
+	Status                  string
+	RejectReason            *string
+	DispatchAttempts        int32
+	LastAttemptAt           pgtype.Timestamptz
+	LastError               string
+	ProcessedAt             pgtype.Timestamptz
+	CorrelationActivityID   pgtype.UUID
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	WasEncrypted            bool
+	DecryptedWithKeyVersion *int32
 }
 
 type FederationOutbox struct {

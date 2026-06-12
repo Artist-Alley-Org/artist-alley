@@ -296,6 +296,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// sub-1s latency per 1.22.D-b-6 G1. The dispatcher's 30s
 	// ticker is correctness backstop only.
 	s.inboxDispatcher.SetRawPool(pool)
+	// Phase 1.22.I-f stage-4 decrypt-branch wiring. All three
+	// hooks nil-safe at the dispatcher level; when any is unwired
+	// the encrypted-row path rejects with reject_reason=
+	// decrypt_failed + a typed audit reason. Plaintext traffic
+	// is unaffected. The remoteHandler reuses the same instance
+	// the upserter cached above so a key-write the inbox just
+	// stored is immediately visible to the decrypt walk.
+	s.inboxDispatcher.SetSenderEncKey(func(ctx context.Context, actorURI string) ([]byte, int32, error) {
+		k, err := remoteHandler.GetEncryptionKey(ctx, actorURI)
+		if err != nil {
+			return nil, 0, err
+		}
+		return k.Key[:], k.Version, nil
+	})
+	s.inboxDispatcher.SetRecipientUserRef(recipientUserRefFor(pool))
+	s.inboxDispatcher.SetAudit(auditRec)
 
 	// Federation OUTBOX dispatcher (Phase 1.22.D-b). Drains
 	// activities ledger rows into per-recipient federation_outbox
@@ -760,6 +776,56 @@ func inboxDispatchPeerLookup(reg *peer.Registry) func(ctx context.Context, peerI
 			Connected:         p.Status == federation.PeerStatusConnected,
 		}, nil
 	}
+}
+
+// recipientUserRefFor returns the inbox-dispatcher hook that
+// resolves a recipient actor URI (envelope.To[0]) to the local
+// user_ref the receiver-key walk needs. Phase 1.22.I-f.
+//
+// Actor URIs follow `<base>/users/<username>` per the federation
+// spec §8.4. The resolver picks the last non-empty path segment
+// + queries auth.users by name; same-host check is the upstream
+// inbox-side stage 8 (already validated).
+//
+// Direct SQL because the inbox package doesn't import auth (would
+// pull in HTTP middleware deps the dispatcher doesn't need) +
+// the query is single-column, single-row, no joins. Cache hit
+// path lives in *users.Handler.UserPublic for the social hot
+// path; the dispatcher is off the hot path so an uncached lookup
+// per encrypted envelope is acceptable.
+func recipientUserRefFor(pool *pgxpool.Pool) inbox.RecipientUserRefFunc {
+	return func(ctx context.Context, actorURI string) (int64, error) {
+		username := usernameFromActorURI(actorURI)
+		if username == "" {
+			return 0, errors.New("api: actor URI has no username segment")
+		}
+		var ref int64
+		err := pool.QueryRow(ctx,
+			`SELECT ref FROM "user" WHERE LOWER(username) = LOWER($1) LIMIT 1`,
+			username,
+		).Scan(&ref)
+		if err != nil {
+			return 0, err
+		}
+		return ref, nil
+	}
+}
+
+// usernameFromActorURI parses the last `/users/<username>` segment
+// out of an actor URI. Returns "" when the URI doesn't carry the
+// expected shape so the caller can surface a typed error.
+func usernameFromActorURI(uri string) string {
+	const marker = "/users/"
+	idx := strings.LastIndex(uri, marker)
+	if idx < 0 {
+		return ""
+	}
+	tail := uri[idx+len(marker):]
+	// Strip trailing slash + any query/fragment defensively.
+	if i := strings.IndexAny(tail, "/?#"); i >= 0 {
+		tail = tail[:i]
+	}
+	return tail
 }
 
 // postTargetLookupFor returns the "who owns this post?" closure

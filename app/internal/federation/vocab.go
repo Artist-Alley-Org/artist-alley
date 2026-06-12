@@ -555,6 +555,7 @@ const (
 	InboxStatusEncryptionRequired    InboxStatus = "encryption_required"      // SENDER violated a MUST-encrypt rule (inverse of EncryptionNotSupported)
 	InboxStatusEncryptionNotSupported InboxStatus = "encryption_not_supported" // RECEIVER hasn't shipped 1.22.I X25519 decode yet (inverse of EncryptionRequired)
 	InboxStatusPlaintextTypeMismatch InboxStatus = "plaintext_type_mismatch" // decrypted type ≠ envelope type
+	InboxStatusDecryptFailed       InboxStatus = "decrypt_failed"         // 1.22.I-f: walked every retained receiver key + every attempt's nacl/box.Open returned !ok — tamper, corruption, or sender used a recipient key version we've fully aged out
 	InboxStatusStaleRequest        InboxStatus = "stale_request"          // HTTP-Sig date out of window
 	InboxStatusReplay              InboxStatus = "replay"                 // activity id already seen
 	InboxStatusError               InboxStatus = "error"                  // internal error during processing
@@ -586,6 +587,7 @@ var KnownInboxStatuses = map[InboxStatus]struct{}{
 	InboxStatusEncryptionRequired:    {},
 	InboxStatusEncryptionNotSupported: {},
 	InboxStatusPlaintextTypeMismatch: {},
+	InboxStatusDecryptFailed:        {},
 	InboxStatusStaleRequest:          {},
 	InboxStatusReplay:                {},
 	InboxStatusError:                 {},
