@@ -228,26 +228,44 @@ Each peer relationship carries an encryption policy:
 | Policy | Behaviour |
 |---|---|
 | `plaintext` | Envelopes are signed but not encrypted. Suitable for trusted within-organisation peers. v0.x default. |
-| `e2e-encrypted` | Envelopes are signed + the content payload is NaCl-box encrypted to the recipient's published X25519 public key. **Planned for v1.0 (Phase 1.22.I).** Reserved in v0.x. |
+| `e2e-encrypted` | Envelopes are signed + the content payload is NaCl-box encrypted to the recipient's published X25519 public key. Shipped in v0.5 (sender, 1.22.I-e) + v0.6 (receiver, 1.22.I-f). |
 
 A peer's encryption policy is announced during the pairing handshake.
 Senders MUST honour the recipient's declared policy.
 
+**v0.7 (1.22.I-g)** completes the encryption story end-to-end with the
+sender-refusal policy: from v0.7 forward, `policy: e2e-encrypted`
+becomes **enforceable** at the sender side. Pre-v0.7 senders silently
+degraded `restricted` shares to plaintext when the recipient couldn't
+decrypt; v0.7+ senders **refuse** to dispatch (see §3.6 + §5.3).
+
 ### 3.6 Sensitivity tiers (per-asset)
 
 Independent of the federation peer policy, each `aa:Asset` carries a
-sensitivity tier governing local access:
+sensitivity tier governing local access AND federation transmission:
 
-| Tier | Visibility |
-|---|---|
-| `public` | Visible to anyone with org-level access. |
-| `team` | Visible to members of the asset's owning team. |
-| `restricted` | Visible only to explicitly granted users. Federation refuses to ship unless the recipient peer has `e2e-encrypted` policy. |
-| `embargo` | Like `restricted`, plus a temporal release date. |
+| Tier | Visibility | Federation transmission (v0.7+) |
+|---|---|---|
+| `public` | Visible to anyone with org-level access. | Best-effort: encrypted when both sides can; plaintext otherwise. |
+| `team` | Visible to members of the asset's owning team. | Best-effort: encrypted when both sides can; plaintext otherwise. |
+| `restricted` | Visible only to explicitly granted users. | **MUST encrypt**: refuse if recipient peer can't (capability missing OR pubkey unfetchable). |
+| `embargo` | Like `restricted`, plus a temporal release date. | **MUST encrypt**: same refusal rule as `restricted`. |
 
-The intersection of asset sensitivity + peer encryption policy
-determines federation eligibility — `restricted` + `plaintext` peer =
-refusal, with a specific reject reason.
+The combined decision matrix (sender side, per recipient peer):
+
+| Tier | Peer e2e + key | Path |
+|---|---|---|
+| `public`, `team` | yes | Encrypted (opportunistic) |
+| `public`, `team` | no | Plaintext (1.22.D backwards-compat) |
+| `restricted`, `embargo` | yes | Encrypted (required) |
+| `restricted`, `embargo` | no | **REFUSED** — outbox row terminal-fails with `refused_reason=encryption_required_but_unavailable`; no envelope reaches the receiver. |
+| unknown / future tier | yes | Encrypted |
+| unknown / future tier | no | **REFUSED** (conservative default — unknown tier is treated as required-encryption). |
+
+Unknown tiers default to require-encryption so the failure mode of an
+unrecognised tier is "refused + visible in the operator audit log"
+rather than "leaked + invisible". Implementers adding a new tier MUST
+update this matrix in the same revision.
 
 ## 4. Wire format
 
@@ -328,6 +346,8 @@ inline HTTP-error payloads):
 | `unshared_object` | The receiver has no `aa:Share` grant for the referenced object. |
 | `encryption_required_but_not_supported` | Recipient's policy demands encryption; sender can't provide it. |
 | `plaintext_type_mismatch` | A type that MUST be encrypted arrived as plaintext. |
+| `decrypt_failed` | The encrypted envelope's ciphertext did not open against any retained receiver key (1.22.I-f). |
+| `encryption_required` | **Receiver-side variant** (RESERVED at v0.7, lights up at v0.8 / 1.22.I-h): plaintext envelope arrived for a target whose share sensitivity tier mandates encryption — the sender violated the v0.7 §3.6 policy. Distinct from `encryption_required_but_not_supported`, which is the recipient declaring inability to receive plaintext. |
 | `peer_defederated` | The sending peer was previously defederated. |
 | `actor_unknown` | The `from` actor isn't resolvable. |
 | `clock_skew_too_large` | The envelope's `created_at` is too far from receiver's clock. |
@@ -411,6 +431,29 @@ any inbound activity referencing the object.
 
 `aa:Unshare` revokes the grant. Defederation (operator-side action)
 cascade-cancels all outstanding shares to that peer.
+
+**Sender refusal policy (v0.7+, 1.22.I-g).** When the shared object's
+sensitivity tier is `restricted` or `embargo`, senders **MUST refuse**
+to dispatch the activity to any recipient peer where either:
+
+- the peer has not negotiated the `nacl-box` capability during the
+  pairing handshake (§5.2), OR
+- the recipient actor's published encryption public key is not
+  retrievable at dispatch time.
+
+Refusal is per-recipient: a single `aa:Share` activity fanning out to
+multiple peers (one e2e-capable, one legacy) emits encrypted to the
+capable peer + refuses for the legacy one. The refusal is **terminal**
+— the sender's outbox row records the refusal in the audit log
+(`federation.emission.refused`) + no envelope reaches the receiver.
+Capability changes on the recipient peer do NOT auto-trigger
+re-dispatch; operator action (re-pair to refresh capabilities OR move
+the share to a lower sensitivity tier) is required.
+
+Senders running v0.7 against legacy peers SHOULD prepare for operator
+inquiries about refused shares; the audit log's
+`metadata->>'reason' = 'encryption_required_but_unavailable'`
+filter is the canonical diagnostic.
 
 ### 5.4 Activity emission
 
@@ -598,3 +641,4 @@ example envelopes from the dogfood week.*
 | v0.4 | 2026-06-11 | 1.22.I-d (peer capability negotiation) — **second wire-breaking change**. Handshake offer + confirm envelopes gain an optional `supported_capabilities` field carrying the sender's typed advertisement (JSON array of strings). Receivers compute the INTERSECTION with their own `KnownCapabilities` set and persist the result on `federation_peers.capabilities`; both sides end up with the same set because intersection is commutative. Vocabulary at v0.4: `e2e-encrypted`, `nacl-box`, `x25519`, `ed25519-envelope-sig`, `http2-batched-inbox`. Open on the wire (peers MAY advertise unknown strings, receivers MUST preserve them through round-trip — re-saving a stored row doesn't drop peer-side metadata) but closed in code (this reference implementation only dispatches on `KnownCapabilities`). Receiver-side rule for the nil-vs-empty distinction: a missing `supported_capabilities` field (pre-v0.4 peer) leaves `capabilities_negotiated_at` NULL, surfaces the peer via `ListPeersMissingCapabilities` for operator re-pairing; an explicit `[]` (peer with no overlapping caps) sets `capabilities_negotiated_at = NOW()` with an empty array. The outbox resolver gains a per-recipient gate that consults `SupportsE2E()` when `Input.RequiresEncryption=true` and emits `federation.emission.skipped` (with reason `capability_missing_e2e_encrypted`) for any recipient whose peer hasn't negotiated the required capabilities; gate is dormant at v0.4 (no production caller sets the flag) and lights up at v0.5 (envelope encryption, 1.22.I-e). Reference implementation: schema in migration `00009_peer_capabilities.sql`, vocabulary + helpers in `federation/peer/capabilities.go`, handshake wiring in `federation/peer/handshake.go`, resolver gate in `federation/outbox/resolver.go::applyCapabilityGate`, audit recorder in `audit.Recorder.FederationEmissionSkippedForPeer`. **Forward notice unchanged**: v0.5 (envelope encryption) remains the next wire-breaking change. |
 | v0.5 | 2026-06-11 | 1.22.I-e (envelope encryption, sender side) — **third wire-breaking change**. Envelopes gain an optional `encryption` field containing a per-recipient NaCl-box ciphertext + the sender + recipient key id/version metadata the receiver needs for the I-h rotation grace window. Shape: `{"algorithm": "nacl-box-v1", "sender_key_id": "<actor URL>#encryption-key", "sender_key_version": <int>, "recipient_key_id": "<actor URL>#encryption-key", "recipient_key_version": <int>, "nonce": "<base64 24 bytes>", "ciphertext": "<base64>"}`. When `encryption` is present the envelope's activity-payload extras (`actorDisplayName`, `content`, etc.) MUST be absent — the receiver decrypts the ciphertext into the original extras map. Routing-critical fields (`type`, `id`, `actor`, `published`, `to`, `cc`, `object`, `signature`) stay in clear so the inbox can authenticate the sender + dispatch the activity without decrypting. The Ed25519 envelope signature covers the entire envelope including the encryption block (RFC 8785 JCS canonicalization); tampering with the ciphertext, nonce, or metadata invalidates the signature. Per-recipient: each outbox row → one recipient → one NaCl-box seal; no shared envelopes across recipients. Nonce is fresh `crypto/rand` per emission (reuse with the same keypair is catastrophic for XSalsa20). The sender's private key is master-key-wrapped at rest; the dispatcher unwraps + zeros the bytes around `box.Seal`. **Rollout coordination**: the reference implementation REMOVES `nacl-box` from `KnownCapabilities` in this revision so the I-d intersection produces an empty `SupportsE2E` result against every peer — production traffic does NOT encrypt at v0.5 even though the code path exists. The receiver-side decrypt (v0.6, 1.22.I-f) re-adds `nacl-box` to `KnownCapabilities` as its final step + triggers a re-pair. Implementers MUST NOT advertise `nacl-box` until they ship the matching decrypt path; advertising what they can't honor breaks every encrypted envelope at the receiver. Reference implementation: schema in migration `00010_outbox_encryption_metadata.sql` (observability mirror), primitive in `federation.EncryptActivityPayload` / `federation.DecryptActivityPayload` (both ship in I-e so the round-trip tests cover the full pipeline; I-f wires the decrypt side into the inbox), envelope shape in `federation.EncryptionBlock`, dispatcher integration in `federation/outbox/delivery.Worker.tryEncryptFor`, audit recorder in `audit.Recorder.FederationEmissionEncrypted`. **Forward notice**: v0.6 (envelope decryption + retained-key fallback) is the next wire-breaking change. |
 | v0.6 | 2026-06-11 | 1.22.I-f (envelope decryption, receiver side + retained-key fallback) — **fourth wire-breaking change** (in name only; the wire shape from v0.5 is unchanged — what changes is that receivers MUST now decrypt envelopes carrying the `encryption` block from v0.5 instead of rejecting them). The reference implementation's inbox dispatcher gains a stage-4 decrypt branch (`federation/inbox.Dispatcher.dispatchOne` between envelope re-parse and verb-handler dispatch): when `env.Encryption != nil` the dispatcher resolves the recipient's local user_ref from `envelope.To[0]`, looks up the sender's pubkey via the I-c remote-actor cache, walks the recipient's retained keys via `inbox.DecryptForUser` (order: `is_current DESC, version DESC` — current key tries first, then any retained-not-expired keys for the rotation grace window) and unwraps + zeros the private scalar per attempt. On success `env.Extra` is restored from the JSON plaintext so every downstream verb handler sees the same view it would on a plaintext envelope; on failure the row transitions to `status=rejected` with a new `reject_reason=decrypt_failed` (catalogued in `InboxStatus`) and the audit recorder fires `federation.inbox.decrypt_failed` with a typed `reason` field (catalogue: `no_keys_walked` / `sender_key_missing` / `recipient_unresolvable` / `no_key_worked`). The happy path fires `federation.inbox.decrypted` with `decrypted_with_key_version` + `attempt_count` (=1 in steady state; ≥2 means the rotation grace window saved a delivery in flight during a key rotation). Per-row observability: `federation_inbox.was_encrypted` (bool) + `decrypted_with_key_version` (nullable int) on every row that took the decrypt branch — the operator dashboard surfaces `is_current` rotation health by grouping on `decrypted_with_key_version`. **Rollout coordination**: this revision RESTORES `nacl-box` to `KnownCapabilities`. The on-disk capability set persisted at handshake time does NOT auto-refresh — operators MUST trigger a re-pair (or wait for the next handshake round-trip) for `CapNaClBox` to land in the intersection + the outbox resolver's per-peer gate (I-d) to light up the encryption branch. Until both sides re-pair the I-d gate emission-skips with reason `capability_missing_naclbox` — encrypted traffic stays paused, the wire-format remains backwards-compatible because the optional `encryption` block is absent from every plaintext envelope. Implementers MUST NOT skip the receiver-side decrypt path before advertising `nacl-box`: a peer that advertises the capability but doesn't decrypt would reject every encrypted envelope back to its sender. Reference implementation: schema in migration `00011_inbox_decryption_metadata.sql` (observability mirror of v0.5's `00010` outbox column), retained-key walk primitive in `federation/inbox.DecryptForUser` (also `federation/userkeys.ListUserKeysForDecrypt` — distinct from the public-key list query so private bytes can't leak via code drift), dispatcher integration in `federation/inbox.Dispatcher.dispatchOne` stage-4 (delegated to `tryDecryptInbound` for readability), three nil-safe boot hooks `SetSenderEncKey` / `SetRecipientUserRef` / `SetAudit` in `app/internal/http/api.go`, capability restoration in `federation/peer.KnownCapabilities`, audit events `audit.Recorder.FederationInboxDecrypted` + `FederationInboxDecryptFailed`. Conformance vector: an encrypted envelope from v0.5 round-trips through v0.6's decrypt walk, env.Extra recovers byte-identical, the verb handler dispatches unchanged. **Forward notice**: v0.7 (sender refusal when recipient has no published encryption key, 1.22.I-g) is the next wire-breaking change. |
+| v0.7 | 2026-06-12 | 1.22.I-g (sender refusal flip) — **policy change, not a wire-format change**. v0.5's optional `encryption` field is still optional on the wire; v0.7 makes its ABSENCE a refusal cause for senders dispatching `restricted` or `embargo` sensitivity tiers. Decision matrix (codified in the reference implementation's `outbox.ChoosePathFor` pure function): `public` and `team` tiers continue to send plaintext when capability or key is missing (1.22.D backwards-compat with pre-I-f peers); `restricted` and `embargo` tiers REFUSE to dispatch when either the recipient peer hasn't negotiated `nacl-box` OR the recipient's published X25519 key isn't cached locally. Unknown / future sensitivity tiers default to "require encryption" (conservative — failure mode for an unrecognised tier is "refused + visible in operator audit log" rather than "leaked plaintext + invisible"). Refusal is TERMINAL: the sender's outbox row transitions to `status=refused` with `refused_reason=encryption_required_but_unavailable` (catalogued in `outbox.RefuseReason`), the partial-index on `status='queued'` filters refused rows out of redelivery automatically, no backoff fires, and capability changes on the peer DO NOT auto-trigger re-dispatch (operator action: re-pair → caps refresh OR move the share to a lower tier). Refusal is PER-RECIPIENT, not per-envelope: a single activity fanning out to multiple peers (one e2e-capable, one legacy) results in 1 encrypted dispatch + 1 refusal — the refusal does NOT poison the capable recipient's emission. **New audit event**: `federation.emission.refused` (distinct from the existing `federation.emission.skipped` — semantically `skipped`="informational, not relevant" / `refused`="policy DECISION blocked an emission"; operators grep on the two distinctly). Receiver-side defense-in-depth (a new reject reason `encryption_required` for plaintext envelopes arriving for restricted-share targets) is RESERVED at v0.7 + lights up in v0.8 / 1.22.I-h. From the receiver's perspective v0.7 reads as "the wire is unchanged, fewer envelopes arrive" — no parsing changes needed. Reference implementation: schema in migration `00012_outbox_refusal_policy.sql` (denormalised `sensitivity` + `refused_reason` columns on `federation_outbox` + `status='refused'` admitted in the CHECK), policy primitive in `federation/outbox/policy.go` (`RequiresEncryption` + `ChoosePathFor` + `EmissionPath` + `RefuseReason` + `ErrEmissionRefused`), Worker integration in `federation/outbox.Worker.tryEncryptFor` (refactored to consume `ChoosePathFor`; returns `ErrEmissionRefused` on the refused path; callers in `deliverOne` + `deliverOneBatch` catch + skip the POST), audit recorder `audit.Recorder.FederationEmissionRefused`. **Forward notice**: v0.8 (key rotation lifecycle + receiver-side defense-in-depth, 1.22.I-h) is the next revision. Operator inquiries about "why didn't my Update reach bob?" should land in the I-h policy UI bundle. |
