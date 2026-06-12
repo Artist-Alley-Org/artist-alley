@@ -364,6 +364,8 @@ type FederationOutbox struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	WasEncrypted       bool               `json:"was_encrypted"`
+	Sensitivity        *string            `json:"sensitivity"`
+	RefusedReason      *string            `json:"refused_reason"`
 }
 
 type FederationPeer struct {

@@ -106,7 +106,7 @@ const getOutboxByID = `-- name: GetOutboxByID :one
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
        sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
-          sensitivity, refused_reason
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE id = $1
 `
@@ -165,7 +165,12 @@ type InsertOutboxRowParams struct {
 // (pre-I-g rows or test fixtures); the Worker treats that as
 // conservative-public per the same default the resolver uses.
 func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams) (FederationOutbox, error) {
-	row := q.db.QueryRow(ctx, insertOutboxRow, arg.ActivityID, arg.PeerID, arg.TargetUserUrl, arg.Sensitivity)
+	row := q.db.QueryRow(ctx, insertOutboxRow,
+		arg.ActivityID,
+		arg.PeerID,
+		arg.TargetUserUrl,
+		arg.Sensitivity,
+	)
 	var i FederationOutbox
 	err := row.Scan(
 		&i.ID,
@@ -192,7 +197,7 @@ const listDueOutbox = `-- name: ListDueOutbox :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
        sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
-          sensitivity, refused_reason
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -246,7 +251,7 @@ const listDueOutboxByPeer = `-- name: ListDueOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
        sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
-          sensitivity, refused_reason
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -304,7 +309,7 @@ const listOutboxByPeer = `-- name: ListOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
        sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
-          sensitivity, refused_reason
+       sensitivity, refused_reason
 FROM federation_outbox
 WHERE peer_id = $1
 ORDER BY created_at DESC
@@ -568,6 +573,31 @@ func (q *Queries) MarkOutboxEncrypted(ctx context.Context, id pgtype.UUID) error
 	return err
 }
 
+const markOutboxFailedTerminal = `-- name: MarkOutboxFailedTerminal :execrows
+UPDATE federation_outbox
+   SET status     = 'failed',
+       last_attempt_at = NOW(),
+       last_error = $2,
+       updated_at = NOW()
+ WHERE id = $1 AND status = 'queued'
+`
+
+type MarkOutboxFailedTerminalParams struct {
+	ID        pgtype.UUID
+	LastError string
+}
+
+// Permanent failure: status → failed. Caller invokes when the
+// attempts cap is hit OR when the error is non-retryable
+// (4xx that isn't 429).
+func (q *Queries) MarkOutboxFailedTerminal(ctx context.Context, arg MarkOutboxFailedTerminalParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxFailedTerminal, arg.ID, arg.LastError)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markOutboxRefused = `-- name: MarkOutboxRefused :execrows
 UPDATE federation_outbox
    SET status         = 'refused',
@@ -594,31 +624,6 @@ type MarkOutboxRefusedParams struct {
 // changes.
 func (q *Queries) MarkOutboxRefused(ctx context.Context, arg MarkOutboxRefusedParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markOutboxRefused, arg.ID, arg.RefusedReason)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const markOutboxFailedTerminal = `-- name: MarkOutboxFailedTerminal :execrows
-UPDATE federation_outbox
-   SET status     = 'failed',
-       last_attempt_at = NOW(),
-       last_error = $2,
-       updated_at = NOW()
- WHERE id = $1 AND status = 'queued'
-`
-
-type MarkOutboxFailedTerminalParams struct {
-	ID        pgtype.UUID
-	LastError string
-}
-
-// Permanent failure: status → failed. Caller invokes when the
-// attempts cap is hit OR when the error is non-retryable
-// (4xx that isn't 429).
-func (q *Queries) MarkOutboxFailedTerminal(ctx context.Context, arg MarkOutboxFailedTerminalParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markOutboxFailedTerminal, arg.ID, arg.LastError)
 	if err != nil {
 		return 0, err
 	}
