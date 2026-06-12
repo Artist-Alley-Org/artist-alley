@@ -1,10 +1,10 @@
 ---
 id: "0010"
 title: Permissions, teams, and workflow states
-status: accepted
+status: proposed
 date: 2026-05-26
 area: architecture
-phases: ["1.11.A", "1.11.B"]
+phases: 
   - "1.3"
   - "1.7.B"
   - "1.13.D-2b"

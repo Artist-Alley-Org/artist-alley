@@ -4,7 +4,7 @@ title: Postgres-only, no MySQL
 status: superseded
 date: 2026-05-23
 area: infrastructure
-phases: []
+phases: 
   - "0.5.A"
   - "0.5.B"
   - "0.5.C"
