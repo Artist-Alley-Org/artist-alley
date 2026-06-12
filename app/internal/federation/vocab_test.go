@@ -174,7 +174,9 @@ func TestInboxStatusValid_AllSentinelsRegistered(t *testing.T) {
 		federation.InboxStatusEnvelopeSigMissing,
 		federation.InboxStatusEncryptionRequired,
 		federation.InboxStatusEncryptionNotSupported,
-		federation.InboxStatusPlaintextTypeMismatch, federation.InboxStatusStaleRequest,
+		federation.InboxStatusPlaintextTypeMismatch,
+		federation.InboxStatusDecryptFailed,
+		federation.InboxStatusStaleRequest,
 		federation.InboxStatusReplay, federation.InboxStatusError,
 	}
 	for _, s := range sentinels {

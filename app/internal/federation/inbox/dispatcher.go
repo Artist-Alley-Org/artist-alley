@@ -48,6 +48,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 )
 
@@ -73,6 +74,23 @@ const (
 
 // HandlerFn is the contract every per-verb handler implements.
 type HandlerFn func(ctx context.Context, env *federation.Envelope, peerID uuid.UUID, peerURL string, row FederationInbox) (DispatchOutcome, federation.InboxStatus, uuid.UUID, error)
+
+// SenderEncKeyFunc returns the sender actor's current encryption
+// public key (32 bytes) + version number — the values needed for
+// nacl/box.Open. Phase 1.22.I-f; wired by boot to
+// federation/remote.Handler.GetEncryptionKey. Nil-safe: when
+// unwired, encrypted envelopes get rejected with reason
+// "sender_key_missing".
+type SenderEncKeyFunc func(ctx context.Context, actorURI string) (pubBytes []byte, version int32, err error)
+
+// RecipientUserRefFunc returns the local user_ref for the recipient
+// actor URI in envelope.To. The dispatcher feeds that user_ref to
+// [DecryptForUser] so the receiver's retained-key set can be walked.
+// Phase 1.22.I-f; wired by boot to a function that parses the URI's
+// `/users/<username>` path segment + calls auth.FindUserByUsername.
+// Nil-safe: when unwired, encrypted envelopes get rejected with
+// reason "recipient_unresolvable".
+type RecipientUserRefFunc func(ctx context.Context, actorURI string) (int64, error)
 
 // DispatcherConfig controls the worker's cadence + batch.
 type DispatcherConfig struct {
@@ -130,6 +148,21 @@ type Dispatcher struct {
 	social     SocialPoster
 	actorCache RemoteActorUpserter
 
+	// 1.22.I-f stage-4 decrypt-branch hooks. All nil-safe; when
+	// any is unwired AND a row arrives encrypted, the dispatcher
+	// rejects with reject_reason=decrypt_failed + audits with
+	// reason=sender_key_missing / recipient_unresolvable / etc.
+	// Plaintext rows are unaffected.
+	//
+	// rawPool is reused for the receiver-key walk (DecryptForUser
+	// needs a *pgxpool.Pool to construct the userkeys.Queries).
+	// Test fixtures that exercise the decrypt branch MUST call
+	// SetRawPool — there's no fallback. Plaintext-only tests
+	// don't need it.
+	senderEncKey     SenderEncKeyFunc
+	recipientUserRef RecipientUserRefFunc
+	audit            *audit.Recorder
+
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the
 	// LISTEN never blocks; main loop drains extras before
@@ -182,6 +215,25 @@ func NewDispatcher(
 // for sub-1s end-to-end latency; ticker is correctness backstop
 // only at 30s default.
 func (d *Dispatcher) SetRawPool(p *pgxpool.Pool) { d.rawPool = p }
+
+// SetSenderEncKey wires the sender-pubkey lookup the stage-4
+// decrypt branch needs. Call once at boot AFTER the remote actor
+// cache is constructed. Idempotent; passing nil disables
+// decryption (encrypted envelopes get rejected with reason
+// "sender_key_missing"). Phase 1.22.I-f.
+func (d *Dispatcher) SetSenderEncKey(f SenderEncKeyFunc) { d.senderEncKey = f }
+
+// SetRecipientUserRef wires the recipient-actor-URI → local
+// user_ref resolver. Call once at boot. Idempotent; passing nil
+// disables decryption (encrypted envelopes get rejected with
+// reason "recipient_unresolvable"). Phase 1.22.I-f.
+func (d *Dispatcher) SetRecipientUserRef(f RecipientUserRefFunc) { d.recipientUserRef = f }
+
+// SetAudit wires the audit recorder for
+// federation.inbox.decrypted + federation.inbox.decrypt_failed.
+// nil-safe (the decrypt path works without audit, just with no
+// observability). Phase 1.22.I-f.
+func (d *Dispatcher) SetAudit(rec *audit.Recorder) { d.audit = rec }
 
 // Run blocks until ctx is cancelled. Safe to call once per
 // process; subsequent calls log + return.
@@ -329,6 +381,23 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (processed, rejected, failed i
 	return processed, rejected, failed
 }
 
+// DispatchRow is the test-friendly exported wrapper around
+// [dispatchOne]. Integration tests use this to bypass the
+// LISTEN/NOTIFY + ListPendingInbox loop so a concurrent
+// dispatcher sharing the same DB (e.g., the live app container
+// during scripts/test.sh) can't race the row to a different
+// terminal state. Production code MUST use [Run] / [RunOnce];
+// this helper exists ONLY for the Phase 1.22.I-f decrypt
+// integration tests + any future test that needs the same
+// isolation guarantee.
+//
+// The row is processed as if [RunOnce] had picked it up: stage-4
+// decrypt branch, peer lookup, verb handler invocation, mark-as-
+// processed / mark-as-rejected.
+func (d *Dispatcher) DispatchRow(ctx context.Context, row FederationInbox) DispatchOutcome {
+	return d.dispatchOne(ctx, row)
+}
+
 // dispatchOne processes a single row. Returns the outcome so
 // the batch loop can tally.
 func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) DispatchOutcome {
@@ -347,6 +416,24 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 	if err != nil {
 		d.markFailed(ctx, row, "peer lookup: "+err.Error())
 		return OutcomeFailed
+	}
+
+	// Phase 1.22.I-f stage 4: per-recipient decryption. When the
+	// envelope arrived encrypted, unwrap + open against the
+	// recipient's current key (or walk the retained-key set if
+	// the sender used an older recipient-key version during a
+	// rotation grace window). Restoration of env.Extra makes the
+	// rest of the pipeline (verb dispatch, handler, MarkInbox*)
+	// indifferent to whether this envelope started encrypted.
+	var wasEncrypted bool
+	var decryptedWithKeyVersion *int32
+	if env.Encryption != nil {
+		wasEncrypted = true
+		decryptedVer, ok := d.tryDecryptInbound(ctx, row, env, peerID)
+		if !ok {
+			return OutcomeRejected
+		}
+		decryptedWithKeyVersion = &decryptedVer
 	}
 
 	// Find handler. Apply RevokeShare → Unshare normalization
@@ -368,8 +455,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 			)
 		}
 		_, _ = d.pool.MarkInboxProcessed(ctx, MarkInboxProcessedParams{
-			ID:                    row.ID,
-			CorrelationActivityID: pgtype.UUID{}, // no correlation row
+			ID:                      row.ID,
+			CorrelationActivityID:   pgtype.UUID{}, // no correlation row
+			WasEncrypted:            wasEncrypted,
+			DecryptedWithKeyVersion: decryptedWithKeyVersion,
 		})
 		return OutcomeProcessed
 	}
@@ -383,8 +472,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 			corr = pgtype.UUID{Bytes: correlationID, Valid: true}
 		}
 		_, perr := d.pool.MarkInboxProcessed(ctx, MarkInboxProcessedParams{
-			ID:                    row.ID,
-			CorrelationActivityID: corr,
+			ID:                      row.ID,
+			CorrelationActivityID:   corr,
+			WasEncrypted:            wasEncrypted,
+			DecryptedWithKeyVersion: decryptedWithKeyVersion,
 		})
 		if perr != nil {
 			d.markFailed(ctx, row, "mark processed: "+perr.Error())
@@ -420,6 +511,220 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 		}
 		return OutcomeFailed
 	}
+}
+
+// tryDecryptInbound runs the stage-4 decrypt branch. On success,
+// repopulates env.Extra with the decrypted JSON object + returns
+// (decryptedWithKeyVersion, true). On failure, marks the row
+// rejected with reject_reason=decrypt_failed + fires the
+// federation.inbox.decrypt_failed audit + returns (0, false).
+//
+// # Why this method, not a sequence inlined in dispatchOne
+//
+// Encrypted-envelope handling has three distinct failure modes
+// (recipient unresolvable, sender key missing, no key opened) and
+// each maps to a different audit `reason` string + the same
+// reject row. Pulling the orchestration out keeps dispatchOne's
+// control flow readable.
+//
+// # Why decryption happens AFTER the peer lookup
+//
+// The audit row carries peerID metadata + the markRejected* paths
+// need peer context for the operator dashboard. The dispatcher
+// already has peer in scope by the time we get here; failing
+// fast on peer-lookup is the sole reason that stage runs first.
+//
+// # Why env.Extra is restored from the plaintext
+//
+// The outbox-side EncryptActivityPayload sealed `json.Marshal(env.Extra)`
+// (delivery.go §5–7). The receiver restoring env.Extra from the
+// plaintext gives every downstream verb handler the same view it
+// would have on a plaintext envelope — they don't need to know
+// whether the row arrived encrypted. wasEncrypted is captured for
+// the audit + the row's was_encrypted column; the handler stays
+// indifferent.
+func (d *Dispatcher) tryDecryptInbound(
+	ctx context.Context,
+	row FederationInbox,
+	env *federation.Envelope,
+	peerID uuid.UUID,
+) (decryptedWithKeyVersion int32, ok bool) {
+	block := env.Encryption
+
+	// Pre-flight: the dispatcher must be wired with both
+	// resolvers. Boot wires both in production; an encrypted
+	// envelope landing on a dispatcher that hasn't been wired is
+	// either misconfiguration OR a test-fixture omission. Reject
+	// loudly so the operator notices.
+	if d.recipientUserRef == nil {
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			"recipient_unresolvable", 0,
+			"dispatcher missing recipient user-ref resolver")
+		return 0, false
+	}
+	if d.senderEncKey == nil {
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			"sender_key_missing", 0,
+			"dispatcher missing sender enc-key lookup")
+		return 0, false
+	}
+	if d.rawPool == nil {
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			"recipient_unresolvable", 0,
+			"dispatcher missing raw pool for receiver-key walk")
+		return 0, false
+	}
+
+	// 1. Resolve the recipient's local user_ref. The outbox seals
+	// against ONE recipient per emission (see delivery.go's
+	// per-peer loop) so envelope.To has exactly one entry by the
+	// time the inbox sees it; fall back to env.Actor's host's
+	// users-tree only if needed.
+	recipientURI := firstRecipientURI(env)
+	if recipientURI == "" {
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			"recipient_unresolvable", 0,
+			"envelope.to is empty")
+		return 0, false
+	}
+	recipientRef, err := d.recipientUserRef(ctx, recipientURI)
+	if err != nil {
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			"recipient_unresolvable", 0,
+			"recipient resolver: "+err.Error())
+		return 0, false
+	}
+
+	// 2. Resolve the sender's encryption public key. Cache hit
+	// via the I-c remote-actor cache is the common case.
+	senderPub, _, err := d.senderEncKey(ctx, env.Actor)
+	if err != nil || len(senderPub) == 0 {
+		reason := "sender_key_missing"
+		errStr := "sender key lookup failed"
+		if err != nil {
+			errStr = "sender key lookup: " + err.Error()
+		}
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			reason, 0, errStr)
+		return 0, false
+	}
+
+	// 3. Walk the recipient's retained keys + try each one.
+	result, err := DecryptForUser(ctx, d.rawPool, recipientRef,
+		senderPub, []byte(block.Nonce), []byte(block.Ciphertext))
+	if err != nil {
+		reason := "no_key_worked"
+		switch {
+		case errors.Is(err, ErrNoReceiverKey):
+			reason = "no_keys_walked"
+		case errors.Is(err, ErrSenderKeyMissing):
+			reason = "sender_key_missing"
+		case errors.Is(err, federation.ErrEncryptionDecryptFailed):
+			reason = "no_key_worked"
+		}
+		d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+			reason, block.RecipientKeyVersion,
+			"decrypt: "+err.Error())
+		return 0, false
+	}
+
+	// 4. Restore env.Extra from the plaintext payload so every
+	// downstream verb handler sees the same view it would on a
+	// plaintext envelope. Outbox sealed json.Marshal(env.Extra)
+	// (delivery.go §5); receiver Unmarshal-into-Extra is the
+	// inverse. Empty/null plaintext maps to an empty Extra so
+	// handlers that don't read Extra keep working.
+	var restored map[string]json.RawMessage
+	if len(result.Plaintext) > 0 && string(result.Plaintext) != "null" {
+		if err := json.Unmarshal(result.Plaintext, &restored); err != nil {
+			d.markRejectedDecryptFailed(ctx, row, env, peerID, block,
+				"no_key_worked", block.RecipientKeyVersion,
+				"plaintext re-parse: "+err.Error())
+			return 0, false
+		}
+	}
+	env.Extra = restored
+	env.Encryption = nil // handlers don't need to re-check
+
+	// 5. Audit happy-path.
+	if d.audit != nil {
+		d.audit.FederationInboxDecrypted(
+			ctx, nil,
+			peerID.String(),
+			string(env.Type),
+			env.ID,
+			block.SenderKeyVersion,
+			result.DecryptedWithKeyVersion,
+			result.AttemptCount,
+		)
+	}
+
+	return result.DecryptedWithKeyVersion, true
+}
+
+// markRejectedDecryptFailed transitions the inbox row to
+// status=rejected with reject_reason=decrypt_failed + fires the
+// federation.inbox.decrypt_failed audit. Both writes are
+// best-effort; the dispatcher can't recover from a DB failure on
+// the rejection path either.
+func (d *Dispatcher) markRejectedDecryptFailed(
+	ctx context.Context,
+	row FederationInbox,
+	env *federation.Envelope,
+	peerID uuid.UUID,
+	block *federation.EncryptionBlock,
+	reason string,
+	recipientKeyVersionAttempted int32,
+	lastErr string,
+) {
+	rejectReason := string(federation.InboxStatusDecryptFailed)
+	_, _ = d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+		ID:           row.ID,
+		RejectReason: &rejectReason,
+		LastError:    lastErr,
+	})
+	if d.audit != nil {
+		var senderKeyVersion int32
+		if block != nil {
+			senderKeyVersion = block.SenderKeyVersion
+		}
+		d.audit.FederationInboxDecryptFailed(
+			ctx, nil,
+			peerID.String(),
+			string(env.Type),
+			env.ID,
+			reason,
+			senderKeyVersion,
+			recipientKeyVersionAttempted,
+		)
+	}
+	if d.logger != nil {
+		d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.decrypt_failed",
+			slog.String("inbox_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.String("activity_id", env.ID),
+			slog.String("reason", reason),
+			slog.String("err", lastErr),
+		)
+	}
+}
+
+// firstRecipientURI returns env.To[0] when populated, falling
+// back to the first CC entry when To is empty. The outbox sealer
+// targets a single recipient per emission so this always picks
+// the right user; the CC fallback covers a defensive case where
+// a peer rewrites To→CC mid-delivery.
+func firstRecipientURI(env *federation.Envelope) string {
+	for _, u := range env.To {
+		if u != "" {
+			return u
+		}
+	}
+	for _, u := range env.CC {
+		if u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 func (d *Dispatcher) markFailed(ctx context.Context, row FederationInbox, msg string) {

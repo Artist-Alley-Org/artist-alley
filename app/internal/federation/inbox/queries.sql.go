@@ -487,38 +487,58 @@ func (q *Queries) MarkInboxFailedTerminal(ctx context.Context, arg MarkInboxFail
 
 const markInboxProcessed = `-- name: MarkInboxProcessed :one
 UPDATE federation_inbox
-SET status                  = 'processed',
-    processed_at            = NOW(),
-    last_attempt_at         = NOW(),
-    dispatch_attempts       = dispatch_attempts + 1,
-    correlation_activity_id = $2,
-    last_error              = '',
-    updated_at              = NOW()
+SET status                     = 'processed',
+    processed_at               = NOW(),
+    last_attempt_at            = NOW(),
+    dispatch_attempts          = dispatch_attempts + 1,
+    correlation_activity_id    = $2,
+    was_encrypted              = $3,
+    decrypted_with_key_version = $4,
+    last_error                 = '',
+    updated_at                 = NOW()
 WHERE id = $1
-RETURNING id, status, processed_at, correlation_activity_id
+RETURNING id, status, processed_at, correlation_activity_id,
+          was_encrypted, decrypted_with_key_version
 `
 
 type MarkInboxProcessedParams struct {
-	ID                    pgtype.UUID
-	CorrelationActivityID pgtype.UUID
+	ID                       pgtype.UUID
+	CorrelationActivityID    pgtype.UUID
+	WasEncrypted             bool
+	DecryptedWithKeyVersion  *int32
 }
 
 type MarkInboxProcessedRow struct {
-	ID                    pgtype.UUID
-	Status                string
-	ProcessedAt           pgtype.Timestamptz
-	CorrelationActivityID pgtype.UUID
+	ID                       pgtype.UUID
+	Status                   string
+	ProcessedAt              pgtype.Timestamptz
+	CorrelationActivityID    pgtype.UUID
+	WasEncrypted             bool
+	DecryptedWithKeyVersion  *int32
 }
 
-// Worker stage 13: dispatch succeeded.
+// Worker stage 13: dispatch succeeded. Records the per-row
+// encryption observability columns (1.22.I-f, migration 00011):
+// was_encrypted=true when the dispatcher took the stage-4 decrypt
+// branch; decrypted_with_key_version captures which receiver key
+// version actually opened the payload (NULL on plaintext rows so
+// the admin filter `WHERE decrypted_with_key_version IS NOT NULL`
+// isolates the encrypted-rows view).
 func (q *Queries) MarkInboxProcessed(ctx context.Context, arg MarkInboxProcessedParams) (MarkInboxProcessedRow, error) {
-	row := q.db.QueryRow(ctx, markInboxProcessed, arg.ID, arg.CorrelationActivityID)
+	row := q.db.QueryRow(ctx, markInboxProcessed,
+		arg.ID,
+		arg.CorrelationActivityID,
+		arg.WasEncrypted,
+		arg.DecryptedWithKeyVersion,
+	)
 	var i MarkInboxProcessedRow
 	err := row.Scan(
 		&i.ID,
 		&i.Status,
 		&i.ProcessedAt,
 		&i.CorrelationActivityID,
+		&i.WasEncrypted,
+		&i.DecryptedWithKeyVersion,
 	)
 	return i, err
 }

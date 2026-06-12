@@ -101,6 +101,35 @@ const (
 	// on metadata->>'peer_id'.
 	EventFederationEmissionEncrypted = "federation.emission.encrypted"
 
+	// 1.22.I-f inbox decryption events. Both fired by the inbox
+	// dispatcher's stage-4 decrypt branch (federation/inbox/
+	// dispatcher.go) once per encrypted envelope. Pool-bound;
+	// the decrypt runs outside any tx because the dispatcher's
+	// MarkInboxProcessed / MarkInboxRejected is the unit of work
+	// being audited.
+	//
+	//   federation.inbox.decrypted        — happy path. Metadata
+	//                                       carries which receiver
+	//                                       key version unlocked
+	//                                       the payload + the
+	//                                       attempt count (1 = no
+	//                                       fallback fired; 2+ =
+	//                                       rotation grace window
+	//                                       saved us).
+	//
+	//   federation.inbox.decrypt_failed   — terminal path. Walked
+	//                                       every retained key,
+	//                                       all attempts failed.
+	//                                       Inbox row transitions
+	//                                       to status=rejected with
+	//                                       reject_reason=decrypt_failed.
+	//
+	// Operator dashboards group on metadata->>'peer_id' +
+	// 'sender_key_version' to surface "is one peer's rotated key
+	// not making it through?" without joining federation_inbox.
+	EventFederationInboxDecrypted     = "federation.inbox.decrypted"
+	EventFederationInboxDecryptFailed = "federation.inbox.decrypt_failed"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -602,4 +631,92 @@ func (r *Recorder) WriteInTx(ctx context.Context, q *Queries, eventType string, 
 	// stay null. Federation share writes are server-internal —
 	// the originating user_ref is the actor, which is enough.
 	r.writeWith(ctx, q, eventType, subject, actor, reqContext{}, metadata)
+}
+
+// FederationInboxDecrypted records a federation.inbox.decrypted
+// event per Phase 1.22.I-f. Fires from the inbox dispatcher's
+// stage-4 decrypt branch once per envelope that successfully
+// opened against one of the recipient's retained keys.
+//
+// Pool-bound (NOT tx-bound) — the dispatcher's
+// MarkInboxProcessedWithEncryption commits independently. Pairing
+// the audit row to that tx would change the dispatcher's failure
+// semantics; the audit feed accepts the "domain write committed,
+// audit row missed" gap as the lesser failure mode.
+//
+//   peerID                  — sender peer's UUID (audit metadata
+//                             for the admin federation surface).
+//   activityType            — the verb (Like / Comment / etc.).
+//   activityID              — envelope.id (so the audit feed
+//                             cross-references the inbox row).
+//   senderKeyVersion        — sender's key version sealed against
+//                             (from envelope.encryption block).
+//   decryptedWithKeyVersion — which receiver key actually opened
+//                             the payload. 1 = current key (steady
+//                             state); 2+ = retained key fallback
+//                             fired (rotation grace window).
+//   attemptCount            — how many keys the dispatcher tried
+//                             before one worked. AttemptCount=1 is
+//                             the common case; >1 means rotation
+//                             drift saved us.
+func (r *Recorder) FederationInboxDecrypted(
+	ctx context.Context,
+	subjectUserRef *int64,
+	peerID, activityType, activityID string,
+	senderKeyVersion, decryptedWithKeyVersion int32,
+	attemptCount int,
+) {
+	meta := map[string]any{
+		"peer_id":                    peerID,
+		"activity_type":              activityType,
+		"activity_id":                activityID,
+		"sender_key_version":         senderKeyVersion,
+		"decrypted_with_key_version": decryptedWithKeyVersion,
+		"attempt_count":              attemptCount,
+	}
+	r.write(ctx, EventFederationInboxDecrypted, subjectUserRef, nil, reqContext{}, meta)
+}
+
+// FederationInboxDecryptFailed records a
+// federation.inbox.decrypt_failed event per Phase 1.22.I-f. Fires
+// from the inbox dispatcher's stage-4 decrypt branch when every
+// retained receiver key fails to open the ciphertext.
+//
+// Pool-bound — same reasoning as [FederationInboxDecrypted]. The
+// audit + the MarkInboxRejected(reason=decrypt_failed) commit
+// independently.
+//
+// `reason` is the operator-facing breakdown:
+//   - "no_keys_walked"          — recipient had no current + no
+//                                  retained keys (post-I-b
+//                                  invariant violation; defensive).
+//   - "sender_key_missing"      — sender pubkey lookup returned
+//                                  empty; pre-I-c peer that hasn't
+//                                  advertised an encryption key.
+//   - "recipient_unresolvable"  — envelope.to didn't resolve to a
+//                                  local user (likely misrouted
+//                                  delivery).
+//   - "no_key_worked"           — walked every retained key, none
+//                                  opened. Tamper, corruption, or
+//                                  sender used a recipient key
+//                                  version we've fully aged out.
+//
+// `recipientKeyVersionAttempted` is the version of the FIRST key
+// the dispatcher tried (current key, by convention). 0 when no
+// receiver keys were walked at all.
+func (r *Recorder) FederationInboxDecryptFailed(
+	ctx context.Context,
+	subjectUserRef *int64,
+	peerID, activityType, activityID, reason string,
+	senderKeyVersion, recipientKeyVersionAttempted int32,
+) {
+	meta := map[string]any{
+		"peer_id":                        peerID,
+		"activity_type":                  activityType,
+		"activity_id":                    activityID,
+		"reason":                         reason,
+		"sender_key_version":             senderKeyVersion,
+		"recipient_key_version_attempted": recipientKeyVersionAttempted,
+	}
+	r.write(ctx, EventFederationInboxDecryptFailed, subjectUserRef, nil, reqContext{}, meta)
 }
