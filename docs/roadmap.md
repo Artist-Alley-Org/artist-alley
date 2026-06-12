@@ -76,11 +76,14 @@ The current release stream covers the foundations:
   cascade-cancel + audit. Sub-1s p99 end-to-end against production
   defaults. First federated DAM, open-source or commercial. See
   ADR 0043. Encrypted federation continues in 1.22.I:
-  **1.22.I-a (dogfood infrastructure) shipped via PR #110;
-  1.22.I-b (X25519 keypair-per-user) shipped via PR #111.**
-  Remainder of the encrypted-federation arc (1.22.I-c through
-  1.22.I-i) continues; encrypted-on-wire envelopes land at
-  1.22.I-e.
+  **1.22.I-a (dogfood infrastructure) shipped via PR #109
+  (foundational `scripts/dogfood/*` helpers + paired-instance
+  scenarios; closes #98) + PR #110 (CI-resident automation:
+  ui-pr.yml + ui-nightly.yml + 270-test regression net; five
+  production bugs caught by the suite). 1.22.I-b (X25519
+  keypair-per-user) shipped via PR #111.** Remainder of the
+  encrypted-federation arc (1.22.I-c through 1.22.I-i)
+  continues; encrypted-on-wire envelopes land at 1.22.I-e.
 
 ## In flight
 

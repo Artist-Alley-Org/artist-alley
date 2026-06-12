@@ -257,17 +257,20 @@ fires.
 The dogfood track is sub-phase a (Track A); encryption is sub-
 phases b through i (Track B).
 
-- **1.22.I-a — Dogfood infrastructure** (Track A). **Shipped via
-  PR #110.** `scripts/dogfood/` helpers (`up.sh` with
-  `--standalone` mode, `pair.sh`, `seed.sh`, `run-all.sh`,
-  `run-ui.sh`); mkcert bootstrap with capability-shaped TLS
-  prereqs; the dogfood CI loop via `.github/workflows/ui-pr.yml`
-  + `ui-nightly.yml` running on a self-hosted containerised
-  runner. First production-class bug caught by the loop:
-  SPA-fallback directory regression at `063a232`. Runs the
-  existing 1.22.D wire surface against itself; the
-  paired-instance Scenarios 01-04 run from `scripts/dogfood/
-  scenarios/`. Scenario 05 still lands with I-i below. Gates
+- **1.22.I-a — Dogfood infrastructure** (Track A). **Shipped in
+  two PRs: foundation in PR #109 (closes #98) + CI automation
+  in PR #110.** PR #109 lays down the `scripts/dogfood/` helpers
+  (`up.sh` with `--standalone` mode, `pair.sh`, `seed.sh`,
+  `run-all.sh`, `run-ui.sh`), mkcert bootstrap with
+  capability-shaped TLS prereqs, and the paired-instance
+  Scenarios 01-04 under `scripts/dogfood/scenarios/`. PR #110
+  layers the CI-resident loop on top: `.github/workflows/
+  ui-pr.yml` + `ui-nightly.yml` running on a self-hosted
+  containerised runner, plus the 270-test regression net that
+  caught five production-class bugs before they shipped
+  (including the SPA-fallback directory regression at
+  `063a232`). Runs the existing 1.22.D wire surface against
+  itself; Scenario 05 still lands with I-i below. Gates
   everything else in 1.22.I.
 
 - **1.22.I-b — X25519 keypair-per-user.** **Shipped via PR #111.**
