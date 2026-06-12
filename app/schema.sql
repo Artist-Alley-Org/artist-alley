@@ -3625,6 +3625,12 @@ CREATE INDEX federation_inbox_by_peer_idx
     ON public.federation_inbox (peer_id, received_at DESC);
 CREATE INDEX federation_inbox_by_status_idx
     ON public.federation_inbox (status, received_at DESC);
+-- Migration 00011 — federation_inbox observability for the
+-- decrypt branch (Phase 1.22.I-f). Mirrors 00010's
+-- federation_outbox.was_encrypted shape.
+ALTER TABLE public.federation_inbox
+    ADD COLUMN was_encrypted               boolean  NOT NULL DEFAULT false,
+    ADD COLUMN decrypted_with_key_version  integer  NULL;
 
 -- Migration 00004 — inbound-federation columns on likes + comments
 -- + federation_remote_actors display cache (Phase 1.22.D-a-4).

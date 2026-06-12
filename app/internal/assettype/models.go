@@ -326,25 +326,27 @@ type FederationDispatchState struct {
 }
 
 type FederationInbox struct {
-	ID                    pgtype.UUID        `json:"id"`
-	ActivityUri           string             `json:"activity_uri"`
-	PeerID                pgtype.UUID        `json:"peer_id"`
-	ActorUri              string             `json:"actor_uri"`
-	ActivityType          string             `json:"activity_type"`
-	ObjectKind            *string            `json:"object_kind"`
-	ObjectID              pgtype.UUID        `json:"object_id"`
-	EnvelopeJson          []byte             `json:"envelope_json"`
-	HttpSigKey            string             `json:"http_sig_key"`
-	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
-	Status                string             `json:"status"`
-	RejectReason          *string            `json:"reject_reason"`
-	DispatchAttempts      int32              `json:"dispatch_attempts"`
-	LastAttemptAt         pgtype.Timestamptz `json:"last_attempt_at"`
-	LastError             string             `json:"last_error"`
-	ProcessedAt           pgtype.Timestamptz `json:"processed_at"`
-	CorrelationActivityID pgtype.UUID        `json:"correlation_activity_id"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	ActivityUri             string             `json:"activity_uri"`
+	PeerID                  pgtype.UUID        `json:"peer_id"`
+	ActorUri                string             `json:"actor_uri"`
+	ActivityType            string             `json:"activity_type"`
+	ObjectKind              *string            `json:"object_kind"`
+	ObjectID                pgtype.UUID        `json:"object_id"`
+	EnvelopeJson            []byte             `json:"envelope_json"`
+	HttpSigKey              string             `json:"http_sig_key"`
+	ReceivedAt              pgtype.Timestamptz `json:"received_at"`
+	Status                  string             `json:"status"`
+	RejectReason            *string            `json:"reject_reason"`
+	DispatchAttempts        int32              `json:"dispatch_attempts"`
+	LastAttemptAt           pgtype.Timestamptz `json:"last_attempt_at"`
+	LastError               string             `json:"last_error"`
+	ProcessedAt             pgtype.Timestamptz `json:"processed_at"`
+	CorrelationActivityID   pgtype.UUID        `json:"correlation_activity_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	WasEncrypted            bool               `json:"was_encrypted"`
+	DecryptedWithKeyVersion *int32             `json:"decrypted_with_key_version"`
 }
 
 type FederationOutbox struct {

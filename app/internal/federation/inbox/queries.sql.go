@@ -51,7 +51,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE activity_uri = $1
 `
@@ -79,6 +79,8 @@ func (q *Queries) GetInboxByActivityURI(ctx context.Context, activityUri string)
 		&i.CorrelationActivityID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WasEncrypted,
+		&i.DecryptedWithKeyVersion,
 	)
 	return i, err
 }
@@ -88,7 +90,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE id = $1
 `
@@ -116,6 +118,8 @@ func (q *Queries) GetInboxByID(ctx context.Context, id pgtype.UUID) (FederationI
 		&i.CorrelationActivityID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WasEncrypted,
+		&i.DecryptedWithKeyVersion,
 	)
 	return i, err
 }
@@ -136,7 +140,7 @@ RETURNING id, activity_uri, peer_id, actor_uri, activity_type,
           object_kind, object_id, envelope_json, http_sig_key,
           received_at, status, reject_reason, dispatch_attempts,
           last_attempt_at, last_error, processed_at,
-          correlation_activity_id, created_at, updated_at
+          correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 `
 
 type InsertInboxParams struct {
@@ -185,6 +189,8 @@ func (q *Queries) InsertInbox(ctx context.Context, arg InsertInboxParams) (Feder
 		&i.CorrelationActivityID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WasEncrypted,
+		&i.DecryptedWithKeyVersion,
 	)
 	return i, err
 }
@@ -194,7 +200,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE peer_id = $1
 ORDER BY received_at DESC
@@ -238,6 +244,8 @@ func (q *Queries) ListInboxByPeer(ctx context.Context, arg ListInboxByPeerParams
 			&i.CorrelationActivityID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WasEncrypted,
+			&i.DecryptedWithKeyVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -358,7 +366,7 @@ SELECT id, activity_uri, peer_id, actor_uri, activity_type,
        object_kind, object_id, envelope_json, http_sig_key,
        received_at, status, reject_reason, dispatch_attempts,
        last_attempt_at, last_error, processed_at,
-       correlation_activity_id, created_at, updated_at
+       correlation_activity_id, created_at, updated_at, was_encrypted, decrypted_with_key_version
 FROM federation_inbox
 WHERE status = 'pending'
 ORDER BY received_at
@@ -397,6 +405,8 @@ func (q *Queries) ListPendingInbox(ctx context.Context, limit int32) ([]Federati
 			&i.CorrelationActivityID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WasEncrypted,
+			&i.DecryptedWithKeyVersion,
 		); err != nil {
 			return nil, err
 		}

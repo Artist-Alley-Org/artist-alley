@@ -211,3 +211,59 @@ func (q *Queries) ListPublicKeysByUser(ctx context.Context, userID int64) ([]Lis
 	}
 	return items, nil
 }
+
+const listUserKeysForDecrypt = `-- name: ListUserKeysForDecrypt :many
+SELECT user_id, version, algorithm, public_key, private_key_enc,
+       is_current, created_at, retained_until
+FROM federation_user_keys
+WHERE user_id = $1
+  AND (is_current = TRUE OR retained_until > NOW())
+ORDER BY is_current DESC, version DESC
+`
+
+// Phase 1.22.I-f — returns the current + retained-not-expired keys
+// for a user, full row (public + WRAPPED PRIVATE bytes + version)
+// so the inbox decrypt path can walk them in order until one
+// successfully opens the NaCl-box ciphertext. Distinct from
+// ListPublicKeysByUser (no private bytes there) so the public
+// read-path can't accidentally leak the private column even
+// with code drift.
+//
+// Ordering:
+//  1. is_current DESC — the active key always tried first;
+//     handles the common case (no rotation drift) at attempt #1.
+//  2. version DESC — among retained keys, walk newest-to-oldest
+//     so a sender that's one version behind hits a quick
+//     success; very-stale senders pay the linear walk cost.
+//
+// The retained_until filter excludes keys past their grace window
+// — those rows might still be in the table during the I-h sweeper
+// delay, but the dispatcher must NOT decrypt against them.
+func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]FederationUserKey, error) {
+	rows, err := q.db.Query(ctx, listUserKeysForDecrypt, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FederationUserKey
+	for rows.Next() {
+		var i FederationUserKey
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Version,
+			&i.Algorithm,
+			&i.PublicKey,
+			&i.PrivateKeyEnc,
+			&i.IsCurrent,
+			&i.CreatedAt,
+			&i.RetainedUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
