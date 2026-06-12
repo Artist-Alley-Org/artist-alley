@@ -5,7 +5,7 @@
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 ORDER BY handshake_at DESC, id DESC
 LIMIT $1;
@@ -17,7 +17,7 @@ LIMIT $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 WHERE status = 'pending_inbound'
 ORDER BY handshake_at DESC, id DESC;
@@ -28,7 +28,7 @@ ORDER BY handshake_at DESC, id DESC;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 WHERE id = $1;
 
@@ -41,7 +41,7 @@ WHERE id = $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 WHERE instance_url = $1;
 
@@ -55,7 +55,7 @@ WHERE instance_url = $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 WHERE enabled = TRUE AND status = 'connected'
 ORDER BY instance_url;
@@ -84,7 +84,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, share_in_visible_list, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at;
 
 -- name: UpdatePeer :one
 -- Admin edit: change display_name / trust_tier / encryption_policy
@@ -103,7 +103,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, share_in_visible_list, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at;
 
 -- name: CompleteOutboundHandshake :one
 -- Atomically replaces the pending_outbound placeholder pubkey
@@ -120,7 +120,7 @@ WHERE id = $1 AND status = 'pending_outbound'
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, share_in_visible_list, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at;
 
 -- name: SetPeerStatus :one
 -- Internal handshake state transition: pending_outbound →
@@ -134,7 +134,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, share_in_visible_list, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at;
 
 -- name: AppendPeerNote :one
 -- Internal: append a timestamped line to the notes column so
@@ -147,7 +147,7 @@ WHERE id = $1
 RETURNING id, instance_url, display_name, instance_public_key,
           trust_tier, encryption_policy, enabled, status,
           handshake_at, handshake_by_user_ref, last_seen_at,
-          notes, share_in_visible_list, created_at, updated_at;
+          notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at;
 
 -- name: DeletePeer :exec
 -- Defederation. Per ADR 0043 §"Trust model" the receiving side
@@ -174,7 +174,32 @@ WHERE instance_url = $1;
 SELECT id, instance_url, display_name, instance_public_key,
        trust_tier, encryption_policy, enabled, status,
        handshake_at, handshake_by_user_ref, last_seen_at,
-       notes, share_in_visible_list, created_at, updated_at
+       notes, share_in_visible_list, created_at, updated_at, capabilities, capabilities_negotiated_at
 FROM federation_peers
 WHERE enabled = TRUE AND status = 'connected' AND share_in_visible_list = TRUE
 ORDER BY instance_url;
+
+-- --- Phase 1.22.I-d — capability negotiation ------------------------
+
+-- name: SetPeerCapabilities :exec
+-- Writes the bilateral intersection produced by the handshake
+-- engine. The intersection — NOT either side's raw advertised set
+-- — is what we record, so the I-e/I-g dispatch gates can rely on
+-- "this peer supports X" without re-doing the intersection at
+-- every check site. capabilities_negotiated_at moves to NOW() so
+-- ListPeersMissingCapabilities stops surfacing this peer.
+UPDATE federation_peers
+   SET capabilities = $2,
+       capabilities_negotiated_at = NOW()
+ WHERE id = $1;
+
+-- name: ListPeersMissingCapabilities :many
+-- Operator observability: peers paired before I-d that haven't
+-- been re-negotiated. Surfaced on the admin federation page so
+-- the operator can trigger re-pairing. Backed by the
+-- federation_peers_unnegotiated_idx partial index from migration
+-- 00009 so this query stays cheap regardless of total peer count.
+SELECT id, instance_url, display_name
+  FROM federation_peers
+ WHERE capabilities_negotiated_at IS NULL
+ ORDER BY instance_url;

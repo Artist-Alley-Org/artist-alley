@@ -944,6 +944,18 @@ CREATE TABLE public.federation_peers (
     CONSTRAINT federation_peers_status_check CHECK ((status = ANY (ARRAY['pending_outbound'::text, 'pending_inbound'::text, 'connected'::text]))),
     CONSTRAINT federation_peers_trust_tier_check CHECK ((trust_tier = ANY (ARRAY['connected'::text, 'directory-listed'::text, 'auto-sync'::text])))
 );
+-- Migration 00009 (Phase 1.22.I-d) — federation_peers gains
+-- bilateral capability intersection + negotiation timestamp.
+-- NOT NULL DEFAULT '[]' so existing peers reach a deterministic
+-- "never negotiated" steady state surfaced via the partial
+-- index. JSONB because the vocabulary is open on the wire +
+-- closed in code (federation/peer.KnownCapabilities).
+ALTER TABLE public.federation_peers
+    ADD COLUMN capabilities                jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN capabilities_negotiated_at  timestamptz NULL;
+CREATE INDEX federation_peers_unnegotiated_idx
+    ON public.federation_peers (id)
+    WHERE capabilities_negotiated_at IS NULL;
 
 
 --

@@ -103,6 +103,21 @@ type Peer struct {
 	// per migration 00055. When TRUE this peer appears in
 	// GET /federation/peers/visible responses.
 	ShareInVisibleList bool
+
+	// Capabilities (Phase 1.22.I-d) — bilateral intersection
+	// of what BOTH this peer and we support. Populated by the
+	// handshake engine on completion. Empty for legacy peers
+	// paired before I-d; the [CapabilitiesNegotiatedAt] timestamp
+	// distinguishes "never negotiated" (NULL) from "negotiated
+	// and got an empty intersection" (non-NULL with empty array).
+	Capabilities CapabilitySet
+
+	// CapabilitiesNegotiatedAt is non-zero ONLY when the
+	// handshake completed with a capability exchange. Pre-I-d
+	// peers surface as zero-time + appear in
+	// [Registry.ListPeersMissingCapabilities] for operator
+	// re-pairing.
+	CapabilitiesNegotiatedAt pgtype.Timestamptz
 }
 
 // AddInput is the typed argument to Registry.Add.
@@ -388,6 +403,70 @@ func (r *Registry) TouchLastSeen(ctx context.Context, instanceURL string) {
 	// flushing on every inbound request would defeat the cache.
 }
 
+// SetCapabilities (Phase 1.22.I-d) writes the bilateral
+// capability intersection produced by the handshake engine on
+// both sides of a pairing. Invalidates the by-URL cache so the
+// next ByInstanceURL / ByID returns the fresh value rather
+// than the stale empty set — load-bearing because the I-e/I-g
+// dispatch gate is the only consumer of Peer.Capabilities and
+// MUST see the result of negotiation immediately.
+//
+// caps must be the INTERSECTION of both sides' advertised sets,
+// not either side's raw advertised set. Helper [Intersect]
+// produces it.
+func (r *Registry) SetCapabilities(ctx context.Context, id uuid.UUID, caps CapabilitySet) error {
+	blob, err := json.Marshal(caps)
+	if err != nil {
+		return fmt.Errorf("peer: marshal capabilities: %w", err)
+	}
+	q := New(r.Pool)
+	if err := q.SetPeerCapabilities(ctx, SetPeerCapabilitiesParams{
+		ID:           pgtype.UUID{Bytes: id, Valid: true},
+		Capabilities: blob,
+	}); err != nil {
+		return fmt.Errorf("peer: set capabilities: %w", err)
+	}
+	// Resolve the URL so the by-URL cache invalidation hits the
+	// right key. A read failure here doesn't propagate — the
+	// write succeeded, and the cache invalidation broadcast will
+	// drop the stale entry on the next ByInstanceURL miss
+	// (slower path but still correct).
+	if peer, err := r.ByID(ctx, id); err == nil {
+		r.invalidate(ctx, peer.InstanceURL)
+	}
+	return nil
+}
+
+// ListPeersMissingCapabilities returns peers paired before I-d
+// that haven't been re-negotiated. Surfaced by the admin
+// federation page so an operator can trigger re-pairing.
+//
+// Returns the small typed struct rather than the full Peer
+// because the only consumer is the operator-facing list — the
+// other peer columns aren't needed at the call site.
+func (r *Registry) ListPeersMissingCapabilities(ctx context.Context) ([]PeerMissingCapabilities, error) {
+	rows, err := New(r.Pool).ListPeersMissingCapabilities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PeerMissingCapabilities, len(rows))
+	for i, row := range rows {
+		out[i] = PeerMissingCapabilities{
+			ID:          uuid.UUID(row.ID.Bytes),
+			InstanceURL: row.InstanceUrl,
+			DisplayName: row.DisplayName,
+		}
+	}
+	return out, nil
+}
+
+// PeerMissingCapabilities is the operator-list shape.
+type PeerMissingCapabilities struct {
+	ID          uuid.UUID
+	InstanceURL string
+	DisplayName string
+}
+
 // invalidate drops both caches for a given peer URL. Called on
 // every write; safe to call with an empty URL (e.g. on Add
 // failure paths where we never got a URL).
@@ -424,21 +503,33 @@ func (r *Registry) invalidate(ctx context.Context, url string) {
 // rowToPeer adapts the sqlc-generated FederationPeer row into
 // the package's public Peer type.
 func rowToPeer(r FederationPeer) *Peer {
-	return &Peer{
-		ID:                 uuid.UUID(r.ID.Bytes),
-		InstanceURL:        r.InstanceUrl,
-		DisplayName:        r.DisplayName,
-		InstancePublicKey:  r.InstancePublicKey,
-		TrustTier:          federation.TrustTier(r.TrustTier),
-		EncryptionPolicy:   federation.EncryptionPolicy(r.EncryptionPolicy),
-		Enabled:            r.Enabled,
-		Status:             federation.PeerStatus(r.Status),
-		HandshakeAt:        r.HandshakeAt,
-		HandshakeByUserRef: r.HandshakeByUserRef,
-		LastSeenAt:         r.LastSeenAt,
-		Notes:              r.Notes,
-		ShareInVisibleList: r.ShareInVisibleList,
+	p := &Peer{
+		ID:                       uuid.UUID(r.ID.Bytes),
+		InstanceURL:              r.InstanceUrl,
+		DisplayName:              r.DisplayName,
+		InstancePublicKey:        r.InstancePublicKey,
+		TrustTier:                federation.TrustTier(r.TrustTier),
+		EncryptionPolicy:         federation.EncryptionPolicy(r.EncryptionPolicy),
+		Enabled:                  r.Enabled,
+		Status:                   federation.PeerStatus(r.Status),
+		HandshakeAt:              r.HandshakeAt,
+		HandshakeByUserRef:       r.HandshakeByUserRef,
+		LastSeenAt:               r.LastSeenAt,
+		Notes:                    r.Notes,
+		ShareInVisibleList:       r.ShareInVisibleList,
+		CapabilitiesNegotiatedAt: r.CapabilitiesNegotiatedAt,
 	}
+	// Capabilities JSONB → typed CapabilitySet. Unknown values
+	// preserve per ADR 0042. Malformed JSON falls through to an
+	// empty set + logs nothing here — boot-time data corruption
+	// is surfaced by the admin observability surface
+	// (ListPeersMissingCapabilities won't list a peer with a bad
+	// blob, so the operator sees the gap via missing-from-list
+	// rather than a noisy log line per query).
+	if len(r.Capabilities) > 0 {
+		_ = p.Capabilities.UnmarshalJSON(r.Capabilities)
+	}
+	return p
 }
 
 // VisibleSnapshot returns the cached snapshot of peers we've

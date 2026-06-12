@@ -364,21 +364,23 @@ type FederationOutbox struct {
 }
 
 type FederationPeer struct {
-	ID                 pgtype.UUID
-	InstanceUrl        string
-	DisplayName        string
-	InstancePublicKey  string
-	TrustTier          string
-	EncryptionPolicy   string
-	Enabled            bool
-	Status             string
-	HandshakeAt        pgtype.Timestamptz
-	HandshakeByUserRef int64
-	LastSeenAt         pgtype.Timestamptz
-	Notes              string
-	ShareInVisibleList bool
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	ID                       pgtype.UUID
+	InstanceUrl              string
+	DisplayName              string
+	InstancePublicKey        string
+	TrustTier                string
+	EncryptionPolicy         string
+	Enabled                  bool
+	Status                   string
+	HandshakeAt              pgtype.Timestamptz
+	HandshakeByUserRef       int64
+	LastSeenAt               pgtype.Timestamptz
+	Notes                    string
+	ShareInVisibleList       bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Capabilities             []byte
+	CapabilitiesNegotiatedAt pgtype.Timestamptz
 }
 
 type FederationPeerSuggestion struct {

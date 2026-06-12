@@ -73,6 +73,12 @@ const (
 // Field order doesn't matter for the wire — the signature
 // covers the RFC 8785 JSON canonicalization, which sorts keys
 // deterministically regardless of how either side emits them.
+//
+// Phase 1.22.I-d (v0.4 wire bump): adds the optional
+// SupportedCapabilities field. Pre-v0.4 peers (offer/confirm
+// without the field) treated as advertising an empty set;
+// negotiation runs + the peer surfaces in
+// [Registry.ListPeersMissingCapabilities] for re-pairing.
 type Envelope struct {
 	Protocol         string `json:"protocol"`
 	Type             string `json:"type"`
@@ -82,6 +88,16 @@ type Envelope struct {
 	To               string `json:"to"`
 	Nonce            string `json:"nonce"`
 	Timestamp        string `json:"timestamp"` // RFC 3339 nano
+
+	// SupportedCapabilities (Phase 1.22.I-d) — the sender's
+	// advertised capability set. The receiver intersects this
+	// with its own KnownCapabilities + persists the result on
+	// federation_peers.capabilities. omitempty so handshake
+	// envelopes from pre-v0.4 peers round-trip cleanly through
+	// the canonical-JSON signature check (an absent field is
+	// not in the signed bytes, so a v0.4 receiver verifying a
+	// v0.3 sender's signature passes).
+	SupportedCapabilities CapabilitySet `json:"supported_capabilities,omitempty"`
 }
 
 // signedEnvelope is the on-wire JSON shape.
@@ -209,6 +225,12 @@ func (e *Engine) HandleInbound(ctx context.Context, body []byte) (*InboundResult
 
 // handleOffer processes an inbound offer envelope. Idempotent on
 // (from_url): re-receiving the same offer doesn't double-insert.
+//
+// Phase 1.22.I-d: every offer carries the sender's advertised
+// capability set; we intersect with our own KnownCapabilities +
+// persist the result on the peer row so the I-e/I-g dispatch
+// gate has the bilateral view. Runs on both the new-peer and
+// duplicate paths — re-handshakes refresh the cached intersection.
 func (e *Engine) handleOffer(ctx context.Context, env Envelope) (*InboundResult, error) {
 	existing, err := e.registry.ByInstanceURL(ctx, env.From)
 	if err != nil && !errors.Is(err, ErrPeerNotFound) {
@@ -225,6 +247,19 @@ func (e *Engine) handleOffer(ctx context.Context, env Envelope) (*InboundResult,
 		//                        B sent offer simultaneously. Flip
 		//                        ours to connected: both sides are
 		//                        signalling intent.
+		//
+		// Phase 1.22.I-d: only mark the row as "negotiated" if the
+		// peer explicitly sent the supported_capabilities field
+		// (even as empty array). A nil slice means the field was
+		// absent from the JSON — pre-I-d peer; leave
+		// capabilities_negotiated_at NULL so ListPeersMissingCapabilities
+		// still surfaces them for re-pairing.
+		if env.SupportedCapabilities != nil {
+			caps := Intersect(KnownCapabilities, env.SupportedCapabilities)
+			if err := e.registry.SetCapabilities(ctx, existing.ID, caps); err != nil {
+				return nil, err
+			}
+		}
 		if existing.Status == federation.PeerStatusPendingOutbound {
 			updated, err := e.registry.setStatus(ctx, existing.ID, federation.PeerStatusConnected)
 			if err != nil {
@@ -250,6 +285,15 @@ func (e *Engine) handleOffer(ctx context.Context, env Envelope) (*InboundResult,
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Phase 1.22.I-d: stash the intersection only if the peer
+	// advertised a field (even as empty array). Missing field →
+	// pre-I-d peer → leave capabilities_negotiated_at NULL.
+	if env.SupportedCapabilities != nil {
+		caps := Intersect(KnownCapabilities, env.SupportedCapabilities)
+		if err := e.registry.SetCapabilities(ctx, p.ID, caps); err != nil {
+			return nil, err
+		}
 	}
 	return &InboundResult{Peer: p, Status: "accepted_pending"}, nil
 }
@@ -282,6 +326,15 @@ func (e *Engine) handleConfirm(ctx context.Context, env Envelope) (*InboundResul
 	updated, err := e.registry.completeOutboundHandshake(ctx, existing.ID, env.FromPublicKeyPEM)
 	if err != nil {
 		return nil, err
+	}
+	// Phase 1.22.I-d — confirm's supported_capabilities is the
+	// peer's advertised set. Same nil-vs-empty rule as the offer
+	// path: only mark negotiated if the field was present.
+	if env.SupportedCapabilities != nil {
+		caps := Intersect(KnownCapabilities, env.SupportedCapabilities)
+		if err := e.registry.SetCapabilities(ctx, updated.ID, caps); err != nil {
+			return nil, err
+		}
 	}
 	return &InboundResult{Peer: updated, Status: "completed"}, nil
 }
@@ -347,16 +400,19 @@ func (e *Engine) InitiateOffer(
 		return nil, err
 	}
 
-	// Build + sign the offer envelope.
+	// Build + sign the offer envelope. SupportedCapabilities is
+	// Phase 1.22.I-d's wire bump — receivers intersect with their
+	// own KnownCapabilities + persist the result (see handleOffer).
 	env := Envelope{
-		Protocol:         HandshakeProtocol,
-		Type:             HandshakeTypeOffer,
-		From:             e.localBaseURL,
-		FromDisplayName:  e.localDisplayName,
-		FromPublicKeyPEM: string(id.PublicKeyPEM()),
-		To:               url,
-		Nonce:            mustNonce(),
-		Timestamp:        e.now().Format(time.RFC3339Nano),
+		Protocol:              HandshakeProtocol,
+		Type:                  HandshakeTypeOffer,
+		From:                  e.localBaseURL,
+		FromDisplayName:       e.localDisplayName,
+		FromPublicKeyPEM:      string(id.PublicKeyPEM()),
+		To:                    url,
+		Nonce:                 mustNonce(),
+		Timestamp:             e.now().Format(time.RFC3339Nano),
+		SupportedCapabilities: KnownCapabilities,
 	}
 	if err := e.postEnvelope(ctx, url, env, id); err != nil {
 		// Local row stays as pending_outbound — admin sees the
@@ -382,14 +438,15 @@ func (e *Engine) AcceptInbound(ctx context.Context, p Peer) error {
 		return err
 	}
 	env := Envelope{
-		Protocol:         HandshakeProtocol,
-		Type:             HandshakeTypeConfirm,
-		From:             e.localBaseURL,
-		FromDisplayName:  e.localDisplayName,
-		FromPublicKeyPEM: string(id.PublicKeyPEM()),
-		To:               p.InstanceURL,
-		Nonce:            mustNonce(),
-		Timestamp:        e.now().Format(time.RFC3339Nano),
+		Protocol:              HandshakeProtocol,
+		Type:                  HandshakeTypeConfirm,
+		From:                  e.localBaseURL,
+		FromDisplayName:       e.localDisplayName,
+		FromPublicKeyPEM:      string(id.PublicKeyPEM()),
+		To:                    p.InstanceURL,
+		Nonce:                 mustNonce(),
+		Timestamp:             e.now().Format(time.RFC3339Nano),
+		SupportedCapabilities: KnownCapabilities,
 	}
 	// Best-effort post — local state is already connected.
 	// Future outbox (1.22.D) will retry if this fails.
