@@ -361,6 +361,7 @@ type FederationOutbox struct {
 	DeliveredWithKeyID *string            `json:"delivered_with_key_id"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	WasEncrypted       bool               `json:"was_encrypted"`
 }
 
 type FederationPeer struct {

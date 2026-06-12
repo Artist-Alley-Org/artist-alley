@@ -361,6 +361,7 @@ type FederationOutbox struct {
 	DeliveredWithKeyID *string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	WasEncrypted       bool
 }
 
 type FederationPeer struct {
