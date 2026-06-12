@@ -502,19 +502,19 @@ RETURNING id, status, processed_at, correlation_activity_id,
 `
 
 type MarkInboxProcessedParams struct {
-	ID                       pgtype.UUID
-	CorrelationActivityID    pgtype.UUID
-	WasEncrypted             bool
-	DecryptedWithKeyVersion  *int32
+	ID                      pgtype.UUID
+	CorrelationActivityID   pgtype.UUID
+	WasEncrypted            bool
+	DecryptedWithKeyVersion *int32
 }
 
 type MarkInboxProcessedRow struct {
-	ID                       pgtype.UUID
-	Status                   string
-	ProcessedAt              pgtype.Timestamptz
-	CorrelationActivityID    pgtype.UUID
-	WasEncrypted             bool
-	DecryptedWithKeyVersion  *int32
+	ID                      pgtype.UUID
+	Status                  string
+	ProcessedAt             pgtype.Timestamptz
+	CorrelationActivityID   pgtype.UUID
+	WasEncrypted            bool
+	DecryptedWithKeyVersion *int32
 }
 
 // Worker stage 13: dispatch succeeded. Records the per-row
