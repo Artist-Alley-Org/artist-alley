@@ -105,7 +105,8 @@ func (q *Queries) GetDispatchState(ctx context.Context) (FederationDispatchState
 const getOutboxByID = `-- name: GetOutboxByID :one
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason
 FROM federation_outbox
 WHERE id = $1
 `
@@ -128,32 +129,43 @@ func (q *Queries) GetOutboxByID(ctx context.Context, id pgtype.UUID) (Federation
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WasEncrypted,
+		&i.Sensitivity,
+		&i.RefusedReason,
 	)
 	return i, err
 }
 
 const insertOutboxRow = `-- name: InsertOutboxRow :one
 INSERT INTO federation_outbox (
-    activity_id, peer_id, target_user_url, status, next_attempt_at
+    activity_id, peer_id, target_user_url, status, next_attempt_at, sensitivity
 )
-VALUES ($1, $2, $3, 'queued', NOW())
+VALUES ($1, $2, $3, 'queued', NOW(), $4)
 ON CONFLICT DO NOTHING
 RETURNING id, activity_id, peer_id, target_user_url, status,
           attempts, next_attempt_at, last_attempt_at, last_error,
-          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason
 `
 
 type InsertOutboxRowParams struct {
 	ActivityID    pgtype.UUID
 	PeerID        pgtype.UUID
 	TargetUserUrl *string
+	Sensitivity   *string
 }
 
 // Idempotent via the partial UNIQUE indexes. ON CONFLICT DO
 // NOTHING handles both targeted (target_user_url IS NOT NULL)
 // + broadcast (NULL) flavours.
+//
+// Phase 1.22.I-g: sensitivity is denormalized from the activities
+// ledger at INSERT time so the delivery Worker can consult
+// outbox.ChoosePathFor without a per-row JOIN. NULL passes through
+// when the resolver dispatcher has no sensitivity lookup wired
+// (pre-I-g rows or test fixtures); the Worker treats that as
+// conservative-public per the same default the resolver uses.
 func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams) (FederationOutbox, error) {
-	row := q.db.QueryRow(ctx, insertOutboxRow, arg.ActivityID, arg.PeerID, arg.TargetUserUrl)
+	row := q.db.QueryRow(ctx, insertOutboxRow, arg.ActivityID, arg.PeerID, arg.TargetUserUrl, arg.Sensitivity)
 	var i FederationOutbox
 	err := row.Scan(
 		&i.ID,
@@ -170,6 +182,8 @@ func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.WasEncrypted,
+		&i.Sensitivity,
+		&i.RefusedReason,
 	)
 	return i, err
 }
@@ -177,7 +191,8 @@ func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams
 const listDueOutbox = `-- name: ListDueOutbox :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -214,6 +229,8 @@ func (q *Queries) ListDueOutbox(ctx context.Context, limit int32) ([]FederationO
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.WasEncrypted,
+			&i.Sensitivity,
+			&i.RefusedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -228,7 +245,8 @@ func (q *Queries) ListDueOutbox(ctx context.Context, limit int32) ([]FederationO
 const listDueOutboxByPeer = `-- name: ListDueOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -269,6 +287,8 @@ func (q *Queries) ListDueOutboxByPeer(ctx context.Context, arg ListDueOutboxByPe
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.WasEncrypted,
+			&i.Sensitivity,
+			&i.RefusedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -283,7 +303,8 @@ func (q *Queries) ListDueOutboxByPeer(ctx context.Context, arg ListDueOutboxByPe
 const listOutboxByPeer = `-- name: ListOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted,
+          sensitivity, refused_reason
 FROM federation_outbox
 WHERE peer_id = $1
 ORDER BY created_at DESC
@@ -320,6 +341,8 @@ func (q *Queries) ListOutboxByPeer(ctx context.Context, arg ListOutboxByPeerPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.WasEncrypted,
+			&i.Sensitivity,
+			&i.RefusedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -543,6 +566,38 @@ UPDATE federation_outbox
 func (q *Queries) MarkOutboxEncrypted(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markOutboxEncrypted, id)
 	return err
+}
+
+const markOutboxRefused = `-- name: MarkOutboxRefused :execrows
+UPDATE federation_outbox
+   SET status         = 'refused',
+       refused_reason = $2,
+       last_attempt_at = NOW(),
+       updated_at     = NOW()
+ WHERE id = $1 AND status = 'queued'
+`
+
+type MarkOutboxRefusedParams struct {
+	ID            pgtype.UUID
+	RefusedReason *string
+}
+
+// Phase 1.22.I-g terminal-refusal path. Worker flips queued →
+// refused with a catalogue reason when policy.ChoosePathFor
+// returns EmissionRefused (share sensitivity requires encryption
+// + capability or recipient key isn't available). The partial-
+// index federation_outbox_due_idx (status='queued') filters
+// refused rows out of ListDueOutbox automatically, so refusal is
+// terminal — no retries, no backoff. Operator action (re-pair →
+// caps refresh OR move share to a lower tier) is the recovery
+// path; the protocol does NOT auto-retry after capability
+// changes.
+func (q *Queries) MarkOutboxRefused(ctx context.Context, arg MarkOutboxRefusedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxRefused, arg.ID, arg.RefusedReason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markOutboxFailedTerminal = `-- name: MarkOutboxFailedTerminal :execrows

@@ -3740,6 +3740,20 @@ CREATE INDEX federation_outbox_by_peer_idx
 -- Observability mirror of the dispatcher's encryption decision.
 ALTER TABLE public.federation_outbox
     ADD COLUMN was_encrypted boolean NOT NULL DEFAULT false;
+-- Migration 00012 — sender-refusal policy state (Phase 1.22.I-g).
+-- sensitivity is denormalized from activities at INSERT time so the
+-- delivery Worker can consult outbox.ChoosePathFor without a JOIN.
+-- refused_reason is populated alongside status='refused' (new status
+-- value, terminal — refused rows never retry).
+ALTER TABLE public.federation_outbox
+    ADD COLUMN sensitivity    text NULL,
+    ADD COLUMN refused_reason text NULL;
+ALTER TABLE public.federation_outbox
+    DROP CONSTRAINT federation_outbox_status_check;
+ALTER TABLE public.federation_outbox
+    ADD CONSTRAINT federation_outbox_status_check CHECK (
+        status IN ('queued', 'sent', 'failed', 'cancelled', 'refused')
+    );
 CREATE TABLE public.federation_dispatch_state (
     id                            int          PRIMARY KEY CHECK (id = 1),
     last_dispatched_activity_id   uuid         NULL,
