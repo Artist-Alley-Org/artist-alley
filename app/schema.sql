@@ -3730,6 +3730,10 @@ CREATE INDEX federation_outbox_due_idx
     WHERE status = 'queued';
 CREATE INDEX federation_outbox_by_peer_idx
     ON public.federation_outbox (peer_id, created_at DESC);
+-- Migration 00010 — federation_outbox.was_encrypted (Phase 1.22.I-e).
+-- Observability mirror of the dispatcher's encryption decision.
+ALTER TABLE public.federation_outbox
+    ADD COLUMN was_encrypted boolean NOT NULL DEFAULT false;
 CREATE TABLE public.federation_dispatch_state (
     id                            int          PRIMARY KEY CHECK (id = 1),
     last_dispatched_activity_id   uuid         NULL,
