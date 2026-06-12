@@ -9,7 +9,7 @@ VALUES ($1, $2, $3, 'queued', NOW())
 ON CONFLICT DO NOTHING
 RETURNING id, activity_id, peer_id, target_user_url, status,
           attempts, next_attempt_at, last_attempt_at, last_error,
-          sent_at, delivered_with_key_id, created_at, updated_at;
+          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted;
 
 -- name: ListDueOutbox :many
 -- Hot-path read for the delivery worker. Uses
@@ -19,7 +19,7 @@ RETURNING id, activity_id, peer_id, target_user_url, status,
 -- defaults to 100 rows/tick.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -32,7 +32,7 @@ LIMIT $1;
 -- batched POST per the §3.10 batched-delivery optimisation.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -96,7 +96,7 @@ UPDATE federation_outbox
 -- name: GetOutboxByID :one
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE id = $1;
 
@@ -104,7 +104,7 @@ WHERE id = $1;
 -- Per-peer admin view. Most-recent first.
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE peer_id = $1
 ORDER BY created_at DESC
@@ -187,3 +187,15 @@ WHERE source = 'local'
   )
 ORDER BY created_at, id
 LIMIT $1;
+
+-- name: MarkOutboxEncrypted :exec
+-- Phase 1.22.I-e — flips the row's was_encrypted observability
+-- column to TRUE. Called by the delivery worker after the
+-- encryption branch produces a sealed envelope but BEFORE
+-- attempting the HTTP POST, so even a transient delivery
+-- failure leaves the column reflecting what we actually
+-- emitted.
+UPDATE federation_outbox
+   SET was_encrypted = TRUE,
+       updated_at = NOW()
+ WHERE id = $1;

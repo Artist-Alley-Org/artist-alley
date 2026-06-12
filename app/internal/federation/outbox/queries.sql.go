@@ -105,7 +105,7 @@ func (q *Queries) GetDispatchState(ctx context.Context) (FederationDispatchState
 const getOutboxByID = `-- name: GetOutboxByID :one
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE id = $1
 `
@@ -127,6 +127,7 @@ func (q *Queries) GetOutboxByID(ctx context.Context, id pgtype.UUID) (Federation
 		&i.DeliveredWithKeyID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WasEncrypted,
 	)
 	return i, err
 }
@@ -139,7 +140,7 @@ VALUES ($1, $2, $3, 'queued', NOW())
 ON CONFLICT DO NOTHING
 RETURNING id, activity_id, peer_id, target_user_url, status,
           attempts, next_attempt_at, last_attempt_at, last_error,
-          sent_at, delivered_with_key_id, created_at, updated_at
+          sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 `
 
 type InsertOutboxRowParams struct {
@@ -168,6 +169,7 @@ func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams
 		&i.DeliveredWithKeyID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WasEncrypted,
 	)
 	return i, err
 }
@@ -175,7 +177,7 @@ func (q *Queries) InsertOutboxRow(ctx context.Context, arg InsertOutboxRowParams
 const listDueOutbox = `-- name: ListDueOutbox :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -211,6 +213,7 @@ func (q *Queries) ListDueOutbox(ctx context.Context, limit int32) ([]FederationO
 			&i.DeliveredWithKeyID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WasEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -225,7 +228,7 @@ func (q *Queries) ListDueOutbox(ctx context.Context, limit int32) ([]FederationO
 const listDueOutboxByPeer = `-- name: ListDueOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE status = 'queued'
   AND next_attempt_at <= NOW()
@@ -265,6 +268,7 @@ func (q *Queries) ListDueOutboxByPeer(ctx context.Context, arg ListDueOutboxByPe
 			&i.DeliveredWithKeyID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WasEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -279,7 +283,7 @@ func (q *Queries) ListDueOutboxByPeer(ctx context.Context, arg ListDueOutboxByPe
 const listOutboxByPeer = `-- name: ListOutboxByPeer :many
 SELECT id, activity_id, peer_id, target_user_url, status,
        attempts, next_attempt_at, last_attempt_at, last_error,
-       sent_at, delivered_with_key_id, created_at, updated_at
+       sent_at, delivered_with_key_id, created_at, updated_at, was_encrypted
 FROM federation_outbox
 WHERE peer_id = $1
 ORDER BY created_at DESC
@@ -315,6 +319,7 @@ func (q *Queries) ListOutboxByPeer(ctx context.Context, arg ListOutboxByPeerPara
 			&i.DeliveredWithKeyID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WasEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -520,6 +525,24 @@ func (q *Queries) MarkOutboxAttemptFailed(ctx context.Context, arg MarkOutboxAtt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markOutboxEncrypted = `-- name: MarkOutboxEncrypted :exec
+UPDATE federation_outbox
+   SET was_encrypted = TRUE,
+       updated_at = NOW()
+ WHERE id = $1
+`
+
+// Phase 1.22.I-e — flips the row's was_encrypted observability
+// column to TRUE. Called by the delivery worker after the
+// encryption branch produces a sealed envelope but BEFORE
+// attempting the HTTP POST, so even a transient delivery
+// failure leaves the column reflecting what we actually
+// emitted.
+func (q *Queries) MarkOutboxEncrypted(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markOutboxEncrypted, id)
+	return err
 }
 
 const markOutboxFailedTerminal = `-- name: MarkOutboxFailedTerminal :execrows

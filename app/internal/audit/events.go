@@ -91,6 +91,16 @@ const (
 	// flag. Scenario 08 exercises the audit path via synthetic
 	// injection.
 
+	// 1.22.I-e per-recipient encrypted emission. Fired by the
+	// outbox delivery worker (Worker.buildEnvelope) once per
+	// outbox row that took the encryption branch. Pool-bound;
+	// not coupled to any tx because the encryption + the
+	// audit row are both pool-direct in the dispatcher loop.
+	// Operator observability: "how many encrypted dispatches
+	// per hour did this peer accept?" answerable via grouping
+	// on metadata->>'peer_id'.
+	EventFederationEmissionEncrypted = "federation.emission.encrypted"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -422,6 +432,36 @@ func (r *Recorder) EmissionSkipped(
 		"reason":        reason,
 	}
 	r.write(ctx, EventFederationEmissionSkipped, nil, nil, reqContext{}, meta)
+}
+
+// FederationEmissionEncrypted records a
+// federation.emission.encrypted event per Phase 1.22.I-e — fired
+// once per outbox row that the delivery worker actually
+// dispatched encrypted (capability gate passed, recipient key
+// resolved, NaCl-box seal completed).
+//
+// Pool-bound. Metadata fields are the per-emission detail an
+// operator wants when grepping the audit log:
+//
+//   peer_id                — recipient peer's UUID
+//   activity_type          — the verb (Like / Comment / etc.)
+//   sender_key_version     — sender's key version sealed against
+//   recipient_key_version  — recipient's key version sealed against
+//
+// One row per encrypted recipient. A broadcast activity to N
+// peers that all support e2e produces N audit rows.
+func (r *Recorder) FederationEmissionEncrypted(
+	ctx context.Context,
+	peerID, activityType string,
+	senderKeyVersion, recipientKeyVersion int32,
+) {
+	meta := map[string]any{
+		"peer_id":               peerID,
+		"activity_type":         activityType,
+		"sender_key_version":    senderKeyVersion,
+		"recipient_key_version": recipientKeyVersion,
+	}
+	r.write(ctx, EventFederationEmissionEncrypted, nil, nil, reqContext{}, meta)
 }
 
 // FederationEmissionSkippedForPeer records a
