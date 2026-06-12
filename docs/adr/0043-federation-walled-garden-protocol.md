@@ -4,7 +4,7 @@ title: Federation — artist-alley walled-garden protocol (ActivityPub-shaped, n
 status: accepted
 date: 2026-06-04
 area: architecture
-phases:
+phases: ["1.22.A", "1.22.B", "1.22.C", "1.22.D", "1.22.E", "1.22.F", "1.22.G", "1.22.H", "1.22.I", "1.22.J"]
   - "1.22"
 supersedes:
   - "0007"

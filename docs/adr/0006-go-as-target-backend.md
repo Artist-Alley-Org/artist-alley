@@ -4,7 +4,7 @@ title: Go as the target backend; no sidecars
 status: accepted
 date: 2026-05-24
 area: architecture
-phases: 
+phases: []
   - "0.5"
   - "1.0"
 supersedes: 

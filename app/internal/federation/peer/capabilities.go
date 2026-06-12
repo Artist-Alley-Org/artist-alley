@@ -81,10 +81,28 @@ const (
 // this list. The TestKnownCapabilities_AllHaveDispatchCases test
 // enforces it — any const here that doesn't map to a non-empty
 // [purposeOf] result fails the test.
+//
+// # CapNaClBox is intentionally absent at Phase 1.22.I-e
+//
+// Per ADR 0049 §Track B rollout coordination: advertising a
+// capability MUST imply both sides can honor it. I-e ships the
+// sender-side encrypt path; I-f ships the receiver-side decrypt
+// path. If CapNaClBox were advertised between I-e + I-f, the
+// I-d handshake would land it in the intersection, the I-e
+// dispatcher would encrypt, and every encrypted envelope would
+// fail inbound at the receiver until I-f shipped — a transient
+// production breakage that the agent removed-cap-now / re-add-at-I-f
+// pattern prevents.
+//
+// I-f's PR re-adds CapNaClBox to this list as its final
+// commit + triggers a re-pair (peers running v0.5+ will then
+// see CapNaClBox advertised by the I-f-shipped instance + light
+// up the encryption path).
 var KnownCapabilities = CapabilitySet{
 	CapE2EEncrypted,
-	CapNaClBox,
 	CapX25519,
+	// CapNaClBox — see § rollout coordination above. Restored
+	// in I-f.
 	CapEd25519EnvelopeSig,
 	CapHTTP2BatchedInbox,
 }

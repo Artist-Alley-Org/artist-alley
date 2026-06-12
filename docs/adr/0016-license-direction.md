@@ -4,7 +4,7 @@ title: License direction — toward AGPL + commercial dual-license
 status: accepted
 date: 2026-05-29
 area: licensing
-phases: 
+phases: ["1.24"]
   - "1.23"
 supersedes: 
   - "0002"

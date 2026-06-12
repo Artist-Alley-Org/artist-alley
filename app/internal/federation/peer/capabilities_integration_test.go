@@ -188,13 +188,18 @@ func TestHandshake_OfferWithCapabilitiesField_StoresIntersection(t *testing.T) {
 	p := fixturePeer(t, ctx, r, admin, randHex(t, 4))
 
 	// Simulate the handshake's intersection call.
+	//
+	// 1.22.I-e removed CapNaClBox from KnownCapabilities until
+	// I-f ships (rollout coordination). The intersection of
+	// KnownCapabilities ∩ theirs reflects the post-I-e state:
+	// e2e-encrypted + x25519 only; nacl-box drops because our
+	// side no longer advertises it, future-pq-kem drops because
+	// neither side advertises it. The expectation will move to
+	// 3 again when I-f restores CapNaClBox.
 	theirs := peer.CapabilitySet{peer.CapE2EEncrypted, peer.CapNaClBox, peer.CapX25519, "future-pq-kem"}
 	want := peer.Intersect(peer.KnownCapabilities, theirs)
-	// 4 entries from KnownCapabilities ∩ theirs:
-	//   e2e-encrypted + nacl-box + x25519 are in both
-	//   future-pq-kem is in theirs but not KnownCapabilities → drops
-	if len(want) != 3 {
-		t.Fatalf("Intersect produced %d caps, expected 3 (e2e, nacl-box, x25519)", len(want))
+	if len(want) != 2 {
+		t.Fatalf("Intersect produced %d caps, expected 2 (e2e, x25519 — CapNaClBox is reserved-for-I-f)", len(want))
 	}
 	if err := r.SetCapabilities(ctx, p.ID, want); err != nil {
 		t.Fatalf("SetCapabilities: %v", err)
