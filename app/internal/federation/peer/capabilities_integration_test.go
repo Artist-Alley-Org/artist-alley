@@ -189,17 +189,17 @@ func TestHandshake_OfferWithCapabilitiesField_StoresIntersection(t *testing.T) {
 
 	// Simulate the handshake's intersection call.
 	//
-	// 1.22.I-e removed CapNaClBox from KnownCapabilities until
-	// I-f ships (rollout coordination). The intersection of
-	// KnownCapabilities ∩ theirs reflects the post-I-e state:
-	// e2e-encrypted + x25519 only; nacl-box drops because our
-	// side no longer advertises it, future-pq-kem drops because
-	// neither side advertises it. The expectation will move to
-	// 3 again when I-f restores CapNaClBox.
+	// 1.22.I-f restored CapNaClBox to KnownCapabilities — both
+	// sides now advertise the full e2e-encrypted + nacl-box +
+	// x25519 triple. future-pq-kem is unknown to our side + drops
+	// on intersection (the load-bearing property the test pins).
+	// The I-e gap (where CapNaClBox was removed pending the
+	// receiver-side decrypt path) is documented in
+	// capabilities.go's KnownCapabilities comment block.
 	theirs := peer.CapabilitySet{peer.CapE2EEncrypted, peer.CapNaClBox, peer.CapX25519, "future-pq-kem"}
 	want := peer.Intersect(peer.KnownCapabilities, theirs)
-	if len(want) != 2 {
-		t.Fatalf("Intersect produced %d caps, expected 2 (e2e, x25519 — CapNaClBox is reserved-for-I-f)", len(want))
+	if len(want) != 3 {
+		t.Fatalf("Intersect produced %d caps, expected 3 (e2e, nacl-box, x25519 — CapNaClBox restored at I-f)", len(want))
 	}
 	if err := r.SetCapabilities(ctx, p.ID, want); err != nil {
 		t.Fatalf("SetCapabilities: %v", err)

@@ -1,27 +1,46 @@
 #!/usr/bin/env bash
 # scripts/dogfood/scenarios/09-outbox-encryption-sender-side.sh
 #
-# Scenario 09: Phase 1.22.I-e sender-side encryption verification.
+# Scenario 09 — full cross-instance encrypted dispatch.
 #
-# The full cross-instance encrypted dispatch test (sender encrypts →
-# receiver decrypts → activity processes normally) waits for I-f
-# to ship. This scenario covers the I-e half: sender-side encrypt
-# path produces correctly-shaped envelopes that round-trip through
-# box.Open with the recipient's actual private key.
+# The 1.22.I arc is complete: I-b mints per-user X25519 keypairs,
+# I-c caches inbound encryption pubkeys on federation_remote_actors,
+# I-d gates emission on the per-peer CapNaClBox capability, I-e
+# encrypts in the sender's outbox delivery worker, and I-f decrypts
+# in the receiver's inbox dispatcher's stage-4 branch + restores
+# env.Extra so the verb handler dispatches as if the row arrived
+# plaintext.
 #
-# Setup hack: studio-a's KnownCapabilities does NOT include
-# CapNaClBox at I-e (per rollout coordination). To exercise the
-# encrypt path we directly INJECT 'nacl-box' into studio-a's view
-# of studio-b's federation_peers.capabilities — simulating the
-# post-I-f state. The override is local-only; studio-b is
-# unaffected. We CAPTURE the encrypted envelope from the delivery
-# worker's audit + outbox row, then attempt a manual decrypt
-# using studio-b's private key directly (since I-f's in-app
-# decrypt hasn't shipped).
+# This scenario exercises ALL of that end to end across studio-a +
+# studio-b with NO capability override + NO synthetic SQL injection.
+# The pair must already be handshake-paired so the I-d capability
+# negotiation has happened + both sides advertise CapNaClBox.
 #
-# Cleanup: revert the capability override + (optionally) delete
-# the synthetic activity. Note that this is a transient state
-# until I-f lands.
+# # What it proves
+#
+#   1. studio-a's outbox encrypts the Like envelope (was_encrypted=
+#      true + federation.emission.encrypted audit row fires).
+#   2. studio-b's inbox receives the encrypted envelope, decrypts
+#      it (was_encrypted=true + decrypted_with_key_version=1 on
+#      the federation_inbox row, plus federation.inbox.decrypted
+#      audit), restores env.Extra, dispatches to the Like handler,
+#      and the resulting likes row exists on studio-b's posts table.
+#
+# # Re-pair prerequisite
+#
+# The capability set persisted on a paired peer's
+# federation_peers.capabilities is fixed at handshake time. After
+# upgrading both sides to 1.22.I-f the capability list still
+# reflects the pre-I-f intersection (e2e + x25519, NaCl-box
+# absent). Operators MUST re-pair (or wait for the next handshake
+# round-trip) to refresh capabilities so CapNaClBox lands in the
+# intersection + the outbox resolver lights up the encryption
+# branch.
+#
+# The scenario detects + repairs that state automatically: if
+# studio-a's federation_peers row for studio-b doesn't already
+# advertise nacl-box, we trigger a /federation/handshake/refresh
+# on the admin API before staging the Like.
 
 set -euo pipefail
 
@@ -48,7 +67,7 @@ asset_resp=$(api_post "$B_HOST" "$B_COOKIES" "/assets" \
 import json
 print(json.dumps({
     'title':          'Scenario 09 fixture asset',
-    'description':    'Encryption-sender-side target.',
+    'description':    'End-to-end encryption target.',
     'asset_type':     2,
     'file_hash':      '${file_hash}',
     'file_extension': 'txt',
@@ -59,7 +78,7 @@ post_resp=$(api_post "$B_HOST" "$B_COOKIES" "/posts" \
 import json
 print(json.dumps({
     'title':       'Scenario 09 fixture post',
-    'description': 'Encryption-sender-side target post.',
+    'description': 'End-to-end encryption target post.',
     'visibility':  'explicit-share',
     'members':     [{'asset_id': '${asset_id}'}],
 }))")")
@@ -75,55 +94,72 @@ admin_ref=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley
     "SELECT ref FROM \"user\" WHERE username = 'admin' LIMIT 1" | tr -d ' \r\n')
 [ -n "$admin_ref" ] || fail "studio-a admin user not found"
 
-# Confirm admin has a current federation_user_keys row (post-I-b).
+# Confirm both sides have current federation_user_keys rows (I-b).
 a_keylen=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(public_key) FROM federation_user_keys
      WHERE user_id = ${admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
-[ "$a_keylen" = "32" ] || fail "studio-a admin has no current keypair"
+[ "$a_keylen" = "32" ] || fail "studio-a admin has no current keypair (I-b not bootstrapped)"
+
+b_admin_ref=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT ref FROM \"user\" WHERE username = 'admin' LIMIT 1" | tr -d ' \r\n')
+b_keylen=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT octet_length(public_key) FROM federation_user_keys
+     WHERE user_id = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+[ "$b_keylen" = "32" ] || fail "studio-b admin has no current keypair (I-b not bootstrapped)"
+
+actor_uri="http://studio-a.local/users/admin"
+target_uri="https://studio-b.local:9443/posts/${post_id}"
+recipient_inbox="https://studio-b.local:9443/federation/inbox"
+
+# --- Phase A: confirm I-f capability advertisement + re-pair if needed ---
+
+step "Confirming studio-a's view of studio-b's capabilities advertises nacl-box (I-f re-pair check)"
+current_caps=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+    "SELECT capabilities::text FROM federation_peers WHERE id = '${peer_id}'" | tr -d ' \r\n')
+if echo "$current_caps" | grep -q 'nacl-box'; then
+    pass "studio-a sees nacl-box in studio-b's capabilities (re-pair already complete)"
+else
+    warn "nacl-box absent — triggering a handshake refresh to land the I-f capability"
+    api_post "$A_HOST" "$A_COOKIES" "/federation/peers/${peer_id}/handshake/refresh" "{}" >/dev/null \
+        || fail "/federation/peers/${peer_id}/handshake/refresh failed (admin API not wired?)"
+    sleep 2
+    current_caps=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+        "SELECT capabilities::text FROM federation_peers WHERE id = '${peer_id}'" | tr -d ' \r\n')
+    echo "$current_caps" | grep -q 'nacl-box' \
+        || fail "post-refresh capabilities still missing nacl-box: ${current_caps}"
+    pass "handshake refresh landed nacl-box in the intersection"
+fi
 
 # Confirm studio-b has captured studio-a admin's encryption pubkey
 # from I-c (would be NULL on a stack that hadn't received any
-# inbound activity yet).
-actor_uri="http://studio-a.local/users/admin"
+# inbound activity yet). I-d's gate would emission-skip without it
+# so a missing cache here is a real failure, not a warning.
 b_remote_key=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(encryption_public_key) FROM federation_remote_actors
      WHERE actor_uri = '${actor_uri}'" | tr -d ' \r\n')
 b_remote_key=${b_remote_key:-0}
-if [ "$b_remote_key" != "32" ]; then
-    warn "studio-b doesn't yet have studio-a admin's pubkey cached (${b_remote_key} bytes) — scenario will rely on the synthetic override path"
-fi
+[ "$b_remote_key" = "32" ] || fail "studio-b doesn't have studio-a admin's pubkey cached (${b_remote_key} bytes) — run scenario 01 first to populate the I-c cache"
 
-target_uri="https://studio-b.local:9443/posts/${post_id}"
-recipient_inbox="https://studio-b.local:9443/federation/inbox"
+# Symmetric — studio-a needs studio-b's admin pubkey to seal
+# against. The handshake's directory-fetch primes both rows.
+a_remote_key=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+    "SELECT octet_length(encryption_public_key) FROM federation_remote_actors
+     WHERE actor_uri = 'http://studio-b.local/users/admin'" | tr -d ' \r\n')
+a_remote_key=${a_remote_key:-0}
+[ "$a_remote_key" = "32" ] || fail "studio-a doesn't have studio-b admin's pubkey cached (${a_remote_key} bytes) — scenario 07 should have primed it"
 
-# --- Phase A: override studio-a's view of studio-b's caps to advertise nacl-box
+# --- Phase B: stage Like + audit baselines ----------------------------
 
-step "Injecting nacl-box into studio-a's view of studio-b's capabilities (synthetic, reverts after)"
-saved_caps=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
-    "SELECT capabilities::text FROM federation_peers WHERE id = '${peer_id}'" | tr -d ' \r\n')
-docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "
-  UPDATE federation_peers
-     SET capabilities = '[\"e2e-encrypted\",\"nacl-box\",\"x25519\"]'::jsonb,
-         capabilities_negotiated_at = NOW()
-   WHERE id = '${peer_id}';
-" >/dev/null
-pass "synthetic caps active on studio-a's row for studio-b (saved: ${saved_caps})"
-
-# --- Phase B: inject Like + observe encryption ----------------------------
-
-step "Capturing audit baseline before the synthetic dispatch"
-audit_before=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+step "Capturing audit baselines"
+a_audit_before=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT count(*) FROM audit_events
      WHERE event_type = 'federation.emission.encrypted'
        AND metadata->>'peer_id' = '${peer_id}'" | tr -d ' \r\n')
+b_audit_before=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT count(*) FROM audit_events
+     WHERE event_type = 'federation.inbox.decrypted'" | tr -d ' \r\n')
 
 step "Injecting Like activity row + outbox dispatch on studio-a"
-# Note we DON'T pre-seed the cache with the recipient's key in
-# studio-a's federation_remote_actors here — the encryption hook
-# in boot wires to remote.Handler.GetEncryptionKey which already
-# cached the value during prior inbound activity. If the cache is
-# empty, tryEncryptFor soft-fails to plaintext (which the
-# was_encrypted check below detects).
 docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 <<SQL >/dev/null
 BEGIN;
 
@@ -162,60 +198,84 @@ COMMIT;
 SQL
 pass "activity + outbox row staged"
 
-step "Polling studio-a's outbox row for the encryption result"
+# --- Phase C: sender-side observability assertions --------------------
+
+step "Polling studio-a's outbox row for the encrypted-dispatch result"
 outbox_id=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT o.id FROM federation_outbox o
      JOIN activities a ON a.id = o.activity_id
      WHERE a.activity_uri = '${activity_uri}'" | tr -d ' \r\n')
 
-wait_for "studio-a outbox row records a dispatch attempt" 10 "
+wait_for "studio-a outbox row transitions to sent" 15 "
     status=\$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \\
         \"SELECT status FROM federation_outbox WHERE id = '${outbox_id}'\" | tr -d ' \r\n')
-    [ \"\$status\" = 'sent' ] || [ \"\$status\" = 'failed' ]
+    [ \"\$status\" = 'sent' ]
 "
 
 was_encrypted=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT was_encrypted FROM federation_outbox WHERE id = '${outbox_id}'" | tr -d ' \r\n')
-out_status=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
-    "SELECT status FROM federation_outbox WHERE id = '${outbox_id}'" | tr -d ' \r\n')
+[ "$was_encrypted" = "t" ] || fail "studio-a outbox row was_encrypted=${was_encrypted}, want true (the encryption branch did NOT fire)"
+pass "studio-a outbox row: was_encrypted=true"
 
-if [ "$was_encrypted" = "t" ]; then
-    pass "studio-a outbox row: was_encrypted=true (the encrypt branch fired)"
-else
-    warn "was_encrypted=${was_encrypted} (the encrypt branch did NOT fire — likely cache miss on studio-a's view of studio-b's encryption_public_key)"
-fi
-
-audit_after=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+a_audit_after=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT count(*) FROM audit_events
      WHERE event_type = 'federation.emission.encrypted'
        AND metadata->>'peer_id' = '${peer_id}'" | tr -d ' \r\n')
-delta=$(( audit_after - audit_before ))
-if [ "$delta" -ge 1 ]; then
-    pass "federation.emission.encrypted audit row fired (delta=${delta})"
-else
-    log "audit delta=${delta} (no encrypted-dispatch event recorded; check was_encrypted above)"
-fi
+a_delta=$(( a_audit_after - a_audit_before ))
+[ "$a_delta" -ge 1 ] || fail "federation.emission.encrypted audit did not fire (delta=${a_delta})"
+pass "studio-a fired federation.emission.encrypted (delta=${a_delta})"
 
-# --- Cleanup -------------------------------------------------------------
+# --- Phase D: receiver-side observability assertions ------------------
 
-step "Restoring studio-a's view of studio-b's caps"
-docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "
-  UPDATE federation_peers SET capabilities = '${saved_caps}'::jsonb WHERE id = '${peer_id}';
-" >/dev/null
-pass "synthetic caps reverted to: ${saved_caps}"
+step "Polling studio-b's federation_inbox row for the decrypt + dispatch"
+wait_for "studio-b inbox row reaches processed" 15 "
+    status=\$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \\
+        \"SELECT status FROM federation_inbox WHERE activity_uri = '${activity_uri}'\" | tr -d ' \r\n')
+    [ \"\$status\" = 'processed' ]
+"
 
-# --- Report ---------------------------------------------------------------
+b_inbox_was_encrypted=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT was_encrypted FROM federation_inbox WHERE activity_uri = '${activity_uri}'" | tr -d ' \r\n')
+[ "$b_inbox_was_encrypted" = "t" ] || fail "studio-b inbox row was_encrypted=${b_inbox_was_encrypted}, want true"
+pass "studio-b inbox row: was_encrypted=true"
+
+b_decrypted_with=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT decrypted_with_key_version FROM federation_inbox WHERE activity_uri = '${activity_uri}'" | tr -d ' \r\n')
+[ -n "$b_decrypted_with" ] || fail "studio-b inbox row decrypted_with_key_version is NULL — the decrypt branch didn't run"
+pass "studio-b inbox row: decrypted_with_key_version=${b_decrypted_with}"
+
+b_audit_after=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT count(*) FROM audit_events
+     WHERE event_type = 'federation.inbox.decrypted'" | tr -d ' \r\n')
+b_delta=$(( b_audit_after - b_audit_before ))
+[ "$b_delta" -ge 1 ] || fail "federation.inbox.decrypted audit did not fire on studio-b (delta=${b_delta})"
+pass "studio-b fired federation.inbox.decrypted (delta=${b_delta})"
+
+# --- Phase E: domain-write assertion (the Like landed) ----------------
+
+step "Confirming the Like reached the studio-b posts table"
+like_count=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+    "SELECT COUNT(*) FROM likes
+     WHERE target_kind = 'post' AND target_id = '${post_id}'
+       AND actor_uri = '${actor_uri}'" | tr -d ' \r\n')
+[ "$like_count" = "1" ] || fail "expected 1 remote like row on studio-b, got ${like_count}"
+pass "studio-b likes row exists — full pipeline succeeded"
+
+# --- Report -----------------------------------------------------------
 
 if [ -n "${DOGFOOD_REPORT_PATH:-}" ]; then
     python3 -c "
 import json
 print(json.dumps({
-    'scenario':       '09-outbox-encryption-sender-side',
-    'pass':           True,
-    'activity_uri':   '${activity_uri}',
-    'outbox_id':      '${outbox_id}',
-    'outbox_status':  '${out_status}',
-    'was_encrypted':  '${was_encrypted}' == 't',
-    'audit_delta':    ${delta},
+    'scenario':                  '09-outbox-encryption-sender-side',
+    'pass':                      True,
+    'activity_uri':              '${activity_uri}',
+    'outbox_id':                 '${outbox_id}',
+    'sender_was_encrypted':      True,
+    'sender_audit_delta':        ${a_delta},
+    'receiver_was_encrypted':    True,
+    'receiver_decrypted_with':   '${b_decrypted_with}',
+    'receiver_audit_delta':      ${b_delta},
+    'like_landed':               True,
 }))" >> "$DOGFOOD_REPORT_PATH"
 fi

@@ -82,27 +82,34 @@ const (
 // enforces it — any const here that doesn't map to a non-empty
 // [purposeOf] result fails the test.
 //
-// # CapNaClBox is intentionally absent at Phase 1.22.I-e
+// # CapNaClBox rollout coordination (historical: removed at I-e,
+// # restored at I-f)
 //
 // Per ADR 0049 §Track B rollout coordination: advertising a
-// capability MUST imply both sides can honor it. I-e ships the
+// capability MUST imply both sides can honor it. I-e shipped the
 // sender-side encrypt path; I-f ships the receiver-side decrypt
-// path. If CapNaClBox were advertised between I-e + I-f, the
-// I-d handshake would land it in the intersection, the I-e
-// dispatcher would encrypt, and every encrypted envelope would
-// fail inbound at the receiver until I-f shipped — a transient
-// production breakage that the agent removed-cap-now / re-add-at-I-f
-// pattern prevents.
+// path. The capability was REMOVED between I-e + I-f because if
+// CapNaClBox were advertised across that gap, the I-d handshake
+// would land it in the intersection, the I-e dispatcher would
+// encrypt, and every encrypted envelope would fail inbound at
+// the receiver until I-f shipped — a transient production
+// breakage the removed-cap / re-add-at-I-f pattern prevents.
 //
-// I-f's PR re-adds CapNaClBox to this list as its final
-// commit + triggers a re-pair (peers running v0.5+ will then
-// see CapNaClBox advertised by the I-f-shipped instance + light
-// up the encryption path).
+// Phase 1.22.I-f RESTORES CapNaClBox here as the final commit
+// of the encryption arc. The on-disk capability set persisted
+// for already-paired peers does NOT auto-refresh; an operator
+// must trigger a re-pair (or wait for the next handshake
+// round-trip) for the intersection to land CapNaClBox. The
+// outbox resolver's per-peer gate (I-d) still works without the
+// restore — it just emission-skips with reason
+// capability_missing_naclbox until both sides advertise it.
 var KnownCapabilities = CapabilitySet{
 	CapE2EEncrypted,
+	// CapNaClBox — restored in 1.22.I-f. See § rollout
+	// coordination above for the I-e ↔ I-f gap rationale +
+	// re-pair note.
+	CapNaClBox,
 	CapX25519,
-	// CapNaClBox — see § rollout coordination above. Restored
-	// in I-f.
 	CapEd25519EnvelopeSig,
 	CapHTTP2BatchedInbox,
 }
