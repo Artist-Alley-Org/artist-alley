@@ -58,7 +58,23 @@ type Envelope struct {
 	CC        []string           `json:"cc,omitempty"`
 	Object    string             `json:"object,omitempty"`
 	Encrypted *EncryptedEnvelope `json:"encrypted,omitempty"`
-	Signature *Signature         `json:"signature,omitempty"`
+
+	// Encryption (Phase 1.22.I-e) — per-recipient NaCl-box
+	// envelope encryption. When present, the activity-payload
+	// Extra fields are replaced by the encrypted ciphertext
+	// here; the wire-required fields (Type, ID, Actor, Object,
+	// Published, To, CC, Signature) stay clear so the receiver
+	// can authenticate + dispatch without decrypting. See ADR
+	// 0049 §Track B Decision 2 + spec §6 (will be rewritten in
+	// v0.5 with the per-recipient shape).
+	//
+	// Distinct from [Encrypted] (the older 1.22.A multi-recipient
+	// scaffolding type) — that field has no producers + is
+	// retained for backwards-compat decode; new producers use
+	// this field exclusively.
+	Encryption *EncryptionBlock `json:"encryption,omitempty"`
+
+	Signature *Signature `json:"signature,omitempty"`
 
 	// Extra carries the activity-type-specific fields. The known
 	// named fields above are excluded from Extra both at marshal
@@ -166,6 +182,11 @@ func (e *Envelope) Marshal() ([]byte, error) {
 			return nil, err
 		}
 	}
+	if e.Encryption != nil {
+		if err := setRaw(out, "encryption", e.Encryption); err != nil {
+			return nil, err
+		}
+	}
 	if e.Signature != nil {
 		if err := setRaw(out, "signature", e.Signature); err != nil {
 			return nil, err
@@ -198,7 +219,7 @@ func Unmarshal(data []byte) (*Envelope, error) {
 	known := map[string]bool{
 		"@context": true, "type": true, "id": true, "actor": true,
 		"published": true, "to": true, "cc": true, "object": true,
-		"encrypted": true, "signature": true,
+		"encrypted": true, "encryption": true, "signature": true,
 	}
 
 	env := &Envelope{Extra: map[string]json.RawMessage{}}
@@ -290,6 +311,17 @@ func Unmarshal(data []byte) (*Envelope, error) {
 			return nil, fmt.Errorf("federation: encrypted: %w", err)
 		}
 		env.Encrypted = &ee
+	}
+	if v, ok := raw["encryption"]; ok {
+		var eb EncryptionBlock
+		// Strict-parse to catch typos in receiver-side
+		// implementations early; v0.5 wire shape is fixed.
+		ed := json.NewDecoder(bytes.NewReader(v))
+		ed.DisallowUnknownFields()
+		if err := ed.Decode(&eb); err != nil {
+			return nil, fmt.Errorf("federation: encryption: %w", err)
+		}
+		env.Encryption = &eb
 	}
 	if v, ok := raw["signature"]; ok {
 		var sig Signature

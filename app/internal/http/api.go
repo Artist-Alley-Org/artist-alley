@@ -388,6 +388,28 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		outboxDeliveryPeerLookup(s.peers),
 		logger,
 	)
+	// Phase 1.22.I-e per-recipient encryption hooks. Three nil-
+	// safe setters; missing any input falls back to the existing
+	// 1.22.D plaintext path. Production traffic at I-e doesn't
+	// actually encrypt because CapNaClBox is removed from
+	// KnownCapabilities until I-f ships (rollout coordination
+	// per ADR 0049 §Track B); the wiring lands now so I-f's PR
+	// is a one-line capability re-add + re-pair trigger.
+	s.outboxDelivery.SetPeerSupportsE2E(func(ctx context.Context, peerID uuid.UUID) bool {
+		p, err := s.peers.ByID(ctx, peerID)
+		if err != nil {
+			return false
+		}
+		return p.Capabilities.SupportsE2E()
+	})
+	s.outboxDelivery.SetRecipientEncKey(func(ctx context.Context, actorURI string) ([]byte, int32, error) {
+		k, err := remoteHandler.GetEncryptionKey(ctx, actorURI)
+		if err != nil {
+			return nil, 0, err
+		}
+		return k.Key[:], k.Version, nil
+	})
+	s.outboxDelivery.SetAudit(auditRec)
 	// Cross-package "who owns this post?" lookup so inbound
 	// Like/Comment can fire the post-author notification
 	// without social importing posts (which already imports

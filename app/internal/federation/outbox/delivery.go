@@ -57,8 +57,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 )
 
 // DeliveryConfig controls the worker's cadence + HTTP client.
@@ -119,6 +121,19 @@ type PeerInfo struct {
 // PeerLookup resolves PeerInfo by id at delivery time.
 type PeerLookup func(ctx context.Context, peerID uuid.UUID) (PeerInfo, error)
 
+// PeerSupportsE2EFunc reports whether a peer has negotiated
+// end-to-end encryption support. Phase 1.22.I-e; wired by boot
+// to peer.Registry.ByID + Capabilities.SupportsE2E. Nil-safe.
+type PeerSupportsE2EFunc func(ctx context.Context, peerID uuid.UUID) bool
+
+// RecipientEncKeyFunc returns the recipient actor's current
+// encryption public key (32 bytes) + version number for the
+// EncryptionBlock.RecipientKeyVersion field. Phase 1.22.I-e;
+// wired by boot to federation/remote.Handler.GetEncryptionKey.
+// Returns a typed error when the cache miss can't be resolved;
+// the dispatcher logs + falls through to plaintext.
+type RecipientEncKeyFunc func(ctx context.Context, actorURI string) (pubBytes []byte, version int32, err error)
+
 // Worker is the delivery worker.
 type Worker struct {
 	cfg        DeliveryConfig
@@ -128,6 +143,13 @@ type Worker struct {
 	lookupPeer PeerLookup
 	http       *http.Client
 	logger     *slog.Logger
+
+	// 1.22.I-e per-recipient encryption hooks. All nil-safe;
+	// when any of the three is unwired the dispatcher falls
+	// back to the existing 1.22.D plaintext path.
+	peerSupportsE2E PeerSupportsE2EFunc
+	recipientEncKey RecipientEncKeyFunc
+	audit           *audit.Recorder
 
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_outbox_pending notification. Buffered=1 so the
@@ -140,6 +162,28 @@ type Worker struct {
 	mu      sync.Mutex
 	running bool
 }
+
+// SetPeerSupportsE2E wires the per-recipient capability check.
+// Call once at boot AFTER the peer registry is constructed.
+// Idempotent; passing nil disables the encryption gate.
+func (w *Worker) SetPeerSupportsE2E(f PeerSupportsE2EFunc) { w.peerSupportsE2E = f }
+
+// SetRecipientEncKey wires the recipient pubkey lookup. Call
+// once at boot. Idempotent; passing nil disables encryption
+// (the gate would have to soft-fail anyway, so the cleaner
+// thing is to skip the whole path).
+func (w *Worker) SetRecipientEncKey(f RecipientEncKeyFunc) { w.recipientEncKey = f }
+
+// SetAudit wires the audit recorder for federation.emission.encrypted
+// + federation.emission.skipped(reason=recipient_key_unfetchable).
+// nil-safe (the gate works without audit, just with no observability).
+func (w *Worker) SetAudit(rec *audit.Recorder) { w.audit = rec }
+
+// ErrTestRecipientKeyMissing is a sentinel the integration test
+// suite returns from its synthetic RecipientEncKey hook when
+// modelling a cache miss. Not surfaced from production code
+// paths; exported so tests in outbox_test can reference it.
+var ErrTestRecipientKeyMissing = errors.New("outbox: recipient key not available (test sentinel)")
 
 // NewWorker constructs the delivery worker. The HTTP client is
 // built here with the HTTP/2 + connection-pool defaults so
@@ -396,7 +440,16 @@ func (w *Worker) deliverOneBatch(ctx context.Context, rows []FederationOutbox) (
 	envelopes := make([]json.RawMessage, 0, len(rows))
 	uriToRow := make(map[string]FederationOutbox, len(rows))
 	for _, row := range rows {
-		env, err := w.buildEnvelope(ctx, uuid.UUID(row.ActivityID.Bytes))
+		recipientActorURI := ""
+		if row.TargetUserUrl != nil {
+			recipientActorURI = *row.TargetUserUrl
+		}
+		env, err := w.buildEnvelope(ctx,
+			uuid.UUID(row.ActivityID.Bytes),
+			uuid.UUID(row.ID.Bytes),
+			uuid.UUID(row.PeerID.Bytes),
+			recipientActorURI,
+		)
 		if err != nil {
 			w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
 			deferred++
@@ -540,8 +593,20 @@ const (
 // deliverOne POSTs a single outbox row's envelope to the
 // recipient peer. Outcome drives the state transition.
 func (w *Worker) deliverOne(ctx context.Context, row FederationOutbox) deliveryOutcome {
-	// Rebuild envelope from the activities row.
-	envelope, err := w.buildEnvelope(ctx, uuid.UUID(row.ActivityID.Bytes))
+	// Rebuild envelope from the activities row. Phase 1.22.I-e
+	// folds in per-recipient encryption when the peer supports
+	// it; arguments carry outbox + peer + recipient context the
+	// encryption branch needs.
+	recipientActorURI := ""
+	if row.TargetUserUrl != nil {
+		recipientActorURI = *row.TargetUserUrl
+	}
+	envelope, err := w.buildEnvelope(ctx,
+		uuid.UUID(row.ActivityID.Bytes),
+		uuid.UUID(row.ID.Bytes),
+		uuid.UUID(row.PeerID.Bytes),
+		recipientActorURI,
+	)
 	if err != nil {
 		w.markAttemptFailed(ctx, row, fmt.Errorf("rebuild envelope: %w", err))
 		return deliveryOutcomeFailedTransient
@@ -673,10 +738,14 @@ func nextAttemptAt(n int16) time.Time {
 // receiver's inbox actor-cache upsert harvests the key into
 // federation_remote_actors so the future I-e outbox encryption +
 // I-f inbox decryption have a known recipient key to dispatch
-// against. activities without an actor_user_ref (system-generated
-// activities) skip the block; receivers gracefully fall through
-// the sender-refusal path (I-g) for those.
-func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*federation.Envelope, error) {
+// against.
+//
+// Phase 1.22.I-e: the JOIN also surfaces the wrapped private key
+// so [tryEncryptFor] can unwrap + seal env.Extra against the
+// recipient's public key when the peer has negotiated e2e
+// support. Activities without an actor_user_ref (system-generated)
+// dispatch unencrypted regardless.
+func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID uuid.UUID, recipientActorURI string) (*federation.Envelope, error) {
 	var (
 		activityURI  string
 		activityType string
@@ -689,14 +758,15 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*fede
 		sigValue     *string
 		sigPubKey    *string
 
-		encKeyBytes   []byte         // 32 bytes if the actor has a current key, nil otherwise
-		encKeyVersion pgtype.Int4    // matches encKeyBytes — both Valid=false or both Valid=true
+		encKeyBytes      []byte      // 32 bytes if the actor has a current key, nil otherwise
+		encKeyVersion    pgtype.Int4 // matches encKeyBytes — both Valid=false or both Valid=true
+		encKeyPrivateEnc []byte      // master-key-wrapped private key bytes; nil when no key
 	)
 	err := w.pool.QueryRow(ctx, `
 		SELECT a.activity_uri, a.activity_type, a.actor_uri, a.object_uri,
 		       a.to_uris, a.cc_uris, a.payload, a.published_at,
 		       a.signature_value, a.signature_pubkey,
-		       fuk.public_key, fuk.version
+		       fuk.public_key, fuk.version, fuk.private_key_enc
 		  FROM activities a
 		  LEFT JOIN federation_user_keys fuk
 		    ON fuk.user_id = a.actor_user_ref
@@ -706,7 +776,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*fede
 		&activityURI, &activityType, &actorURI, &objectURI,
 		&toURIs, &ccURIs, &payload, &publishedAt,
 		&sigValue, &sigPubKey,
-		&encKeyBytes, &encKeyVersion,
+		&encKeyBytes, &encKeyVersion, &encKeyPrivateEnc,
 	)
 	if err != nil {
 		return nil, err
@@ -779,7 +849,144 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID uuid.UUID) (*fede
 			env.Extra[federation.PropEncryptionPublicKey] = encKeyRaw
 		}
 	}
+
+	// Phase 1.22.I-e — per-recipient encryption. Capability gated
+	// + soft-fail. The dispatcher always returns the envelope —
+	// either with Encryption populated + Extra cleared, or
+	// untouched. Sign step downstream covers both shapes.
+	w.tryEncryptFor(ctx, env, outboxID, peerID, recipientActorURI, encKeyVersion, encKeyPrivateEnc)
 	return env, nil
+}
+
+// tryEncryptFor mutates env into its encrypted shape when the
+// recipient peer has negotiated e2e support + we can resolve a
+// recipient public key + we have an unwrappable sender private
+// key. Any soft-failure path leaves env unchanged — the
+// dispatcher continues on the plaintext branch + the audit log
+// records the reason.
+//
+// Inputs:
+//
+//   - outboxID         — the federation_outbox row ID; used to
+//                         mark was_encrypted on success.
+//   - peerID           — recipient peer's UUID; used for the
+//                         capability check + audit metadata.
+//   - recipientActorURI — recipient's actor URI; used for the
+//                         remote-actor encryption-key lookup +
+//                         the EncryptionBlock.RecipientKeyID
+//                         field.
+//   - senderKeyVersion + senderPrivateEnc — surfaced by buildEnvelope's
+//                         JOIN; the wrapped private key gets
+//                         unwrapped here for the box.Seal
+//                         operation + zeroed via the
+//                         userkeys.Unwrap helper.
+//
+// All five 1.22.I-e Worker hooks (peerSupportsE2E, recipientEncKey,
+// audit, plus the wrapped sender key from the JOIN, plus the
+// federation_user_keys version pgtype.Int4) must be present for
+// the encryption path to run. Any missing input — by design —
+// falls through to plaintext silently.
+func (w *Worker) tryEncryptFor(
+	ctx context.Context,
+	env *federation.Envelope,
+	outboxID, peerID uuid.UUID,
+	recipientActorURI string,
+	senderKeyVersion pgtype.Int4,
+	senderPrivateEnc []byte,
+) {
+	// 1. Wiring + data preconditions. Any nil / missing → plaintext.
+	if w.peerSupportsE2E == nil || w.recipientEncKey == nil {
+		return
+	}
+	if !senderKeyVersion.Valid || senderKeyVersion.Int32 < 1 || len(senderPrivateEnc) == 0 {
+		return
+	}
+	if recipientActorURI == "" {
+		return
+	}
+
+	// 2. Capability gate. Peer must have advertised + we must
+	// have stored a positive SupportsE2E from the handshake.
+	if !w.peerSupportsE2E(ctx, peerID) {
+		return
+	}
+
+	// 3. Recipient key lookup via the I-c remote-actor cache.
+	// Cache miss = soft fail; audit + plaintext fallback.
+	recPub, recVer, err := w.recipientEncKey(ctx, recipientActorURI)
+	if err != nil {
+		w.logErr(ctx, "outbox.encrypt.recipient_key.miss", err)
+		if w.audit != nil {
+			w.audit.FederationEmissionSkippedForPeer(ctx,
+				peerID.String(),
+				"recipient_key_unfetchable",
+				string(env.Type),
+			)
+		}
+		return
+	}
+
+	// 4. Unwrap the sender's at-rest private key. The userkeys
+	// package owns the atrest+ecdh wire; we just consume the
+	// 32-byte X25519 scalar via PrivateKey.Bytes(). Defer a
+	// zero of the unwrapped bytes so a panic in the seal step
+	// doesn't leak them on the stack.
+	senderPriv, err := userkeys.Unwrap(senderPrivateEnc)
+	if err != nil {
+		w.logErr(ctx, "outbox.encrypt.sender_unwrap", err)
+		return
+	}
+	senderPrivBytes := senderPriv.Bytes()
+	defer func() {
+		for i := range senderPrivBytes {
+			senderPrivBytes[i] = 0
+		}
+	}()
+
+	// 5. Serialize the plaintext payload (env.Extra). Receivers
+	// (1.22.I-f) decrypt + restore Extra so the rest of the
+	// inbox dispatch path doesn't change. Marshal as JSON object
+	// even when Extra is nil/empty — encrypts to box.Overhead
+	// bytes + decrypts to `{}` cleanly.
+	plaintext, err := json.Marshal(env.Extra)
+	if err != nil {
+		w.logErr(ctx, "outbox.encrypt.marshal_extra", err)
+		return
+	}
+
+	// 6. Seal.
+	nonce, ciphertext, err := federation.EncryptActivityPayload(plaintext, senderPrivBytes, recPub)
+	if err != nil {
+		w.logErr(ctx, "outbox.encrypt.seal", err)
+		return
+	}
+
+	// 7. Replace env.Extra with the encryption block + mark the row.
+	env.Encryption = &federation.EncryptionBlock{
+		Algorithm:           federation.EncryptionAlgNaClBoxV1,
+		SenderKeyID:         env.Actor + "#encryption-key",
+		SenderKeyVersion:    senderKeyVersion.Int32,
+		RecipientKeyID:      recipientActorURI + "#encryption-key",
+		RecipientKeyVersion: recVer,
+		Nonce:               federation.Base64Bytes(nonce),
+		Ciphertext:          federation.Base64Bytes(ciphertext),
+	}
+	env.Extra = nil
+
+	// 8. Observability — best-effort, non-blocking. Mark before
+	// audit so the row's was_encrypted column reflects reality
+	// even if the audit-row write fails.
+	if err := w.q.MarkOutboxEncrypted(ctx, pgtype.UUID{Bytes: outboxID, Valid: true}); err != nil {
+		w.logErr(ctx, "outbox.encrypt.mark_row", err)
+	}
+	if w.audit != nil {
+		w.audit.FederationEmissionEncrypted(ctx,
+			peerID.String(),
+			string(env.Type),
+			senderKeyVersion.Int32,
+			recVer,
+		)
+	}
 }
 
 func (w *Worker) logErr(ctx context.Context, msg string, err error) {
