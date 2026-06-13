@@ -129,10 +129,27 @@ func TestBuildEnvelope_OmitsEncryptionKeyWhenUserHasNone(t *testing.T) {
 	// federation_user_keys row. The LEFT JOIN in buildEnvelope
 	// returns NULL for the key columns; the block is omitted
 	// from env.Extra.
+	//
+	// Phase 1.22.I-b's boot-time backfill sweep
+	// ([userkeys.BackfillMissingKeys]) mints a keypair for any
+	// approved+keyless user. Across-package `go test ./...`
+	// concurrency means the userkeys backfill tests can sweep
+	// the fixture's user between INSERT and worker.RunOnce —
+	// the test's "no key" precondition needs to be re-asserted
+	// at the exact moment of dispatch. A defensive DELETE
+	// scopes the assertion to "given the user has no key when
+	// the envelope is built, the block is omitted" — which is
+	// the actual contract under test, independent of when the
+	// I-b sweep happens to fire.
 	pool := openTestPool(t)
 	var capturedBody []byte
-	worker, _, _, _, _, _ := newDeliveryFixture(t, http.StatusAccepted, &capturedBody)
-	_ = pool
+	worker, _, _, grantorRef, _, _ := newDeliveryFixture(t, http.StatusAccepted, &capturedBody)
+
+	if _, err := pool.Exec(context.Background(),
+		`DELETE FROM federation_user_keys WHERE user_id = $1`, grantorRef,
+	); err != nil {
+		t.Fatalf("ensure keyless precondition: %v", err)
+	}
 
 	worker.RunOnce(context.Background())
 
