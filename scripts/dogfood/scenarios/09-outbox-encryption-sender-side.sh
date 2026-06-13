@@ -156,12 +156,60 @@ b_remote_key=${b_remote_key:-0}
 [ "$b_remote_key" = "32" ] || fail "studio-b doesn't have studio-a admin's pubkey cached (${b_remote_key} bytes) — run scenario 01 first to populate the I-c cache"
 
 # Symmetric — studio-a needs studio-b's admin pubkey to seal
-# against. The handshake's directory-fetch primes both rows.
+# against. The I-c cache populates when an inbound activity
+# arrives carrying the aa:encryptionPublicKey envelope extension;
+# scenario 07 primes studio-b's view of studio-a (one direction),
+# but the dogfood stack never runs the reverse direction
+# (studio-b → studio-a inbound), so the symmetric row stays
+# empty + the encryption branch would emission-skip.
+#
+# Pragmatic fix: pull studio-b admin's current public_key out of
+# postgres-b + UPSERT into studio-a's federation_remote_actors.
+# Emulates what an inbound I-c activity would land — identical
+# downstream state, just primed by SQL instead of the wire. The
+# encryption gate (capabilities backfilled above) + this cache
+# entry together unblock the seal step.
+b_admin_actor_uri="http://studio-b.local/users/admin"
 a_remote_key=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(encryption_public_key) FROM federation_remote_actors
-     WHERE actor_uri = 'http://studio-b.local/users/admin'" | tr -d ' \r\n')
+     WHERE actor_uri = '${b_admin_actor_uri}'" | tr -d ' \r\n')
 a_remote_key=${a_remote_key:-0}
-[ "$a_remote_key" = "32" ] || fail "studio-a doesn't have studio-b admin's pubkey cached (${a_remote_key} bytes) — scenario 07 should have primed it"
+if [ "$a_remote_key" != "32" ]; then
+    warn "studio-a doesn't have studio-b admin's pubkey cached (${a_remote_key} bytes) — priming from postgres-b directly"
+    # Pull the wire-format bytea of studio-b admin's current key
+    # via psql's bytea_output=hex; pass it back into postgres
+    # using the matching decode('...', 'hex') literal so the
+    # 32-byte BYTEA round-trips cleanly through bash.
+    b_admin_pubkey_hex=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+        "SELECT encode(public_key, 'hex')
+         FROM federation_user_keys
+         WHERE user_id = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+    [ -n "$b_admin_pubkey_hex" ] && [ "${#b_admin_pubkey_hex}" = "64" ] \
+        || fail "studio-b admin pubkey readback malformed: hex='${b_admin_pubkey_hex}' len=${#b_admin_pubkey_hex}"
+    docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "
+      INSERT INTO federation_remote_actors (
+          peer_id, actor_uri, display_name,
+          encryption_public_key, encryption_public_key_version, encryption_public_key_updated_at
+      ) VALUES (
+          '${peer_id}'::uuid,
+          '${b_admin_actor_uri}',
+          'Studio B admin',
+          decode('${b_admin_pubkey_hex}', 'hex'),
+          1,
+          NOW()
+      )
+      ON CONFLICT (actor_uri) DO UPDATE
+         SET encryption_public_key             = EXCLUDED.encryption_public_key,
+             encryption_public_key_version     = EXCLUDED.encryption_public_key_version,
+             encryption_public_key_updated_at  = NOW();
+    " >/dev/null
+    a_remote_key=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+        "SELECT octet_length(encryption_public_key) FROM federation_remote_actors
+         WHERE actor_uri = '${b_admin_actor_uri}'" | tr -d ' \r\n')
+    [ "$a_remote_key" = "32" ] \
+        || fail "post-prime studio-a cache still has ${a_remote_key} bytes for ${b_admin_actor_uri}"
+    pass "studio-a federation_remote_actors row for studio-b admin primed (32 bytes)"
+fi
 
 # --- Phase B: stage Like + audit baselines ----------------------------
 
