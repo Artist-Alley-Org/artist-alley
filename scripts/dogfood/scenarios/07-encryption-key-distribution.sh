@@ -109,7 +109,7 @@ pre_keylen=$(docker compose exec -T postgres-b psql \
     "SELECT COALESCE(octet_length(encryption_public_key), 0) FROM federation_remote_actors
      WHERE actor_uri = '${actor_uri}'" | tr -d ' \r\n')
 pre_keylen=${pre_keylen:-0}
-log "studio-b pre-state: encryption_public_key length = ${pre_keylen}"
+info "studio-b pre-state: encryption_public_key length = ${pre_keylen}"
 
 # --- inject the activity + outbox row -------------------------------------
 
