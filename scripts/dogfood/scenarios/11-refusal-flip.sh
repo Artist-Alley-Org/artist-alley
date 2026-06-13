@@ -48,46 +48,92 @@ login_admin "$B_HOST" "$B_COOKIES"; pass "studio-b admin in"
 step "Setting up fixtures (one RESTRICTED post + one PUBLIC post on studio-b)"
 suffix=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
 
-# Helper to mint a post + asset on studio-b at a given visibility.
-make_post() {
-    local visibility="$1" label="$2"
-    local upload_resp
-    upload_resp=$(curl -sk -b "$B_COOKIES" \
-        -X POST "${B_HOST}/api/v1/storage/objects" \
-        -H "Content-Type: application/octet-stream" \
-        -H "X-Content-Type: text/plain" \
-        --data-binary "scenario-11 ${label} fixture ${suffix}")
-    local file_hash
-    file_hash=$(echo "$upload_resp" | python3 -c 'import sys, json; print(json.load(sys.stdin)["hash"])')
-    local asset_resp
-    asset_resp=$(api_post "$B_HOST" "$B_COOKIES" "/assets" \
-        "$(python3 -c "
-import json
-print(json.dumps({
-    'title':          'Scenario 11 ${label} asset',
-    'description':    'Refusal-flip target.',
-    'asset_type':     2,
-    'file_hash':      '${file_hash}',
-    'file_extension': 'txt',
-}))")")
-    local asset_id
-    asset_id=$(echo "$asset_resp" | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')
-    local post_resp
-    post_resp=$(api_post "$B_HOST" "$B_COOKIES" "/posts" \
-        "$(python3 -c "
-import json
-print(json.dumps({
-    'title':       'Scenario 11 ${label} post',
-    'description': 'Refusal-flip ${label} target post.',
-    'visibility':  '${visibility}',
-    'members':     [{'asset_id': '${asset_id}'}],
-}))")")
-    echo "$post_resp" | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])'
+# Inlined per-post fixture create — the previous version used a
+# bash function whose output capture suffered from a
+# silent-error-envelope failure mode (curl exits 0 on 4xx, so
+# `local resp=$(api_post ...)` captured an error body, and the
+# downstream python parse hit KeyError on 'id' with no
+# diagnostic). Inlining matches scenario 09's pattern + the
+# parse_id_or_dump helper below surfaces the actual response when
+# the parse fails so we get a real error message instead of just
+# a traceback.
+
+# Surface the raw response body when the json parse fails, so
+# the next nightly debugger doesn't have to guess at why the
+# fixture broke.
+parse_id_or_dump() {
+    local label="$1" body="$2"
+    local id
+    id=$(echo "$body" | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])' 2>/dev/null) \
+        || fail "${label} response had no 'id' field; body=${body}"
+    echo "$id"
 }
 
-restricted_post_id=$(make_post "explicit-share" "restricted")
-public_post_id=$(make_post "public" "public")
+# --- RESTRICTED post on studio-b ---
+restricted_upload_resp=$(curl -sk -b "$B_COOKIES" \
+    -X POST "${B_HOST}/api/v1/storage/objects" \
+    -H "Content-Type: application/octet-stream" \
+    -H "X-Content-Type: text/plain" \
+    --data-binary "scenario-11 restricted fixture ${suffix}")
+restricted_file_hash=$(echo "$restricted_upload_resp" | python3 -c 'import sys, json; print(json.load(sys.stdin)["hash"])' 2>/dev/null) \
+    || fail "restricted upload response had no 'hash'; body=${restricted_upload_resp}"
+restricted_asset_resp=$(api_post "$B_HOST" "$B_COOKIES" "/assets" \
+    "$(python3 -c "
+import json
+print(json.dumps({
+    'title':          'Scenario 11 restricted asset',
+    'description':    'Refusal-flip restricted target.',
+    'asset_type':     2,
+    'file_hash':      '${restricted_file_hash}',
+    'file_extension': 'txt',
+}))")")
+restricted_asset_id=$(parse_id_or_dump "restricted asset create" "$restricted_asset_resp")
+restricted_post_resp=$(api_post "$B_HOST" "$B_COOKIES" "/posts" \
+    "$(python3 -c "
+import json
+print(json.dumps({
+    'title':       'Scenario 11 restricted post',
+    'description': 'Refusal-flip restricted target post.',
+    'visibility':  'explicit-share',
+    'members':     [{'asset_id': '${restricted_asset_id}'}],
+}))")")
+restricted_post_id=$(parse_id_or_dump "restricted post create" "$restricted_post_resp")
 pass "studio-b restricted post id=${restricted_post_id}"
+
+# --- PUBLIC post on studio-b ---
+# Note: the openapi PostCreate.visibility enum is
+# [private, org-only, followers, explicit-share]; "public" is
+# implied by the absence of the field (visibility defaults to
+# public-equivalent on the model). We omit visibility entirely
+# rather than passing 'public' (which fails strict enum
+# validation on post-I-g binaries).
+public_upload_resp=$(curl -sk -b "$B_COOKIES" \
+    -X POST "${B_HOST}/api/v1/storage/objects" \
+    -H "Content-Type: application/octet-stream" \
+    -H "X-Content-Type: text/plain" \
+    --data-binary "scenario-11 public fixture ${suffix}")
+public_file_hash=$(echo "$public_upload_resp" | python3 -c 'import sys, json; print(json.load(sys.stdin)["hash"])' 2>/dev/null) \
+    || fail "public upload response had no 'hash'; body=${public_upload_resp}"
+public_asset_resp=$(api_post "$B_HOST" "$B_COOKIES" "/assets" \
+    "$(python3 -c "
+import json
+print(json.dumps({
+    'title':          'Scenario 11 public asset',
+    'description':    'Refusal-flip public target.',
+    'asset_type':     2,
+    'file_hash':      '${public_file_hash}',
+    'file_extension': 'txt',
+}))")")
+public_asset_id=$(parse_id_or_dump "public asset create" "$public_asset_resp")
+public_post_resp=$(api_post "$B_HOST" "$B_COOKIES" "/posts" \
+    "$(python3 -c "
+import json
+print(json.dumps({
+    'title':       'Scenario 11 public post',
+    'description': 'Refusal-flip public target post.',
+    'members':     [{'asset_id': '${public_asset_id}'}],
+}))")")
+public_post_id=$(parse_id_or_dump "public post create" "$public_post_resp")
 pass "studio-b public post id=${public_post_id}"
 
 peer_id=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \

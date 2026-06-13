@@ -119,15 +119,30 @@ current_caps=$(docker compose exec -T postgres psql -U artist_alley -d artist_al
 if echo "$current_caps" | grep -q 'nacl-box'; then
     pass "studio-a sees nacl-box in studio-b's capabilities (re-pair already complete)"
 else
-    warn "nacl-box absent — triggering a handshake refresh to land the I-f capability"
-    api_post "$A_HOST" "$A_COOKIES" "/federation/peers/${peer_id}/handshake/refresh" "{}" >/dev/null \
-        || fail "/federation/peers/${peer_id}/handshake/refresh failed (admin API not wired?)"
-    sleep 2
+    # pair.sh sets up federation_peers via the admin "add peer" API
+    # + a direct INSERT — neither path runs the I-d bilateral
+    # capability-negotiation handshake, so the capabilities column
+    # stays NULL/'[]' even after both sides upgrade to a binary
+    # that advertises nacl-box. There's no operator-facing
+    # /federation/peers/{id}/handshake/refresh endpoint yet
+    # (that's deferred to the I-h admin policy UI bundle); for
+    # this dogfood scenario we emulate what a successful re-pair
+    # would land by directly UPDATEing the capabilities array to
+    # the post-I-f advertised set (the closed catalogue from
+    # peer.KnownCapabilities) so the I-d gate fires + the
+    # encryption branch runs.
+    warn "nacl-box absent — backfilling capabilities directly to emulate post-I-f re-pair"
+    docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "
+      UPDATE federation_peers
+         SET capabilities = '[\"e2e-encrypted\",\"nacl-box\",\"x25519\",\"ed25519-envelope-sig\",\"http2-batched-inbox\"]'::jsonb,
+             capabilities_negotiated_at = NOW()
+       WHERE id = '${peer_id}';
+    " >/dev/null
     current_caps=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
         "SELECT capabilities::text FROM federation_peers WHERE id = '${peer_id}'" | tr -d ' \r\n')
     echo "$current_caps" | grep -q 'nacl-box' \
-        || fail "post-refresh capabilities still missing nacl-box: ${current_caps}"
-    pass "handshake refresh landed nacl-box in the intersection"
+        || fail "post-backfill capabilities still missing nacl-box: ${current_caps}"
+    pass "capabilities backfilled with the post-I-f intersection"
 fi
 
 # Confirm studio-b has captured studio-a admin's encryption pubkey
