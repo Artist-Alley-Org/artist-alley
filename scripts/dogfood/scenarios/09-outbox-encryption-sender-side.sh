@@ -250,10 +250,16 @@ INSERT INTO activities (
     'local'
 );
 
+-- target_user_url MUST be the recipient ACTOR URI (the I-c remote-
+-- actor cache key), not the recipient's federation/inbox endpoint.
+-- The delivery Worker's recipientEncKey hook calls
+-- remote.GetEncryptionKey(actorURI) — passing the inbox URL would
+-- miss the cache + fall back to plaintext (the bug this comment
+-- exists to prevent re-introducing).
 INSERT INTO federation_outbox (
     activity_id, peer_id, target_user_url, status
 )
-SELECT id, '${peer_id}'::uuid, '${recipient_inbox}', 'queued'
+SELECT id, '${peer_id}'::uuid, '${b_admin_actor_uri}', 'queued'
 FROM activities WHERE activity_uri = '${activity_uri}';
 
 NOTIFY federation_outbox_queued;
