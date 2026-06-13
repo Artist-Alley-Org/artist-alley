@@ -187,11 +187,25 @@ step "Bringing up the dogfood profile (studio-b alongside dev)"
 #
 # Two compose calls: the first brings every service in the dogfood
 # profile up (creates whatever's missing); the second
-# force-recreates `app` only, so a re-run picks up a freshly-mounted
-# CA without bouncing the whole stack. Passing `app` as a positional
-# arg to compose `up` SCOPES the command to that one service + its
-# deps — without the bare `up` first, postgres-b / app-b / nginx-b
-# would never start on a fresh runner.
+# force-recreates app + app-b so a re-run picks up a freshly-built
+# binary on BOTH sides of the pair, plus the freshly-mounted CA.
+# Passing `app app-b` as positional args to compose `up` SCOPES
+# the command to those two services + their deps — without the
+# bare `up` first, postgres-b / nginx-b would never start on a
+# fresh runner.
+#
+# # Why app-b needs the same force-recreate treatment
+#
+# Pre-2026-06-12 this only force-recreated `app`. The 2026-06-12
+# nightly caught a real bug from that asymmetry: studio-b's
+# container had been running an old image for 3 days, so it
+# missed migrations 7-12 (the entire 1.22.I encryption arc) +
+# the Phase 1.22.I-b boot-time keypair-backfill sweep. Scenario
+# 09 (federation_user_keys doesn't exist on studio-b) + scenario
+# 11 (the /posts shape didn't match the old binary's openapi)
+# both failed as a cascade. Force-recreating both sides ensures
+# the binary + the schema state stay in lockstep with main's
+# tip on every nightly.
 docker compose \
     -f docker-compose.yml \
     -f infra/docker/dogfood/docker-compose.override.yml \
@@ -199,7 +213,7 @@ docker compose \
 docker compose \
     -f docker-compose.yml \
     -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --force-recreate app
+    --profile dogfood up -d --force-recreate app app-b
 
 # --- 5. wait for studio-b ready --------------------------------------------
 

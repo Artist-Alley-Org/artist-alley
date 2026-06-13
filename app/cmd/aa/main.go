@@ -17,6 +17,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/bootstrap"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/db"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
 	"github.com/mscrnt/artist-alley/app/internal/logging"
 )
@@ -79,11 +80,38 @@ func run() error {
 	// exists. Idempotent — no-op on subsequent boots. Runs
 	// AFTER migrations + the DB pool are up so we have the
 	// schema + a working connection.
+	auditRec := audit.NewRecorder(pool, logger)
 	if err := bootstrap.Run(ctx, pool, bootstrap.Config{
 		ScrambleKey:         cfg.ScrambleKey,
 		AdminPath:           cfg.BootstrapAdminPath,
 		DefaultAdminEnabled: cfg.BootstrapDefaultAdmin,
-	}, logger, audit.NewRecorder(pool, logger)); err != nil {
+	}, logger, auditRec); err != nil {
+		return err
+	}
+
+	// Phase 1.22.I-b safety net: backfill federation keypairs for
+	// any pre-existing approved user that lacks one. Covers two
+	// real cases the three in-tx callers (bootstrap, /setup,
+	// /admin/seed/users) DON'T:
+	//
+	//   * Users created BEFORE 1.22.I-b shipped (instances
+	//     upgraded forward carry pre-existing user rows).
+	//   * Users created via test fixtures or direct DB INSERTs
+	//     that bypass the three wired paths.
+	//
+	// Steady-state happy path: one query returns zero rows + the
+	// sweep exits silently. Real backfill: per-user audit row +
+	// a single summary boot-log line. The sweep runs BEFORE
+	// srv.Run so the master key + pool aren't competing with
+	// request handling on the rare bulk-mint boot.
+	if _, err := userkeys.BackfillMissingKeys(ctx, pool, logger,
+		auditRec.FederationUserKeyGeneratedSystem,
+	); err != nil {
+		// Return error means something catastrophic (DB
+		// unreachable, master-key rotation broke wrapping) —
+		// surface to the caller so the boot fails loudly.
+		// Per-user mint failures are counted in stats + logged
+		// but DON'T propagate; the sweep continues.
 		return err
 	}
 

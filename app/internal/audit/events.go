@@ -637,6 +637,33 @@ func (r *Recorder) FederationUserKeyGenerated(
 	r.WriteInTx(ctx, q, EventFederationUserKeyGenerated, &subjectUserRef, actorUserRef, meta)
 }
 
+// FederationUserKeyGeneratedSystem is the pool-bound
+// system-actor variant of [FederationUserKeyGenerated]. Fired by
+// the Phase 1.22.I-b boot-time backfill sweep
+// ([userkeys.BackfillMissingKeys]) once per user the sweep mints
+// a keypair for. Distinct from the tx-bound variant because the
+// sweep's commit-then-audit ordering is a deliberate relaxation
+// of the write-ahead-audit invariant — see [userkeys.AuditFireFn]
+// for the rationale.
+//
+// Always system-actor (no actorUserRef); no human triggered the
+// boot sweep. subjectUserRef is the user whose keypair was just
+// minted. Metadata mirrors [FederationUserKeyGenerated] so the
+// admin audit feed surfaces both flavours as the same event_type
+// + columnar shape — only the actor_user_ref discriminates.
+func (r *Recorder) FederationUserKeyGeneratedSystem(
+	ctx context.Context,
+	subjectUserRef int64,
+	version int32,
+	algorithm string,
+) {
+	meta := map[string]any{
+		"version":   version,
+		"algorithm": algorithm,
+	}
+	r.write(ctx, EventFederationUserKeyGenerated, &subjectUserRef, nil, reqContext{}, meta)
+}
+
 // WriteInTx is the tx-aware public funnel. Callers needing the
 // write-ahead-audit invariant (federation_shares grant/revoke,
 // per the 1.22.C design proposal §7.2) call this from inside a

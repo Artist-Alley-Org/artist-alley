@@ -267,3 +267,55 @@ func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]F
 	}
 	return items, nil
 }
+
+const listUsersWithoutCurrentKey = `-- name: ListUsersWithoutCurrentKey :many
+SELECT u.ref
+FROM "user" u
+WHERE u.approved = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM federation_user_keys fuk
+      WHERE fuk.user_id = u.ref AND fuk.is_current = TRUE
+  )
+ORDER BY u.ref
+LIMIT $1
+`
+
+// Phase 1.22.I-b boot-time backfill safety net. Returns refs of
+// every "user" row that has no federation_user_keys row with
+// is_current=TRUE. Caller iterates the results and invokes
+// [EnsureCurrentForUser] on each ref to mint the missing key.
+//
+// Scope:
+//   - approved=1 only — disabled/pending users (approved=0 or 2)
+//     don't federate, so they don't need a keypair until + unless
+//     they're re-approved.
+//   - Anti-join via WHERE NOT EXISTS is faster than LEFT JOIN +
+//     IS NULL on this table shape (small index on is_current=TRUE
+//     keeps the EXISTS lookup O(log n)).
+//   - LIMIT $1 caps the per-tick work so an instance with
+//     100k pre-I-b users doesn't block boot for minutes; the
+//     boot sweeper loops until LIMIT returns empty.
+//
+// Order: by ref ASC so a partial sweep is deterministic + the next
+// tick continues from a known point. Boot doesn't care about
+// ordering on the happy path (zero rows) but a debugger watching
+// a real backfill in progress sees predictable progress.
+func (q *Queries) ListUsersWithoutCurrentKey(ctx context.Context, limit int32) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listUsersWithoutCurrentKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var ref int64
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		items = append(items, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
