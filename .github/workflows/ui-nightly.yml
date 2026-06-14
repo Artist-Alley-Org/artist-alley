@@ -46,6 +46,17 @@ jobs:
     # under load) + teardown. Last run got cancelled at 45 min
     # halfway through the UI suite.
     timeout-minutes: 60
+    # Serialize with every other workflow that brings up the
+    # artist-alley docker compose stack on the self-hosted
+    # runner. Two workflows sharing the same compose project name
+    # ("artist-alley") clobber each other's containers + volumes
+    # mid-run — a #123-merge ui-pr standalone race with this
+    # ui-nightly produced an all-fail nightly. cancel-in-progress
+    # is false so jobs queue rather than cancel; ui-nightly
+    # finishes its pair + scenarios, THEN the standalone runs.
+    concurrency:
+      group: artist-alley-compose-stack
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
