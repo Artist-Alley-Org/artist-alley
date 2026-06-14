@@ -53,9 +53,14 @@ WHERE user_id = $1 AND is_current = TRUE;
 -- name: GetUserKeyByVersion :one
 -- Returns a specific (user, version) row. Used by I-f inbound
 -- decryption when an envelope cites a non-current version still
--- inside its retention window.
+-- inside its retention window. The I-h rotation metadata columns
+-- ride along — overhead is ~16 bytes per row + the admin
+-- /admin/federation/key-health surface uses the same query to
+-- show "who rotated this key + when?" without a second round
+-- trip.
 SELECT user_id, version, algorithm, public_key, private_key_enc,
-       is_current, created_at, retained_until
+       is_current, created_at, retained_until,
+       rotated_at, rotated_by_user_ref
 FROM federation_user_keys
 WHERE user_id = $1 AND version = $2;
 

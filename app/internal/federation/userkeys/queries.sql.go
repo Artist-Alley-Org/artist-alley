@@ -157,7 +157,8 @@ func (q *Queries) GetKeyHealthSummary(ctx context.Context) (GetKeyHealthSummaryR
 
 const getUserKeyByVersion = `-- name: GetUserKeyByVersion :one
 SELECT user_id, version, algorithm, public_key, private_key_enc,
-       is_current, created_at, retained_until
+       is_current, created_at, retained_until,
+       rotated_at, rotated_by_user_ref
 FROM federation_user_keys
 WHERE user_id = $1 AND version = $2
 `
@@ -167,23 +168,16 @@ type GetUserKeyByVersionParams struct {
 	Version int32
 }
 
-type GetUserKeyByVersionRow struct {
-	UserID        int64
-	Version       int32
-	Algorithm     string
-	PublicKey     []byte
-	PrivateKeyEnc []byte
-	IsCurrent     bool
-	CreatedAt     pgtype.Timestamptz
-	RetainedUntil pgtype.Timestamptz
-}
-
 // Returns a specific (user, version) row. Used by I-f inbound
 // decryption when an envelope cites a non-current version still
-// inside its retention window.
-func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersionParams) (GetUserKeyByVersionRow, error) {
+// inside its retention window. The I-h rotation metadata columns
+// ride along — overhead is ~16 bytes per row + the admin
+// /admin/federation/key-health surface uses the same query to
+// show "who rotated this key + when?" without a second round
+// trip.
+func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersionParams) (FederationUserKey, error) {
 	row := q.db.QueryRow(ctx, getUserKeyByVersion, arg.UserID, arg.Version)
-	var i GetUserKeyByVersionRow
+	var i FederationUserKey
 	err := row.Scan(
 		&i.UserID,
 		&i.Version,
@@ -193,6 +187,8 @@ func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersi
 		&i.IsCurrent,
 		&i.CreatedAt,
 		&i.RetainedUntil,
+		&i.RotatedAt,
+		&i.RotatedByUserRef,
 	)
 	return i, err
 }
