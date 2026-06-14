@@ -221,11 +221,21 @@ jobs:
         run: |
           python3 -m pip install --user --quiet kagglehub requests || true
 
+          # --limit-per-extension 3 shrinks the seed from ~970/~1270
+          # assets per stack down to ~45/~60, cascade-filtering posts
+          # to ~55 each. Keeps coverage of every distinct
+          # file_extension (17 on site_a, 24 on site_b) + enough
+          # entries to exercise pagination, but cuts seed wall time
+          # from ~5min to under 30s. The full dataset is only useful
+          # for manual / human-review runs (operators reading the
+          # admin UI); CI / dogfood don't need fidelity, just
+          # coverage.
           ( python3 seed/scripts/apply.py \
               --site "$SITE_A_PATH" \
               --catalogue seed/profiles \
               --api "$STUDIO_A_API" \
               --workers 16 \
+              --limit-per-extension 3 \
               --strict-verify 2>&1 | sed 's/^/[a] /' ) &
           PID_A=$!
 
@@ -234,6 +244,7 @@ jobs:
               --catalogue seed/profiles \
               --api "$STUDIO_B_API" \
               --workers 16 \
+              --limit-per-extension 3 \
               --strict-verify 2>&1 | sed 's/^/[b] /' ) &
           PID_B=$!
 
