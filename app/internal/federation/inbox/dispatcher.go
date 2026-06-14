@@ -776,7 +776,7 @@ func (d *Dispatcher) markRejectedEncryptionRequired(
 		d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.encryption_required_rejected",
 			slog.String("inbox_id", uuid.UUID(row.ID.Bytes).String()),
 			slog.String("activity_id", env.ID),
-			slog.String("sender_actor", env.From),
+			slog.String("sender_actor", env.Actor),
 		)
 	}
 }
