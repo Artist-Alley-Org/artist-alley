@@ -109,7 +109,6 @@ b_keylen=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alle
 
 actor_uri="http://studio-a.local/users/admin"
 target_uri="https://studio-b.local:9443/posts/${post_id}"
-recipient_inbox="https://studio-b.local:9443/federation/inbox"
 
 # --- Phase A: confirm I-f capability advertisement + re-pair if needed ---
 
@@ -226,6 +225,12 @@ step "Injecting Like activity row + outbox dispatch on studio-a"
 docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 <<SQL >/dev/null
 BEGIN;
 
+-- to_uris MUST be the recipient ACTOR URI(s) — the receiver's
+-- inbox dispatcher parses env.To[0] to resolve a local user_ref
+-- (via <base>/users/<username>). An inbox URL like
+-- https://.../federation/inbox has no /users/<username> segment,
+-- so the resolver bails with "actor URI has no username segment"
+-- and the row rejects before decryption runs.
 INSERT INTO activities (
     id, activity_uri, activity_type, actor_uri, actor_user_ref,
     object_uri, object_kind, object_local_id, to_uris,
@@ -239,7 +244,7 @@ INSERT INTO activities (
     '${target_uri}',
     'post',
     '${post_id}',
-    '["${recipient_inbox}"]'::jsonb,
+    '["${b_admin_actor_uri}"]'::jsonb,
     jsonb_build_object(
         '@context', 'aa-fed/v1',
         'type',     'Like',
