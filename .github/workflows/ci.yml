@@ -187,6 +187,15 @@ jobs:
     needs: pick-runner
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
     timeout-minutes: 30
+    # See ui-nightly.yml. On PR events runs-on is ubuntu-latest +
+    # the group is harmless (no other ubuntu workflow joins it).
+    # On push events runs-on is the self-hosted artist-alley
+    # runner where ui-nightly + ui-pr also queue under this
+    # group — required to avoid the compose-stack race that took
+    # out an all-fail nightly post-#123-merge.
+    concurrency:
+      group: artist-alley-compose-stack
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4

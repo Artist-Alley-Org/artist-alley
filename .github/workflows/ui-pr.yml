@@ -59,6 +59,14 @@ jobs:
     name: Playwright standalone
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 20
+    # See ui-nightly.yml for the rationale — shared compose stack
+    # on the self-hosted runner; two workflows racing on the same
+    # project name clobber each other. cancel-in-progress: false
+    # so a #N-merge push waits for a running ui-nightly to drain
+    # rather than killing it mid-scenario.
+    concurrency:
+      group: artist-alley-compose-stack
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
