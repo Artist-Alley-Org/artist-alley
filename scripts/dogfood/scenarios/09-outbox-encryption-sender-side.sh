@@ -307,21 +307,24 @@ if ! wait_for "studio-b inbox row reaches processed" 30 "
         \"SELECT status FROM federation_inbox WHERE activity_uri = '${activity_uri}'\" | tr -d ' \r\n')
     [ \"\$status\" = 'processed' ]
 "; then
-    # Diagnostic dump: surface the actual inbox row state +
-    # studio-a's delivery state + studio-b's recent app logs
-    # so the next nightly debugger doesn't have to ssh the
-    # runner to figure out what hung.
-    echo "    │ DIAGNOSTIC: studio-b inbox row state:" >&2
-    docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -c \
-        "SELECT status, reject_reason, dispatch_attempts, last_error, was_encrypted, decrypted_with_key_version
-         FROM federation_inbox WHERE activity_uri = '${activity_uri}';" >&2 2>&1 || true
-    echo "    │ DIAGNOSTIC: studio-a outbox row state:" >&2
-    docker compose exec -T postgres psql -U artist_alley -d artist_alley -c \
-        "SELECT status, attempts, last_error, sent_at, was_encrypted
-         FROM federation_outbox WHERE id = '${outbox_id}';" >&2 2>&1 || true
-    echo "    │ DIAGNOSTIC: studio-b app-b last 30 log lines:" >&2
-    docker compose logs --tail=30 app-b >&2 2>&1 || true
-    fail "studio-b inbox row never reached processed (see diagnostic dump above)"
+    # Compact single-line diagnostics, ordered last-to-first
+    # so the run-all.sh post-FAIL `tail -5 $log_file` shows the
+    # FAIL message + the four most-actionable status snapshots.
+    # Without this, CI shows only the timeout message — every
+    # nightly debugger has to ssh the runner.
+    out_state=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+        "SELECT status || ' attempts=' || attempts || ' err=' || left(coalesce(last_error,''), 80)
+         FROM federation_outbox WHERE id = '${outbox_id}'" 2>&1 | tr -d '\r' | tail -1)
+    in_state=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+        "SELECT coalesce(status,'<no row>') || ' reject=' || coalesce(reject_reason,'-') ||
+                ' was_enc=' || coalesce(was_encrypted::text,'-') ||
+                ' err=' || left(coalesce(last_error,''), 80)
+         FROM federation_inbox WHERE activity_uri = '${activity_uri}'" 2>&1 | tr -d '\r' | tail -1)
+    a_b_last=$(docker compose logs --tail=1 --no-log-prefix app-b 2>&1 | tail -1 | cut -c1-160)
+    echo "DIAG outbox: ${out_state:-<query failed>}"
+    echo "DIAG inbox:  ${in_state:-<query failed or no row>}"
+    echo "DIAG app-b:  ${a_b_last:-<no log>}"
+    fail "studio-b inbox row never reached processed (see DIAG lines above)"
 fi
 
 b_inbox_was_encrypted=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
