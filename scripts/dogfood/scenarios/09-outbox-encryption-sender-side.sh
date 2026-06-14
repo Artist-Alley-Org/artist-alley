@@ -297,11 +297,32 @@ pass "studio-a fired federation.emission.encrypted (delta=${a_delta})"
 # --- Phase D: receiver-side observability assertions ------------------
 
 step "Polling studio-b's federation_inbox row for the decrypt + dispatch"
-wait_for "studio-b inbox row reaches processed" 15 "
+# 30s ceiling: cold-cache delivery (first peer dial in the run)
+# can take a few seconds for TLS handshake + the inbox
+# dispatcher batches at LISTEN/NOTIFY cadence (sub-1s steady
+# state, but first event after a fresh boot can lag the LISTEN
+# subscription wake by ~5s).
+if ! wait_for "studio-b inbox row reaches processed" 30 "
     status=\$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \\
         \"SELECT status FROM federation_inbox WHERE activity_uri = '${activity_uri}'\" | tr -d ' \r\n')
     [ \"\$status\" = 'processed' ]
-"
+"; then
+    # Diagnostic dump: surface the actual inbox row state +
+    # studio-a's delivery state + studio-b's recent app logs
+    # so the next nightly debugger doesn't have to ssh the
+    # runner to figure out what hung.
+    echo "    │ DIAGNOSTIC: studio-b inbox row state:" >&2
+    docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -c \
+        "SELECT status, reject_reason, dispatch_attempts, last_error, was_encrypted, decrypted_with_key_version
+         FROM federation_inbox WHERE activity_uri = '${activity_uri}';" >&2 2>&1 || true
+    echo "    │ DIAGNOSTIC: studio-a outbox row state:" >&2
+    docker compose exec -T postgres psql -U artist_alley -d artist_alley -c \
+        "SELECT status, attempts, last_error, sent_at, was_encrypted
+         FROM federation_outbox WHERE id = '${outbox_id}';" >&2 2>&1 || true
+    echo "    │ DIAGNOSTIC: studio-b app-b last 30 log lines:" >&2
+    docker compose logs --tail=30 app-b >&2 2>&1 || true
+    fail "studio-b inbox row never reached processed (see diagnostic dump above)"
+fi
 
 b_inbox_was_encrypted=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
     "SELECT was_encrypted FROM federation_inbox WHERE activity_uri = '${activity_uri}'" | tr -d ' \r\n')
