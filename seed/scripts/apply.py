@@ -493,6 +493,53 @@ class Catalogues:
         return cls(users=users, teams=teams, collections=collections,
                    fields=fields, workflow=workflow, assets=assets, posts=posts)
 
+    def apply_extension_limit(self, n: int, log: logging.Logger) -> None:
+        """Shrink assets to N-per-extension + cascade-filter posts.
+
+        Order-preserving: keeps the FIRST N assets of each extension
+        in the source list so re-runs against the same dataset are
+        deterministic. Posts that reference any dropped asset get
+        dropped entirely (a post can't half-exist).
+
+        Collections aren't filtered — only 18 of them, all cheap, +
+        cascade-filtering them would also need to drop the post.
+        Some collections might end up with zero posts, which the
+        target API tolerates (collections are independent entities).
+        """
+        if n <= 0:
+            return
+
+        before_assets = len(self.assets)
+        before_posts = len(self.posts)
+
+        # Group + cap. dict preserves insertion order (Python 3.7+).
+        by_ext: dict[str, list[dict]] = {}
+        for a in self.assets:
+            by_ext.setdefault(a.get("file_extension", ""), []).append(a)
+        kept_assets: list[dict] = []
+        for ext, bucket in by_ext.items():
+            kept_assets.extend(bucket[:n])
+        kept_ids = {a["id"] for a in kept_assets if "id" in a}
+
+        # Cascade-filter posts: every asset_id the post references
+        # MUST survive. If any of its assets got cut, drop the post.
+        # This preserves multi-asset / mixed-type posts only when
+        # the full asset set stayed in.
+        kept_posts = [
+            p for p in self.posts
+            if all(aid in kept_ids for aid in p.get("asset_ids", []))
+        ]
+
+        self.assets = kept_assets
+        self.posts = kept_posts
+
+        log.info(
+            "limit-per-extension=%d applied: assets %d -> %d (across %d extensions), "
+            "posts %d -> %d (cascade-dropped %d that referenced cut assets)",
+            n, before_assets, len(self.assets), len(by_ext),
+            before_posts, len(self.posts), before_posts - len(self.posts),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Phase implementations
@@ -1245,6 +1292,16 @@ def parse_args() -> argparse.Namespace:
                         help="State tracker path (default: ./apply-state-<host>.json)")
     parser.add_argument("--strict-verify", action="store_true",
                         help="Exit 1 if verify counts diverge by >10%%")
+    parser.add_argument(
+        "--limit-per-extension", type=int, default=0,
+        help=(
+            "When >0, keep at most N assets per distinct file_extension "
+            "(e.g. 3 keeps 3 .png + 3 .glb + 3 .fbx + ...). Posts that "
+            "reference dropped assets get cascade-dropped so the resulting "
+            "dataset is internally consistent. 0 (default) = no limit. "
+            "Use this to shrink CI / dogfood seeds from ~1000 assets to "
+            "~50, cutting seed wall time from 5min to under 30s."),
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args()
 
@@ -1308,6 +1365,12 @@ def main() -> int:
              "%d assets, %d posts",
              len(cat.users), len(cat.teams), len(cat.collections),
              len(cat.fields), len(cat.assets), len(cat.posts))
+
+    # Optional shrink for CI / dogfood. Applied AFTER load so a
+    # re-run against the same dataset is deterministic (the
+    # filter is order-preserving on assets-by-extension).
+    if args.limit_per_extension > 0:
+        cat.apply_extension_limit(args.limit_per_extension, LOG)
 
     # Compute phase plan
     if args.phases == "all":

@@ -302,11 +302,21 @@ step "Polling studio-b's federation_inbox row for the decrypt + dispatch"
 # dispatcher batches at LISTEN/NOTIFY cadence (sub-1s steady
 # state, but first event after a fresh boot can lag the LISTEN
 # subscription wake by ~5s).
-if ! wait_for "studio-b inbox row reaches processed" 30 "
-    status=\$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \\
-        \"SELECT status FROM federation_inbox WHERE activity_uri = '${activity_uri}'\" | tr -d ' \r\n')
-    [ \"\$status\" = 'processed' ]
-"; then
+# Inline poll loop (not lib.sh's wait_for — wait_for calls fail()
+# which exit 1's the script, so the DIAG dump below would be dead
+# code if we used it). Loop returns control via the timeout flag
+# so we run the diagnostics + a clean fail message ourselves.
+inbox_ok=0
+for _ in $(seq 1 30); do
+    inbox_status=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
+        "SELECT status FROM federation_inbox WHERE activity_uri = '${activity_uri}'" 2>/dev/null | tr -d ' \r\n')
+    if [ "$inbox_status" = "processed" ]; then
+        inbox_ok=1
+        break
+    fi
+    sleep 1
+done
+if [ "$inbox_ok" != "1" ]; then
     # Compact single-line diagnostics, ordered last-to-first
     # so the run-all.sh post-FAIL `tail -5 $log_file` shows the
     # FAIL message + the four most-actionable status snapshots.
