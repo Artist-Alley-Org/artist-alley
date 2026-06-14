@@ -430,14 +430,16 @@ type FederationShare struct {
 }
 
 type FederationUserKey struct {
-	UserID        int64              `json:"user_id"`
-	Version       int32              `json:"version"`
-	Algorithm     string             `json:"algorithm"`
-	PublicKey     []byte             `json:"public_key"`
-	PrivateKeyEnc []byte             `json:"private_key_enc"`
-	IsCurrent     bool               `json:"is_current"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	RetainedUntil pgtype.Timestamptz `json:"retained_until"`
+	UserID           int64              `json:"user_id"`
+	Version          int32              `json:"version"`
+	Algorithm        string             `json:"algorithm"`
+	PublicKey        []byte             `json:"public_key"`
+	PrivateKeyEnc    []byte             `json:"private_key_enc"`
+	IsCurrent        bool               `json:"is_current"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	RetainedUntil    pgtype.Timestamptz `json:"retained_until"`
+	RotatedAt        pgtype.Timestamptz `json:"rotated_at"`
+	RotatedByUserRef *int64             `json:"rotated_by_user_ref"`
 }
 
 type FieldDefinition struct {

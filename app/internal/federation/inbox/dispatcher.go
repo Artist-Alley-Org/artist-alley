@@ -163,6 +163,12 @@ type Dispatcher struct {
 	recipientUserRef RecipientUserRefFunc
 	audit            *audit.Recorder
 
+	// 1.22.I-h receiver-side encryption policy gate. nil-safe:
+	// pass-through when unwired (test fixtures + pre-I-h boots).
+	// See policy_gate.go for the gate contract; SetSensitivityLookup
+	// is the boot-wiring hook.
+	sensitivityLookup SensitivityLookup
+
 	// wake is signalled by the LISTEN goroutine on every
 	// federation_inbox_pending notification. Buffered=1 so the
 	// LISTEN never blocks; main loop drains extras before
@@ -416,6 +422,28 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, row FederationInbox) Dispa
 	if err != nil {
 		d.markFailed(ctx, row, "peer lookup: "+err.Error())
 		return OutcomeFailed
+	}
+
+	// Phase 1.22.I-h stage 3.5: receiver-side encryption policy
+	// gate. Catches plaintext envelopes whose target object's
+	// sensitivity tier mandates encryption. Defense in depth:
+	// I-g's sender-side refusal is the primary enforcement;
+	// this gate refuses to accept what a misbehaving sender
+	// should never have sent. Pass-through when the gate isn't
+	// wired (test fixtures) OR when the envelope already
+	// arrived encrypted (the I-f decrypt stage below handles
+	// the cryptographic side).
+	if env.Encryption == nil {
+		if err := d.checkInboundEncryptionPolicy(ctx, row); err != nil {
+			if errors.Is(err, ErrEncryptionRequired) {
+				d.markRejectedEncryptionRequired(ctx, row, env, peerID)
+				return OutcomeRejected
+			}
+			// Non-sentinel error (DB hiccup in the lookup) —
+			// fail the row so the next dispatch tick retries.
+			d.markFailed(ctx, row, "encryption policy gate: "+err.Error())
+			return OutcomeFailed
+		}
 	}
 
 	// Phase 1.22.I-f stage 4: per-recipient decryption. When the
@@ -704,6 +732,51 @@ func (d *Dispatcher) markRejectedDecryptFailed(
 			slog.String("activity_id", env.ID),
 			slog.String("reason", reason),
 			slog.String("err", lastErr),
+		)
+	}
+}
+
+// markRejectedEncryptionRequired transitions the inbox row to
+// status=rejected with reject_reason=encryption_required + fires
+// the federation.inbox.encryption_required_rejected audit. Fires
+// when the receiver-side policy gate (1.22.I-h) catches a
+// plaintext envelope targeting an object whose sensitivity tier
+// mandates encryption.
+//
+// Mirrors markRejectedDecryptFailed shape; distinct reject_reason
+// + audit event so operators grepping the audit feed can
+// distinguish "sender ignored the I-g refusal policy" from
+// "decrypt branch failed for any reason."
+func (d *Dispatcher) markRejectedEncryptionRequired(
+	ctx context.Context,
+	row FederationInbox,
+	env *federation.Envelope,
+	peerID uuid.UUID,
+) {
+	rejectReason := string(federation.InboxStatusEncryptionRequired)
+	_, _ = d.pool.MarkInboxRejected(ctx, MarkInboxRejectedParams{
+		ID:           row.ID,
+		RejectReason: &rejectReason,
+		LastError:    "receiver-side policy gate: plaintext envelope but target requires encryption",
+	})
+	if d.audit != nil {
+		var objectKind string
+		if row.ObjectKind != nil {
+			objectKind = *row.ObjectKind
+		}
+		d.audit.FederationInboxEncryptionRequiredRejected(
+			ctx, nil,
+			peerID.String(),
+			string(env.Type),
+			env.ID,
+			objectKind,
+		)
+	}
+	if d.logger != nil {
+		d.logger.LogAttrs(ctx, slog.LevelWarn, "inbox.dispatcher.encryption_required_rejected",
+			slog.String("inbox_id", uuid.UUID(row.ID.Bytes).String()),
+			slog.String("activity_id", env.ID),
+			slog.String("sender_actor", env.From),
 		)
 	}
 }

@@ -47,6 +47,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -105,6 +106,7 @@ type apiServer struct {
 	outboxDispatcher *outbox.Dispatcher
 	outboxDelivery   *outbox.Worker
 	outboxAdmin      *outbox.AdminHandler
+	userKeysSweeper  *userkeys.Sweeper
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -347,6 +349,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	)
 	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
 	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+
+	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
+	// Reaps federation_user_keys rows past their retained_until
+	// grace window. Ticks every userkeys.SweepTickDefault (1h);
+	// audit hook fires federation.user.key_retained_expired once
+	// per non-zero reap. Goroutine starts in Server.Run alongside
+	// the dispatchers.
+	s.userKeysSweeper = userkeys.NewSweeper(
+		pool, logger, auditRec.FederationUserKeyRetainedExpired, 0,
+	)
 
 	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
 	// Owns /admin/federation/outbox + /inbox + the re-queue +
