@@ -60,6 +60,20 @@ source "${ROOT}/scripts/dogfood/scenarios/lib.sh"
 step "Logging in as admin on studio-a"
 login_admin "$A_HOST" "$A_COOKIES"; pass "studio-a admin in"
 
+# Cross-scenario DIAG: surface the federation_peers + admin-user
+# state once so the all-fail-nightly pattern (peer rows missing
+# despite pair.sh reporting success) has a concrete data point
+# in the workflow log. Scenarios 01/06/07/08/09/11 all fail with
+# "no peer row" — knowing whether the row is genuinely absent vs.
+# present-with-wrong-fields is the diagnostic lever.
+peers_snapshot=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc "
+    SELECT json_agg(json_build_object('id', id::text, 'instance_url', instance_url, 'enabled', enabled, 'status', status))
+      FROM federation_peers")
+info "DIAG federation_peers @ scenario-12 entry: ${peers_snapshot}"
+admin_count=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+    "SELECT COUNT(*) FROM \"user\" WHERE username = 'admin'" | tr -d ' \r\n')
+info "DIAG admins-named-admin count = ${admin_count}"
+
 admin_ref=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT ref FROM \"user\" WHERE username = 'admin' LIMIT 1" | tr -d ' \r\n')
 [ -n "$admin_ref" ] || fail "admin user not found on studio-a"
@@ -113,11 +127,32 @@ db_state=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley 
      WHERE user_id = ${admin_ref}
        AND version IN (${admin_v_before}, ${new_v})")
 
+# Diagnostic dump — captures the full per-user state so a failure
+# downstream is debuggable from the workflow log alone.
+info "DIAG db_state (versions=[${admin_v_before},${new_v}]): ${db_state}"
+all_keys=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc "
+    SELECT json_agg(json_build_object(
+        'version', version,
+        'is_current', is_current,
+        'retained_until', retained_until,
+        'rotated_at', rotated_at,
+        'rotated_by', rotated_by_user_ref
+    ) ORDER BY version)
+      FROM federation_user_keys
+     WHERE user_id = ${admin_ref}")
+info "DIAG all_keys for user_id=${admin_ref}: ${all_keys}"
+
 prev_rotated_by=$(echo "$db_state" | python3 -c "
 import sys, json
 rows = json.loads(sys.stdin.read().strip())
-prev = next(r for r in rows if r['version'] == ${admin_v_before})
-new  = next(r for r in rows if r['version'] == ${new_v})
+if rows is None:
+    sys.exit('DIAG empty result set — query returned NULL')
+prev = next((r for r in rows if r['version'] == ${admin_v_before}), None)
+if prev is None:
+    sys.exit(f'DIAG no row at version=${admin_v_before}; got versions={[r[\"version\"] for r in rows]}')
+new  = next((r for r in rows if r['version'] == ${new_v}), None)
+if new is None:
+    sys.exit(f'DIAG no row at version=${new_v}; got versions={[r[\"version\"] for r in rows]}')
 assert prev['is_current'] is False, f'prev still current: {prev}'
 assert new['is_current'] is True, f'new not current: {new}'
 assert prev['retained_until_set'] is True, f'prev retained_until missing: {prev}'
@@ -125,7 +160,7 @@ assert new['retained_until_set'] is False, f'new has retained_until set: {new}'
 assert prev['rotated_at_set'] is True, f'prev rotated_at missing: {prev}'
 assert new['rotated_at_set'] is True, f'new rotated_at missing: {new}'
 print(prev['rotated_by'])
-")
+") || fail "DB-state python check failed; see DIAG lines above"
 [ "${prev_rotated_by}" = "${admin_ref}" ] \
     || fail "previous row rotated_by_user_ref = ${prev_rotated_by}, want ${admin_ref} (self-rotation)"
 pass "DB state: v${admin_v_before} retained, v${new_v} current, metadata recorded"
