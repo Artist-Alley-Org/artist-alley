@@ -288,35 +288,70 @@ phases b through i (Track B).
   integration).
 
 - **1.22.I-c — Public key distribution + actor profile inline.**
-  `GET /users/{username}` response gains a `publicKeys` block
-  (array of current + retained-for-decrypt keys with version +
-  algorithm). Per-actor cache layer; invalidation on rotation
-  bumps the profile version. Webfinger continues to carry only
-  the actor URL; the keys come from the actor fetch.
+  **Shipped via PR #112.** Actor profile gains the
+  `aa:encryptionPublicKey` block (X25519 public key +
+  version + base64 encoding). Remote-actor cache extended with
+  `encryption_public_key` column populated by the inbox
+  upsert path; the I-c cache becomes the canonical
+  recipient-pubkey lookup for outbox encryption (I-e).
+  Spec bumped to v0.3.
 
 - **1.22.I-d — Capability negotiation at peer handshake.**
-  Handshake response carries `supported_capabilities` JSONB
-  array; stored on `federation_peers.capabilities`; sender-side
-  check at outbox dispatch resolution time; audit event named
-  with the capability gap on refusal.
+  **Shipped via PR #113.** Handshake exchanges
+  `supported_capabilities` array; intersection stored on
+  `federation_peers.capabilities`. Typed `peer.Capability`
+  vocabulary (e2e-encrypted, nacl-box, x25519,
+  ed25519-envelope-sig, http2-batched-inbox); reference impl
+  enforces the closed `KnownCapabilities` set but preserves
+  unknown peer-advertised values through round-trip. Sender-side
+  capability gate at outbox dispatch resolution; audit event
+  with `capability_missing_*` reason codes. Spec bumped to v0.4.
 
-- **1.22.I-e — Outbox encryption.** NaCl-box envelope encryption
-  per recipient at delivery time. Sender fetches recipient
-  pubkey via the I-c cache, encrypts the payload, signs the
-  envelope. Per-recipient encryption means one outbox row →
-  one recipient → one encryption operation; no shared envelope
-  across recipients.
+- **1.22.I-e — Outbox encryption.** **Shipped via PR #114.**
+  NaCl-box envelope encryption at outbox dispatch time, per
+  recipient. Sender fetches recipient pubkey via I-c cache,
+  unwraps own private key per emission (zeroed after use),
+  encrypts payload, signs the envelope (encrypt-then-sign).
+  Per-recipient operation: one outbox row → one recipient →
+  one encrypt op. `was_encrypted` column on federation_outbox
+  for observability. `CapNaClBox` deliberately removed from
+  KnownCapabilities at this phase (re-added in I-f) so the
+  rollout doesn't break receivers that can't decrypt yet.
+  Spec bumped to v0.5.
 
-- **1.22.I-f — Inbox decryption.** Light up the
-  `TODO(1.22.I)` markers stamped in 1.22.D-a-3. Receiver tries
-  current key first; falls back to retained older keys on
-  decrypt failure. New §12.1 reject reason `decrypt_failed`
-  for envelopes that don't decrypt against any retained key.
+- **1.22.I-f — Inbox decryption.** **Shipped via PR #115.**
+  Receiver-side decryption: verify signature first, then decrypt
+  via `box.Open`. Multi-version retained-key fallback (try
+  current, then retained in version-desc) handles in-flight
+  envelopes during sender rotation. Distinct `decrypt_failed`
+  reject reason for terminal authentication failures.
+  `was_encrypted` + `decrypted_with_key_version` columns on
+  federation_inbox for rotation observability. `CapNaClBox`
+  restored to KnownCapabilities now that decrypt code exists.
+  Spec bumped to v0.6.
 
-- **1.22.I-g — Sender refusal flip.** Replace the unconditional
-  "encryption not supported" refusal with the capability-aware
-  check from Decision 5. Refuse only when peer capability is
-  absent OR recipient key is unfetchable.
+- **1.22.I-g — Sender refusal flip.** **Shipped via PR #116.**
+  Replaces the I-d "if capability missing, skip" with
+  share-sensitivity-aware policy: `restricted` and `embargo`
+  shares MUST encrypt or refuse; `public` and `team` MAY
+  encrypt (best-effort fallback to plaintext). New
+  `federation.emission.refused` audit event distinct from
+  `skipped`; `encryption_required_but_unavailable` reason
+  code; `refused_recipient_count` aggregate column on
+  federation_outbox. Receiver-side `encryption_required`
+  reject reason reserved for I-h's defense-in-depth gate.
+  Spec bumped to v0.7.
+
+- **1.22.I-a/b/c/d/e/f/g — dogfood-validated end-to-end on
+  2026-06-14** via ui-nightly run 27504699922 (scenarios 01,
+  06, 07, 08, 09, 11 all PASS in 26.6s wall). Eight follow-up
+  PRs (#117 keypair backfill, #118 scenario fixes, #119 cache
+  backfill, #120 profile-aware teardown, #121-#122 diagnostic
+  dump, #123 seed perf 10×, #124 compose concurrency, #125
+  actor-URI fixture) addressed production-class bugs surfaced
+  by the dogfood loop. Every gap caught by the loop was real;
+  none caught by unit tests or integration tests alone — the
+  whole point of the I-a infrastructure investment.
 
 - **1.22.I-h — Key rotation flow.** User-facing
   `/account/security/rotate-federation-keys` action; profile
