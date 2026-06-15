@@ -75,18 +75,22 @@ The current release stream covers the foundations:
   against `federation_shares`; admin queue UI with re-queue +
   cascade-cancel + audit. Sub-1s p99 end-to-end against production
   defaults. First federated DAM, open-source or commercial. See
-  ADR 0043. **Encrypted federation arc 1.22.I-a through 1.22.I-g
-  shipped + dogfood-validated 2026-06-14** (ui-nightly run
-  27504699922; scenarios 01/06/07/08/09/11 all PASS in 26.6s
-  wall): I-a dogfood infra via PRs #109 + #110, I-b keypair via
-  #111, I-c key distribution via #112, I-d capability
-  negotiation via #113, I-e outbox encryption via #114, I-f
-  inbox decryption via #115, I-g sender refusal flip via #116.
-  Eight follow-up PRs (#117-#125) closed real production-class
-  bugs surfaced by the dogfood loop — every gap was caught by
-  the loop, none by unit tests alone. ArchivePub spec at v0.7;
-  rotation flow + admin policy UI at 1.22.I-h (in flight); final
-  acceptance at 1.22.I-i.
+  ADR 0043. **Encrypted federation arc 1.22.I-a through 1.22.I-i
+  COMPLETE + dogfood-validated end-to-end 2026-06-15** via
+  ui-nightly 27558910639: all 8 conformance vectors (scenarios
+  01, 05, 06, 07, 08, 09, 11, 12) PASS in 34.8s wall.
+  Shipment trail: I-a dogfood infra (#109 + #110), I-b keypair
+  (#111), I-c key distribution (#112), I-d capability
+  negotiation (#113), I-e outbox encryption (#114), I-f inbox
+  decryption (#115), I-g sender refusal flip (#116), I-h
+  rotation lifecycle + admin UI (#126 + #127 + #129), I-i
+  receiver-gate activation + scenario 05 + spec v1.0-rc1 (#128 +
+  #130). Plus eight follow-up PRs (#117–#125) closing real
+  production-class bugs surfaced by the dogfood loop — every
+  gap caught by the loop, none by unit tests alone.
+  **ArchivePub spec at v1.0-rc1** with Appendix A conformance
+  test vectors locked; 7-day soak window open through 2026-06-22;
+  v1.0 final ships as a no-code spec commit if soak is clean.
 
 ## In flight
 

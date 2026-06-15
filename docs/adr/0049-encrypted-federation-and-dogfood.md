@@ -353,19 +353,42 @@ phases b through i (Track B).
   none caught by unit tests or integration tests alone — the
   whole point of the I-a infrastructure investment.
 
-- **1.22.I-h — Key rotation flow.** User-facing
-  `/account/security/rotate-federation-keys` action; profile
-  version bump; retained-until sweeper as a background job;
-  admin UI surfaces ("when did this user last rotate?" and "are
-  any retained keys near expiry?"); audit events.
+- **1.22.I-h — Key rotation flow + admin UI.** **Shipped via
+  PRs #126 + #127 + #129.** User-facing
+  `POST /account/security/rotate-federation-keys` action +
+  admin-initiated `POST /admin/federation/users/{ref}/rotate-keys`
+  for compromised-key recovery; transaction-safe rotation
+  primitive (`RotateForUser`); background `Sweeper` goroutine
+  that reaps retained keys past `retained_until` (configurable
+  via `federation.user_keys.retained_until_days` system_config,
+  default 30 days); receiver-side `encryption_required` defense
+  gate added (shipped DORMANT pending sensitivity columns on
+  local objects — activated by I-i); admin observability via
+  `GET /admin/federation/key-health` aggregating users-without-
+  keypair / remote-actors-without-encryption-key / peers-without-
+  capabilities / retained-keys-near-expiry. Spec bumped to v0.8.
+  Scenario 12 validates all 4 phases (self-rotation, admin-
+  initiated, sweeper reap, decrypt-with-retained).
 
-- **1.22.I-i — Scenario 05 + dogfood validation.** Scenario 05
-  script in `scripts/dogfood/scenarios/`: studio-a's admin
-  marks an asset as `restricted`, shares with studio-b's user,
-  observes encrypted envelope delivered + decrypted + the
-  restricted content surfaces correctly on b's UI. Acceptance:
-  end-to-end works in the dogfood environment with default key
-  rotation policies. Validates the entire 1.22.I deliverable.
+- **1.22.I-i — Scenario 05 + final acceptance.** **Shipped via
+  PRs #128 + #130.** Migration 00014 adds `asset.sensitivity`
+  with CHECK constraint over four tiers + partial index for
+  restricted/embargo; `inboxSensitivityLookup` resolves
+  asset-kind targets to their tier; boot wire activates the
+  I-h dormant defense gate. Share-creation path inherits
+  sensitivity from the target asset with downgrade rejection.
+  Scenario 05 implements the canonical restricted-asset
+  round-trip including the defense-in-depth negative test
+  (plaintext envelope targeting a restricted asset → reject
+  with `encryption_required`). Spec bumped to v1.0-rc1 with
+  Appendix A locking 8 canonical conformance test vectors.
+
+- **1.22.I encryption arc COMPLETE + dogfood-validated 2026-06-15**
+  via ui-nightly run 27558910639: all 8 conformance vectors
+  (01, 05, 06, 07, 08, 09, 11, 12) PASS in 34.8s wall. Spec at
+  v1.0-rc1; 7-day soak window open through 2026-06-22. v1.0
+  final ships as a no-code spec-only commit if soak is clean;
+  v1.0-rc2 otherwise.
 
 ### Scenarios — the canonical regression catalogue
 
