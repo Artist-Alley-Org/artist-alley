@@ -660,9 +660,14 @@ CREATE TABLE public.assets (
     processing_error text,
     processing_started_at timestamp with time zone,
     processing_finished_at timestamp with time zone,
+    sensitivity text DEFAULT 'public'::text NOT NULL,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
+    CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
 );
+CREATE INDEX idx_assets_sensitivity_restricted
+    ON public.assets (sensitivity)
+    WHERE sensitivity IN ('restricted', 'embargo');
 
 
 --
