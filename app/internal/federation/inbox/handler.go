@@ -288,15 +288,15 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stage 9: encrypted envelopes not supported until 1.22.I
-	// per §5.5 addition 1. Distinct from encryption_required
-	// (that one fires when the SENDER violated a MUST-encrypt
-	// rule; this one fires when the RECEIVER can't decrypt).
-	//
-	// TODO(1.22.I): replace this rejection with a real NaCl-box
-	// decrypt path using the per-actor X25519 private key. The
-	// receiver's response shape switches from 422 to 202 once
-	// decryption lands.
+	// Stage 9: rejection for the LEGACY multi-recipient
+	// `Encrypted` field (the pre-I-e EncryptedEnvelope shape
+	// reserved in 1.22.A). Per-recipient envelope encryption
+	// ships at v0.5 (Phase 1.22.I-e) via the `Encryption`
+	// field, handled downstream by the dispatcher's stage-4
+	// decrypt branch. The legacy field has NO live producers in
+	// the reference implementation — this rejection catches a
+	// peer somehow constructing the old shape (forward-compat
+	// catalogue cleanup at v1.0 may drop the field entirely).
 	if env.Encrypted != nil {
 		h.auditReject(ctx, peer.ID, federation.InboxStatusEncryptionNotSupported, activityURI,
 			"encrypted envelope received; X25519 decryption ships in 1.22.I")
@@ -306,22 +306,16 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 10: structural-validate envelope signature per spec
-	// §5.6 + §5.5 addition C. We don't crypto-verify it yet
-	// (per-actor pubkey distribution lands in 1.22.I); the
-	// structural check keeps the wire format honest so 1.22.I
-	// can flip on real verify without rejecting traffic that
-	// was previously accepted.
-	//
-	// envelope_sig_missing is the spec §12.1 reason for any
-	// structural failure (absent OR malformed). sig_invalid is
-	// reserved for the future crypto-verify failure path —
-	// keeping them distinct so operators can tell "spec-
-	// noncompliant peer" from "key compromised / drifted."
-	//
-	// TODO(1.22.I): add real ed25519.Verify against the per-
-	// actor pubkey resolved from env.Signature.PublicKey. On
-	// failure, return reject(federation.InboxStatusSigInvalid,
-	// http.StatusUnauthorized, "envelope signature failed crypto verify").
+	// §5.6 + §5.5 addition C. The structural check fires at
+	// the inbox-handler ingress to reject malformed envelopes
+	// before they enter the federation_inbox queue; full
+	// ed25519 crypto-verify against the per-actor public key
+	// happens further down the same handler (see the
+	// httpsig.Verify + federation.VerifyEnvelopeSignature
+	// paths below), which surface sig_invalid distinctly from
+	// the structural envelope_sig_missing reason so operators
+	// can tell "spec-noncompliant peer" from "key compromised /
+	// drifted."
 	if env.Signature == nil ||
 		env.Signature.Type == "" ||
 		env.Signature.PublicKey == "" ||

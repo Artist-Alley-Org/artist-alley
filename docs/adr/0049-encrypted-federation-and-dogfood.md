@@ -29,6 +29,25 @@ excerpt: >-
   surface against itself. Dogfood infrastructure becomes a
   permanent dev surface in `infra/docker/dogfood/`, not throwaway.
 ---
+## Implementation status (2026-06-15)
+
+The decision recorded here is **fully implemented** as of
+Phase 1.22.I-i (PRs #109 through #128 + cleanup #130). The
+encrypted federation arc is dogfood-validated end-to-end via
+the eight active conformance scenarios at
+`scripts/dogfood/scenarios/` (01, 05, 06, 07, 08, 09, 11, 12) —
+see [ArchivePub spec Appendix A](../protocol/archivepub.md#appendix-a--canonical-regression-scenarios).
+ArchivePub is at **v1.0-rc1** with a 7-day soak window through
+2026-06-22; v1.0 final ships as a no-code spec-only commit if
+the soak is clean.
+
+The frontmatter `status: accepted` reflects the project's ADR
+convention (no `implemented` value is used anywhere else in
+`docs/adr/`); this section is the implementation-milestone
+record without introducing a new status vocabulary that would
+need to be applied retroactively across the rest of the ADR
+corpus.
+
 ## Context
 
 Phase 1.22.A through 1.22.D ship the federation wire-protocol
