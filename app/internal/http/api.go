@@ -14,6 +14,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
@@ -315,6 +316,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	})
 	s.inboxDispatcher.SetRecipientUserRef(recipientUserRefFor(pool))
 	s.inboxDispatcher.SetAudit(auditRec)
+	// Phase 1.22.I-i — activates the I-h receiver-side
+	// encryption policy gate. The lookup resolves "asset"-kind
+	// objects to their sensitivity tier (migration 00014); other
+	// kinds pass through (SensitivityNotFound). When the gate
+	// fires (plaintext envelope + restricted/embargo target),
+	// the dispatcher marks the row rejected with reason
+	// encryption_required + audits via
+	// FederationInboxEncryptionRequiredRejected.
+	s.inboxDispatcher.SetSensitivityLookup(inboxSensitivityLookup(pool))
 
 	// Federation OUTBOX dispatcher (Phase 1.22.D-b). Drains
 	// activities ledger rows into per-recipient federation_outbox
@@ -745,6 +755,53 @@ func outboxVisibilityLookup(pool *pgxpool.Pool) outbox.VisibilityLookup {
 		// Unknown / unsupported kind → caller treats as
 		// VisibilityPrivate (local-only).
 		return "", nil
+	}
+}
+
+// inboxSensitivityLookup returns the per-object sensitivity
+// closure the inbox dispatcher's stage-3.5 encryption policy
+// gate (1.22.I-h, activated at I-i) consults to decide whether
+// a plaintext envelope targeting a local object should be
+// rejected with reject_reason=encryption_required.
+//
+// Resolves only "asset" today — the federation arc's primary
+// restricted-tier target. Future kinds (post, collection, …)
+// land here as those domains grow sensitivity columns; the
+// gate's SensitivityNotFound fallback keeps the dispatcher
+// permissive for unrecognised kinds (matches the brief's
+// scope-discipline notes).
+//
+// Lookup errors map to SensitivityNotFound so a missing
+// local object is pass-through (the activity's domain handler
+// will reject downstream with a more specific reason if the
+// object is required). DB errors propagate so the dispatcher
+// can fail-the-row + retry on the next tick.
+func inboxSensitivityLookup(pool *pgxpool.Pool) inbox.SensitivityLookup {
+	return func(ctx context.Context, objectKind string, objectID uuid.UUID) (inbox.Sensitivity, error) {
+		switch objectKind {
+		case "asset":
+			var tier string
+			err := pool.QueryRow(ctx,
+				`SELECT sensitivity FROM assets WHERE id = $1 AND deleted_at IS NULL`,
+				objectID,
+			).Scan(&tier)
+			if err != nil {
+				// pgx.ErrNoRows is the common pre-share case;
+				// other errors surface to the dispatcher (which
+				// fails-the-row, not rejects). Conflating the
+				// two would either silently leak or noisily
+				// reject. Distinguish.
+				if errors.Is(err, pgx.ErrNoRows) {
+					return inbox.SensitivityNotFound, nil
+				}
+				return "", fmt.Errorf("asset sensitivity lookup: %w", err)
+			}
+			return inbox.Sensitivity(tier), nil
+		}
+		// Unknown / unsupported kind — gate passes through.
+		// Post + collection + comment land here today; they
+		// gain sensitivity columns in their own phases.
+		return inbox.SensitivityNotFound, nil
 	}
 }
 

@@ -271,3 +271,24 @@ SELECT id, asset_id, label, kind, object_hash, content_type,
 -- Remove an alternate by id. Caller unpins the underlying blob.
 DELETE FROM asset_alternates
  WHERE id = $1;
+
+-- name: GetAssetSensitivity :one
+-- Phase 1.22.I-i — single-column probe used by the federation
+-- inbox dispatcher's receiver-side encryption policy gate
+-- (SensitivityLookup callback). Returns the intrinsic
+-- sensitivity tier; pgx.ErrNoRows when the asset doesn't exist
+-- locally (gate treats as pass-through).
+SELECT sensitivity
+  FROM assets
+ WHERE id = $1;
+
+-- name: SetAssetSensitivity :exec
+-- Phase 1.22.I-i — admin / owner action. Does NOT retroactively
+-- affect outstanding federation_shares (those resolve sensitivity
+-- at dispatch time via GetAssetSensitivity, so the change DOES
+-- propagate to in-flight emissions — see 00014 migration's
+-- design comment for the chosen tradeoff vs. copy-at-grant).
+UPDATE assets
+   SET sensitivity = $2,
+       updated_at = NOW()
+ WHERE id = $1;

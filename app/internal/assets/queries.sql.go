@@ -407,6 +407,24 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 	return i, err
 }
 
+const getAssetSensitivity = `-- name: GetAssetSensitivity :one
+SELECT sensitivity
+  FROM assets
+ WHERE id = $1
+`
+
+// Phase 1.22.I-i — single-column probe used by the federation
+// inbox dispatcher's receiver-side encryption policy gate
+// (SensitivityLookup callback). Returns the intrinsic
+// sensitivity tier; pgx.ErrNoRows when the asset doesn't exist
+// locally (gate treats as pass-through).
+func (q *Queries) GetAssetSensitivity(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getAssetSensitivity, id)
+	var sensitivity string
+	err := row.Scan(&sensitivity)
+	return sensitivity, err
+}
+
 const listAssetAlternates = `-- name: ListAssetAlternates :many
 SELECT id, asset_id, label, kind, object_hash, content_type,
        size_bytes, origin_server_id, created_by_user_ref, created_at, metadata
@@ -868,6 +886,28 @@ type ReplaceAssetTagsParams struct {
 // AssetUpdate when the request body sends a `tags` array.
 func (q *Queries) ReplaceAssetTags(ctx context.Context, arg ReplaceAssetTagsParams) error {
 	_, err := q.db.Exec(ctx, replaceAssetTags, arg.AssetID, arg.Column2)
+	return err
+}
+
+const setAssetSensitivity = `-- name: SetAssetSensitivity :exec
+UPDATE assets
+   SET sensitivity = $2,
+       updated_at = NOW()
+ WHERE id = $1
+`
+
+type SetAssetSensitivityParams struct {
+	ID          pgtype.UUID
+	Sensitivity string
+}
+
+// Phase 1.22.I-i — admin / owner action. Does NOT retroactively
+// affect outstanding federation_shares (those resolve sensitivity
+// at dispatch time via GetAssetSensitivity, so the change DOES
+// propagate to in-flight emissions — see 00014 migration's
+// design comment for the chosen tradeoff vs. copy-at-grant).
+func (q *Queries) SetAssetSensitivity(ctx context.Context, arg SetAssetSensitivityParams) error {
+	_, err := q.db.Exec(ctx, setAssetSensitivity, arg.ID, arg.Sensitivity)
 	return err
 }
 

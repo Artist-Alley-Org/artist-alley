@@ -73,6 +73,7 @@ type Asset struct {
 	ProcessingError      *string            `json:"processing_error"`
 	ProcessingStartedAt  pgtype.Timestamptz `json:"processing_started_at"`
 	ProcessingFinishedAt pgtype.Timestamptz `json:"processing_finished_at"`
+	Sensitivity          string             `json:"sensitivity"`
 }
 
 type AssetAlternate struct {

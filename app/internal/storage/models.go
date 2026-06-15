@@ -73,6 +73,7 @@ type Asset struct {
 	ProcessingError      *string
 	ProcessingStartedAt  pgtype.Timestamptz
 	ProcessingFinishedAt pgtype.Timestamptz
+	Sensitivity          string
 }
 
 type AssetAlternate struct {
