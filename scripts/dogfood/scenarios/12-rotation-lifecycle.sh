@@ -136,14 +136,17 @@ pass "DB state: v${admin_v_before} retained, v${new_v} current, metadata recorde
 
 step "Phase B: admin-initiated rotation on a fixture user"
 
-# Mint a throwaway user via the admin API so we have a clean
-# subject != admin.
+# Mint a throwaway user via /admin/seed/users — the only
+# operator-side user-create endpoint (general user-create is
+# self-service via /auth/register; we use the seed surface
+# because it carries system.admin auth + returns the new ref
+# directly).
 suffix=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
 fixture_username="rotation-test-${suffix}"
-fixture_body=$(printf '{"username":"%s","fullname":"Rotation Test","password":"P@ssw0rd!","email":"%s@example.invalid"}' \
+fixture_body=$(printf '{"username":"%s","fullname":"Rotation Test","password":"P@ssw0rd!","email":"%s@example.invalid","approved":true}' \
     "${fixture_username}" "${fixture_username}")
 create_resp=$(curl -sk -b "$A_COOKIES" \
-    -X POST "${A_HOST}/api/v1/admin/users" \
+    -X POST "${A_HOST}/api/v1/admin/seed/users" \
     -H "Content-Type: application/json" \
     -d "${fixture_body}" \
     -w "\n%{http_code}")
@@ -159,13 +162,16 @@ if [ -z "$fixture_ref" ]; then
 fi
 [ -n "$fixture_ref" ] || fail "fixture user ref not resolvable"
 
-# Ensure the fixture user has a current key (I-b should mint
-# inline on /admin/users; defensive backfill query is the same
-# query the boot sweep uses).
+# Confirm the seed-user-create path minted the v1 keypair
+# inline (the I-b "three wired paths" — bootstrap, /setup,
+# /admin/seed/users — share the same EnsureCurrentForUser
+# call site). Without v1 we'd be exercising the rotation
+# primitive's first-time-defensive path instead of the real
+# rotation-from-existing flow.
 v1=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT COALESCE(MAX(version), 0) FROM federation_user_keys
       WHERE user_id = ${fixture_ref} AND is_current = TRUE" | tr -d ' \r\n')
-[ "${v1}" = "1" ] || fail "fixture user has no v1 keypair (got max version=${v1}); /admin/users create path should mint inline"
+[ "${v1}" = "1" ] || fail "fixture user has no v1 keypair (got max version=${v1}); /admin/seed/users should mint inline (I-b 'three wired paths' contract)"
 
 # Trigger admin rotation.
 admin_rotate_resp=$(curl -sk -b "$A_COOKIES" \
