@@ -118,17 +118,23 @@ inbox_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
 # The envelope JSON. Note: NO "encryption" field. The dispatcher
 # parses this, sees Encryption=nil, then hits the policy gate
-# at stage 3.5. Required actor + activity-type fields kept to
-# the minimum the dispatcher's pre-gate parsing demands.
+# at stage 3.5. The @context value MUST equal
+# federation.ContextV1 (https://artist-alley.org/protocol/v1)
+# and the type MUST be in the known catalogue — Unmarshal's
+# strict reject-on-unknown-fields rule fails the whole row
+# (status=failed, not rejected) when either is off. Signature is
+# optional at the Unmarshal layer (verified at a separate
+# stage); the receiver gate fires before signature verification
+# so we can skip it for this synthetic-injection negative test.
 envelope_json=$(python3 -c "
 import json
 print(json.dumps({
-    '@context':  'aa-fed/v1',
+    '@context':  'https://artist-alley.org/protocol/v1',
     'type':      'Like',
     'id':        '${activity_uri}',
     'actor':     'http://studio-b.local/users/admin',
     'object':    'https://studio-a.local/assets/${asset_id}',
-    'published': '2026-06-15T00:00:00Z',
+    'published': '2026-06-15T00:00:00.000Z',
     'to':        ['http://studio-a.local/users/admin'],
 }))
 ")
@@ -167,10 +173,18 @@ final=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tA
 final_status="${final%%|*}"
 final_reason="${final##*|}"
 
-[ "${final_status}" = "rejected" ] \
-    || fail "inbox row status = ${final_status}, want rejected"
-[ "${final_reason}" = "encryption_required" ] \
-    || fail "inbox row reject_reason = ${final_reason}, want encryption_required"
+if [ "${final_status}" != "rejected" ] || [ "${final_reason}" != "encryption_required" ]; then
+    diag_row=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc "
+        SELECT json_build_object(
+            'status', status,
+            'reject_reason', reject_reason,
+            'last_error', last_error,
+            'dispatch_attempts', dispatch_attempts,
+            'was_encrypted', was_encrypted
+        ) FROM federation_inbox WHERE id = '${inbox_id}'::uuid")
+    info "DIAG inbox row: ${diag_row}"
+    fail "inbox row status=${final_status} reject_reason=${final_reason}; want status=rejected reject_reason=encryption_required"
+fi
 pass "inbox row rejected with reason=encryption_required (gate fired as designed)"
 
 # Verify the audit event.
