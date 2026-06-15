@@ -95,6 +95,11 @@ func (*PanicShim) PatchAccountPreferences(context.Context, openapi.PatchAccountP
 	panic("PanicShim: PatchAccountPreferences called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// RotateOwnFederationKeys panics by default; test shims override.
+func (*PanicShim) RotateOwnFederationKeys(context.Context, openapi.RotateOwnFederationKeysRequestObject) (openapi.RotateOwnFederationKeysResponseObject, error) {
+	panic("PanicShim: RotateOwnFederationKeys called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListMySessions panics by default; test shims override.
 func (*PanicShim) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
 	panic("PanicShim: ListMySessions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -158,6 +163,11 @@ func (*PanicShim) RegisterFederationDirectoryPublishListing(context.Context, ope
 // ListFederationInbox panics by default; test shims override.
 func (*PanicShim) ListFederationInbox(context.Context, openapi.ListFederationInboxRequestObject) (openapi.ListFederationInboxResponseObject, error) {
 	panic("PanicShim: ListFederationInbox called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetFederationKeyHealth panics by default; test shims override.
+func (*PanicShim) GetFederationKeyHealth(context.Context, openapi.GetFederationKeyHealthRequestObject) (openapi.GetFederationKeyHealthResponseObject, error) {
+	panic("PanicShim: GetFederationKeyHealth called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListFederationOutbox panics by default; test shims override.
@@ -243,6 +253,11 @@ func (*PanicShim) ListFederationPeerSuggestions(context.Context, openapi.ListFed
 // RefreshFederationPeerSuggestions panics by default; test shims override.
 func (*PanicShim) RefreshFederationPeerSuggestions(context.Context, openapi.RefreshFederationPeerSuggestionsRequestObject) (openapi.RefreshFederationPeerSuggestionsResponseObject, error) {
 	panic("PanicShim: RefreshFederationPeerSuggestions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RotateUserFederationKeysAsAdmin panics by default; test shims override.
+func (*PanicShim) RotateUserFederationKeysAsAdmin(context.Context, openapi.RotateUserFederationKeysAsAdminRequestObject) (openapi.RotateUserFederationKeysAsAdminResponseObject, error) {
+	panic("PanicShim: RotateUserFederationKeysAsAdmin called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetAdminLicenseStatus panics by default; test shims override.

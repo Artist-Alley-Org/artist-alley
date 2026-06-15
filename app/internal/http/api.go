@@ -107,6 +107,7 @@ type apiServer struct {
 	outboxDelivery   *outbox.Worker
 	outboxAdmin      *outbox.AdminHandler
 	userKeysSweeper  *userkeys.Sweeper
+	userKeysAdmin    *userkeys.AdminHandler
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -359,6 +360,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.userKeysSweeper = userkeys.NewSweeper(
 		pool, logger, auditRec.FederationUserKeyRetainedExpired, 0,
 	)
+
+	// Federation user-keys admin + self-rotation HTTP surface
+	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
+	// federation-keys, /admin/federation/key-health,
+	// /admin/federation/users/{ref}/rotate-keys.
+	s.userKeysAdmin = userkeys.NewAdminHandler(pool, auditRec, logger)
 
 	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
 	// Owns /admin/federation/outbox + /inbox + the re-queue +
@@ -2028,6 +2035,20 @@ func (s *apiServer) UpdateFederationPeer(ctx context.Context, req openapi.Update
 
 func (s *apiServer) DeleteFederationPeer(ctx context.Context, req openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	return s.peersAdmin.DeleteFederationPeer(ctx, req)
+}
+
+// --- federation user-keys rotation + health (Phase 1.22.I-h) -------------
+
+func (s *apiServer) RotateOwnFederationKeys(ctx context.Context, req openapi.RotateOwnFederationKeysRequestObject) (openapi.RotateOwnFederationKeysResponseObject, error) {
+	return s.userKeysAdmin.RotateOwnFederationKeys(ctx, req)
+}
+
+func (s *apiServer) RotateUserFederationKeysAsAdmin(ctx context.Context, req openapi.RotateUserFederationKeysAsAdminRequestObject) (openapi.RotateUserFederationKeysAsAdminResponseObject, error) {
+	return s.userKeysAdmin.RotateUserFederationKeysAsAdmin(ctx, req)
+}
+
+func (s *apiServer) GetFederationKeyHealth(ctx context.Context, req openapi.GetFederationKeyHealthRequestObject) (openapi.GetFederationKeyHealthResponseObject, error) {
+	return s.userKeysAdmin.GetFederationKeyHealth(ctx, req)
 }
 
 // --- activities admin audit (Phase 1.22.A-bis-3b) ------------------------
