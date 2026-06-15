@@ -443,6 +443,18 @@ func (s *Server) Run(ctx context.Context) error {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "outbox.delivery.start")
 	}
 
+	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
+	// Reaps federation_user_keys rows whose retained_until grace
+	// window has elapsed. Boot-time first sweep covers
+	// expirations accumulated during downtime; then ticks every
+	// SweepTickDefault (1h) until ctx cancels. The audit hook
+	// fires federation.user.key_retained_expired once per
+	// non-zero reap.
+	if s.api != nil && s.api.userKeysSweeper != nil {
+		go s.api.userKeysSweeper.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "userkeys.sweeper.start")
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "http.listen",

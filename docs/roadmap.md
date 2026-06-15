@@ -75,15 +75,18 @@ The current release stream covers the foundations:
   against `federation_shares`; admin queue UI with re-queue +
   cascade-cancel + audit. Sub-1s p99 end-to-end against production
   defaults. First federated DAM, open-source or commercial. See
-  ADR 0043. Encrypted federation continues in 1.22.I:
-  **1.22.I-a (dogfood infrastructure) shipped via PR #109
-  (foundational `scripts/dogfood/*` helpers + paired-instance
-  scenarios; closes #98) + PR #110 (CI-resident automation:
-  ui-pr.yml + ui-nightly.yml + 270-test regression net; five
-  production bugs caught by the suite). 1.22.I-b (X25519
-  keypair-per-user) shipped via PR #111.** Remainder of the
-  encrypted-federation arc (1.22.I-c through 1.22.I-i)
-  continues; encrypted-on-wire envelopes land at 1.22.I-e.
+  ADR 0043. **Encrypted federation arc 1.22.I-a through 1.22.I-g
+  shipped + dogfood-validated 2026-06-14** (ui-nightly run
+  27504699922; scenarios 01/06/07/08/09/11 all PASS in 26.6s
+  wall): I-a dogfood infra via PRs #109 + #110, I-b keypair via
+  #111, I-c key distribution via #112, I-d capability
+  negotiation via #113, I-e outbox encryption via #114, I-f
+  inbox decryption via #115, I-g sender refusal flip via #116.
+  Eight follow-up PRs (#117-#125) closed real production-class
+  bugs surfaced by the dogfood loop — every gap was caught by
+  the loop, none by unit tests alone. ArchivePub spec at v0.7;
+  rotation flow + admin policy UI at 1.22.I-h (in flight); final
+  acceptance at 1.22.I-i.
 
 ## In flight
 

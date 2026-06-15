@@ -47,6 +47,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/peer"
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
+	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -105,6 +106,8 @@ type apiServer struct {
 	outboxDispatcher *outbox.Dispatcher
 	outboxDelivery   *outbox.Worker
 	outboxAdmin      *outbox.AdminHandler
+	userKeysSweeper  *userkeys.Sweeper
+	userKeysAdmin    *userkeys.AdminHandler
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -347,6 +350,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	)
 	s.outboxDispatcher.SetSkippedAudit(auditRec.EmissionSkipped)
 	s.outboxDispatcher.SetVisibilityLookup(outboxVisibilityLookup(pool))
+
+	// Federation user-keys retained-row sweeper (Phase 1.22.I-h).
+	// Reaps federation_user_keys rows past their retained_until
+	// grace window. Ticks every userkeys.SweepTickDefault (1h);
+	// audit hook fires federation.user.key_retained_expired once
+	// per non-zero reap. Goroutine starts in Server.Run alongside
+	// the dispatchers.
+	s.userKeysSweeper = userkeys.NewSweeper(
+		pool, logger, auditRec.FederationUserKeyRetainedExpired, 0,
+	)
+
+	// Federation user-keys admin + self-rotation HTTP surface
+	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
+	// federation-keys, /admin/federation/key-health,
+	// /admin/federation/users/{ref}/rotate-keys.
+	s.userKeysAdmin = userkeys.NewAdminHandler(pool, auditRec, logger)
 
 	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
 	// Owns /admin/federation/outbox + /inbox + the re-queue +
@@ -2016,6 +2035,20 @@ func (s *apiServer) UpdateFederationPeer(ctx context.Context, req openapi.Update
 
 func (s *apiServer) DeleteFederationPeer(ctx context.Context, req openapi.DeleteFederationPeerRequestObject) (openapi.DeleteFederationPeerResponseObject, error) {
 	return s.peersAdmin.DeleteFederationPeer(ctx, req)
+}
+
+// --- federation user-keys rotation + health (Phase 1.22.I-h) -------------
+
+func (s *apiServer) RotateOwnFederationKeys(ctx context.Context, req openapi.RotateOwnFederationKeysRequestObject) (openapi.RotateOwnFederationKeysResponseObject, error) {
+	return s.userKeysAdmin.RotateOwnFederationKeys(ctx, req)
+}
+
+func (s *apiServer) RotateUserFederationKeysAsAdmin(ctx context.Context, req openapi.RotateUserFederationKeysAsAdminRequestObject) (openapi.RotateUserFederationKeysAsAdminResponseObject, error) {
+	return s.userKeysAdmin.RotateUserFederationKeysAsAdmin(ctx, req)
+}
+
+func (s *apiServer) GetFederationKeyHealth(ctx context.Context, req openapi.GetFederationKeyHealthRequestObject) (openapi.GetFederationKeyHealthResponseObject, error) {
+	return s.userKeysAdmin.GetFederationKeyHealth(ctx, req)
 }
 
 // --- activities admin audit (Phase 1.22.A-bis-3b) ------------------------

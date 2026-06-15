@@ -1466,6 +1466,97 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/federation/key-health:
+    get:
+      operationId: getFederationKeyHealth
+      summary: Aggregate federation key + capability health
+      description: |
+        Phase 1.22.I-h admin observability surface. One round-trip
+        feeds the /admin/federation/key-health dashboard's five
+        tiles: users without keypair (I-b backfill gap), remote
+        actors missing encryption keys (I-c cache miss), peers
+        without capabilities (I-d negotiation miss), retained
+        keys near expiry (sweeper preview), and the total
+        approved-user count for denominator context. Drill-down
+        rows for "users missing keypair" + "recent rotations"
+        ride along so the page renders without separate calls.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Aggregate health counts + drill-downs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FederationKeyHealth" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/federation/users/{ref}/rotate-keys:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+        description: Subject user.ref whose federation keypair the admin is rotating.
+    post:
+      operationId: rotateUserFederationKeysAsAdmin
+      summary: Admin-initiated rotation on behalf of a user
+      description: |
+        Phase 1.22.I-h compromised-key recovery path. Forces
+        rotation for the named user; the new federation_user_keys
+        row + the demoted previous row both record
+        rotated_by_user_ref = the admin's ref. Distinct from
+        self-rotation (subject == rotated_by) at the audit row
+        level so operator-initiated recoveries are greppable.
+      tags: [admin, federation]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Rotation complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserKeyRotationResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /account/security/rotate-federation-keys:
+    post:
+      operationId: rotateOwnFederationKeys
+      summary: Rotate my own X25519 federation keypair
+      description: |
+        Phase 1.22.I-h user self-rotation. Generates a fresh
+        X25519 keypair, demotes the previous current key to
+        retained state with the configured grace window
+        (federation.user_keys.retained_until_days, default 30d),
+        and returns the new key version + public bytes for the UI
+        to render verification feedback. The previous key
+        remains decrypt-capable until the sweeper reaps it
+        post-grace.
+      tags: [account]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Rotation complete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserKeyRotationResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /admin/activities:
     get:
       operationId: listAdminActivities
@@ -9355,6 +9446,156 @@ components:
             1.22.B-d). Toggle this to expose the peer in our
             /federation/peers/visible response so other peers
             can surface it as a suggestion.
+
+    UserKeyRotationResult:
+      type: object
+      description: |
+        Phase 1.22.I-h response from the rotation endpoints
+        (/account/security/rotate-federation-keys and
+        /admin/federation/users/{ref}/rotate-keys). The new public
+        key is base64-encoded for transport; clients render it as
+        a verification fingerprint or pass it along to the
+        federation actor profile.
+      required: [user_ref, new_version, new_public_key_b64, algorithm]
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+          description: Subject user whose key was rotated.
+        new_version:
+          type: integer
+          format: int32
+          description: Version of the freshly-minted current key. Equals previous_version + 1, or 1 if no prior key existed.
+        previous_version:
+          type: integer
+          format: int32
+          description: |
+            Version of the key just demoted to retained state. 0
+            when no prior current key existed (defensive — shouldn't
+            happen post-I-b but documented for completeness).
+        new_public_key_b64:
+          type: string
+          description: Base64-encoded 32-byte X25519 public key for the new version.
+        algorithm:
+          type: string
+          description: Always `naclbox-x25519-v1` today; recorded for forward-compat.
+        retained_until_days:
+          type: integer
+          format: int32
+          description: |
+            Grace window applied to the demoted previous key. Read
+            from sysconfig at rotation time; pass-through so the UI
+            can render "your previous key is reapable on YYYY-MM-DD."
+
+    FederationKeyHealth:
+      type: object
+      description: |
+        Phase 1.22.I-h aggregate counts feeding the
+        /admin/federation/key-health dashboard. Five counts in
+        one round-trip; drill-down endpoints (
+        ListUsersMissingKeypair, ListRecentRotations) cover the
+        per-row detail when the operator follows a tile.
+      required:
+        - users_total
+        - users_missing_keypair
+        - remote_actors_missing_enc_key
+        - peers_missing_capabilities
+        - retained_keys_near_expiry
+      properties:
+        users_total:
+          type: integer
+          format: int64
+          description: Total approved users on this instance.
+        users_missing_keypair:
+          type: integer
+          format: int64
+          description: |
+            Approved users with no current federation_user_keys
+            row. Healthy steady state = 0; non-zero surfaces the
+            I-b boot backfill gap.
+        remote_actors_missing_enc_key:
+          type: integer
+          format: int64
+          description: |
+            federation_remote_actors rows whose
+            encryption_public_key is NULL. Pre-I-c peers OR a
+            peer who hasn't yet emitted an inbound activity
+            carrying their key.
+        peers_missing_capabilities:
+          type: integer
+          format: int64
+          description: |
+            federation_peers rows that haven't completed I-d
+            capability negotiation. Surfaces the "needs re-pair"
+            cohort.
+        retained_keys_near_expiry:
+          type: integer
+          format: int64
+          description: |
+            Retained federation_user_keys rows whose
+            retained_until trips in the next 7 days. Preview of
+            what the sweeper will reap soon.
+        recent_rotations:
+          type: array
+          description: |
+            Last 50 rotations across all users; ordered newest
+            first. Surfaced inline so the dashboard renders
+            without a separate round-trip.
+          items: { $ref: "#/components/schemas/FederationKeyRotationEvent" }
+        users_missing_keypair_sample:
+          type: array
+          description: |
+            Per-user drill-down on the "users missing keypair"
+            tile. Up to 100 rows; oldest-account-first so the
+            operator can prioritise long-standing gaps.
+          items: { $ref: "#/components/schemas/UserMissingKeypair" }
+
+    FederationKeyRotationEvent:
+      type: object
+      description: |
+        Phase 1.22.I-h audit-style projection of a single
+        rotation. Pulled from federation_user_keys.rotated_at +
+        rotated_by_user_ref so the dashboard renders without
+        joining audit_events.
+      required: [user_ref, version, rotated_at]
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+        version:
+          type: integer
+          format: int32
+        rotated_at:
+          type: string
+          format: date-time
+        rotated_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            user.ref of whoever triggered the rotation. NULL when
+            the original triggering admin has since been deleted
+            (the FK is ON DELETE SET NULL). Equals user_ref for
+            self-rotation; differs for admin-initiated recovery.
+
+    UserMissingKeypair:
+      type: object
+      description: |
+        Phase 1.22.I-h drill-down row for the "users missing
+        keypair" tile on the admin federation health dashboard.
+      required: [ref, username]
+      properties:
+        ref:
+          type: integer
+          format: int64
+        username:
+          type: string
+          nullable: true
+        created:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the user record was created. Old creation date + no keypair = the I-b boot backfill missed them across reboots.
 
     AdminActivity:
       type: object

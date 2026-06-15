@@ -3805,15 +3805,20 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg
 -- the I-h rotation flow; the inbox decrypt path (I-f) falls back
 -- from current to retained versions during a peer's catch-up
 -- window. See ADR 0049 §Track B.
+-- rotated_at / rotated_by_user_ref added in migration 00013 (Phase
+-- 1.22.I-h). Both nullable: legacy rows pre-I-h have NULL; rows
+-- minted or demoted by the rotation primitive carry both fields.
 CREATE TABLE public.federation_user_keys (
-    user_id          bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
-    version          integer      NOT NULL CHECK (version >= 1),
-    algorithm        text         NOT NULL DEFAULT 'naclbox-x25519-v1',
-    public_key       bytea        NOT NULL CHECK (octet_length(public_key) = 32),
-    private_key_enc  bytea        NOT NULL CHECK (octet_length(private_key_enc) >= 13),
-    is_current       boolean      NOT NULL,
-    created_at       timestamptz  NOT NULL DEFAULT NOW(),
-    retained_until   timestamptz  NULL,
+    user_id             bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
+    version             integer      NOT NULL CHECK (version >= 1),
+    algorithm           text         NOT NULL DEFAULT 'naclbox-x25519-v1',
+    public_key          bytea        NOT NULL CHECK (octet_length(public_key) = 32),
+    private_key_enc     bytea        NOT NULL CHECK (octet_length(private_key_enc) >= 13),
+    is_current          boolean      NOT NULL,
+    created_at          timestamptz  NOT NULL DEFAULT NOW(),
+    retained_until      timestamptz  NULL,
+    rotated_at          timestamptz  NULL,
+    rotated_by_user_ref bigint       NULL REFERENCES public."user"(ref) ON DELETE SET NULL,
     PRIMARY KEY (user_id, version),
     CONSTRAINT federation_user_keys_current_xor_retained CHECK (
         (is_current = TRUE  AND retained_until IS NULL)

@@ -430,14 +430,16 @@ type FederationShare struct {
 }
 
 type FederationUserKey struct {
-	UserID        int64
-	Version       int32
-	Algorithm     string
-	PublicKey     []byte
-	PrivateKeyEnc []byte
-	IsCurrent     bool
-	CreatedAt     pgtype.Timestamptz
-	RetainedUntil pgtype.Timestamptz
+	UserID           int64
+	Version          int32
+	Algorithm        string
+	PublicKey        []byte
+	PrivateKeyEnc    []byte
+	IsCurrent        bool
+	CreatedAt        pgtype.Timestamptz
+	RetainedUntil    pgtype.Timestamptz
+	RotatedAt        pgtype.Timestamptz
+	RotatedByUserRef *int64
 }
 
 type FieldDefinition struct {

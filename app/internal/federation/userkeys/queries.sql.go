@@ -24,6 +24,42 @@ func (q *Queries) CountUserKeys(ctx context.Context, userID int64) (int64, error
 	return count, err
 }
 
+const demoteCurrentKey = `-- name: DemoteCurrentKey :exec
+UPDATE federation_user_keys
+   SET is_current          = FALSE,
+       retained_until      = NOW() + ($1::int || ' days')::interval,
+       rotated_at          = NOW(),
+       rotated_by_user_ref = $2
+ WHERE user_id = $3
+   AND is_current = TRUE
+`
+
+type DemoteCurrentKeyParams struct {
+	RetentionDays    int32
+	RotatedByUserRef *int64
+	UserID           int64
+}
+
+// Phase 1.22.I-h rotation primitive. Flips the user's current key
+// to is_current=FALSE, sets retained_until=NOW()+($2 days), AND
+// records the rotation metadata on the demoted row (rotated_at +
+// rotated_by_user_ref). The CHECK constraint
+// federation_user_keys_current_xor_retained requires both column
+// flips atomically — this single UPDATE satisfies it.
+//
+// Idempotency: WHERE is_current = TRUE means a repeated call (no
+// current key found) is a no-op; the rotation orchestration relies
+// on this when the user has no prior key (defensive — shouldn't
+// happen post-I-b but the path is exercised).
+//
+// The retention interval is constructed from the $2 integer days
+// value (not interpolated SQL) so an operator-supplied retention
+// override goes through pgx parameter binding, not string concat.
+func (q *Queries) DemoteCurrentKey(ctx context.Context, arg DemoteCurrentKeyParams) error {
+	_, err := q.db.Exec(ctx, demoteCurrentKey, arg.RetentionDays, arg.RotatedByUserRef, arg.UserID)
+	return err
+}
+
 const getCurrentUserKey = `-- name: GetCurrentUserKey :one
 SELECT user_id, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
@@ -31,12 +67,23 @@ FROM federation_user_keys
 WHERE user_id = $1 AND is_current = TRUE
 `
 
+type GetCurrentUserKeyRow struct {
+	UserID        int64
+	Version       int32
+	Algorithm     string
+	PublicKey     []byte
+	PrivateKeyEnc []byte
+	IsCurrent     bool
+	CreatedAt     pgtype.Timestamptz
+	RetainedUntil pgtype.Timestamptz
+}
+
 // Returns the user's current key. Used by the EnsureCurrentForUser
 // idempotency check + I-e outbox encryption + I-c actor profile.
 // Returns pgx.ErrNoRows if the user has no keys yet.
-func (q *Queries) GetCurrentUserKey(ctx context.Context, userID int64) (FederationUserKey, error) {
+func (q *Queries) GetCurrentUserKey(ctx context.Context, userID int64) (GetCurrentUserKeyRow, error) {
 	row := q.db.QueryRow(ctx, getCurrentUserKey, userID)
-	var i FederationUserKey
+	var i GetCurrentUserKeyRow
 	err := row.Scan(
 		&i.UserID,
 		&i.Version,
@@ -50,9 +97,68 @@ func (q *Queries) GetCurrentUserKey(ctx context.Context, userID int64) (Federati
 	return i, err
 }
 
+const getKeyHealthSummary = `-- name: GetKeyHealthSummary :one
+SELECT
+    (SELECT COUNT(*) FROM "user" WHERE approved = 1)
+        AS users_total,
+    (SELECT COUNT(*) FROM "user" u
+       WHERE u.approved = 1
+         AND NOT EXISTS (
+             SELECT 1 FROM federation_user_keys k
+             WHERE k.user_id = u.ref AND k.is_current = TRUE
+         ))
+        AS users_missing_keypair,
+    (SELECT COUNT(*) FROM federation_remote_actors
+        WHERE encryption_public_key IS NULL)
+        AS remote_actors_missing_enc_key,
+    (SELECT COUNT(*) FROM federation_peers
+        WHERE capabilities_negotiated_at IS NULL)
+        AS peers_missing_capabilities,
+    (SELECT COUNT(*) FROM federation_user_keys
+        WHERE is_current = FALSE
+          AND retained_until IS NOT NULL
+          AND retained_until > NOW()
+          AND retained_until < NOW() + INTERVAL '7 days')
+        AS retained_keys_near_expiry
+`
+
+type GetKeyHealthSummaryRow struct {
+	UsersTotal                int64
+	UsersMissingKeypair       int64
+	RemoteActorsMissingEncKey int64
+	PeersMissingCapabilities  int64
+	RetainedKeysNearExpiry    int64
+}
+
+// Phase 1.22.I-h admin observability surface. One aggregate query
+// feeding /admin/federation/key-health's top-of-page tiles. Five
+// counts that surface the gaps dogfood exposed on the encryption
+// arc: users without keypairs (I-b backfill miss), remote actors
+// missing encryption keys (I-c cache miss), peers without
+// capabilities (I-d negotiation miss), retained keys near expiry
+// (sweeper preview), and the total approved-user count for
+// denominator context.
+//
+// All five counts in one round-trip — the dashboard renders the
+// whole top panel without N HTTP calls. Per-row drill-downs use
+// the separate List* queries below.
+func (q *Queries) GetKeyHealthSummary(ctx context.Context) (GetKeyHealthSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getKeyHealthSummary)
+	var i GetKeyHealthSummaryRow
+	err := row.Scan(
+		&i.UsersTotal,
+		&i.UsersMissingKeypair,
+		&i.RemoteActorsMissingEncKey,
+		&i.PeersMissingCapabilities,
+		&i.RetainedKeysNearExpiry,
+	)
+	return i, err
+}
+
 const getUserKeyByVersion = `-- name: GetUserKeyByVersion :one
 SELECT user_id, version, algorithm, public_key, private_key_enc,
-       is_current, created_at, retained_until
+       is_current, created_at, retained_until,
+       rotated_at, rotated_by_user_ref
 FROM federation_user_keys
 WHERE user_id = $1 AND version = $2
 `
@@ -64,7 +170,11 @@ type GetUserKeyByVersionParams struct {
 
 // Returns a specific (user, version) row. Used by I-f inbound
 // decryption when an envelope cites a non-current version still
-// inside its retention window.
+// inside its retention window. The I-h rotation metadata columns
+// ride along — overhead is ~16 bytes per row + the admin
+// /admin/federation/key-health surface uses the same query to
+// show "who rotated this key + when?" without a second round
+// trip.
 func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersionParams) (FederationUserKey, error) {
 	row := q.db.QueryRow(ctx, getUserKeyByVersion, arg.UserID, arg.Version)
 	var i FederationUserKey
@@ -77,6 +187,8 @@ func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersi
 		&i.IsCurrent,
 		&i.CreatedAt,
 		&i.RetainedUntil,
+		&i.RotatedAt,
+		&i.RotatedByUserRef,
 	)
 	return i, err
 }
@@ -104,6 +216,17 @@ type InsertUserKeyParams struct {
 	PublicKey     []byte
 	PrivateKeyEnc []byte
 	IsCurrent     bool
+	RetainedUntil pgtype.Timestamptz
+}
+
+type InsertUserKeyRow struct {
+	UserID        int64
+	Version       int32
+	Algorithm     string
+	PublicKey     []byte
+	PrivateKeyEnc []byte
+	IsCurrent     bool
+	CreatedAt     pgtype.Timestamptz
 	RetainedUntil pgtype.Timestamptz
 }
 
@@ -136,7 +259,7 @@ type InsertUserKeyParams struct {
 // current key; non-NULL only when inserting a row already in the
 // retention window — usually nothing to do at insert time, the
 // rotation path UPDATEs the previously-current row instead).
-func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (FederationUserKey, error) {
+func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (InsertUserKeyRow, error) {
 	row := q.db.QueryRow(ctx, insertUserKey,
 		arg.UserID,
 		arg.Version,
@@ -145,6 +268,67 @@ func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (F
 		arg.PrivateKeyEnc,
 		arg.IsCurrent,
 		arg.RetainedUntil,
+	)
+	var i InsertUserKeyRow
+	err := row.Scan(
+		&i.UserID,
+		&i.Version,
+		&i.Algorithm,
+		&i.PublicKey,
+		&i.PrivateKeyEnc,
+		&i.IsCurrent,
+		&i.CreatedAt,
+		&i.RetainedUntil,
+	)
+	return i, err
+}
+
+const insertUserKeyAsCurrent = `-- name: InsertUserKeyAsCurrent :one
+INSERT INTO federation_user_keys (
+    user_id,
+    version,
+    algorithm,
+    public_key,
+    private_key_enc,
+    is_current,
+    retained_until,
+    rotated_at,
+    rotated_by_user_ref
+)
+VALUES ($1, $2, $3, $4, $5, TRUE, NULL, NOW(), $6)
+RETURNING user_id, version, algorithm, public_key, private_key_enc,
+          is_current, created_at, retained_until,
+          rotated_at, rotated_by_user_ref
+`
+
+type InsertUserKeyAsCurrentParams struct {
+	UserID           int64
+	Version          int32
+	Algorithm        string
+	PublicKey        []byte
+	PrivateKeyEnc    []byte
+	RotatedByUserRef *int64
+}
+
+// Phase 1.22.I-h rotation primitive. Inserts a new key with
+// is_current=TRUE, retained_until=NULL, AND populates the
+// rotation metadata columns (rotated_at = NOW(), rotated_by_user_ref
+// = caller). Distinct from [InsertUserKey] (the bootstrap path)
+// which leaves rotated_at NULL — non-NULL rotated_at is the
+// forensic signal that a rotation primitive minted this row.
+//
+// Callers MUST run [DemoteCurrentKey] for the same user in the
+// SAME transaction before this insert; the partial unique index
+// federation_user_keys_one_current_idx would otherwise fail the
+// second is_current=TRUE row.
+func (q *Queries) InsertUserKeyAsCurrent(ctx context.Context, arg InsertUserKeyAsCurrentParams) (FederationUserKey, error) {
+	row := q.db.QueryRow(ctx, insertUserKeyAsCurrent,
+		arg.UserID,
+		arg.Version,
+		arg.Algorithm,
+		arg.PublicKey,
+		arg.PrivateKeyEnc,
+		arg.RotatedByUserRef,
 	)
 	var i FederationUserKey
 	err := row.Scan(
@@ -156,6 +340,8 @@ func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (F
 		&i.IsCurrent,
 		&i.CreatedAt,
 		&i.RetainedUntil,
+		&i.RotatedAt,
+		&i.RotatedByUserRef,
 	)
 	return i, err
 }
@@ -212,6 +398,54 @@ func (q *Queries) ListPublicKeysByUser(ctx context.Context, userID int64) ([]Lis
 	return items, nil
 }
 
+const listRecentRotations = `-- name: ListRecentRotations :many
+SELECT user_id, version, rotated_at, rotated_by_user_ref
+  FROM federation_user_keys
+ WHERE rotated_at IS NOT NULL
+ ORDER BY rotated_at DESC
+ LIMIT 50
+`
+
+type ListRecentRotationsRow struct {
+	UserID           int64
+	Version          int32
+	RotatedAt        pgtype.Timestamptz
+	RotatedByUserRef *int64
+}
+
+// Drill-down for the /admin/federation/key-health "recent
+// rotations" tile. Audit-style list of the 50 most recent rotation
+// events. Pulls from federation_user_keys directly (not
+// audit_events) so the page renders without a JOIN against an
+// event-log table whose growth profile differs.
+//
+// LIMIT 50 + DESC ordering on rotated_at: shows newest first;
+// pagination is a follow-up if rotation volume grows.
+func (q *Queries) ListRecentRotations(ctx context.Context) ([]ListRecentRotationsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentRotations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentRotationsRow
+	for rows.Next() {
+		var i ListRecentRotationsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Version,
+			&i.RotatedAt,
+			&i.RotatedByUserRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserKeysForDecrypt = `-- name: ListUserKeysForDecrypt :many
 SELECT user_id, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
@@ -220,6 +454,17 @@ WHERE user_id = $1
   AND (is_current = TRUE OR retained_until > NOW())
 ORDER BY is_current DESC, version DESC
 `
+
+type ListUserKeysForDecryptRow struct {
+	UserID        int64
+	Version       int32
+	Algorithm     string
+	PublicKey     []byte
+	PrivateKeyEnc []byte
+	IsCurrent     bool
+	CreatedAt     pgtype.Timestamptz
+	RetainedUntil pgtype.Timestamptz
+}
 
 // Phase 1.22.I-f — returns the current + retained-not-expired keys
 // for a user, full row (public + WRAPPED PRIVATE bytes + version)
@@ -239,15 +484,15 @@ ORDER BY is_current DESC, version DESC
 // The retained_until filter excludes keys past their grace window
 // — those rows might still be in the table during the I-h sweeper
 // delay, but the dispatcher must NOT decrypt against them.
-func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]FederationUserKey, error) {
+func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]ListUserKeysForDecryptRow, error) {
 	rows, err := q.db.Query(ctx, listUserKeysForDecrypt, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []FederationUserKey
+	var items []ListUserKeysForDecryptRow
 	for rows.Next() {
-		var i FederationUserKey
+		var i ListUserKeysForDecryptRow
 		if err := rows.Scan(
 			&i.UserID,
 			&i.Version,
@@ -258,6 +503,53 @@ func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]F
 			&i.CreatedAt,
 			&i.RetainedUntil,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsersMissingKeypair = `-- name: ListUsersMissingKeypair :many
+SELECT u.ref, u.username, u.created
+  FROM "user" u
+ WHERE u.approved = 1
+   AND NOT EXISTS (
+       SELECT 1 FROM federation_user_keys k
+       WHERE k.user_id = u.ref AND k.is_current = TRUE
+   )
+ ORDER BY u.created DESC
+ LIMIT 100
+`
+
+type ListUsersMissingKeypairRow struct {
+	Ref      int64
+	Username *string
+	Created  pgtype.Timestamptz
+}
+
+// Drill-down for the /admin/federation/key-health "users missing
+// keypair" tile. Returns enough per-row context for the operator
+// to either trigger a per-user backfill OR escalate (the user is
+// pending approval and shouldn't have a keypair yet).
+//
+// LIMIT 100 caps the response — an instance with thousands of
+// pre-I-b users-without-keys would otherwise hit a multi-MB JSON
+// response; this query exists to surface the LAST FEW, not
+// replace the boot sweeper.
+func (q *Queries) ListUsersMissingKeypair(ctx context.Context) ([]ListUsersMissingKeypairRow, error) {
+	rows, err := q.db.Query(ctx, listUsersMissingKeypair)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersMissingKeypairRow
+	for rows.Next() {
+		var i ListUsersMissingKeypairRow
+		if err := rows.Scan(&i.Ref, &i.Username, &i.Created); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -318,4 +610,32 @@ func (q *Queries) ListUsersWithoutCurrentKey(ctx context.Context, limit int32) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const sweepExpiredRetainedKeys = `-- name: SweepExpiredRetainedKeys :execrows
+DELETE FROM federation_user_keys
+ WHERE is_current = FALSE
+   AND retained_until IS NOT NULL
+   AND retained_until < NOW()
+`
+
+// Phase 1.22.I-h sweeper. Hard-deletes every retained-but-expired
+// row (is_current=FALSE AND retained_until < NOW()). Returns the
+// count of reaped rows for the audit emit + the operator log line.
+//
+// The partial index federation_user_keys_retained_idx on
+// retained_until WHERE retained_until IS NOT NULL keeps this sweep
+// O(k log n) where k is the expired-row count — usually zero on a
+// healthy tick, occasionally tens after a busy day.
+//
+// No batching: the per-tick reap count is small (one user can
+// accumulate at most 1 retained key per rotation; the 30-day TTL
+// means the typical instance has 0-1 retained keys per user at
+// any moment); a single DELETE finishes in milliseconds.
+func (q *Queries) SweepExpiredRetainedKeys(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepExpiredRetainedKeys)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

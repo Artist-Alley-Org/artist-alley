@@ -155,6 +155,33 @@ const (
 	// dogfood validation that follows I-g.
 	EventFederationEmissionRefused = "federation.emission.refused"
 
+	// Phase 1.22.I-h key rotation lifecycle events.
+	//
+	// EventFederationUserKeyRotated fires once per successful
+	// rotation primitive call (userkeys.RotateForUser). The audit
+	// row's subject is the user whose key was rotated; the actor
+	// is the principal who triggered the flip (= subject for
+	// self-rotation, the admin's ref for compromised-key recovery
+	// via the /admin/federation/users/{ref}/rotate-keys path).
+	EventFederationUserKeyRotated = "federation.user.key_rotated"
+
+	// EventFederationUserKeyRetainedExpired fires once per
+	// non-zero sweeper reap (userkeys.Sweeper). One audit row
+	// per sweep, NOT one per reaped key — the count is the
+	// metadata field. Operators tracking churn on "how many
+	// retained keys aged out in the last week" sum the metadata
+	// values across audit rows of this type.
+	EventFederationUserKeyRetainedExpired = "federation.user.key_retained_expired"
+
+	// EventFederationInboxEncryptionRequiredRejected fires when
+	// the receiver-side encryption policy gate (1.22.I-h) catches
+	// a plaintext envelope whose target object's sensitivity
+	// tier mandates encryption. Distinct from
+	// EventFederationInboxDecryptFailed (which covers actual
+	// decryption attempts) — this one fires BEFORE the decrypt
+	// stage on the plaintext-but-shouldn't-be path.
+	EventFederationInboxEncryptionRequiredRejected = "federation.inbox.encryption_required_rejected"
+
 	// Demo-seed loader events (post-1.22.D dogfood unblock).
 	// Both gated on system.admin; emitted by the apply-side
 	// script the seed agent owns. Visible in the admin audit
@@ -807,4 +834,106 @@ func (r *Recorder) FederationEmissionRefused(
 		"reason":        reason,
 	}
 	r.write(ctx, EventFederationEmissionRefused, nil, nil, reqContext{}, meta)
+}
+
+// FederationUserKeyRotated records a federation.user.key_rotated
+// event per Phase 1.22.I-h. Fires once per successful
+// [userkeys.RotateForUser] call AFTER the commit succeeds.
+//
+// Pool-bound (NOT tx-bound to the keypair insert): same contract
+// as [FederationUserKeyGeneratedSystem] — the keypair commit is
+// load-bearing, audit row is observability, and an audit-write
+// failure must not roll back the rotation. The pool-bound path
+// matches that contract.
+//
+// subjectUserRef is the user whose key was rotated;
+// rotatedByUserRef is whoever triggered the rotation:
+//
+//   - subjectUserRef == rotatedByUserRef → self-rotation
+//     (the user's own /account/security action).
+//   - subjectUserRef != rotatedByUserRef → admin-initiated
+//     rotation (compromised-key recovery via
+//     /admin/federation/users/{ref}/rotate-keys). The audit
+//     feed shows "rotated by admin X on behalf of user Y."
+//
+// `previousVersion == 0` is the defensive first-time-rotation
+// path (no prior current key existed); the audit row metadata
+// surfaces it so an operator notices the post-I-b invariant
+// violation.
+func (r *Recorder) FederationUserKeyRotated(
+	ctx context.Context,
+	subjectUserRef int64,
+	rotatedByUserRef int64,
+	newVersion int32,
+	previousVersion int32,
+	algorithm string,
+) {
+	actor := rotatedByUserRef
+	meta := map[string]any{
+		"new_version":         newVersion,
+		"previous_version":    previousVersion,
+		"algorithm":           algorithm,
+		"self_rotation":       subjectUserRef == rotatedByUserRef,
+		"first_time_rotation": previousVersion == 0,
+	}
+	r.write(ctx, EventFederationUserKeyRotated, &subjectUserRef, &actor, reqContext{}, meta)
+}
+
+// FederationUserKeyRetainedExpired records a
+// federation.user.key_retained_expired event per Phase 1.22.I-h.
+// Fires once per non-zero sweeper tick (userkeys.Sweeper);
+// `count` is the number of retained rows the sweep reaped in
+// that pass.
+//
+// Pool-bound; system-actor (sweeper is the system). No subject —
+// the sweep is cross-user. Operators reconcile the per-user
+// retention timeline by joining audit rows of
+// EventFederationUserKeyRotated (which carry subject) against
+// retained_until timestamps; the sweep audit is the "garbage
+// collection actually ran" signal, not a per-user one.
+//
+// Zero-count sweeps are NOT audited — the sweeper's quiet steady
+// state would otherwise spam the audit feed.
+func (r *Recorder) FederationUserKeyRetainedExpired(
+	ctx context.Context,
+	count int64,
+) {
+	meta := map[string]any{
+		"count": count,
+	}
+	r.write(ctx, EventFederationUserKeyRetainedExpired, nil, nil, reqContext{}, meta)
+}
+
+// FederationInboxEncryptionRequiredRejected records a
+// federation.inbox.encryption_required_rejected event per
+// Phase 1.22.I-h. Fires from the inbox dispatcher's receiver-side
+// policy gate when a plaintext envelope arrives for a target
+// object whose sensitivity tier mandates encryption.
+//
+// Pool-bound — same contract as [FederationInboxDecryptFailed].
+// Distinct event type from decrypt_failed: the decrypt branch
+// NEVER ran (the envelope wasn't encrypted), so attributing the
+// failure to "decryption" would mislead an operator triaging
+// the audit feed. The dedicated event type makes the gate's
+// firing greppable.
+//
+//   peerID        — sender peer's UUID.
+//   activityType  — verb on the envelope (Like / Create / etc.).
+//   activityID    — envelope.id.
+//   objectKind    — target object's kind ("post" / "asset" / etc.);
+//                   empty when row.ObjectKind was nil (the gate
+//                   shouldn't have fired in that case but the
+//                   audit records the actual value seen).
+func (r *Recorder) FederationInboxEncryptionRequiredRejected(
+	ctx context.Context,
+	subjectUserRef *int64,
+	peerID, activityType, activityID, objectKind string,
+) {
+	meta := map[string]any{
+		"peer_id":       peerID,
+		"activity_type": activityType,
+		"activity_id":   activityID,
+		"object_kind":   objectKind,
+	}
+	r.write(ctx, EventFederationInboxEncryptionRequiredRejected, subjectUserRef, nil, reqContext{}, meta)
 }
