@@ -38,22 +38,29 @@ the Artist Alley roadmap). The document version `v0.x` will become
 `v1.0` when the federation arc completes its dogfood validation week
 (see [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md)).
 
-Expect changes. Specifically expect:
-- The namespace prefix (currently `aa:` in the reference impl, see
-  [§ Open questions](#open-questions)) may change before v1.0.
-- The encryption envelope (`aa:Envelope` with NaCl-box, planned for
-  Phase 1.22.I) is reserved but not yet shipped.
-- The capability-negotiation handshake (Phase 1.22.I-d) will surface
-  protocol-version negotiation hooks not yet present in v0.x.
+The document is at **v1.0-rc1** (Appendix A conformance test
+vectors locked; 7-day soak window through 2026-06-22). The
+following items shipped during the v0.x window and are now
+stable:
 
-Implementers writing against v0.x SHOULD pin to a specific commit of
-this document and the reference implementation. Don't build a
-production deployment on v0.x and expect a clean upgrade — the
-purpose of the v0.x window is to discover the spec, not to ship it.
+- The namespace prefix is **`aa:`** (finalised at v1.0-rc1; the
+  earlier "may change before v1.0" disclaimer is resolved).
+- The encryption envelope (NaCl-box, per-recipient, via the
+  `encryption` field — see [§ 4](#4-wire-format)) shipped
+  across Phases 1.22.I-e through I-i.
+- The capability-negotiation handshake shipped at Phase
+  1.22.I-d; the `supported_capabilities` field is part of every
+  v0.4+ offer / confirm envelope.
 
-When v1.0 is published, this document will move to a dedicated home
-(provisional: `archivepub.org`) and a versioned change log will track
-breaking + non-breaking revisions per the standard
+Implementers writing against v1.0-rc1 SHOULD still pin to a
+specific commit of this document and the reference
+implementation during the soak window; v1.0 final ships as a
+no-code spec-only commit if the soak is clean (otherwise
+v1.0-rc2 first).
+
+When v1.0 is published, this document will move to a dedicated
+home (provisional: `archivepub.org`) and a versioned change log
+will track breaking + non-breaking revisions per the standard
 major.minor.patch convention.
 
 ## Conventions
@@ -555,12 +562,25 @@ here for reference:
 
 | Question | Resolution path |
 |---|---|
-| Final namespace prefix (`aa:` / `arc:` / `apub:`) | Defer to v1.0; reference impl renames in a single migration before publication |
 | Domain home for the spec | Operator's call; provisional `archivepub.org` |
-| Encryption envelope final shape | Phase 1.22.I — see ADR 0049 |
-| Conformance test vector format | Phase 1.22.I-i — will be JSON files matching the 5 canonical regression scenarios |
 | Public-fediverse compatibility (webfinger + nodeinfo) | Out of scope for v1.0; tracked at reference-impl issue [#108](https://github.com/mscrnt/artist-alley/issues/108) as a separate concern |
 | Re-sharing semantics with `admin` tier | Phase 1.22.J auto-sync work will surface the real requirements |
+
+Resolved at v1.0-rc1 (previously open):
+
+- **Namespace prefix** — `aa:` is final. The earlier "may change
+  before v1.0" disclaimer is removed; the prefix appears
+  throughout the wire format (activity-type catalogue, envelope
+  field naming) and across the conformance vectors.
+- **Encryption envelope final shape** — landed across Phases
+  1.22.I-e through I-i. See [§ 4](#4-wire-format) for the
+  `encryption` block, [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md)
+  for the design.
+- **Conformance test vector format** — Appendix A's table is
+  the authority; each row maps to a script under
+  `scripts/dogfood/scenarios/`. The 8 active scenarios (01,
+  05, 06, 07, 08, 09, 11, 12) are what implementations claiming
+  ArchivePub conformance MUST pass.
 
 ## 10. References
 
