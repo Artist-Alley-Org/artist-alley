@@ -35,7 +35,8 @@
 // registered in [docs/spec/federation/CONTRIBUTORS.md]; approved
 // spec sources are catalogued in [docs/spec/federation/SOURCES.md].
 // Reading the source of any other ActivityPub implementation
-// (go-fed/activity, Mastodon, Pleroma, etc.) contaminates the
-// reader and excludes them from further Phase 1 / Phase 3 work
-// on this package.
+// contaminates the reader and excludes them from further Phase
+// 1 / Phase 3 work on this package. See SOURCES.md for the
+// approved spec-reading list; everything else (third-party
+// server, library, or client implementation) is forbidden.
 package federation

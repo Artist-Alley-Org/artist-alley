@@ -4440,7 +4440,7 @@ paths:
         - name: owner_ref
           in: query
           required: false
-          description: Filter to collections owned by this RS user_ref.
+          description: Filter to collections owned by this user_ref.
           schema: { type: integer, format: int64 }
         - name: visibility
           in: query
@@ -5210,9 +5210,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [rs_user_id]
+              required: [user_ref]
               properties:
-                rs_user_id: { type: integer, format: int64 }
+                user_ref: { type: integer, format: int64 }
       responses:
         "204":
           description: Added
@@ -5225,13 +5225,13 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /teams/{id}/members/{rs_user_id}:
+  /teams/{id}/members/{user_ref}:
     parameters:
       - name: id
         in: path
         required: true
         schema: { type: string, format: uuid }
-      - name: rs_user_id
+      - name: user_ref
         in: path
         required: true
         schema: { type: integer, format: int64 }
@@ -5485,10 +5485,11 @@ paths:
       summary: Block this user
       description: |
         Phase 1.17.G2 — directional block. Auto-unfollows BOTH
-        directions before persisting the block (per Twitter /
-        Mastodon / ArtStation convention — blocking + continuing to
-        follow is a contradictory state). The optional `reason` is
-        private to the blocker, surfaced only in /account/blocked.
+        directions before persisting the block (continuing to
+        follow a blocked user is a contradictory state, so the
+        block implies a follower-graph cleanup). The optional
+        `reason` is private to the blocker, surfaced only in
+        /account/blocked.
       tags: [social]
       security:
         - cookieAuth: []
@@ -5814,7 +5815,7 @@ paths:
       summary: Teams the caller is a member of (direct memberships)
       description: |
         Returns rows from team_memberships for the caller's
-        rs_user_id. Use this in the upload modal to render a team
+        user_ref. Use this in the upload modal to render a team
         picker. Includes only direct memberships; the closure-walk
         for capability resolution happens server-side.
       tags: [teams, auth]
@@ -8048,7 +8049,7 @@ components:
           format: int64
           nullable: true
           description: |
-            Acting admin's rs_user_id at time of grant/revoke. Null
+            Acting admin's user_ref at time of grant/revoke. Null
             when the row predates Phase 1.17.F or was inserted by
             seed migration.
         granted_at:
@@ -10138,7 +10139,7 @@ components:
           type: string
           enum: [read, write, admin]
         granted_at: { type: string, format: date-time }
-        granted_by_rs_user_id:
+        granted_by_user_ref:
           type: integer
           format: int64
           nullable: true
@@ -10170,12 +10171,12 @@ components:
 
     TeamMember:
       type: object
-      required: [team_id, rs_user_id, added_at]
+      required: [team_id, user_ref, added_at]
       properties:
         team_id: { type: string, format: uuid }
-        rs_user_id: { type: integer, format: int64 }
+        user_ref: { type: integer, format: int64 }
         added_at: { type: string, format: date-time }
-        added_by_rs_user_id:
+        added_by_user_ref:
           type: integer
           format: int64
           nullable: true

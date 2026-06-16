@@ -1316,11 +1316,11 @@ CREATE TABLE public.teams (
 --
 
 -- "user" table — post-1.49.C-2 baseline-squash trim. 17
--- ResourceSpace-heritage columns (F-001..F-017 in the
--- cleanup-audit-2026-06.md report) were dropped because they
--- had zero non-generated Go consumers. Remaining columns are
--- the ones actually used by the artist-alley auth / session /
--- profile / federation surfaces.
+-- legacy columns (F-001..F-017 in the cleanup-audit-2026-06.md
+-- report) were dropped because they had zero non-generated Go
+-- consumers. Remaining columns are the ones actually used by
+-- the artist-alley auth / session / profile / federation
+-- surfaces.
 CREATE TABLE public."user" (
     ref bigint NOT NULL,
     username character varying(50),

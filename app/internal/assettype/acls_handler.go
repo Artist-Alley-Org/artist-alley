@@ -74,7 +74,7 @@ func (h *Handler) ListAssetTypeAcls(
 			PrincipalId:       r.PrincipalID,
 			Permission:        openapi.AclEntryPermission(r.Permission),
 			GrantedAt:         r.GrantedAt.Time,
-			GrantedByRsUserId: r.GrantedByUserRef,
+			GrantedByUserRef: r.GrantedByUserRef,
 			ExpiresAt:         tsToTimePtr(r.ExpiresAt),
 		})
 	}

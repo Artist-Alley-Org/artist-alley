@@ -71,12 +71,9 @@ NGINX_PORT=${NGINX_PORT:-8080}
 
 step "Stack is up"
 printf '\n'
-printf '   Open http://localhost:%s to finish ResourceSpace install.\n' "$NGINX_PORT"
-printf '   On the RS setup screen, use:\n'
-printf '     MySQL server:   mysql\n'
-printf '     MySQL username: see MYSQL_USER in .env\n'
-printf '     MySQL password: see MYSQL_PASSWORD in .env\n'
-printf '     MySQL database: see MYSQL_DATABASE in .env\n'
+printf '   Open http://localhost:%s to reach the SPA.\n' "$NGINX_PORT"
+printf '   Bootstrap admin lands automatically when AA_BOOTSTRAP_DEFAULT_ADMIN=1.\n'
+printf '   See README.md for the post-bootstrap walkthrough.\n'
 printf '\n'
 printf '   Logs:  docker compose logs -f\n'
 printf '   Stop:  docker compose down\n'

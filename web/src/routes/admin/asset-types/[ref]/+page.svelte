@@ -27,7 +27,7 @@
     principal_id: string;
     permission: 'read' | 'write' | 'admin';
     granted_at: string;
-    granted_by_rs_user_id?: number | null;
+    granted_by_user_ref?: number | null;
     expires_at?: string | null;
   }
 
