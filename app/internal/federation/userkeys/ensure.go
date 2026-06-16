@@ -59,7 +59,7 @@ func EnsureCurrentForUser(ctx context.Context, q *Queries, userRef int64) (alrea
 	}
 
 	_, err = q.InsertUserKey(ctx, InsertUserKeyParams{
-		UserID:        userRef,
+		UserRef:        userRef,
 		Version:       1,
 		Algorithm:     Algorithm,
 		PublicKey:     pub,

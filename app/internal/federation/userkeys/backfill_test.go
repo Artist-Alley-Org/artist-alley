@@ -42,7 +42,7 @@ func keylessUserAtState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, a
 	}
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM federation_user_keys WHERE user_id = $1`, ref)
+		_, _ = pool.Exec(c, `DELETE FROM federation_user_keys WHERE user_ref = $1`, ref)
 		_, _ = pool.Exec(c, `DELETE FROM "user" WHERE ref = $1`, ref)
 	})
 	return ref

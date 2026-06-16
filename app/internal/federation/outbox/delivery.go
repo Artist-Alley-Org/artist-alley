@@ -807,7 +807,7 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 		       fuk.public_key, fuk.version, fuk.private_key_enc
 		  FROM activities a
 		  LEFT JOIN federation_user_keys fuk
-		    ON fuk.user_id = a.actor_user_ref
+		    ON fuk.user_ref = a.actor_user_ref
 		   AND fuk.is_current = TRUE
 		 WHERE a.id = $1
 	`, activityID).Scan(

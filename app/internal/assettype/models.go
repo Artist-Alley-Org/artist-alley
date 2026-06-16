@@ -107,6 +107,7 @@ type AssetFieldValue struct {
 	ValueNum     *float64           `json:"value_num"`
 	ValueDate    pgtype.Timestamptz `json:"value_date"`
 	ValueOptions []string           `json:"value_options"`
+	// UUID reference value for ref-typed fields. The _ref suffix follows the table's local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.
 	ValueRef     pgtype.UUID        `json:"value_ref"`
 	SetBy        string             `json:"set_by"`
 	SetAt        pgtype.Timestamptz `json:"set_at"`
@@ -166,7 +167,7 @@ type AuditEvent struct {
 
 type BrushPack struct {
 	ID             pgtype.UUID        `json:"id"`
-	OwnerRef       int64              `json:"owner_ref"`
+	OwnerUserRef   int64              `json:"owner_user_ref"`
 	Name           string             `json:"name"`
 	SourceFile     *string            `json:"source_file"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
@@ -431,7 +432,7 @@ type FederationShare struct {
 }
 
 type FederationUserKey struct {
-	UserID           int64              `json:"user_id"`
+	UserRef          int64              `json:"user_ref"`
 	Version          int32              `json:"version"`
 	Algorithm        string             `json:"algorithm"`
 	PublicKey        []byte             `json:"public_key"`
@@ -654,32 +655,15 @@ type User struct {
 	Usergroup               *int64             `json:"usergroup"`
 	LastActive              pgtype.Timestamptz `json:"last_active"`
 	LoggedIn                *int32             `json:"logged_in"`
-	LastBrowser             *string            `json:"last_browser"`
-	LastIp                  *string            `json:"last_ip"`
-	CurrentCollection       *int32             `json:"current_collection"`
-	AcceptedTerms           int32              `json:"accepted_terms"`
 	AccountExpires          pgtype.Timestamptz `json:"account_expires"`
 	Comments                *string            `json:"comments"`
 	Session                 *string            `json:"session"`
-	IpRestrict              *string            `json:"ip_restrict"`
-	SearchFilterOverride    *string            `json:"search_filter_override"`
 	PasswordLastChange      pgtype.Timestamptz `json:"password_last_change"`
-	LoginTries              int32              `json:"login_tries"`
-	LoginLastTry            pgtype.Timestamptz `json:"login_last_try"`
 	Approved                int64              `json:"approved"`
 	Lang                    *string            `json:"lang"`
 	Created                 pgtype.Timestamptz `json:"created"`
-	HiddenCollections       *string            `json:"hidden_collections"`
 	PasswordResetHash       *string            `json:"password_reset_hash"`
 	Origin                  *string            `json:"origin"`
-	UniqueHash              *string            `json:"unique_hash"`
-	CsrfToken               *string            `json:"csrf_token"`
-	SearchFilterOID         *int32             `json:"search_filter_o_id"`
-	ProfileImage            *string            `json:"profile_image"`
-	ProfileText             *string            `json:"profile_text"`
-	EmailInvalid            *int32             `json:"email_invalid"`
-	EmailRateLimitActive    *int32             `json:"email_rate_limit_active"`
-	ProcessingMessages      *string            `json:"processing_messages"`
 	ActorUri                *string            `json:"actor_uri"`
 	SigningPublicKeyPem     *string            `json:"signing_public_key_pem"`
 	SigningPrivateKeyEnc    []byte             `json:"signing_private_key_enc"`

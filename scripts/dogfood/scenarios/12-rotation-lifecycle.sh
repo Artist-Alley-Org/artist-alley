@@ -82,7 +82,7 @@ admin_ref=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley
 # can assert N+1 increments rather than guessing.
 admin_v_before=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT version FROM federation_user_keys
-      WHERE user_id = ${admin_ref} AND is_current = TRUE" | tr -d ' \r\n')
+      WHERE user_ref = ${admin_ref} AND is_current = TRUE" | tr -d ' \r\n')
 [ -n "$admin_v_before" ] || fail "admin has no current keypair (I-b backfill should have minted v1)"
 info "admin's pre-rotation current version: v${admin_v_before}"
 
@@ -124,7 +124,7 @@ db_state=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley 
         'rotated_by', rotated_by_user_ref
     ) ORDER BY version)
       FROM federation_user_keys
-     WHERE user_id = ${admin_ref}
+     WHERE user_ref = ${admin_ref}
        AND version IN (${admin_v_before}, ${new_v})")
 
 # Diagnostic dump — captures the full per-user state so a failure
@@ -139,8 +139,8 @@ all_keys=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley 
         'rotated_by', rotated_by_user_ref
     ) ORDER BY version)
       FROM federation_user_keys
-     WHERE user_id = ${admin_ref}")
-info "DIAG all_keys for user_id=${admin_ref}: ${all_keys}"
+     WHERE user_ref = ${admin_ref}")
+info "DIAG all_keys for user_ref=${admin_ref}: ${all_keys}"
 
 prev_rotated_by=$(echo "$db_state" | python3 -c "
 import sys, json
@@ -205,7 +205,7 @@ fi
 # rotation-from-existing flow.
 v1=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT COALESCE(MAX(version), 0) FROM federation_user_keys
-      WHERE user_id = ${fixture_ref} AND is_current = TRUE" | tr -d ' \r\n')
+      WHERE user_ref = ${fixture_ref} AND is_current = TRUE" | tr -d ' \r\n')
 [ "${v1}" = "1" ] || fail "fixture user has no v1 keypair (got max version=${v1}); /admin/seed/users should mint inline (I-b 'three wired paths' contract)"
 
 # Trigger admin rotation.
@@ -219,7 +219,7 @@ admin_body=$(echo "$admin_rotate_resp" | head -n -1)
 
 fixture_v2_rotated_by=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT rotated_by_user_ref FROM federation_user_keys
-      WHERE user_id = ${fixture_ref} AND version = 2" | tr -d ' \r\n')
+      WHERE user_ref = ${fixture_ref} AND version = 2" | tr -d ' \r\n')
 [ "${fixture_v2_rotated_by}" = "${admin_ref}" ] \
     || fail "fixture v2 rotated_by_user_ref = ${fixture_v2_rotated_by}, want ${admin_ref} (admin recovery, NOT self)"
 pass "admin recovery: subject=#${fixture_ref}, rotated_by=admin#${admin_ref}"
@@ -240,7 +240,7 @@ step "Phase C: sweeper reaps expired retained keys"
 docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "
     UPDATE federation_user_keys
        SET retained_until = NOW() - INTERVAL '1 day'
-     WHERE user_id = ${admin_ref}
+     WHERE user_ref = ${admin_ref}
        AND version = ${admin_v_before}
        AND is_current = FALSE" >/dev/null
 
@@ -254,14 +254,14 @@ reaped=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -t
          WHERE is_current = FALSE
            AND retained_until IS NOT NULL
            AND retained_until < NOW()
-        RETURNING user_id
+        RETURNING user_ref
     )
     SELECT COUNT(*) FROM deleted" | tr -d ' \r\n')
 [ "${reaped}" -ge "1" ] || fail "sweep query reaped ${reaped} rows; expected >=1"
 
 still_there=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT COUNT(*) FROM federation_user_keys
-      WHERE user_id = ${admin_ref} AND version = ${admin_v_before}" | tr -d ' \r\n')
+      WHERE user_ref = ${admin_ref} AND version = ${admin_v_before}" | tr -d ' \r\n')
 [ "${still_there}" = "0" ] || fail "admin's v${admin_v_before} retained row should be gone post-sweep; ${still_there} remain"
 pass "sweep reaped ${reaped} expired row(s); admin's v${admin_v_before} cleared"
 

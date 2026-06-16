@@ -717,9 +717,13 @@ CREATE TABLE public.brush_pack_stamps (
 -- Name: brush_packs; Type: TABLE; Schema: public; Owner: -
 --
 
+-- F-023 (cleanup-audit-2026-06.md): column renamed
+-- brush_packs.owner_ref → owner_user_ref to match the
+-- schema-wide ownership-FK convention used by assets,
+-- collections, posts, comments (`{owner,author}_user_ref`).
 CREATE TABLE public.brush_packs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    owner_ref bigint NOT NULL,
+    owner_user_ref bigint NOT NULL,
     name text NOT NULL,
     source_file text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -1311,6 +1315,12 @@ CREATE TABLE public.teams (
 -- Name: user; Type: TABLE; Schema: public; Owner: -
 --
 
+-- "user" table — post-1.49.C-2 baseline-squash trim. 17
+-- ResourceSpace-heritage columns (F-001..F-017 in the
+-- cleanup-audit-2026-06.md report) were dropped because they
+-- had zero non-generated Go consumers. Remaining columns are
+-- the ones actually used by the artist-alley auth / session /
+-- profile / federation surfaces.
 CREATE TABLE public."user" (
     ref bigint NOT NULL,
     username character varying(50),
@@ -1320,32 +1330,15 @@ CREATE TABLE public."user" (
     usergroup bigint,
     last_active timestamp with time zone,
     logged_in integer,
-    last_browser text,
-    last_ip character varying(100),
-    current_collection integer,
-    accepted_terms integer DEFAULT 0 NOT NULL,
     account_expires timestamp with time zone,
     comments text,
     session character varying(50),
-    ip_restrict text,
-    search_filter_override text,
     password_last_change timestamp with time zone,
-    login_tries integer DEFAULT 0 NOT NULL,
-    login_last_try timestamp with time zone,
     approved bigint DEFAULT 1 NOT NULL,
     lang character varying(11),
     created timestamp with time zone DEFAULT now(),
-    hidden_collections text,
     password_reset_hash character varying(100),
     origin character varying(50),
-    unique_hash character varying(50),
-    csrf_token character varying(255),
-    search_filter_o_id integer,
-    profile_image text,
-    profile_text character varying(500),
-    email_invalid integer DEFAULT 0,
-    email_rate_limit_active integer DEFAULT 0,
-    processing_messages text,
     actor_uri text,
     signing_public_key_pem text,
     signing_private_key_enc bytea,
@@ -2356,7 +2349,7 @@ CREATE INDEX brush_pack_stamps_pack_idx ON public.brush_pack_stamps USING btree 
 -- Name: brush_packs_owner_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX brush_packs_owner_idx ON public.brush_packs USING btree (owner_ref);
+CREATE INDEX brush_packs_owner_idx ON public.brush_packs USING btree (owner_user_ref);
 
 
 --
@@ -3170,7 +3163,7 @@ ALTER TABLE ONLY public.asset_alternates
 --
 
 ALTER TABLE ONLY public.asset_alternates
-    ADD CONSTRAINT asset_alternates_object_hash_fkey FOREIGN KEY (object_hash) REFERENCES public.storage_objects(hash);
+    ADD CONSTRAINT asset_alternates_object_hash_fkey FOREIGN KEY (object_hash) REFERENCES public.storage_objects(hash) ON DELETE RESTRICT;
 
 
 --
@@ -3186,7 +3179,7 @@ ALTER TABLE ONLY public.asset_companions
 --
 
 ALTER TABLE ONLY public.asset_companions
-    ADD CONSTRAINT asset_companions_object_hash_fkey FOREIGN KEY (object_hash) REFERENCES public.storage_objects(hash);
+    ADD CONSTRAINT asset_companions_object_hash_fkey FOREIGN KEY (object_hash) REFERENCES public.storage_objects(hash) ON DELETE RESTRICT;
 
 
 --
@@ -3226,7 +3219,7 @@ ALTER TABLE ONLY public.asset_type_acls
 --
 
 ALTER TABLE ONLY public.assets
-    ADD CONSTRAINT assets_asset_type_fkey FOREIGN KEY (asset_type) REFERENCES public.asset_types(ref);
+    ADD CONSTRAINT assets_asset_type_fkey FOREIGN KEY (asset_type) REFERENCES public.asset_types(ref) ON DELETE RESTRICT;
 
 
 --
@@ -3266,7 +3259,7 @@ ALTER TABLE ONLY public.brush_pack_stamps
 --
 
 ALTER TABLE ONLY public.brush_packs
-    ADD CONSTRAINT brush_packs_owner_ref_fkey FOREIGN KEY (owner_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+    ADD CONSTRAINT brush_packs_owner_user_ref_fkey FOREIGN KEY (owner_user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --
@@ -3362,7 +3355,7 @@ ALTER TABLE ONLY public.federation_shares
 --
 
 ALTER TABLE ONLY public.field_definition
-    ADD CONSTRAINT field_definition_deprecated_replacement_id_fkey FOREIGN KEY (deprecated_replacement_id) REFERENCES public.field_definition(id);
+    ADD CONSTRAINT field_definition_deprecated_replacement_id_fkey FOREIGN KEY (deprecated_replacement_id) REFERENCES public.field_definition(id) ON DELETE RESTRICT;
 
 
 --
@@ -3813,8 +3806,12 @@ CREATE TRIGGER federation_inbox_dispatch_notify_trg
 -- rotated_at / rotated_by_user_ref added in migration 00013 (Phase
 -- 1.22.I-h). Both nullable: legacy rows pre-I-h have NULL; rows
 -- minted or demoted by the rotation primitive carry both fields.
+-- F-021 (cleanup-audit-2026-06.md): column renamed
+-- federation_user_keys.user_id → user_ref to match the
+-- schema-wide BIGINT-FK-to-"user"(ref) convention (28+ other
+-- tables use `_user_ref`).
 CREATE TABLE public.federation_user_keys (
-    user_id             bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
+    user_ref            bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
     version             integer      NOT NULL CHECK (version >= 1),
     algorithm           text         NOT NULL DEFAULT 'naclbox-x25519-v1',
     public_key          bytea        NOT NULL CHECK (octet_length(public_key) = 32),
@@ -3824,14 +3821,14 @@ CREATE TABLE public.federation_user_keys (
     retained_until      timestamptz  NULL,
     rotated_at          timestamptz  NULL,
     rotated_by_user_ref bigint       NULL REFERENCES public."user"(ref) ON DELETE SET NULL,
-    PRIMARY KEY (user_id, version),
+    PRIMARY KEY (user_ref, version),
     CONSTRAINT federation_user_keys_current_xor_retained CHECK (
         (is_current = TRUE  AND retained_until IS NULL)
      OR (is_current = FALSE AND retained_until IS NOT NULL)
     )
 );
 CREATE UNIQUE INDEX federation_user_keys_one_current_idx
-    ON public.federation_user_keys (user_id)
+    ON public.federation_user_keys (user_ref)
     WHERE is_current = TRUE;
 CREATE INDEX federation_user_keys_retained_idx
     ON public.federation_user_keys (retained_until)
@@ -3950,3 +3947,13 @@ INSERT INTO public.workflow_transitions VALUES ('23306b7c-c570-4d50-9c22-875f778
 --
 -- Name: resource_type_ref_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
+
+-- F-022 (cleanup-audit-2026-06.md): document that the _ref suffix
+-- on asset_field_value.value_ref is the table's local multi-type
+-- value-column convention (sibling to value_text / value_num /
+-- value_date / value_options), NOT the schema-wide BIGINT-FK _ref
+-- rule. The column is a UUID storing a domain-object reference for
+-- ref-typed field values; renaming to value_id would break the
+-- sibling pattern. See the audit doc for the full rationale.
+COMMENT ON COLUMN public.asset_field_value.value_ref IS
+    'UUID reference value for ref-typed fields. The _ref suffix follows the table''s local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.';

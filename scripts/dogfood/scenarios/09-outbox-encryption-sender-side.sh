@@ -97,14 +97,14 @@ admin_ref=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley
 # Confirm both sides have current federation_user_keys rows (I-b).
 a_keylen=$(docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(public_key) FROM federation_user_keys
-     WHERE user_id = ${admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+     WHERE user_ref = ${admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
 [ "$a_keylen" = "32" ] || fail "studio-a admin has no current keypair (I-b not bootstrapped)"
 
 b_admin_ref=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
     "SELECT ref FROM \"user\" WHERE username = 'admin' LIMIT 1" | tr -d ' \r\n')
 b_keylen=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(public_key) FROM federation_user_keys
-     WHERE user_id = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+     WHERE user_ref = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
 [ "$b_keylen" = "32" ] || fail "studio-b admin has no current keypair (I-b not bootstrapped)"
 
 actor_uri="http://studio-a.local/users/admin"
@@ -182,7 +182,7 @@ if [ "$a_remote_key" != "32" ]; then
     b_admin_pubkey_hex=$(docker compose exec -T postgres-b psql -U artist_alley -d artist_alley -tAc \
         "SELECT encode(public_key, 'hex')
          FROM federation_user_keys
-         WHERE user_id = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+         WHERE user_ref = ${b_admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
     [ -n "$b_admin_pubkey_hex" ] && [ "${#b_admin_pubkey_hex}" = "64" ] \
         || fail "studio-b admin pubkey readback malformed: hex='${b_admin_pubkey_hex}' len=${#b_admin_pubkey_hex}"
     docker compose exec -T postgres psql -U artist_alley -d artist_alley -v ON_ERROR_STOP=1 -c "

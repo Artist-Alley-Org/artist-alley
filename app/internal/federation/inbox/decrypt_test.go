@@ -111,7 +111,7 @@ func seedUserKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userRef 
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO federation_user_keys (
-		    user_id, version, algorithm, public_key, private_key_enc, is_current, retained_until
+		    user_ref, version, algorithm, public_key, private_key_enc, is_current, retained_until
 		) VALUES ($1, $2, 'naclbox-x25519-v1', $3, $4, $5, $6)`,
 		userRef, version, pub, wrappedPriv, isCurrent, retainedArg,
 	); err != nil {
