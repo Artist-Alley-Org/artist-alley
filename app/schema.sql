@@ -3957,3 +3957,27 @@ INSERT INTO public.workflow_transitions VALUES ('23306b7c-c570-4d50-9c22-875f778
 -- sibling pattern. See the audit doc for the full rationale.
 COMMENT ON COLUMN public.asset_field_value.value_ref IS
     'UUID reference value for ref-typed fields. The _ref suffix follows the table''s local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.';
+
+-- Phase 1.18.B-3 — Subtitle / caption tracks (migration 00002).
+-- Child table of `assets` with CASCADE delete. NOT counted toward
+-- asset totals (separate table). See subtitles package + the
+-- 00002_subtitle_tracks.sql migration for the full rationale.
+CREATE TABLE public.asset_subtitle_tracks (
+    asset_id       uuid   NOT NULL
+        REFERENCES public.assets(id) ON DELETE CASCADE,
+    lang           text   NOT NULL
+        CHECK (lang ~ '^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$' OR lang = 'und'),
+    label          text   NOT NULL DEFAULT '',
+    file_hash      text   NOT NULL,
+    source_format  text   NOT NULL
+        CHECK (source_format IN ('vtt','srt','ssa','ass','sub','idx')),
+    confidence     real   NOT NULL DEFAULT 1.0
+        CHECK (confidence >= 0 AND confidence <= 1),
+    created_at     timestamptz NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (asset_id, lang)
+);
+
+-- Per-post override for the parent asset's subtitle tracks.
+-- NULL means use the asset's intrinsic tracks (99% case).
+ALTER TABLE public.posts
+    ADD COLUMN subtitle_track_override jsonb;

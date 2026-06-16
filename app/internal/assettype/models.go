@@ -125,6 +125,16 @@ type AssetFieldValueHistory struct {
 	SetBy            string             `json:"set_by"`
 }
 
+type AssetSubtitleTrack struct {
+	AssetID      pgtype.UUID        `json:"asset_id"`
+	Lang         string             `json:"lang"`
+	Label        string             `json:"label"`
+	FileHash     string             `json:"file_hash"`
+	SourceFormat string             `json:"source_format"`
+	Confidence   float32            `json:"confidence"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type AssetTag struct {
 	AssetID pgtype.UUID        `json:"asset_id"`
 	Tag     string             `json:"tag"`
@@ -532,6 +542,7 @@ type Post struct {
 	StateID               pgtype.UUID        `json:"state_id"`
 	TeamID                pgtype.UUID        `json:"team_id"`
 	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
+	SubtitleTrackOverride []byte             `json:"subtitle_track_override"`
 }
 
 type PostAcl struct {
