@@ -22,6 +22,28 @@ excerpt: >-
   sequence. After v1.0 launch, squashes are forbidden; the
   migration history becomes append-only forever.
 ---
+
+## Implementation status (2026-06-15)
+
+The pre-MVP baseline squash is **in progress**:
+
+- **1.49.C-1 audit** ✅ shipped via PR #132 (`b3b796b`). The first
+  audit report under this ADR's policy lives at
+  [`docs/cleanup-audit-2026-06.md`](../cleanup-audit-2026-06.md) —
+  26 findings (17 drop-recommended, 9 cosmetic, 0 critical) across
+  14 migrations / 61 tables / 64 FKs / 149 indexes. Closes #81.
+- **1.49.C-2 squash** ⏭ ready to ship. Scope locked at 24
+  single-line schema edits (17 column drops + 2 renames + 4 FK
+  annotations + 1 column comment) per the audit's "Recommended C-2
+  net changes" section. Tracked at #82.
+- **Future audits.** This ADR's audit-report shape (§ "Audit-report
+  shape" below) is now exercised end-to-end; the `docs/
+  cleanup-audit-<date>.md` filename pattern is locked. Subsequent
+  pre-MVP audits (if any) follow the same template.
+
+After 1.49.C-2 lands + v1.0.0 ships, this ADR's append-only
+clause activates. No further squashes permitted.
+
 ## Context
 
 The Artist Alley codebase landed its first 60ish migrations during

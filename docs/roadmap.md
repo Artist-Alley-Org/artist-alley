@@ -439,6 +439,25 @@ roughly in order of practical value to operators.
 
 The phases queued behind the current focus, in build order:
 
+- **Pre-MVP cleanup** (Phase 1.49). Foundational debt-clearing for
+  the v1.0 release. Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
+  pre-MVP migrations MAY be squashed once into a single baseline;
+  after v1.0.0 tag, migrations become append-only forever.
+  Sub-phases:
+  - ✅ 1.49.A — PanicShim consolidation (shipped)
+  - ✅ 1.49.B — Legacy fallback drop (shipped)
+  - ✅ 1.49.C-1 — DB schema audit report (shipped via PR #132;
+    [`docs/cleanup-audit-2026-06.md`](https://github.com/mscrnt/artist-alley/blob/dev/docs/cleanup-audit-2026-06.md);
+    26 findings)
+  - ⏭ 1.49.C-2 — Flatten migrations to `00001_baseline_v1.sql`
+    (scope locked at 24 single-line schema edits derived from the
+    audit; tracked at [#82](https://github.com/mscrnt/artist-alley/issues/82))
+  - ⏭ 1.49.D — Scrub product references from source (clean-room
+    on a stable baseline)
+
+  Gates the v1.0.0 release tag. Soak-compatible — the audit + the
+  squash + the scrub all touch DB schema / docs / source-text only;
+  the federation runtime is not affected.
 
 - **Identity & teams** (Phase 1.17). Groups + team hierarchy,
   active session management, capability grants. Extended with: **table-level change tracking** with before / after
