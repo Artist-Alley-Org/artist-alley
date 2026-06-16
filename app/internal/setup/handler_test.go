@@ -148,7 +148,7 @@ func TestSetupFlow_HappyPath(t *testing.T) {
 		if err := fx.pool.QueryRow(ctx, `
 			SELECT COUNT(*), MAX(algorithm), bool_or(is_current)
 			  FROM federation_user_keys
-			 WHERE user_id = (SELECT ref FROM "user" WHERE username = $1)
+			 WHERE user_ref = (SELECT ref FROM "user" WHERE username = $1)
 			`, fx.adminUsername).Scan(&keyCount, &algorithm, &isCurrent); err != nil {
 			t.Fatalf("lookup federation_user_keys: %v", err)
 		}

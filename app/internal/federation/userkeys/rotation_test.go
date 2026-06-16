@@ -146,7 +146,7 @@ func TestRotateForUser_DemotedRowCarriesRetentionAndMetadata(t *testing.T) {
 	}
 
 	v1, err := userkeys.New(pool).GetUserKeyByVersion(ctx,
-		userkeys.GetUserKeyByVersionParams{UserID: ref, Version: 1})
+		userkeys.GetUserKeyByVersionParams{UserRef: ref, Version: 1})
 	if err != nil {
 		t.Fatalf("GetUserKeyByVersion v1: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestRotateForUser_NewRowRecordsRotatedByUserRef(t *testing.T) {
 	}
 
 	v2, err := userkeys.New(pool).GetUserKeyByVersion(ctx,
-		userkeys.GetUserKeyByVersionParams{UserID: ref, Version: 2})
+		userkeys.GetUserKeyByVersionParams{UserRef: ref, Version: 2})
 	if err != nil {
 		t.Fatalf("GetUserKeyByVersion v2: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestRotateForUser_DistinguishesSelfVsAdminRotation(t *testing.T) {
 	}
 
 	v2, err := userkeys.New(pool).GetUserKeyByVersion(ctx,
-		userkeys.GetUserKeyByVersionParams{UserID: subject, Version: 2})
+		userkeys.GetUserKeyByVersionParams{UserRef: subject, Version: 2})
 	if err != nil {
 		t.Fatalf("GetUserKeyByVersion: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestRotateForUser_NonPositiveRetentionFallsBackToDefault(t *testing.T) {
 	// that's true after a 0-day request is the normalisation
 	// firing.
 	v1, err := userkeys.New(pool).GetUserKeyByVersion(ctx,
-		userkeys.GetUserKeyByVersionParams{UserID: ref, Version: 1})
+		userkeys.GetUserKeyByVersionParams{UserRef: ref, Version: 1})
 	if err != nil {
 		t.Fatalf("GetUserKeyByVersion: %v", err)
 	}

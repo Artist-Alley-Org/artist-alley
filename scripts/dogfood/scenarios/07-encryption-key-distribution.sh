@@ -90,7 +90,7 @@ admin_ref=$(docker compose exec -T postgres psql \
 a_keylen=$(docker compose exec -T postgres psql \
     -U artist_alley -d artist_alley -tAc \
     "SELECT octet_length(public_key) FROM federation_user_keys
-     WHERE user_id = ${admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
+     WHERE user_ref = ${admin_ref} AND is_current = TRUE LIMIT 1" | tr -d ' \r\n')
 if [ "$a_keylen" != "32" ]; then
     fail "studio-a admin has no current federation_user_keys row (len=${a_keylen}) — was 1.22.I-b applied?"
 fi

@@ -48,7 +48,7 @@ func seedExpiredRetained(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	priv := []byte("nonempty>=13bytes-padding") // CHECK >= 13 bytes
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO federation_user_keys (
-			user_id, version, algorithm, public_key, private_key_enc,
+			user_ref, version, algorithm, public_key, private_key_enc,
 			is_current, retained_until
 		) VALUES ($1, 1, 'naclbox-x25519-v1', $2, $3, FALSE, NOW() + $4::interval)`,
 		ref, pub, priv, offset.String(),
@@ -88,7 +88,7 @@ func TestSweeper_ReapsExpiredRetainedRows(t *testing.T) {
 	for _, ref := range refs {
 		var n int
 		if err := pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`,
+			`SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1`,
 			ref,
 		).Scan(&n); err != nil {
 			t.Fatalf("count rows for ref=%d: %v", ref, err)
@@ -118,7 +118,7 @@ func TestSweeper_PreservesNonExpiredRetainedRows(t *testing.T) {
 
 	var n int
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`,
+		`SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1`,
 		ref,
 	).Scan(&n); err != nil {
 		t.Fatalf("count rows: %v", err)
@@ -165,7 +165,7 @@ func TestSweeper_ZeroReapsDoesNotFireAudit(t *testing.T) {
 	ctx := context.Background()
 
 	// No expired retained rows for our fixture user — sweep
-	// against our user_id only via a pre-clean step.
+	// against our user_ref only via a pre-clean step.
 	var auditCount atomic.Int64
 	hook := func(_ context.Context, count int64) {
 		auditCount.Add(count)

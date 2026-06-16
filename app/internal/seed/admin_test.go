@@ -393,7 +393,7 @@ func TestCreateUser_HappyPath_PasswordHashedAndPersisted(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `
 		SELECT COUNT(*), MAX(algorithm), bool_or(is_current)
 		  FROM federation_user_keys
-		 WHERE user_id = $1
+		 WHERE user_ref = $1
 	`, res.Ref).Scan(&keyCount, &algorithm, &isCurrent); err != nil {
 		t.Fatalf("federation_user_keys query: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestCreateUser_IdempotentOnUsername(t *testing.T) {
 	// EnsureCurrentForUser's idempotency contract (1.22.I-b).
 	var keyCount int
 	if err := pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`,
+		`SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1`,
 		first.Ref).Scan(&keyCount); err != nil {
 		t.Fatalf("federation_user_keys count: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestCreateUser_BackfillsKeyForPreExistingKeylessUser(t *testing.T) {
 	// Confirm no key exists.
 	var preCount int
 	_ = pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1`, ref,
+		`SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1`, ref,
 	).Scan(&preCount)
 	if preCount != 0 {
 		t.Fatalf("test setup: pre-existing user already has key (count=%d)", preCount)
@@ -545,7 +545,7 @@ func TestCreateUser_BackfillsKeyForPreExistingKeylessUser(t *testing.T) {
 	var postCount int
 	var isCurrent bool
 	if err := pool.QueryRow(context.Background(),
-		`SELECT COUNT(*), bool_or(is_current) FROM federation_user_keys WHERE user_id = $1`,
+		`SELECT COUNT(*), bool_or(is_current) FROM federation_user_keys WHERE user_ref = $1`,
 		ref).Scan(&postCount, &isCurrent); err != nil {
 		t.Fatalf("post-count: %v", err)
 	}

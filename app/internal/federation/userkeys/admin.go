@@ -126,7 +126,7 @@ func (h *AdminHandler) resultToAPI(result *RotationResult, retentionDays int) op
 	prev := result.PreviousVersion
 	days := int32(retentionDays)
 	out := openapi.UserKeyRotationResult{
-		UserRef:           result.UserID,
+		UserRef:           result.UserRef,
 		NewVersion:        result.NewVersion,
 		PreviousVersion:   &prev,
 		NewPublicKeyB64:   base64.StdEncoding.EncodeToString(result.NewPublicKey),
@@ -258,7 +258,7 @@ func (h *AdminHandler) GetFederationKeyHealth(
 			continue
 		}
 		rotationsAPI = append(rotationsAPI, openapi.FederationKeyRotationEvent{
-			UserRef:          r.UserID,
+			UserRef:          r.UserRef,
 			Version:          r.Version,
 			RotatedAt:        r.RotatedAt.Time,
 			RotatedByUserRef: r.RotatedByUserRef,

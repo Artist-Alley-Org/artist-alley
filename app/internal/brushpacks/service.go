@@ -118,7 +118,7 @@ func (s *Service) ImportABR(ctx context.Context, ownerRef int64, name, sourceFil
 	qtx := s.q.WithTx(tx)
 
 	pack, err := qtx.CreatePack(ctx, CreatePackParams{
-		OwnerRef:   ownerRef,
+		OwnerUserRef:   ownerRef,
 		Name:       name,
 		SourceFile: nilStr(sourceFile),
 	})
@@ -170,7 +170,7 @@ func (s *Service) ListPacks(ctx context.Context, ownerRef int64) ([]BrushPack, e
 // when the pack doesn't belong to the owner (which intentionally
 // looks identical to "doesn't exist").
 func (s *Service) GetPack(ctx context.Context, ownerRef int64, packID pgtype.UUID) (*BrushPack, []BrushPackStamp, error) {
-	pack, err := s.q.GetPackForOwner(ctx, GetPackForOwnerParams{ID: packID, OwnerRef: ownerRef})
+	pack, err := s.q.GetPackForOwner(ctx, GetPackForOwnerParams{ID: packID, OwnerUserRef: ownerRef})
 	if err != nil {
 		if isNoRows(err) {
 			return nil, nil, ErrPackNotFound
@@ -190,7 +190,7 @@ func (s *Service) GetPack(ctx context.Context, ownerRef int64, packID pgtype.UUI
 // addressing makes dedup the default). A future GC pass walks
 // brush_pack_stamps.storage_key to find orphaned objects.
 func (s *Service) DeletePack(ctx context.Context, ownerRef int64, packID pgtype.UUID) error {
-	n, err := s.q.DeletePackForOwner(ctx, DeletePackForOwnerParams{ID: packID, OwnerRef: ownerRef})
+	n, err := s.q.DeletePackForOwner(ctx, DeletePackForOwnerParams{ID: packID, OwnerUserRef: ownerRef})
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (s *Service) DeletePack(ctx context.Context, ownerRef int64, packID pgtype.
 // asking owner. Caller MUST close the returned reader. Validates
 // ownership via the stamps→packs join before opening storage.
 func (s *Service) OpenStamp(ctx context.Context, ownerRef int64, stampID pgtype.UUID) (io.ReadCloser, *BrushPackStamp, error) {
-	row, err := s.q.GetStampForOwner(ctx, GetStampForOwnerParams{ID: stampID, OwnerRef: ownerRef})
+	row, err := s.q.GetStampForOwner(ctx, GetStampForOwnerParams{ID: stampID, OwnerUserRef: ownerRef})
 	if err != nil {
 		if isNoRows(err) {
 			return nil, nil, ErrStampNotFound

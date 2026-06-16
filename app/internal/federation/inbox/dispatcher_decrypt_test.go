@@ -485,7 +485,7 @@ func TestDispatcher_EncryptedEnvelope_RetainedKeyFallback(t *testing.T) {
 	// Rotate: v1 stops being current, v2 becomes current.
 	if _, err := fx.pool.Exec(ctx,
 		`UPDATE federation_user_keys SET is_current = FALSE, retained_until = $1
-		   WHERE user_id = $2 AND version = 1`,
+		   WHERE user_ref = $2 AND version = 1`,
 		time.Now().Add(7*24*time.Hour), fx.recipientRef,
 	); err != nil {
 		t.Fatalf("rotate v1: %v", err)
@@ -703,7 +703,7 @@ func fetchUserCurrentPub(t *testing.T, pool *pgxpool.Pool, userRef int64) []byte
 	t.Helper()
 	var pub []byte
 	if err := pool.QueryRow(context.Background(),
-		`SELECT public_key FROM federation_user_keys WHERE user_id = $1 AND is_current = TRUE LIMIT 1`,
+		`SELECT public_key FROM federation_user_keys WHERE user_ref = $1 AND is_current = TRUE LIMIT 1`,
 		userRef,
 	).Scan(&pub); err != nil {
 		t.Fatalf("fetch current pub: %v", err)
@@ -715,7 +715,7 @@ func fetchUserPubByVersion(t *testing.T, pool *pgxpool.Pool, userRef int64, vers
 	t.Helper()
 	var pub []byte
 	if err := pool.QueryRow(context.Background(),
-		`SELECT public_key FROM federation_user_keys WHERE user_id = $1 AND version = $2`,
+		`SELECT public_key FROM federation_user_keys WHERE user_ref = $1 AND version = $2`,
 		userRef, version,
 	).Scan(&pub); err != nil {
 		t.Fatalf("fetch v%d pub: %v", version, err)

@@ -107,6 +107,7 @@ type AssetFieldValue struct {
 	ValueNum     *float64
 	ValueDate    pgtype.Timestamptz
 	ValueOptions []string
+	// UUID reference value for ref-typed fields. The _ref suffix follows the table's local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.
 	ValueRef     pgtype.UUID
 	SetBy        string
 	SetAt        pgtype.Timestamptz
@@ -166,7 +167,7 @@ type AuditEvent struct {
 
 type BrushPack struct {
 	ID             pgtype.UUID
-	OwnerRef       int64
+	OwnerUserRef   int64
 	Name           string
 	SourceFile     *string
 	CreatedAt      pgtype.Timestamptz
@@ -431,7 +432,7 @@ type FederationShare struct {
 }
 
 type FederationUserKey struct {
-	UserID           int64
+	UserRef          int64
 	Version          int32
 	Algorithm        string
 	PublicKey        []byte
@@ -654,32 +655,15 @@ type User struct {
 	Usergroup               *int64
 	LastActive              pgtype.Timestamptz
 	LoggedIn                *int32
-	LastBrowser             *string
-	LastIp                  *string
-	CurrentCollection       *int32
-	AcceptedTerms           int32
 	AccountExpires          pgtype.Timestamptz
 	Comments                *string
 	Session                 *string
-	IpRestrict              *string
-	SearchFilterOverride    *string
 	PasswordLastChange      pgtype.Timestamptz
-	LoginTries              int32
-	LoginLastTry            pgtype.Timestamptz
 	Approved                int64
 	Lang                    *string
 	Created                 pgtype.Timestamptz
-	HiddenCollections       *string
 	PasswordResetHash       *string
 	Origin                  *string
-	UniqueHash              *string
-	CsrfToken               *string
-	SearchFilterOID         *int32
-	ProfileImage            *string
-	ProfileText             *string
-	EmailInvalid            *int32
-	EmailRateLimitActive    *int32
-	ProcessingMessages      *string
 	ActorUri                *string
 	SigningPublicKeyPem     *string
 	SigningPrivateKeyEnc    []byte

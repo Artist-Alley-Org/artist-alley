@@ -13,29 +13,29 @@ import (
 
 const createPack = `-- name: CreatePack :one
 
-INSERT INTO brush_packs (owner_ref, name, source_file)
+INSERT INTO brush_packs (owner_user_ref, name, source_file)
 VALUES ($1, $2, $3)
-RETURNING id, owner_ref, name, source_file, created_at, origin_server_id
+RETURNING id, owner_user_ref, name, source_file, created_at, origin_server_id
 `
 
 type CreatePackParams struct {
-	OwnerRef   int64
-	Name       string
-	SourceFile *string
+	OwnerUserRef int64
+	Name         string
+	SourceFile   *string
 }
 
 // queries for the brushpacks package (Phase 1.21c).
 //
-// All queries are owner-scoped — every read takes `owner_ref` so a
+// All queries are owner-scoped — every read takes `owner_user_ref` so a
 // user can't enumerate or fetch someone else's pack metadata. The
 // HTTP handler is responsible for authn (resolving the session →
-// owner_ref); these queries are the second line of defence.
+// owner_user_ref); these queries are the second line of defence.
 func (q *Queries) CreatePack(ctx context.Context, arg CreatePackParams) (BrushPack, error) {
-	row := q.db.QueryRow(ctx, createPack, arg.OwnerRef, arg.Name, arg.SourceFile)
+	row := q.db.QueryRow(ctx, createPack, arg.OwnerUserRef, arg.Name, arg.SourceFile)
 	var i BrushPack
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerRef,
+		&i.OwnerUserRef,
 		&i.Name,
 		&i.SourceFile,
 		&i.CreatedAt,
@@ -46,12 +46,12 @@ func (q *Queries) CreatePack(ctx context.Context, arg CreatePackParams) (BrushPa
 
 const deletePackForOwner = `-- name: DeletePackForOwner :execrows
 DELETE FROM brush_packs
-WHERE id = $1 AND owner_ref = $2
+WHERE id = $1 AND owner_user_ref = $2
 `
 
 type DeletePackForOwnerParams struct {
-	ID       pgtype.UUID
-	OwnerRef int64
+	ID           pgtype.UUID
+	OwnerUserRef int64
 }
 
 // Returns rows affected so the handler can 404 when the pack didn't
@@ -61,7 +61,7 @@ type DeletePackForOwnerParams struct {
 // layer before this query runs (storage is best-effort cleanup
 // since DB deletion is the source of truth).
 func (q *Queries) DeletePackForOwner(ctx context.Context, arg DeletePackForOwnerParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePackForOwner, arg.ID, arg.OwnerRef)
+	result, err := q.db.Exec(ctx, deletePackForOwner, arg.ID, arg.OwnerUserRef)
 	if err != nil {
 		return 0, err
 	}
@@ -69,25 +69,25 @@ func (q *Queries) DeletePackForOwner(ctx context.Context, arg DeletePackForOwner
 }
 
 const getPackForOwner = `-- name: GetPackForOwner :one
-SELECT id, owner_ref, name, source_file, created_at, origin_server_id
+SELECT id, owner_user_ref, name, source_file, created_at, origin_server_id
 FROM brush_packs
-WHERE id = $1 AND owner_ref = $2
+WHERE id = $1 AND owner_user_ref = $2
 `
 
 type GetPackForOwnerParams struct {
-	ID       pgtype.UUID
-	OwnerRef int64
+	ID           pgtype.UUID
+	OwnerUserRef int64
 }
 
 // Scoped GET — returns sql.ErrNoRows when the pack doesn't exist OR
 // exists but belongs to someone else. Callers map that to 404, which
 // avoids leaking pack existence across owners.
 func (q *Queries) GetPackForOwner(ctx context.Context, arg GetPackForOwnerParams) (BrushPack, error) {
-	row := q.db.QueryRow(ctx, getPackForOwner, arg.ID, arg.OwnerRef)
+	row := q.db.QueryRow(ctx, getPackForOwner, arg.ID, arg.OwnerUserRef)
 	var i BrushPack
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerRef,
+		&i.OwnerUserRef,
 		&i.Name,
 		&i.SourceFile,
 		&i.CreatedAt,
@@ -102,12 +102,12 @@ SELECT s.id, s.pack_id, s.abr_id, s.label, s.width, s.height,
        s.size_jitter, s.opacity_jitter, s.angle_jitter, s.created_at
 FROM brush_pack_stamps s
 JOIN brush_packs p ON p.id = s.pack_id
-WHERE s.id = $1 AND p.owner_ref = $2
+WHERE s.id = $1 AND p.owner_user_ref = $2
 `
 
 type GetStampForOwnerParams struct {
-	ID       pgtype.UUID
-	OwnerRef int64
+	ID           pgtype.UUID
+	OwnerUserRef int64
 }
 
 // Cross-checks the stamp's pack belongs to the owner before
@@ -115,7 +115,7 @@ type GetStampForOwnerParams struct {
 // the handler then streams the bytes from storage using
 // storage_key.
 func (q *Queries) GetStampForOwner(ctx context.Context, arg GetStampForOwnerParams) (BrushPackStamp, error) {
-	row := q.db.QueryRow(ctx, getStampForOwner, arg.ID, arg.OwnerRef)
+	row := q.db.QueryRow(ctx, getStampForOwner, arg.ID, arg.OwnerUserRef)
 	var i BrushPackStamp
 	err := row.Scan(
 		&i.ID,
@@ -201,16 +201,16 @@ func (q *Queries) InsertStamp(ctx context.Context, arg InsertStampParams) (Brush
 }
 
 const listPacksForOwner = `-- name: ListPacksForOwner :many
-SELECT id, owner_ref, name, source_file, created_at, origin_server_id
+SELECT id, owner_user_ref, name, source_file, created_at, origin_server_id
 FROM brush_packs
-WHERE owner_ref = $1
+WHERE owner_user_ref = $1
 ORDER BY created_at DESC
 `
 
 // Most-recent first so the panel shows the user's latest import at
 // the top of the brush-pack picker.
-func (q *Queries) ListPacksForOwner(ctx context.Context, ownerRef int64) ([]BrushPack, error) {
-	rows, err := q.db.Query(ctx, listPacksForOwner, ownerRef)
+func (q *Queries) ListPacksForOwner(ctx context.Context, ownerUserRef int64) ([]BrushPack, error) {
+	rows, err := q.db.Query(ctx, listPacksForOwner, ownerUserRef)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (q *Queries) ListPacksForOwner(ctx context.Context, ownerRef int64) ([]Brus
 		var i BrushPack
 		if err := rows.Scan(
 			&i.ID,
-			&i.OwnerRef,
+			&i.OwnerUserRef,
 			&i.Name,
 			&i.SourceFile,
 			&i.CreatedAt,

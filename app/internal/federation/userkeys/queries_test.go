@@ -115,7 +115,7 @@ func freshKeyParams(t *testing.T, userRef int64, version int32, isCurrent bool) 
 		t.Fatalf("Generate: %v", err)
 	}
 	p := userkeys.InsertUserKeyParams{
-		UserID:        userRef,
+		UserRef:        userRef,
 		Version:       version,
 		Algorithm:     userkeys.Algorithm,
 		PublicKey:     pub,
@@ -152,7 +152,7 @@ func TestQueries_InsertAndGetCurrent_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCurrentUserKey: %v", err)
 	}
-	if got.UserID != userRef || got.Version != 1 || !got.IsCurrent {
+	if got.UserRef != userRef || got.Version != 1 || !got.IsCurrent {
 		t.Fatalf("GetCurrentUserKey shape: %+v", got)
 	}
 	if !bytesEqual(got.PublicKey, in.PublicKey) {
@@ -210,7 +210,7 @@ func TestQueries_GetUserKeyByVersion_FindsExactRow(t *testing.T) {
 	}
 
 	got, err := q.GetUserKeyByVersion(ctx, userkeys.GetUserKeyByVersionParams{
-		UserID:  userRef,
+		UserRef:  userRef,
 		Version: 1,
 	})
 	if err != nil {

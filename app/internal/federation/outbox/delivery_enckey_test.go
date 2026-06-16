@@ -53,9 +53,9 @@ func TestBuildEnvelope_IncludesEncryptionKeyWhenUserHasOne(t *testing.T) {
 	wantKey := randomEncKey(t)
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO federation_user_keys (
-		    user_id, version, algorithm, public_key, private_key_enc, is_current
+		    user_ref, version, algorithm, public_key, private_key_enc, is_current
 		 ) VALUES ($1, 1, 'naclbox-x25519-v1', $2, $3, TRUE)
-		 ON CONFLICT (user_id, version) DO UPDATE
+		 ON CONFLICT (user_ref, version) DO UPDATE
 		 SET public_key = EXCLUDED.public_key, is_current = TRUE`,
 		grantorRef, wantKey, make([]byte, 13),
 	); err != nil {
@@ -71,7 +71,7 @@ func TestBuildEnvelope_IncludesEncryptionKeyWhenUserHasOne(t *testing.T) {
 		SELECT fuk.public_key, fuk.version
 		  FROM "user" u
 		  LEFT JOIN federation_user_keys fuk
-		    ON fuk.user_id = u.ref AND fuk.is_current = TRUE
+		    ON fuk.user_ref = u.ref AND fuk.is_current = TRUE
 		 WHERE u.ref = $1`, grantorRef,
 	).Scan(&joinKey, &joinVer); err != nil {
 		t.Fatalf("sanity join: %v", err)
@@ -146,7 +146,7 @@ func TestBuildEnvelope_OmitsEncryptionKeyWhenUserHasNone(t *testing.T) {
 	worker, _, _, grantorRef, _, _ := newDeliveryFixture(t, http.StatusAccepted, &capturedBody)
 
 	if _, err := pool.Exec(context.Background(),
-		`DELETE FROM federation_user_keys WHERE user_id = $1`, grantorRef,
+		`DELETE FROM federation_user_keys WHERE user_ref = $1`, grantorRef,
 	); err != nil {
 		t.Fatalf("ensure keyless precondition: %v", err)
 	}

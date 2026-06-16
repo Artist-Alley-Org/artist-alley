@@ -508,3 +508,39 @@ The pre-MVP DB is **in good shape for the v1.0 baseline squash.** 26 findings to
 Net schema change in C-2 against this audit: **17 column drops + 2 column renames + 4 FK annotations + 1 column comment = 24 single-line schema edits in the new `00001_baseline_v1.sql`.**
 
 **Soak-window note:** none of the above touches federation runtime *code*; they all live in the baseline migration. The v1.0-rc1 federation soak (through 2026-06-22) is unaffected by either this audit (read-only) or the future C-2 (DB schema only, no runtime).
+
+---
+
+## C-2 action log (2026-06-16)
+
+The C-2 squash (PR coming next) acted on each finding from this audit:
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| F-001 `"user".accepted_terms` | drop-recommended | DROPPED |
+| F-002 `"user".csrf_token` | drop-recommended | DROPPED |
+| F-003 `"user".current_collection` | drop-recommended | DROPPED |
+| F-004 `"user".email_invalid` | drop-recommended | DROPPED |
+| F-005 `"user".email_rate_limit_active` | drop-recommended | DROPPED |
+| F-006 `"user".hidden_collections` | drop-recommended | DROPPED |
+| F-007 `"user".ip_restrict` | drop-recommended | DROPPED |
+| F-008 `"user".last_browser` | drop-recommended | DROPPED |
+| F-009 `"user".last_ip` | drop-recommended | DROPPED |
+| F-010 `"user".login_last_try` | drop-recommended | DROPPED |
+| F-011 `"user".login_tries` | drop-recommended | DROPPED |
+| F-012 `"user".processing_messages` | drop-recommended | DROPPED |
+| F-013 `"user".profile_image` | drop-recommended | DROPPED |
+| F-014 `"user".profile_text` | drop-recommended | DROPPED |
+| F-015 `"user".search_filter_o_id` | drop-recommended | DROPPED |
+| F-016 `"user".search_filter_override` | drop-recommended | DROPPED |
+| F-017 `"user".unique_hash` | drop-recommended | DROPPED |
+| F-018 4 FKs without explicit `ON DELETE` | cosmetic | ANNOTATED `ON DELETE RESTRICT` (4 of 4) |
+| F-019 `comments` annotation-type partial indexes | cosmetic | DEFERRED — flagged for post-MVP perf pass |
+| F-020 `assets` 10-index spread | cosmetic | DEFERRED — flagged for post-MVP perf pass |
+| F-021 `federation_user_keys.user_id` → `user_ref` | cosmetic | RENAMED (column + indexes + FK + Go callers) |
+| F-022 `asset_field_value.value_ref` naming | cosmetic | DOCUMENTED via `COMMENT ON COLUMN` (NOT renamed; intentional local convention per the audit's borderline note) |
+| F-023 `brush_packs.owner_ref` → `owner_user_ref` | cosmetic | RENAMED (column + index + FK + Go callers) |
+
+**Net schema change in C-2 against this audit:** 17 column drops + 2 column renames + 4 FK annotations + 1 column comment = 24 single-line schema edits in the new `00001_baseline_v1.sql`. Plus the inherited additive layering from the 14 prior migrations (Phase 1.22.I encryption-arc columns, federation_user_keys + rotation metadata, etc.) all absorbed into the single canonical end-state.
+
+**Closes the audit-to-action traceability loop.** A future reader asking "what happened to F-007?" or "did anyone act on F-019?" can answer from this table in one place. The audit document itself stays as a permanent record per ADR 0046 — it's the input that motivated the squash; the squash commit is the output.

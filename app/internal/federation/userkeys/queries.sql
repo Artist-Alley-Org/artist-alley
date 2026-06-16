@@ -29,7 +29,7 @@
 -- retention window — usually nothing to do at insert time, the
 -- rotation path UPDATEs the previously-current row instead).
 INSERT INTO federation_user_keys (
-    user_id,
+    user_ref,
     version,
     algorithm,
     public_key,
@@ -38,17 +38,17 @@ INSERT INTO federation_user_keys (
     retained_until
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING user_id, version, algorithm, public_key, private_key_enc,
+RETURNING user_ref, version, algorithm, public_key, private_key_enc,
           is_current, created_at, retained_until;
 
 -- name: GetCurrentUserKey :one
 -- Returns the user's current key. Used by the EnsureCurrentForUser
 -- idempotency check + I-e outbox encryption + I-c actor profile.
 -- Returns pgx.ErrNoRows if the user has no keys yet.
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1 AND is_current = TRUE;
+WHERE user_ref = $1 AND is_current = TRUE;
 
 -- name: GetUserKeyByVersion :one
 -- Returns a specific (user, version) row. Used by I-f inbound
@@ -58,11 +58,11 @@ WHERE user_id = $1 AND is_current = TRUE;
 -- /admin/federation/key-health surface uses the same query to
 -- show "who rotated this key + when?" without a second round
 -- trip.
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until,
        rotated_at, rotated_by_user_ref
 FROM federation_user_keys
-WHERE user_id = $1 AND version = $2;
+WHERE user_ref = $1 AND version = $2;
 
 -- name: ListPublicKeysByUser :many
 -- Returns the user's current key + any retained-for-decrypt keys,
@@ -70,17 +70,17 @@ WHERE user_id = $1 AND version = $2;
 -- key first. The private_key_enc column is intentionally omitted —
 -- public lookups don't need it and shouldn't carry the ciphertext
 -- across the read boundary.
-SELECT user_id, version, algorithm, public_key,
+SELECT user_ref, version, algorithm, public_key,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1
+WHERE user_ref = $1
   AND (is_current = TRUE OR retained_until > NOW())
 ORDER BY version DESC;
 
 -- name: CountUserKeys :one
 -- Total key versions for a user (current + retained, regardless of
 -- expiry). Test helper + future admin UI; not on any hot path.
-SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1;
+SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1;
 
 -- name: ListUserKeysForDecrypt :many
 -- Phase 1.22.I-f — returns the current + retained-not-expired keys
@@ -101,10 +101,10 @@ SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1;
 -- The retained_until filter excludes keys past their grace window
 -- — those rows might still be in the table during the I-h sweeper
 -- delay, but the dispatcher must NOT decrypt against them.
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1
+WHERE user_ref = $1
   AND (is_current = TRUE OR retained_until > NOW())
 ORDER BY is_current DESC, version DESC;
 
@@ -121,7 +121,7 @@ ORDER BY is_current DESC, version DESC;
 -- federation_user_keys_one_current_idx would otherwise fail the
 -- second is_current=TRUE row.
 INSERT INTO federation_user_keys (
-    user_id,
+    user_ref,
     version,
     algorithm,
     public_key,
@@ -132,7 +132,7 @@ INSERT INTO federation_user_keys (
     rotated_by_user_ref
 )
 VALUES ($1, $2, $3, $4, $5, TRUE, NULL, NOW(), $6)
-RETURNING user_id, version, algorithm, public_key, private_key_enc,
+RETURNING user_ref, version, algorithm, public_key, private_key_enc,
           is_current, created_at, retained_until,
           rotated_at, rotated_by_user_ref;
 
@@ -157,7 +157,7 @@ UPDATE federation_user_keys
        retained_until      = NOW() + (sqlc.arg('retention_days')::int || ' days')::interval,
        rotated_at          = NOW(),
        rotated_by_user_ref = sqlc.arg('rotated_by_user_ref')
- WHERE user_id = sqlc.arg('user_id')
+ WHERE user_ref = sqlc.arg('user_ref')
    AND is_current = TRUE;
 
 -- name: SweepExpiredRetainedKeys :execrows
@@ -199,7 +199,7 @@ SELECT
        WHERE u.approved = 1
          AND NOT EXISTS (
              SELECT 1 FROM federation_user_keys k
-             WHERE k.user_id = u.ref AND k.is_current = TRUE
+             WHERE k.user_ref = u.ref AND k.is_current = TRUE
          ))
         AS users_missing_keypair,
     (SELECT COUNT(*) FROM federation_remote_actors
@@ -230,7 +230,7 @@ SELECT u.ref, u.username, u.created
  WHERE u.approved = 1
    AND NOT EXISTS (
        SELECT 1 FROM federation_user_keys k
-       WHERE k.user_id = u.ref AND k.is_current = TRUE
+       WHERE k.user_ref = u.ref AND k.is_current = TRUE
    )
  ORDER BY u.created DESC
  LIMIT 100;
@@ -244,7 +244,7 @@ SELECT u.ref, u.username, u.created
 --
 -- LIMIT 50 + DESC ordering on rotated_at: shows newest first;
 -- pagination is a follow-up if rotation volume grows.
-SELECT user_id, version, rotated_at, rotated_by_user_ref
+SELECT user_ref, version, rotated_at, rotated_by_user_ref
   FROM federation_user_keys
  WHERE rotated_at IS NOT NULL
  ORDER BY rotated_at DESC
@@ -276,7 +276,7 @@ FROM "user" u
 WHERE u.approved = 1
   AND NOT EXISTS (
       SELECT 1 FROM federation_user_keys fuk
-      WHERE fuk.user_id = u.ref AND fuk.is_current = TRUE
+      WHERE fuk.user_ref = u.ref AND fuk.is_current = TRUE
   )
 ORDER BY u.ref
 LIMIT $1;

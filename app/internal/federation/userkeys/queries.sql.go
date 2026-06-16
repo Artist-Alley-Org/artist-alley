@@ -12,13 +12,13 @@ import (
 )
 
 const countUserKeys = `-- name: CountUserKeys :one
-SELECT COUNT(*) FROM federation_user_keys WHERE user_id = $1
+SELECT COUNT(*) FROM federation_user_keys WHERE user_ref = $1
 `
 
 // Total key versions for a user (current + retained, regardless of
 // expiry). Test helper + future admin UI; not on any hot path.
-func (q *Queries) CountUserKeys(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRow(ctx, countUserKeys, userID)
+func (q *Queries) CountUserKeys(ctx context.Context, userRef int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserKeys, userRef)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -30,14 +30,14 @@ UPDATE federation_user_keys
        retained_until      = NOW() + ($1::int || ' days')::interval,
        rotated_at          = NOW(),
        rotated_by_user_ref = $2
- WHERE user_id = $3
+ WHERE user_ref = $3
    AND is_current = TRUE
 `
 
 type DemoteCurrentKeyParams struct {
 	RetentionDays    int32
 	RotatedByUserRef *int64
-	UserID           int64
+	UserRef          int64
 }
 
 // Phase 1.22.I-h rotation primitive. Flips the user's current key
@@ -56,19 +56,19 @@ type DemoteCurrentKeyParams struct {
 // value (not interpolated SQL) so an operator-supplied retention
 // override goes through pgx parameter binding, not string concat.
 func (q *Queries) DemoteCurrentKey(ctx context.Context, arg DemoteCurrentKeyParams) error {
-	_, err := q.db.Exec(ctx, demoteCurrentKey, arg.RetentionDays, arg.RotatedByUserRef, arg.UserID)
+	_, err := q.db.Exec(ctx, demoteCurrentKey, arg.RetentionDays, arg.RotatedByUserRef, arg.UserRef)
 	return err
 }
 
 const getCurrentUserKey = `-- name: GetCurrentUserKey :one
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1 AND is_current = TRUE
+WHERE user_ref = $1 AND is_current = TRUE
 `
 
 type GetCurrentUserKeyRow struct {
-	UserID        int64
+	UserRef       int64
 	Version       int32
 	Algorithm     string
 	PublicKey     []byte
@@ -81,11 +81,11 @@ type GetCurrentUserKeyRow struct {
 // Returns the user's current key. Used by the EnsureCurrentForUser
 // idempotency check + I-e outbox encryption + I-c actor profile.
 // Returns pgx.ErrNoRows if the user has no keys yet.
-func (q *Queries) GetCurrentUserKey(ctx context.Context, userID int64) (GetCurrentUserKeyRow, error) {
-	row := q.db.QueryRow(ctx, getCurrentUserKey, userID)
+func (q *Queries) GetCurrentUserKey(ctx context.Context, userRef int64) (GetCurrentUserKeyRow, error) {
+	row := q.db.QueryRow(ctx, getCurrentUserKey, userRef)
 	var i GetCurrentUserKeyRow
 	err := row.Scan(
-		&i.UserID,
+		&i.UserRef,
 		&i.Version,
 		&i.Algorithm,
 		&i.PublicKey,
@@ -105,7 +105,7 @@ SELECT
        WHERE u.approved = 1
          AND NOT EXISTS (
              SELECT 1 FROM federation_user_keys k
-             WHERE k.user_id = u.ref AND k.is_current = TRUE
+             WHERE k.user_ref = u.ref AND k.is_current = TRUE
          ))
         AS users_missing_keypair,
     (SELECT COUNT(*) FROM federation_remote_actors
@@ -156,15 +156,15 @@ func (q *Queries) GetKeyHealthSummary(ctx context.Context) (GetKeyHealthSummaryR
 }
 
 const getUserKeyByVersion = `-- name: GetUserKeyByVersion :one
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until,
        rotated_at, rotated_by_user_ref
 FROM federation_user_keys
-WHERE user_id = $1 AND version = $2
+WHERE user_ref = $1 AND version = $2
 `
 
 type GetUserKeyByVersionParams struct {
-	UserID  int64
+	UserRef int64
 	Version int32
 }
 
@@ -176,10 +176,10 @@ type GetUserKeyByVersionParams struct {
 // show "who rotated this key + when?" without a second round
 // trip.
 func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersionParams) (FederationUserKey, error) {
-	row := q.db.QueryRow(ctx, getUserKeyByVersion, arg.UserID, arg.Version)
+	row := q.db.QueryRow(ctx, getUserKeyByVersion, arg.UserRef, arg.Version)
 	var i FederationUserKey
 	err := row.Scan(
-		&i.UserID,
+		&i.UserRef,
 		&i.Version,
 		&i.Algorithm,
 		&i.PublicKey,
@@ -196,7 +196,7 @@ func (q *Queries) GetUserKeyByVersion(ctx context.Context, arg GetUserKeyByVersi
 const insertUserKey = `-- name: InsertUserKey :one
 
 INSERT INTO federation_user_keys (
-    user_id,
+    user_ref,
     version,
     algorithm,
     public_key,
@@ -205,12 +205,12 @@ INSERT INTO federation_user_keys (
     retained_until
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING user_id, version, algorithm, public_key, private_key_enc,
+RETURNING user_ref, version, algorithm, public_key, private_key_enc,
           is_current, created_at, retained_until
 `
 
 type InsertUserKeyParams struct {
-	UserID        int64
+	UserRef       int64
 	Version       int32
 	Algorithm     string
 	PublicKey     []byte
@@ -220,7 +220,7 @@ type InsertUserKeyParams struct {
 }
 
 type InsertUserKeyRow struct {
-	UserID        int64
+	UserRef       int64
 	Version       int32
 	Algorithm     string
 	PublicKey     []byte
@@ -261,7 +261,7 @@ type InsertUserKeyRow struct {
 // rotation path UPDATEs the previously-current row instead).
 func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (InsertUserKeyRow, error) {
 	row := q.db.QueryRow(ctx, insertUserKey,
-		arg.UserID,
+		arg.UserRef,
 		arg.Version,
 		arg.Algorithm,
 		arg.PublicKey,
@@ -271,7 +271,7 @@ func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (I
 	)
 	var i InsertUserKeyRow
 	err := row.Scan(
-		&i.UserID,
+		&i.UserRef,
 		&i.Version,
 		&i.Algorithm,
 		&i.PublicKey,
@@ -285,7 +285,7 @@ func (q *Queries) InsertUserKey(ctx context.Context, arg InsertUserKeyParams) (I
 
 const insertUserKeyAsCurrent = `-- name: InsertUserKeyAsCurrent :one
 INSERT INTO federation_user_keys (
-    user_id,
+    user_ref,
     version,
     algorithm,
     public_key,
@@ -296,13 +296,13 @@ INSERT INTO federation_user_keys (
     rotated_by_user_ref
 )
 VALUES ($1, $2, $3, $4, $5, TRUE, NULL, NOW(), $6)
-RETURNING user_id, version, algorithm, public_key, private_key_enc,
+RETURNING user_ref, version, algorithm, public_key, private_key_enc,
           is_current, created_at, retained_until,
           rotated_at, rotated_by_user_ref
 `
 
 type InsertUserKeyAsCurrentParams struct {
-	UserID           int64
+	UserRef          int64
 	Version          int32
 	Algorithm        string
 	PublicKey        []byte
@@ -323,7 +323,7 @@ type InsertUserKeyAsCurrentParams struct {
 // second is_current=TRUE row.
 func (q *Queries) InsertUserKeyAsCurrent(ctx context.Context, arg InsertUserKeyAsCurrentParams) (FederationUserKey, error) {
 	row := q.db.QueryRow(ctx, insertUserKeyAsCurrent,
-		arg.UserID,
+		arg.UserRef,
 		arg.Version,
 		arg.Algorithm,
 		arg.PublicKey,
@@ -332,7 +332,7 @@ func (q *Queries) InsertUserKeyAsCurrent(ctx context.Context, arg InsertUserKeyA
 	)
 	var i FederationUserKey
 	err := row.Scan(
-		&i.UserID,
+		&i.UserRef,
 		&i.Version,
 		&i.Algorithm,
 		&i.PublicKey,
@@ -347,16 +347,16 @@ func (q *Queries) InsertUserKeyAsCurrent(ctx context.Context, arg InsertUserKeyA
 }
 
 const listPublicKeysByUser = `-- name: ListPublicKeysByUser :many
-SELECT user_id, version, algorithm, public_key,
+SELECT user_ref, version, algorithm, public_key,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1
+WHERE user_ref = $1
   AND (is_current = TRUE OR retained_until > NOW())
 ORDER BY version DESC
 `
 
 type ListPublicKeysByUserRow struct {
-	UserID        int64
+	UserRef       int64
 	Version       int32
 	Algorithm     string
 	PublicKey     []byte
@@ -370,8 +370,8 @@ type ListPublicKeysByUserRow struct {
 // key first. The private_key_enc column is intentionally omitted —
 // public lookups don't need it and shouldn't carry the ciphertext
 // across the read boundary.
-func (q *Queries) ListPublicKeysByUser(ctx context.Context, userID int64) ([]ListPublicKeysByUserRow, error) {
-	rows, err := q.db.Query(ctx, listPublicKeysByUser, userID)
+func (q *Queries) ListPublicKeysByUser(ctx context.Context, userRef int64) ([]ListPublicKeysByUserRow, error) {
+	rows, err := q.db.Query(ctx, listPublicKeysByUser, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +380,7 @@ func (q *Queries) ListPublicKeysByUser(ctx context.Context, userID int64) ([]Lis
 	for rows.Next() {
 		var i ListPublicKeysByUserRow
 		if err := rows.Scan(
-			&i.UserID,
+			&i.UserRef,
 			&i.Version,
 			&i.Algorithm,
 			&i.PublicKey,
@@ -399,7 +399,7 @@ func (q *Queries) ListPublicKeysByUser(ctx context.Context, userID int64) ([]Lis
 }
 
 const listRecentRotations = `-- name: ListRecentRotations :many
-SELECT user_id, version, rotated_at, rotated_by_user_ref
+SELECT user_ref, version, rotated_at, rotated_by_user_ref
   FROM federation_user_keys
  WHERE rotated_at IS NOT NULL
  ORDER BY rotated_at DESC
@@ -407,7 +407,7 @@ SELECT user_id, version, rotated_at, rotated_by_user_ref
 `
 
 type ListRecentRotationsRow struct {
-	UserID           int64
+	UserRef          int64
 	Version          int32
 	RotatedAt        pgtype.Timestamptz
 	RotatedByUserRef *int64
@@ -431,7 +431,7 @@ func (q *Queries) ListRecentRotations(ctx context.Context) ([]ListRecentRotation
 	for rows.Next() {
 		var i ListRecentRotationsRow
 		if err := rows.Scan(
-			&i.UserID,
+			&i.UserRef,
 			&i.Version,
 			&i.RotatedAt,
 			&i.RotatedByUserRef,
@@ -447,16 +447,16 @@ func (q *Queries) ListRecentRotations(ctx context.Context) ([]ListRecentRotation
 }
 
 const listUserKeysForDecrypt = `-- name: ListUserKeysForDecrypt :many
-SELECT user_id, version, algorithm, public_key, private_key_enc,
+SELECT user_ref, version, algorithm, public_key, private_key_enc,
        is_current, created_at, retained_until
 FROM federation_user_keys
-WHERE user_id = $1
+WHERE user_ref = $1
   AND (is_current = TRUE OR retained_until > NOW())
 ORDER BY is_current DESC, version DESC
 `
 
 type ListUserKeysForDecryptRow struct {
-	UserID        int64
+	UserRef       int64
 	Version       int32
 	Algorithm     string
 	PublicKey     []byte
@@ -484,8 +484,8 @@ type ListUserKeysForDecryptRow struct {
 // The retained_until filter excludes keys past their grace window
 // — those rows might still be in the table during the I-h sweeper
 // delay, but the dispatcher must NOT decrypt against them.
-func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]ListUserKeysForDecryptRow, error) {
-	rows, err := q.db.Query(ctx, listUserKeysForDecrypt, userID)
+func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userRef int64) ([]ListUserKeysForDecryptRow, error) {
+	rows, err := q.db.Query(ctx, listUserKeysForDecrypt, userRef)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +494,7 @@ func (q *Queries) ListUserKeysForDecrypt(ctx context.Context, userID int64) ([]L
 	for rows.Next() {
 		var i ListUserKeysForDecryptRow
 		if err := rows.Scan(
-			&i.UserID,
+			&i.UserRef,
 			&i.Version,
 			&i.Algorithm,
 			&i.PublicKey,
@@ -519,7 +519,7 @@ SELECT u.ref, u.username, u.created
  WHERE u.approved = 1
    AND NOT EXISTS (
        SELECT 1 FROM federation_user_keys k
-       WHERE k.user_id = u.ref AND k.is_current = TRUE
+       WHERE k.user_ref = u.ref AND k.is_current = TRUE
    )
  ORDER BY u.created DESC
  LIMIT 100
@@ -566,7 +566,7 @@ FROM "user" u
 WHERE u.approved = 1
   AND NOT EXISTS (
       SELECT 1 FROM federation_user_keys fuk
-      WHERE fuk.user_id = u.ref AND fuk.is_current = TRUE
+      WHERE fuk.user_ref = u.ref AND fuk.is_current = TRUE
   )
 ORDER BY u.ref
 LIMIT $1

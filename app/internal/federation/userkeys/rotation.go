@@ -43,7 +43,7 @@
 // Step ordering matters: DemoteCurrentKey MUST land before
 // InsertUserKeyAsCurrent — otherwise the partial unique index
 // federation_user_keys_one_current_idx blocks the insert (two
-// rows with is_current=TRUE for the same user_id).
+// rows with is_current=TRUE for the same user_ref).
 //
 // # Why outside-tx keygen
 //
@@ -86,9 +86,10 @@ const DefaultRetentionDays = 30
 // RotationResult is the rotation primitive's typed return. The
 // HTTP handler shapes it into the OpenAPI UserKeyRotationResult
 // response; the audit hook reads NewVersion + PreviousVersion
-// for the event payload.
+// for the event payload. Field name `UserRef` matches the
+// post-1.49.C-2 schema convention (federation_user_keys.user_ref).
 type RotationResult struct {
-	UserID          int64
+	UserRef         int64
 	NewVersion      int32
 	PreviousVersion int32 // 0 when this was the user's first key
 	NewPublicKey    []byte // raw 32 bytes; caller base64s for transport
@@ -183,7 +184,7 @@ func RotateForUser(
 		if err := qtx.DemoteCurrentKey(ctx, DemoteCurrentKeyParams{
 			RetentionDays:    int32(retentionDays),
 			RotatedByUserRef: &rotatedByUserRef,
-			UserID:           userID,
+			UserRef:          userID,
 		}); err != nil {
 			return nil, fmt.Errorf("userkeys.RotateForUser: demote: %w", err)
 		}
@@ -192,7 +193,7 @@ func RotateForUser(
 	// Step 3 — insert the new current row.
 	newVersion := previousVersion + 1
 	if _, err := qtx.InsertUserKeyAsCurrent(ctx, InsertUserKeyAsCurrentParams{
-		UserID:           userID,
+		UserRef:          userID,
 		Version:          newVersion,
 		Algorithm:        Algorithm,
 		PublicKey:        pub,
@@ -215,7 +216,7 @@ func RotateForUser(
 	}
 
 	return &RotationResult{
-		UserID:          userID,
+		UserRef:         userID,
 		NewVersion:      newVersion,
 		PreviousVersion: previousVersion,
 		NewPublicKey:    pub,

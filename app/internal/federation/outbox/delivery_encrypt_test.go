@@ -64,9 +64,9 @@ func seedSenderKeypair(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	// minimal interface).
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO federation_user_keys (
-		    user_id, version, algorithm, public_key, private_key_enc, is_current
+		    user_ref, version, algorithm, public_key, private_key_enc, is_current
 		) VALUES ($1, 1, 'naclbox-x25519-v1', $2, $3, TRUE)
-		ON CONFLICT (user_id, version) DO UPDATE
+		ON CONFLICT (user_ref, version) DO UPDATE
 		SET public_key = EXCLUDED.public_key,
 		    private_key_enc = EXCLUDED.private_key_enc,
 		    is_current = TRUE`,
