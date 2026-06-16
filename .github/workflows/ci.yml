@@ -11,8 +11,33 @@ name: CI
 on:
   push:
     branches: [main, dev, "feat/**"]
+    # Skip CI on docs-only changes — no Go / TS / wire-format edit
+    # means nothing CI cares about. Branch protection on dev/main
+    # does NOT list any path-filtered check as required (single-
+    # maintainer + agent-collaborator model per ADR 0046 ops note);
+    # skipped workflows surface as "Skipped" not "Pending", so a
+    # docs-only PR can merge without burning ~12 min of runner time.
+    #
+    # Be aware: **.md excludes ALL markdown including in-tree
+    # README files (e.g. app/internal/foo/README.md). Today none
+    # of those carry code or CI-relevant content; revisit this
+    # filter if a README ever needs to gate CI.
+    paths-ignore:
+      - 'docs/**'
+      - 'site/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - 'docs/**'
+      - 'site/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
 
 # Cancel superseded runs on the same ref so a force-push doesn't burn
 # minutes on the previous commit.

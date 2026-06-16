@@ -44,8 +44,25 @@ name: UI dogfood (standalone)
 on:
   push:
     branches: [main, dev, "feat/**"]
+    # Same docs-only-skip rationale as ci.yml — see the comment
+    # block there for the branch-protection note + the **.md
+    # caveat.
+    paths-ignore:
+      - 'docs/**'
+      - 'site/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - 'docs/**'
+      - 'site/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
 
 concurrency:
   group: ui-pr-${{ github.workflow }}-${{ github.ref }}
