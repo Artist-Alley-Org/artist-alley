@@ -449,11 +449,12 @@ The phases queued behind the current focus, in build order:
   - ✅ 1.49.C-1 — DB schema audit report (shipped via PR #132;
     [`docs/cleanup-audit-2026-06.md`](https://github.com/mscrnt/artist-alley/blob/dev/docs/cleanup-audit-2026-06.md);
     26 findings)
-  - ⏭ 1.49.C-2 — Flatten migrations to `00001_baseline_v1.sql`
-    (scope locked at 24 single-line schema edits derived from the
-    audit; tracked at [#82](https://github.com/mscrnt/artist-alley/issues/82))
+  - ✅ 1.49.C-2 — Migration baseline squash (shipped via PR #135
+    `8c4922f`; 14 migrations → 1 baseline at
+    [`00001_baseline_v1.sql`](https://github.com/mscrnt/artist-alley/blob/dev/app/internal/db/migrations/00001_baseline_v1.sql);
+    all 24 audit-derived edits applied; CI 7/7 green)
   - ⏭ 1.49.D — Scrub product references from source (clean-room
-    on a stable baseline)
+    on the stable baseline; independent of soak)
 
   Gates the v1.0.0 release tag. Soak-compatible — the audit + the
   squash + the scrub all touch DB schema / docs / source-text only;
