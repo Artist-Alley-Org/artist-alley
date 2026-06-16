@@ -815,7 +815,7 @@ func (h *Handler) ListPostAcls(
 			GrantedAt:     r.GrantedAt.Time,
 		}
 		if r.GrantedByUserRef != nil {
-			e.GrantedByRsUserId = r.GrantedByUserRef
+			e.GrantedByUserRef = r.GrantedByUserRef
 		}
 		if r.ExpiresAt.Valid {
 			t := r.ExpiresAt.Time

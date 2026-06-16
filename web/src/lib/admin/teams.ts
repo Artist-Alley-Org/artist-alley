@@ -14,7 +14,7 @@ export interface Team {
 }
 
 export interface TeamMember {
-  rs_user_id: number;
+  user_ref: number;
   username?: string | null;
   display_name?: string | null;
   added_at: string;

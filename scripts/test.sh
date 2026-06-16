@@ -9,8 +9,9 @@
 #   ./scripts/test.sh --with-s3   # also bring up MinIO + run S3-backend tests
 #
 # (The legacy `--php` flag is gone — the PHP-side test harness was
-# removed when the strangler-fig migration was abandoned. ResourceSpace
-# is now reference-only and there is no PHP code path in the runtime.)
+# removed when the strangler-fig migration was abandoned. The upstream
+# fork base is reference-only and there is no PHP code path in the
+# runtime.)
 
 set -euo pipefail
 

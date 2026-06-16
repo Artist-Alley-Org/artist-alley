@@ -623,7 +623,7 @@
           "outbox":      { "title": "Outbox",         "blurb": "Per-recipient delivery queue. Re-queue failed rows; LISTEN/NOTIFY drives sub-1s p99 latency." },
           "inbox":       { "title": "Inbox",          "blurb": "Inbound activities from paired peers + their dispatch state. Read-only." },
           "blocklist":   { "title": "Block list",     "blurb": "Peers this instance refuses to federate with. Lands with the moderation hooks in Phase 1.22.G." },
-          "activitypub": { "title": "Public fediverse compatibility", "blurb": "webfinger + nodeinfo + per-user inbox URLs so Mastodon-shaped clients can discover this instance. Opt-in; walled-garden installs stay instance-level." }
+          "activitypub": { "title": "Public fediverse compatibility", "blurb": "webfinger + nodeinfo + per-user inbox URLs so ActivityPub clients can discover this instance. Opt-in; walled-garden installs stay instance-level." }
         }
       },
       "integrations": {
@@ -873,7 +873,7 @@
       "acl_principal_id": "Principal ID",
       "acl_permission": "Permission",
       "acl_add_button": "Add ACL row",
-      "principal_user_placeholder": "rs_user_id (BIGINT, e.g. 42)",
+      "principal_user_placeholder": "user_ref (BIGINT, e.g. 42)",
       "principal_uuid_placeholder": "UUID (role.id or team.id)",
       "principal_kind_user": "User",
       "principal_kind_role": "Role",
@@ -894,7 +894,7 @@
       "filter_event_type_placeholder": "e.g. user.status_changed",
       "filter_actor": "Actor user ref",
       "filter_subject": "Subject user ref",
-      "filter_user_ref_placeholder": "rs_user_id",
+      "filter_user_ref_placeholder": "user_ref",
       "filter_since": "Since",
       "filter_until": "Until",
       "apply_filters": "Apply filters",

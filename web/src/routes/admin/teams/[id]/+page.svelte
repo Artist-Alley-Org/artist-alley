@@ -122,7 +122,7 @@
     try {
       const r = await api.POST('/teams/{id}/members', {
         params: { path: { id } },
-        body: { rs_user_id: ref },
+        body: { user_ref: ref },
       });
       if (r.error) {
         error = (r.error as { error?: string } | undefined)?.error ?? 'Failed to add member.';
@@ -140,8 +140,8 @@
     memberBusy = true;
     error = null;
     try {
-      await api.DELETE('/teams/{id}/members/{rs_user_id}', {
-        params: { path: { id, rs_user_id: ref } },
+      await api.DELETE('/teams/{id}/members/{user_ref}', {
+        params: { path: { id, user_ref: ref } },
       });
       await load();
     } finally {
@@ -273,15 +273,15 @@
       <p class="text-xs text-fg-muted">{t('admin.team_detail.no_members')}</p>
     {:else}
       <ul class="space-y-1">
-        {#each members as m (m.rs_user_id)}
+        {#each members as m (m.user_ref)}
           <li class="flex items-center gap-2 text-xs">
-            <a href="/admin/users/{m.rs_user_id}" class="flex-1 text-accent hover:underline">
-              {m.display_name || m.username || `user ${m.rs_user_id}`}
+            <a href="/admin/users/{m.user_ref}" class="flex-1 text-accent hover:underline">
+              {m.display_name || m.username || `user ${m.user_ref}`}
             </a>
             <span class="text-fg-muted">{t('admin.team_detail.added_at')} {relativeAgo(m.added_at)}</span>
             <button
               type="button"
-              onclick={() => removeMember(m.rs_user_id)}
+              onclick={() => removeMember(m.user_ref)}
               disabled={memberBusy}
               class="rounded border border-border bg-surface px-2 py-1 text-[11px] hover:border-danger hover:text-danger disabled:opacity-50"
             >

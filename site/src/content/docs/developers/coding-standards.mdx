@@ -106,7 +106,13 @@ What this looks like in practice:
 - **Don't** write "PeerTube has to move every byte" → **do** drop the comparison; just describe what we do.
 - **Don't** keep `rs_user_id` / `rs_resource_id` column names — rename to neutral `external_user_id` or drop if the column is now unused.
 
-ADRs and `docs/research/` may discuss competitor products freely — those are decision documents and historical record. Source code stays neutral.
+**Exemptions.** Three places retain named upstream / competitor references intentionally:
+
+- **ADRs and `docs/research/`** — decision documents and historical record.
+- **License attribution surfaces** (e.g. `/admin/about` linking the BSD-3 fork base) — required by the originating license. Acknowledgment is not comparison.
+- **Diff / comparison tooling** (`scripts/rs-diff.sh`, `scripts/gen-rs-baseline.py`) — these scripts exist *to* compare against the upstream fork base; naming the target in the script's own header comment is operational, not editorial.
+
+Everything else in source stays neutral.
 
 ## Things we don't do
 
