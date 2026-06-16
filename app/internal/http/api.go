@@ -50,6 +50,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
+	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -109,6 +110,8 @@ type apiServer struct {
 	outboxAdmin      *outbox.AdminHandler
 	userKeysSweeper  *userkeys.Sweeper
 	userKeysAdmin    *userkeys.AdminHandler
+	subtitles        *subtitles.Handler
+	subtitlesHTTP    *subtitles.HTTPHandler
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -118,6 +121,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
 		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
+		subtitles:    subtitles.NewHandler(pool, cacheReg, logger),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
@@ -376,6 +380,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// federation-keys, /admin/federation/key-health,
 	// /admin/federation/users/{ref}/rotate-keys.
 	s.userKeysAdmin = userkeys.NewAdminHandler(pool, auditRec, logger)
+
+	// Phase 1.18.B-3 subtitle tracks HTTP surface. Three
+	// endpoints under /assets/{id}/subtitle-tracks (list / upload /
+	// delete). Storage adapter bridges to the same CAS used by
+	// original asset bytes.
+	s.subtitlesHTTP = subtitles.NewHTTPHandler(
+		s.subtitles,
+		subtitles.NewStorageAdapter(storageSvc),
+		logger,
+	)
 
 	// Federation outbox + inbox admin surface (Phase 1.22.D-c).
 	// Owns /admin/federation/outbox + /inbox + the re-queue +
@@ -1174,7 +1188,25 @@ func (s *apiServer) ListAssets(ctx context.Context, req openapi.ListAssetsReques
 }
 
 func (s *apiServer) GetAsset(ctx context.Context, req openapi.GetAssetRequestObject) (openapi.GetAssetResponseObject, error) {
-	return s.assets.GetAsset(ctx, req)
+	resp, err := s.assets.GetAsset(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	// Phase 1.18.B-3: splice subtitle_tracks into the response.
+	// Read-through is cheap (cache-fronted, returns [] for
+	// non-applicable assets), so no asset-kind pre-check here.
+	if r, ok := resp.(openapi.GetAsset200JSONResponse); ok && s.subtitles != nil {
+		tracks, terr := s.subtitles.GetForAsset(ctx, uuid.UUID(req.Id))
+		if terr == nil && len(tracks) > 0 {
+			apiTracks := make([]openapi.SubtitleTrack, len(tracks))
+			for i, t := range tracks {
+				apiTracks[i] = subtitles.TrackToAPI(t)
+			}
+			r.SubtitleTracks = &apiTracks
+			return r, nil
+		}
+	}
+	return resp, nil
 }
 
 func (s *apiServer) UpdateAsset(ctx context.Context, req openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
@@ -1187,6 +1219,19 @@ func (s *apiServer) DeleteAsset(ctx context.Context, req openapi.DeleteAssetRequ
 
 func (s *apiServer) DownloadAssetFile(ctx context.Context, req openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
 	return s.assets.DownloadAssetFile(ctx, req)
+}
+
+// Phase 1.18.B-3 subtitle tracks.
+func (s *apiServer) ListSubtitleTracks(ctx context.Context, req openapi.ListSubtitleTracksRequestObject) (openapi.ListSubtitleTracksResponseObject, error) {
+	return s.subtitlesHTTP.ListSubtitleTracks(ctx, req)
+}
+
+func (s *apiServer) UploadSubtitleTrack(ctx context.Context, req openapi.UploadSubtitleTrackRequestObject) (openapi.UploadSubtitleTrackResponseObject, error) {
+	return s.subtitlesHTTP.UploadSubtitleTrack(ctx, req)
+}
+
+func (s *apiServer) DeleteSubtitleTrack(ctx context.Context, req openapi.DeleteSubtitleTrackRequestObject) (openapi.DeleteSubtitleTrackResponseObject, error) {
+	return s.subtitlesHTTP.DeleteSubtitleTrack(ctx, req)
 }
 
 func (s *apiServer) DownloadAssetVariant(ctx context.Context, req openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
