@@ -33,6 +33,25 @@ const (
 	EventSessionRevoked   = "session.revoked"
 	EventSessionExpired   = "session.expired"
 	EventUserStatusChanged = "user.status_changed"
+
+	// Phase 1.17.A — typed per-transition admin events. The
+	// generic user.status_changed event remains for backstop /
+	// ad-hoc transitions; the four below are the canonical
+	// admin-driven lifecycle moves and ship per-transition so
+	// downstream consumers (search filters, dashboards, audit-log
+	// changeset retrofits in 1.17.D) can pivot without parsing
+	// the metadata pair.
+	EventAdminUserApproved = "admin.users.approved"
+	EventAdminUserDisabled = "admin.users.disabled"
+	EventAdminUserArchived = "admin.users.archived"
+	EventAdminUserRestored = "admin.users.restored"
+
+	// Phase 1.17.A — refused-by-invariant event. Distinct from
+	// user.status_changed (which only fires on a successful write)
+	// so the "operator tried to leave us with zero admins" signal
+	// is unambiguous and easy to alert on.
+	EventAdminUserRefusedLastAdmin = "admin.users.refused_last_admin"
+
 	EventPasswordChanged   = "user.password_changed"
 	EventPasswordReset     = "user.password_reset"
 	EventCapabilityGranted = "user.capability_granted"
@@ -289,6 +308,60 @@ func (r *Recorder) UserStatusChanged(ctx context.Context, req *http.Request, sub
 		"previous": previous,
 		"next":     next,
 		"reason":   reason,
+	})
+}
+
+// AdminUserApproved / AdminUserDisabled / AdminUserArchived /
+// AdminUserRestored — Phase 1.17.A typed per-transition events.
+// Fire IN ADDITION TO UserStatusChanged so backstop consumers
+// (everything that already filters on user.status_changed) keep
+// working, AND new consumers (admin dashboards, the 1.17.D
+// changeset retrofit) can pivot on the specific transition
+// without parsing metadata. previous/next carry the typed state
+// strings ("pending" / "active" / etc.) — easier to read in the
+// audit viewer than the raw int values.
+func (r *Recorder) AdminUserApproved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string) {
+	r.write(ctx, EventAdminUserApproved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
+	})
+}
+
+func (r *Recorder) AdminUserDisabled(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string) {
+	r.write(ctx, EventAdminUserDisabled, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
+	})
+}
+
+func (r *Recorder) AdminUserArchived(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string) {
+	r.write(ctx, EventAdminUserArchived, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
+	})
+}
+
+func (r *Recorder) AdminUserRestored(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string) {
+	r.write(ctx, EventAdminUserRestored, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous": previous,
+		"next":     next,
+		"reason":   reason,
+	})
+}
+
+// AdminUserRefusedLastAdmin — Phase 1.17.A. Fires when the
+// last-admin invariant blocks a transition. Distinct event so
+// alerting on "operator tried to leave us with zero admins" is
+// unambiguous. previous/next are the typed state strings; the
+// transition did NOT commit.
+func (r *Recorder) AdminUserRefusedLastAdmin(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, attempted, reason string) {
+	r.write(ctx, EventAdminUserRefusedLastAdmin, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"previous":  previous,
+		"attempted": attempted,
+		"reason":    reason,
 	})
 }
 

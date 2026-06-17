@@ -83,13 +83,30 @@ type Handler struct {
 	// Handler can leave it unset and the audit calls degrade to
 	// no-ops.
 	Audit auditRecorder
+
+	// state is the per-user state cache (Phase 1.17.A). 50k entries
+	// fits the active-user set on any plausible install; LRU eviction
+	// handles overflow. nil-safe — tests without a registry get a
+	// Handler whose state path falls through to PG every time.
+	state *UserStateCache
 }
 
 // auditRecorder is the subset of *audit.Recorder this package needs.
 // Interface form so tests can substitute a fake without dragging
 // the full audit package's DB dependency in.
+//
+// Phase 1.17.A adds the four typed per-transition methods alongside
+// the generic UserStatusChanged backstop. The new methods take the
+// state values as strings (typed-state nouns: "pending", "active",
+// etc.) rather than int — easier to read in the audit viewer and
+// shields the audit layer from the int-magic legacy.
 type auditRecorder interface {
 	UserStatusChanged(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next int64, reason string)
+	AdminUserApproved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
+	AdminUserDisabled(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
+	AdminUserArchived(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
+	AdminUserRestored(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
+	AdminUserRefusedLastAdmin(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, attempted, reason string)
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
@@ -106,6 +123,10 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		// in 1.22.B-onward; LRU eviction handles overflow.
 		h.actorKeys = cache.Register[ActorKeyMaterial](registry, CacheDomainActorKeys, 10_000)
 	}
+	// Per-user state cache (Phase 1.17.A). Internally nil-safe;
+	// when registry is nil, h.state is nil + state reads fall
+	// through to PG.
+	h.state = newUserStateCache(registry)
 	return h
 }
 

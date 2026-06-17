@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -52,74 +53,38 @@ func approvedFromStatus(s *openapi.ListAdminUsersParamsStatus) (*int64, bool) {
 	if s == nil {
 		return nil, true
 	}
-	switch *s {
-	case openapi.ListAdminUsersParamsStatusActive:
-		v := int64(1)
-		return &v, true
-	case openapi.ListAdminUsersParamsStatusPending:
-		v := int64(0)
-		return &v, true
-	case openapi.ListAdminUsersParamsStatusDisabled:
-		v := int64(2)
-		return &v, true
+	st, ok := FromOpenAPIListStatus(*s)
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	v := int64(st)
+	return &v, true
 }
 
-// approvedFromUpdateStatus mirrors approvedFromStatus but takes
-// the *AdminUserStatusUpdateStatus enum the update endpoint
-// receives. Same numeric mapping — kept separate because the
-// openapi generator emits distinct types per endpoint.
+// Phase 1.17.A — the legacy switch-on-int helpers
+// (approvedFromUpdateStatus / statusFromApprovedResult / etc.)
+// have been replaced by the typed mappings in userstate.go. The
+// shims below keep the existing call sites compiling while pointing
+// at the typed source-of-truth, so a future cleanup can drop them
+// in a single change once every consumer has migrated.
+
 func approvedFromUpdateStatus(s openapi.AdminUserStatusUpdateStatus) (int64, bool) {
-	switch s {
-	case openapi.AdminUserStatusUpdateStatusActive:
-		return 1, true
-	case openapi.AdminUserStatusUpdateStatusPending:
-		return 0, true
-	case openapi.AdminUserStatusUpdateStatusDisabled:
-		return 2, true
+	if st, ok := FromOpenAPIUpdateStatus(s); ok {
+		return int64(st), true
 	}
 	return 0, false
 }
 
-// statusFromApprovedResult is the AdminUserStatusResult-enum variant
-// of statusFromApproved. Same mapping; openapi generator emits a
-// distinct enum type per response schema.
 func statusFromApprovedResult(approved int64) openapi.AdminUserStatusResultStatus {
-	switch approved {
-	case 1:
-		return openapi.AdminUserStatusResultStatusActive
-	case 0:
-		return openapi.AdminUserStatusResultStatusPending
-	}
-	return openapi.AdminUserStatusResultStatusDisabled
+	return ToOpenAPIResultStatus(UserState(approved))
 }
 
-// statusFromApprovedResultPrevious — separate type because the
-// openapi generator emits a distinct enum per JSON property even
-// when the underlying values are identical.
 func statusFromApprovedResultPrevious(approved int64) openapi.AdminUserStatusResultPreviousStatus {
-	switch approved {
-	case 1:
-		return openapi.AdminUserStatusResultPreviousStatusActive
-	case 0:
-		return openapi.AdminUserStatusResultPreviousStatusPending
-	}
-	return openapi.AdminUserStatusResultPreviousStatusDisabled
+	return ToOpenAPIResultPreviousStatus(UserState(approved))
 }
 
-// statusFromApproved is the inverse — the column value coming
-// back from the DB becomes the API enum. Unknown / out-of-range
-// values surface as "disabled" defensively so a bad row never
-// shows as "active".
 func statusFromApproved(approved int64) openapi.AdminUserStatus {
-	switch approved {
-	case 1:
-		return openapi.AdminUserStatusActive
-	case 0:
-		return openapi.AdminUserStatusPending
-	}
-	return openapi.AdminUserStatusDisabled
+	return ToOpenAPIListStatus(UserState(approved))
 }
 
 // encodeAdminUserCursor packs (created_at, ref) into an opaque
@@ -300,14 +265,32 @@ func (h *Handler) ListAdminUsers(
 	return openapi.ListAdminUsers200JSONResponse(resp), nil
 }
 
-// SetAdminUserStatus moves a user through the lifecycle states
-// (Phase 1.17.B). The mutation is idempotent — re-sending the
-// current status returns 200 with `changed: false` rather than an
-// error, so admin tooling that drives this from a checkbox toggle
-// doesn't trip on a no-op.
+// SetAdminUserStatus moves a user through the typed lifecycle
+// state machine (Phase 1.17.A). Idempotent — re-sending the
+// current status returns 200 with `changed: false` rather than
+// erroring, so admin tooling driven by a checkbox toggle doesn't
+// trip on no-ops.
+//
+// Pipeline (every gate logged):
+//
+//  1. auth — caller present + holds CapApproveUsers.
+//  2. body — status enum parses to a known UserState.
+//  3. transition matrix — (from → to) is in the legal set per
+//     ValidateTransition. Out-of-matrix rejected with 400.
+//  4. last-admin invariant — RequiresLastAdminCheck gates
+//     transitions OUT OF active (covers disable, archive,
+//     and the should-never-happen active→pending). Refusal
+//     emits AdminUserRefusedLastAdmin for alerting.
+//  5. write — typed transition method on Recorder fires AFTER
+//     commit + cache invalidation. Per-transition events
+//     (admin.users.approved / .disabled / .archived / .restored)
+//     run ALONGSIDE the generic user.status_changed for
+//     backstop compatibility.
 //
 // Audit + cache invalidation fire only when the row actually
-// changed; idempotent calls skip both.
+// changed; idempotent calls skip both. The state cache is
+// invalidated even for the rare race where another instance
+// transitioned the user concurrently — see InvalidateUserState.
 func (h *Handler) SetAdminUserStatus(
 	ctx context.Context,
 	req openapi.SetAdminUserStatusRequestObject,
@@ -328,21 +311,53 @@ func (h *Handler) SetAdminUserStatus(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
-	newApproved, ok := approvedFromUpdateStatus(req.Body.Status)
+	target, ok := FromOpenAPIUpdateStatus(req.Body.Status)
 	if !ok {
 		return openapi.SetAdminUserStatus400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "invalid status"},
 		}, nil
 	}
+	reason := ""
+	if req.Body.Reason != nil {
+		reason = *req.Body.Reason
+	}
 
-	// Last-admin invariant: refuse to deactivate the user when
-	// they're the last system.admin holder. The bootstrap admin
-	// (created on first boot by internal/bootstrap) guarantees
-	// at least one admin always exists; the guard ensures admin
-	// management endpoints can't undo that.
-	if newApproved == 0 {
+	// Resolve the current state via the cache-first path so the
+	// transition-matrix check + the last-admin gate both see the
+	// same value the write below will compare against. The PG-side
+	// idempotency check in UpdateUserStatus is the load-bearing
+	// race-free barrier (CAS via the WITH prior pattern); this
+	// pre-read just lets us return a clean ErrInvalidTransition
+	// before incurring the write.
+	current, err := h.GetUserState(ctx, req.Ref)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetAdminUserStatus404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "user not found"},
+			}, nil
+		}
+		return nil, fmt.Errorf("users: read current state: %w", err)
+	}
+	if err := ValidateTransition(current, target); err != nil {
+		return openapi.SetAdminUserStatus400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+
+	// Last-admin invariant. Fires only on transitions OUT OF
+	// active (per RequiresLastAdminCheck) — pending can't hold
+	// admin, and disabled/archived users don't authenticate so
+	// their admin grants don't count toward the active total.
+	if current != target && RequiresLastAdminCheck(current, target) {
 		if err := auth.EnsureNotLastAdmin(ctx, auth.New(h.Pool), req.Ref); err != nil {
 			if errors.Is(err, auth.ErrLastAdmin) {
+				if h.Audit != nil {
+					h.Audit.AdminUserRefusedLastAdmin(
+						ctx, auth.RequestFromContext(ctx),
+						req.Ref, caller.UserRef,
+						current.String(), target.String(), reason,
+					)
+				}
 				return openapi.SetAdminUserStatus400JSONResponse{
 					BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 				}, nil
@@ -354,7 +369,7 @@ func (h *Handler) SetAdminUserStatus(
 	q := New(h.Pool)
 	row, err := q.UpdateUserStatus(ctx, UpdateUserStatusParams{
 		UserRef:   req.Ref,
-		NewStatus: newApproved,
+		NewStatus: int64(target),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -365,24 +380,30 @@ func (h *Handler) SetAdminUserStatus(
 		return nil, fmt.Errorf("users: update status: %w", err)
 	}
 
-	prevApproved := row.PrevStatus
-	resultStatus := statusFromApprovedResult(newApproved)
-	prevResultStatus := statusFromApprovedResultPrevious(prevApproved)
+	prevState := UserState(row.PrevStatus)
+	resultStatus := ToOpenAPIResultStatus(target)
+	prevResultStatus := ToOpenAPIResultPreviousStatus(prevState)
 
 	if row.Changed {
-		// Per-user profile cache could have the old status baked in
-		// (the public profile doesn't expose it today, but the admin
-		// detail view + future "is this user disabled" badges will).
-		// Invalidate so the next read repopulates.
+		// Per-user profile cache + state cache. Profile cache
+		// because future admin views may bake state into the
+		// payload; state cache because Commit 2's auth gate reads
+		// it on every login.
 		if h.byRef != nil {
 			h.byRef.Invalidate(ctx, strconv.FormatInt(req.Ref, 10))
 		}
+		h.InvalidateUserState(ctx, req.Ref)
+
 		if h.Audit != nil {
-			reason := ""
-			if req.Body.Reason != nil {
-				reason = *req.Body.Reason
-			}
-			h.Audit.UserStatusChanged(ctx, auth.RequestFromContext(ctx), req.Ref, caller.UserRef, prevApproved, newApproved, reason)
+			httpReq := auth.RequestFromContext(ctx)
+			// Generic backstop event — keeps existing consumers
+			// (alerting rules, audit-log dashboards filtering on
+			// user.status_changed) working unchanged.
+			h.Audit.UserStatusChanged(ctx, httpReq, req.Ref, caller.UserRef, int64(prevState), int64(target), reason)
+			// Typed per-transition event. Dispatch keyed off the
+			// destination state — Approved when pending→active,
+			// Restored when {disabled,archived}→active, etc.
+			emitTypedTransition(ctx, h.Audit, httpReq, req.Ref, caller.UserRef, prevState, target, reason)
 		}
 	}
 
@@ -393,5 +414,26 @@ func (h *Handler) SetAdminUserStatus(
 		Changed:        row.Changed,
 	}
 	return openapi.SetAdminUserStatus200JSONResponse(resp), nil
+}
+
+// emitTypedTransition fires the per-transition typed audit event
+// that corresponds to the (from, to) pair. Approvals go pending →
+// active; restores go {disabled,archived} → active; disables go
+// active → disabled; archives go {active,disabled} → archived.
+// Pairs outside that set are no-ops here — ValidateTransition
+// blocked them upstream.
+func emitTypedTransition(ctx context.Context, rec auditRecorder, req *http.Request, subjectUserRef, actorUserRef int64, from, to UserState, reason string) {
+	prev := from.String()
+	next := to.String()
+	switch {
+	case from == UserStatePending && to == UserStateActive:
+		rec.AdminUserApproved(ctx, req, subjectUserRef, actorUserRef, prev, next, reason)
+	case to == UserStateActive: // restore from disabled or archived
+		rec.AdminUserRestored(ctx, req, subjectUserRef, actorUserRef, prev, next, reason)
+	case to == UserStateDisabled:
+		rec.AdminUserDisabled(ctx, req, subjectUserRef, actorUserRef, prev, next, reason)
+	case to == UserStateArchived:
+		rec.AdminUserArchived(ctx, req, subjectUserRef, actorUserRef, prev, next, reason)
+	}
 }
 
