@@ -460,6 +460,11 @@ func (*PanicShim) DownloadAssetAlternate(context.Context, openapi.DownloadAssetA
 	panic("PanicShim: DownloadAssetAlternate called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// BurnSubtitleTrack panics by default; test shims override.
+func (*PanicShim) BurnSubtitleTrack(context.Context, openapi.BurnSubtitleTrackRequestObject) (openapi.BurnSubtitleTrackResponseObject, error) {
+	panic("PanicShim: BurnSubtitleTrack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAssetCompanions panics by default; test shims override.
 func (*PanicShim) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
 	panic("PanicShim: ListAssetCompanions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -533,6 +538,21 @@ func (*PanicShim) LintAsset(context.Context, openapi.LintAssetRequestObject) (op
 // RecreateAssetPreview panics by default; test shims override.
 func (*PanicShim) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
 	panic("PanicShim: RecreateAssetPreview called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListSubtitleTracks panics by default; test shims override.
+func (*PanicShim) ListSubtitleTracks(context.Context, openapi.ListSubtitleTracksRequestObject) (openapi.ListSubtitleTracksResponseObject, error) {
+	panic("PanicShim: ListSubtitleTracks called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UploadSubtitleTrack panics by default; test shims override.
+func (*PanicShim) UploadSubtitleTrack(context.Context, openapi.UploadSubtitleTrackRequestObject) (openapi.UploadSubtitleTrackResponseObject, error) {
+	panic("PanicShim: UploadSubtitleTrack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteSubtitleTrack panics by default; test shims override.
+func (*PanicShim) DeleteSubtitleTrack(context.Context, openapi.DeleteSubtitleTrackRequestObject) (openapi.DeleteSubtitleTrackResponseObject, error) {
+	panic("PanicShim: DeleteSubtitleTrack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // AddAssetTags panics by default; test shims override.

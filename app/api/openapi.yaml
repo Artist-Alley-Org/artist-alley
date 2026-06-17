@@ -3139,6 +3139,199 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/subtitle-tracks:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listSubtitleTracks
+      summary: List subtitle tracks for an asset (Phase 1.18.B-3)
+      description: |
+        Returns the WebVTT subtitle / caption tracks attached to
+        this asset. Returns 422 when the asset's renderable kind
+        doesn't support subtitles (image / 3D / document / etc.) —
+        the body's `error` field carries the "subtitles not
+        applicable" message so frontend clients can render a
+        helpful disabled-state message instead of treating the 422
+        as a generic server error.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Subtitle tracks (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SubtitleTrack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    post:
+      operationId: uploadSubtitleTrack
+      summary: Upload a subtitle / caption track (Phase 1.18.B-3)
+      description: |
+        Upload a subtitle file (SRT / SSA / ASS / SUB / VTT) for
+        this asset. The conversion worker normalises the file to
+        WebVTT and inserts an asset_subtitle_tracks row. Returns
+        202 immediately; the track appears in the list endpoint
+        when the conversion job completes (typically <1 second
+        for text-based sources).
+
+        IDX (DVD bitmap) uploads return 501 Not Implemented —
+        bitmap OCR requires a capability add-on not present in
+        the standard runtime.
+
+        Returns 422 when the asset's renderable kind doesn't
+        support subtitles.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang, source_format, content]
+              properties:
+                lang:
+                  type: string
+                  description: RFC 5646 language tag (e.g. "en", "en-US"). "und" accepted for sidecar files with no inferable language.
+                label:
+                  type: string
+                  description: Optional human-readable label. Empty string default.
+                source_format:
+                  type: string
+                  enum: [vtt, srt, ssa, ass, sub, idx]
+                content:
+                  type: string
+                  description: Subtitle file contents (UTF-8 text for vtt/srt/ssa/ass/sub).
+      responses:
+        "202":
+          description: Track conversion queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubtitleTrack" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "501":
+          description: Format requires a capability add-on not present.
+
+  /assets/{id}/subtitle-tracks/{lang}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: lang
+        in: path
+        required: true
+        schema: { type: string }
+        description: RFC 5646 language tag of the track to delete.
+    delete:
+      operationId: deleteSubtitleTrack
+      summary: Remove a subtitle track (Phase 1.18.B-3)
+      description: |
+        Deletes the (asset, lang) subtitle track. The underlying
+        WebVTT file in CAS stays (storage GC is a separate process).
+
+        Returns 422 when the asset's renderable kind doesn't support
+        subtitles — the policy gate fires BEFORE the row lookup, so
+        a Delete on an image asset returns "not applicable" (422)
+        rather than "not found" (404).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Track deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /assets/{id}/burn-subtitles:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: burnSubtitleTrack
+      summary: Bake a subtitle track into the video (Phase 1.18.B-3)
+      description: |
+        Enqueues a `subtitle.burn` job that re-encodes the source
+        video with the named track baked into the pixel grid. The
+        result is a new asset linked back to the source via
+        `metadata.video.burned_from`. Use this for exports to
+        platforms that don't honour `<track kind="subtitles">`
+        (Twitter / IG uploads, embedded video on non-HTML5
+        surfaces).
+
+        The handler itself is a Phase 1.18.B-3-b stub today — the
+        endpoint enqueues + returns 202 + the job id; the worker
+        will surface a TerminalError until the ffmpeg integration
+        ships. Job result will carry the new asset id.
+
+        422 when the asset's renderable kind isn't audio/video
+        (image / 3D / document assets reject up-front).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang]
+              properties:
+                lang:
+                  type: string
+                  description: |
+                    The (asset, lang) track to bake in. Must match
+                    an existing track on the asset.
+      responses:
+        "202":
+          description: Burn job enqueued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                    description: The enqueued jobs.* row id. Poll /jobs/{id} for status.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /assets/{id}/epub/spine:
     parameters:
       - name: id
@@ -7273,6 +7466,62 @@ components:
             non-image resources.
         created_at:     { type: string, format: date-time }
         updated_at:     { type: string, format: date-time }
+        subtitle_tracks:
+          type: array
+          items: { $ref: '#/components/schemas/SubtitleTrack' }
+          description: |
+            Phase 1.18.B-3 — WebVTT subtitle / caption tracks
+            attached to this asset. Empty array when none, or when
+            the asset's renderable kind doesn't support subtitles
+            (image, 3D, document, etc.). Tracks ride along with the
+            asset; they do NOT appear in asset-count queries and do
+            NOT federate as standalone activities.
+    SubtitleTrack:
+      type: object
+      required: [lang, file_hash, source_format, confidence]
+      description: |
+        Phase 1.18.B-3 — one WebVTT subtitle track attached to an
+        asset. NOT a first-class asset; rides along with its parent
+        in the Asset.subtitle_tracks array. Tracks are uniquely
+        identified by (asset_id, lang) — re-uploading the same lang
+        replaces the existing row rather than creating a duplicate.
+      properties:
+        lang:
+          type: string
+          description: |
+            RFC 5646 / BCP 47 language tag (e.g. "en", "en-US",
+            "ja", "fr-CA"). The sentinel value "und" is reserved
+            for sidecar files that matched by basename but had no
+            inferrable language segment.
+        label:
+          type: string
+          description: |
+            Optional human-readable label ("English (US)",
+            "Forced", "Director's commentary"). Empty string when
+            not provided; never null.
+        file_hash:
+          type: string
+          description: CAS hash of the stored WebVTT file.
+        source_format:
+          type: string
+          enum: [vtt, srt, ssa, ass, sub, idx]
+          description: |
+            The format the track was uploaded in. The conversion
+            worker stores WebVTT regardless; tracking the source
+            lets operators re-convert if a converter bug surfaces.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: |
+            1.0 for text-based sources (deterministic conversion).
+            <1.0 for OCR'd bitmap sources like IDX (DVD subtitles).
+            UI MAY surface a warning banner below 0.8.
+        created_at:
+          type: string
+          format: date-time
+
     AssetCreate:
       type: object
       required: [title, asset_type]
@@ -10408,6 +10657,12 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: Request shape is valid but the action doesn't apply (e.g. subtitles on a non-video/audio asset).
       content:
         application/json:
           schema:

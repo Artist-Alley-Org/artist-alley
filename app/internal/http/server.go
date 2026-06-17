@@ -31,6 +31,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
+	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/tenancy"
 )
@@ -204,6 +205,9 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// app/internal/audiobook/jobs.go.
 	jobRegistry.Register(audiobook.NewMergeHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(audiobook.NewDecryptHandler(pool, storageSvc, sysCfg, logger))
+	// Subtitle burn — Phase 1.18.B-3 stub; ffmpeg integration
+	// deferred to 1.18.B-3-b.
+	jobRegistry.Register(subtitles.NewBurnHandler(pool, storageSvc, sysCfg, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package

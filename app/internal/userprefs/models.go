@@ -125,6 +125,16 @@ type AssetFieldValueHistory struct {
 	SetBy            string
 }
 
+type AssetSubtitleTrack struct {
+	AssetID      pgtype.UUID
+	Lang         string
+	Label        string
+	FileHash     string
+	SourceFormat string
+	Confidence   float32
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AssetTag struct {
 	AssetID pgtype.UUID
 	Tag     string
@@ -532,6 +542,7 @@ type Post struct {
 	StateID               pgtype.UUID
 	TeamID                pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
+	SubtitleTrackOverride []byte
 }
 
 type PostAcl struct {

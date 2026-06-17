@@ -93,8 +93,38 @@
 
   // Subtitle tracks live next to the codec metadata. Both audio and
   // video can carry them — the player renders <track> for each.
-  const subtitleTracks = $derived<SubtitleTrack[]>(
+  const legacyTracks = $derived<SubtitleTrack[]>(
     isAudio ? (audioMeta.subtitle_tracks ?? []) : (videoMeta.subtitle_tracks ?? []),
+  );
+
+  // Phase 1.18.B-3: top-level Asset.subtitle_tracks (uploaded via
+  // POST /assets/{id}/subtitle-tracks). VTT lives in CAS — fetched
+  // via /api/v1/storage/objects/{file_hash}. When the asset carries
+  // both, the new uploads take priority (they're explicitly user-
+  // managed); the legacy metadata array remains as fallback so
+  // existing whisper-transcribed tracks keep playing.
+  interface TopLevelTrack {
+    lang: string;
+    label?: string;
+    file_hash: string;
+    source_format: string;
+    confidence: number;
+    created_at?: string;
+  }
+  const topLevelTracks = $derived<TopLevelTrack[]>(
+    ((asset as unknown as Record<string, unknown>).subtitle_tracks as TopLevelTrack[] | undefined) ?? [],
+  );
+  const subtitleTracks = $derived<SubtitleTrack[]>(
+    topLevelTracks.length > 0
+      ? topLevelTracks.map((t, i) => ({
+          index: i,
+          lang: t.lang,
+          title: t.label || t.lang,
+          format: t.source_format,
+          variant_key: `__top:${t.file_hash}`,
+          source: 'manual',
+        }))
+      : legacyTracks,
   );
 
   // Skip the cover layer entirely when the worker said there's no
@@ -687,7 +717,9 @@
         {#if track.variant_key}
           <track
             kind="subtitles"
-            src={`/api/v1/assets/${asset.id}/variants/${track.variant_key}`}
+            src={track.variant_key.startsWith('__top:')
+              ? `/api/v1/storage/objects/${track.variant_key.slice(6)}`
+              : `/api/v1/assets/${asset.id}/variants/${track.variant_key}`}
             srclang={track.lang ?? 'en'}
             label={track.title ?? track.lang ?? `Track ${track.index}`}
           />
@@ -712,7 +744,9 @@
       {#if track.variant_key}
         <track
           kind="subtitles"
-          src={`/api/v1/assets/${asset.id}/variants/${track.variant_key}`}
+          src={track.variant_key.startsWith('__top:')
+            ? `/api/v1/storage/objects/${track.variant_key.slice(6)}`
+            : `/api/v1/assets/${asset.id}/variants/${track.variant_key}`}
           srclang={track.lang ?? 'en'}
           label={track.title ?? track.lang ?? `Track ${track.index}`}
         />
