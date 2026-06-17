@@ -202,6 +202,16 @@ func (m *SessionManager) Touch(ctx context.Context, id uuid.UUID) error {
 	return q.TouchSession(ctx, pgtype.UUID{Bytes: id, Valid: true})
 }
 
+// RevokeAllForUser cascade-revokes every active session a user has.
+// Phase 1.17.A — fired by users.SetAdminUserStatus when a transition
+// moves the user OUT OF UserStateActive. Returns rows-affected so
+// the audit log can record the cascade size. Idempotent — re-running
+// on a user with no active sessions returns 0 + nil.
+func (m *SessionManager) RevokeAllForUser(ctx context.Context, userRef int64) (int64, error) {
+	q := New(m.Pool)
+	return q.RevokeAllSessionsForUser(ctx, userRef)
+}
+
 // RevokeByToken expires the session represented by the given plaintext
 // cookie. Idempotent. Used by /auth/logout.
 func (m *SessionManager) RevokeByToken(ctx context.Context, plaintext string) error {

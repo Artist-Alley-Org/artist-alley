@@ -126,7 +126,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		collections:  collections.NewHandler(pool, logger, cacheReg),
 		posts:        posts.NewHandler(pool, logger, cacheReg),
 		teams:        teams.NewHandler(pool, logger, cacheReg),
-		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec),
+		users:        usersHandlerWithAudit(pool, logger, cacheReg, auditRec, sessions),
 		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
@@ -1019,9 +1019,16 @@ func (a socialNotifyAdapter) Notify(ctx context.Context, recipient int64, actor 
 // expression-shaped without an inline statement block (gofmt
 // rejects that), and so a future "users handler needs LDAP-bind
 // hook too" addition lands in one spot.
-func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, auditRec *audit.Recorder) *users.Handler {
+func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *cache.Registry, auditRec *audit.Recorder, sessions *auth.SessionManager) *users.Handler {
 	h := users.NewHandler(pool, logger, cacheReg)
 	h.SetAuditRecorder(auditRec)
+	// Phase 1.17.A — wire the session-revocation cascade so a
+	// transition out of UserStateActive kills every active session
+	// for the subject. nil-safe at the call site; sessions is
+	// always non-nil in production boot.
+	if sessions != nil {
+		h.SetSessionRevoker(sessions.RevokeAllForUser)
+	}
 	return h
 }
 

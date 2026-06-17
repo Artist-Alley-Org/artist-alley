@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -393,6 +394,33 @@ func (h *Handler) SetAdminUserStatus(
 			h.byRef.Invalidate(ctx, strconv.FormatInt(req.Ref, 10))
 		}
 		h.InvalidateUserState(ctx, req.Ref)
+
+		// Session-revocation cascade (Phase 1.17.A). Any
+		// transition OUT OF active means the user can no longer
+		// authenticate, so existing sessions must die immediately
+		// — otherwise a disabled user with an open browser tab
+		// keeps API access until their cookie expires naturally.
+		// nil-safe: when no revoker is wired (test fixtures), the
+		// cascade is silently skipped.
+		if h.sessionRevoker != nil && prevState == UserStateActive && target != UserStateActive {
+			if n, err := h.sessionRevoker(ctx, req.Ref); err != nil {
+				if h.Logger != nil {
+					h.Logger.LogAttrs(ctx, slog.LevelWarn,
+						"users.session.cascade.failed",
+						slog.Int64("user_ref", req.Ref),
+						slog.String("err", err.Error()),
+					)
+				}
+			} else if n > 0 && h.Logger != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelInfo,
+					"users.session.cascade.revoked",
+					slog.Int64("user_ref", req.Ref),
+					slog.Int64("count", n),
+					slog.String("previous", prevState.String()),
+					slog.String("next", target.String()),
+				)
+			}
+		}
 
 		if h.Audit != nil {
 			httpReq := auth.RequestFromContext(ctx)

@@ -221,6 +221,17 @@ func TestSetAdminUserStatus_ArchiveLastAdmin_Refuses(t *testing.T) {
 	// one — pure precondition for the last-admin invariant test.
 	wipeAllAdmins(t, pool)
 	lone := seedAdminUserForStateTests(t, pool, "lone")
+
+	// Parallel-package safety: other test packages (notably
+	// internal/auth/last_admin_test.go) wipe + seed admins on the
+	// shared dev DB. If one of them seeds a sibling admin in the
+	// window between our wipe + write, the invariant won't fire
+	// and the assertion below would be a false negative. Verify
+	// the precondition holds; if not, skip with a clear message.
+	if n := countActiveSystemAdmins(t, pool); n != 1 {
+		t.Skipf("precondition: expected exactly 1 active system admin, found %d (parallel-package test race)", n)
+	}
+
 	h := users.NewHandler(pool, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	rec := &recordingAudit{}
 	h.SetAuditRecorder(rec)
@@ -503,6 +514,42 @@ func wipeAllAdmins(t *testing.T, pool *pgxpool.Pool) {
 	); err != nil {
 		t.Fatalf("wipe grants: %v", err)
 	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM user_capability_revokes WHERE capability_code = 'system.admin'`,
+	); err != nil {
+		t.Fatalf("wipe revokes: %v", err)
+	}
+}
+
+// countActiveSystemAdmins returns the total count of users who
+// currently hold system.admin via either a role assignment or an
+// explicit grant AND are in UserStateActive. Mirrors what
+// EnsureNotLastAdmin sees — used by tests to verify last-admin
+// preconditions before asserting on the invariant.
+func countActiveSystemAdmins(t *testing.T, pool *pgxpool.Pool) int64 {
+	t.Helper()
+	ctx := context.Background()
+	var n int64
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT u.ref)
+		FROM "user" u
+		WHERE u.approved = 1
+		  AND (
+		    EXISTS (
+		      SELECT 1 FROM user_roles ur
+		      JOIN role_capabilities rc ON rc.role_id = ur.role_id
+		      WHERE ur.user_ref = u.ref AND rc.capability_code = 'system.admin'
+		    )
+		    OR EXISTS (
+		      SELECT 1 FROM user_capability_grants g
+		      WHERE g.user_ref = u.ref AND g.capability_code = 'system.admin'
+		    )
+		  )
+	`).Scan(&n)
+	if err != nil {
+		t.Fatalf("countActiveSystemAdmins: %v", err)
+	}
+	return n
 }
 
 func newRegistry(t *testing.T, pool *pgxpool.Pool) *cache.Registry {

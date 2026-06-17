@@ -89,7 +89,21 @@ type Handler struct {
 	// handles overflow. nil-safe — tests without a registry get a
 	// Handler whose state path falls through to PG every time.
 	state *UserStateCache
+
+	// sessionRevoker is wired by api.go (Phase 1.17.A). Returns the
+	// number of sessions cascade-revoked when a user transitions out
+	// of UserStateActive. nil-safe — when unset (test fixtures that
+	// don't need session cascading), the transition skips the cascade
+	// silently.
+	sessionRevoker SessionRevokerFn
 }
+
+// SessionRevokerFn is the dependency-inverted signature for cascading
+// session revocation. Wired at boot to auth.SessionManager.RevokeAllForUser;
+// kept as a closure on Handler so the users package doesn't import auth's
+// session subsystem (the package already depends on auth for Identity;
+// pulling in the session DB queries would invert the layering).
+type SessionRevokerFn func(ctx context.Context, userRef int64) (int64, error)
 
 // auditRecorder is the subset of *audit.Recorder this package needs.
 // Interface form so tests can substitute a fake without dragging
@@ -136,6 +150,13 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 // surface. Safe to call once at startup.
 func (h *Handler) SetAuditRecorder(rec auditRecorder) {
 	h.Audit = rec
+}
+
+// SetSessionRevoker wires the session-cascade closure (Phase 1.17.A).
+// Same post-construction-setter pattern as SetAuditRecorder. Safe to
+// call once at startup.
+func (h *Handler) SetSessionRevoker(fn SessionRevokerFn) {
+	h.sessionRevoker = fn
 }
 
 // SetActivitiesWriter installs the federation activity-ledger
