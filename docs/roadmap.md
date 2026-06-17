@@ -146,12 +146,15 @@ sessions before the next lands.
 - Audio scrub (variable-speed) while dragging the playhead.
 - Screen capture to clipboard / file.
 
-### 1.18.B-3 — Subtitles + multi-format captions
-- Native WebVTT track support (`<track>` elements).
-- Worker-side conversion of SRT / SSA / ASS / SUB / IDX → WebVTT at
-  preview time; tracks stored as `subs/{lang}.vtt` variants.
-- Burned-subtitle option for export.
-- Per-user subtitle preferences (default language, font size, position).
+### 1.18.B-3 — Subtitles + multi-format captions (shipped)
+**Shipped via PR #137 (`5d16dcb`).** ui-nightly green at 10m21s on 2026-06-16.
+- Native WebVTT track support (`<track>` elements) wired into the existing VideoPlayer.
+- Pure-Go worker-side conversion of SRT / SSA / ASS / SUB → WebVTT; IDX deferred to a capability add-on per ADR 0034.
+- Sidecar auto-detection on multi-file asset ingest (`clip.mp4` + `clip.en.srt` pattern).
+- Burned-subtitle export via the existing worker queue.
+- Per-user subtitle preferences (enabled / preferredLang / fontSize / position).
+- Dedicated `asset_subtitle_tracks` table — tracks bound to assets via FK + CASCADE; NOT counted in asset-count queries; only applicable to audio/video assets (422 guard).
+- First post-baseline migration under ADR 0046's append-only convention; sets the `0000N_description.sql` convention going forward.
 
 ### 1.18.B-4 — Image sequences + RAM cache + always-on-top
 - Treat an image-sequence asset (numbered PNG/EXR/JPEG run) as a
