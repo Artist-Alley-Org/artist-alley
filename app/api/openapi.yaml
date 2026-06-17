@@ -3268,6 +3268,70 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /assets/{id}/burn-subtitles:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: burnSubtitleTrack
+      summary: Bake a subtitle track into the video (Phase 1.18.B-3)
+      description: |
+        Enqueues a `subtitle.burn` job that re-encodes the source
+        video with the named track baked into the pixel grid. The
+        result is a new asset linked back to the source via
+        `metadata.video.burned_from`. Use this for exports to
+        platforms that don't honour `<track kind="subtitles">`
+        (Twitter / IG uploads, embedded video on non-HTML5
+        surfaces).
+
+        The handler itself is a Phase 1.18.B-3-b stub today — the
+        endpoint enqueues + returns 202 + the job id; the worker
+        will surface a TerminalError until the ffmpeg integration
+        ships. Job result will carry the new asset id.
+
+        422 when the asset's renderable kind isn't audio/video
+        (image / 3D / document assets reject up-front).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lang]
+              properties:
+                lang:
+                  type: string
+                  description: |
+                    The (asset, lang) track to bake in. Must match
+                    an existing track on the asset.
+      responses:
+        "202":
+          description: Burn job enqueued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                    description: The enqueued jobs.* row id. Poll /jobs/{id} for status.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /assets/{id}/epub/spine:
     parameters:
       - name: id

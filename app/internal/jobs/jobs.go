@@ -77,6 +77,12 @@ const (
 	TypeAudiobookMerge   JobType = "audiobook.merge"   // concat N audio files → single .m4b
 	TypeAudiobookDecrypt JobType = "audiobook.decrypt" // .aax (Audible) → .m4b using .key
 
+	// Phase 1.18.B-3 — burn a subtitle track into a video (re-
+	// encode with the VTT baked into the pixel grid). Stub
+	// today; ffmpeg subtitles-filter integration is Phase
+	// 1.18.B-3-b. Enqueued from POST /assets/{id}/burn-subtitles.
+	TypeSubtitleBurn JobType = "subtitle.burn"
+
 )
 
 // Priority defaults. Lower numbers run sooner. Handlers can override.

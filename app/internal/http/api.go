@@ -388,6 +388,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.subtitlesHTTP = subtitles.NewHTTPHandler(
 		s.subtitles,
 		subtitles.NewStorageAdapter(storageSvc),
+		func(ctx context.Context, assetID uuid.UUID, lang string) (uuid.UUID, error) {
+			payload := subtitles.BurnPayload{AssetID: assetID, Lang: lang}
+			return jobSvc.Enqueue(ctx, jobs.TypeSubtitleBurn, payload, jobs.EnqueueOpts{})
+		},
 		logger,
 	)
 
@@ -1232,6 +1236,10 @@ func (s *apiServer) UploadSubtitleTrack(ctx context.Context, req openapi.UploadS
 
 func (s *apiServer) DeleteSubtitleTrack(ctx context.Context, req openapi.DeleteSubtitleTrackRequestObject) (openapi.DeleteSubtitleTrackResponseObject, error) {
 	return s.subtitlesHTTP.DeleteSubtitleTrack(ctx, req)
+}
+
+func (s *apiServer) BurnSubtitleTrack(ctx context.Context, req openapi.BurnSubtitleTrackRequestObject) (openapi.BurnSubtitleTrackResponseObject, error) {
+	return s.subtitlesHTTP.BurnSubtitleTrack(ctx, req)
 }
 
 func (s *apiServer) DownloadAssetVariant(ctx context.Context, req openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {

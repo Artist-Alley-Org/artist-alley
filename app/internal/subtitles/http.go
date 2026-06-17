@@ -40,21 +40,30 @@ type StorageWriter interface {
 	PutBytes(ctx context.Context, b []byte, contentType, pinSubjectType, pinSubjectID string) (string, error)
 }
 
+// EnqueueBurnFn is the dependency-inverted signature for enqueueing
+// a subtitle.burn job. The HTTP layer doesn't import jobs/ directly
+// (would force every subtitles caller to drag jobs into its
+// dependency graph); the boot wiring passes a closure that calls
+// jobs.Service.Enqueue with TypeSubtitleBurn + a BurnPayload.
+type EnqueueBurnFn func(ctx context.Context, assetID uuid.UUID, lang string) (uuid.UUID, error)
+
 // HTTPHandler adapts subtitles.Handler to the OpenAPI strict-server
 // shim contract. Kept separate from Handler so the package's
 // non-HTTP consumers (federation pass-through, admin tooling)
 // don't drag the openapi import.
 type HTTPHandler struct {
-	domain  *Handler
-	storage StorageWriter
-	logger  *slog.Logger
+	domain      *Handler
+	storage     StorageWriter
+	logger      *slog.Logger
+	enqueueBurn EnqueueBurnFn
 }
 
 // NewHTTPHandler wires the HTTP adapter. domain is required;
 // storage may be nil if the build path doesn't ship the upload
 // endpoint (test fixtures); when nil, upload returns 503.
-func NewHTTPHandler(domain *Handler, storageWriter StorageWriter, logger *slog.Logger) *HTTPHandler {
-	return &HTTPHandler{domain: domain, storage: storageWriter, logger: logger}
+// enqueueBurn may be nil; when nil, burn endpoint returns 503.
+func NewHTTPHandler(domain *Handler, storageWriter StorageWriter, enqueueBurn EnqueueBurnFn, logger *slog.Logger) *HTTPHandler {
+	return &HTTPHandler{domain: domain, storage: storageWriter, enqueueBurn: enqueueBurn, logger: logger}
 }
 
 // ListSubtitleTracks — GET /assets/{id}/subtitle-tracks.
@@ -162,6 +171,61 @@ func (h *HTTPHandler) UploadSubtitleTrack(
 		return mapPolicyErrorToUpload(err), nil
 	}
 	return openapi.UploadSubtitleTrack202JSONResponse(trackToAPI(track)), nil
+}
+
+// BurnSubtitleTrack — POST /assets/{id}/burn-subtitles. Enqueues
+// a subtitle.burn job that re-encodes the source video with the
+// chosen track baked in. Returns 202 + the new jobs row id.
+//
+// Validates that (asset, lang) refers to an existing track before
+// enqueueing — there's no point enqueueing burn work for a track
+// that doesn't exist, and the user gets a synchronous 404 instead
+// of a job that terminally fails minutes later.
+func (h *HTTPHandler) BurnSubtitleTrack(
+	ctx context.Context,
+	req openapi.BurnSubtitleTrackRequestObject,
+) (openapi.BurnSubtitleTrackResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.BurnSubtitleTrack401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.BurnSubtitleTrack400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "request body required"},
+		}, nil
+	}
+	assetID := uuid.UUID(req.Id)
+	if err := RequiresAudioVideo(ctx, h.domain.queries, assetID); err != nil {
+		switch {
+		case errors.Is(err, ErrAssetNotFound):
+			return openapi.BurnSubtitleTrack404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: err.Error()},
+			}, nil
+		case errors.Is(err, ErrSubtitlesNotApplicable):
+			return openapi.BurnSubtitleTrack422JSONResponse{
+				UnprocessableEntityJSONResponse: openapi.UnprocessableEntityJSONResponse{Error: err.Error()},
+			}, nil
+		default:
+			return nil, err
+		}
+	}
+	if _, err := h.domain.Get(ctx, assetID, req.Body.Lang); err != nil {
+		if errors.Is(err, ErrTrackNotFound) {
+			return openapi.BurnSubtitleTrack404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		return nil, err
+	}
+	if h.enqueueBurn == nil {
+		return nil, fmt.Errorf("subtitles HTTP: burn enqueue not wired")
+	}
+	jobID, err := h.enqueueBurn(ctx, assetID, req.Body.Lang)
+	if err != nil {
+		return nil, fmt.Errorf("subtitles: enqueue burn job: %w", err)
+	}
+	return openapi.BurnSubtitleTrack202JSONResponse{JobId: jobID}, nil
 }
 
 // DeleteSubtitleTrack — DELETE /assets/{id}/subtitle-tracks/{lang}.

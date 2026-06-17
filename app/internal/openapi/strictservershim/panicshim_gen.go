@@ -460,6 +460,11 @@ func (*PanicShim) DownloadAssetAlternate(context.Context, openapi.DownloadAssetA
 	panic("PanicShim: DownloadAssetAlternate called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// BurnSubtitleTrack panics by default; test shims override.
+func (*PanicShim) BurnSubtitleTrack(context.Context, openapi.BurnSubtitleTrackRequestObject) (openapi.BurnSubtitleTrackResponseObject, error) {
+	panic("PanicShim: BurnSubtitleTrack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAssetCompanions panics by default; test shims override.
 func (*PanicShim) ListAssetCompanions(context.Context, openapi.ListAssetCompanionsRequestObject) (openapi.ListAssetCompanionsResponseObject, error) {
 	panic("PanicShim: ListAssetCompanions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
