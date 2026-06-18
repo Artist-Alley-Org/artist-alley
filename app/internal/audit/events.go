@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -58,6 +59,15 @@ const (
 	EventCapabilityRevoked = "user.capability_revoked"
 	EventCapabilityGrantRemoved = "user.capability_grant_removed"
 	EventCapabilityRevokeRemoved = "user.capability_revoke_removed"
+
+	// Phase 1.17.C — fired by capability_sweeper.go once per
+	// reaped grant or revoke that's past its expires_at. The
+	// pre-reap row contents (subject, capability, team, expires_at)
+	// go in metadata so the audit row alone reconstructs the
+	// grant/revoke's life cycle without joining against the
+	// (now-deleted) source table.
+	EventCapabilityGrantExpiredSwept  = "user.capability_grant_expired_swept"
+	EventCapabilityRevokeExpiredSwept = "user.capability_revoke_expired_swept"
 
 	// 1.22.C federation share events. Emitted via WriteInTx so
 	// the audit row commits atomically with the share write per
@@ -423,6 +433,29 @@ func (r *Recorder) CapabilityRevokeRemoved(ctx context.Context, req *http.Reques
 	r.write(ctx, EventCapabilityRevokeRemoved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"capability": capability,
 		"team_id":    teamID,
+	})
+}
+
+// CapabilityGrantExpiredSwept / CapabilityRevokeExpiredSwept —
+// Phase 1.17.C. Fired by capability_sweeper.go once per reaped
+// row. Pool-bound (the sweeper has no http.Request); subject is
+// the grant/revoke's user_ref; actor is nil (the system swept it,
+// not a person). team_id is "" for global rows. expired_at carries
+// the timestamp that triggered the sweep so the audit row
+// reconstructs the lifecycle without the (now-deleted) source row.
+func (r *Recorder) CapabilityGrantExpiredSwept(ctx context.Context, subjectUserRef int64, capability, teamID string, expiredAt time.Time) {
+	r.write(ctx, EventCapabilityGrantExpiredSwept, &subjectUserRef, nil, reqContext{}, map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"expired_at": expiredAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (r *Recorder) CapabilityRevokeExpiredSwept(ctx context.Context, subjectUserRef int64, capability, teamID string, expiredAt time.Time) {
+	r.write(ctx, EventCapabilityRevokeExpiredSwept, &subjectUserRef, nil, reqContext{}, map[string]any{
+		"capability": capability,
+		"team_id":    teamID,
+		"expired_at": expiredAt.UTC().Format(time.RFC3339Nano),
 	})
 }
 
