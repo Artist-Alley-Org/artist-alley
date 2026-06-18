@@ -575,6 +575,7 @@ type recordingAudit struct {
 	archivedCalls         int
 	restoredCalls         int
 	refusedLastAdminCalls int
+	recordChangeCalls     int
 }
 
 func (r *recordingAudit) UserStatusChanged(_ context.Context, _ *http.Request, _, _, _, _ int64, _ string) {
@@ -594,6 +595,9 @@ func (r *recordingAudit) AdminUserRestored(_ context.Context, _ *http.Request, _
 }
 func (r *recordingAudit) AdminUserRefusedLastAdmin(_ context.Context, _ *http.Request, _, _ int64, _, _, _ string) {
 	r.refusedLastAdminCalls++
+}
+func (r *recordingAudit) RecordChange(_ context.Context, _ *http.Request, _ string, _, _ *int64, _, _ any, _ map[string]any) {
+	r.recordChangeCalls++
 }
 
 // countActivitiesTouchingUser approximates "did this transition

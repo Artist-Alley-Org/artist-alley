@@ -22,6 +22,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -121,6 +122,11 @@ type auditRecorder interface {
 	AdminUserArchived(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
 	AdminUserRestored(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string)
 	AdminUserRefusedLastAdmin(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, attempted, reason string)
+	// Phase 1.17.D — field-level change recording via the
+	// reflective helper. The interface form lets tests substitute
+	// a recording fake without dragging in the audit package's
+	// DB dependency.
+	RecordChange(ctx context.Context, req *http.Request, eventType string, subject, actor *int64, before, after any, extra map[string]any)
 }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
@@ -481,6 +487,37 @@ func (h *Handler) UpdateUserProfile(
 		}
 	}
 
+	// Phase 1.17.D — emit field-level changeset audit BEFORE the
+	// cache invalidate so the audit row lands close-in-time with
+	// the write. before is the snapshot we loaded at line 368;
+	// after is the merged-PATCH local-state we just wrote.
+	if h.Audit != nil {
+		before := profileSnapshot{
+			DisplayName: existing.DisplayName,
+			Bio:         existing.Bio,
+			AvatarURL:   derefOrEmpty(existing.AvatarUrl),
+			Location:    existing.Location,
+			WebsiteURL:  derefOrEmpty(existing.WebsiteUrl),
+			Language:    existing.Language,
+			Theme:       existing.Theme,
+		}
+		after := profileSnapshot{
+			DisplayName: displayName,
+			Bio:         bio,
+			AvatarURL:   derefOrEmpty(avatarURL),
+			Location:    location,
+			WebsiteURL:  derefOrEmpty(websiteURL),
+			Language:    language,
+			Theme:       theme,
+		}
+		actor := caller.UserRef
+		subject := req.Ref
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventUserProfileUpdated,
+			&subject, &actor,
+			before, after, nil)
+	}
+
 	// The cached entry (if any) just went stale. Local-evict +
 	// broadcast in one Invalidate call — peer instances and the
 	// LISTEN goroutine pick up via NOTIFY.
@@ -500,6 +537,22 @@ func (h *Handler) UpdateUserProfile(
 		h.byRef.Add(strconv.FormatInt(req.Ref, 10), *out)
 	}
 	return openapi.UpdateUserProfile200JSONResponse(*out), nil
+}
+
+// profileSnapshot is the diffable shape for the Phase 1.17.D
+// user.profile_updated event. Carries only the operator-visible
+// profile fields — no password, no actor keys, no system-managed
+// metadata. The benign-only-field invariant means the
+// changeset.go sensitive-pattern backstop has nothing to strip
+// here (all fields pass through cleanly).
+type profileSnapshot struct {
+	DisplayName string
+	Bio         string
+	AvatarURL   string
+	Location    string
+	WebsiteURL  string
+	Language    string
+	Theme       string
 }
 
 // ---------------------------------------------------------------------------
