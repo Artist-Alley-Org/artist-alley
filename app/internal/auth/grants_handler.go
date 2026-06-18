@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -81,6 +82,7 @@ func (h *Handler) ListAdminUserCapabilities(
 			Note:       strPtrOrNil(g.Note),
 			GrantedBy:  g.GrantedByUserRef,
 			GrantedAt:  g.GrantedAt.Time,
+			ExpiresAt:  pgTimestampPtr(g.ExpiresAt),
 		})
 	}
 	for _, r := range revokes {
@@ -90,6 +92,7 @@ func (h *Handler) ListAdminUserCapabilities(
 			Note:       strPtrOrNil(r.Note),
 			GrantedBy:  r.RevokedByUserRef,
 			GrantedAt:  r.RevokedAt.Time,
+			ExpiresAt:  pgTimestampPtr(r.ExpiresAt),
 		})
 	}
 	return openapi.ListAdminUserCapabilities200JSONResponse(out), nil
@@ -116,6 +119,16 @@ func (h *Handler) AddAdminUserGrant(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "capability is required"},
 		}, nil
 	}
+	// Phase 1.17.C — time-bound expiry. Reject past values so an
+	// operator can't accidentally land a pre-stale grant that the
+	// sweeper would reap on its next tick (silent grant-that-never-
+	// was). Future or NULL only.
+	expiresAt, perr := parseExpiryParam(req.Body.ExpiresAt)
+	if perr != nil {
+		return openapi.AddAdminUserGrant400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: perr.Error()},
+		}, nil
+	}
 
 	q := New(h.Pool)
 	if _, err := q.GetUserPasswordHashByRef(ctx, req.Ref); err != nil {
@@ -138,6 +151,7 @@ func (h *Handler) AddAdminUserGrant(
 		TeamID:            teamUUID,
 		GrantedByUserRef: &caller.UserRef,
 		Note:              note,
+		ExpiresAt:         expiresAt,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert grant: %w", err)
 	}
@@ -234,6 +248,13 @@ func (h *Handler) AddAdminUserRevoke(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "capability is required"},
 		}, nil
 	}
+	// Phase 1.17.C — same expiry validation as the grant path.
+	expiresAt, perr := parseExpiryParam(req.Body.ExpiresAt)
+	if perr != nil {
+		return openapi.AddAdminUserRevoke400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: perr.Error()},
+		}, nil
+	}
 
 	q := New(h.Pool)
 	if _, err := q.GetUserPasswordHashByRef(ctx, req.Ref); err != nil {
@@ -274,6 +295,7 @@ func (h *Handler) AddAdminUserRevoke(
 		TeamID:            teamUUID,
 		RevokedByUserRef: &caller.UserRef,
 		Note:              note,
+		ExpiresAt:         expiresAt,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert revoke: %w", err)
 	}
@@ -373,4 +395,41 @@ func strPtrOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// parseExpiryParam normalises the optional expires_at from a request
+// body into the pgtype.Timestamptz the sqlc layer wants. Phase 1.17.C —
+// time-bound grants and revokes share this validation:
+//
+//   * nil pointer → permanent (Valid=false → INSERT NULL)
+//   * future timestamp → time-bound (Valid=true)
+//   * past timestamp → ErrPastExpiry; caller maps to 400
+//
+// A past value is operator error: the sweeper would reap the row on
+// its next tick, producing a silent grant-that-never-was. Better to
+// reject up-front with a clear message than to land a stale row.
+func parseExpiryParam(p *time.Time) (pgtype.Timestamptz, error) {
+	if p == nil {
+		return pgtype.Timestamptz{}, nil
+	}
+	if !p.After(time.Now()) {
+		return pgtype.Timestamptz{}, ErrPastExpiry
+	}
+	return pgtype.Timestamptz{Time: *p, Valid: true}, nil
+}
+
+// ErrPastExpiry is returned by parseExpiryParam when the caller
+// supplied an expires_at value in the past. The grant/revoke
+// handlers surface this as HTTP 400 with the message in the body.
+var ErrPastExpiry = errors.New("expires_at must be in the future")
+
+// pgTimestampPtr unwraps a pgtype.Timestamptz to *time.Time —
+// returns nil when the row's column is SQL NULL (Valid=false)
+// so the openapi `expires_at` field renders as null / omitted.
+func pgTimestampPtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
 }

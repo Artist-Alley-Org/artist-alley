@@ -458,6 +458,14 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.api.userKeysSweeper.Run(ctx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "userkeys.sweeper.start")
 	}
+	// Phase 1.17.C capability-expiry sweeper. Same lifecycle —
+	// starts here, runs until ctx cancels, log a start event so
+	// boot observability is consistent across both background
+	// reapers.
+	if s.api != nil && s.api.capabilitySweeper != nil {
+		go s.api.capabilitySweeper.Run(ctx)
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "auth.capability_sweeper.start")
+	}
 
 	listenErr := make(chan error, 1)
 	go func() {

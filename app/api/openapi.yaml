@@ -8279,9 +8279,14 @@ components:
       type: object
       description: |
         One row from either `user_capability_grants` or
-        `user_capability_revokes` (Phase 1.17.F). `team_id` is null
-        for global overrides, set for team-scoped ones. `note` is the
+        `user_capability_revokes`. `team_id` is null for global
+        overrides, set for team-scoped ones. `note` is the
         admin-supplied justification recorded at grant/revoke time.
+
+        Phase 1.17.C — `expires_at` is the optional time-bound
+        expiry. NULL means permanent (the existing default behavior);
+        non-null rows get reaped by the background capability
+        sweeper once NOW() passes the expiry.
       required: [capability, granted_at]
       properties:
         capability:
@@ -8304,6 +8309,13 @@ components:
         granted_at:
           type: string
           format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Phase 1.17.C — optional auto-expiry timestamp. Null
+            means permanent. Reaped by the background sweeper.
 
     UserCapabilityOverrides:
       type: object
@@ -8327,6 +8339,12 @@ components:
         Body shared by POST /admin/users/{ref}/grants and POST
         /admin/users/{ref}/revokes. Pass `team_id` to scope the
         override to a team — omit / null for a global override.
+
+        Phase 1.17.C — `expires_at` is optional. When set, the
+        grant or revoke auto-expires at that time and is reaped by
+        the background sweeper. Past values are rejected with 400
+        (operator must explicitly choose to delete an already-
+        expired override rather than land it pre-stale).
       required: [capability]
       properties:
         capability:
@@ -8340,6 +8358,13 @@ components:
           type: string
           maxLength: 500
           description: Optional admin-supplied justification recorded with the row.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Phase 1.17.C — optional auto-expiry. NULL / omitted =
+            permanent. Past values rejected with 400.
 
     LicenseStatus:
       type: object

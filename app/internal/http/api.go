@@ -108,8 +108,9 @@ type apiServer struct {
 	outboxDispatcher *outbox.Dispatcher
 	outboxDelivery   *outbox.Worker
 	outboxAdmin      *outbox.AdminHandler
-	userKeysSweeper  *userkeys.Sweeper
-	userKeysAdmin    *userkeys.AdminHandler
+	userKeysSweeper    *userkeys.Sweeper
+	userKeysAdmin      *userkeys.AdminHandler
+	capabilitySweeper  *auth.CapabilitySweeper
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
 	seedAdmin        *seed.AdminHandler
@@ -373,6 +374,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// the dispatchers.
 	s.userKeysSweeper = userkeys.NewSweeper(
 		pool, logger, auditRec.FederationUserKeyRetainedExpired, 0,
+	)
+
+	// Phase 1.17.C capability-expiry sweeper. Mirrors userkeys
+	// (same tick cadence; same boot/shutdown lifecycle). Reaps
+	// expired user_capability_grants + user_capability_revokes;
+	// emits per-row audit; broadcasts cache invalidation for every
+	// affected user_ref so the resolver picks up the change on the
+	// next authz check.
+	s.capabilitySweeper = auth.NewCapabilitySweeper(
+		pool, logger,
+		auditRec.CapabilityGrantExpiredSwept,
+		auditRec.CapabilityRevokeExpiredSwept,
+		func(ctx context.Context, userRef int64) {
+			auth.InvalidateUserCaps(ctx, cacheReg, userRef)
+		},
+		0,
 	)
 
 	// Federation user-keys admin + self-rotation HTTP surface
