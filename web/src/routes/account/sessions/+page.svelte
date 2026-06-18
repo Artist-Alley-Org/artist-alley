@@ -1,5 +1,5 @@
 <script lang="ts">
-  // /account/sessions — multi-device session manager (Phase 1.17.C).
+  // /account/sessions — multi-device session manager (Phase 1.17.B).
   //
   // Lists the caller's active sessions and lets them revoke any
   // except the one authenticating this request (the "current"
