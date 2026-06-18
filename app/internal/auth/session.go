@@ -10,13 +10,12 @@ import (
 	"time"
 )
 
-// SessionCookieName matches the legacy PHP-side cookie. The legacy code
-// reads/writes a cookie named exactly "user" (see include/authenticate.php and
-// include/login_functions.php::set_login_cookies). Keeping the name
-// identical is what makes login interoperable between Go and PHP
-// during the transition; after PHP is retired we may rename to
-// something less generic but every PHP path key on "user" so it
-// stays as-is for now.
+// SessionCookieName is the auth cookie name. Inherited from the
+// pre-1.49 PHP coexistence window (where the legacy
+// include/authenticate.php read a cookie literally named "user");
+// the PHP pages are gone post-1.49.B, but renaming the cookie now
+// would log everyone out for no benefit. May rename in a future
+// polish phase that's worth the all-user logout.
 const SessionCookieName = "user"
 
 // TokenPrefix is the visible marker stamped on every artist-alley
@@ -26,8 +25,7 @@ const TokenPrefix = "aa_pat_"
 
 // sessionTokenBytes is the number of random bytes baked into a
 // session-cookie value. 18 raw bytes -> 24 base64url chars (no
-// padding), comfortably under the user.session column's 50-char
-// width and well above any practical entropy floor (144 bits).
+// padding) -> 144 bits of entropy, well above any practical floor.
 const sessionTokenBytes = 18
 
 // apiTokenBytes is the random length for Personal Access Tokens.
@@ -35,8 +33,9 @@ const sessionTokenBytes = 18
 // token is 39 chars total.
 const apiTokenBytes = 24
 
-// NewSessionToken returns a fresh random string suitable for storing
-// in user.session and sending in the rs_session cookie.
+// NewSessionToken returns a fresh random string suitable for the
+// session cookie value. The sha256 of this token is what lands in
+// sessions.token_hash; the plaintext never reaches the DB.
 func NewSessionToken() (string, error) {
 	b := make([]byte, sessionTokenBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -70,9 +69,8 @@ func LooksLikeAPIToken(s string) bool {
 	return strings.HasPrefix(s, TokenPrefix) && len(s) >= len(TokenPrefix)+16
 }
 
-// WriteSessionCookie sets the rs_session cookie on w with the same
-// flags rs_setcookie() uses on the PHP side: HttpOnly, SameSite=Strict,
-// Path=/, Secure when the request scheme is https.
+// WriteSessionCookie sets the session cookie on w: HttpOnly,
+// SameSite=Lax, Path=/, Secure when the request scheme is https.
 func WriteSessionCookie(w http.ResponseWriter, r *http.Request, token string, daysExpire int) {
 	expires := time.Time{}
 	if daysExpire > 0 {
@@ -89,8 +87,7 @@ func WriteSessionCookie(w http.ResponseWriter, r *http.Request, token string, da
 	})
 }
 
-// ClearSessionCookie expires the rs_session cookie on w. Matches
-// rs_setcookie(.., -1) on the PHP side.
+// ClearSessionCookie expires the session cookie on w.
 func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
@@ -123,9 +120,9 @@ func ExtractBearerToken(h http.Header) (string, bool) {
 	return tok, true
 }
 
-// SessionCookieValue returns the rs_session value from r, or "" if not
-// present. Wraps r.Cookie so callers don't pull in net/http just for
-// this.
+// SessionCookieValue returns the session cookie value from r, or ""
+// if not present. Wraps r.Cookie so callers don't pull in net/http
+// just for this.
 func SessionCookieValue(r *http.Request) string {
 	c, err := r.Cookie(SessionCookieName)
 	if err != nil || c == nil {

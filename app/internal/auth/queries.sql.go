@@ -58,35 +58,6 @@ func (q *Queries) AssignedRolesForUser(ctx context.Context, userRef int64) ([]As
 	return items, nil
 }
 
-const clearUserSession = `-- name: ClearUserSession :exec
-UPDATE "user"
-SET session   = NULL,
-    logged_in = 0
-WHERE ref = $1
-`
-
-// Used by /auth/logout. Idempotent: clearing an already-NULL session
-// is a no-op.
-func (q *Queries) ClearUserSession(ctx context.Context, ref int64) error {
-	_, err := q.db.Exec(ctx, clearUserSession, ref)
-	return err
-}
-
-const clearUserSessionByToken = `-- name: ClearUserSessionByToken :exec
-UPDATE "user"
-SET session   = NULL,
-    logged_in = 0
-WHERE session = $1
-`
-
-// Same as ClearUserSession but matches on the cookie value rather than
-// the user id — used when we know the cookie but haven't resolved the
-// user (e.g., logout from an already-expired session).
-func (q *Queries) ClearUserSessionByToken(ctx context.Context, session *string) error {
-	_, err := q.db.Exec(ctx, clearUserSessionByToken, session)
-	return err
-}
-
 const countSystemAdmins = `-- name: CountSystemAdmins :one
 
 WITH admin_candidates AS (
@@ -631,45 +602,6 @@ type FindUserByRefRow struct {
 func (q *Queries) FindUserByRef(ctx context.Context, ref int64) (FindUserByRefRow, error) {
 	row := q.db.QueryRow(ctx, findUserByRef, ref)
 	var i FindUserByRefRow
-	err := row.Scan(
-		&i.Ref,
-		&i.Username,
-		&i.Fullname,
-		&i.Email,
-		&i.Usergroup,
-		&i.Approved,
-		&i.AccountExpires,
-	)
-	return i, err
-}
-
-const findUserBySession = `-- name: FindUserBySession :one
-SELECT ref,
-       username,
-       fullname,
-       email,
-       usergroup,
-       approved,
-       account_expires
-FROM "user"
-WHERE session = $1
-LIMIT 1
-`
-
-type FindUserBySessionRow struct {
-	Ref            int64
-	Username       *string
-	Fullname       *string
-	Email          *string
-	Usergroup      *int64
-	Approved       int64
-	AccountExpires pgtype.Timestamptz
-}
-
-// Used by the session-cookie middleware to resolve rs_session -> user.
-func (q *Queries) FindUserBySession(ctx context.Context, session *string) (FindUserBySessionRow, error) {
-	row := q.db.QueryRow(ctx, findUserBySession, session)
-	var i FindUserBySessionRow
 	err := row.Scan(
 		&i.Ref,
 		&i.Username,
@@ -1447,27 +1379,6 @@ func (q *Queries) SetUserGlobalRole(ctx context.Context, arg SetUserGlobalRolePa
 	return err
 }
 
-const setUserSession = `-- name: SetUserSession :exec
-UPDATE "user"
-SET session     = $1,
-    last_active = NOW(),
-    logged_in   = 1
-WHERE ref = $2
-`
-
-type SetUserSessionParams struct {
-	Session *string
-	Ref     int64
-}
-
-// Writes a freshly minted session token to the user's row. Also
-// bumps last_active so legacy-side "active users" lists notice. Used at
-// the end of /auth/login.
-func (q *Queries) SetUserSession(ctx context.Context, arg SetUserSessionParams) error {
-	_, err := q.db.Exec(ctx, setUserSession, arg.Session, arg.Ref)
-	return err
-}
-
 const touchApiToken = `-- name: TouchApiToken :exec
 UPDATE api_tokens
 SET last_used_at = NOW()
@@ -1492,6 +1403,20 @@ WHERE id = $1
 // to call on every hit; the index on last_used_at is partial-on-active.
 func (q *Queries) TouchSession(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, touchSession, id)
+	return err
+}
+
+const touchUserLastActive = `-- name: TouchUserLastActive :exec
+UPDATE "user"
+SET last_active = NOW()
+WHERE ref = $1
+`
+
+// Bumps last_active on the user row. Called by SessionManager.Issue
+// so downstream "active users" surfaces (admin list, leaderboards)
+// see fresh logins. Idempotent.
+func (q *Queries) TouchUserLastActive(ctx context.Context, ref int64) error {
+	_, err := q.db.Exec(ctx, touchUserLastActive, ref)
 	return err
 }
 

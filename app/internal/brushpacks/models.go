@@ -665,10 +665,8 @@ type User struct {
 	Email                   *string
 	Usergroup               *int64
 	LastActive              pgtype.Timestamptz
-	LoggedIn                *int32
 	AccountExpires          pgtype.Timestamptz
 	Comments                *string
-	Session                 *string
 	PasswordLastChange      pgtype.Timestamptz
 	Approved                int64
 	Lang                    *string

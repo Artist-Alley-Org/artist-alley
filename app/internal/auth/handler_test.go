@@ -77,17 +77,20 @@ func TestLogin_OK(t *testing.T) {
 			t.Errorf("auth_method=%q want session", cu.AuthMethod)
 		}
 
-		// The session column got written.
-		var sess *string
-		if err := fx.tx.QueryRow(ctx, `SELECT session FROM "user" WHERE ref = $1`, fx.userRef).Scan(&sess); err != nil {
-			t.Fatalf("read session: %v", err)
+		// A sessions row landed for this user with the cookie's
+		// token_hash. Phase 1.17.B replaced the legacy
+		// user.session column with the sessions table as the
+		// canonical session-state source of truth.
+		hash := hashCookieValue(cookie.Value)
+		var rowCount int64
+		if err := fx.tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM sessions WHERE user_ref = $1 AND token_hash = $2 AND revoked_at IS NULL`,
+			fx.userRef, hash,
+		).Scan(&rowCount); err != nil {
+			t.Fatalf("read session row: %v", err)
 		}
-		if sess == nil || *sess != cookie.Value {
-			gotSess := "<nil>"
-			if sess != nil {
-				gotSess = *sess
-			}
-			t.Errorf("user.session=%q want %q", gotSess, cookie.Value)
+		if rowCount != 1 {
+			t.Errorf("sessions row count = %d, want 1 (active row keyed by token_hash)", rowCount)
 		}
 	})
 }
@@ -153,13 +156,18 @@ func TestLogout_ClearsSession(t *testing.T) {
 			t.Fatalf("status=%d want 204", resp.StatusCode)
 		}
 
-		// user.session got NULLed.
-		var sess *string
-		if err := fx.tx.QueryRow(ctx, `SELECT session FROM "user" WHERE ref = $1`, fx.userRef).Scan(&sess); err != nil {
+		// The sessions row got revoked. Phase 1.17.B —
+		// /auth/logout sets revoked_at on the sessions row;
+		// no legacy user.session column to clear.
+		hash := hashCookieValue(cookie.Value)
+		var revokedAt *time.Time
+		if err := fx.tx.QueryRow(ctx,
+			`SELECT revoked_at FROM sessions WHERE token_hash = $1`, hash,
+		).Scan(&revokedAt); err != nil {
 			t.Fatalf("read session: %v", err)
 		}
-		if sess != nil {
-			t.Errorf("user.session should be NULL after logout, got %q", *sess)
+		if revokedAt == nil {
+			t.Errorf("sessions.revoked_at should be set after logout, got NULL")
 		}
 	})
 }
