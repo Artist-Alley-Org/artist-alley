@@ -69,6 +69,23 @@ const (
 	EventCapabilityGrantExpiredSwept  = "user.capability_grant_expired_swept"
 	EventCapabilityRevokeExpiredSwept = "user.capability_revoke_expired_swept"
 
+	// Phase 1.17.D — admin-driven system-config changes. One
+	// event per surface so operators can filter by what got
+	// touched (alerting "auth config changed" is materially
+	// different from "appearance changed"). Each carries a
+	// metadata.changeset built via Recorder.RecordChange.
+	EventAdminSiteConfigUpdated       = "admin.system.site_config_updated"
+	EventAdminSMTPConfigUpdated       = "admin.system.smtp_config_updated"
+	EventAdminAuthConfigUpdated       = "admin.system.auth_config_updated"
+	EventAdminAIConfigUpdated         = "admin.system.ai_config_updated"
+	EventAdminAppearanceConfigUpdated = "admin.system.appearance_config_updated"
+
+	// Phase 1.17.D — user-profile change event. Distinct from
+	// the state-transition events (approve/disable/etc.) because
+	// this is a field-level edit — name / bio / avatar etc. —
+	// surfaced as a metadata.changeset.
+	EventUserProfileUpdated = "user.profile_updated"
+
 	// 1.22.C federation share events. Emitted via WriteInTx so
 	// the audit row commits atomically with the share write per
 	// the design proposal §7.2 write-ahead invariant.

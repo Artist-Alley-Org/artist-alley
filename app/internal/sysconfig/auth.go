@@ -71,8 +71,20 @@ type PasswordPolicy struct {
 
 // AuthConfig is the full auth settings payload stored under KeyAuth.
 type AuthConfig struct {
+	// PasswordPolicy field name matches the "password" sensitive
+	// pattern in the Phase 1.17.D changeset helper and is stripped
+	// from the diff automatically. Operators see "auth config
+	// updated" and read the new policy via the API. Known MVP
+	// limitation; addressable with a per-field audit:"include"
+	// opt-in tag in a follow-up if the false positive matters.
 	PasswordPolicy PasswordPolicy `json:"password_policy"`
-	SSOProviders   []SSOProvider  `json:"sso_providers"`
+	// SSOProviders carries per-provider Config map[string]any
+	// values that may include OAuth client_secret / LDAP bind
+	// creds. Stripped from the changeset for the same reason as
+	// AIConfig.Providers — the diff helper isn't slice-element-
+	// aware. Operators see "auth config updated"; provider list
+	// edits are visible via the API.
+	SSOProviders []SSOProvider `json:"sso_providers" audit:"-"`
 }
 
 // GetAuth returns the auth config or, if unset, an empty AuthConfig

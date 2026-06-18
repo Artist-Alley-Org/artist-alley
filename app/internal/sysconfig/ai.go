@@ -63,8 +63,18 @@ type AIConfig struct {
 	// DefaultProviderID is the AIProvider.ID picked when nothing
 	// else specifies one. Empty = no default (every caller must
 	// choose explicitly, or the AI feature is disabled).
-	DefaultProviderID string       `json:"default_provider_id"`
-	Providers         []AIProvider `json:"providers"`
+	DefaultProviderID string `json:"default_provider_id"`
+	// Providers carries per-provider AIProvider.APIKey strings that
+	// the Phase 1.17.D changeset helper cannot strip per-element
+	// (the slice gets DeepEqual'd; a single field change dumps the
+	// whole before/after slices including embedded API keys).
+	// Stripping the entire slice from the changeset is the
+	// conservative choice — operators see "AI config changed,
+	// DefaultProviderID went from X to Y" and read the new
+	// provider list via the API. Lost diff signal is a known
+	// MVP limitation; addressing it would require slice-element-
+	// aware recursion in the diff helper.
+	Providers []AIProvider `json:"providers" audit:"-"`
 }
 
 // GetAI returns the AI config or, if unset, an empty AIConfig.

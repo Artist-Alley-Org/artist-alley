@@ -131,7 +131,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:   sysconfig.NewHTTPHandler(pool, sysCfg, logger),
+		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
@@ -1046,6 +1046,15 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 	if sessions != nil {
 		h.SetSessionRevoker(sessions.RevokeAllForUser)
 	}
+	return h
+}
+
+// sysconfigHandlerWithAudit mirrors usersHandlerWithAudit — wires
+// the audit recorder so Phase 1.17.D's RecordChange call sites in
+// the Update* config handlers have somewhere to emit to.
+func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder) *sysconfig.Handler {
+	h := sysconfig.NewHTTPHandler(pool, store, logger)
+	h.SetAuditRecorder(auditRec)
 	return h
 }
 
