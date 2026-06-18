@@ -125,14 +125,19 @@ func (s *CapabilitySweeper) Run(ctx context.Context) {
 	}
 }
 
-// SweepOnce executes one DELETE pass per table, fires per-row
-// audit, and broadcasts cache invalidation for every affected
-// user. Returns (grantsReaped, revokesReaped). Exported so admin
-// tooling + tests can drive a single sweep without spinning up
-// the Run loop.
+// SweepOnce executes one expiry pass: reaps every non-protected
+// expired grant + revoke in a bulk DELETE, then walks the
+// protected GLOBAL system.admin grant candidates per-row,
+// enforcing the last-admin invariant. Per-row audit fires for
+// every reaped row; cache invalidation broadcasts once per
+// affected user (deduped — LISTEN/NOTIFY churn is real on big
+// installs).
 //
-// Errors are logged at WARN + counted as 0; the call never
-// propagates. The next tick retries.
+// Returns (grantsReaped, revokesReaped). The grantsReaped count
+// includes both bulk-reaped and individually-reaped admin grants.
+//
+// Errors are logged at WARN + counted as 0 for the failing query;
+// the call never propagates. The next tick retries.
 func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 	q := New(s.pool)
 
@@ -147,16 +152,60 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 		revokes = nil
 	}
 
-	if len(grants) == 0 && len(revokes) == 0 {
+	// Protected sweep: GLOBAL system.admin grants past expires_at
+	// need per-row last-admin checking. Skip a reap that would
+	// leave the system with zero active admins; log a WARN so
+	// the operator can extend or replace the grant.
+	adminCandidates, err := q.ListExpiredAdminGrants(ctx)
+	if err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.admin_candidates.error", err)
+		adminCandidates = nil
+	}
+	adminReaped := make([]ListExpiredAdminGrantsRow, 0, len(adminCandidates))
+	for _, c := range adminCandidates {
+		remaining, err := q.CountActiveAdminsIfRowRemoved(ctx, c.UserRef)
+		if err != nil {
+			s.logWarn(ctx, "auth.capability_sweeper.admin_count.error", err)
+			continue
+		}
+		if remaining == 0 {
+			// Stuck open — keep the row, surface the situation.
+			if s.logger != nil {
+				s.logger.LogAttrs(ctx, slog.LevelWarn,
+					"auth.capability_sweeper.last_admin.stuck_open",
+					slog.Int64("user_ref", c.UserRef),
+					slog.Time("expired_at", c.ExpiresAt.Time),
+				)
+			}
+			continue
+		}
+		n, derr := q.DeleteUserGrant(ctx, DeleteUserGrantParams{
+			UserRef:        c.UserRef,
+			CapabilityCode: c.CapabilityCode,
+			TeamID:         c.TeamID,
+		})
+		if derr != nil || n == 0 {
+			if derr != nil {
+				s.logWarn(ctx, "auth.capability_sweeper.admin_delete.error", derr)
+			}
+			continue
+		}
+		adminReaped = append(adminReaped, c)
+	}
+
+	if len(grants) == 0 && len(revokes) == 0 && len(adminReaped) == 0 {
 		return 0, 0 // happy steady state; stay quiet
 	}
 
-	// Per-row audit + cache invalidation. Use a set keyed by
-	// user_ref so a user with N reaped rows gets exactly one
-	// invalidate broadcast (LISTEN/NOTIFY churn is real on big
-	// installs; dedup at the source).
-	affected := make(map[int64]struct{}, len(grants)+len(revokes))
+	affected := make(map[int64]struct{}, len(grants)+len(revokes)+len(adminReaped))
 	for _, g := range grants {
+		teamID := pgUUIDStr(g.TeamID)
+		if s.auditGrant != nil {
+			s.auditGrant(ctx, g.UserRef, g.CapabilityCode, teamID, g.ExpiresAt.Time)
+		}
+		affected[g.UserRef] = struct{}{}
+	}
+	for _, g := range adminReaped {
 		teamID := pgUUIDStr(g.TeamID)
 		if s.auditGrant != nil {
 			s.auditGrant(ctx, g.UserRef, g.CapabilityCode, teamID, g.ExpiresAt.Time)
@@ -176,16 +225,17 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 		}
 	}
 
+	totalGrants := len(grants) + len(adminReaped)
 	if s.logger != nil {
 		s.logger.LogAttrs(ctx, slog.LevelInfo,
 			"auth.capability_sweeper.reaped",
-			slog.Int("grants", len(grants)),
+			slog.Int("grants", totalGrants),
 			slog.Int("revokes", len(revokes)),
 			slog.Int("affected_users", len(affected)),
 		)
 	}
 
-	return int64(len(grants)), int64(len(revokes))
+	return int64(totalGrants), int64(len(revokes))
 }
 
 func (s *CapabilitySweeper) logWarn(ctx context.Context, msg string, err error) {

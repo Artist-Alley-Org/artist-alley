@@ -969,6 +969,52 @@ func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, 
 	return items, nil
 }
 
+const listExpiredAdminGrants = `-- name: ListExpiredAdminGrants :many
+SELECT user_ref, capability_code, team_id, expires_at
+FROM user_capability_grants
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+  AND capability_code = 'system.admin'
+  AND team_id IS NULL
+`
+
+type ListExpiredAdminGrantsRow struct {
+	UserRef        int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+	ExpiresAt      pgtype.Timestamptz
+}
+
+// Phase 1.17.C — used by capability_sweeper.go for the last-
+// admin-protected sweep. Returns expired GLOBAL system.admin
+// grant candidates so the sweeper can per-row check
+// CountActiveAdminsIfRowRemoved and skip rows whose reap would
+// leave the system with zero active admins (logging a "stuck
+// open" WARN so the operator notices).
+func (q *Queries) ListExpiredAdminGrants(ctx context.Context) ([]ListExpiredAdminGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredAdminGrants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredAdminGrantsRow
+	for rows.Next() {
+		var i ListExpiredAdminGrantsRow
+		if err := rows.Scan(
+			&i.UserRef,
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentPasswordHashes = `-- name: ListRecentPasswordHashes :many
 SELECT password_hash
 FROM user_password_history
@@ -1449,6 +1495,7 @@ func (q *Queries) SetUserGlobalRole(ctx context.Context, arg SetUserGlobalRolePa
 const sweepExpiredGrants = `-- name: SweepExpiredGrants :many
 DELETE FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
+  AND NOT (capability_code = 'system.admin' AND team_id IS NULL)
 RETURNING user_ref, capability_code, team_id, expires_at
 `
 
@@ -1459,11 +1506,18 @@ type SweepExpiredGrantsRow struct {
 	ExpiresAt      pgtype.Timestamptz
 }
 
-// Phase 1.17.C — used by capability_sweeper.go. Deletes every
-// grant past its expires_at and returns the reaped rows so the
-// sweeper can emit a per-row audit event + invalidate the
-// affected user's capability cache. NOW() is evaluated at
-// statement time so the result set is internally consistent.
+// Phase 1.17.C — used by capability_sweeper.go for non-protected
+// grants only. Deletes every non-system.admin grant past its
+// expires_at and returns the reaped rows so the sweeper can emit
+// a per-row audit event + invalidate the affected user's
+// capability cache.
+//
+// system.admin global grants are EXCLUDED from this bulk sweep
+// and handled separately via ListExpiredAdminGrants +
+// DeleteUserGrant per-row so the sweeper can enforce the
+// last-admin invariant before each reap. Team-scoped
+// system.admin grants (team_id IS NOT NULL) don't affect the
+// global admin count, so they bulk-sweep here.
 func (q *Queries) SweepExpiredGrants(ctx context.Context) ([]SweepExpiredGrantsRow, error) {
 	rows, err := q.db.Query(ctx, sweepExpiredGrants)
 	if err != nil {

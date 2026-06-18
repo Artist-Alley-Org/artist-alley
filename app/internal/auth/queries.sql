@@ -190,14 +190,35 @@ WHERE user_ref = $1
   AND team_id IS NOT DISTINCT FROM $3;
 
 -- name: SweepExpiredGrants :many
--- Phase 1.17.C — used by capability_sweeper.go. Deletes every
--- grant past its expires_at and returns the reaped rows so the
--- sweeper can emit a per-row audit event + invalidate the
--- affected user's capability cache. NOW() is evaluated at
--- statement time so the result set is internally consistent.
+-- Phase 1.17.C — used by capability_sweeper.go for non-protected
+-- grants only. Deletes every non-system.admin grant past its
+-- expires_at and returns the reaped rows so the sweeper can emit
+-- a per-row audit event + invalidate the affected user's
+-- capability cache.
+--
+-- system.admin global grants are EXCLUDED from this bulk sweep
+-- and handled separately via ListExpiredAdminGrants +
+-- DeleteUserGrant per-row so the sweeper can enforce the
+-- last-admin invariant before each reap. Team-scoped
+-- system.admin grants (team_id IS NOT NULL) don't affect the
+-- global admin count, so they bulk-sweep here.
 DELETE FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
+  AND NOT (capability_code = 'system.admin' AND team_id IS NULL)
 RETURNING user_ref, capability_code, team_id, expires_at;
+
+-- name: ListExpiredAdminGrants :many
+-- Phase 1.17.C — used by capability_sweeper.go for the last-
+-- admin-protected sweep. Returns expired GLOBAL system.admin
+-- grant candidates so the sweeper can per-row check
+-- CountActiveAdminsIfRowRemoved and skip rows whose reap would
+-- leave the system with zero active admins (logging a "stuck
+-- open" WARN so the operator notices).
+SELECT user_ref, capability_code, team_id, expires_at
+FROM user_capability_grants
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+  AND capability_code = 'system.admin'
+  AND team_id IS NULL;
 
 -- name: SweepExpiredRevokes :many
 -- Same as SweepExpiredGrants but for revokes — same audit +
