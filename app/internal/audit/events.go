@@ -86,6 +86,17 @@ const (
 	// surfaced as a metadata.changeset.
 	EventUserProfileUpdated = "user.profile_updated"
 
+	// Phase 1.17.E — resource request lifecycle events. Each
+	// fires from the corresponding requests.Handler method
+	// (Submit / Grant / Deny / sweeper-cascade). Metadata
+	// carries the request_id + asset + capability + reason so
+	// the audit row alone reconstructs the request lifecycle
+	// without joining against the (potentially stale) source row.
+	EventRequestCreated = "request.created"
+	EventRequestGranted = "request.granted"
+	EventRequestDenied  = "request.denied"
+	EventRequestExpired = "request.expired"
+
 	// 1.22.C federation share events. Emitted via WriteInTx so
 	// the audit row commits atomically with the share write per
 	// the design proposal §7.2 write-ahead invariant.
@@ -472,6 +483,62 @@ func (r *Recorder) CapabilityRevokeExpiredSwept(ctx context.Context, subjectUser
 	r.write(ctx, EventCapabilityRevokeExpiredSwept, &subjectUserRef, nil, reqContext{}, map[string]any{
 		"capability": capability,
 		"team_id":    teamID,
+		"expired_at": expiredAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// RequestCreated — Phase 1.17.E. Fired by requests.Handler.Submit.
+// requestID is the new resource_request row id; assetID is the
+// target; capability is the code the requester asked for. reason
+// is the requester's free-text justification (may be empty).
+func (r *Recorder) RequestCreated(ctx context.Context, req *http.Request, requesterRef int64, requestID, assetID, capability, reason string) {
+	r.write(ctx, EventRequestCreated, &requesterRef, &requesterRef, ctxFromRequest(req), map[string]any{
+		"request_id": requestID,
+		"asset_id":   assetID,
+		"capability": capability,
+		"reason":     reason,
+	})
+}
+
+// RequestGranted — Phase 1.17.E. Fired by requests.Handler.Grant
+// after the resource_request row + the user_capability_grants row
+// commit atomically. expiresAt is the optional auto-expiry that
+// the CapabilitySweeper will later reap (zero time → permanent).
+func (r *Recorder) RequestGranted(ctx context.Context, req *http.Request, approverRef, requesterRef int64, requestID, assetID, capability, decisionReason string, expiresAt time.Time) {
+	meta := map[string]any{
+		"request_id":      requestID,
+		"asset_id":        assetID,
+		"capability":      capability,
+		"requester":       requesterRef,
+		"decision_reason": decisionReason,
+	}
+	if !expiresAt.IsZero() {
+		meta["expires_at"] = expiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	r.write(ctx, EventRequestGranted, &requesterRef, &approverRef, ctxFromRequest(req), meta)
+}
+
+// RequestDenied — Phase 1.17.E. Fired by requests.Handler.Deny.
+// Mirrors RequestGranted shape; no expires_at because deny is
+// terminal.
+func (r *Recorder) RequestDenied(ctx context.Context, req *http.Request, approverRef, requesterRef int64, requestID, assetID, capability, decisionReason string) {
+	r.write(ctx, EventRequestDenied, &requesterRef, &approverRef, ctxFromRequest(req), map[string]any{
+		"request_id":      requestID,
+		"asset_id":        assetID,
+		"capability":      capability,
+		"requester":       requesterRef,
+		"decision_reason": decisionReason,
+	})
+}
+
+// RequestExpired — Phase 1.17.E. Fired by the CapabilitySweeper
+// request-cascade callback when a grant with request_ref reaps.
+// Pool-bound (the sweeper has no http.Request); actor is nil
+// (the system swept it, not a person).
+func (r *Recorder) RequestExpired(ctx context.Context, requesterRef int64, requestID, capability string, expiredAt time.Time) {
+	r.write(ctx, EventRequestExpired, &requesterRef, nil, reqContext{}, map[string]any{
+		"request_id": requestID,
+		"capability": capability,
 		"expired_at": expiredAt.UTC().Format(time.RFC3339Nano),
 	})
 }

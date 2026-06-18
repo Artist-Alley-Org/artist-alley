@@ -567,6 +567,20 @@ type PostTag struct {
 	Tag    string      `json:"tag"`
 }
 
+type ResourceRequest struct {
+	ID                  pgtype.UUID        `json:"id"`
+	RequesterUserRef    int64              `json:"requester_user_ref"`
+	TargetAssetID       pgtype.UUID        `json:"target_asset_id"`
+	RequestedCapability string             `json:"requested_capability"`
+	Reason              string             `json:"reason"`
+	State               string             `json:"state"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	DecidedByUserRef    *int64             `json:"decided_by_user_ref"`
+	DecisionReason      string             `json:"decision_reason"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	RequestedAt         pgtype.Timestamptz `json:"requested_at"`
+}
+
 type Role struct {
 	ID             pgtype.UUID        `json:"id"`
 	ParentID       pgtype.UUID        `json:"parent_id"`
@@ -696,6 +710,7 @@ type UserCapabilityGrant struct {
 	Note             string             `json:"note"`
 	TeamID           pgtype.UUID        `json:"team_id"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	RequestRef       pgtype.UUID        `json:"request_ref"`
 }
 
 type UserCapabilityRevoke struct {
