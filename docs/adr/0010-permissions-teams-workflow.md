@@ -1,7 +1,7 @@
 ---
 id: "0010"
 title: Permissions, teams, and workflow states
-status: proposed
+status: accepted
 date: 2026-05-26
 area: architecture
 phases: 
@@ -9,8 +9,11 @@ phases:
   - "1.7.B"
   - "1.13.D-2b"
   - "1.13.D-3"
+  - "1.17"
 supersedes: []
-related: []
+related: 
+  - "0042"
+  - "0044"
 tags:
   - architecture
   - ai
@@ -19,6 +22,35 @@ tags:
 excerpt: >-
   The authorization model laid down in migration 00002_capabilities_roles.sql (Phase 1.3) gave us three of the seven layers a real production permissions system needs:
 ---
+## Implementation status (2026-06-16)
+
+The decision recorded here is **partially implemented** and the
+remaining work is in flight under Phase 1.17:
+
+- **1.17.A — User approval states + admin approval workflow** ✅
+  shipped via PR #138 (`672e45d`). Typed state machine, single-gate
+  authn, session-cascade invalidation, last-admin invariant.
+- **1.17.B — Groups + team hierarchy + multi-session management** ⏭
+  next; covers the missing "teams" pillar of this ADR.
+- **1.17.C — Capability grants + admin grant surface** ⏭ covers the
+  fine-grained authorization layer.
+- **1.17.D — Audit-log changeset (before / after diffs)** ⏭ closes the
+  audit-trail gap.
+- **1.17.E — Resource request workflow** ⏭ adds the request lifecycle.
+- **1.17.F — Self-service profile editing + operator gates** ⏭ wraps
+  the user-controlled surface.
+
+When the full 1.17 arc lands, this ADR will be cross-referenced
+from each shipped sub-phase. The `status: accepted` flip in this
+revision reflects that the design held against 1.17.A's
+implementation (no design changes, no surprises) — the rest of the
+arc is mechanical execution of the same model.
+
+Related companion ADRs that share the typed-vocabulary discipline:
+[ADR 0042](0042-distributed-catalogs-typed-per-package.md) (typed
+constants per package) + [ADR 0044](0044-activities-ledger-cqrs-lite.md)
+(activity ledger as audit substrate).
+
 ## Context
 
 The authorization model laid down in migration `00002_capabilities_roles.sql`

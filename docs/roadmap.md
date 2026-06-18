@@ -3,6 +3,25 @@
 A snapshot of what's shipped, what's in flight, and what's on the
 map. Subject to change as we learn what teams actually need.
 
+## Foundation status
+
+**Pre-v1.0 foundation is essentially complete.** Forty-nine accepted
+ADRs cover the load-bearing concerns: storage, caching, frontend
+stack, federation protocol (walled-garden + encrypted, ArchivePub
+v1.0-rc1), capability add-ons, audit log, observability, packaging,
+migration baseline policy. The encryption arc (Phase 1.22.I) closed
+the federation foundation. The pre-MVP cleanup (Phase 1.49) closed
+the technical debt. The Phase 1.17 identity arc is the last
+foundational arc in flight; the remaining sub-phases (1.17.B
+through 1.17.F) are mechanical execution of decisions captured in
+[ADR 0010](/adr/0010-permissions-teams-workflow/) (now `accepted`).
+
+The transition marker is the **v1.0.0 release tag**, expected after
+the federation v1.0-rc1 soak completes on 2026-06-22 and the 1.17
+arc closes. Post-tag work is feature development on a stable
+foundation; per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
+schema migrations become append-only forever at the same moment.
+
 ## Shipped
 
 The current release stream covers the foundations:
