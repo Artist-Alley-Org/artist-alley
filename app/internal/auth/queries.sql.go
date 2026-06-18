@@ -1277,6 +1277,26 @@ func (q *Queries) LoadCapabilityLicenseFeatures(ctx context.Context) ([]LoadCapa
 	return items, nil
 }
 
+const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :execrows
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND revoked_at IS NULL
+`
+
+// Phase 1.17.A — cascade revoke every active session for a user.
+// Fired by users.SetAdminUserStatus when a transition moves the
+// user OUT OF UserStateActive (disabled, archived, or the
+// should-never-happen active→pending). Returns rows-affected so
+// the audit log can record the cascade size.
+func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userRef int64) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAllSessionsForUser, userRef)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeApiToken = `-- name: RevokeApiToken :execrows
 UPDATE api_tokens
 SET revoked_at = NOW()

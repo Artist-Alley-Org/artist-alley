@@ -11,6 +11,8 @@
     type AdminUser,
     type AdminUserStatus,
     statusBadgeClass,
+    validTargetsFrom,
+    transitionVerb,
   } from '$lib/admin/users';
 
   interface UserPublic {
@@ -123,8 +125,23 @@
   function statusLabel(s: AdminUserStatus): string {
     if (s === 'active') return t('admin.users.status_active');
     if (s === 'pending') return t('admin.users.status_pending');
+    if (s === 'archived') return t('admin.users.status_archived');
     return t('admin.users.status_disabled');
   }
+
+  // Phase 1.17.A — typed transition buttons. The matrix lives in
+  // $lib/admin/users (mirrors internal/users/userstate.go on the
+  // backend); we render one button per legal target with a verb-
+  // labelled action so the operator sees "Approve / Disable /
+  // Archive / Restore" rather than four ambiguous "Set to X"
+  // buttons. Disabled while a save is in flight.
+  const transitionActions = $derived(
+    validTargetsFrom(status).map((to) => ({
+      to,
+      verb: transitionVerb(status, to),
+      label: t(`admin.user_detail.transition_${transitionVerb(status, to)}`),
+    })),
+  );
 
   // Password reset (Phase 1.17.D).
   let resetReason = $state('');
@@ -376,31 +393,34 @@
       />
     </label>
 
-    <div class="flex flex-wrap gap-2">
-      <button
-        type="button"
-        onclick={() => saveStatus('active')}
-        disabled={statusSaving}
-        class="rounded border border-success bg-success/10 px-3 py-1 text-xs font-medium text-success hover:bg-success/20 disabled:opacity-50"
-      >
-        {status === 'disabled' ? t('admin.user_detail.status_save_active_again') : t('admin.user_detail.status_save_active')}
-      </button>
-      <button
-        type="button"
-        onclick={() => saveStatus('pending')}
-        disabled={statusSaving}
-        class="rounded border border-warning bg-warning/10 px-3 py-1 text-xs font-medium text-warning hover:bg-warning/20 disabled:opacity-50"
-      >
-        {t('admin.user_detail.status_save_pending')}
-      </button>
-      <button
-        type="button"
-        onclick={() => saveStatus('disabled')}
-        disabled={statusSaving}
-        class="rounded border border-danger bg-danger/10 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/20 disabled:opacity-50"
-      >
-        {t('admin.user_detail.status_save_disabled')}
-      </button>
+    <!-- Phase 1.17.A — render one button per LEGAL transition target,
+         derived from the typed matrix. Replaces the always-on three
+         buttons (which let an operator click "Pending" on an active
+         user and get a 400) — operators only see actions that will
+         actually work, and the verb is unambiguous (Approve / Disable
+         / Archive / Restore vs the old "Set to X" framing). -->
+    <div class="flex flex-wrap gap-2" data-testid="admin-user-transitions">
+      {#each transitionActions as action (action.to)}
+        <button
+          type="button"
+          onclick={() => saveStatus(action.to)}
+          disabled={statusSaving}
+          data-testid={`transition-${action.verb}`}
+          class={
+            'rounded border px-3 py-1 text-xs font-medium disabled:opacity-50 ' +
+            (action.verb === 'approve' || action.verb === 'restore'
+              ? 'border-success bg-success/10 text-success hover:bg-success/20'
+              : action.verb === 'disable'
+                ? 'border-danger bg-danger/10 text-danger hover:bg-danger/20'
+                : 'border-muted bg-muted/10 text-fg-muted hover:bg-muted/20')
+          }
+        >
+          {action.label}
+        </button>
+      {/each}
+      {#if transitionActions.length === 0}
+        <p class="text-xs text-fg-muted">{t('admin.user_detail.status_terminal')}</p>
+      {/if}
     </div>
 
     {#if statusMessage}

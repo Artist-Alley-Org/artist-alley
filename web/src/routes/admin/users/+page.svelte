@@ -72,6 +72,7 @@
   function statusLabel(s: AdminUserStatus): string {
     if (s === 'active') return t('admin.users.status_active');
     if (s === 'pending') return t('admin.users.status_pending');
+    if (s === 'archived') return t('admin.users.status_archived');
     return t('admin.users.status_disabled');
   }
 </script>
@@ -104,6 +105,7 @@
       <option value="active">{t('admin.users.filter_status_active')}</option>
       <option value="pending">{t('admin.users.filter_status_pending')}</option>
       <option value="disabled">{t('admin.users.filter_status_disabled')}</option>
+      <option value="archived">{t('admin.users.filter_status_archived')}</option>
     </select>
   </label>
 </div>

@@ -2312,7 +2312,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [active, pending, disabled]
+            enum: [active, pending, disabled, archived]
         - name: cursor
           in: query
           required: false
@@ -7993,7 +7993,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [active, pending, disabled]
+          enum: [active, pending, disabled, archived]
         primary_role:
           type: string
           description: Empty when the user has no global role assigned.
@@ -8227,7 +8227,7 @@ components:
       properties:
         status:
           type: string
-          enum: [active, pending, disabled]
+          enum: [active, pending, disabled, archived]
         reason:
           type: string
           maxLength: 500
@@ -8245,10 +8245,10 @@ components:
           format: int64
         status:
           type: string
-          enum: [active, pending, disabled]
+          enum: [active, pending, disabled, archived]
         previous_status:
           type: string
-          enum: [active, pending, disabled]
+          enum: [active, pending, disabled, archived]
         changed:
           type: boolean
           description: |

@@ -304,17 +304,17 @@ func (h *Handler) loginViaRegistry(
 	if err != nil {
 		return nil, err
 	}
-	if user.Approved != 1 {
-		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "not_approved")
-		return openapi.Login401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account is not approved"},
-		}, nil
-	}
-	if user.AccountExpires.Valid && user.AccountExpires.Time.Before(time.Now()) {
-		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "account_expired")
-		return openapi.Login401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account has expired"},
-		}, nil
+	// Phase 1.17.A — single-gate. Replaces the inline approved +
+	// expires checks scattered between the two login paths. The
+	// typed UserState gate routes pending users to the "waiting
+	// for approval" UX, and disabled/archived to a uniform 401
+	// (the audit metadata reason carries the typed state).
+	if resp, err := AssertCanAuthenticateUser(ctx, h.Audit, httpReq, username, userForAuthnGate{
+		Ref: user.Ref, Approved: user.Approved, AccountExpires: user.AccountExpires,
+	}); err != nil {
+		return nil, err
+	} else if resp != nil {
+		return resp, nil
 	}
 
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
@@ -376,17 +376,13 @@ func (h *Handler) loginInlinePassword(
 		}
 		return nil, err
 	}
-	if user.Approved != 1 {
-		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "not_approved")
-		return openapi.Login401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account is not approved"},
-		}, nil
-	}
-	if user.AccountExpires.Valid && user.AccountExpires.Time.Before(time.Now()) {
-		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "account_expired")
-		return openapi.Login401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "account has expired"},
-		}, nil
+	// Phase 1.17.A — single-gate. Same call site as the registry path.
+	if resp, err := AssertCanAuthenticateUser(ctx, h.Audit, httpReq, username, userForAuthnGate{
+		Ref: user.Ref, Approved: user.Approved, AccountExpires: user.AccountExpires,
+	}); err != nil {
+		return nil, err
+	} else if resp != nil {
+		return resp, nil
 	}
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
 	if err != nil {

@@ -131,6 +131,17 @@ SET revoked_at = NOW()
 WHERE token_hash = $1
   AND revoked_at IS NULL;
 
+-- name: RevokeAllSessionsForUser :execrows
+-- Phase 1.17.A — cascade revoke every active session for a user.
+-- Fired by users.SetAdminUserStatus when a transition moves the
+-- user OUT OF UserStateActive (disabled, archived, or the
+-- should-never-happen active→pending). Returns rows-affected so
+-- the audit log can record the cascade size.
+UPDATE sessions
+SET revoked_at = NOW()
+WHERE user_ref = $1
+  AND revoked_at IS NULL;
+
 -- name: ListUserGrants :many
 -- Per-user capability grants (Phase 1.17.F). Returns rows ordered
 -- by (cap, team_id) so the UI displays a stable list across reloads.
