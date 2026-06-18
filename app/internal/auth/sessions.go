@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,12 +18,13 @@ import (
 
 // SessionManager is the orchestrator behind the sessions table: issue,
 // lookup, touch, revoke. Handlers go through this rather than poking
-// the queries directly so the dual-write to user.session (for PHP
-// coexistence) and the audit emission stay consistent.
+// the queries directly so audit emission + idle/expiry policy stay
+// consistent.
 //
-// During the PHP cutover window, every issue/revoke also updates the
-// legacy user.session/logged_in columns. Once PHP is gone, those writes
-// become dead code and are deleted in a follow-up.
+// Phase 1.17.B dropped the PHP-coexistence dual-write to
+// user.session / user.logged_in (migration 00004) — those columns are
+// gone, and the only state the session lives in is the sessions table
+// (id uuid PRIMARY KEY, looked up by sha256(cookie)).
 type SessionManager struct {
 	Pool *pgxpool.Pool
 
@@ -41,8 +41,8 @@ type SessionManager struct {
 	DefaultLifetime time.Duration
 }
 
-// NewSessionManager returns a manager with sensible defaults matching
-// the legacy behaviour ($session_length = 30 minutes idle, no hard cap).
+// NewSessionManager returns a manager with sensible defaults
+// (30 minutes idle, no hard cap).
 func NewSessionManager(pool *pgxpool.Pool) *SessionManager {
 	return &SessionManager{
 		Pool:            pool,
@@ -67,8 +67,10 @@ type SessionInfo struct {
 // cookie value to set on the response. The plaintext never reaches
 // the DB — only its sha256 lives there.
 //
-// The dual-write to "user".session keeps the legacy PHP pages able to see
-// the login. Remove that branch once PHP is fully retired.
+// Also touches "user".last_active so downstream "active users"
+// surfaces (admin list, leaderboards) see fresh logins. The touch
+// failure is logged-and-swallowed: a session is real even if the
+// observability column lags.
 func (m *SessionManager) Issue(ctx context.Context, userRef int64, r *http.Request) (token string, info SessionInfo, err error) {
 	token, err = NewSessionToken()
 	if err != nil {
@@ -94,26 +96,21 @@ func (m *SessionManager) Issue(ctx context.Context, userRef int64, r *http.Reque
 		return "", SessionInfo{}, fmt.Errorf("auth: insert session: %w", err)
 	}
 
-	// PHP compatibility: the legacy authenticate.php reads cookie "user" and
-	// matches against "user".session = <plaintext>. Write the plaintext
-	// here so PHP pages see this user as logged in too.
-	if err := q.SetUserSession(ctx, SetUserSessionParams{
-		Session: &token,
-		Ref:     userRef,
-	}); err != nil {
-		return "", SessionInfo{}, fmt.Errorf("auth: set user.session: %w", err)
-	}
+	// last_active is observability; failure here doesn't void the
+	// session we just minted. Best-effort.
+	_ = q.TouchUserLastActive(ctx, userRef)
 
 	return token, sessionInfoFromInsert(row), nil
 }
 
 // Lookup resolves an incoming cookie to a session and the user it
-// belongs to. Falls back to "user".session for PHP-issued sessions
-// during the transition so a user who logged in via login.php is still
-// recognised on Go endpoints.
+// belongs to. Returns (nil, pgx.ErrNoRows) when the cookie matches no
+// active session.
 //
-// Returns (nil, pgx.ErrNoRows) when the cookie matches no active
-// session under either path.
+// Phase 1.17.B dropped the PHP-issued-session fallback (which mirrored
+// "user".session rows into the sessions table on lookup). The legacy
+// PHP pages are gone; the sessions table is now the only source of
+// truth for an active session.
 func (m *SessionManager) Lookup(ctx context.Context, plaintext string) (*SessionInfo, error) {
 	if plaintext == "" {
 		return nil, pgx.ErrNoRows
@@ -122,77 +119,33 @@ func (m *SessionManager) Lookup(ctx context.Context, plaintext string) (*Session
 	q := New(m.Pool)
 
 	row, err := q.FindActiveSession(ctx, hash)
-	if err == nil {
-		// Idle-timeout check lives here so it's configurable per
-		// request without changing the query.
-		if m.IdleTimeout > 0 && time.Since(row.LastUsedAt.Time) > m.IdleTimeout {
-			// Best-effort revoke — don't block the caller.
-			_ = q.RevokeSession(ctx, row.ID)
-			return nil, pgx.ErrNoRows
-		}
-		info := &SessionInfo{
-			ID:         uuid.UUID(row.ID.Bytes),
-			UserRef:    row.UserRef,
-			CreatedAt:  row.CreatedAt.Time,
-			LastUsedAt: row.LastUsedAt.Time,
-		}
-		if row.ExpiresAt.Valid {
-			t := row.ExpiresAt.Time
-			info.ExpiresAt = &t
-		}
-		if row.Ip != nil {
-			info.IP = row.Ip.String()
-		}
-		if row.UserAgent != nil {
-			info.UserAgent = *row.UserAgent
-		}
-		return info, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-
-	// PHP-issued fallback. The legacy login.php writes plaintext into
-	// "user".session; a session-table miss may just mean the user
-	// authenticated via the legacy form. Materialize a sessions row
-	// so future requests hit the fast path.
-	user, err := q.FindUserBySession(ctx, &plaintext)
 	if err != nil {
 		return nil, err
 	}
-	// Idle check against "user".last_active. The legacy code touches it on each
-	// authenticate.php call, so if the row hasn't been touched in
-	// IdleTimeout it's stale by either side's definition.
-	// We don't have last_active in the FindUserBySession row; skip
-	// the explicit check here — the migration creates a fresh
-	// sessions row with last_used_at = NOW().
-	mirrorRow, err := q.InsertSession(ctx, InsertSessionParams{
-		UserRef:   user.Ref,
-		TokenHash: hash,
-		ExpiresAt: pgtype.Timestamptz{},
-		Ip:        nil,
-		UserAgent: nil,
-	})
-	if err != nil {
-		// If the insert raced and lost on UNIQUE(token_hash),
-		// re-read instead of failing.
-		row, err2 := q.FindActiveSession(ctx, hash)
-		if err2 != nil {
-			return nil, fmt.Errorf("auth: mirror php session: %w (and re-read: %v)", err, err2)
-		}
-		return &SessionInfo{
-			ID:         uuid.UUID(row.ID.Bytes),
-			UserRef:    row.UserRef,
-			CreatedAt:  row.CreatedAt.Time,
-			LastUsedAt: row.LastUsedAt.Time,
-		}, nil
+	// Idle-timeout check lives here so it's configurable per
+	// request without changing the query.
+	if m.IdleTimeout > 0 && time.Since(row.LastUsedAt.Time) > m.IdleTimeout {
+		// Best-effort revoke — don't block the caller.
+		_ = q.RevokeSession(ctx, row.ID)
+		return nil, pgx.ErrNoRows
 	}
-	return &SessionInfo{
-		ID:         uuid.UUID(mirrorRow.ID.Bytes),
-		UserRef:    user.Ref,
-		CreatedAt:  mirrorRow.CreatedAt.Time,
-		LastUsedAt: mirrorRow.LastUsedAt.Time,
-	}, nil
+	info := &SessionInfo{
+		ID:         uuid.UUID(row.ID.Bytes),
+		UserRef:    row.UserRef,
+		CreatedAt:  row.CreatedAt.Time,
+		LastUsedAt: row.LastUsedAt.Time,
+	}
+	if row.ExpiresAt.Valid {
+		t := row.ExpiresAt.Time
+		info.ExpiresAt = &t
+	}
+	if row.Ip != nil {
+		info.IP = row.Ip.String()
+	}
+	if row.UserAgent != nil {
+		info.UserAgent = *row.UserAgent
+	}
+	return info, nil
 }
 
 // Touch bumps last_used_at on every authenticated request. Cheap, and
@@ -214,18 +167,16 @@ func (m *SessionManager) RevokeAllForUser(ctx context.Context, userRef int64) (i
 
 // RevokeByToken expires the session represented by the given plaintext
 // cookie. Idempotent. Used by /auth/logout.
+//
+// Phase 1.17.B dropped the dual-clear of "user".session — that column
+// is gone; the sessions row is the only state.
 func (m *SessionManager) RevokeByToken(ctx context.Context, plaintext string) error {
 	if plaintext == "" {
 		return nil
 	}
 	q := New(m.Pool)
 	hash := hashCookieValue(plaintext)
-	if err := q.RevokeSessionByToken(ctx, hash); err != nil {
-		return err
-	}
-	// PHP compatibility: also clear "user".session so PHP pages stop
-	// seeing the user as logged in.
-	return q.ClearUserSessionByToken(ctx, &plaintext)
+	return q.RevokeSessionByToken(ctx, hash)
 }
 
 // hashCookieValue is the one-way hash used as the sessions.token_hash

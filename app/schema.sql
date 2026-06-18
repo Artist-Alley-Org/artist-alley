@@ -1329,10 +1329,8 @@ CREATE TABLE public."user" (
     email character varying(100),
     usergroup bigint,
     last_active timestamp with time zone,
-    logged_in integer,
     account_expires timestamp with time zone,
     comments text,
-    session character varying(50),
     password_last_change timestamp with time zone,
     approved bigint DEFAULT 1 NOT NULL,
     lang character varying(11),
@@ -1343,7 +1341,8 @@ CREATE TABLE public."user" (
     signing_public_key_pem text,
     signing_private_key_enc bytea,
     encryption_public_key bytea,
-    encryption_private_key_enc bytea
+    encryption_private_key_enc bytea,
+    CONSTRAINT user_approved_check CHECK ((approved = ANY (ARRAY[(0)::bigint, (1)::bigint, (2)::bigint, (3)::bigint])))
 );
 
 

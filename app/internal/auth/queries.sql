@@ -12,19 +12,6 @@ FROM "user"
 WHERE username = $1
 LIMIT 1;
 
--- name: FindUserBySession :one
--- Used by the session-cookie middleware to resolve rs_session -> user.
-SELECT ref,
-       username,
-       fullname,
-       email,
-       usergroup,
-       approved,
-       account_expires
-FROM "user"
-WHERE session = $1
-LIMIT 1;
-
 -- name: FindUserByRef :one
 -- Used by the registry-dispatched login flow after a provider has
 -- resolved credentials to a local user ref. Same shape as the
@@ -41,32 +28,13 @@ FROM "user"
 WHERE ref = $1
 LIMIT 1;
 
--- name: SetUserSession :exec
--- Writes a freshly minted session token to the user's row. Also
--- bumps last_active so legacy-side "active users" lists notice. Used at
--- the end of /auth/login.
+-- name: TouchUserLastActive :exec
+-- Bumps last_active on the user row. Called by SessionManager.Issue
+-- so downstream "active users" surfaces (admin list, leaderboards)
+-- see fresh logins. Idempotent.
 UPDATE "user"
-SET session     = $1,
-    last_active = NOW(),
-    logged_in   = 1
-WHERE ref = $2;
-
--- name: ClearUserSession :exec
--- Used by /auth/logout. Idempotent: clearing an already-NULL session
--- is a no-op.
-UPDATE "user"
-SET session   = NULL,
-    logged_in = 0
+SET last_active = NOW()
 WHERE ref = $1;
-
--- name: ClearUserSessionByToken :exec
--- Same as ClearUserSession but matches on the cookie value rather than
--- the user id — used when we know the cookie but haven't resolved the
--- user (e.g., logout from an already-expired session).
-UPDATE "user"
-SET session   = NULL,
-    logged_in = 0
-WHERE session = $1;
 
 -- ---------------------------------------------------------------------------
 -- sessions table (Phase 1.5)
