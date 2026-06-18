@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
@@ -42,6 +43,11 @@ type Handler struct {
 	Pool   *pgxpool.Pool
 	Store  *Store
 	Logger *slog.Logger
+	// Audit is the typed recorder for Phase 1.17.D field-level
+	// changesets. nil-safe — when unwired (test fixtures), audit
+	// emit is silently skipped. Production attaches the pool-bound
+	// *audit.Recorder via SetAuditRecorder at boot.
+	Audit *audit.Recorder
 }
 
 // NewHTTPHandler returns a Handler wired against an existing Store —
@@ -49,6 +55,14 @@ type Handler struct {
 // the HTTP surface uses the longer name.
 func NewHTTPHandler(pool *pgxpool.Pool, store *Store, logger *slog.Logger) *Handler {
 	return &Handler{Pool: pool, Store: store, Logger: logger}
+}
+
+// SetAuditRecorder wires the audit pipeline post-construction so
+// the api.go composition can keep its existing NewHTTPHandler call
+// without growing a positional argument. Mirrors users.SetAuditRecorder.
+// Safe to call once at startup.
+func (h *Handler) SetAuditRecorder(rec *audit.Recorder) {
+	h.Audit = rec
 }
 
 // requireCap rejects callers who lack the required capability OR
@@ -97,7 +111,8 @@ func (h *Handler) UpdateSiteConfig(
 	ctx context.Context,
 	req openapi.UpdateSiteConfigRequestObject,
 ) (openapi.UpdateSiteConfigResponseObject, error) {
-	if _, denied := h.requireCap(ctx, CapConfigWrite); denied != nil {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
 		return siteConfigUpdateDenial(denied), nil
 	}
 	if req.Body == nil {
@@ -105,9 +120,25 @@ func (h *Handler) UpdateSiteConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	// Phase 1.17.D — snapshot the current value so the changeset
+	// diff has a `before`. If the read fails, log + proceed
+	// without a before (RecordChange will diff against the zero
+	// value). The operator-action signal is preserved either way.
+	before, beforeErr := h.Store.GetSite(ctx)
 	site := apiToSite(*req.Body)
 	if err := h.Store.SetSite(ctx, site); err != nil {
 		return nil, fmt.Errorf("sysconfig: set site: %w", err)
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*Site)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminSiteConfigUpdated,
+			nil, actor,
+			beforeArg, &site, nil)
 	}
 	return openapi.UpdateSiteConfig200JSONResponse(siteToAPI(site)), nil
 }
@@ -134,7 +165,8 @@ func (h *Handler) UpdateSMTPConfig(
 	ctx context.Context,
 	req openapi.UpdateSMTPConfigRequestObject,
 ) (openapi.UpdateSMTPConfigResponseObject, error) {
-	if _, denied := h.requireCap(ctx, CapConfigWrite); denied != nil {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
 		return smtpConfigUpdateDenial(denied), nil
 	}
 	if req.Body == nil {
@@ -142,6 +174,7 @@ func (h *Handler) UpdateSMTPConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	before, beforeErr := h.Store.GetSMTP(ctx)
 	smtp, err := apiToSMTP(*req.Body)
 	if err != nil {
 		return openapi.UpdateSMTPConfig400JSONResponse{
@@ -152,6 +185,17 @@ func (h *Handler) UpdateSMTPConfig(
 		return openapi.UpdateSMTPConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*SMTP)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminSMTPConfigUpdated,
+			nil, actor,
+			beforeArg, &smtp, nil)
 	}
 	return openapi.UpdateSMTPConfig200JSONResponse(smtpToAPI(smtp)), nil
 }
@@ -178,7 +222,8 @@ func (h *Handler) UpdateAuthConfig(
 	ctx context.Context,
 	req openapi.UpdateAuthConfigRequestObject,
 ) (openapi.UpdateAuthConfigResponseObject, error) {
-	if _, denied := h.requireCap(ctx, CapAuthWrite); denied != nil {
+	id, denied := h.requireCap(ctx, CapAuthWrite)
+	if denied != nil {
 		return authConfigUpdateDenial(denied), nil
 	}
 	if req.Body == nil {
@@ -186,11 +231,23 @@ func (h *Handler) UpdateAuthConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	before, beforeErr := h.Store.GetAuth(ctx)
 	cfg := apiToAuth(*req.Body)
 	if err := h.Store.SetAuth(ctx, cfg); err != nil {
 		return openapi.UpdateAuthConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*AuthConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminAuthConfigUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
 	}
 	return openapi.UpdateAuthConfig200JSONResponse(authToAPI(cfg)), nil
 }
@@ -217,7 +274,8 @@ func (h *Handler) UpdateAIConfig(
 	ctx context.Context,
 	req openapi.UpdateAIConfigRequestObject,
 ) (openapi.UpdateAIConfigResponseObject, error) {
-	if _, denied := h.requireCap(ctx, CapAIWrite); denied != nil {
+	id, denied := h.requireCap(ctx, CapAIWrite)
+	if denied != nil {
 		return aiConfigUpdateDenial(denied), nil
 	}
 	if req.Body == nil {
@@ -225,11 +283,23 @@ func (h *Handler) UpdateAIConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	before, beforeErr := h.Store.GetAI(ctx)
 	cfg := apiToAI(*req.Body)
 	if err := h.Store.SetAI(ctx, cfg); err != nil {
 		return openapi.UpdateAIConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*AIConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminAIConfigUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
 	}
 	return openapi.UpdateAIConfig200JSONResponse(aiToAPI(cfg)), nil
 }
@@ -262,7 +332,8 @@ func (h *Handler) UpdateAppearanceConfig(
 	ctx context.Context,
 	req openapi.UpdateAppearanceConfigRequestObject,
 ) (openapi.UpdateAppearanceConfigResponseObject, error) {
-	if _, denied := h.requireCap(ctx, CapAppearanceWrite); denied != nil {
+	id, denied := h.requireCap(ctx, CapAppearanceWrite)
+	if denied != nil {
 		return appearanceConfigUpdateDenial(denied), nil
 	}
 	if req.Body == nil {
@@ -270,11 +341,23 @@ func (h *Handler) UpdateAppearanceConfig(
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
 		}, nil
 	}
+	before, beforeErr := h.Store.GetAppearance(ctx)
 	cfg := apiToAppearance(*req.Body)
 	if err := h.Store.SetAppearance(ctx, cfg); err != nil {
 		return openapi.UpdateAppearanceConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
 		}, nil
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*AppearanceConfig)(nil)
+		}
+		actor := &id.UserRef
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminAppearanceConfigUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
 	}
 	return openapi.UpdateAppearanceConfig200JSONResponse(appearanceToAPI(cfg)), nil
 }

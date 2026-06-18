@@ -5,6 +5,7 @@
 
 # --- Local reference materials (not part of the project) ---
 _docker_reference/
+review_references/
 *.zip
 *.mview
 
