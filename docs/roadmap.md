@@ -366,6 +366,64 @@ whatever anchor the presenter emits to everyone in the room.
   used, expected runtime cost. Operators know exactly what they're
   looking at without reading file headers manually.
 
+### 1.18.B-19 — Review queue (auto-rotated)
+The "review mode" navbar button (already shipped) opens a system-curated
+queue of assets that need review. Reuses the existing AssetViewer +
+AssetPlaylist surfaces; no new viewer shell or "review session" toggle —
+the navbar button is dedicated enough.
+
+- **Auto-rotated queue.** A scheduled job rolls over to a fresh queue
+  on a configurable cadence. Default policy is **opt-in** — operator
+  enables auto-rotation in admin settings; absence keeps the queue
+  manual / operator-curated. Once enabled, the queue auto-populates
+  with assets matching a curation rule (initial impl: "assets created
+  since last queue rollover that haven't been reviewed").
+- **Last-viewed-item resume.** Per-(user, queue) bookmark of "where
+  did I stop reviewing?" Opening the queue resumes at that position;
+  no scroll-hunt to find the last spot. Cached per user; invalidated
+  on queue rollover.
+- **Override viewed status.** Reviewers can manually mark an asset
+  as reviewed (advance the queue) OR mark previously-reviewed as
+  unreviewed (re-queue it). Per-(user, queue, asset) state.
+- **Count badge** on the navbar review button — count of
+  not-yet-reviewed items in the current queue for this user.
+- **Operator-tunable cadence** via system_config (default daily at
+  the operator's site timezone if auto-rotation is enabled).
+- Borrowed conceptually from the BARTS `barts_collab_collections`
+  workflow but clean-room implementation; no code lift. Departs
+  from the BARTS model on policy: BARTS rotates on cron
+  unconditionally; AA defaults to opt-in to avoid surprising
+  operators who didn't ask for it.
+- Per ABC: queue contents cached; invalidated on rollover + on
+  review completion + on viewed-status override.
+- Per the cadence: soak-safe; no federation runtime involvement.
+
+### Future ideas — borrowed from BARTS review-mode reference (deferred, not scheduled)
+
+These were surfaced from the BARTS reference review on 2026-06-18 and
+are worth pulling forward when their parent surface lands. Not
+scheduled as standalone sub-phases — they fold into adjacent work.
+
+- **Hover info panel + right-click-to-pin** — when hovering a thumbnail
+  anywhere (browse feed, playlist, collection view), show a large
+  preview + metadata + annotation count. Right-click pins so it stays
+  while you keep scrolling — explicit compare affordance. Fold into a
+  future viewer/browse polish phase; not review-mode-specific.
+- **Annotation count badges on thumbnails** — at-a-glance signal of
+  which assets have feedback. Falls out of the annotations work in
+  1.18.B-6 once annotations exist; small UI addition then.
+- **Fullscreen "Artist View" with deep-link state persistence** — modal
+  state survives refresh + can be deep-linked. Fold into AssetViewer
+  polish later (extends 1.18.B-2 territory).
+
+Explicitly rejected from the BARTS reference:
+- **Save-and-next batch workflow** — friction point for artists;
+  contradicts the minimize-artist-input principle. Artists want one
+  page with little input.
+- **Strip view of a playlist** — not on the roadmap.
+- **Smart metadata field reordering on edit** — fragile UX that
+  breaks operator muscle memory.
+
 ## Admin settings — fleshing out every placeholder
 
 The admin shell currently has 13 sections; most have a real surface
