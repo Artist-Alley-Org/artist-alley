@@ -58,6 +58,51 @@ func (q *Queries) AssignedRolesForUser(ctx context.Context, userRef int64) ([]As
 	return items, nil
 }
 
+const countActiveAdminsIfRowRemoved = `-- name: CountActiveAdminsIfRowRemoved :one
+WITH admin_candidates AS (
+    SELECT u.ref
+    FROM user_roles ur
+    JOIN role_capabilities rc ON rc.role_id = ur.role_id
+    JOIN "user" u             ON u.ref     = ur.user_ref
+    WHERE rc.capability_code = 'system.admin'
+      AND ur.team_id IS NULL
+      AND u.approved = 1
+    UNION
+    SELECT u.ref
+    FROM user_capability_grants g
+    JOIN "user" u ON u.ref = g.user_ref
+    WHERE g.capability_code = 'system.admin'
+      AND g.team_id IS NULL
+      AND u.approved = 1
+      AND NOT (g.user_ref = $1)
+)
+SELECT COUNT(*)::BIGINT AS value
+FROM admin_candidates c
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_capability_revokes r
+    WHERE r.user_ref = c.ref
+      AND r.capability_code = 'system.admin'
+      AND r.team_id IS NULL
+)
+`
+
+// Phase 1.17.C sweeper-time guard. Returns the system.admin
+// holder count AFTER speculatively removing the row identified by
+// (userRef, 'system.admin', team_id IS NULL). Used by the
+// sweeper to refuse to reap a system.admin grant whose expiry
+// would leave the system with zero active admins — the sweeper
+// logs the "stuck open" grant and leaves the row in place so the
+// operator can extend or replace it.
+//
+// Mirrors CountSystemAdmins's logic but excludes the candidate
+// row from the union.
+func (q *Queries) CountActiveAdminsIfRowRemoved(ctx context.Context, userRef int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAdminsIfRowRemoved, userRef)
+	var value int64
+	err := row.Scan(&value)
+	return value, err
+}
+
 const countSystemAdmins = `-- name: CountSystemAdmins :one
 
 WITH admin_candidates AS (
@@ -768,12 +813,13 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 
 const insertUserGrant = `-- name: InsertUserGrant :exec
 INSERT INTO user_capability_grants (
-    user_ref, capability_code, team_id, granted_by_user_ref, note
-) VALUES ($1, $2, $3, $4, $5)
+    user_ref, capability_code, team_id, granted_by_user_ref, note, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     granted_at = NOW(),
     granted_by_user_ref = EXCLUDED.granted_by_user_ref,
-    note = EXCLUDED.note
+    note = EXCLUDED.note,
+    expires_at = EXCLUDED.expires_at
 `
 
 type InsertUserGrantParams struct {
@@ -782,12 +828,18 @@ type InsertUserGrantParams struct {
 	TeamID           pgtype.UUID
 	GrantedByUserRef *int64
 	Note             string
+	ExpiresAt        pgtype.Timestamptz
 }
 
 // Upsert a grant. The UNIQUE NULLS NOT DISTINCT (user_ref, cap,
 // team_id) means re-granting the same (cap, team_id) is a no-op
 // update of granted_at + note + granter — useful when an admin
 // refreshes a stale grant.
+//
+// Phase 1.17.C — expires_at is the optional time-bound expiry
+// (NULL = permanent). The background sweeper
+// (auth/capability_sweeper.go) reaps rows past expires_at on a
+// fixed cadence.
 func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams) error {
 	_, err := q.db.Exec(ctx, insertUserGrant,
 		arg.UserRef,
@@ -795,18 +847,20 @@ func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams
 		arg.TeamID,
 		arg.GrantedByUserRef,
 		arg.Note,
+		arg.ExpiresAt,
 	)
 	return err
 }
 
 const insertUserRevoke = `-- name: InsertUserRevoke :exec
 INSERT INTO user_capability_revokes (
-    user_ref, capability_code, team_id, revoked_by_user_ref, note
-) VALUES ($1, $2, $3, $4, $5)
+    user_ref, capability_code, team_id, revoked_by_user_ref, note, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     revoked_at = NOW(),
     revoked_by_user_ref = EXCLUDED.revoked_by_user_ref,
-    note = EXCLUDED.note
+    note = EXCLUDED.note,
+    expires_at = EXCLUDED.expires_at
 `
 
 type InsertUserRevokeParams struct {
@@ -815,8 +869,11 @@ type InsertUserRevokeParams struct {
 	TeamID           pgtype.UUID
 	RevokedByUserRef *int64
 	Note             string
+	ExpiresAt        pgtype.Timestamptz
 }
 
+// Phase 1.17.C — expires_at is the optional time-bound expiry on
+// the REVOKE side (same NULL-is-permanent convention as grants).
 func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokeParams) error {
 	_, err := q.db.Exec(ctx, insertUserRevoke,
 		arg.UserRef,
@@ -824,6 +881,7 @@ func (q *Queries) InsertUserRevoke(ctx context.Context, arg InsertUserRevokePara
 		arg.TeamID,
 		arg.RevokedByUserRef,
 		arg.Note,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -1076,6 +1134,7 @@ SELECT g.capability_code,
        g.granted_at,
        g.granted_by_user_ref,
        g.note,
+       g.expires_at,
        t.name AS team_name
 FROM user_capability_grants g
 LEFT JOIN teams t ON t.id = g.team_id
@@ -1089,11 +1148,14 @@ type ListUserGrantsRow struct {
 	GrantedAt        pgtype.Timestamptz
 	GrantedByUserRef *int64
 	Note             string
+	ExpiresAt        pgtype.Timestamptz
 	TeamName         *string
 }
 
-// Per-user capability grants (Phase 1.17.F). Returns rows ordered
-// by (cap, team_id) so the UI displays a stable list across reloads.
+// Per-user capability grants. Returns rows ordered by
+// (cap, team_id) so the UI displays a stable list across reloads.
+// expires_at (Phase 1.17.C) is the optional time-bound expiry —
+// NULL = permanent.
 func (q *Queries) ListUserGrants(ctx context.Context, userRef int64) ([]ListUserGrantsRow, error) {
 	rows, err := q.db.Query(ctx, listUserGrants, userRef)
 	if err != nil {
@@ -1109,6 +1171,7 @@ func (q *Queries) ListUserGrants(ctx context.Context, userRef int64) ([]ListUser
 			&i.GrantedAt,
 			&i.GrantedByUserRef,
 			&i.Note,
+			&i.ExpiresAt,
 			&i.TeamName,
 		); err != nil {
 			return nil, err
@@ -1127,6 +1190,7 @@ SELECT r.capability_code,
        r.revoked_at,
        r.revoked_by_user_ref,
        r.note,
+       r.expires_at,
        t.name AS team_name
 FROM user_capability_revokes r
 LEFT JOIN teams t ON t.id = r.team_id
@@ -1140,11 +1204,13 @@ type ListUserRevokesRow struct {
 	RevokedAt        pgtype.Timestamptz
 	RevokedByUserRef *int64
 	Note             string
+	ExpiresAt        pgtype.Timestamptz
 	TeamName         *string
 }
 
 // Per-user capability revokes (subtractive overrides). Same shape
 // as ListUserGrants — front-end renders both lists in one section.
+// expires_at (Phase 1.17.C) — NULL = permanent.
 func (q *Queries) ListUserRevokes(ctx context.Context, userRef int64) ([]ListUserRevokesRow, error) {
 	rows, err := q.db.Query(ctx, listUserRevokes, userRef)
 	if err != nil {
@@ -1160,6 +1226,7 @@ func (q *Queries) ListUserRevokes(ctx context.Context, userRef int64) ([]ListUse
 			&i.RevokedAt,
 			&i.RevokedByUserRef,
 			&i.Note,
+			&i.ExpiresAt,
 			&i.TeamName,
 		); err != nil {
 			return nil, err
@@ -1377,6 +1444,89 @@ type SetUserGlobalRoleParams struct {
 func (q *Queries) SetUserGlobalRole(ctx context.Context, arg SetUserGlobalRoleParams) error {
 	_, err := q.db.Exec(ctx, setUserGlobalRole, arg.UserRef, arg.RoleID, arg.AssignedByUserRef)
 	return err
+}
+
+const sweepExpiredGrants = `-- name: SweepExpiredGrants :many
+DELETE FROM user_capability_grants
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING user_ref, capability_code, team_id, expires_at
+`
+
+type SweepExpiredGrantsRow struct {
+	UserRef        int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+	ExpiresAt      pgtype.Timestamptz
+}
+
+// Phase 1.17.C — used by capability_sweeper.go. Deletes every
+// grant past its expires_at and returns the reaped rows so the
+// sweeper can emit a per-row audit event + invalidate the
+// affected user's capability cache. NOW() is evaluated at
+// statement time so the result set is internally consistent.
+func (q *Queries) SweepExpiredGrants(ctx context.Context) ([]SweepExpiredGrantsRow, error) {
+	rows, err := q.db.Query(ctx, sweepExpiredGrants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SweepExpiredGrantsRow
+	for rows.Next() {
+		var i SweepExpiredGrantsRow
+		if err := rows.Scan(
+			&i.UserRef,
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sweepExpiredRevokes = `-- name: SweepExpiredRevokes :many
+DELETE FROM user_capability_revokes
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING user_ref, capability_code, team_id, expires_at
+`
+
+type SweepExpiredRevokesRow struct {
+	UserRef        int64
+	CapabilityCode string
+	TeamID         pgtype.UUID
+	ExpiresAt      pgtype.Timestamptz
+}
+
+// Same as SweepExpiredGrants but for revokes — same audit +
+// cache contract.
+func (q *Queries) SweepExpiredRevokes(ctx context.Context) ([]SweepExpiredRevokesRow, error) {
+	rows, err := q.db.Query(ctx, sweepExpiredRevokes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SweepExpiredRevokesRow
+	for rows.Next() {
+		var i SweepExpiredRevokesRow
+		if err := rows.Scan(
+			&i.UserRef,
+			&i.CapabilityCode,
+			&i.TeamID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const touchApiToken = `-- name: TouchApiToken :exec

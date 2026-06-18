@@ -695,6 +695,7 @@ type UserCapabilityGrant struct {
 	GrantedByUserRef *int64
 	Note             string
 	TeamID           pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type UserCapabilityRevoke struct {
@@ -704,6 +705,7 @@ type UserCapabilityRevoke struct {
 	RevokedByUserRef *int64
 	Note             string
 	TeamID           pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type UserFollow struct {

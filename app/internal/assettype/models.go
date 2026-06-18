@@ -695,6 +695,7 @@ type UserCapabilityGrant struct {
 	GrantedByUserRef *int64             `json:"granted_by_user_ref"`
 	Note             string             `json:"note"`
 	TeamID           pgtype.UUID        `json:"team_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 type UserCapabilityRevoke struct {
@@ -704,6 +705,7 @@ type UserCapabilityRevoke struct {
 	RevokedByUserRef *int64             `json:"revoked_by_user_ref"`
 	Note             string             `json:"note"`
 	TeamID           pgtype.UUID        `json:"team_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
 type UserFollow struct {

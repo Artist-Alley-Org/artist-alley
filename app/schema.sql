@@ -1370,7 +1370,8 @@ CREATE TABLE public.user_capability_grants (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     granted_by_user_ref bigint,
     note text DEFAULT ''::text NOT NULL,
-    team_id uuid
+    team_id uuid,
+    expires_at timestamp with time zone
 );
 
 
@@ -1384,7 +1385,8 @@ CREATE TABLE public.user_capability_revokes (
     revoked_at timestamp with time zone DEFAULT now() NOT NULL,
     revoked_by_user_ref bigint,
     note text DEFAULT ''::text NOT NULL,
-    team_id uuid
+    team_id uuid,
+    expires_at timestamp with time zone
 );
 
 

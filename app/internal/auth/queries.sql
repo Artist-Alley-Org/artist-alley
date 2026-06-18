@@ -111,13 +111,16 @@ WHERE user_ref = $1
   AND revoked_at IS NULL;
 
 -- name: ListUserGrants :many
--- Per-user capability grants (Phase 1.17.F). Returns rows ordered
--- by (cap, team_id) so the UI displays a stable list across reloads.
+-- Per-user capability grants. Returns rows ordered by
+-- (cap, team_id) so the UI displays a stable list across reloads.
+-- expires_at (Phase 1.17.C) is the optional time-bound expiry —
+-- NULL = permanent.
 SELECT g.capability_code,
        g.team_id,
        g.granted_at,
        g.granted_by_user_ref,
        g.note,
+       g.expires_at,
        t.name AS team_name
 FROM user_capability_grants g
 LEFT JOIN teams t ON t.id = g.team_id
@@ -127,11 +130,13 @@ ORDER BY g.capability_code, g.team_id NULLS FIRST;
 -- name: ListUserRevokes :many
 -- Per-user capability revokes (subtractive overrides). Same shape
 -- as ListUserGrants — front-end renders both lists in one section.
+-- expires_at (Phase 1.17.C) — NULL = permanent.
 SELECT r.capability_code,
        r.team_id,
        r.revoked_at,
        r.revoked_by_user_ref,
        r.note,
+       r.expires_at,
        t.name AS team_name
 FROM user_capability_revokes r
 LEFT JOIN teams t ON t.id = r.team_id
@@ -143,13 +148,19 @@ ORDER BY r.capability_code, r.team_id NULLS FIRST;
 -- team_id) means re-granting the same (cap, team_id) is a no-op
 -- update of granted_at + note + granter — useful when an admin
 -- refreshes a stale grant.
+--
+-- Phase 1.17.C — expires_at is the optional time-bound expiry
+-- (NULL = permanent). The background sweeper
+-- (auth/capability_sweeper.go) reaps rows past expires_at on a
+-- fixed cadence.
 INSERT INTO user_capability_grants (
-    user_ref, capability_code, team_id, granted_by_user_ref, note
-) VALUES ($1, $2, $3, $4, $5)
+    user_ref, capability_code, team_id, granted_by_user_ref, note, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     granted_at = NOW(),
     granted_by_user_ref = EXCLUDED.granted_by_user_ref,
-    note = EXCLUDED.note;
+    note = EXCLUDED.note,
+    expires_at = EXCLUDED.expires_at;
 
 -- name: DeleteUserGrant :execrows
 -- Ownership-checked delete. The (user_ref, cap, team_id) tuple is
@@ -161,19 +172,76 @@ WHERE user_ref = $1
   AND team_id IS NOT DISTINCT FROM $3;
 
 -- name: InsertUserRevoke :exec
+-- Phase 1.17.C — expires_at is the optional time-bound expiry on
+-- the REVOKE side (same NULL-is-permanent convention as grants).
 INSERT INTO user_capability_revokes (
-    user_ref, capability_code, team_id, revoked_by_user_ref, note
-) VALUES ($1, $2, $3, $4, $5)
+    user_ref, capability_code, team_id, revoked_by_user_ref, note, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_ref, capability_code, team_id) DO UPDATE SET
     revoked_at = NOW(),
     revoked_by_user_ref = EXCLUDED.revoked_by_user_ref,
-    note = EXCLUDED.note;
+    note = EXCLUDED.note,
+    expires_at = EXCLUDED.expires_at;
 
 -- name: DeleteUserRevoke :execrows
 DELETE FROM user_capability_revokes
 WHERE user_ref = $1
   AND capability_code = $2
   AND team_id IS NOT DISTINCT FROM $3;
+
+-- name: SweepExpiredGrants :many
+-- Phase 1.17.C — used by capability_sweeper.go. Deletes every
+-- grant past its expires_at and returns the reaped rows so the
+-- sweeper can emit a per-row audit event + invalidate the
+-- affected user's capability cache. NOW() is evaluated at
+-- statement time so the result set is internally consistent.
+DELETE FROM user_capability_grants
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING user_ref, capability_code, team_id, expires_at;
+
+-- name: SweepExpiredRevokes :many
+-- Same as SweepExpiredGrants but for revokes — same audit +
+-- cache contract.
+DELETE FROM user_capability_revokes
+WHERE expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING user_ref, capability_code, team_id, expires_at;
+
+-- name: CountActiveAdminsIfRowRemoved :one
+-- Phase 1.17.C sweeper-time guard. Returns the system.admin
+-- holder count AFTER speculatively removing the row identified by
+-- (userRef, 'system.admin', team_id IS NULL). Used by the
+-- sweeper to refuse to reap a system.admin grant whose expiry
+-- would leave the system with zero active admins — the sweeper
+-- logs the "stuck open" grant and leaves the row in place so the
+-- operator can extend or replace it.
+--
+-- Mirrors CountSystemAdmins's logic but excludes the candidate
+-- row from the union.
+WITH admin_candidates AS (
+    SELECT u.ref
+    FROM user_roles ur
+    JOIN role_capabilities rc ON rc.role_id = ur.role_id
+    JOIN "user" u             ON u.ref     = ur.user_ref
+    WHERE rc.capability_code = 'system.admin'
+      AND ur.team_id IS NULL
+      AND u.approved = 1
+    UNION
+    SELECT u.ref
+    FROM user_capability_grants g
+    JOIN "user" u ON u.ref = g.user_ref
+    WHERE g.capability_code = 'system.admin'
+      AND g.team_id IS NULL
+      AND u.approved = 1
+      AND NOT (g.user_ref = $1)
+)
+SELECT COUNT(*)::BIGINT AS value
+FROM admin_candidates c
+WHERE NOT EXISTS (
+    SELECT 1 FROM user_capability_revokes r
+    WHERE r.user_ref = c.ref
+      AND r.capability_code = 'system.admin'
+      AND r.team_id IS NULL
+);
 
 -- name: RevokeOtherSessionsForUser :execrows
 -- Revokes every session belonging to a user EXCEPT the one passed
