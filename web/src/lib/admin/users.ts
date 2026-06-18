@@ -1,7 +1,13 @@
 // Helpers for the /admin/users surface. Pure (no DOM) so the
 // vitest pure-helper suite can pin them.
 
-export type AdminUserStatus = 'active' | 'pending' | 'disabled';
+// Phase 1.17.A — `archived` is the fourth lifecycle state. Same
+// auth-gate semantics as `disabled` (login rejected) but hidden
+// from the default admin list and presented as terminal in the
+// UI (operator action implies "this user has left the org" rather
+// than "temporarily revoked"). Reachable from active or disabled;
+// reversible via the Restore action.
+export type AdminUserStatus = 'active' | 'pending' | 'disabled' | 'archived';
 
 export interface AdminUser {
   ref: number;
@@ -30,7 +36,38 @@ export function statusBadgeClass(s: AdminUserStatus): string {
       return 'bg-warning/15 text-warning border border-warning/40';
     case 'disabled':
       return 'bg-danger/15 text-danger border border-danger/40';
+    case 'archived':
+      // Slightly muted vs disabled — archived reads as "neutral
+      // terminal" rather than "active operator concern".
+      return 'bg-muted/30 text-muted-foreground border border-muted/50';
   }
+}
+
+// Phase 1.17.A — typed transition matrix mirroring the backend
+// (internal/users/userstate.go). The admin UI uses this to drive
+// which action buttons render for the current row state. Keep in
+// sync with ValidateTransition on the Go side; tests pin the
+// bijection.
+const TRANSITIONS: Record<AdminUserStatus, AdminUserStatus[]> = {
+  pending: ['active'],
+  active: ['disabled', 'archived'],
+  disabled: ['active', 'archived'],
+  archived: ['active'],
+};
+
+export function validTargetsFrom(current: AdminUserStatus): AdminUserStatus[] {
+  return TRANSITIONS[current] ?? [];
+}
+
+// Verb form for each target — used for confirmation copy + button
+// labels. Approve/Disable/Archive/Restore mirror the typed audit
+// event family on the backend.
+export function transitionVerb(from: AdminUserStatus, to: AdminUserStatus): string {
+  if (from === 'pending' && to === 'active') return 'approve';
+  if (to === 'active') return 'restore';
+  if (to === 'disabled') return 'disable';
+  if (to === 'archived') return 'archive';
+  return 'set';
 }
 
 /** Human-friendly relative duration since `iso`. Returns empty string

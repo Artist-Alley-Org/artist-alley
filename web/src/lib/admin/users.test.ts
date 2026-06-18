@@ -3,6 +3,8 @@ import {
   statusBadgeClass,
   relativeAgo,
   buildListQuery,
+  validTargetsFrom,
+  transitionVerb,
   type AdminUserStatus,
 } from './users';
 
@@ -11,9 +13,51 @@ describe('statusBadgeClass', () => {
     ['active', 'success'],
     ['pending', 'warning'],
     ['disabled', 'danger'],
+    ['archived', 'muted'],
   ])('maps %s to the %s palette', (status, palette) => {
     const cls = statusBadgeClass(status);
     expect(cls).toContain(palette);
+  });
+});
+
+describe('validTargetsFrom — transition matrix', () => {
+  it.each<[AdminUserStatus, AdminUserStatus[]]>([
+    ['pending', ['active']],
+    ['active', ['disabled', 'archived']],
+    ['disabled', ['active', 'archived']],
+    ['archived', ['active']],
+  ])('%s → %j', (from, expected) => {
+    expect(validTargetsFrom(from)).toEqual(expected);
+  });
+
+  it('rejects every pair not in the matrix', () => {
+    // Mirrors the Go-side ValidateTransition coverage. Pending
+    // can't go straight to disabled or archived; active can't
+    // step back to pending; archived must restore via active.
+    const rejected: [AdminUserStatus, AdminUserStatus][] = [
+      ['pending', 'disabled'],
+      ['pending', 'archived'],
+      ['active', 'pending'],
+      ['disabled', 'pending'],
+      ['archived', 'pending'],
+      ['archived', 'disabled'],
+    ];
+    for (const [from, to] of rejected) {
+      expect(validTargetsFrom(from), `${from} → ${to} should NOT be in valid targets`).not.toContain(to);
+    }
+  });
+});
+
+describe('transitionVerb', () => {
+  it.each<[AdminUserStatus, AdminUserStatus, string]>([
+    ['pending', 'active', 'approve'],
+    ['disabled', 'active', 'restore'],
+    ['archived', 'active', 'restore'],
+    ['active', 'disabled', 'disable'],
+    ['active', 'archived', 'archive'],
+    ['disabled', 'archived', 'archive'],
+  ])('%s → %s = %s', (from, to, verb) => {
+    expect(transitionVerb(from, to)).toBe(verb);
   });
 });
 
