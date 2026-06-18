@@ -60,6 +60,16 @@ type CapabilitySweepAuditFn func(ctx context.Context, userRef int64, capability,
 // tests pass a recording stub.
 type CapabilityCacheInvalidateFn func(ctx context.Context, userRef int64)
 
+// RequestCascadeFn is the Phase 1.17.E request-cascade hook.
+// Called by SweepOnce once per reaped grant whose request_ref
+// column is non-NULL, with the request_id + the grant's reaped
+// expires_at. Best-effort by contract — a failure here logs at
+// WARN but does not roll back the grant reap or fail the sweep
+// (the grant is already gone by the time this fires).
+//
+// Production wires this to requests.Handler.MarkExpired.
+type RequestCascadeFn func(ctx context.Context, requestID uuid.UUID, expiredAt time.Time) error
+
 // CapabilitySweeper is the background goroutine that reaps
 // expired user_capability_grants + user_capability_revokes rows.
 // Construct via NewCapabilitySweeper; call Run inside a goroutine;
@@ -70,6 +80,7 @@ type CapabilitySweeper struct {
 	auditGrant     CapabilitySweepAuditFn
 	auditRevoke    CapabilitySweepAuditFn
 	invalidateCaps CapabilityCacheInvalidateFn
+	cascadeRequest RequestCascadeFn
 	tickEvery      time.Duration
 }
 
@@ -82,6 +93,10 @@ type CapabilitySweeper struct {
 // also be nil (the resolver will see the empty result on its
 // next miss + repopulate, but cross-instance peers will be stale
 // until their own LRU evicts).
+//
+// Phase 1.17.E adds SetRequestCascade (post-construction setter)
+// for the request-expiry cascade. Keeping it off the constructor
+// avoids churning the existing 1.17.C call site.
 func NewCapabilitySweeper(
 	pool *pgxpool.Pool,
 	logger *slog.Logger,
@@ -101,6 +116,18 @@ func NewCapabilitySweeper(
 		invalidateCaps: invalidateCaps,
 		tickEvery:      tickEvery,
 	}
+}
+
+// SetRequestCascade wires the Phase 1.17.E request-cascade hook.
+// Called from boot in app/internal/http/api.go with
+// requests.Handler.MarkExpired. nil-safe — when unwired, the
+// sweeper skips the cascade silently (the request row just stays
+// granted while the grant disappears — observable to the operator
+// but doesn't break anything).
+//
+// Safe to call once at startup.
+func (s *CapabilitySweeper) SetRequestCascade(fn RequestCascadeFn) {
+	s.cascadeRequest = fn
 }
 
 // Run blocks until ctx is cancelled. Sweeps once at boot, then
@@ -204,6 +231,7 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 			s.auditGrant(ctx, g.UserRef, g.CapabilityCode, teamID, g.ExpiresAt.Time)
 		}
 		affected[g.UserRef] = struct{}{}
+		s.cascadeIfRequestLinked(ctx, g.RequestRef, g.ExpiresAt.Time)
 	}
 	for _, g := range adminReaped {
 		teamID := pgUUIDStr(g.TeamID)
@@ -211,6 +239,7 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 			s.auditGrant(ctx, g.UserRef, g.CapabilityCode, teamID, g.ExpiresAt.Time)
 		}
 		affected[g.UserRef] = struct{}{}
+		s.cascadeIfRequestLinked(ctx, g.RequestRef, g.ExpiresAt.Time)
 	}
 	for _, r := range revokes {
 		teamID := pgUUIDStr(r.TeamID)
@@ -236,6 +265,20 @@ func (s *CapabilitySweeper) SweepOnce(ctx context.Context) (int64, int64) {
 	}
 
 	return int64(totalGrants), int64(len(revokes))
+}
+
+// cascadeIfRequestLinked invokes the Phase 1.17.E request-cascade
+// callback when the reaped grant has a request_ref. Failure logs
+// at WARN but doesn't roll back the grant reap (the grant is
+// already gone) or fail the sweep — best-effort by contract.
+func (s *CapabilitySweeper) cascadeIfRequestLinked(ctx context.Context, requestRef pgtype.UUID, expiredAt time.Time) {
+	if !requestRef.Valid || s.cascadeRequest == nil {
+		return
+	}
+	rid := uuid.UUID(requestRef.Bytes)
+	if err := s.cascadeRequest(ctx, rid, expiredAt); err != nil {
+		s.logWarn(ctx, "auth.capability_sweeper.request_cascade.error", err)
+	}
 }
 
 func (s *CapabilitySweeper) logWarn(ctx context.Context, msg string, err error) {

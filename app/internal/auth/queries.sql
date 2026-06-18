@@ -205,7 +205,7 @@ WHERE user_ref = $1
 DELETE FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
   AND NOT (capability_code = 'system.admin' AND team_id IS NULL)
-RETURNING user_ref, capability_code, team_id, expires_at;
+RETURNING user_ref, capability_code, team_id, expires_at, request_ref;
 
 -- name: ListExpiredAdminGrants :many
 -- Phase 1.17.C — used by capability_sweeper.go for the last-
@@ -214,7 +214,7 @@ RETURNING user_ref, capability_code, team_id, expires_at;
 -- CountActiveAdminsIfRowRemoved and skip rows whose reap would
 -- leave the system with zero active admins (logging a "stuck
 -- open" WARN so the operator notices).
-SELECT user_ref, capability_code, team_id, expires_at
+SELECT user_ref, capability_code, team_id, expires_at, request_ref
 FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
   AND capability_code = 'system.admin'

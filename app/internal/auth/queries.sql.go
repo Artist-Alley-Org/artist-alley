@@ -970,7 +970,7 @@ func (q *Queries) ListCapabilities(ctx context.Context) ([]ListCapabilitiesRow, 
 }
 
 const listExpiredAdminGrants = `-- name: ListExpiredAdminGrants :many
-SELECT user_ref, capability_code, team_id, expires_at
+SELECT user_ref, capability_code, team_id, expires_at, request_ref
 FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
   AND capability_code = 'system.admin'
@@ -982,6 +982,7 @@ type ListExpiredAdminGrantsRow struct {
 	CapabilityCode string
 	TeamID         pgtype.UUID
 	ExpiresAt      pgtype.Timestamptz
+	RequestRef     pgtype.UUID
 }
 
 // Phase 1.17.C — used by capability_sweeper.go for the last-
@@ -1004,6 +1005,7 @@ func (q *Queries) ListExpiredAdminGrants(ctx context.Context) ([]ListExpiredAdmi
 			&i.CapabilityCode,
 			&i.TeamID,
 			&i.ExpiresAt,
+			&i.RequestRef,
 		); err != nil {
 			return nil, err
 		}
@@ -1496,7 +1498,7 @@ const sweepExpiredGrants = `-- name: SweepExpiredGrants :many
 DELETE FROM user_capability_grants
 WHERE expires_at IS NOT NULL AND expires_at < NOW()
   AND NOT (capability_code = 'system.admin' AND team_id IS NULL)
-RETURNING user_ref, capability_code, team_id, expires_at
+RETURNING user_ref, capability_code, team_id, expires_at, request_ref
 `
 
 type SweepExpiredGrantsRow struct {
@@ -1504,6 +1506,7 @@ type SweepExpiredGrantsRow struct {
 	CapabilityCode string
 	TeamID         pgtype.UUID
 	ExpiresAt      pgtype.Timestamptz
+	RequestRef     pgtype.UUID
 }
 
 // Phase 1.17.C — used by capability_sweeper.go for non-protected
@@ -1532,6 +1535,7 @@ func (q *Queries) SweepExpiredGrants(ctx context.Context) ([]SweepExpiredGrantsR
 			&i.CapabilityCode,
 			&i.TeamID,
 			&i.ExpiresAt,
+			&i.RequestRef,
 		); err != nil {
 			return nil, err
 		}
