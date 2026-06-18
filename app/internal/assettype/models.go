@@ -665,10 +665,8 @@ type User struct {
 	Email                   *string            `json:"email"`
 	Usergroup               *int64             `json:"usergroup"`
 	LastActive              pgtype.Timestamptz `json:"last_active"`
-	LoggedIn                *int32             `json:"logged_in"`
 	AccountExpires          pgtype.Timestamptz `json:"account_expires"`
 	Comments                *string            `json:"comments"`
-	Session                 *string            `json:"session"`
 	PasswordLastChange      pgtype.Timestamptz `json:"password_last_change"`
 	Approved                int64              `json:"approved"`
 	Lang                    *string            `json:"lang"`
