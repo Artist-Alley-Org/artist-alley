@@ -50,6 +50,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	"github.com/mscrnt/artist-alley/app/internal/seed"
+	"github.com/mscrnt/artist-alley/app/internal/requests"
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -111,6 +112,8 @@ type apiServer struct {
 	userKeysSweeper    *userkeys.Sweeper
 	userKeysAdmin      *userkeys.AdminHandler
 	capabilitySweeper  *auth.CapabilitySweeper
+	requests           *requests.Handler
+	requestsHTTP       *requests.HTTPHandler
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
 	seedAdmin        *seed.AdminHandler
@@ -391,6 +394,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		},
 		0,
 	)
+	// Phase 1.17.E — wire the request-cascade hook so a grant
+	// reaped with a non-NULL request_ref also flips the linked
+	// resource_request row to expired. Best-effort by contract;
+	// failure here logs but doesn't fail the sweep.
+	s.requests = requests.NewHandler(pool, logger, cacheReg)
+	s.requests.SetAuditRecorder(auditRec)
+	s.requests.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.requestsHTTP = requests.NewHTTPHandler(s.requests, logger)
+	s.capabilitySweeper.SetRequestCascade(s.requests.MarkExpired)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -1523,6 +1535,21 @@ func (s *apiServer) ListAdminUsers(ctx context.Context, req openapi.ListAdminUse
 }
 func (s *apiServer) SetAdminUserStatus(ctx context.Context, req openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
 	return s.users.SetAdminUserStatus(ctx, req)
+}
+
+// --- resource requests (Phase 1.17.E) ------------------------------------
+
+func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {
+	return s.requestsHTTP.RequestAssetAccess(ctx, req)
+}
+func (s *apiServer) ListOwnRequests(ctx context.Context, req openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
+	return s.requestsHTTP.ListOwnRequests(ctx, req)
+}
+func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
+	return s.requestsHTTP.ListAdminRequests(ctx, req)
+}
+func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
+	return s.requestsHTTP.DecideAdminRequest(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------

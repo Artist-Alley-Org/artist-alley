@@ -1371,7 +1371,28 @@ CREATE TABLE public.user_capability_grants (
     granted_by_user_ref bigint,
     note text DEFAULT ''::text NOT NULL,
     team_id uuid,
-    expires_at timestamp with time zone
+    expires_at timestamp with time zone,
+    request_ref uuid
+);
+
+
+--
+-- Name: resource_request; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.resource_request (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    requester_user_ref bigint NOT NULL,
+    target_asset_id uuid NOT NULL,
+    requested_capability text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    decided_at timestamp with time zone,
+    decided_by_user_ref bigint,
+    decision_reason text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text])))
 );
 
 

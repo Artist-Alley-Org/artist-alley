@@ -2284,6 +2284,198 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ===========================================================================
+  # Resource requests (Phase 1.17.E)
+  # ===========================================================================
+
+  /assets/{id}/request-access:
+    post:
+      operationId: requestAssetAccess
+      summary: Submit a resource request for an asset (Phase 1.17.E)
+      description: |
+        Creates a `pending` resource_request for the calling user
+        against the target asset. Any authenticated user may submit
+        a request; the approver decides via /admin/requests.
+
+        When the approver grants the request, a row lands in
+        user_capability_grants with `request_ref` populated — the
+        CapabilitySweeper reaps both the grant and the linked
+        request together at expires_at.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [capability]
+              properties:
+                capability:
+                  type: string
+                  description: Capability code being requested.
+                reason:
+                  type: string
+                  maxLength: 1000
+                  description: Optional free-text justification.
+      responses:
+        "201":
+          description: Request created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/requests:
+    get:
+      operationId: listOwnRequests
+      summary: List the caller's own resource requests (Phase 1.17.E)
+      description: |
+        Returns the caller's resource requests, newest first.
+        Limit defaults to 50 + caps at 200.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResourceRequest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /admin/requests:
+    get:
+      operationId: listAdminRequests
+      summary: List pending resource requests (approver-facing, Phase 1.17.E)
+      description: |
+        Returns the pending resource_request rows, oldest first.
+        Requires `share.grant` capability OR `system.admin`.
+        Per-approver capability scoping (filtering by which team the
+        approver actually controls) is a polish-phase follow-up.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Pending requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ResourceRequest" }
+                  total:
+                    type: integer
+                    format: int64
+                    description: Total pending count (badge value).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/requests/{id}/decide:
+    post:
+      operationId: decideAdminRequest
+      summary: Grant or deny a pending resource request (Phase 1.17.E)
+      description: |
+        Atomic CAS — only pending requests transition. Re-deciding
+        an already-decided request returns 409.
+
+        On grant, a user_capability_grants row is inserted in the
+        same tx as the resource_request CAS. expires_at on the
+        grant is the same value the operator supplied here; the
+        CapabilitySweeper reaps both together when it fires.
+
+        Requires `share.grant` capability OR `system.admin`.
+      tags: [requests]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [granted, denied]
+                reason:
+                  type: string
+                  maxLength: 1000
+                  description: Operator-supplied decision reason.
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: |
+                    On grant: optional auto-expiry. Past values
+                    rejected. Omit / null for a permanent grant.
+                    Ignored on deny.
+      responses:
+        "200":
+          description: Decided.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRequest" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already decided.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -7476,6 +7668,52 @@ components:
             (image, 3D, document, etc.). Tracks ride along with the
             asset; they do NOT appear in asset-count queries and do
             NOT federate as standalone activities.
+    ResourceRequest:
+      type: object
+      description: |
+        Phase 1.17.E — a resource_request row. The state machine
+        is pending → granted / denied (admin decision); granted
+        → expired (CapabilitySweeper cascade). Terminal states
+        admit no further transitions.
+      required: [id, requester_user_ref, target_asset_id, requested_capability, state, requested_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        requester_user_ref:
+          type: integer
+          format: int64
+        target_asset_id:
+          type: string
+          format: uuid
+        requested_capability:
+          type: string
+        reason:
+          type: string
+        state:
+          type: string
+          enum: [pending, granted, denied, expired]
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        decided_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+        decision_reason:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            On granted requests, the linked grant's auto-expiry.
+            Null means permanent.
+        requested_at:
+          type: string
+          format: date-time
+
     SubtitleTrack:
       type: object
       required: [lang, file_hash, source_format, confidence]

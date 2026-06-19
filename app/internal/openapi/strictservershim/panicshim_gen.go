@@ -95,6 +95,11 @@ func (*PanicShim) PatchAccountPreferences(context.Context, openapi.PatchAccountP
 	panic("PanicShim: PatchAccountPreferences called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListOwnRequests panics by default; test shims override.
+func (*PanicShim) ListOwnRequests(context.Context, openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
+	panic("PanicShim: ListOwnRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RotateOwnFederationKeys panics by default; test shims override.
 func (*PanicShim) RotateOwnFederationKeys(context.Context, openapi.RotateOwnFederationKeysRequestObject) (openapi.RotateOwnFederationKeysResponseObject, error) {
 	panic("PanicShim: RotateOwnFederationKeys called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -273,6 +278,16 @@ func (*PanicShim) UploadAdminLicense(context.Context, openapi.UploadAdminLicense
 // ValidateAdminLicense panics by default; test shims override.
 func (*PanicShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLicenseRequestObject) (openapi.ValidateAdminLicenseResponseObject, error) {
 	panic("PanicShim: ValidateAdminLicense called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListAdminRequests panics by default; test shims override.
+func (*PanicShim) ListAdminRequests(context.Context, openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
+	panic("PanicShim: ListAdminRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DecideAdminRequest panics by default; test shims override.
+func (*PanicShim) DecideAdminRequest(context.Context, openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
+	panic("PanicShim: DecideAdminRequest called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // SeedCreateComment panics by default; test shims override.
@@ -538,6 +553,11 @@ func (*PanicShim) LintAsset(context.Context, openapi.LintAssetRequestObject) (op
 // RecreateAssetPreview panics by default; test shims override.
 func (*PanicShim) RecreateAssetPreview(context.Context, openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
 	panic("PanicShim: RecreateAssetPreview called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RequestAssetAccess panics by default; test shims override.
+func (*PanicShim) RequestAssetAccess(context.Context, openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {
+	panic("PanicShim: RequestAssetAccess called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListSubtitleTracks panics by default; test shims override.

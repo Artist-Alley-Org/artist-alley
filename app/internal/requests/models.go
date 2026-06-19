@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package seed
+package requests
 
 import (
 	"net/netip"

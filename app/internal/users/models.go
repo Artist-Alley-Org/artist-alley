@@ -567,6 +567,20 @@ type PostTag struct {
 	Tag    string
 }
 
+type ResourceRequest struct {
+	ID                  pgtype.UUID
+	RequesterUserRef    int64
+	TargetAssetID       pgtype.UUID
+	RequestedCapability string
+	Reason              string
+	State               string
+	DecidedAt           pgtype.Timestamptz
+	DecidedByUserRef    *int64
+	DecisionReason      string
+	ExpiresAt           pgtype.Timestamptz
+	RequestedAt         pgtype.Timestamptz
+}
+
 type Role struct {
 	ID             pgtype.UUID
 	ParentID       pgtype.UUID
@@ -696,6 +710,7 @@ type UserCapabilityGrant struct {
 	Note             string
 	TeamID           pgtype.UUID
 	ExpiresAt        pgtype.Timestamptz
+	RequestRef       pgtype.UUID
 }
 
 type UserCapabilityRevoke struct {
