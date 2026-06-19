@@ -40,6 +40,8 @@ const TRACKED_FILES = [
   'src/routes/account/messages/+page.svelte',
   'src/routes/account/messages/[peer]/+page.svelte',
   'src/routes/admin/system/activities/+page.svelte',
+  'src/routes/admin/system/users/+page.svelte',
+  'src/routes/account/profile/+page.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',
 ];

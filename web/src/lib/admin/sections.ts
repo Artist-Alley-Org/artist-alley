@@ -155,6 +155,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'site',         status: 'live',   href: '/admin/system/site' },
       { key: 'smtp',         status: 'live',   href: '/admin/system/smtp' },
       { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
+      { key: 'self_edit_gates', status: 'live', href: '/admin/system/users' },
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
       { key: 'log',          status: 'stub',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
