@@ -41,6 +41,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // `audit` moved to the automation section (its natural home alongside workflow + triggers).
       // `workflow` moved to the automation section.
       { key: 'capability_grants', status: 'future', phase: '1.17' },
+      { key: 'requests',   status: 'live',   href: '/admin/requests' },
     ],
   },
   {

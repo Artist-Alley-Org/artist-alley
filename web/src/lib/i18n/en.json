@@ -107,7 +107,16 @@
       "ai": "AI",
       "password": "Password",
       "tokens": "API tokens",
-      "messages": "Messages"
+      "messages": "Messages",
+      "requests": "Access requests"
+    },
+    "requests": {
+      "title": "Your access requests",
+      "intro": "Resource requests you've submitted. State updates appear here as approvers decide.",
+      "empty": "You haven't submitted any requests.",
+      "decision_reason": "Decision reason",
+      "expires_at": "Access expires: {ts}",
+      "view_asset": "View asset"
     },
     "overview": {
       "title": "Overview",
@@ -283,6 +292,17 @@
       "live": "Live",
       "stub": "Stub",
       "phase": "Phase {phase}"
+    },
+    "requests": {
+      "title": "Resource requests",
+      "intro": "{total} pending requests. Approve a request to mint a time-bound capability grant for the requester.",
+      "empty": "No pending requests.",
+      "decide": "Decide",
+      "reason": "Reason (optional)",
+      "expires_at": "Expires (optional; permanent if blank)",
+      "grant": "Grant",
+      "deny": "Deny",
+      "decided": "Decision recorded ({decision})."
     },
     "federation": {
       "title": "Federation peers",

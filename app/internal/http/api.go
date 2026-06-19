@@ -113,6 +113,7 @@ type apiServer struct {
 	userKeysAdmin      *userkeys.AdminHandler
 	capabilitySweeper  *auth.CapabilitySweeper
 	requests           *requests.Handler
+	requestsHTTP       *requests.HTTPHandler
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
 	seedAdmin        *seed.AdminHandler
@@ -400,6 +401,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.requests = requests.NewHandler(pool, logger, cacheReg)
 	s.requests.SetAuditRecorder(auditRec)
 	s.requests.SetNotifier(socialNotifyAdapter{w: notifWriter})
+	s.requestsHTTP = requests.NewHTTPHandler(s.requests, logger)
 	s.capabilitySweeper.SetRequestCascade(s.requests.MarkExpired)
 
 	// Federation user-keys admin + self-rotation HTTP surface
@@ -1533,6 +1535,21 @@ func (s *apiServer) ListAdminUsers(ctx context.Context, req openapi.ListAdminUse
 }
 func (s *apiServer) SetAdminUserStatus(ctx context.Context, req openapi.SetAdminUserStatusRequestObject) (openapi.SetAdminUserStatusResponseObject, error) {
 	return s.users.SetAdminUserStatus(ctx, req)
+}
+
+// --- resource requests (Phase 1.17.E) ------------------------------------
+
+func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {
+	return s.requestsHTTP.RequestAssetAccess(ctx, req)
+}
+func (s *apiServer) ListOwnRequests(ctx context.Context, req openapi.ListOwnRequestsRequestObject) (openapi.ListOwnRequestsResponseObject, error) {
+	return s.requestsHTTP.ListOwnRequests(ctx, req)
+}
+func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
+	return s.requestsHTTP.ListAdminRequests(ctx, req)
+}
+func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
+	return s.requestsHTTP.DecideAdminRequest(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------
