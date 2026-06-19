@@ -105,6 +105,11 @@ func (*PanicShim) RotateOwnFederationKeys(context.Context, openapi.RotateOwnFede
 	panic("PanicShim: RotateOwnFederationKeys called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetSelfEditGates panics by default; test shims override.
+func (*PanicShim) GetSelfEditGates(context.Context, openapi.GetSelfEditGatesRequestObject) (openapi.GetSelfEditGatesResponseObject, error) {
+	panic("PanicShim: GetSelfEditGates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListMySessions panics by default; test shims override.
 func (*PanicShim) ListMySessions(context.Context, openapi.ListMySessionsRequestObject) (openapi.ListMySessionsResponseObject, error) {
 	panic("PanicShim: ListMySessions called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -353,6 +358,16 @@ func (*PanicShim) GetSMTPConfig(context.Context, openapi.GetSMTPConfigRequestObj
 // UpdateSMTPConfig panics by default; test shims override.
 func (*PanicShim) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
 	panic("PanicShim: UpdateSMTPConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetAdminUserGates panics by default; test shims override.
+func (*PanicShim) GetAdminUserGates(context.Context, openapi.GetAdminUserGatesRequestObject) (openapi.GetAdminUserGatesResponseObject, error) {
+	panic("PanicShim: GetAdminUserGates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateAdminUserGates panics by default; test shims override.
+func (*PanicShim) UpdateAdminUserGates(context.Context, openapi.UpdateAdminUserGatesRequestObject) (openapi.UpdateAdminUserGatesResponseObject, error) {
+	panic("PanicShim: UpdateAdminUserGates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListAdminUsers panics by default; test shims override.

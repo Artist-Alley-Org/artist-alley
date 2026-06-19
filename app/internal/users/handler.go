@@ -31,7 +31,24 @@ import (
 const (
 	CapEditAnyProfile = "users.profile.edit.any"
 	CapSystemAdmin    = "system.admin"
+	// CapUpdateSelfProfile is the per-user gate (Phase 1.17.F).
+	// Seeded for the Base role by migration 00007 so every
+	// existing user keeps the ability by default. An operator
+	// can revoke it per-user (disciplinary lock-out) without
+	// touching the handler's auth model.
+	CapUpdateSelfProfile = "profile.update_self"
 )
+
+// updateBodyProbe adapts the openapi update body to the
+// selfEditBodyProbe interface in selfedit.go. Lives here so the
+// openapi import stays in handler.go (selfedit.go is openapi-free).
+type updateBodyProbe struct{ body *openapi.UserProfileUpdate }
+
+func (p updateBodyProbe) HasDisplayName() bool { return p.body != nil && p.body.DisplayName != nil }
+func (p updateBodyProbe) HasBio() bool         { return p.body != nil && p.body.Bio != nil }
+func (p updateBodyProbe) HasAvatarURL() bool   { return p.body != nil && p.body.AvatarUrl != nil }
+func (p updateBodyProbe) HasLocation() bool    { return p.body != nil && p.body.Location != nil }
+func (p updateBodyProbe) HasWebsiteURL() bool  { return p.body != nil && p.body.WebsiteUrl != nil }
 
 // CacheDomain is the NOTIFY channel for per-user public-profile cache
 // entries. Exported because cross-package writers (the posts handler
@@ -97,6 +114,12 @@ type Handler struct {
 	// don't need session cascading), the transition skips the cascade
 	// silently.
 	sessionRevoker SessionRevokerFn
+
+	// selfEditGates is the per-field gate cache (Phase 1.17.F).
+	// Read by UpdateUserProfile to enforce the operator-set
+	// flags; invalidated by the admin write handler when an
+	// operator toggles a gate. nil-safe.
+	selfEditGates *selfEditGatesCache
 }
 
 // SessionRevokerFn is the dependency-inverted signature for cascading
@@ -147,6 +170,9 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 	// when registry is nil, h.state is nil + state reads fall
 	// through to PG.
 	h.state = newUserStateCache(registry)
+	// Phase 1.17.F — per-field self-edit gates cache. Same nil-safe
+	// pattern as state above.
+	h.selfEditGates = newSelfEditGatesCache(registry)
 	return h
 }
 
@@ -368,6 +394,40 @@ func (h *Handler) UpdateUserProfile(
 		return openapi.UpdateUserProfile403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "cannot edit another user's profile"},
 		}, nil
+	}
+
+	// Phase 1.17.F — self-edit operator gates.
+	//
+	// Apply ONLY on self-edit (caller == subject). Admin edits via
+	// CapEditAnyProfile / CapSystemAdmin bypass the gates because
+	// the gates exist to lock operator-controlled fields against
+	// the user themselves; the operator can still write them.
+	//
+	// All-or-nothing: if any PATCHed field is gated off, reject
+	// the entire request. Partial application would surprise
+	// users + leave the form in an inconsistent state vs the
+	// payload they submitted. The 422 response carries the
+	// FIRST rejected field name; if more than one is gated, the
+	// frontend re-renders + the user sees subsequent gates next
+	// time they try.
+	isSelfEdit := caller.UserRef == req.Ref
+	if isSelfEdit {
+		// profile.update_self capability gate. Bootstrap admin + Base
+		// role have it by default (migration 00007); an operator who
+		// wants to lock a user out of self-editing entirely can revoke
+		// this capability.
+		if !caller.Can(CapUpdateSelfProfile) && !caller.Can(CapSystemAdmin) {
+			return openapi.UpdateUserProfile403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "profile.update_self capability required"},
+			}, nil
+		}
+		if fge := h.checkSelfEditGates(ctx, updateBodyProbe{req.Body}); fge != nil {
+			return openapi.UpdateUserProfile422JSONResponse{
+				Error:  fge.Error(),
+				Reason: openapi.FieldDisabledByOperator,
+				Field:  string(fge.Field),
+			}, nil
+		}
 	}
 
 	q := New(h.Pool)
