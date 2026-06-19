@@ -36,8 +36,12 @@ func TestUpdateUserProfile_EmitsChangeset_OnFieldEdit(t *testing.T) {
 	t.Cleanup(func() { cleanupProfileEvents(t, pool, subjectRef) })
 
 	h := newProfileHandler(t, pool)
+	// Phase 1.17.F gates self-edit on profile.update_self — the
+	// 1.17.D test path is the canonical self-edit, so grant it
+	// here. Without the cap the handler now 403s before the audit
+	// event is emitted.
 	ctx := auth.WithIdentity(context.Background(),
-		&auth.Identity{UserRef: subjectRef, Username: "subj", Capabilities: []string{}})
+		&auth.Identity{UserRef: subjectRef, Username: "subj", Capabilities: []string{users.CapUpdateSelfProfile}})
 
 	body := openapi.UserProfileUpdate{
 		DisplayName: strPtrP("New Display Name"),
@@ -90,7 +94,7 @@ func TestUpdateUserProfile_NoChange_NoChangesetKey(t *testing.T) {
 
 	h := newProfileHandler(t, pool)
 	ctx := auth.WithIdentity(context.Background(),
-		&auth.Identity{UserRef: subjectRef, Capabilities: []string{}})
+		&auth.Identity{UserRef: subjectRef, Capabilities: []string{users.CapUpdateSelfProfile}})
 
 	// Submit the SAME values as the existing profile → no diff.
 	body := openapi.UserProfileUpdate{
