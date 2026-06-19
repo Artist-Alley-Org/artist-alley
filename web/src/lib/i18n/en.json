@@ -168,7 +168,9 @@
       "location": "Location",
       "website_url": "Website",
       "save": "Save profile",
-      "saved": "Profile saved."
+      "saved": "Profile saved.",
+      "locked_hint": "Locked by operator — contact an admin to change this.",
+      "field_disabled_by_operator": "The {field} field is locked by an operator and cannot be edited here."
     },
     "blocked": {
       "title": "Blocked users",
@@ -665,6 +667,7 @@
           "site":         { "title": "Site",          "blurb": "Display name and base URL." },
           "smtp":         { "title": "SMTP",          "blurb": "Outbound email server." },
           "auth":         { "title": "Authentication","blurb": "Password policy and SSO providers." },
+          "self_edit_gates": { "title": "User self-edit", "blurb": "Per-field locks for what users can edit on their own profile." },
           "ai":           { "title": "AI providers",  "blurb": "Provider list and the default selection." },
           "log":          { "title": "System log",    "blurb": "Audit trail of admin actions." },
           "activities":   { "title": "Activity ledger","blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)." },
@@ -1021,6 +1024,24 @@
       },
       "log": {
         "title": "System log"
+      },
+      "self_edit_gates": {
+        "title": "User self-edit",
+        "intro": "Pick which profile fields users may edit on /account/profile. Unticking a row leaves the field visible but read-only — operators can still write to it via /admin/users. Changes apply immediately across all instances.",
+        "field_display_name": "Display name",
+        "field_bio": "Bio",
+        "field_avatar_url": "Avatar URL",
+        "field_location": "Location",
+        "field_website_url": "Website",
+        "field_help_display_name": "Untick to map display names from HR or directory sync.",
+        "field_help_bio": "Untick if user-authored bios are moderated centrally.",
+        "field_help_avatar_url": "Untick if avatars are managed by an integration.",
+        "field_help_location": "Untick if locations are tracked elsewhere.",
+        "field_help_website_url": "Untick to prevent self-promotion links.",
+        "save": "Save gates",
+        "saved": "Gates saved.",
+        "locked_hint": "Locked by operator",
+        "load_error": "Failed to load self-edit gates."
       },
       "license": {
         "title": "License status",

@@ -1537,6 +1537,18 @@ func (s *apiServer) SetAdminUserStatus(ctx context.Context, req openapi.SetAdmin
 	return s.users.SetAdminUserStatus(ctx, req)
 }
 
+// --- self-edit gates (Phase 1.17.F) --------------------------------------
+
+func (s *apiServer) GetSelfEditGates(ctx context.Context, req openapi.GetSelfEditGatesRequestObject) (openapi.GetSelfEditGatesResponseObject, error) {
+	return s.users.GetSelfEditGates(ctx, req)
+}
+func (s *apiServer) GetAdminUserGates(ctx context.Context, req openapi.GetAdminUserGatesRequestObject) (openapi.GetAdminUserGatesResponseObject, error) {
+	return s.users.GetAdminUserGates(ctx, req)
+}
+func (s *apiServer) UpdateAdminUserGates(ctx context.Context, req openapi.UpdateAdminUserGatesRequestObject) (openapi.UpdateAdminUserGatesResponseObject, error) {
+	return s.users.UpdateAdminUserGates(ctx, req)
+}
+
 // --- resource requests (Phase 1.17.E) ------------------------------------
 
 func (s *apiServer) RequestAssetAccess(ctx context.Context, req openapi.RequestAssetAccessRequestObject) (openapi.RequestAssetAccessResponseObject, error) {

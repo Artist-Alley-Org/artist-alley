@@ -14,13 +14,30 @@
     website_url?: string | null;
   }
 
+  interface SelfEditGates {
+    display_name: boolean;
+    bio: boolean;
+    avatar_url: boolean;
+    location: boolean;
+    website_url: boolean;
+  }
+
   let user = $state<UserPublic | null>(null);
   let loading = $state(true);
   let saving = $state(false);
   let saved = $state(false);
   let error = $state<string | null>(null);
 
-  // Form state — populated from `user` once it loads.
+  // Per-field gate snapshot. Defaults to all-editable so a load
+  // failure leaves the form usable; the backend still enforces.
+  let gates = $state<SelfEditGates>({
+    display_name: true,
+    bio: true,
+    avatar_url: true,
+    location: true,
+    website_url: true,
+  });
+
   let displayName = $state('');
   let bio = $state('');
   let avatarUrl = $state('');
@@ -35,19 +52,23 @@
     loading = true;
     try {
       if (!auth.user) return;
-      const { data } = await api.GET('/users/{ref}', {
-        params: { path: { ref: auth.user.ref } },
-      });
-      if (data) {
-        user = data as UserPublic;
-        displayName = user.display_name === (user.fullname ?? '') ? '' : (user.display_name ?? '');
+      const [profileRes, gatesRes] = await Promise.all([
+        api.GET('/users/{ref}', { params: { path: { ref: auth.user.ref } } }),
+        api.GET('/account/selfedit-gates'),
+      ]);
+      if (profileRes.data) {
+        user = profileRes.data as UserPublic;
         // The display_name field on the response is the resolved
         // string. If it matches fullname (the next-tier fallback),
         // treat the actual profile column as empty for the form.
+        displayName = user.display_name === (user.fullname ?? '') ? '' : (user.display_name ?? '');
         bio = user.bio ?? '';
         avatarUrl = user.avatar_url ?? '';
         location = user.location ?? '';
         websiteUrl = user.website_url ?? '';
+      }
+      if (gatesRes.data) {
+        gates = gatesRes.data as SelfEditGates;
       }
     } finally {
       loading = false;
@@ -60,22 +81,32 @@
     saved = false;
     error = null;
     try {
-      const { data, error: apiErr } = await api.PATCH('/users/{ref}', {
+      // Only PATCH fields the operator allows. Stripping locked
+      // fields means a user who never touched them can't trip the
+      // gate either — the server's 422 is the backstop for tamper.
+      const body: Record<string, string | null> = {};
+      if (gates.display_name) body.display_name = displayName;
+      if (gates.bio)          body.bio          = bio;
+      if (gates.avatar_url)   body.avatar_url   = avatarUrl || null;
+      if (gates.location)     body.location     = location;
+      if (gates.website_url)  body.website_url  = websiteUrl || null;
+
+      const { data, error: apiErr, response } = await api.PATCH('/users/{ref}', {
         params: { path: { ref: auth.user.ref } },
-        body: {
-          display_name: displayName,
-          bio,
-          avatar_url: avatarUrl || null,
-          location,
-          website_url: websiteUrl || null,
-        } as never,
+        body: body as never,
       });
       if (apiErr || !data) {
-        error = (apiErr as { error?: string } | undefined)?.error ?? t('errors.save_failed');
-      } else {
-        user = data as UserPublic;
-        saved = true;
+        // 422 from a gated field: show the field-specific message.
+        const apiErrObj = apiErr as { error?: string; reason?: string; field?: string } | undefined;
+        if (response?.status === 422 && apiErrObj?.reason === 'field_disabled_by_operator' && apiErrObj.field) {
+          error = t('account.profile.field_disabled_by_operator', { field: apiErrObj.field });
+        } else {
+          error = apiErrObj?.error ?? t('errors.save_failed');
+        }
+        return;
       }
+      user = data as UserPublic;
+      saved = true;
     } finally {
       saving = false;
     }
@@ -101,20 +132,31 @@
       <input
         type="text"
         bind:value={displayName}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        disabled={!gates.display_name}
+        data-testid="profile-display-name"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="100"
       />
-      <span class="mt-1 block text-xs text-fg-muted">{t('account.profile.display_name_help')}</span>
+      {#if !gates.display_name}
+        <span class="mt-1 block text-xs text-fg-muted" data-testid="profile-display-name-locked">{t('account.profile.locked_hint')}</span>
+      {:else}
+        <span class="mt-1 block text-xs text-fg-muted">{t('account.profile.display_name_help')}</span>
+      {/if}
     </label>
 
     <label class="block">
       <span class="text-sm text-fg-muted">{t('account.profile.bio')}</span>
       <textarea
         bind:value={bio}
+        disabled={!gates.bio}
+        data-testid="profile-bio"
         rows="3"
-        class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        class="mt-1 w-full resize-y rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="1000"
       ></textarea>
+      {#if !gates.bio}
+        <span class="mt-1 block text-xs text-fg-muted" data-testid="profile-bio-locked">{t('account.profile.locked_hint')}</span>
+      {/if}
     </label>
 
     <label class="block">
@@ -122,9 +164,14 @@
       <input
         type="url"
         bind:value={avatarUrl}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        disabled={!gates.avatar_url}
+        data-testid="profile-avatar-url"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="1024"
       />
+      {#if !gates.avatar_url}
+        <span class="mt-1 block text-xs text-fg-muted" data-testid="profile-avatar-url-locked">{t('account.profile.locked_hint')}</span>
+      {/if}
     </label>
 
     <label class="block">
@@ -132,9 +179,14 @@
       <input
         type="text"
         bind:value={location}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        disabled={!gates.location}
+        data-testid="profile-location"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="100"
       />
+      {#if !gates.location}
+        <span class="mt-1 block text-xs text-fg-muted" data-testid="profile-location-locked">{t('account.profile.locked_hint')}</span>
+      {/if}
     </label>
 
     <label class="block">
@@ -142,13 +194,18 @@
       <input
         type="url"
         bind:value={websiteUrl}
-        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        disabled={!gates.website_url}
+        data-testid="profile-website-url"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         maxlength="500"
       />
+      {#if !gates.website_url}
+        <span class="mt-1 block text-xs text-fg-muted" data-testid="profile-website-url-locked">{t('account.profile.locked_hint')}</span>
+      {/if}
     </label>
 
     {#if error}
-      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
+      <p role="alert" data-testid="profile-error" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
         {error}
       </p>
     {/if}

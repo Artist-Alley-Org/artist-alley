@@ -5694,6 +5694,97 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: |
+            Phase 1.17.F — operator has disabled self-edit for the
+            field carried in `field`. The frontend renders an
+            inline "locked by your administrator" tooltip without
+            blocking other fields.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, reason, field]
+                properties:
+                  error:
+                    type: string
+                  reason:
+                    type: string
+                    enum: [field_disabled_by_operator]
+                  field:
+                    type: string
+
+  /account/selfedit-gates:
+    get:
+      operationId: getSelfEditGates
+      summary: Per-field self-edit gates (Phase 1.17.F)
+      description: |
+        Returns the operator-set flags for the five gateable
+        profile fields. Used by /account/profile on page mount
+        to disable inputs the operator has locked.
+
+        Missing system_config rows default to `true` (editable)
+        — fail-open preserves current behavior across partial
+        migrations.
+      tags: [users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Gate snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfEditGates" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /admin/system/users:
+    get:
+      operationId: getAdminUserGates
+      summary: Read the per-field self-edit gates (admin, Phase 1.17.F)
+      tags: [admin, users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Gate snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfEditGates" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateAdminUserGates
+      summary: Update the per-field self-edit gates (admin, Phase 1.17.F)
+      description: |
+        Operator writes the five boolean flags. The handler upserts
+        each `users.allow_self_edit.*` system_config row and invokes
+        users.Handler.InvalidateSelfEditGates so every instance's
+        cache picks up the new values on the next read. Requires
+        `system.config.write` OR `system.admin`.
+      tags: [admin, users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SelfEditGates" }
+      responses:
+        "200":
+          description: Updated gate snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SelfEditGates" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /users/by-username/{username}:
     parameters:
@@ -8813,6 +8904,23 @@ components:
         next_cursor:
           type: string
           nullable: true
+
+    SelfEditGates:
+      type: object
+      description: |
+        Phase 1.17.F — per-field self-edit gates. Each flag
+        controls whether users may edit that field on their own
+        profile. Operators set these via PATCH /admin/system/users;
+        users read them via GET /account/selfedit-gates to render
+        disabled inputs. Missing system_config rows default to
+        `true` (fail-open).
+      required: [display_name, bio, avatar_url, location, website_url]
+      properties:
+        display_name: { type: boolean }
+        bio:          { type: boolean }
+        avatar_url:   { type: boolean }
+        location:     { type: boolean }
+        website_url:  { type: boolean }
 
     UserPublic:
       type: object
