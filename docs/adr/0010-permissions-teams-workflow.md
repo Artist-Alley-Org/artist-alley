@@ -22,29 +22,35 @@ tags:
 excerpt: >-
   The authorization model laid down in migration 00002_capabilities_roles.sql (Phase 1.3) gave us three of the seven layers a real production permissions system needs:
 ---
-## Implementation status (2026-06-16)
+## Implementation status (2026-06-19)
 
-The decision recorded here is **partially implemented** and the
-remaining work is in flight under Phase 1.17:
+The decision recorded here is **fully implemented** as of the
+1.17 arc landing on `dev`:
 
 - **1.17.A — User approval states + admin approval workflow** ✅
-  shipped via PR #138 (`672e45d`). Typed state machine, single-gate
-  authn, session-cascade invalidation, last-admin invariant.
-- **1.17.B — Groups + team hierarchy + multi-session management** ⏭
-  next; covers the missing "teams" pillar of this ADR.
-- **1.17.C — Capability grants + admin grant surface** ⏭ covers the
-  fine-grained authorization layer.
-- **1.17.D — Audit-log changeset (before / after diffs)** ⏭ closes the
-  audit-trail gap.
-- **1.17.E — Resource request workflow** ⏭ adds the request lifecycle.
-- **1.17.F — Self-service profile editing + operator gates** ⏭ wraps
-  the user-controlled surface.
+  PR #138. Typed state machine, single-gate authn, session-cascade
+  invalidation, last-admin invariant.
+- **1.17.B — Capability grants with expiry** ✅ PR #139. Typed
+  grant rows, deny precedence, scoped subject lookup,
+  best-effort audit.
+- **1.17.C — Capability sweeper** ✅ PR #140. Background job
+  retires expired grants, NOTIFY-broadcasts cap-cache evictions
+  across instances.
+- **1.17.D — Profile-update audit ledger** ✅ PR #141. Reflective
+  diff helper, changeset-only metadata, fail-open audit recording.
+- **1.17.E — Resource request workflow** ✅ PR #142. Typed
+  request lifecycle (open → approved/denied/expired), cache
+  broadcast, owner + approver gate split.
+- **1.17.F — Self-service profile editing + operator gates** ✅
+  PR #143. Per-field `users.allow_self_edit.*` gates, new
+  `profile.update_self` capability, 422 reason shape
+  (`field_disabled_by_operator`), cross-instance cache
+  invalidation. Closes issue #20.
 
-When the full 1.17 arc lands, this ADR will be cross-referenced
-from each shipped sub-phase. The `status: accepted` flip in this
-revision reflects that the design held against 1.17.A's
-implementation (no design changes, no surprises) — the rest of the
-arc is mechanical execution of the same model.
+The design held end-to-end through the arc: typed catalogues per
+ADR 0042, NOTIFY/LISTEN cache invalidation per ADR 0013, and the
+audit ledger anchored on ADR 0044 — no design changes against
+implementation reality.
 
 Related companion ADRs that share the typed-vocabulary discipline:
 [ADR 0042](0042-distributed-catalogs-typed-per-package.md) (typed
