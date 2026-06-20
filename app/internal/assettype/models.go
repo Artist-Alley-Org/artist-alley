@@ -33,6 +33,26 @@ type Activity struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type AiProviderCall struct {
+	ID                     pgtype.UUID        `json:"id"`
+	Provider               string             `json:"provider"`
+	Model                  string             `json:"model"`
+	Concern                string             `json:"concern"`
+	PromptTemplate         *string            `json:"prompt_template"`
+	PromptVersion          *string            `json:"prompt_version"`
+	AssetID                pgtype.UUID        `json:"asset_id"`
+	JobID                  pgtype.UUID        `json:"job_id"`
+	InputHash              *string            `json:"input_hash"`
+	InputTokens            *int32             `json:"input_tokens"`
+	OutputTokens           *int32             `json:"output_tokens"`
+	DurationMs             int32              `json:"duration_ms"`
+	EstimatedCostUsdMicros *int64             `json:"estimated_cost_usd_micros"`
+	Status                 string             `json:"status"`
+	ErrorMessage           *string            `json:"error_message"`
+	ActorUserRef           *int64             `json:"actor_user_ref"`
+	TriggeredAt            pgtype.Timestamptz `json:"triggered_at"`
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID        `json:"id"`
 	UserRef        int64              `json:"user_ref"`
@@ -522,6 +542,7 @@ type Job struct {
 	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
 	StartedAt      pgtype.Timestamptz `json:"started_at"`
 	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	IdempotencyKey *string            `json:"idempotency_key"`
 }
 
 type Like struct {

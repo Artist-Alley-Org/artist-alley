@@ -10,20 +10,45 @@
 
 -- name: EnqueueJob :one
 -- Insert a fresh job. `payload` is handler-defined JSONB. `priority`
--- defaults to 100; lower numbers run sooner.
+-- defaults to 100; lower numbers run sooner. `idempotency_key` is
+-- optional — when set, the partial UNIQUE INDEX on
+-- (type, idempotency_key) WHERE status IN ('pending','running')
+-- (migration 00009) causes a 23505 unique_violation if the same
+-- (type, key) work is already in-flight. Handler layer catches
+-- that violation and looks the existing job up via
+-- GetJobByIdempotencyKey, returning the existing id.
 INSERT INTO jobs (
-    type, payload, priority, max_attempts, scheduled_for, origin_server_id
+    type, payload, priority, max_attempts, scheduled_for, origin_server_id,
+    idempotency_key
 ) VALUES (
     $1, $2,
     COALESCE(sqlc.narg('priority')::INTEGER, 100),
     COALESCE(sqlc.narg('max_attempts')::INTEGER, 3),
     sqlc.narg('scheduled_for')::TIMESTAMPTZ,
-    sqlc.narg('origin_server_id')::UUID
+    sqlc.narg('origin_server_id')::UUID,
+    sqlc.narg('idempotency_key')::TEXT
 )
 RETURNING id, type, payload, status, priority, attempts, max_attempts,
           claimed_by, claimed_at, lease_expires_at, last_error, result,
           origin_server_id, scheduled_for,
-          enqueued_at, started_at, finished_at;
+          enqueued_at, started_at, finished_at,
+          idempotency_key;
+
+-- name: GetJobByIdempotencyKey :one
+-- Resolves the existing in-flight job's id when an Enqueue hits the
+-- partial UNIQUE INDEX. Looks at pending + running statuses only —
+-- a completed/failed job with the same key should not block a fresh
+-- re-enqueue (the new call is genuinely new work, the prior result
+-- is historical).
+SELECT id, type, payload, status, priority, attempts, max_attempts,
+       claimed_by, claimed_at, lease_expires_at, last_error, result,
+       origin_server_id, scheduled_for,
+       enqueued_at, started_at, finished_at,
+       idempotency_key
+FROM jobs
+WHERE type = $1
+  AND idempotency_key = $2
+  AND status IN ('pending', 'running');
 
 -- name: ClaimNextJob :one
 -- Atomically pick the highest-priority pending job whose type is in
@@ -57,7 +82,8 @@ WHERE j.id = picked.id
 RETURNING j.id, j.type, j.payload, j.status, j.priority, j.attempts, j.max_attempts,
           j.claimed_by, j.claimed_at, j.lease_expires_at, j.last_error, j.result,
           j.origin_server_id, j.scheduled_for,
-          j.enqueued_at, j.started_at, j.finished_at;
+          j.enqueued_at, j.started_at, j.finished_at,
+          j.idempotency_key;
 
 -- name: ClaimJobBatch :many
 -- Like ClaimNextJob but returns up to `limit` rows for batched
@@ -87,7 +113,8 @@ WHERE j.id = picked.id
 RETURNING j.id, j.type, j.payload, j.status, j.priority, j.attempts, j.max_attempts,
           j.claimed_by, j.claimed_at, j.lease_expires_at, j.last_error, j.result,
           j.origin_server_id, j.scheduled_for,
-          j.enqueued_at, j.started_at, j.finished_at;
+          j.enqueued_at, j.started_at, j.finished_at,
+          j.idempotency_key;
 
 -- name: HeartbeatJob :execrows
 -- Extend the lease on a running job. Worker must call this faster
@@ -154,7 +181,8 @@ WHERE status = 'running'
 SELECT id, type, payload, status, priority, attempts, max_attempts,
        claimed_by, claimed_at, lease_expires_at, last_error, result,
        origin_server_id, scheduled_for,
-       enqueued_at, started_at, finished_at
+       enqueued_at, started_at, finished_at,
+       idempotency_key
 FROM jobs
 WHERE id = $1;
 

@@ -52,6 +52,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/seed"
 	"github.com/mscrnt/artist-alley/app/internal/requests"
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
+	"github.com/mscrnt/artist-alley/app/internal/ai"
+	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
@@ -86,6 +88,7 @@ type apiServer struct {
 	audit         *audit.HTTPHandler
 	licensing     *licensing.Handler
 	userprefs     *userprefs.Handler
+	aiAdmin       *aiadmin.Handler // Phase 1.14.A inference subsystem admin surface
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -141,6 +144,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		audit:        audit.NewHTTPHandler(pool, logger),
 		licensing:    licensing.NewHandler(licState, logger),
 		userprefs:    userprefs.NewHandler(pool, logger, cacheReg),
+		aiAdmin:      newAIAdminHandler(pool, cacheReg),
 	}
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
@@ -1667,6 +1671,42 @@ func (s *apiServer) GetAIConfig(ctx context.Context, req openapi.GetAIConfigRequ
 func (s *apiServer) UpdateAIConfig(ctx context.Context, req openapi.UpdateAIConfigRequestObject) (openapi.UpdateAIConfigResponseObject, error) {
 	return s.sysconfigH.UpdateAIConfig(ctx, req)
 }
+
+// Phase 1.14.A — AI inference subsystem admin endpoints. Routed to
+// the dedicated ai/admin package which composes the typed Loader +
+// validator + cost rollup. Distinct from the Phase 1.16 GetAIConfig
+// surface above (that's the raw provider-list stub; this is the
+// inference config that drives the router + privacy gate + budget
+// tracker).
+//
+// aiAdmin is nil-safe (the field is populated only when the AI
+// subsystem boots successfully); the methods return 503 when it
+// isn't wired so the admin UI can surface "AI subsystem
+// unavailable" rather than a 500.
+func (s *apiServer) GetAIInferenceConfig(ctx context.Context, req openapi.GetAIInferenceConfigRequestObject) (openapi.GetAIInferenceConfigResponseObject, error) {
+	if s.aiAdmin == nil {
+		return openapi.GetAIInferenceConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "AI subsystem not initialised"},
+		}, nil
+	}
+	return s.aiAdmin.GetAIInferenceConfig(ctx, req)
+}
+func (s *apiServer) UpdateAIInferenceConfig(ctx context.Context, req openapi.UpdateAIInferenceConfigRequestObject) (openapi.UpdateAIInferenceConfigResponseObject, error) {
+	if s.aiAdmin == nil {
+		return openapi.UpdateAIInferenceConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "AI subsystem not initialised"},
+		}, nil
+	}
+	return s.aiAdmin.UpdateAIInferenceConfig(ctx, req)
+}
+func (s *apiServer) GetAIUsage(ctx context.Context, req openapi.GetAIUsageRequestObject) (openapi.GetAIUsageResponseObject, error) {
+	if s.aiAdmin == nil {
+		return openapi.GetAIUsage401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "AI subsystem not initialised"},
+		}, nil
+	}
+	return s.aiAdmin.GetAIUsage(ctx, req)
+}
 func (s *apiServer) GetAppearanceConfig(ctx context.Context, req openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
 	return s.sysconfigH.GetAppearanceConfig(ctx, req)
 }
@@ -2338,4 +2378,16 @@ func (s *apiServer) DeleteBrushPack(ctx context.Context, req openapi.DeleteBrush
 }
 func (s *apiServer) GetBrushPackStamp(ctx context.Context, req openapi.GetBrushPackStampRequestObject) (openapi.GetBrushPackStampResponseObject, error) {
 	return s.brushpacks.GetBrushPackStamp(ctx, req)
+}
+
+// newAIAdminHandler builds the Phase 1.14.A AI inference admin
+// surface. Constructs the Caches + Loader from the shared pool +
+// cache registry and passes them into the ai/admin package. Safe
+// to call before any AI provider is registered — the admin
+// endpoints only read/write configuration; runtime inference
+// requires the router (wired separately when providers register).
+func newAIAdminHandler(pool *pgxpool.Pool, registry *cache.Registry) *aiadmin.Handler {
+	caches := ai.NewCaches(registry)
+	loader := ai.NewLoader(pool, caches)
+	return aiadmin.NewHandler(pool, loader, caches)
 }

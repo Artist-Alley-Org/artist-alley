@@ -33,6 +33,26 @@ type Activity struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type AiProviderCall struct {
+	ID                     pgtype.UUID
+	Provider               string
+	Model                  string
+	Concern                string
+	PromptTemplate         *string
+	PromptVersion          *string
+	AssetID                pgtype.UUID
+	JobID                  pgtype.UUID
+	InputHash              *string
+	InputTokens            *int32
+	OutputTokens           *int32
+	DurationMs             int32
+	EstimatedCostUsdMicros *int64
+	Status                 string
+	ErrorMessage           *string
+	ActorUserRef           *int64
+	TriggeredAt            pgtype.Timestamptz
+}
+
 type ApiToken struct {
 	ID             pgtype.UUID
 	UserRef        int64
@@ -522,6 +542,7 @@ type Job struct {
 	EnqueuedAt     pgtype.Timestamptz
 	StartedAt      pgtype.Timestamptz
 	FinishedAt     pgtype.Timestamptz
+	IdempotencyKey *string
 }
 
 type Like struct {
