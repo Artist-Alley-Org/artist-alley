@@ -157,6 +157,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
       { key: 'self_edit_gates', status: 'live', href: '/admin/system/users' },
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
+      { key: 'ai_inference_config', status: 'live', href: '/admin/ai/config' },
+      { key: 'ai_inference_usage',  status: 'live', href: '/admin/ai/usage' },
       { key: 'log',          status: 'stub',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
       // Federation tiles moved to the dedicated `federation` section
