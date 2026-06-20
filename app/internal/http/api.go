@@ -537,7 +537,52 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.messages.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.collections.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
 	s.users.SetActivitiesWriter(s.activities, sysconfigBaseURLFn(sysCfg))
+	// Phase 1.9.B — let collections.Create probe required collection
+	// fields + seed initial values via the metadata package.
+	s.collections.SetMetadataGate(collectionsMetadataGateAdapter{md: s.metadata})
 	return s
+}
+
+// collectionsMetadataGateAdapter bridges metadata.Handler to
+// collections.MetadataGate so the two packages can stay decoupled —
+// neither imports the other. Phase 1.9.B helper.
+type collectionsMetadataGateAdapter struct {
+	md *metadata.Handler
+}
+
+func (a collectionsMetadataGateAdapter) RequiredCollectionFields(ctx context.Context) ([]collections.RequiredField, error) {
+	rows, err := a.md.ListRequiredCollectionFieldsRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]collections.RequiredField, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, collections.RequiredField{
+			ID:    uuid.UUID(r.ID.Bytes),
+			Code:  r.Code,
+			Label: r.Label,
+			Type:  r.Type,
+		})
+	}
+	return out, nil
+}
+
+func (a collectionsMetadataGateAdapter) UpsertCollectionFieldValueInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	collectionID, fieldID uuid.UUID,
+	raw collections.CollectionFieldValueInput,
+	callerRef int64,
+) error {
+	var options []string
+	if raw.ValueOptions != nil {
+		options = *raw.ValueOptions
+	}
+	return a.md.SeedCollectionFieldValueInTx(
+		ctx, tx, collectionID, fieldID,
+		raw.ValueText, raw.ValueNum, raw.ValueDate,
+		options, raw.ValueRef, callerRef,
+	)
 }
 
 // sysconfigBaseURLFn returns a base-URL resolver closure that

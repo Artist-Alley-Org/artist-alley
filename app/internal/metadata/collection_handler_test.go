@@ -23,7 +23,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-const collectionTestPrefix = "ctest_"
+const collectionTestPrefix = "mcoltest_"
 
 // TestCollectionField_Upsert_NewValue_Inserts covers the happy path:
 // admin defines a collection field; setting a value via PUT returns
@@ -40,8 +40,8 @@ func TestCollectionField_Upsert_NewValue_Inserts(t *testing.T) {
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
 
 	router, userRef := makeRouter(t, pool, true)
-	fieldID := mustCreateCollectionField(t, router, "ctest_client", "Client", "text")
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 1")
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_client", "Client", "text")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 1")
 
 	rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID), map[string]any{
 		"value_text": "Acme",
@@ -81,8 +81,8 @@ func TestCollectionField_Upsert_Replace_OverridesAndWritesHistory(t *testing.T) 
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
 
 	router, userRef := makeRouter(t, pool, true)
-	fieldID := mustCreateCollectionField(t, router, "ctest_priority", "Priority", "text")
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 2")
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_priority", "Priority", "text")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 2")
 
 	if rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID), map[string]any{
 		"value_text": "low",
@@ -136,11 +136,11 @@ func TestCollectionField_AssetSubjectRejected_422(t *testing.T) {
 	router, userRef := makeRouter(t, pool, true)
 	// Asset-scoped field (the default subject_kind when none supplied).
 	assetFieldID := mustCreateField(t, router, map[string]any{
-		"code":  "ctest_asset_only",
+		"code":  "mcoltest_asset_only",
 		"label": "Asset Only",
 		"type":  "text",
 	})
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 3")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 3")
 
 	rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, assetFieldID), map[string]any{
 		"value_text": "should fail",
@@ -168,8 +168,8 @@ func TestCollectionField_TypeMismatch_422(t *testing.T) {
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
 
 	router, userRef := makeRouter(t, pool, true)
-	fieldID := mustCreateCollectionField(t, router, "ctest_amount", "Amount", "number")
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 4")
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_amount", "Amount", "number")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 4")
 
 	rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID), map[string]any{
 		"value_text": "not a number",
@@ -197,8 +197,8 @@ func TestCollectionField_Delete_RemovesRowAndWritesHistory(t *testing.T) {
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
 
 	router, userRef := makeRouter(t, pool, true)
-	fieldID := mustCreateCollectionField(t, router, "ctest_notes", "Notes", "text")
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 5")
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_notes", "Notes", "text")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 5")
 
 	if rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID), map[string]any{
 		"value_text": "to be deleted",
@@ -251,8 +251,8 @@ func TestCollectionField_HistoryEndpoint_ReturnsNewestFirst(t *testing.T) {
 	t.Cleanup(func() { cleanCollectionTestRows(t, pool) })
 
 	router, userRef := makeRouter(t, pool, true)
-	fieldID := mustCreateCollectionField(t, router, "ctest_status", "Status", "text")
-	collectionID := mustInsertCollection(t, pool, userRef, "ctest col 6")
+	fieldID := mustCreateCollectionField(t, router, "mcoltest_status", "Status", "text")
+	collectionID := mustInsertCollection(t, pool, userRef, "mcoltest col 6")
 
 	for _, v := range []string{"draft", "review", "final"} {
 		if rr := putJSON(t, router, fmt.Sprintf("/collections/%s/fields/%s", collectionID, fieldID), map[string]any{
@@ -312,7 +312,7 @@ func TestCollectionField_FilterListBySubjectKind(t *testing.T) {
 		"type":  "text",
 	})
 	// Collection-scoped.
-	collectionFieldID := mustCreateCollectionField(t, router, "ctest_only", "Collection only", "text")
+	collectionFieldID := mustCreateCollectionField(t, router, "mcoltest_only", "Collection only", "text")
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/fields?subject_kind=collection", nil))
@@ -390,5 +390,5 @@ func cleanCollectionTestRows(t *testing.T, pool *pgxpool.Pool) {
 		collectionTestPrefix+"%")
 	_, _ = pool.Exec(ctx, `DELETE FROM field_definition WHERE code LIKE $1`,
 		collectionTestPrefix+"%")
-	_, _ = pool.Exec(ctx, `DELETE FROM collections WHERE name LIKE 'ctest col %'`)
+	_, _ = pool.Exec(ctx, `DELETE FROM collections WHERE name LIKE 'mcoltest col %'`)
 }

@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -564,4 +565,85 @@ func canReadField(_ context.Context, h *Handler, fieldUUID openapi_types.UUID, i
 		return true
 	}
 	return id.Can(*row.ReadCapability)
+}
+
+// ---------------------------------------------------------------------------
+// Cross-package gate helpers for collections.MetadataGate (Phase 1.9.B).
+//
+// These are the raw building blocks; an adapter in app/internal/http
+// converts the metadata-local input shape to the collections-package
+// interface shape so neither package has to know about the other's
+// types directly. Keeps metadata a leaf.
+// ---------------------------------------------------------------------------
+
+// SeedCollectionFieldValueInTx writes one value inside the caller's
+// transaction. Used by collections.Create to seed the initial values
+// supplied in the create body — same tx as the collection INSERT so
+// a write failure rolls back together.
+//
+// Type validation: enforced via the field_definition.type lookup.
+// Capability validation is the caller's responsibility.
+// 422-class errors are returned as plain Go errors; the calling
+// package decides how to surface them. Required-field validation
+// is the caller's job (already happened pre-tx).
+//
+// History is NOT written here — the create flow's collection
+// activity emission is sufficient audit; per-value history rows
+// land when operators edit via PUT /collections/{id}/fields/{field_id}.
+// Keeps the create path lean.
+func (h *Handler) SeedCollectionFieldValueInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	collectionID, fieldID uuid.UUID,
+	valueText *string,
+	valueNum *float64,
+	valueDate *time.Time,
+	valueOptions []string,
+	valueRef *uuid.UUID,
+	callerRef int64,
+) error {
+	pgField := pgtype.UUID{Bytes: fieldID, Valid: true}
+	fieldRow, err := h.getFieldByIDCached(ctx, pgField)
+	if err != nil {
+		return fmt.Errorf("metadata: lookup field for seed: %w", err)
+	}
+	if fieldRow.SubjectKind != string(SubjectCollection) {
+		return fmt.Errorf("field %q is not a collection field", fieldRow.Code)
+	}
+
+	params := UpsertCollectionFieldValueParams{
+		CollectionID: pgtype.UUID{Bytes: collectionID, Valid: true},
+		FieldID:      pgField,
+		SetBy:        "manual",
+		SetByUserRef: &callerRef,
+	}
+	switch fieldRow.Type {
+	case "text", "longtext", "rich_text", "select", "boolean":
+		params.ValueText = valueText
+	case "number":
+		params.ValueNum = valueNum
+	case "date", "datetime":
+		if valueDate != nil {
+			params.ValueDate = pgtype.Timestamptz{Time: *valueDate, Valid: true}
+		}
+	case "multi_select", "tree":
+		params.ValueOptions = valueOptions
+	case "reference":
+		if valueRef != nil {
+			params.ValueRef = pgtype.UUID{Bytes: *valueRef, Valid: true}
+		}
+	}
+
+	if _, err := New(tx).UpsertCollectionFieldValue(ctx, params); err != nil {
+		return fmt.Errorf("metadata: upsert collection field value: %w", err)
+	}
+	return nil
+}
+
+// ListRequiredCollectionFieldsRaw returns the (id, code, label, type)
+// tuples for every active collection-scoped field where required=TRUE.
+// Adapter in app/internal/http maps the result into
+// collections.RequiredField.
+func (h *Handler) ListRequiredCollectionFieldsRaw(ctx context.Context) ([]ListRequiredCollectionFieldsRow, error) {
+	return New(h.Pool).ListRequiredCollectionFields(ctx)
 }
