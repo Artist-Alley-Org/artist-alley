@@ -64,6 +64,13 @@ type Handler struct {
 	// Registry's NOTIFY channel. Nil-safe: a Handler built without
 	// a registry skips the cache and reads always go to the DB.
 	fieldsByID *cache.Cache[FieldDefinition]
+
+	// collectionValues caches the full collection_field_value list
+	// per collection (Phase 1.9.B). Per-collection eviction on
+	// upsert/delete; cross-instance NOTIFY via the same Registry.
+	// Capability filtering runs on the way out so a single cache
+	// entry serves every caller.
+	collectionValues *cache.Cache[collectionValueCacheEntry]
 }
 
 // NewHandler binds the metadata handler to the DB pool and the
@@ -78,6 +85,7 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 		// cold field defs without losing them — next read repopulates.
 		h.fieldsByID = cache.Register[FieldDefinition](registry, cacheDomainFieldByID, 5000)
 	}
+	h.setCollectionValueCache(registry)
 	return h
 }
 
@@ -150,7 +158,15 @@ func (h *Handler) ListFields(
 		s := string(*req.Params.Status)
 		statusFilter = &s
 	}
-	rows, err := q.ListFieldDefinitions(ctx, statusFilter)
+	var subjectFilter *string
+	if req.Params.SubjectKind != nil {
+		s := string(*req.Params.SubjectKind)
+		subjectFilter = &s
+	}
+	rows, err := q.ListFieldDefinitions(ctx, ListFieldDefinitionsParams{
+		Status:      statusFilter,
+		SubjectKind: subjectFilter,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("metadata: list: %w", err)
 	}
@@ -213,24 +229,39 @@ func (h *Handler) CreateField(
 		return nil, err
 	}
 
+	// subject_kind discriminator (Phase 1.9.B). Defaults to asset for
+	// callers that don't supply one — preserves the pre-1.9.B
+	// "everything is an asset field" semantics.
+	subject := SubjectAsset
+	if in.SubjectKind != nil {
+		parsed, err := ParseSubjectKind(string(*in.SubjectKind))
+		if err != nil {
+			return openapi.CreateField400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+			}, nil
+		}
+		subject = parsed
+	}
+
 	q := New(h.Pool)
 	row, err := q.CreateFieldDefinition(ctx, CreateFieldDefinitionParams{
-		Code:            code,
-		Label:           label,
-		Description:     strOr(in.Description, ""),
-		Type:            string(in.Type),
-		Options:         optsJSON,
-		Required:        boolOr(in.Required, false),
-		Searchable:      boolOr(in.Searchable, true),
-		AppliesTo:       int64SliceOr(in.AppliesTo, []int64{}),
-		FieldSetID:      uuidFromOpenAPIPtr(in.FieldSetId),
-		ReadCapability:  in.ReadCapability,
-		WriteCapability: in.WriteCapability,
-		DisplayOrder:    int32Or(in.DisplayOrder, 100),
-		DisplayGroup:    strOr(in.DisplayGroup, "general"),
-		Source:          srcJSON,
-		Status:          "active",
+		Code:             code,
+		Label:            label,
+		Description:      strOr(in.Description, ""),
+		Type:             string(in.Type),
+		Options:          optsJSON,
+		Required:         boolOr(in.Required, false),
+		Searchable:       boolOr(in.Searchable, true),
+		AppliesTo:        int64SliceOr(in.AppliesTo, []int64{}),
+		FieldSetID:       uuidFromOpenAPIPtr(in.FieldSetId),
+		ReadCapability:   in.ReadCapability,
+		WriteCapability:  in.WriteCapability,
+		DisplayOrder:     int32Or(in.DisplayOrder, 100),
+		DisplayGroup:     strOr(in.DisplayGroup, "general"),
+		Source:           srcJSON,
+		Status:           "active",
 		CreatedByUserRef: &id.UserRef,
+		SubjectKind:      string(subject),
 	})
 	if err != nil {
 		// Most likely a duplicate code violating the UNIQUE
@@ -757,6 +788,7 @@ func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 		Label:           r.Label,
 		Description:     &r.Description,
 		Type:            openapi.FieldDefinitionType(r.Type),
+		SubjectKind:     openapi.FieldDefinitionSubjectKind(r.SubjectKind),
 		Required:        r.Required,
 		Searchable:      r.Searchable,
 		AppliesTo:       r.AppliesTo,

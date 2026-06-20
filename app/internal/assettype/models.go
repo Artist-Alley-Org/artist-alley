@@ -232,6 +232,30 @@ type CollectionAcl struct {
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
+type CollectionFieldValue struct {
+	CollectionID pgtype.UUID        `json:"collection_id"`
+	FieldID      pgtype.UUID        `json:"field_id"`
+	ValueText    *string            `json:"value_text"`
+	ValueNum     *float64           `json:"value_num"`
+	ValueDate    pgtype.Timestamptz `json:"value_date"`
+	ValueOptions []string           `json:"value_options"`
+	ValueRef     pgtype.UUID        `json:"value_ref"`
+	SetBy        string             `json:"set_by"`
+	SetAt        pgtype.Timestamptz `json:"set_at"`
+	SetByUserRef *int64             `json:"set_by_user_ref"`
+}
+
+type CollectionFieldValueHistory struct {
+	ID               pgtype.UUID        `json:"id"`
+	CollectionID     pgtype.UUID        `json:"collection_id"`
+	FieldID          pgtype.UUID        `json:"field_id"`
+	OldValue         []byte             `json:"old_value"`
+	NewValue         []byte             `json:"new_value"`
+	SetBy            string             `json:"set_by"`
+	ChangedByUserRef *int64             `json:"changed_by_user_ref"`
+	ChangedAt        pgtype.Timestamptz `json:"changed_at"`
+}
+
 type CollectionPost struct {
 	CollectionID pgtype.UUID        `json:"collection_id"`
 	PostID       pgtype.UUID        `json:"post_id"`
@@ -477,6 +501,7 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
 	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
+	SubjectKind             string             `json:"subject_kind"`
 }
 
 type Job struct {

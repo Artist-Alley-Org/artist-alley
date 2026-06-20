@@ -42,6 +42,39 @@ func (q *Queries) AppendAssetFieldValueHistory(ctx context.Context, arg AppendAs
 	return err
 }
 
+const appendCollectionFieldValueHistory = `-- name: AppendCollectionFieldValueHistory :exec
+
+INSERT INTO collection_field_value_history (
+    collection_id, field_id, old_value, new_value, set_by, changed_by_user_ref
+) VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type AppendCollectionFieldValueHistoryParams struct {
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	OldValue         []byte
+	NewValue         []byte
+	SetBy            string
+	ChangedByUserRef *int64
+}
+
+// ---------------------------------------------------------------------------
+// collection_field_value_history — append-only audit (Phase 1.9.B).
+// Same JSONB pair shape as asset_field_value_history; handler is
+// responsible for serialising values before writing.
+// ---------------------------------------------------------------------------
+func (q *Queries) AppendCollectionFieldValueHistory(ctx context.Context, arg AppendCollectionFieldValueHistoryParams) error {
+	_, err := q.db.Exec(ctx, appendCollectionFieldValueHistory,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.OldValue,
+		arg.NewValue,
+		arg.SetBy,
+		arg.ChangedByUserRef,
+	)
+	return err
+}
+
 const archiveFieldDefinition = `-- name: ArchiveFieldDefinition :exec
 UPDATE field_definition
    SET status = 'archived', updated_at = NOW(), updated_by_user_ref = $2
@@ -66,13 +99,14 @@ INSERT INTO field_definition (
     code, label, description, type, options, required, searchable,
     applies_to, field_set_id, read_capability, write_capability,
     display_order, display_group, source, status,
-    created_by_user_ref, updated_by_user_ref
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)
+    created_by_user_ref, updated_by_user_ref, subject_kind
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17)
 RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, field_set_id, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
-          created_at, updated_at, created_by_user_ref, updated_by_user_ref
+          created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+          subject_kind
 `
 
 type CreateFieldDefinitionParams struct {
@@ -92,6 +126,7 @@ type CreateFieldDefinitionParams struct {
 	Source           []byte
 	Status           string
 	CreatedByUserRef *int64
+	SubjectKind      string
 }
 
 func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefinitionParams) (FieldDefinition, error) {
@@ -112,6 +147,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		arg.Source,
 		arg.Status,
 		arg.CreatedByUserRef,
+		arg.SubjectKind,
 	)
 	var i FieldDefinition
 	err := row.Scan(
@@ -137,6 +173,7 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.UpdatedAt,
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
+		&i.SubjectKind,
 	)
 	return i, err
 }
@@ -152,6 +189,21 @@ type DeleteAssetFieldValueParams struct {
 
 func (q *Queries) DeleteAssetFieldValue(ctx context.Context, arg DeleteAssetFieldValueParams) error {
 	_, err := q.db.Exec(ctx, deleteAssetFieldValue, arg.AssetID, arg.FieldID)
+	return err
+}
+
+const deleteCollectionFieldValue = `-- name: DeleteCollectionFieldValue :exec
+DELETE FROM collection_field_value
+WHERE collection_id = $1 AND field_id = $2
+`
+
+type DeleteCollectionFieldValueParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+}
+
+func (q *Queries) DeleteCollectionFieldValue(ctx context.Context, arg DeleteCollectionFieldValueParams) error {
+	_, err := q.db.Exec(ctx, deleteCollectionFieldValue, arg.CollectionID, arg.FieldID)
 	return err
 }
 
@@ -204,12 +256,43 @@ func (q *Queries) GetAssetFieldValue(ctx context.Context, arg GetAssetFieldValue
 	return i, err
 }
 
+const getCollectionFieldValue = `-- name: GetCollectionFieldValue :one
+SELECT collection_id, field_id, value_text, value_num, value_date,
+       value_options, value_ref, set_by, set_at, set_by_user_ref
+FROM collection_field_value
+WHERE collection_id = $1 AND field_id = $2
+`
+
+type GetCollectionFieldValueParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+}
+
+func (q *Queries) GetCollectionFieldValue(ctx context.Context, arg GetCollectionFieldValueParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, getCollectionFieldValue, arg.CollectionID, arg.FieldID)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
 const getFieldDefinitionByCode = `-- name: GetFieldDefinitionByCode :one
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
-       created_at, updated_at, created_by_user_ref, updated_by_user_ref
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind
 FROM field_definition WHERE code = $1
 `
 
@@ -239,6 +322,7 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.UpdatedAt,
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
+		&i.SubjectKind,
 	)
 	return i, err
 }
@@ -248,7 +332,8 @@ SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
-       created_at, updated_at, created_by_user_ref, updated_by_user_ref
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind
 FROM field_definition WHERE id = $1
 `
 
@@ -278,6 +363,7 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.UpdatedAt,
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
+		&i.SubjectKind,
 	)
 	return i, err
 }
@@ -398,17 +484,124 @@ func (q *Queries) ListAssetFieldValues(ctx context.Context, assetID pgtype.UUID)
 	return items, nil
 }
 
+const listCollectionFieldValueHistory = `-- name: ListCollectionFieldValueHistory :many
+SELECT id, collection_id, field_id, old_value, new_value,
+       changed_at, changed_by_user_ref, set_by
+FROM collection_field_value_history
+WHERE collection_id = $1
+  AND ($2::UUID IS NULL OR field_id = $2::UUID)
+ORDER BY changed_at DESC
+LIMIT $3::INTEGER
+`
+
+type ListCollectionFieldValueHistoryParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+	RowLimit     int32
+}
+
+type ListCollectionFieldValueHistoryRow struct {
+	ID               pgtype.UUID
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	OldValue         []byte
+	NewValue         []byte
+	ChangedAt        pgtype.Timestamptz
+	ChangedByUserRef *int64
+	SetBy            string
+}
+
+func (q *Queries) ListCollectionFieldValueHistory(ctx context.Context, arg ListCollectionFieldValueHistoryParams) ([]ListCollectionFieldValueHistoryRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionFieldValueHistory, arg.CollectionID, arg.FieldID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCollectionFieldValueHistoryRow
+	for rows.Next() {
+		var i ListCollectionFieldValueHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CollectionID,
+			&i.FieldID,
+			&i.OldValue,
+			&i.NewValue,
+			&i.ChangedAt,
+			&i.ChangedByUserRef,
+			&i.SetBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCollectionFieldValues = `-- name: ListCollectionFieldValues :many
+
+SELECT collection_id, field_id, value_text, value_num, value_date,
+       value_options, value_ref, set_by, set_at, set_by_user_ref
+FROM collection_field_value
+WHERE collection_id = $1
+`
+
+// ---------------------------------------------------------------------------
+// collection_field_value — typed-value storage for collection metadata
+// (Phase 1.9.B). Mirrors the asset_field_value pattern one-for-one;
+// the value path is identical so debuggers see one shape, not two.
+// ---------------------------------------------------------------------------
+func (q *Queries) ListCollectionFieldValues(ctx context.Context, collectionID pgtype.UUID) ([]CollectionFieldValue, error) {
+	rows, err := q.db.Query(ctx, listCollectionFieldValues, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CollectionFieldValue
+	for rows.Next() {
+		var i CollectionFieldValue
+		if err := rows.Scan(
+			&i.CollectionID,
+			&i.FieldID,
+			&i.ValueText,
+			&i.ValueNum,
+			&i.ValueDate,
+			&i.ValueOptions,
+			&i.ValueRef,
+			&i.SetBy,
+			&i.SetAt,
+			&i.SetByUserRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFieldDefinitions = `-- name: ListFieldDefinitions :many
 
 SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
-       created_at, updated_at, created_by_user_ref, updated_by_user_ref
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind
 FROM field_definition
 WHERE ($1::TEXT IS NULL OR status = $1::TEXT)
+  AND ($2::TEXT IS NULL OR subject_kind = $2::TEXT)
 ORDER BY display_group, display_order, code
 `
+
+type ListFieldDefinitionsParams struct {
+	Status      *string
+	SubjectKind *string
+}
 
 // ---------------------------------------------------------------------------
 // field_definition — admin-managed schema for what fields exist
@@ -416,8 +609,8 @@ ORDER BY display_group, display_order, code
 // Returns active field defs ordered by group + display_order. Caller
 // can post-filter by applies_to in the handler since GIN array
 // membership doesn't compose well with our other filters.
-func (q *Queries) ListFieldDefinitions(ctx context.Context, status *string) ([]FieldDefinition, error) {
-	rows, err := q.db.Query(ctx, listFieldDefinitions, status)
+func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinitionsParams) ([]FieldDefinition, error) {
+	rows, err := q.db.Query(ctx, listFieldDefinitions, arg.Status, arg.SubjectKind)
 	if err != nil {
 		return nil, err
 	}
@@ -448,6 +641,7 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, status *string) ([]F
 			&i.UpdatedAt,
 			&i.CreatedByUserRef,
 			&i.UpdatedByUserRef,
+			&i.SubjectKind,
 		); err != nil {
 			return nil, err
 		}
@@ -464,9 +658,11 @@ SELECT id, code, label, description, type, options, required, searchable,
        applies_to, field_set_id, read_capability, write_capability,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
-       created_at, updated_at, created_by_user_ref, updated_by_user_ref
+       created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+       subject_kind
 FROM field_definition
 WHERE status = 'active'
+  AND subject_kind = 'asset'
   AND (cardinality(applies_to) = 0 OR $1::BIGINT = ANY(applies_to))
 ORDER BY display_group, display_order, code
 `
@@ -505,6 +701,53 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.UpdatedAt,
 			&i.CreatedByUserRef,
 			&i.UpdatedByUserRef,
+			&i.SubjectKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRequiredCollectionFields = `-- name: ListRequiredCollectionFields :many
+
+SELECT id, code, label, type
+FROM field_definition
+WHERE subject_kind = 'collection'
+  AND status = 'active'
+  AND required = TRUE
+ORDER BY display_order ASC, label ASC
+`
+
+type ListRequiredCollectionFieldsRow struct {
+	ID    pgtype.UUID
+	Code  string
+	Label string
+	Type  string
+}
+
+// ---------------------------------------------------------------------------
+// Required collection-field probe — used by collections.Create to
+// gate creation when operators have required collection fields.
+// ---------------------------------------------------------------------------
+func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequiredCollectionFieldsRow, error) {
+	rows, err := q.db.Query(ctx, listRequiredCollectionFields)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRequiredCollectionFieldsRow
+	for rows.Next() {
+		var i ListRequiredCollectionFieldsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Label,
+			&i.Type,
 		); err != nil {
 			return nil, err
 		}
@@ -539,7 +782,8 @@ RETURNING id, code, label, description, type, options, required, searchable,
           applies_to, field_set_id, read_capability, write_capability,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
-          created_at, updated_at, created_by_user_ref, updated_by_user_ref
+          created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+          subject_kind
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -608,6 +852,7 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.UpdatedAt,
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
+		&i.SubjectKind,
 	)
 	return i, err
 }
@@ -670,6 +915,74 @@ func (q *Queries) UpsertAssetFieldValue(ctx context.Context, arg UpsertAssetFiel
 	var i AssetFieldValue
 	err := row.Scan(
 		&i.AssetID,
+		&i.FieldID,
+		&i.ValueText,
+		&i.ValueNum,
+		&i.ValueDate,
+		&i.ValueOptions,
+		&i.ValueRef,
+		&i.SetBy,
+		&i.SetAt,
+		&i.SetByUserRef,
+	)
+	return i, err
+}
+
+const upsertCollectionFieldValue = `-- name: UpsertCollectionFieldValue :one
+INSERT INTO collection_field_value (
+    collection_id, field_id,
+    value_text, value_num, value_date, value_options, value_ref,
+    set_by, set_at, set_by_user_ref
+) VALUES (
+    $1,  $2,
+    $3,    $4,
+    $5,    $6,
+    $7,
+    $8,         NOW(),
+    $9
+)
+ON CONFLICT (collection_id, field_id) DO UPDATE SET
+    value_text      = EXCLUDED.value_text,
+    value_num       = EXCLUDED.value_num,
+    value_date      = EXCLUDED.value_date,
+    value_options   = EXCLUDED.value_options,
+    value_ref       = EXCLUDED.value_ref,
+    set_by          = EXCLUDED.set_by,
+    set_at          = NOW(),
+    set_by_user_ref = EXCLUDED.set_by_user_ref
+RETURNING collection_id, field_id, value_text, value_num, value_date,
+          value_options, value_ref, set_by, set_at, set_by_user_ref
+`
+
+type UpsertCollectionFieldValueParams struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetByUserRef *int64
+}
+
+// Cache invalidation MUST follow at handler layer.
+// History row MUST follow in the same transaction.
+func (q *Queries) UpsertCollectionFieldValue(ctx context.Context, arg UpsertCollectionFieldValueParams) (CollectionFieldValue, error) {
+	row := q.db.QueryRow(ctx, upsertCollectionFieldValue,
+		arg.CollectionID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+		arg.SetBy,
+		arg.SetByUserRef,
+	)
+	var i CollectionFieldValue
+	err := row.Scan(
+		&i.CollectionID,
 		&i.FieldID,
 		&i.ValueText,
 		&i.ValueNum,

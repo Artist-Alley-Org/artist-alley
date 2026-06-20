@@ -740,6 +740,26 @@ func (*PanicShim) RemoveCollectionAcl(context.Context, openapi.RemoveCollectionA
 	panic("PanicShim: RemoveCollectionAcl called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetCollectionFields panics by default; test shims override.
+func (*PanicShim) GetCollectionFields(context.Context, openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
+	panic("PanicShim: GetCollectionFields called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ClearCollectionFieldValue panics by default; test shims override.
+func (*PanicShim) ClearCollectionFieldValue(context.Context, openapi.ClearCollectionFieldValueRequestObject) (openapi.ClearCollectionFieldValueResponseObject, error) {
+	panic("PanicShim: ClearCollectionFieldValue called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetCollectionFieldValue panics by default; test shims override.
+func (*PanicShim) SetCollectionFieldValue(context.Context, openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
+	panic("PanicShim: SetCollectionFieldValue called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetCollectionFieldValueHistory panics by default; test shims override.
+func (*PanicShim) GetCollectionFieldValueHistory(context.Context, openapi.GetCollectionFieldValueHistoryRequestObject) (openapi.GetCollectionFieldValueHistoryResponseObject, error) {
+	panic("PanicShim: GetCollectionFieldValueHistory called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListCollectionResources panics by default; test shims override.
 func (*PanicShim) ListCollectionResources(context.Context, openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	panic("PanicShim: ListCollectionResources called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

@@ -1372,6 +1372,22 @@ func (s *apiServer) GetAssetFieldValueHistory(ctx context.Context, req openapi.G
 	return s.metadata.GetAssetFieldValueHistory(ctx, req)
 }
 
+// Phase 1.9.B — collection metadata HTTP surface. The handlers
+// route to the metadata package so the asset + collection field
+// value paths share one cache + audit + capability discipline.
+func (s *apiServer) GetCollectionFields(ctx context.Context, req openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
+	return s.metadata.GetCollectionFields(ctx, req)
+}
+func (s *apiServer) SetCollectionFieldValue(ctx context.Context, req openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
+	return s.metadata.SetCollectionFieldValue(ctx, req)
+}
+func (s *apiServer) ClearCollectionFieldValue(ctx context.Context, req openapi.ClearCollectionFieldValueRequestObject) (openapi.ClearCollectionFieldValueResponseObject, error) {
+	return s.metadata.ClearCollectionFieldValue(ctx, req)
+}
+func (s *apiServer) GetCollectionFieldValueHistory(ctx context.Context, req openapi.GetCollectionFieldValueHistoryRequestObject) (openapi.GetCollectionFieldValueHistoryResponseObject, error) {
+	return s.metadata.GetCollectionFieldValueHistory(ctx, req)
+}
+
 // --- collections -----------------------------------------------------------
 
 func (s *apiServer) ListCollections(ctx context.Context, req openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
