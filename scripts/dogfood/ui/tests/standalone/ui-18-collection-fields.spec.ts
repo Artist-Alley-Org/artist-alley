@@ -55,7 +55,11 @@ test.describe('UI-18 collection custom fields', () => {
     await page.getByTestId('admin-fields-create-code').fill(TEST_FIELD_CODE);
     await page.getByTestId('admin-fields-create-label').fill('UI-18 Notes');
     await page.getByTestId('admin-fields-create-type').selectOption('text');
-    await page.getByTestId('admin-fields-create-subject-collection').check();
+    // The radio is sr-only so the styled label captures pointer
+    // events. Click the wrapping label instead of .check() on the
+    // hidden input — Playwright's actionability check refuses to
+    // click a label-obscured input.
+    await page.locator('label:has([data-testid="admin-fields-create-subject-collection"])').click();
     await page.getByTestId('admin-fields-create-submit').click();
     await expect(page.getByTestId(`admin-fields-row-${TEST_FIELD_CODE}`)).toBeVisible({ timeout: 5_000 });
 
