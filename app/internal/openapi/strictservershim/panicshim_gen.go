@@ -125,6 +125,21 @@ func (*PanicShim) ListAdminActivities(context.Context, openapi.ListAdminActiviti
 	panic("PanicShim: ListAdminActivities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetAIInferenceConfig panics by default; test shims override.
+func (*PanicShim) GetAIInferenceConfig(context.Context, openapi.GetAIInferenceConfigRequestObject) (openapi.GetAIInferenceConfigResponseObject, error) {
+	panic("PanicShim: GetAIInferenceConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateAIInferenceConfig panics by default; test shims override.
+func (*PanicShim) UpdateAIInferenceConfig(context.Context, openapi.UpdateAIInferenceConfigRequestObject) (openapi.UpdateAIInferenceConfigResponseObject, error) {
+	panic("PanicShim: UpdateAIInferenceConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetAIUsage panics by default; test shims override.
+func (*PanicShim) GetAIUsage(context.Context, openapi.GetAIUsageRequestObject) (openapi.GetAIUsageResponseObject, error) {
+	panic("PanicShim: GetAIUsage called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAdminAuditEvents panics by default; test shims override.
 func (*PanicShim) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
 	panic("PanicShim: ListAdminAuditEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

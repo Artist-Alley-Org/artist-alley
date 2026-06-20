@@ -265,6 +265,13 @@ func (t *Tracker) lockFor(provider string) *sync.Mutex {
 // currentBillingPeriod returns "YYYY-MM" in UTC. Operators in
 // different timezones still see consistent month boundaries.
 func currentBillingPeriod() string {
+	return CurrentBillingPeriod()
+}
+
+// CurrentBillingPeriod is the exported form for consumers outside
+// the ai package (the admin handler's usage dashboard uses it to
+// default the ?billing_period parameter).
+func CurrentBillingPeriod() string {
 	return time.Now().UTC().Format("2006-01")
 }
 

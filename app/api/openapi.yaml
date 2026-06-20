@@ -6736,6 +6736,114 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/ai/config:
+    get:
+      operationId: getAIInferenceConfig
+      summary: Read the AI inference subsystem configuration (Phase 1.14.A)
+      description: |
+        Returns the operator-tuned AI subsystem snapshot: master
+        enable switch, per-task routing preferences, fallback chains,
+        privacy policy, default budget. Surfaces structural
+        validation findings (missing concern in routing, lock-on-
+        with-empty-local-providers, etc.) so the admin UI can render
+        them inline.
+
+        Distinct from `/admin/system/ai` (the Phase 1.16 placeholder
+        that holds the raw provider list). Phase 1.14.A introduces
+        the typed config layer that drives the router + privacy gate
+        + budget tracker.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current AI config + validator findings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIInferenceConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: updateAIInferenceConfig
+      summary: Replace the AI inference subsystem configuration
+      description: |
+        Full-replacement write. Validates the supplied config before
+        persisting — invalid configs return 422 with structured
+        findings; the existing config stays in place until the
+        admin resolves the findings.
+
+        Requires `ai.admin` capability.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIInferenceConfigWrite" }
+      responses:
+        "200":
+          description: Updated config (with any non-blocking findings)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIInferenceConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: Config rejected by validator
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, findings]
+                properties:
+                  error:    { type: string }
+                  findings:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIConfigFinding" }
+
+  /admin/ai/usage:
+    get:
+      operationId: getAIUsage
+      summary: AI cost + call-volume dashboard (Phase 1.14.A)
+      description: |
+        Per-provider month-to-date rollup of AI provider calls. Each
+        row reports successful call count, total estimated cost in
+        USD micros (integer math; convert to dollars by dividing by
+        1_000_000), and a per-status breakdown so the operator can
+        spot providers that are mostly rate-limited or permanently
+        failing.
+
+        Requires `ai.admin` capability.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: billing_period
+          in: query
+          required: false
+          description: |
+            YYYY-MM string for the period to summarise. Defaults to
+            the current UTC month if omitted.
+          schema: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+      responses:
+        "200":
+          description: Usage rollup
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIUsageReport" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/system/ai:
     get:
       operationId: getAIConfig
@@ -7341,6 +7449,144 @@ components:
                   (Google/GitHub/X): client_id, client_secret,
                   redirect_uri, scopes. Validated at use time by the
                   integration code, not by this endpoint.
+    AIInferenceConfig:
+      type: object
+      description: |
+        Phase 1.14.A AI inference subsystem snapshot. Returned by
+        GET /admin/ai/config; writable via PUT with the
+        AIInferenceConfigWrite shape (the read shape carries
+        findings + computed defaults that the write shape doesn't
+        include).
+      required: [enabled, routing, fallback_chains, privacy, default_budget]
+      properties:
+        enabled:
+          type: boolean
+          description: Master switch. Defaults to false on fresh install (operator opts in).
+        routing:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Per-task default provider. Keys are concern names
+            (complete | embed | transcribe | tag | caption); values
+            are provider names registered via /admin/system/ai.
+        fallback_chains:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: |
+            Ordered fallback list per concern. The router walks
+            transient + rate-limit failures down the chain;
+            permanent/budget/privacy errors short-circuit.
+        privacy:
+          $ref: "#/components/schemas/AIPrivacyPolicy"
+        default_budget:
+          $ref: "#/components/schemas/AIBudgetDefaults"
+        findings:
+          type: array
+          description: |
+            Validator findings against the current config (e.g.
+            routing references a provider that isn't registered).
+            Empty when the config is clean.
+          items: { $ref: "#/components/schemas/AIConfigFinding" }
+    AIInferenceConfigWrite:
+      type: object
+      description: PUT body for /admin/ai/config. Same shape as the read minus the validator-computed `findings`.
+      required: [enabled, routing, fallback_chains, privacy, default_budget]
+      properties:
+        enabled:         { type: boolean }
+        routing:
+          type: object
+          additionalProperties: { type: string }
+        fallback_chains:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        privacy:
+          $ref: "#/components/schemas/AIPrivacyPolicy"
+        default_budget:
+          $ref: "#/components/schemas/AIBudgetDefaults"
+    AIPrivacyPolicy:
+      type: object
+      required: [lock_sensitive_to_local, local_providers]
+      properties:
+        lock_sensitive_to_local:
+          type: boolean
+          description: |
+            When true, assets at sensitivity tier `restricted` or
+            `embargo` route to local providers only. Defaults to
+            true on fresh install.
+        local_providers:
+          type: array
+          items: { type: string }
+          description: Provider names considered "local" for the gate above.
+    AIBudgetDefaults:
+      type: object
+      required: [soft_warning_usd, hard_cap_usd]
+      properties:
+        soft_warning_usd:
+          type: integer
+          format: int64
+          description: USD threshold at which a soft-warn audit event fires.
+        hard_cap_usd:
+          type: integer
+          format: int64
+          description: |
+            USD ceiling beyond which CheckBudgetBefore rejects calls
+            with `ai_budget_exhausted`. Zero (the fresh-install
+            default) fails-closed with `cloud_budget_not_configured`
+            on the very first call until the operator raises it.
+    AIConfigFinding:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Stable identifier (`routing_missing_concern`,
+            `privacy_lock_with_empty_local_list`,
+            `routing_undefined_provider`, etc.) the admin UI uses
+            to render a localised message.
+        concern:
+          type: string
+          enum: [complete, embed, transcribe, tag, caption]
+          description: Empty when the finding isn't concern-specific.
+        message:
+          type: string
+          description: Operator-readable English fallback message.
+    AIUsageReport:
+      type: object
+      required: [billing_period, total_cost_usd_micros, providers]
+      properties:
+        billing_period:
+          type: string
+          description: YYYY-MM the report covers.
+        total_cost_usd_micros:
+          type: integer
+          format: int64
+          description: Sum across all providers. Divide by 1_000_000 for USD.
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/AIUsageProviderRow" }
+    AIUsageProviderRow:
+      type: object
+      required: [provider, call_count, cost_usd_micros, status_counts]
+      properties:
+        provider:        { type: string }
+        call_count:      { type: integer, format: int64 }
+        cost_usd_micros: { type: integer, format: int64 }
+        status_counts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: |
+            Per-status row count (success / rate_limited /
+            transient_error / permanent_error / budget_blocked /
+            privacy_blocked) so the operator can spot providers
+            that are mostly failing.
     AIConfig:
       type: object
       description: |
