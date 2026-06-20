@@ -43,6 +43,15 @@ The current release stream covers the foundations:
   separate-cover-thumbnail support.
 - **Posts + assets + collections.** Posts wrap one or many assets;
   collections wrap posts; tags + full-text search across all of it.
+- **Admin-extensible metadata** (Phase 1.9). Operators define their
+  own custom fields per asset_type (Phase 1.9.A — shipped with the
+  baseline) and per collection (Phase 1.9.B — shipped 2026-06-20 via
+  PR #144). Typed field vocabulary (text / longtext / rich_text /
+  number / boolean / date / datetime / select / multi_select / tree /
+  reference), per-field read/write capability gates, audit history,
+  federation-ready provenance. ADR 0012. The subject-kind
+  discriminator means future "things with metadata" (posts, users)
+  reuse the same field_definition pipeline.
 - **Browse feed.** Grid / masonry / thumbnail / list views with
   the sortable spreadsheet for list mode (toggleable columns,
   per-row thumbnails). Floating footer with view + feed filter

@@ -19,6 +19,31 @@ excerpt: >-
 ---
 ## Context
 
+## Implementation status (2026-06-20)
+
+The decision recorded here is **fully implemented and extended**:
+
+- **Phase 1.9.A — Per-asset custom fields** ✅ shipped in the
+  pre-MVP baseline (00001_baseline_v1.sql). `field_definition`,
+  `asset_field_value`, `asset_field_value_history` tables + the
+  `metadata` package + GET/POST/PATCH/DELETE on `/fields` and
+  `/assets/{id}/fields/{field_id}` + history audit.
+- **Phase 1.9.B — Per-collection custom fields** ✅ shipped via PR
+  #144 (`2fccab9`). Added a `subject_kind` discriminator to
+  `field_definition` + new `collection_field_value` +
+  `collection_field_value_history` tables. The asset metadata
+  pipeline is bit-for-bit preserved (federation soak invariant);
+  the discriminator means future "things with metadata" (posts,
+  users) reuse the same `field_definition` schema by adding their
+  own kind value + value table.
+
+The design held: typed field vocabulary at the schema layer,
+per-field capability gates, append-only history triggers, federation
+provenance via `origin_server_id`. No design changes against
+implementation reality.
+
+## Context
+
 ADR 0011 ships `assets.metadata jsonb` as an extensibility safety
 valve and a `asset_tag` join table. Neither is enough on its own:
 
