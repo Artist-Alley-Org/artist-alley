@@ -113,6 +113,15 @@ fi
 
 NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' \
     "$(docker compose ps -q postgres)")
+# -p 1 serialises package execution: every test binary writes to the
+# same artist_alley DB, and parallel packages were racing on shared
+# rows (e.g. setup tests wipe system.admin user_roles to assert
+# needs_setup=true; a parallel teams/workflow test creating its own
+# admin during that window flipped TestCompleteSetup_InputValidation
+# to 409 + TestAssetCount_ExcludesSubtitleTracks similarly). Cost of
+# serialisation is ~5min added CI duration on self-hosted runner where
+# wall-clock is queue time, not minute-budget — cheap. Real fix is
+# per-package schema isolation; serialise is the precursor.
 if ! docker run --rm \
     --network "$NET" \
     -v "${ROOT}/app:/src/app" \
@@ -120,7 +129,7 @@ if ! docker run --rm \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
     "${s3_env[@]}" \
     golang:1.26 \
-    go test -race -count=1 ./...; then
+    go test -race -count=1 -p 1 ./...; then
     failed=$((failed + 1))
 fi
 
