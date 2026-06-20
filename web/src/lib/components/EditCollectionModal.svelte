@@ -4,6 +4,7 @@
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import CollectionModal from './CollectionModal.svelte';
+  import CollectionFieldsSection from './CollectionFieldsSection.svelte';
 
   interface Collection {
     id: string;
@@ -110,6 +111,8 @@
       <input type="checkbox" bind:checked={featured} class="h-4 w-4 rounded border-border" />
       <span>{t('collections.featured_flag')}</span>
     </label>
+
+    <CollectionFieldsSection collectionId={collection.id} />
   </div>
 
   {#snippet footer()}

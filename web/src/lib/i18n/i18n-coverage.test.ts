@@ -42,6 +42,8 @@ const TRACKED_FILES = [
   'src/routes/admin/system/activities/+page.svelte',
   'src/routes/admin/system/users/+page.svelte',
   'src/routes/account/profile/+page.svelte',
+  'src/routes/admin/fields/+page.svelte',
+  'src/lib/components/CollectionFieldsSection.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',
 ];

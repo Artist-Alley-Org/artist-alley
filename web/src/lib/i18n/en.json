@@ -873,7 +873,31 @@
       "code": "Code",
       "label": "Label",
       "type": "Type",
-      "applies_to": "Applies to"
+      "applies_to": "Applies to",
+      "group": "Group",
+      "subject_kind": "Subject",
+      "subject_asset": "Asset",
+      "subject_collection": "Collection",
+      "subject_filter_label": "Subject kind",
+      "subject_filter_all": "Both",
+      "subject_filter_asset": "Asset fields",
+      "subject_filter_collection": "Collection fields",
+      "create_button": "New field",
+      "create_title": "Create field",
+      "create_help_subject": "Pick where this field shows up. An asset field hangs off individual assets; a collection field hangs off whole collections.",
+      "create_help_required": "Required collection fields must be supplied at collection creation time.",
+      "create_submit": "Create",
+      "create_error": "Failed to create field.",
+      "code_placeholder": "snake_case_code"
+    },
+    "collection_fields": {
+      "section_title": "Custom fields",
+      "no_fields": "No collection fields defined. Admins can add them under Fields & metadata.",
+      "save": "Save fields",
+      "saved": "Custom fields saved.",
+      "save_error": "Failed to save one or more fields.",
+      "locked_hint": "You don't have permission to edit this field.",
+      "required_marker": "required"
     },
     "asset_types": {
       "title": "Asset types",
