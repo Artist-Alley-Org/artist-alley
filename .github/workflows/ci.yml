@@ -49,15 +49,16 @@ permissions:
   contents: read
 
 jobs:
-  # ── Frontend type-check + production build. Pure Node work, so
-  # always runs on the GitHub-hosted ubuntu runner — no docker stack
-  # needed. Splitting this out keeps the self-hosted runner focused
-  # on integration tests that genuinely need the compose stack, and
-  # sidesteps the bind-mount / docker-from-docker EACCES + SIGKILL
-  # issues we hit trying to run svelte-check inside the dev image.
+  # ── Frontend type-check + production build. Pure Node work; uses
+  # the self-hosted [artist-alley] runner to keep GitHub-hosted
+  # minutes under the monthly quota (rebalance landed when the org
+  # hit 90% of 3000-min during the encryption + 1.17 arcs).
+  # Sidesteps the bind-mount / docker-from-docker EACCES + SIGKILL
+  # issues we hit trying to run svelte-check inside the dev image —
+  # this job spawns its own node toolchain, no compose stack.
   frontend-check:
     name: Frontend type-check + build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, artist-alley]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -184,40 +185,23 @@ jobs:
             exit 1
           fi
 
-  # ── Pick the runner. PRs (which may originate from forks) use
-  # github-hosted; trusted internal pushes use the self-hosted
-  # runner labelled "artist-alley".
-  pick-runner:
-    name: Pick runner
-    runs-on: ubuntu-latest
-    outputs:
-      runner: ${{ steps.pick.outputs.runner }}
-    steps:
-      - id: pick
-        # Emit a valid JSON literal in both branches so `fromJSON`
-        # in the consumer job never throws. The PR branch used to
-        # emit a bare `ubuntu-latest` string which fromJSON
-        # rejected → the test job got silently skipped (with no
-        # job entry in the run UI) instead of running on
-        # ubuntu-latest as intended.
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo 'runner="ubuntu-latest"' >> "$GITHUB_OUTPUT"
-          else
-            echo 'runner=["self-hosted","artist-alley"]' >> "$GITHUB_OUTPUT"
-          fi
-
   test:
     name: Integration tests (full compose stack)
-    needs: pick-runner
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.runner) }}
+    # Self-hosted unconditionally — the runner-rebalance landing
+    # collapsed the prior pick-runner / fromJSON branching into
+    # a single label. Same rationale as frontend-check: keep
+    # GitHub-hosted minutes under the monthly quota.
+    #
+    # Fork-PR caveat: fork PRs won't run this on the self-hosted
+    # runner; GitHub gates that via the "Approve first-time
+    # contributors" setting. The codegen-drift job stays on
+    # ubuntu-latest so a fork PR still gets at least the
+    # portability + drift smoke gate.
+    runs-on: [self-hosted, artist-alley]
     timeout-minutes: 30
-    # See ui-nightly.yml. On PR events runs-on is ubuntu-latest +
-    # the group is harmless (no other ubuntu workflow joins it).
-    # On push events runs-on is the self-hosted artist-alley
-    # runner where ui-nightly + ui-pr also queue under this
-    # group — required to avoid the compose-stack race that took
-    # out an all-fail nightly post-#123-merge.
+    # ui-nightly + ui-pr also queue under this group on the
+    # self-hosted runner — required to avoid the compose-stack
+    # race that took out an all-fail nightly post-#123-merge.
     concurrency:
       group: artist-alley-compose-stack
       cancel-in-progress: false
@@ -339,7 +323,6 @@ jobs:
   # because Docker buildx wants the daemon and the cache mounts.
   docker-build:
     name: Verify production image build
-    needs: pick-runner
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 20
