@@ -23,7 +23,8 @@ INSERT INTO jobs (
 RETURNING id, type, payload, status, priority, attempts, max_attempts,
           claimed_by, claimed_at, lease_expires_at, last_error, result,
           origin_server_id, scheduled_for,
-          enqueued_at, started_at, finished_at;
+          enqueued_at, started_at, finished_at,
+          idempotency_key;
 
 -- name: ClaimNextJob :one
 -- Atomically pick the highest-priority pending job whose type is in
@@ -57,7 +58,8 @@ WHERE j.id = picked.id
 RETURNING j.id, j.type, j.payload, j.status, j.priority, j.attempts, j.max_attempts,
           j.claimed_by, j.claimed_at, j.lease_expires_at, j.last_error, j.result,
           j.origin_server_id, j.scheduled_for,
-          j.enqueued_at, j.started_at, j.finished_at;
+          j.enqueued_at, j.started_at, j.finished_at,
+          j.idempotency_key;
 
 -- name: ClaimJobBatch :many
 -- Like ClaimNextJob but returns up to `limit` rows for batched
@@ -87,7 +89,8 @@ WHERE j.id = picked.id
 RETURNING j.id, j.type, j.payload, j.status, j.priority, j.attempts, j.max_attempts,
           j.claimed_by, j.claimed_at, j.lease_expires_at, j.last_error, j.result,
           j.origin_server_id, j.scheduled_for,
-          j.enqueued_at, j.started_at, j.finished_at;
+          j.enqueued_at, j.started_at, j.finished_at,
+          j.idempotency_key;
 
 -- name: HeartbeatJob :execrows
 -- Extend the lease on a running job. Worker must call this faster
@@ -154,7 +157,8 @@ WHERE status = 'running'
 SELECT id, type, payload, status, priority, attempts, max_attempts,
        claimed_by, claimed_at, lease_expires_at, last_error, result,
        origin_server_id, scheduled_for,
-       enqueued_at, started_at, finished_at
+       enqueued_at, started_at, finished_at,
+       idempotency_key
 FROM jobs
 WHERE id = $1;
 
