@@ -222,6 +222,7 @@
               aria-label={t('collections.more')}
               aria-haspopup="menu"
               aria-expanded={open}
+              data-testid="collection-detail-more-button"
               class="inline-flex items-center rounded-md border border-border bg-surface px-2 py-1.5 text-sm hover:bg-surface-elevated"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -235,6 +236,7 @@
             type="button"
             role="menuitem"
             onclick={() => (editOpen = true)}
+            data-testid="collection-detail-edit-menuitem"
             class="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface"
           >
             {t('collections.edit')}

@@ -73,12 +73,13 @@ test.describe('UI-18 collection custom fields', () => {
     expect(createRes.status()).toBe(201);
     const collection = (await createRes.json()) as { id: string };
 
-    // Open the collection detail page and click Edit to launch the modal.
+    // Open the collection detail page. Edit is hidden behind the
+    // "more" dropdown menu, so click that first, then the Edit
+    // menuitem. Both have data-testids so the test survives copy /
+    // i18n changes.
     await page.goto(`/collections/${collection.id}`);
-    const editBtn = page.getByRole('button', { name: /edit/i }).first();
-    if (await editBtn.isVisible()) {
-      await editBtn.click();
-    }
+    await page.getByTestId('collection-detail-more-button').click();
+    await page.getByTestId('collection-detail-edit-menuitem').click();
 
     // Custom-fields section is in the modal.
     await expect(page.getByTestId('collection-fields-section')).toBeVisible({ timeout: 5_000 });
