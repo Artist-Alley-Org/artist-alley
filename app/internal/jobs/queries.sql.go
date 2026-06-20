@@ -47,9 +47,29 @@ type ClaimJobBatchParams struct {
 	RowLimit     int32
 }
 
+type ClaimJobBatchRow struct {
+	ID             pgtype.UUID
+	Type           string
+	Payload        []byte
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	Result         []byte
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 // Like ClaimNextJob but returns up to `limit` rows for batched
 // external-worker pulls. Same FOR UPDATE SKIP LOCKED semantics.
-func (q *Queries) ClaimJobBatch(ctx context.Context, arg ClaimJobBatchParams) ([]Job, error) {
+func (q *Queries) ClaimJobBatch(ctx context.Context, arg ClaimJobBatchParams) ([]ClaimJobBatchRow, error) {
 	rows, err := q.db.Query(ctx, claimJobBatch,
 		arg.ClaimedBy,
 		arg.LeaseSeconds,
@@ -60,9 +80,9 @@ func (q *Queries) ClaimJobBatch(ctx context.Context, arg ClaimJobBatchParams) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Job
+	var items []ClaimJobBatchRow
 	for rows.Next() {
-		var i Job
+		var i ClaimJobBatchRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Type,
@@ -127,15 +147,35 @@ type ClaimNextJobParams struct {
 	ScopeTypes   []string
 }
 
+type ClaimNextJobRow struct {
+	ID             pgtype.UUID
+	Type           string
+	Payload        []byte
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	Result         []byte
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 // Atomically pick the highest-priority pending job whose type is in
 // the given list, mark it as running, and return its current state.
 // FOR UPDATE SKIP LOCKED makes this race-free across N workers.
 //
 // `types` empty = any type. `lease_seconds` is how long the claim
 // is valid before a watchdog can requeue it.
-func (q *Queries) ClaimNextJob(ctx context.Context, arg ClaimNextJobParams) (Job, error) {
+func (q *Queries) ClaimNextJob(ctx context.Context, arg ClaimNextJobParams) (ClaimNextJobRow, error) {
 	row := q.db.QueryRow(ctx, claimNextJob, arg.ClaimedBy, arg.LeaseSeconds, arg.ScopeTypes)
-	var i Job
+	var i ClaimNextJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
@@ -244,6 +284,26 @@ type EnqueueJobParams struct {
 	OriginServerID pgtype.UUID
 }
 
+type EnqueueJobRow struct {
+	ID             pgtype.UUID
+	Type           string
+	Payload        []byte
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	Result         []byte
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 // ---------------------------------------------------------------------------
 // jobs queue — generic background work
 // ---------------------------------------------------------------------------
@@ -255,7 +315,7 @@ type EnqueueJobParams struct {
 // rows in code.
 // Insert a fresh job. `payload` is handler-defined JSONB. `priority`
 // defaults to 100; lower numbers run sooner.
-func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (Job, error) {
+func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (EnqueueJobRow, error) {
 	row := q.db.QueryRow(ctx, enqueueJob,
 		arg.Type,
 		arg.Payload,
@@ -264,7 +324,7 @@ func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (Job, er
 		arg.ScheduledFor,
 		arg.OriginServerID,
 	)
-	var i Job
+	var i EnqueueJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
@@ -342,9 +402,29 @@ FROM jobs
 WHERE id = $1
 `
 
-func (q *Queries) GetJob(ctx context.Context, id pgtype.UUID) (Job, error) {
+type GetJobRow struct {
+	ID             pgtype.UUID
+	Type           string
+	Payload        []byte
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	Result         []byte
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) GetJob(ctx context.Context, id pgtype.UUID) (GetJobRow, error) {
 	row := q.db.QueryRow(ctx, getJob, id)
-	var i Job
+	var i GetJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.Type,

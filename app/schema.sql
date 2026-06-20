@@ -492,6 +492,33 @@ CREATE TABLE public.activities (
 
 
 --
+-- Name: ai_provider_call; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ai_provider_call (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    provider text NOT NULL,
+    model text NOT NULL,
+    concern text NOT NULL,
+    prompt_template text,
+    prompt_version text,
+    asset_id uuid,
+    job_id uuid,
+    input_hash text,
+    input_tokens integer,
+    output_tokens integer,
+    duration_ms integer NOT NULL,
+    estimated_cost_usd_micros bigint,
+    status text DEFAULT 'success'::text NOT NULL,
+    error_message text,
+    actor_user_ref bigint,
+    triggered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ai_provider_call_concern_check CHECK ((concern = ANY (ARRAY['complete'::text, 'embed'::text, 'transcribe'::text, 'tag'::text, 'caption'::text]))),
+    CONSTRAINT ai_provider_call_status_check CHECK ((status = ANY (ARRAY['success'::text, 'rate_limited'::text, 'transient_error'::text, 'permanent_error'::text, 'budget_blocked'::text, 'privacy_blocked'::text])))
+);
+
+
+--
 -- Name: api_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1083,6 +1110,7 @@ CREATE TABLE public.jobs (
     enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
+    idempotency_key text,
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text, 'cancelled'::text])))
 );
 
@@ -1599,6 +1627,14 @@ ALTER TABLE ONLY public.activities
 
 ALTER TABLE ONLY public.activities
     ADD CONSTRAINT activities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_provider_call ai_provider_call_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_provider_call
+    ADD CONSTRAINT ai_provider_call_pkey PRIMARY KEY (id);
 
 
 --
@@ -2201,6 +2237,34 @@ CREATE INDEX afvh_asset_idx ON public.asset_field_value_history USING btree (ass
 --
 
 CREATE INDEX afvh_field_idx ON public.asset_field_value_history USING btree (field_id, changed_at DESC);
+
+
+--
+-- Name: idx_ai_provider_call_billing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_billing ON public.ai_provider_call USING btree (provider, triggered_at DESC);
+
+
+--
+-- Name: idx_ai_provider_call_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_asset ON public.ai_provider_call USING btree (asset_id, concern, triggered_at DESC) WHERE (asset_id IS NOT NULL);
+
+
+--
+-- Name: idx_ai_provider_call_job; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_job ON public.ai_provider_call USING btree (job_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: uq_jobs_idempotency_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_jobs_idempotency_key ON public.jobs USING btree (type, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::text, 'running'::text])));
 
 
 --
@@ -3258,6 +3322,14 @@ CREATE TRIGGER team_parents_reject_cycle BEFORE INSERT ON public.team_parents FO
 --
 
 CREATE TRIGGER teams_self_closure AFTER INSERT ON public.teams FOR EACH ROW EXECUTE FUNCTION public.teams_insert_self_closure();
+
+
+--
+-- Name: ai_provider_call ai_provider_call_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_provider_call
+    ADD CONSTRAINT ai_provider_call_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
 
 
 --
