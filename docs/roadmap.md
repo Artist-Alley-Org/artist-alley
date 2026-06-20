@@ -824,6 +824,25 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   caps. Enterprise: unlimited + bring-your-own API keys. See
   ADR 0026.
 
+- **Artist Alley as an MCP server** (Phase 1.52). Expose the
+  instance's asset catalogue via the Model Context Protocol so AI
+  coding agents (Claude Code, Cursor, Codex, etc.) and creative
+  agents can query and reason over a studio's archive the same way
+  they query a codebase. Surface includes typed MCP tools for
+  asset search by tag / sensitivity / collection, similarity search
+  via the Phase 1.14.B CLIP embeddings, collection-context retrieval
+  (asset list + metadata + relationships in one call), and
+  multi-asset summarisation through the Phase 1.14.A provider
+  abstraction. Authenticated via the existing API-token surface
+  with a new `mcp.use` capability; per-tool capability gates so
+  operators can expose only the surface they're comfortable with.
+  Federation-aware: the MCP server can resolve cross-instance
+  references via the existing federation actor URIs. Sibling
+  concept to the [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)
+  pattern but for asset catalogues rather than source code. See
+  ADR 0050. Depends on Phase 1.14.A (provider abstraction) +
+  Phase 1.14.B (CLIP embeddings) shipping first.
+
 - **Featured collections & homepage curation** (Phase 1.35). Tree
   edges on the collection model (`collection_parent_id`, capped at
   depth 5) + a `featured` boolean with `team` / `org` / `public`
