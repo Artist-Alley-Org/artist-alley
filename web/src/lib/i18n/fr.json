@@ -18,6 +18,34 @@
   "admin_menu": {
     "title": "Administration"
   },
+  "admin": {
+    "fields": {
+      "group": "Groupe",
+      "subject_kind": "Sujet",
+      "subject_asset": "Asset",
+      "subject_collection": "Collection",
+      "subject_filter_label": "Type de sujet",
+      "subject_filter_all": "Les deux",
+      "subject_filter_asset": "Champs d'asset",
+      "subject_filter_collection": "Champs de collection",
+      "create_button": "Nouveau champ",
+      "create_title": "Créer un champ",
+      "create_help_subject": "Choisissez où ce champ apparaît. Un champ d'asset est rattaché à des assets individuels ; un champ de collection est rattaché à des collections entières.",
+      "create_help_required": "Les champs de collection obligatoires doivent être fournis lors de la création de la collection.",
+      "create_submit": "Créer",
+      "create_error": "Échec de la création du champ.",
+      "code_placeholder": "code_snake_case"
+    },
+    "collection_fields": {
+      "section_title": "Champs personnalisés",
+      "no_fields": "Aucun champ de collection défini. Les administrateurs peuvent les ajouter dans Champs et métadonnées.",
+      "save": "Enregistrer les champs",
+      "saved": "Champs personnalisés enregistrés.",
+      "save_error": "Échec de l'enregistrement d'un ou plusieurs champs.",
+      "locked_hint": "Vous n'avez pas la permission de modifier ce champ.",
+      "required_marker": "obligatoire"
+    }
+  },
   "common": {
     "save": "Enregistrer",
     "cancel": "Annuler"

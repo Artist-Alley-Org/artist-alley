@@ -232,6 +232,30 @@ type CollectionAcl struct {
 	ExpiresAt        pgtype.Timestamptz
 }
 
+type CollectionFieldValue struct {
+	CollectionID pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+	SetBy        string
+	SetAt        pgtype.Timestamptz
+	SetByUserRef *int64
+}
+
+type CollectionFieldValueHistory struct {
+	ID               pgtype.UUID
+	CollectionID     pgtype.UUID
+	FieldID          pgtype.UUID
+	OldValue         []byte
+	NewValue         []byte
+	SetBy            string
+	ChangedByUserRef *int64
+	ChangedAt        pgtype.Timestamptz
+}
+
 type CollectionPost struct {
 	CollectionID pgtype.UUID
 	PostID       pgtype.UUID
@@ -477,6 +501,7 @@ type FieldDefinition struct {
 	UpdatedAt               pgtype.Timestamptz
 	CreatedByUserRef        *int64
 	UpdatedByUserRef        *int64
+	SubjectKind             string
 }
 
 type Job struct {

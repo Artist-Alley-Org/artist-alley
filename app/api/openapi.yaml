@@ -3862,7 +3862,20 @@ paths:
             When set, only fields whose `applies_to` is empty (=all)
             or contains this asset_type ref are returned. Used by
             the asset edit form to figure out which fields to show.
+            Implies `subject_kind=asset` — collection fields aren't
+            applies_to-scoped.
           schema: { type: integer, format: int64 }
+        - name: subject_kind
+          in: query
+          required: false
+          description: |
+            Filter by subject kind. `asset` returns only asset-side
+            definitions (default behaviour for callers that don't
+            specify); `collection` returns only collection-side
+            definitions. Omit to return both kinds.
+          schema:
+            type: string
+            enum: [asset, collection]
       responses:
         "200":
           description: List of field definitions
@@ -4079,6 +4092,139 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/FieldValueHistoryEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/fields:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCollectionFields
+      summary: All field values for a collection (Phase 1.9.B)
+      description: |
+        Returns every field value set on the collection joined with
+        the field definition shape. The response is filtered by
+        `field_definition.read_capability` — callers without the cap
+        for a given field don't see the value.
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Field values for the collection
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CollectionFieldValue" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/fields/{field_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: field_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setCollectionFieldValue
+      summary: Set or replace a single field value on a collection
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionFieldValueWrite" }
+      responses:
+        "200":
+          description: Value set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionFieldValue" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: |
+            Field is asset-scoped (cannot be written on a collection)
+            or value type doesn't match the field's declared type.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, reason]
+                properties:
+                  error:  { type: string }
+                  reason:
+                    type: string
+                    enum: [field_not_for_collection, value_type_mismatch]
+                  field: { type: string, nullable: true }
+    delete:
+      operationId: clearCollectionFieldValue
+      summary: Clear a single field value on a collection
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Cleared
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{id}/fields/{field_id}/history:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: field_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    get:
+      operationId: getCollectionFieldValueHistory
+      summary: Audit trail of changes to one field on one collection
+      tags: [metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Newest-first list of historical changes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CollectionFieldValueHistoryEntry" }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -4901,6 +5047,25 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: |
+            A required collection-scoped field (see
+            `field_definition.subject_kind = 'collection'` +
+            `required = true`) is missing from the request body.
+            Phase 1.9.B introduced this gate; only CREATE enforces
+            it, subsequent UPDATEs don't re-validate.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, reason]
+                properties:
+                  error:       { type: string }
+                  reason:
+                    type: string
+                    enum: [required_collection_field_missing]
+                  field_code:  { type: string }
+                  field_label: { type: string }
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -7419,7 +7584,7 @@ components:
           format: uuid
     FieldDefinition:
       type: object
-      required: [id, code, label, type, required, searchable, applies_to, display_order, display_group, status, created_at, updated_at]
+      required: [id, code, label, type, required, searchable, applies_to, display_order, display_group, status, subject_kind, created_at, updated_at]
       properties:
         id:           { type: string, format: uuid }
         code:         { type: string, description: "Federation-stable slug. Globally unique." }
@@ -7428,6 +7593,14 @@ components:
         type:
           type: string
           enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        subject_kind:
+          type: string
+          enum: [asset, collection]
+          description: |
+            What the field describes. `asset` definitions apply to
+            individual assets; `collection` definitions apply to whole
+            collections. One row is one or the other — operators who
+            want a field on both kinds create two rows.
         options:
           type: object
           additionalProperties: true
@@ -7437,7 +7610,7 @@ components:
         applies_to:
           type: array
           items: { type: integer, format: int64 }
-          description: "Resource type refs this field applies to. Empty = all."
+          description: "Resource type refs this field applies to. Empty = all. Ignored when subject_kind = 'collection'."
         field_set_id:    { type: string, format: uuid, nullable: true }
         read_capability: { type: string, nullable: true }
         write_capability: { type: string, nullable: true }
@@ -7464,6 +7637,11 @@ components:
         type:
           type: string
           enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        subject_kind:
+          type: string
+          enum: [asset, collection]
+          default: asset
+          description: "What the field describes. Defaults to asset for backwards compatibility."
         options:       { type: object, additionalProperties: true }
         required:      { type: boolean, default: false }
         searchable:    { type: boolean, default: true }
@@ -7553,6 +7731,64 @@ components:
         changed_at:         { type: string, format: date-time }
         changed_by_user_ref: { type: integer, format: int64, nullable: true }
         set_by:             { type: string }
+    CollectionFieldValue:
+      type: object
+      required: [field_id, field_code, type, set_by, set_at]
+      description: |
+        One field value as seen on a collection (Phase 1.9.B). Mirrors
+        AssetFieldValue but for the collection subject_kind; the
+        `set_by` vocabulary is narrower (no exif/iptc/xmp — collections
+        aren't files).
+      properties:
+        field_id:    { type: string, format: uuid }
+        field_code:  { type: string }
+        field_label: { type: string }
+        type:
+          type: string
+          enum: [text, longtext, rich_text, number, boolean, date, datetime, select, multi_select, tree, reference]
+        value_text:    { type: string, nullable: true }
+        value_num:     { type: number, nullable: true }
+        value_date:    { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref:     { type: string, format: uuid, nullable: true }
+        set_by:
+          type: string
+          enum: [manual, api, import, computed]
+        set_at:       { type: string, format: date-time }
+        set_by_user_ref: { type: integer, format: int64, nullable: true }
+    CollectionFieldValueWrite:
+      type: object
+      description: |
+        Pass whichever value_* field matches the target field's type.
+        Mismatches return 400 with `value_type_mismatch`.
+      properties:
+        value_text:    { type: string, nullable: true }
+        value_num:     { type: number, nullable: true }
+        value_date:    { type: string, format: date-time, nullable: true }
+        value_options:
+          type: array
+          items: { type: string }
+          nullable: true
+        value_ref:     { type: string, format: uuid, nullable: true }
+        set_by:
+          type: string
+          enum: [manual, api, import, computed]
+          default: manual
+    CollectionFieldValueHistoryEntry:
+      type: object
+      required: [id, collection_id, field_id, changed_at, set_by]
+      properties:
+        id:                  { type: string, format: uuid }
+        collection_id:       { type: string, format: uuid }
+        field_id:            { type: string, format: uuid }
+        old_value:           { type: object, additionalProperties: true, nullable: true }
+        new_value:           { type: object, additionalProperties: true, nullable: true }
+        changed_at:          { type: string, format: date-time }
+        changed_by_user_ref: { type: integer, format: int64, nullable: true }
+        set_by:              { type: string }
     Collection:
       type: object
       description: |
@@ -7622,6 +7858,26 @@ components:
         purpose:
           type: string
           nullable: true
+        field_values:
+          type: array
+          description: |
+            Phase 1.9.B — initial values for collection-scoped custom
+            fields. The handler validates that every `required=true`
+            collection field is present; missing required fields
+            return 422 with `required_collection_field_missing`.
+          items:
+            type: object
+            required: [field_id]
+            properties:
+              field_id:      { type: string, format: uuid }
+              value_text:    { type: string, nullable: true }
+              value_num:     { type: number, nullable: true }
+              value_date:    { type: string, format: date-time, nullable: true }
+              value_options:
+                type: array
+                items: { type: string }
+                nullable: true
+              value_ref:     { type: string, format: uuid, nullable: true }
     CollectionUpdate:
       type: object
       description: |

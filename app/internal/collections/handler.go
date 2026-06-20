@@ -62,6 +62,52 @@ type Handler struct {
 	// AP activity. nil-safe pre-ADR-0044 fallback for tests.
 	activities *activities.Writer
 	baseURLFn  func(ctx context.Context) string
+
+	// metadataGate plumbs the Phase 1.9.B required-collection-field
+	// gate into Create. nil-safe: a Handler built without one acts
+	// as if no required collection fields are configured (preserves
+	// pre-1.9.B behaviour for tests that don't wire metadata).
+	metadataGate MetadataGate
+}
+
+// MetadataGate is the minimal interface collections.Create needs to
+// enforce required-on-create + seed initial values. metadata.Handler
+// satisfies it directly; tests can implement a fake.
+type MetadataGate interface {
+	// RequiredCollectionFields lists every active collection-scoped
+	// field_definition whose required=TRUE. Used by Create as the
+	// pre-insert validation gate.
+	RequiredCollectionFields(ctx context.Context) ([]RequiredField, error)
+	// UpsertCollectionFieldValueInTx writes one value inside the
+	// caller's tx. Run in the same tx as the collection INSERT so
+	// a failed value write rolls the whole creation back.
+	UpsertCollectionFieldValueInTx(
+		ctx context.Context,
+		tx pgx.Tx,
+		collectionID, fieldID uuid.UUID,
+		raw CollectionFieldValueInput,
+		callerRef int64,
+	) error
+}
+
+// RequiredField is the abridged field-definition shape Create needs
+// to render the 422 reason. Mirrors the openapi enum on `type`.
+type RequiredField struct {
+	ID    uuid.UUID
+	Code  string
+	Label string
+	Type  string
+}
+
+// CollectionFieldValueInput is the value shape collections.Create
+// passes to MetadataGate. One of value_* per field type; the gate
+// implementation maps to the typed columns.
+type CollectionFieldValueInput struct {
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    *time.Time
+	ValueOptions *[]string
+	ValueRef     *uuid.UUID
 }
 
 // NewHandler binds the collections handler to the DB pool and the
@@ -85,6 +131,26 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registr
 func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx context.Context) string) {
 	h.activities = w
 	h.baseURLFn = baseURLFn
+}
+
+// SetMetadataGate plugs in the Phase 1.9.B metadata helper so
+// CreateCollection can validate required collection-scoped fields
+// and seed initial values inside the create tx.
+func (h *Handler) SetMetadataGate(g MetadataGate) {
+	h.metadataGate = g
+}
+
+// RequiredCollectionFieldMissingError signals that a required
+// collection field was absent from the create body. The HTTP
+// handler converts this to a 422 with field_code/field_label so
+// the UI can highlight the offending input.
+type RequiredCollectionFieldMissingError struct {
+	FieldCode  string
+	FieldLabel string
+}
+
+func (e *RequiredCollectionFieldMissingError) Error() string {
+	return fmt.Sprintf("required collection field missing: %s", e.FieldCode)
 }
 
 // actorContext builds an emit.ActorContext for the authenticated
@@ -143,6 +209,42 @@ func (h *Handler) CreateCollection(
 		}, nil
 	}
 
+	// Phase 1.9.B — required-collection-field gate. Runs BEFORE any
+	// write so a missing required field returns 422 without leaving
+	// a half-created collection behind. Only CREATE enforces; UPDATE
+	// doesn't re-validate (mirrors typical CMS patterns — fields can
+	// be added after a collection exists without retroactively
+	// breaking it). Skipped when metadataGate is nil (test/wiring
+	// fallback).
+	suppliedValues := map[uuid.UUID]CollectionFieldValueInput{}
+	if in.FieldValues != nil {
+		for _, fv := range *in.FieldValues {
+			suppliedValues[uuid.UUID(fv.FieldId)] = CollectionFieldValueInput{
+				ValueText:    fv.ValueText,
+				ValueNum:     float64Ptr(fv.ValueNum),
+				ValueDate:    fv.ValueDate,
+				ValueOptions: fv.ValueOptions,
+				ValueRef:     uuidPtrFromOpenAPI(fv.ValueRef),
+			}
+		}
+	}
+	if h.metadataGate != nil {
+		required, rfErr := h.metadataGate.RequiredCollectionFields(ctx)
+		if rfErr != nil {
+			return nil, fmt.Errorf("collections: list required fields: %w", rfErr)
+		}
+		for _, rf := range required {
+			if _, ok := suppliedValues[rf.ID]; !ok {
+				return openapi.CreateCollection422JSONResponse{
+					Error:      "required collection field missing: " + rf.Code,
+					Reason:     openapi.RequiredCollectionFieldMissing,
+					FieldCode:  &rf.Code,
+					FieldLabel: &rf.Label,
+				}, nil
+			}
+		}
+	}
+
 	// Gold-standard path: WithEmissionFn so we capture the
 	// generated collection UUID and use it to build the activity's
 	// URI in the same tx. 1.22.B-cleanup made activities required.
@@ -162,6 +264,19 @@ func (h *Handler) CreateCollection(
 			return activities.EmissionInput{}, fmt.Errorf("collections: create: %w", err)
 		}
 		saved = r
+		// Phase 1.9.B — seed the supplied field values inside the
+		// same tx so a write failure rolls the collection back.
+		// Required-field validation already passed; per-field type
+		// validation happens inside the metadata helper.
+		if h.metadataGate != nil {
+			for fieldID, val := range suppliedValues {
+				if upErr := h.metadataGate.UpsertCollectionFieldValueInTx(
+					ctx, tx, uuid.UUID(r.ID.Bytes), fieldID, val, id.UserRef,
+				); upErr != nil {
+					return activities.EmissionInput{}, fmt.Errorf("collections: seed value: %w", upErr)
+				}
+			}
+		}
 		em := emit.CreateCollection(h.actorContext(ctx, id), emit.CollectionRef{
 			ID:          uuid.UUID(r.ID.Bytes).String(),
 			Name:        r.Name,
@@ -175,6 +290,27 @@ func (h *Handler) CreateCollection(
 	}
 	h.cacheAdd(saved)
 	return openapi.CreateCollection201JSONResponse(rowToAPI(saved)), nil
+}
+
+// float64Ptr widens an openapi float32 pointer to a float64 pointer
+// for the metadata-gate value shape. Mirrors the narrowing pattern
+// in metadata/handler.go.
+func float64Ptr(p *float32) *float64 {
+	if p == nil {
+		return nil
+	}
+	v := float64(*p)
+	return &v
+}
+
+// uuidPtrFromOpenAPI converts an oapi UUID pointer to a uuid.UUID
+// pointer.
+func uuidPtrFromOpenAPI(p *openapi_types.UUID) *uuid.UUID {
+	if p == nil {
+		return nil
+	}
+	v := uuid.UUID(*p)
+	return &v
 }
 
 // ---------------------------------------------------------------------------

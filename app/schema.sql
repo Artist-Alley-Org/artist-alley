@@ -789,6 +789,41 @@ CREATE TABLE public.collection_resources (
 
 
 --
+-- Name: collection_field_value; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collection_field_value (
+    collection_id uuid NOT NULL,
+    field_id uuid NOT NULL,
+    value_text text,
+    value_num double precision,
+    value_date timestamp with time zone,
+    value_options text[],
+    value_ref uuid,
+    set_by text DEFAULT 'manual'::text NOT NULL,
+    set_at timestamp with time zone DEFAULT now() NOT NULL,
+    set_by_user_ref bigint,
+    CONSTRAINT collection_field_value_set_by_check CHECK ((set_by = ANY (ARRAY['manual'::text, 'api'::text, 'import'::text, 'computed'::text])))
+);
+
+
+--
+-- Name: collection_field_value_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collection_field_value_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    collection_id uuid NOT NULL,
+    field_id uuid NOT NULL,
+    old_value jsonb,
+    new_value jsonb,
+    set_by text DEFAULT 'manual'::text NOT NULL,
+    changed_by_user_ref bigint,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: collections; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1019,7 +1054,9 @@ CREATE TABLE public.field_definition (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by_user_ref bigint,
     updated_by_user_ref bigint,
+    subject_kind text DEFAULT 'asset'::text NOT NULL,
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
+    CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
 );
 
@@ -1698,6 +1735,22 @@ ALTER TABLE ONLY public.collection_acls
 
 ALTER TABLE ONLY public.collection_posts
     ADD CONSTRAINT collection_posts_pkey PRIMARY KEY (collection_id, post_id);
+
+
+--
+-- Name: collection_field_value collection_field_value_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value
+    ADD CONSTRAINT collection_field_value_pkey PRIMARY KEY (collection_id, field_id);
+
+
+--
+-- Name: collection_field_value_history collection_field_value_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value_history
+    ADD CONSTRAINT collection_field_value_history_pkey PRIMARY KEY (id);
 
 
 --
@@ -2386,6 +2439,41 @@ CREATE INDEX collection_acls_expires_idx ON public.collection_acls USING btree (
 --
 
 CREATE INDEX collection_acls_principal_idx ON public.collection_acls USING btree (principal_type, principal_id);
+
+
+--
+-- Name: cfvh_collection_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cfvh_collection_idx ON public.collection_field_value_history USING btree (collection_id, changed_at DESC);
+
+
+--
+-- Name: cfvh_field_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cfvh_field_idx ON public.collection_field_value_history USING btree (field_id, changed_at DESC);
+
+
+--
+-- Name: idx_collection_field_value_collection_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collection_field_value_collection_id ON public.collection_field_value USING btree (collection_id);
+
+
+--
+-- Name: idx_collection_field_value_field_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collection_field_value_field_id ON public.collection_field_value USING btree (field_id);
+
+
+--
+-- Name: idx_field_definition_subject_kind; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_field_definition_subject_kind ON public.field_definition USING btree (subject_kind, status, display_order);
 
 
 --
@@ -3290,6 +3378,38 @@ ALTER TABLE ONLY public.brush_packs
 
 ALTER TABLE ONLY public.collection_acls
     ADD CONSTRAINT collection_acls_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: collection_field_value collection_field_value_collection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value
+    ADD CONSTRAINT collection_field_value_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: collection_field_value collection_field_value_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value
+    ADD CONSTRAINT collection_field_value_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
+
+
+--
+-- Name: collection_field_value_history collection_field_value_history_collection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value_history
+    ADD CONSTRAINT collection_field_value_history_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES public.collections(id) ON DELETE CASCADE;
+
+
+--
+-- Name: collection_field_value_history collection_field_value_history_field_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_field_value_history
+    ADD CONSTRAINT collection_field_value_history_field_id_fkey FOREIGN KEY (field_id) REFERENCES public.field_definition(id) ON DELETE CASCADE;
 
 
 --

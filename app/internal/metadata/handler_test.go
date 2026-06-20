@@ -486,6 +486,18 @@ func (s metaShim) ClearAssetFieldValue(ctx context.Context, req openapi.ClearAss
 func (s metaShim) GetAssetFieldValueHistory(ctx context.Context, req openapi.GetAssetFieldValueHistoryRequestObject) (openapi.GetAssetFieldValueHistoryResponseObject, error) {
 	return s.h.GetAssetFieldValueHistory(ctx, req)
 }
+func (s metaShim) GetCollectionFields(ctx context.Context, req openapi.GetCollectionFieldsRequestObject) (openapi.GetCollectionFieldsResponseObject, error) {
+	return s.h.GetCollectionFields(ctx, req)
+}
+func (s metaShim) SetCollectionFieldValue(ctx context.Context, req openapi.SetCollectionFieldValueRequestObject) (openapi.SetCollectionFieldValueResponseObject, error) {
+	return s.h.SetCollectionFieldValue(ctx, req)
+}
+func (s metaShim) ClearCollectionFieldValue(ctx context.Context, req openapi.ClearCollectionFieldValueRequestObject) (openapi.ClearCollectionFieldValueResponseObject, error) {
+	return s.h.ClearCollectionFieldValue(ctx, req)
+}
+func (s metaShim) GetCollectionFieldValueHistory(ctx context.Context, req openapi.GetCollectionFieldValueHistoryRequestObject) (openapi.GetCollectionFieldValueHistoryResponseObject, error) {
+	return s.h.GetCollectionFieldValueHistory(ctx, req)
+}
 
 
 
