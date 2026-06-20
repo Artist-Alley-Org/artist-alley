@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// typeCapGate is the narrow surface Worker needs from Pool for per-
+// type concurrency capping. *Pool satisfies it. Defined as an
+// interface so Worker can be tested without a real Pool.
+type typeCapGate interface {
+	tryReserve(types []JobType) []JobType
+	confirmReservation(t JobType)
+	release(t JobType)
+}
+
 // Worker is an in-process goroutine that polls the queue, claims jobs
 // it has a handler for, and runs them. Multiple Workers can run in
 // the same process to parallelise CPU-bound work.
@@ -43,6 +52,10 @@ type Worker struct {
 	// HeartbeatEvery controls the lease-renewal cadence. Must be
 	// less than Service.LeaseSeconds.
 	HeartbeatEvery time.Duration
+
+	// Gate optionally caps concurrent execution per job type. nil
+	// means no per-type caps (the legacy behaviour).
+	Gate typeCapGate
 }
 
 // Run polls the queue until ctx is cancelled. Each iteration claims
@@ -68,10 +81,26 @@ func (w *Worker) Run(ctx context.Context) {
 		default:
 		}
 
+		// Per-type concurrency cap: ask the gate which of our types
+		// still have capacity. If none, back off without hitting
+		// the DB — saves a query when every type is saturated.
+		claimTypes := w.Types
+		if w.Gate != nil {
+			claimTypes = w.Gate.tryReserve(w.Types)
+			if len(claimTypes) == 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(w.PollInterval):
+				}
+				continue
+			}
+		}
+
 		// Bounded per-iteration context so a stuck claim query
 		// doesn't block forever on a momentary DB hiccup.
 		claimCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		job, err := w.Service.ClaimNext(claimCtx, w.ID, w.Types)
+		job, err := w.Service.ClaimNext(claimCtx, w.ID, claimTypes)
 		cancel()
 
 		if err != nil {
@@ -96,7 +125,16 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
+		// Confirm the per-type reservation now that we actually
+		// hold a job; release on return so the next iteration sees
+		// up-to-date counts.
+		if w.Gate != nil {
+			w.Gate.confirmReservation(job.Type)
+		}
 		w.runOne(ctx, job)
+		if w.Gate != nil {
+			w.Gate.release(job.Type)
+		}
 	}
 }
 
@@ -207,14 +245,101 @@ func (w *Worker) report(ctx context.Context, job *Claim, result json.RawMessage,
 
 // Pool spawns N workers sharing the same scope. Returns a cancel
 // function that stops all of them on shutdown.
+//
+// TypeConcurrency caps the maximum number of jobs running
+// concurrently per type. Configured via system_config keys
+// `jobs.type_concurrency.<type>` (seeded for ai.tag / ai.caption /
+// ai.embed / ai.transcribe in migration 00009). Zero = no cap.
+// Workers consult Pool.tryReserve before claiming a job of a
+// given type; the reservation is released when runOne returns.
+//
+// The check-reserve-claim sequence is not strictly atomic across
+// workers — a tiny race window between tryReserve and the DB claim
+// can let one extra job through for the type. That's acceptable
+// because per-type caps are an SLA hint to spread GPU/cost
+// pressure, not a hard isolation boundary.
 type Pool struct {
 	Service *Service
 	Logger  *slog.Logger
 	Size    int
 	Types   []JobType
 
+	// TypeConcurrency maps job type → max concurrent. Missing
+	// entries (or zero values) mean no cap for that type.
+	TypeConcurrency map[JobType]int
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	typeRunningMu sync.Mutex
+	typeRunning   map[JobType]int
+}
+
+// tryReserve atomically checks the per-type cap for the supplied
+// types and returns the subset that still has capacity. Caller
+// (Worker.Run) feeds the result into Service.ClaimNext so the
+// claim query only considers eligible types.
+//
+// Returns ALL the input types if no per-type caps are configured
+// (the common case for non-AI workers).
+func (p *Pool) tryReserve(types []JobType) []JobType {
+	if p.TypeConcurrency == nil || len(p.TypeConcurrency) == 0 {
+		return types
+	}
+	p.typeRunningMu.Lock()
+	defer p.typeRunningMu.Unlock()
+	if p.typeRunning == nil {
+		p.typeRunning = map[JobType]int{}
+	}
+	out := make([]JobType, 0, len(types))
+	for _, t := range types {
+		cap, capped := p.TypeConcurrency[t]
+		if !capped || cap <= 0 {
+			out = append(out, t)
+			continue
+		}
+		if p.typeRunning[t] < cap {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// confirmReservation increments the running counter for the
+// claimed job's type. Called AFTER a successful claim — the
+// counter reflects actually-running jobs.
+func (p *Pool) confirmReservation(t JobType) {
+	if p.TypeConcurrency == nil {
+		return
+	}
+	if _, capped := p.TypeConcurrency[t]; !capped {
+		return
+	}
+	p.typeRunningMu.Lock()
+	defer p.typeRunningMu.Unlock()
+	if p.typeRunning == nil {
+		p.typeRunning = map[JobType]int{}
+	}
+	p.typeRunning[t]++
+}
+
+// release decrements the running counter when a job finishes (or
+// fails). Always paired with a prior confirmReservation.
+func (p *Pool) release(t JobType) {
+	if p.TypeConcurrency == nil {
+		return
+	}
+	if _, capped := p.TypeConcurrency[t]; !capped {
+		return
+	}
+	p.typeRunningMu.Lock()
+	defer p.typeRunningMu.Unlock()
+	if p.typeRunning == nil {
+		return
+	}
+	if p.typeRunning[t] > 0 {
+		p.typeRunning[t]--
+	}
 }
 
 // Start spawns the workers + a watchdog goroutine. Idempotent.
@@ -231,6 +356,12 @@ func (p *Pool) Start(ctx context.Context, instanceID string) {
 			Logger:  p.Logger,
 			ID:      fmt.Sprintf("aa://%s/w%d", instanceID, i),
 			Types:   p.Types,
+			// Per-type concurrency cap (Phase 1.14.A). When the
+			// Pool has TypeConcurrency configured, workers consult
+			// it through the typeCapGate interface before each
+			// claim; otherwise the gate is nil and the worker
+			// claims any of its types unconditionally.
+			Gate: p,
 		}
 		p.wg.Add(1)
 		go func() {

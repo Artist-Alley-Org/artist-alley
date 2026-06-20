@@ -37,6 +37,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -210,13 +211,28 @@ func NewService(pool *pgxpool.Pool, logger *slog.Logger, reg *Registry) *Service
 }
 
 // EnqueueOpts controls non-default fields on a new job.
+//
+// IdempotencyKey (Phase 1.14.A): when non-empty, a partial UNIQUE
+// INDEX on (type, idempotency_key) WHERE status IN ('pending',
+// 'running') (migration 00009) prevents duplicate in-flight work.
+// A re-enqueue with the same (type, key) returns the existing
+// pending/running job's id without inserting a duplicate row.
+// Completed/failed jobs with the same key don't block — that's
+// historical, the new call is genuinely fresh work.
 type EnqueueOpts struct {
-	Priority     *int    // default 100 in SQL
-	MaxAttempts  *int    // default 3 in SQL
-	ScheduledFor *time.Time
+	Priority       *int       // default 100 in SQL
+	MaxAttempts    *int       // default 3 in SQL
+	ScheduledFor   *time.Time
+	IdempotencyKey string     // optional; see type doc
 }
 
 // Enqueue inserts a new job. Returns the row id.
+//
+// When opts.IdempotencyKey is set and the partial UNIQUE INDEX
+// rejects the insert (23505 unique_violation), Enqueue resolves the
+// existing in-flight job's id via GetJobByIdempotencyKey and
+// returns that — the caller treats this as success (the work is
+// already queued).
 func (s *Service) Enqueue(ctx context.Context, t JobType, payload any, opts EnqueueOpts) (uuid.UUID, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -237,11 +253,47 @@ func (s *Service) Enqueue(ctx context.Context, t JobType, payload any, opts Enqu
 	if opts.ScheduledFor != nil {
 		params.ScheduledFor = pgtype.Timestamptz{Time: *opts.ScheduledFor, Valid: true}
 	}
-	row, err := New(s.Pool).EnqueueJob(ctx, params)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("jobs: enqueue: %w", err)
+	if opts.IdempotencyKey != "" {
+		k := opts.IdempotencyKey
+		params.IdempotencyKey = &k
 	}
-	return uuid.UUID(row.ID.Bytes), nil
+	q := New(s.Pool)
+	row, err := q.EnqueueJob(ctx, params)
+	if err == nil {
+		return uuid.UUID(row.ID.Bytes), nil
+	}
+
+	// Unique-violation handling for idempotency: look up the
+	// existing in-flight job and return its id. Any other error
+	// propagates as-is.
+	if opts.IdempotencyKey != "" && isUniqueViolation(err) {
+		k := opts.IdempotencyKey
+		existing, lookupErr := q.GetJobByIdempotencyKey(ctx, GetJobByIdempotencyKeyParams{
+			Type:           string(t),
+			IdempotencyKey: &k,
+		})
+		if lookupErr == nil {
+			return uuid.UUID(existing.ID.Bytes), nil
+		}
+		// Lookup failed AFTER a unique-violation — race window where
+		// the existing job transitioned to done/failed/cancelled
+		// between INSERT and SELECT. Surface as the original
+		// violation so the caller can retry.
+		return uuid.Nil, fmt.Errorf("jobs: enqueue: idempotency lookup raced: %w", lookupErr)
+	}
+
+	return uuid.Nil, fmt.Errorf("jobs: enqueue: %w", err)
+}
+
+// isUniqueViolation reports whether err is a Postgres 23505
+// unique-violation. Imports the pgx error type via the standard
+// errors.As path so the function works against wrapped errors.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
 }
 
 // ClaimNext atomically claims the next available pending job for

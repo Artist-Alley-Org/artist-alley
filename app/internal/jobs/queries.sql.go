@@ -225,13 +225,15 @@ func (q *Queries) CountJobsByStatus(ctx context.Context) ([]CountJobsByStatusRow
 const enqueueJob = `-- name: EnqueueJob :one
 
 INSERT INTO jobs (
-    type, payload, priority, max_attempts, scheduled_for, origin_server_id
+    type, payload, priority, max_attempts, scheduled_for, origin_server_id,
+    idempotency_key
 ) VALUES (
     $1, $2,
     COALESCE($3::INTEGER, 100),
     COALESCE($4::INTEGER, 3),
     $5::TIMESTAMPTZ,
-    $6::UUID
+    $6::UUID,
+    $7::TEXT
 )
 RETURNING id, type, payload, status, priority, attempts, max_attempts,
           claimed_by, claimed_at, lease_expires_at, last_error, result,
@@ -247,6 +249,7 @@ type EnqueueJobParams struct {
 	MaxAttempts    *int32
 	ScheduledFor   pgtype.Timestamptz
 	OriginServerID pgtype.UUID
+	IdempotencyKey *string
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +262,13 @@ type EnqueueJobParams struct {
 // a dead worker's job from being lost — a watchdog requeues stuck
 // rows in code.
 // Insert a fresh job. `payload` is handler-defined JSONB. `priority`
-// defaults to 100; lower numbers run sooner.
+// defaults to 100; lower numbers run sooner. `idempotency_key` is
+// optional — when set, the partial UNIQUE INDEX on
+// (type, idempotency_key) WHERE status IN ('pending','running')
+// (migration 00009) causes a 23505 unique_violation if the same
+// (type, key) work is already in-flight. Handler layer catches
+// that violation and looks the existing job up via
+// GetJobByIdempotencyKey, returning the existing id.
 func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (Job, error) {
 	row := q.db.QueryRow(ctx, enqueueJob,
 		arg.Type,
@@ -268,6 +277,7 @@ func (q *Queries) EnqueueJob(ctx context.Context, arg EnqueueJobParams) (Job, er
 		arg.MaxAttempts,
 		arg.ScheduledFor,
 		arg.OriginServerID,
+		arg.IdempotencyKey,
 	)
 	var i Job
 	err := row.Scan(
@@ -351,6 +361,54 @@ WHERE id = $1
 
 func (q *Queries) GetJob(ctx context.Context, id pgtype.UUID) (Job, error) {
 	row := q.db.QueryRow(ctx, getJob, id)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.ClaimedBy,
+		&i.ClaimedAt,
+		&i.LeaseExpiresAt,
+		&i.LastError,
+		&i.Result,
+		&i.OriginServerID,
+		&i.ScheduledFor,
+		&i.EnqueuedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getJobByIdempotencyKey = `-- name: GetJobByIdempotencyKey :one
+SELECT id, type, payload, status, priority, attempts, max_attempts,
+       claimed_by, claimed_at, lease_expires_at, last_error, result,
+       origin_server_id, scheduled_for,
+       enqueued_at, started_at, finished_at,
+       idempotency_key
+FROM jobs
+WHERE type = $1
+  AND idempotency_key = $2
+  AND status IN ('pending', 'running')
+`
+
+type GetJobByIdempotencyKeyParams struct {
+	Type           string
+	IdempotencyKey *string
+}
+
+// Resolves the existing in-flight job's id when an Enqueue hits the
+// partial UNIQUE INDEX. Looks at pending + running statuses only —
+// a completed/failed job with the same key should not block a fresh
+// re-enqueue (the new call is genuinely new work, the prior result
+// is historical).
+func (q *Queries) GetJobByIdempotencyKey(ctx context.Context, arg GetJobByIdempotencyKeyParams) (Job, error) {
+	row := q.db.QueryRow(ctx, getJobByIdempotencyKey, arg.Type, arg.IdempotencyKey)
 	var i Job
 	err := row.Scan(
 		&i.ID,
