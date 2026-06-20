@@ -843,6 +843,28 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   ADR 0050. Depends on Phase 1.14.A (provider abstraction) +
   Phase 1.14.B (CLIP embeddings) shipping first.
 
+- **Artist Alley as an MCP client** (Phase 1.53). The inverse of
+  Phase 1.52 — instead of exposing AA's catalogue to external
+  agents, AA's own AI orchestrator consumes external Model Context
+  Protocol servers as tool sources. Adds `mcp_server` as a new
+  provider kind to the Phase 1.14.A AI provider abstraction:
+  operator registers an MCP server (URL + auth + capability
+  scoping); its tools become callable from job handlers + workflow
+  rules + admin actions. Validation references:
+  [SceneWeaver's tessa-mcp / comfyui-mcp pattern](https://github.com/mscrnt/artist-alley/blob/dev/docs/adr/0051-artist-alley-as-mcp-client.md)
+  (each external service wrapped as a dedicated MCP server; AA
+  orchestrates). Initial integration target: **ComfyUI MCP** for
+  studios who run local image-generation infrastructure (clean
+  complement to Phase 1.34's hosted image-edit providers). Generic
+  MCP-server registration means any operator-built bridge plugs
+  in without per-tool code in AA. Per-server + per-tool capability
+  gates so operators control exposure precisely. Inherits the
+  Phase 1.14.A audit + cost-tracking + privacy-routing
+  infrastructure — every MCP tool call records to `ai_provider_call`
+  with the MCP-server name as the "provider" + the tool name as
+  the "model." Local-only by default; no MCP traffic federates.
+  See ADR 0051. Depends on Phase 1.14.A shipping first.
+
 - **Featured collections & homepage curation** (Phase 1.35). Tree
   edges on the collection model (`collection_parent_id`, capped at
   depth 5) + a `featured` boolean with `team` / `org` / `public`
