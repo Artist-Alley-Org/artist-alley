@@ -570,6 +570,35 @@ type Like struct {
 	ActorUri   *string
 }
 
+type McpServerRegistration struct {
+	ID                   pgtype.UUID
+	Name                 string
+	Url                  string
+	Transport            string
+	AuthKind             string
+	AuthSecretRef        *string
+	AuthHeaderName       *string
+	PrivacyClass         string
+	Enabled              bool
+	RateLimitPerSecond   int32
+	RateLimitPerMinute   int32
+	HealthCheckIntervalS int32
+	LastHealthCheckAt    pgtype.Timestamptz
+	LastHealthStatus     *string
+	LastHealthError      *string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	RegisteredByUserRef  *int64
+}
+
+type McpServerToolGrant struct {
+	ServerID             pgtype.UUID
+	ToolName             string
+	AdditionalCapability *string
+	CostEstimateMicros   int64
+	Enabled              bool
+}
+
 type Notification struct {
 	ID               pgtype.UUID
 	RecipientUserRef int64

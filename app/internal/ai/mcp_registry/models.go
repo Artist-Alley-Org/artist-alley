@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package messages
+package mcpregistry
 
 import (
 	"net/netip"

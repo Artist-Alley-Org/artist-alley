@@ -570,6 +570,35 @@ type Like struct {
 	ActorUri   *string            `json:"actor_uri"`
 }
 
+type McpServerRegistration struct {
+	ID                   pgtype.UUID        `json:"id"`
+	Name                 string             `json:"name"`
+	Url                  string             `json:"url"`
+	Transport            string             `json:"transport"`
+	AuthKind             string             `json:"auth_kind"`
+	AuthSecretRef        *string            `json:"auth_secret_ref"`
+	AuthHeaderName       *string            `json:"auth_header_name"`
+	PrivacyClass         string             `json:"privacy_class"`
+	Enabled              bool               `json:"enabled"`
+	RateLimitPerSecond   int32              `json:"rate_limit_per_second"`
+	RateLimitPerMinute   int32              `json:"rate_limit_per_minute"`
+	HealthCheckIntervalS int32              `json:"health_check_interval_s"`
+	LastHealthCheckAt    pgtype.Timestamptz `json:"last_health_check_at"`
+	LastHealthStatus     *string            `json:"last_health_status"`
+	LastHealthError      *string            `json:"last_health_error"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	RegisteredByUserRef  *int64             `json:"registered_by_user_ref"`
+}
+
+type McpServerToolGrant struct {
+	ServerID             pgtype.UUID `json:"server_id"`
+	ToolName             string      `json:"tool_name"`
+	AdditionalCapability *string     `json:"additional_capability"`
+	CostEstimateMicros   int64       `json:"cost_estimate_micros"`
+	Enabled              bool        `json:"enabled"`
+}
+
 type Notification struct {
 	ID               pgtype.UUID        `json:"id"`
 	RecipientUserRef int64              `json:"recipient_user_ref"`
