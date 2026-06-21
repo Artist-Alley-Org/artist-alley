@@ -54,6 +54,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/ai"
 	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
+	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -91,6 +92,7 @@ type apiServer struct {
 	userprefs     *userprefs.Handler
 	aiAdmin       *aiadmin.Handler // Phase 1.14.A inference subsystem admin surface
 	aiBridge      ai.Bridge        // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter      *ai.Router       // Phase 1.14.B — typed inference dispatch w/ registered providers
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -177,6 +179,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		EmbeddingWriter:  embedWriter,
 		TranscriptWriter: ai.NewStubTranscriptWriter(),
 	}
+
+	// Phase 1.14.B — wire the AI router + register the clip_local
+	// embedding provider. Loader + Caches are constructed identically
+	// to newAIAdminHandler (both share the same on-disk config table);
+	// they would dedup if held by a shared subsystem object, but for
+	// now the doubled construction is cheap (cache.Registry handles
+	// the dedup at the row level).
+	aiCaches := ai.NewCaches(cacheReg)
+	aiLoader := ai.NewLoader(pool, aiCaches)
+	aiCallAuditor := ai.NewCallAuditor(pool, logger)
+	aiBudget := ai.NewTracker(pool, aiCaches, aiLoader, aiCallAuditor)
+	s.aiRouter = ai.NewRouter(aiLoader, aiBudget, aiCallAuditor)
+	// clip_local is the seed default for ai.routing.embed; register
+	// it unconditionally so a fresh install has at least one embed
+	// path. Operator overrides (alternate base URL / model / API key)
+	// land via the admin UI in a follow-up phase.
+	s.aiRouter.Register(aicliplocal.NewProvider(aicliplocal.Config{}, aiCallAuditor))
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
