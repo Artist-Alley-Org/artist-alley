@@ -53,6 +53,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/requests"
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/ai"
+	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -155,13 +156,25 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// which writers are stubbed vs concrete.
 	//
 	//   - CaptionWriter   stub  → assets caption schema follow-up
-	//   - EmbeddingWriter stub  → Phase 1.14.B (pgvector)
+	//   - EmbeddingWriter concrete (Phase 1.14.B) — best-effort load;
+	//     falls back to stub on dim-registry failure so boot doesn't
+	//     wedge on a misconfigured config row
 	//   - TranscriptWriter stub → Phase 1.14.C (Whisper)
+	var embedWriter ai.EmbeddingWriter = ai.NewStubEmbeddingWriter()
+	if w, err := aiembeddings.NewWriter(context.Background(), pool, logger); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"ai.embeddings.writer.load.failed",
+			slog.String("err", err.Error()),
+			slog.String("impact", "EmbeddingWriter returns ErrNotImplementedYet until ai.embedding.dim_registry is fixed"),
+		)
+	} else {
+		embedWriter = w
+	}
 	s.aiBridge = ai.Bridge{
 		Lookup:           s.assets,
 		TagWriter:        s.assets,
 		CaptionWriter:    ai.NewStubCaptionWriter(),
-		EmbeddingWriter:  ai.NewStubEmbeddingWriter(),
+		EmbeddingWriter:  embedWriter,
 		TranscriptWriter: ai.NewStubTranscriptWriter(),
 	}
 

@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/pgvector/pgvector-go"
 )
 
 const addAssetAlternate = `-- name: AddAssetAlternate :one
@@ -271,80 +270,6 @@ func (q *Queries) DeleteAssetCompanion(ctx context.Context, id pgtype.UUID) erro
 	return err
 }
 
-const deleteAssetEmbeddingsForAssetD768 = `-- name: DeleteAssetEmbeddingsForAssetD768 :exec
-DELETE FROM asset_embedding_d768 WHERE asset_id = $1
-`
-
-// Cleanup helper used by the asset soft-delete path so a re-uploaded
-// asset gets a fresh embedding instead of inheriting the stale one.
-// The ON DELETE CASCADE on the FK handles hard-delete cleanup.
-func (q *Queries) DeleteAssetEmbeddingsForAssetD768(ctx context.Context, assetID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteAssetEmbeddingsForAssetD768, assetID)
-	return err
-}
-
-const findSimilarAssetsD768 = `-- name: FindSimilarAssetsD768 :many
-SELECT
-    e.asset_id,
-    (e.embedding <=> $1::vector) AS distance
-FROM asset_embedding_d768 e
-WHERE e.provider = $2
-  AND e.model    = $3
-  AND e.modality = $4
-  AND e.asset_id <> $5
-ORDER BY e.embedding <=> $1::vector ASC
-LIMIT $6::INTEGER
-`
-
-type FindSimilarAssetsD768Params struct {
-	Column1        *pgvector.Vector
-	Provider       string
-	Model          string
-	Modality       interface{}
-	ExcludeAssetID pgtype.UUID
-	ResultLimit    int32
-}
-
-type FindSimilarAssetsD768Row struct {
-	AssetID  pgtype.UUID
-	Distance interface{}
-}
-
-// Nearest-neighbour search over the HNSW cosine index. $1 is the
-// query vector; $2/$3/$4 are the search space (different models
-// live in different vector spaces — cross-model cosine is
-// meaningless). exclude_asset_id excludes the anchor;
-// result_limit caps the response.
-//
-// Distance is cosine — pgvector's `<=>` operator. Lower = more
-// similar; 0.0 = identical vectors.
-func (q *Queries) FindSimilarAssetsD768(ctx context.Context, arg FindSimilarAssetsD768Params) ([]FindSimilarAssetsD768Row, error) {
-	rows, err := q.db.Query(ctx, findSimilarAssetsD768,
-		arg.Column1,
-		arg.Provider,
-		arg.Model,
-		arg.Modality,
-		arg.ExcludeAssetID,
-		arg.ResultLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FindSimilarAssetsD768Row
-	for rows.Next() {
-		var i FindSimilarAssetsD768Row
-		if err := rows.Scan(&i.AssetID, &i.Distance); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAsset = `-- name: GetAsset :one
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
@@ -506,62 +431,6 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 		&i.ContentType,
 		&i.SizeBytes,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getAssetEmbeddingD768 = `-- name: GetAssetEmbeddingD768 :one
-SELECT
-    asset_id,
-    provider,
-    model,
-    modality::TEXT AS modality_text,
-    embedding,
-    content_hash,
-    created_at,
-    updated_at
-FROM asset_embedding_d768
-WHERE asset_id = $1 AND provider = $2 AND model = $3 AND modality = $4
-`
-
-type GetAssetEmbeddingD768Params struct {
-	AssetID  pgtype.UUID
-	Provider string
-	Model    string
-	Modality interface{}
-}
-
-type GetAssetEmbeddingD768Row struct {
-	AssetID      pgtype.UUID
-	Provider     string
-	Model        string
-	ModalityText string
-	Embedding    interface{}
-	ContentHash  *string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-}
-
-// Read one embedding by full key. Used by the similarity-search
-// handler to grab the query vector before running kNN. Returns the
-// vector as text — pgvector-go parses on the Go side.
-func (q *Queries) GetAssetEmbeddingD768(ctx context.Context, arg GetAssetEmbeddingD768Params) (GetAssetEmbeddingD768Row, error) {
-	row := q.db.QueryRow(ctx, getAssetEmbeddingD768,
-		arg.AssetID,
-		arg.Provider,
-		arg.Model,
-		arg.Modality,
-	)
-	var i GetAssetEmbeddingD768Row
-	err := row.Scan(
-		&i.AssetID,
-		&i.Provider,
-		&i.Model,
-		&i.ModalityText,
-		&i.Embedding,
-		&i.ContentHash,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1264,57 +1133,4 @@ func (q *Queries) UpdateAsset(ctx context.Context, arg UpdateAssetParams) (Updat
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const upsertAssetEmbeddingD768 = `-- name: UpsertAssetEmbeddingD768 :exec
-
-INSERT INTO asset_embedding_d768
-    (asset_id, provider, model, modality, embedding, content_hash, updated_at)
-VALUES ($1, $2, $3, $4, $5::vector, $6::TEXT, NOW())
-ON CONFLICT (asset_id, provider, model, modality) DO UPDATE
-    SET embedding    = EXCLUDED.embedding,
-        content_hash = EXCLUDED.content_hash,
-        updated_at   = NOW()
-`
-
-type UpsertAssetEmbeddingD768Params struct {
-	AssetID     pgtype.UUID
-	Provider    string
-	Model       string
-	Modality    interface{}
-	Column5     *pgvector.Vector
-	ContentHash *string
-}
-
-// ---------------------------------------------------------------------------
-// Phase 1.14.B — asset_embedding_d768 bridge queries
-// ---------------------------------------------------------------------------
-//
-// pgvector + Postgres declarative partitioning is incompatible with
-// per-dim variation (partitions must share column types). So we
-// ship one sibling table per vector dim — `asset_embedding_d768`
-// here, `asset_embedding_d1024` etc. when added by follow-up
-// migrations. The Go-side writer in app/internal/ai/embeddings/
-// dispatches by model → dim via system_config's
-// `ai.embedding.dim_registry`. These queries target the 768-dim
-// table; sibling tables would carry their own queries with the
-// same shape but a different table name.
-//
-// Two reasons to NOT abstract these via a string-substituted table
-// (Go-side): sqlc is a compile-time tool and can't take a runtime
-// table identifier, and prepared-statement caching wants stable
-// SQL text.
-// Idempotent: re-running embedding for the same (asset, provider,
-// model, modality) key replaces the vector. Sets updated_at on
-// conflict so the audit trail records the latest write time.
-func (q *Queries) UpsertAssetEmbeddingD768(ctx context.Context, arg UpsertAssetEmbeddingD768Params) error {
-	_, err := q.db.Exec(ctx, upsertAssetEmbeddingD768,
-		arg.AssetID,
-		arg.Provider,
-		arg.Model,
-		arg.Modality,
-		arg.Column5,
-		arg.ContentHash,
-	)
-	return err
 }
