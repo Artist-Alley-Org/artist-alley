@@ -53,6 +53,9 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/requests"
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/ai"
+	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
+	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
+	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -90,6 +93,7 @@ type apiServer struct {
 	userprefs     *userprefs.Handler
 	aiAdmin       *aiadmin.Handler // Phase 1.14.A inference subsystem admin surface
 	aiBridge      ai.Bridge        // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter      *ai.Router       // Phase 1.14.B — typed inference dispatch w/ registered providers
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -155,14 +159,71 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// which writers are stubbed vs concrete.
 	//
 	//   - CaptionWriter   stub  → assets caption schema follow-up
-	//   - EmbeddingWriter stub  → Phase 1.14.B (pgvector)
+	//   - EmbeddingWriter concrete (Phase 1.14.B) — best-effort load;
+	//     falls back to stub on dim-registry failure so boot doesn't
+	//     wedge on a misconfigured config row
 	//   - TranscriptWriter stub → Phase 1.14.C (Whisper)
+	var embedWriter ai.EmbeddingWriter = ai.NewStubEmbeddingWriter()
+	var embedReader *aiembeddings.Reader
+	if w, err := aiembeddings.NewWriter(context.Background(), pool, logger); err != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"ai.embeddings.writer.load.failed",
+			slog.String("err", err.Error()),
+			slog.String("impact", "EmbeddingWriter returns ErrNotImplementedYet until ai.embedding.dim_registry is fixed"),
+		)
+	} else {
+		embedWriter = w
+		// Reader shares the writer's dim_registry so a model bump
+		// is visible to both without re-construction.
+		embedReader = aiembeddings.NewReader(pool, w.DimRegistry())
+	}
+	// Inject the reader into the assets handler via the consumer-
+	// defined SimilarReader seam — keeps embeddings out of assets'
+	// import graph. Adapter converts the local SimilarNeighbour
+	// type to the embeddings package's Neighbour.
+	if embedReader != nil {
+		s.assets.SetSimilarReader(similarReaderAdapter{r: embedReader})
+	}
 	s.aiBridge = ai.Bridge{
 		Lookup:           s.assets,
 		TagWriter:        s.assets,
 		CaptionWriter:    ai.NewStubCaptionWriter(),
-		EmbeddingWriter:  ai.NewStubEmbeddingWriter(),
+		EmbeddingWriter:  embedWriter,
 		TranscriptWriter: ai.NewStubTranscriptWriter(),
+	}
+
+	// Phase 1.14.B — wire the AI router + register the clip_local
+	// embedding provider. Loader + Caches are constructed identically
+	// to newAIAdminHandler (both share the same on-disk config table);
+	// they would dedup if held by a shared subsystem object, but for
+	// now the doubled construction is cheap (cache.Registry handles
+	// the dedup at the row level).
+	aiCaches := ai.NewCaches(cacheReg)
+	aiLoader := ai.NewLoader(pool, aiCaches)
+	aiCallAuditor := ai.NewCallAuditor(pool, logger)
+	aiBudget := ai.NewTracker(pool, aiCaches, aiLoader, aiCallAuditor)
+	s.aiRouter = ai.NewRouter(aiLoader, aiBudget, aiCallAuditor)
+	// clip_local is the seed default for ai.routing.embed; register
+	// it unconditionally so a fresh install has at least one embed
+	// path. Operator overrides (alternate base URL / model / API key)
+	// land via the admin UI in a follow-up phase.
+	s.aiRouter.Register(aicliplocal.NewProvider(aicliplocal.Config{}, aiCallAuditor))
+
+	// Phase 1.14.B — register ai.embed job handler so the worker
+	// pool can drain ai.embed jobs enqueued by the asset upload
+	// fanout. Privacy policy + default model load best-effort from
+	// system_config; defaults if the rows aren't present yet
+	// (pre-migration state) so boot doesn't wedge.
+	aiPrivacyCfg, _ := aiLoader.Load(context.Background())
+	defaultEmbedModel := "nomic-embed-text"
+	if jobSvc != nil {
+		jobSvc.Registry.Register(aijobs.NewEmbedHandler(
+			s.aiRouter,
+			s.assets,         // ai.AssetLookup (bridge)
+			s.aiBridge.EmbeddingWriter,
+			aiPrivacyCfg.Privacy,
+			defaultEmbedModel,
+		))
 	}
 
 	// Wire the social-graph seam into posts so visibility='followers'
@@ -1076,6 +1137,29 @@ func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
 
 // --- cross-package adapters for the notifications wiring ----------
 
+// similarReaderAdapter bridges the embeddings package's Reader to
+// the assets package's consumer-defined SimilarReader interface.
+// The dual-type pattern keeps the two packages decoupled — assets
+// can't import embeddings (cycle risk + scope creep), so we wrap
+// here at the boot wire.
+type similarReaderAdapter struct{ r *aiembeddings.Reader }
+
+func (a similarReaderAdapter) HasEmbedding(ctx context.Context, anchorID uuid.UUID, provider, model, modality string) (bool, error) {
+	return a.r.HasEmbedding(ctx, anchorID, provider, model, modality)
+}
+
+func (a similarReaderAdapter) FindSimilarByAnchor(ctx context.Context, anchorID uuid.UUID, provider, model, modality string, limit int) ([]assets.SimilarNeighbour, error) {
+	ns, err := a.r.FindSimilarByAnchor(ctx, anchorID, provider, model, modality, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]assets.SimilarNeighbour, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, assets.SimilarNeighbour{AssetID: n.AssetID, Distance: n.Distance})
+	}
+	return out, nil
+}
+
 // socialBlockAdapter satisfies notifications' blockChecker via
 // *social.Handler — the public HasBlockBetween method is the cached,
 // cross-package-safe entry point.
@@ -1365,6 +1449,10 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 
 func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
 	return s.assets.RecreateAssetPreview(ctx, req)
+}
+
+func (s *apiServer) ListSimilarAssets(ctx context.Context, req openapi.ListSimilarAssetsRequestObject) (openapi.ListSimilarAssetsResponseObject, error) {
+	return s.assets.ListSimilarAssets(ctx, req)
 }
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {

@@ -12,6 +12,7 @@
   // this body stays free of kind-specific surface code.
 
   import type { ToolContext } from '../contract';
+  import SimilarAssetsPanel from '$components/SimilarAssetsPanel.svelte';
 
   let { ctx }: { ctx: ToolContext } = $props();
 
@@ -73,6 +74,11 @@
     </section>
   {/if}
 
+
+  <!-- Phase 1.14.B — vector similarity neighbours. Lazy-loads from
+       /assets/{id}/similar; renders empty state when the embedding
+       hasn't been computed yet (just-uploaded asset). -->
+  <SimilarAssetsPanel assetId={ctx.asset.id} />
 
   {#if ctx.controller.kind === '3d' && ctx.modelSession && (ctx.asset.file_extension || '').toLowerCase().replace(/^\./, '') !== 'mview'}
     <!-- Kind-specific hint: when a richer tool exists for this asset,

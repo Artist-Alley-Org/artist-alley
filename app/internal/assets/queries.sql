@@ -103,6 +103,22 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- name: ListAssetTags :many
 SELECT tag FROM asset_tag WHERE asset_id = $1 ORDER BY tag;
 
+-- name: ListAssetTagsDetailed :many
+-- Phase 1.14.B — typed read returning per-tag source/confidence/
+-- provenance. Backs the openapi.Asset.tag_details field that the
+-- frontend AssetTagBadge consumes. Same ordering as ListAssetTags
+-- so the legacy flat `tags` array stays index-aligned with this
+-- list (consumers can zip them when needed).
+SELECT
+    tag,
+    source,
+    confidence,
+    created_by_provider,
+    created_by_model
+FROM asset_tag
+WHERE asset_id = $1
+ORDER BY tag;
+
 -- name: AddAssetTag :exec
 INSERT INTO asset_tag (asset_id, tag)
 VALUES ($1, $2)
@@ -349,3 +365,8 @@ VALUES ($1, $2, 'ai', sqlc.narg('confidence')::REAL, sqlc.narg('provider')::TEXT
 SELECT EXISTS (
     SELECT 1 FROM assets WHERE id = $1 AND deleted_at IS NULL
 )::BOOLEAN AS exists;
+
+-- Phase 1.14.B embedding queries live under
+-- app/internal/ai/embeddings/queries.sql so the writer + reader code
+-- can package alongside them. assets package keeps focus on asset
+-- CRUD + the bridge read/write surface for AI tags.

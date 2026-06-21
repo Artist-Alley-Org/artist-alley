@@ -9,7 +9,9 @@ package assets
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,7 +102,37 @@ type Handler struct {
 	// a few hundred chapters total.
 	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
 	epubChapters *cache.Cache[[]byte]
+
+	// similarReader is the embeddings-side seam for the
+	// /assets/{id}/similar endpoint. Injected post-construction via
+	// SetSimilarReader to avoid pulling ai/embeddings into this
+	// package's import graph. Nil-safe — the endpoint returns 503-
+	// like "embedding subsystem not wired" when nil (only happens
+	// in tests that don't bother wiring it up).
+	similarReader SimilarReader
 }
+
+// SimilarReader is the narrow surface this package needs from the
+// embeddings reader. *embeddings.Reader satisfies it. The interface
+// lives here (consumer-defined) so the assets package doesn't import
+// the embeddings package.
+type SimilarReader interface {
+	HasEmbedding(ctx context.Context, anchorID uuid.UUID, provider, model, modality string) (bool, error)
+	FindSimilarByAnchor(ctx context.Context, anchorID uuid.UUID, provider, model, modality string, limit int) ([]SimilarNeighbour, error)
+}
+
+// SimilarNeighbour mirrors embeddings.Neighbour as a local type so
+// the SimilarReader interface doesn't drag the embeddings package
+// into this one's import graph. The adapter at the boot wire
+// converts between the two.
+type SimilarNeighbour struct {
+	AssetID  uuid.UUID
+	Distance float64
+}
+
+// SetSimilarReader injects the embeddings-side reader for the
+// /assets/{id}/similar endpoint. Boot wire is the only caller.
+func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
@@ -326,9 +358,48 @@ func (h *Handler) CreateAsset(
 				slog.String("err", err.Error()),
 			)
 		}
+
+		// Phase 1.14.B — fan out an ai.embed job alongside the
+		// preview job so the asset becomes searchable via vector
+		// similarity within seconds of upload. PriorityLow because
+		// the search-side use case is asynchronous; the operator
+		// wants previews first. Idempotency key dedups against
+		// in-flight runs for the same (asset, model) — re-enqueue
+		// from a fanout retry returns the existing job's id.
+		embedPriority := jobs.PriorityLow
+		embedPayload := map[string]string{
+			"asset_id": newID.String(),
+			// Empty model + modality → handler falls back to
+			// system_config.ai.embedding.default_model + "text".
+		}
+		embedIdem := aiEmbedIdempotencyKey(newID.String(), "")
+		if _, err := h.Jobs.Enqueue(ctx, aiEmbedJobType, embedPayload, jobs.EnqueueOpts{
+			Priority:       &embedPriority,
+			IdempotencyKey: embedIdem,
+		}); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_embed_failed",
+				slog.String("asset_id", newID.String()),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 
 	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
+}
+
+// aiEmbedJobType + aiEmbedIdempotencyKey duplicate the constants
+// from app/internal/ai/jobs to avoid an import cycle (ai/jobs depends
+// on jobs which depends on assets-side enqueueing). The string + key
+// format are part of the bridge contract — a future test in
+// app/internal/ai/jobs/handlers_test.go asserts the values match.
+const aiEmbedJobType jobs.JobType = "ai.embed"
+
+func aiEmbedIdempotencyKey(assetID, model string) string {
+	// SHA-256("ai.embed|<asset_id>|<model>") hex; mirrors
+	// aijobs.EmbedIdempotencyKey. Pure-string compute here avoids
+	// the cycle.
+	sum := sha256.Sum256([]byte("ai.embed|" + assetID + "|" + model))
+	return hex.EncodeToString(sum[:])
 }
 
 // jobTypeForExt picks the preview-job type for a given file extension.
@@ -450,7 +521,16 @@ func (h *Handler) GetAsset(
 	if err != nil {
 		return nil, fmt.Errorf("assets: list tags: %w", err)
 	}
-	return openapi.GetAsset200JSONResponse(rowToAsset(row, tags)), nil
+	// Phase 1.14.B — also fetch per-tag source/confidence/provenance
+	// so the response includes the typed tag_details projection.
+	// Two queries instead of one for now; trading a round-trip for
+	// clarity. A future sqlc query can combine into a single
+	// json_agg if profiling shows the second hop matters.
+	details, err := q.ListAssetTagsDetailed(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("assets: list tag details: %w", err)
+	}
+	return openapi.GetAsset200JSONResponse(rowToAssetWithDetails(row, tags, details)), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,6 +1100,15 @@ func decodeCursor(s string) (time.Time, uuid.UUID, error) {
 // Asset response. Several sqlc-generated row types share the same
 // columns; we normalise via rowToAssetRow/listRowToGetRow etc.
 func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
+	return rowToAssetWithDetails(row, tags, nil)
+}
+
+// rowToAssetWithDetails populates both `tags` (flat string list,
+// backwards-compat) and `tag_details` (typed Phase 1.14.B
+// projection). Callers that don't have the detailed list can call
+// rowToAsset above which leaves tag_details empty (omitted from
+// JSON — pointer field).
+func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTagsDetailedRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
 		Title:            row.Title,
@@ -1029,6 +1118,29 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 		CreatedAt:        row.CreatedAt.Time,
 		UpdatedAt:        row.UpdatedAt.Time,
 		Tags:             tags,
+	}
+	if len(details) > 0 {
+		td := make([]openapi.AssetTagDetail, 0, len(details))
+		for _, d := range details {
+			item := openapi.AssetTagDetail{
+				Value:  d.Tag,
+				Source: openapi.AssetTagDetailSource(d.Source),
+			}
+			if d.Confidence != nil {
+				c := float64(*d.Confidence)
+				item.Confidence = &c
+			}
+			if d.CreatedByProvider != nil && *d.CreatedByProvider != "" {
+				v := *d.CreatedByProvider
+				item.CreatedByProvider = &v
+			}
+			if d.CreatedByModel != nil && *d.CreatedByModel != "" {
+				v := *d.CreatedByModel
+				item.CreatedByModel = &v
+			}
+			td = append(td, item)
+		}
+		a.TagDetails = &td
 	}
 	if row.Description != "" {
 		d := row.Description

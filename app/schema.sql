@@ -628,6 +628,30 @@ CREATE TABLE public.asset_tag (
 
 
 --
+-- Name: ai_embedding_modality; Type: DOMAIN; Schema: public; Owner: -
+--
+
+CREATE DOMAIN public.ai_embedding_modality AS text
+    CONSTRAINT ai_embedding_modality_check CHECK ((VALUE = ANY (ARRAY['text'::text, 'image'::text, 'multimodal'::text])));
+
+
+--
+-- Name: asset_embedding_d768; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.asset_embedding_d768 (
+    asset_id uuid NOT NULL,
+    provider text NOT NULL,
+    model text NOT NULL,
+    modality public.ai_embedding_modality NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    content_hash text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: asset_type_acls; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1716,6 +1740,14 @@ ALTER TABLE ONLY public.asset_tag
 
 
 --
+-- Name: asset_embedding_d768 asset_embedding_d768_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_embedding_d768
+    ADD CONSTRAINT asset_embedding_d768_pkey PRIMARY KEY (asset_id, provider, model, modality);
+
+
+--
 -- Name: asset_type_acls asset_type_acls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2376,6 +2408,20 @@ CREATE INDEX asset_field_value_text_idx ON public.asset_field_value USING btree 
 --
 
 CREATE INDEX asset_tag_tag_idx ON public.asset_tag USING btree (tag);
+
+
+--
+-- Name: idx_asset_embedding_d768_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_embedding_d768_asset ON public.asset_embedding_d768 USING btree (asset_id);
+
+
+--
+-- Name: idx_asset_embedding_d768_hnsw_cosine; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_embedding_d768_hnsw_cosine ON public.asset_embedding_d768 USING hnsw (embedding public.vector_cosine_ops) WITH (m='16', ef_construction='64');
 
 
 --
@@ -3406,6 +3452,14 @@ ALTER TABLE ONLY public.asset_field_value
 
 ALTER TABLE ONLY public.asset_tag
     ADD CONSTRAINT asset_tag_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: asset_embedding_d768 asset_embedding_d768_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_embedding_d768
+    ADD CONSTRAINT asset_embedding_d768_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
 
 
 --

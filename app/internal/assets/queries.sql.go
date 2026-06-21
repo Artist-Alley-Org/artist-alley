@@ -648,6 +648,57 @@ func (q *Queries) ListAssetTags(ctx context.Context, assetID pgtype.UUID) ([]str
 	return items, nil
 }
 
+const listAssetTagsDetailed = `-- name: ListAssetTagsDetailed :many
+SELECT
+    tag,
+    source,
+    confidence,
+    created_by_provider,
+    created_by_model
+FROM asset_tag
+WHERE asset_id = $1
+ORDER BY tag
+`
+
+type ListAssetTagsDetailedRow struct {
+	Tag               string
+	Source            string
+	Confidence        *float32
+	CreatedByProvider *string
+	CreatedByModel    *string
+}
+
+// Phase 1.14.B — typed read returning per-tag source/confidence/
+// provenance. Backs the openapi.Asset.tag_details field that the
+// frontend AssetTagBadge consumes. Same ordering as ListAssetTags
+// so the legacy flat `tags` array stays index-aligned with this
+// list (consumers can zip them when needed).
+func (q *Queries) ListAssetTagsDetailed(ctx context.Context, assetID pgtype.UUID) ([]ListAssetTagsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listAssetTagsDetailed, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAssetTagsDetailedRow
+	for rows.Next() {
+		var i ListAssetTagsDetailedRow
+		if err := rows.Scan(
+			&i.Tag,
+			&i.Source,
+			&i.Confidence,
+			&i.CreatedByProvider,
+			&i.CreatedByModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAssetsByTagPage = `-- name: ListAssetsByTagPage :many
 SELECT a.id, a.title, a.description, a.asset_type, a.owner_user_ref, a.status,
        a.file_hash, a.file_extension, a.file_size_bytes, a.metadata,

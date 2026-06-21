@@ -120,6 +120,17 @@ type AssetCompanion struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type AssetEmbeddingD768 struct {
+	AssetID     pgtype.UUID        `json:"asset_id"`
+	Provider    string             `json:"provider"`
+	Model       string             `json:"model"`
+	Modality    interface{}        `json:"modality"`
+	Embedding   interface{}        `json:"embedding"`
+	ContentHash *string            `json:"content_hash"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AssetFieldValue struct {
 	AssetID      pgtype.UUID        `json:"asset_id"`
 	FieldID      pgtype.UUID        `json:"field_id"`

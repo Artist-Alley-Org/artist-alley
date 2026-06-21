@@ -23,7 +23,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -37,6 +39,7 @@ import (
 const (
 	JobTypeTag     jobs.JobType = "ai.tag"
 	JobTypeCaption jobs.JobType = "ai.caption"
+	JobTypeEmbed   jobs.JobType = "ai.embed"
 )
 
 // ---------------------------------------------------------------------------
@@ -254,6 +257,184 @@ func CaptionIdempotencyKey(assetID uuid.UUID, promptVersion string) string {
 }
 
 // ---------------------------------------------------------------------------
+// Embed handler — Phase 1.14.B
+// ---------------------------------------------------------------------------
+
+// EmbedRouter is the narrow surface the embed handler needs from the
+// AI router. *ai.Router satisfies it.
+type EmbedRouter interface {
+	Embed(ctx context.Context, in ai.EmbedInput, privacy ai.PrivacyClass) ([]float32, error)
+}
+
+// EmbedAssetLookup resolves an asset id to the rich projection the
+// embed handler needs to compose embedding text. ai.AssetLookup
+// (the bridge interface) satisfies it; assets.Handler is the
+// concrete impl.
+type EmbedAssetLookup interface {
+	GetAssetForAI(ctx context.Context, id uuid.UUID) (ai.AssetForAI, error)
+}
+
+// EmbedWriter persists a vector. ai.EmbeddingWriter (the bridge
+// interface) satisfies it.
+type EmbedWriter interface {
+	UpsertAssetEmbedding(ctx context.Context, in ai.EmbeddingInput) error
+}
+
+// EmbedPayload is the JSON shape the asset upload fanout writes
+// into the job payload.
+type EmbedPayload struct {
+	AssetID  uuid.UUID `json:"asset_id"`
+	Model    string    `json:"model,omitempty"`    // optional override of ai.embedding.default_model
+	Modality string    `json:"modality,omitempty"` // 'text' (default) | 'image' | 'multimodal'
+}
+
+// EmbedHandler implements jobs.Handler for ai.embed.
+type EmbedHandler struct {
+	Router       EmbedRouter
+	Assets       EmbedAssetLookup
+	Writer       EmbedWriter
+	Privacy      ai.PrivacyPolicy
+	DefaultModel string // typically "nomic-embed-text"
+}
+
+// NewEmbedHandler builds a handler. defaultModel comes from
+// system_config.ai.embedding.default_model — operator can override
+// per-job via payload.Model.
+func NewEmbedHandler(router EmbedRouter, assets EmbedAssetLookup, writer EmbedWriter, policy ai.PrivacyPolicy, defaultModel string) *EmbedHandler {
+	return &EmbedHandler{
+		Router:       router,
+		Assets:       assets,
+		Writer:       writer,
+		Privacy:      policy,
+		DefaultModel: defaultModel,
+	}
+}
+
+// Type returns the dispatch identifier.
+func (h *EmbedHandler) Type() jobs.JobType { return JobTypeEmbed }
+
+// Handle runs the embed flow for one asset.
+//
+// Composes the embedding text from Title + existing tags. If the
+// asset has no embeddable text content (untitled + untagged), we
+// skip cleanly — embedding empty text is useless and would bias
+// the vector toward whatever the model's default zero-input vector
+// is.
+//
+// Error mapping mirrors TagHandler:
+//   - parse failure / missing asset id → TerminalError
+//   - asset lookup miss → TerminalError (ai.ErrAssetNotFound)
+//   - router permanent / budget / privacy → TerminalError
+//   - router transient → plain error (worker retries)
+//   - writer ErrAssetNotFound → TerminalError (asset deleted between
+//     embed + persist)
+func (h *EmbedHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, error) {
+	var p EmbedPayload
+	if err := json.Unmarshal(job.Payload, &p); err != nil {
+		return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.embed: parse payload: %w", err)}
+	}
+	if p.AssetID == uuid.Nil {
+		return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.embed: asset_id required")}
+	}
+
+	asset, err := h.Assets.GetAssetForAI(ctx, p.AssetID)
+	if err != nil {
+		if errors.Is(err, ai.ErrAssetNotFound) {
+			return nil, &jobs.TerminalError{Err: err}
+		}
+		return nil, fmt.Errorf("ai.embed: asset lookup: %w", err)
+	}
+
+	text := composeEmbeddingText(asset)
+	if text == "" {
+		// Nothing to embed; report success with a skip note rather
+		// than persisting a zero-vector that would skew kNN results.
+		result, _ := json.Marshal(map[string]any{"skipped": "no_embeddable_text"})
+		return result, nil
+	}
+
+	model := p.Model
+	if model == "" {
+		model = h.DefaultModel
+	}
+	modality := p.Modality
+	if modality == "" {
+		modality = "text"
+	}
+
+	privacy := ai.ClassifyPrivacy(asset.Sensitivity, h.Privacy)
+	vec, err := h.Router.Embed(ctx, ai.EmbedInput{
+		Text:  text,
+		Model: model,
+	}, privacy)
+	if err != nil {
+		if isPermanentAIError(err) {
+			return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.embed: %w", err)}
+		}
+		return nil, fmt.Errorf("ai.embed: router: %w", err)
+	}
+
+	err = h.Writer.UpsertAssetEmbedding(ctx, ai.EmbeddingInput{
+		AssetID:     p.AssetID,
+		Provider:    "router", // the actual provider that served is in ai_provider_call
+		Model:       model,
+		Modality:    modality,
+		Vector:      vec,
+		ContentHash: asset.ContentHash,
+	})
+	if err != nil {
+		if errors.Is(err, ai.ErrAssetNotFound) {
+			return nil, &jobs.TerminalError{Err: err}
+		}
+		return nil, fmt.Errorf("ai.embed: persist: %w", err)
+	}
+
+	result, _ := json.Marshal(map[string]any{
+		"dim":      len(vec),
+		"model":    model,
+		"modality": modality,
+		"text_len": len(text),
+	})
+	return result, nil
+}
+
+// EmbedIdempotencyKey produces the canonical idempotency key. The
+// model + asset_id pair drives dedup — re-enqueuing the same asset
+// under the same model returns the existing job; bumping the model
+// (operator changes ai.embedding.default_model) produces a fresh
+// run.
+func EmbedIdempotencyKey(assetID uuid.UUID, model string) string {
+	return derivedKey("ai.embed", assetID, model)
+}
+
+// composeEmbeddingText concatenates Title + existing-tag values into
+// the string the embedding model sees. Manual + import tags carry
+// operator intent; AI tags from a previous run also feed into the
+// vector (they shape the search space).
+//
+// Tags are joined with commas so the model sees a comma-separated
+// list as a natural phrase ("kittens, basket, fluffy") rather than
+// a glob.
+func composeEmbeddingText(asset ai.AssetForAI) string {
+	var parts []string
+	if asset.Title != "" {
+		parts = append(parts, asset.Title)
+	}
+	if len(asset.ExistingTags) > 0 {
+		tagVals := make([]string, 0, len(asset.ExistingTags))
+		for _, t := range asset.ExistingTags {
+			if t.Value != "" {
+				tagVals = append(tagVals, t.Value)
+			}
+		}
+		if len(tagVals) > 0 {
+			parts = append(parts, strings.Join(tagVals, ", "))
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, ". "))
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -285,3 +466,4 @@ func isPermanentAIError(err error) bool {
 // Compile-time interface checks.
 var _ jobs.Handler = (*TagHandler)(nil)
 var _ jobs.Handler = (*CaptionHandler)(nil)
+var _ jobs.Handler = (*EmbedHandler)(nil)
