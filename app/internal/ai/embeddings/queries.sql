@@ -43,25 +43,45 @@ SELECT
 FROM asset_embedding_d768
 WHERE asset_id = $1 AND provider = $2 AND model = $3 AND modality = $4;
 
--- name: FindSimilarAssetsD768 :many
--- Nearest-neighbour search over the HNSW cosine index. $1 is the
--- query vector; $2/$3/$4 are the search space (different models
--- live in different vector spaces — cross-model cosine is
--- meaningless). exclude_asset_id excludes the anchor;
--- result_limit caps the response.
+-- name: FindSimilarAssetsByAnchorD768 :many
+-- One-shot anchor-then-kNN. Joins the anchor's vector via a CTE +
+-- ranks every other (provider, model, modality)-matching row by
+-- cosine distance. Lower distance = more similar.
 --
--- Distance is cosine — pgvector's `<=>` operator. Lower = more
--- similar; 0.0 = identical vectors.
+-- The subquery / CTE form is what works around sqlc's interface{}
+-- type for the vector column — passing the anchor vector as a
+-- parameter would force a *pgvector.Vector binding on the caller,
+-- which means an extra round-trip to fetch it first. One query
+-- here, sqlc-friendly typed params, no Go-side vector handling.
+WITH anchor AS (
+    SELECT embedding
+    FROM asset_embedding_d768 a
+    WHERE a.asset_id = sqlc.arg('anchor_asset_id')
+      AND a.provider = $1
+      AND a.model    = $2
+      AND a.modality = $3
+)
 SELECT
     e.asset_id,
-    (e.embedding <=> $1::vector) AS distance
+    (e.embedding <=> (SELECT embedding FROM anchor)) AS distance
 FROM asset_embedding_d768 e
-WHERE e.provider = $2
-  AND e.model    = $3
-  AND e.modality = $4
-  AND e.asset_id <> sqlc.arg('exclude_asset_id')
-ORDER BY e.embedding <=> $1::vector ASC
+WHERE e.provider = $1
+  AND e.model    = $2
+  AND e.modality = $3
+  AND e.asset_id <> sqlc.arg('anchor_asset_id')
+  AND EXISTS (SELECT 1 FROM anchor)
+ORDER BY e.embedding <=> (SELECT embedding FROM anchor) ASC
 LIMIT sqlc.arg('result_limit')::INTEGER;
+
+-- name: AssetEmbeddingExistsD768 :one
+-- True when the anchor has an embedding row for the requested
+-- (provider, model, modality). Used by the search handler to
+-- distinguish "no neighbours" from "embedding pending" in the
+-- response.
+SELECT EXISTS (
+    SELECT 1 FROM asset_embedding_d768
+    WHERE asset_id = $1 AND provider = $2 AND model = $3 AND modality = $4
+)::BOOLEAN AS exists;
 
 -- name: DeleteAssetEmbeddingsForAssetD768 :exec
 -- Cleanup helper used by the asset soft-delete path so a re-uploaded

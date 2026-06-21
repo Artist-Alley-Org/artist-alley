@@ -12,6 +12,36 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
+const assetEmbeddingExistsD768 = `-- name: AssetEmbeddingExistsD768 :one
+SELECT EXISTS (
+    SELECT 1 FROM asset_embedding_d768
+    WHERE asset_id = $1 AND provider = $2 AND model = $3 AND modality = $4
+)::BOOLEAN AS exists
+`
+
+type AssetEmbeddingExistsD768Params struct {
+	AssetID  pgtype.UUID
+	Provider string
+	Model    string
+	Modality interface{}
+}
+
+// True when the anchor has an embedding row for the requested
+// (provider, model, modality). Used by the search handler to
+// distinguish "no neighbours" from "embedding pending" in the
+// response.
+func (q *Queries) AssetEmbeddingExistsD768(ctx context.Context, arg AssetEmbeddingExistsD768Params) (bool, error) {
+	row := q.db.QueryRow(ctx, assetEmbeddingExistsD768,
+		arg.AssetID,
+		arg.Provider,
+		arg.Model,
+		arg.Modality,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const deleteAssetEmbeddingsForAssetD768 = `-- name: DeleteAssetEmbeddingsForAssetD768 :exec
 DELETE FROM asset_embedding_d768 WHERE asset_id = $1
 `
@@ -24,57 +54,65 @@ func (q *Queries) DeleteAssetEmbeddingsForAssetD768(ctx context.Context, assetID
 	return err
 }
 
-const findSimilarAssetsD768 = `-- name: FindSimilarAssetsD768 :many
+const findSimilarAssetsByAnchorD768 = `-- name: FindSimilarAssetsByAnchorD768 :many
+WITH anchor AS (
+    SELECT embedding
+    FROM asset_embedding_d768 a
+    WHERE a.asset_id = $4
+      AND a.provider = $1
+      AND a.model    = $2
+      AND a.modality = $3
+)
 SELECT
     e.asset_id,
-    (e.embedding <=> $1::vector) AS distance
+    (e.embedding <=> (SELECT embedding FROM anchor)) AS distance
 FROM asset_embedding_d768 e
-WHERE e.provider = $2
-  AND e.model    = $3
-  AND e.modality = $4
-  AND e.asset_id <> $5
-ORDER BY e.embedding <=> $1::vector ASC
-LIMIT $6::INTEGER
+WHERE e.provider = $1
+  AND e.model    = $2
+  AND e.modality = $3
+  AND e.asset_id <> $4
+  AND EXISTS (SELECT 1 FROM anchor)
+ORDER BY e.embedding <=> (SELECT embedding FROM anchor) ASC
+LIMIT $5::INTEGER
 `
 
-type FindSimilarAssetsD768Params struct {
-	Column1        *pgvector.Vector
-	Provider       string
-	Model          string
-	Modality       interface{}
-	ExcludeAssetID pgtype.UUID
-	ResultLimit    int32
+type FindSimilarAssetsByAnchorD768Params struct {
+	Provider      string
+	Model         string
+	Modality      interface{}
+	AnchorAssetID pgtype.UUID
+	ResultLimit   int32
 }
 
-type FindSimilarAssetsD768Row struct {
+type FindSimilarAssetsByAnchorD768Row struct {
 	AssetID  pgtype.UUID
 	Distance interface{}
 }
 
-// Nearest-neighbour search over the HNSW cosine index. $1 is the
-// query vector; $2/$3/$4 are the search space (different models
-// live in different vector spaces — cross-model cosine is
-// meaningless). exclude_asset_id excludes the anchor;
-// result_limit caps the response.
+// One-shot anchor-then-kNN. Joins the anchor's vector via a CTE +
+// ranks every other (provider, model, modality)-matching row by
+// cosine distance. Lower distance = more similar.
 //
-// Distance is cosine — pgvector's `<=>` operator. Lower = more
-// similar; 0.0 = identical vectors.
-func (q *Queries) FindSimilarAssetsD768(ctx context.Context, arg FindSimilarAssetsD768Params) ([]FindSimilarAssetsD768Row, error) {
-	rows, err := q.db.Query(ctx, findSimilarAssetsD768,
-		arg.Column1,
+// The subquery / CTE form is what works around sqlc's interface{}
+// type for the vector column — passing the anchor vector as a
+// parameter would force a *pgvector.Vector binding on the caller,
+// which means an extra round-trip to fetch it first. One query
+// here, sqlc-friendly typed params, no Go-side vector handling.
+func (q *Queries) FindSimilarAssetsByAnchorD768(ctx context.Context, arg FindSimilarAssetsByAnchorD768Params) ([]FindSimilarAssetsByAnchorD768Row, error) {
+	rows, err := q.db.Query(ctx, findSimilarAssetsByAnchorD768,
 		arg.Provider,
 		arg.Model,
 		arg.Modality,
-		arg.ExcludeAssetID,
+		arg.AnchorAssetID,
 		arg.ResultLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []FindSimilarAssetsD768Row
+	var items []FindSimilarAssetsByAnchorD768Row
 	for rows.Next() {
-		var i FindSimilarAssetsD768Row
+		var i FindSimilarAssetsByAnchorD768Row
 		if err := rows.Scan(&i.AssetID, &i.Distance); err != nil {
 			return nil, err
 		}

@@ -102,7 +102,37 @@ type Handler struct {
 	// a few hundred chapters total.
 	epubSpine    *cache.Cache[[]openapi.EpubSpineEntry]
 	epubChapters *cache.Cache[[]byte]
+
+	// similarReader is the embeddings-side seam for the
+	// /assets/{id}/similar endpoint. Injected post-construction via
+	// SetSimilarReader to avoid pulling ai/embeddings into this
+	// package's import graph. Nil-safe — the endpoint returns 503-
+	// like "embedding subsystem not wired" when nil (only happens
+	// in tests that don't bother wiring it up).
+	similarReader SimilarReader
 }
+
+// SimilarReader is the narrow surface this package needs from the
+// embeddings reader. *embeddings.Reader satisfies it. The interface
+// lives here (consumer-defined) so the assets package doesn't import
+// the embeddings package.
+type SimilarReader interface {
+	HasEmbedding(ctx context.Context, anchorID uuid.UUID, provider, model, modality string) (bool, error)
+	FindSimilarByAnchor(ctx context.Context, anchorID uuid.UUID, provider, model, modality string, limit int) ([]SimilarNeighbour, error)
+}
+
+// SimilarNeighbour mirrors embeddings.Neighbour as a local type so
+// the SimilarReader interface doesn't drag the embeddings package
+// into this one's import graph. The adapter at the boot wire
+// converts between the two.
+type SimilarNeighbour struct {
+	AssetID  uuid.UUID
+	Distance float64
+}
+
+// SetSimilarReader injects the embeddings-side reader for the
+// /assets/{id}/similar endpoint. Boot wire is the only caller.
+func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.

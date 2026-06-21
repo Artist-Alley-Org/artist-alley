@@ -164,6 +164,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	//     wedge on a misconfigured config row
 	//   - TranscriptWriter stub → Phase 1.14.C (Whisper)
 	var embedWriter ai.EmbeddingWriter = ai.NewStubEmbeddingWriter()
+	var embedReader *aiembeddings.Reader
 	if w, err := aiembeddings.NewWriter(context.Background(), pool, logger); err != nil {
 		logger.LogAttrs(context.Background(), slog.LevelWarn,
 			"ai.embeddings.writer.load.failed",
@@ -172,6 +173,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		)
 	} else {
 		embedWriter = w
+		// Reader shares the writer's dim_registry so a model bump
+		// is visible to both without re-construction.
+		embedReader = aiembeddings.NewReader(pool, w.DimRegistry())
+	}
+	// Inject the reader into the assets handler via the consumer-
+	// defined SimilarReader seam — keeps embeddings out of assets'
+	// import graph. Adapter converts the local SimilarNeighbour
+	// type to the embeddings package's Neighbour.
+	if embedReader != nil {
+		s.assets.SetSimilarReader(similarReaderAdapter{r: embedReader})
 	}
 	s.aiBridge = ai.Bridge{
 		Lookup:           s.assets,
@@ -1126,6 +1137,29 @@ func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
 
 // --- cross-package adapters for the notifications wiring ----------
 
+// similarReaderAdapter bridges the embeddings package's Reader to
+// the assets package's consumer-defined SimilarReader interface.
+// The dual-type pattern keeps the two packages decoupled — assets
+// can't import embeddings (cycle risk + scope creep), so we wrap
+// here at the boot wire.
+type similarReaderAdapter struct{ r *aiembeddings.Reader }
+
+func (a similarReaderAdapter) HasEmbedding(ctx context.Context, anchorID uuid.UUID, provider, model, modality string) (bool, error) {
+	return a.r.HasEmbedding(ctx, anchorID, provider, model, modality)
+}
+
+func (a similarReaderAdapter) FindSimilarByAnchor(ctx context.Context, anchorID uuid.UUID, provider, model, modality string, limit int) ([]assets.SimilarNeighbour, error) {
+	ns, err := a.r.FindSimilarByAnchor(ctx, anchorID, provider, model, modality, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]assets.SimilarNeighbour, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, assets.SimilarNeighbour{AssetID: n.AssetID, Distance: n.Distance})
+	}
+	return out, nil
+}
+
 // socialBlockAdapter satisfies notifications' blockChecker via
 // *social.Handler — the public HasBlockBetween method is the cached,
 // cross-package-safe entry point.
@@ -1415,6 +1449,10 @@ func (s *apiServer) AddAssetTags(ctx context.Context, req openapi.AddAssetTagsRe
 
 func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.RecreateAssetPreviewRequestObject) (openapi.RecreateAssetPreviewResponseObject, error) {
 	return s.assets.RecreateAssetPreview(ctx, req)
+}
+
+func (s *apiServer) ListSimilarAssets(ctx context.Context, req openapi.ListSimilarAssetsRequestObject) (openapi.ListSimilarAssetsResponseObject, error) {
+	return s.assets.ListSimilarAssets(ctx, req)
 }
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {

@@ -3762,6 +3762,60 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /assets/{id}/similar:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listSimilarAssets
+      summary: Find assets nearest to this one by vector similarity (Phase 1.14.B)
+      description: |
+        Returns up to `limit` other assets whose embeddings sit
+        closest to this asset's embedding in cosine space. The
+        anchor asset itself is excluded from the result set.
+
+        Lookup uses the embedding row for the configured default
+        model (`system_config.ai.embedding.default_model`). If the
+        anchor has no embedding yet (job hasn't run / asset has no
+        embeddable text), the response is `200` with an empty
+        `results` array — the caller can treat this as "no
+        recommendations yet" rather than an error.
+
+        Cosine `distance` is in `[0, 2]`; lower = more similar
+        (0 = identical vector, 1 = orthogonal). The UI typically
+        clamps the visible set at `distance < 1.0` to avoid
+        random-looking suggestions for sparse catalogues.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 12
+            description: |
+              Max neighbours to return. Default 12 matches the asset
+              detail panel's 4-col grid (3 rows visible without
+              scroll). Server-side cap is 50.
+      responses:
+        "200":
+          description: Ranked nearest neighbours (anchor excluded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimilarAssets"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/preview:
     parameters:
       - name: id
@@ -8419,6 +8473,36 @@ components:
           description: |
             Pass back as the `cursor` query param to fetch the next
             page. null when the current page is the last.
+    SimilarAsset:
+      type: object
+      required: [asset, distance]
+      description: |
+        One nearest-neighbour from /assets/{id}/similar (Phase 1.14.B).
+        `asset` is the standard Asset projection; `distance` is the
+        cosine distance to the anchor — lower = more similar.
+      properties:
+        asset:    { $ref: "#/components/schemas/Asset" }
+        distance:
+          type: number
+          format: double
+          description: |
+            Cosine distance in [0, 2]. 0 = identical vector,
+            1 = orthogonal, 2 = opposite. Frontend typically clamps
+            visible suggestions to distance < 1.0.
+    SimilarAssets:
+      type: object
+      required: [results, anchor_has_embedding]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/SimilarAsset" }
+        anchor_has_embedding:
+          type: boolean
+          description: |
+            False when the anchor asset hasn't been embedded yet
+            (ai.embed job hasn't run or asset has no embeddable
+            text). UI uses this to disambiguate the empty `results`
+            array: "embedding pending" vs "no similar assets exist".
     Post:
       type: object
       description: |

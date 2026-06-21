@@ -590,6 +590,11 @@ func (*PanicShim) RequestAssetAccess(context.Context, openapi.RequestAssetAccess
 	panic("PanicShim: RequestAssetAccess called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListSimilarAssets panics by default; test shims override.
+func (*PanicShim) ListSimilarAssets(context.Context, openapi.ListSimilarAssetsRequestObject) (openapi.ListSimilarAssetsResponseObject, error) {
+	panic("PanicShim: ListSimilarAssets called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListSubtitleTracks panics by default; test shims override.
 func (*PanicShim) ListSubtitleTracks(context.Context, openapi.ListSubtitleTracksRequestObject) (openapi.ListSubtitleTracksResponseObject, error) {
 	panic("PanicShim: ListSubtitleTracks called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
