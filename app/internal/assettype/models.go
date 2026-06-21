@@ -156,9 +156,13 @@ type AssetSubtitleTrack struct {
 }
 
 type AssetTag struct {
-	AssetID pgtype.UUID        `json:"asset_id"`
-	Tag     string             `json:"tag"`
-	AddedAt pgtype.Timestamptz `json:"added_at"`
+	AssetID           pgtype.UUID        `json:"asset_id"`
+	Tag               string             `json:"tag"`
+	AddedAt           pgtype.Timestamptz `json:"added_at"`
+	Source            string             `json:"source"`
+	Confidence        *float32           `json:"confidence"`
+	CreatedByProvider *string            `json:"created_by_provider"`
+	CreatedByModel    *string            `json:"created_by_model"`
 }
 
 type AssetType struct {

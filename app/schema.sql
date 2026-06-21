@@ -617,7 +617,13 @@ CREATE TABLE public.asset_field_value_history (
 CREATE TABLE public.asset_tag (
     asset_id uuid NOT NULL,
     tag text NOT NULL,
-    added_at timestamp with time zone DEFAULT now() NOT NULL
+    added_at timestamp with time zone DEFAULT now() NOT NULL,
+    source text DEFAULT 'manual'::text NOT NULL,
+    confidence real,
+    created_by_provider text,
+    created_by_model text,
+    CONSTRAINT asset_tag_confidence_check CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
+    CONSTRAINT asset_tag_source_check CHECK (source = ANY (ARRAY['manual'::text, 'ai'::text, 'import'::text]))
 );
 
 
@@ -2370,6 +2376,20 @@ CREATE INDEX asset_field_value_text_idx ON public.asset_field_value USING btree 
 --
 
 CREATE INDEX asset_tag_tag_idx ON public.asset_tag USING btree (tag);
+
+
+--
+-- Name: idx_asset_tag_ai_provenance; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_tag_ai_provenance ON public.asset_tag USING btree (created_by_model, added_at DESC) WHERE (source = 'ai'::text);
+
+
+--
+-- Name: idx_asset_tag_asset_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_tag_asset_source ON public.asset_tag USING btree (asset_id, source);
 
 
 --
