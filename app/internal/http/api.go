@@ -56,6 +56,7 @@ import (
 	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
 	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
 	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
+	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -184,12 +185,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	if embedReader != nil {
 		s.assets.SetSimilarReader(similarReaderAdapter{r: embedReader})
 	}
+	// Phase 1.14.C — concrete TranscriptWriter. Writes pre-marshalled
+	// VTT bytes to storage + upserts the asset_subtitle_tracks row
+	// with source_format='whisper'. The orchestration that produces
+	// the VTT (extract → chunk → router → stitch → marshal) lives in
+	// transcribe.Handler and is invoked by the ai.transcribe job
+	// handler — Writer is the smaller bridge contract that any
+	// caller with VTT bytes in hand can use.
+	transcribeStorage := aitranscribe.NewStorageAdapter(storageSvc)
+	transcriptWriter := aitranscribe.NewWriter(transcribeStorage, s.subtitles, logger)
+
 	s.aiBridge = ai.Bridge{
 		Lookup:           s.assets,
 		TagWriter:        s.assets,
 		CaptionWriter:    ai.NewStubCaptionWriter(),
 		EmbeddingWriter:  embedWriter,
-		TranscriptWriter: ai.NewStubTranscriptWriter(),
+		TranscriptWriter: transcriptWriter,
 	}
 
 	// Phase 1.14.B — wire the AI router + register the clip_local
