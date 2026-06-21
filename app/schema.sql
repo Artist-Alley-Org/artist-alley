@@ -4258,7 +4258,7 @@ CREATE TABLE public.asset_subtitle_tracks (
     label          text   NOT NULL DEFAULT '',
     file_hash      text   NOT NULL,
     source_format  text   NOT NULL
-        CHECK (source_format IN ('vtt','srt','ssa','ass','sub','idx')),
+        CHECK (source_format IN ('vtt','srt','ssa','ass','sub','idx','whisper')),
     confidence     real   NOT NULL DEFAULT 1.0
         CHECK (confidence >= 0 AND confidence <= 1),
     created_at     timestamptz NOT NULL DEFAULT NOW(),
