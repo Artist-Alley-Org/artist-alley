@@ -130,6 +130,21 @@ func (q *Queries) AddAssetTag(ctx context.Context, arg AddAssetTagParams) error 
 	return err
 }
 
+const assetExistsForAI = `-- name: AssetExistsForAI :one
+SELECT EXISTS (
+    SELECT 1 FROM assets WHERE id = $1 AND deleted_at IS NULL
+)::BOOLEAN AS exists
+`
+
+// Cheap existence probe for the bridge. Returns true when the
+// asset exists + isn't soft-deleted.
+func (q *Queries) AssetExistsForAI(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, assetExistsForAI, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const createAsset = `-- name: CreateAsset :one
 INSERT INTO assets (
     title, description, asset_type, owner_user_ref, status,
@@ -216,6 +231,19 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Creat
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteAITagsForAsset = `-- name: DeleteAITagsForAsset :exec
+DELETE FROM asset_tag
+ WHERE asset_id = $1 AND source = 'ai'
+`
+
+// Idempotent: removes every AI-source tag for one asset. Called by
+// SetAITagsForAsset inside the same tx as the fresh inserts so the
+// merge is atomic.
+func (q *Queries) DeleteAITagsForAsset(ctx context.Context, assetID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAITagsForAsset, assetID)
+	return err
 }
 
 const deleteAssetAlternate = `-- name: DeleteAssetAlternate :exec
@@ -407,6 +435,69 @@ func (q *Queries) GetAssetCompanionByPath(ctx context.Context, arg GetAssetCompa
 	return i, err
 }
 
+const getAssetForAIBridge = `-- name: GetAssetForAIBridge :one
+
+SELECT
+    a.id,
+    a.asset_type,
+    a.sensitivity,
+    a.team_id,
+    a.title,
+    a.file_hash,
+    a.has_image,
+    COALESCE(
+        (SELECT json_agg(json_build_object('tag', t.tag, 'source', t.source))
+           FROM asset_tag t
+          WHERE t.asset_id = a.id),
+        '[]'::json
+    )::TEXT AS existing_tags_json
+FROM assets a
+WHERE a.id = $1 AND a.deleted_at IS NULL
+`
+
+type GetAssetForAIBridgeRow struct {
+	ID               pgtype.UUID
+	AssetType        int64
+	Sensitivity      string
+	TeamID           pgtype.UUID
+	Title            string
+	FileHash         *string
+	HasImage         bool
+	ExistingTagsJson string
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.14.A-bridge — AI bridge queries.
+//
+// AssetLookup + TagWriter implementations on assets.Handler consume
+// these. Mirrored on the file_hash + thumbhash columns since the
+// assets schema doesn't carry separate primary_image / primary_audio
+// references (that was an audit-first finding vs the brief's
+// assumption).
+// ---------------------------------------------------------------------------
+// Read-side projection for the ai.AssetLookup bridge. Returns the
+// minimal column set the AI handlers need; the asset row stays
+// untouched.
+//
+// existing_tags is the JSON-aggregated list of (tag, source) pairs
+// so the AI handler can pass operator-set tags as prompt context
+// (don't re-suggest those) without a second round-trip.
+func (q *Queries) GetAssetForAIBridge(ctx context.Context, id pgtype.UUID) (GetAssetForAIBridgeRow, error) {
+	row := q.db.QueryRow(ctx, getAssetForAIBridge, id)
+	var i GetAssetForAIBridgeRow
+	err := row.Scan(
+		&i.ID,
+		&i.AssetType,
+		&i.Sensitivity,
+		&i.TeamID,
+		&i.Title,
+		&i.FileHash,
+		&i.HasImage,
+		&i.ExistingTagsJson,
+	)
+	return i, err
+}
+
 const getAssetSensitivity = `-- name: GetAssetSensitivity :one
 SELECT sensitivity
   FROM assets
@@ -423,6 +514,34 @@ func (q *Queries) GetAssetSensitivity(ctx context.Context, id pgtype.UUID) (stri
 	var sensitivity string
 	err := row.Scan(&sensitivity)
 	return sensitivity, err
+}
+
+const insertAITagForAsset = `-- name: InsertAITagForAsset :exec
+INSERT INTO asset_tag
+    (asset_id, tag, source, confidence, created_by_provider, created_by_model)
+VALUES ($1, $2, 'ai', $3::REAL, $4::TEXT, $5::TEXT)
+`
+
+type InsertAITagForAssetParams struct {
+	AssetID    pgtype.UUID
+	Tag        string
+	Confidence *float32
+	Provider   *string
+	Model      *string
+}
+
+// Per-tag insert (one row per AI-generated tag). SetAITagsForAsset
+// loops over the AI output + inserts each. Single-row inserts are
+// fine — typical AI returns < 30 tags per asset.
+func (q *Queries) InsertAITagForAsset(ctx context.Context, arg InsertAITagForAssetParams) error {
+	_, err := q.db.Exec(ctx, insertAITagForAsset,
+		arg.AssetID,
+		arg.Tag,
+		arg.Confidence,
+		arg.Provider,
+		arg.Model,
+	)
+	return err
 }
 
 const listAssetAlternates = `-- name: ListAssetAlternates :many

@@ -89,6 +89,7 @@ type apiServer struct {
 	licensing     *licensing.Handler
 	userprefs     *userprefs.Handler
 	aiAdmin       *aiadmin.Handler // Phase 1.14.A inference subsystem admin surface
+	aiBridge      ai.Bridge        // Phase 1.14.A-bridge — read/write seam for AI handlers
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -146,6 +147,24 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		userprefs:    userprefs.NewHandler(pool, logger, cacheReg),
 		aiAdmin:      newAIAdminHandler(pool, cacheReg),
 	}
+	// Phase 1.14.A-bridge — assemble the AI bridge aggregator from
+	// the assets.Handler (real reader + tag writer) + stubs for the
+	// not-yet-shipped writers. Future AI job handlers + admin reconcile
+	// surface depend on this struct; assembling it once here keeps
+	// the wire site discoverable and lets reviewers see in one place
+	// which writers are stubbed vs concrete.
+	//
+	//   - CaptionWriter   stub  → assets caption schema follow-up
+	//   - EmbeddingWriter stub  → Phase 1.14.B (pgvector)
+	//   - TranscriptWriter stub → Phase 1.14.C (Whisper)
+	s.aiBridge = ai.Bridge{
+		Lookup:           s.assets,
+		TagWriter:        s.assets,
+		CaptionWriter:    ai.NewStubCaptionWriter(),
+		EmbeddingWriter:  ai.NewStubEmbeddingWriter(),
+		TranscriptWriter: ai.NewStubTranscriptWriter(),
+	}
+
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
 	// post-construction since the two handlers are siblings in the

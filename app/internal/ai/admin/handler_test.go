@@ -90,10 +90,15 @@ func TestPutConfig_ValidatorRejectsLockOnWithEmptyLocalList(t *testing.T) {
 
 func TestPutConfig_HappyPath_PersistsAndReturns200(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
-	// Reset config to seeded defaults at end so a parallel test
-	// run doesn't see our edits.
-	t.Cleanup(func() { resetConfigToDefaults(context.Background(), pool) })
+	// t.Cleanup runs AFTER defers, so reset BEFORE closing the pool
+	// (otherwise the cleanup hits a closed pool and silently fails,
+	// leaving ai.routing in the dirtied state for the next package
+	// run — exactly the brittleness that flaked
+	// TestGetConfig_HappyPath_ReturnsSeededDefaults locally).
+	t.Cleanup(func() {
+		resetConfigToDefaults(context.Background(), pool)
+		pool.Close()
+	})
 
 	router := makeRouter(t, pool, []string{aiadmin.CapAIAdmin})
 

@@ -42,8 +42,12 @@
 name: UI dogfood (standalone)
 
 on:
+  # No feat/** push trigger — see ci.yml's comment block for the
+  # rationale. tl;dr push + pull_request:synchronize used to fire
+  # twice per commit, landed in different concurrency groups, and
+  # the cancelled duplicate tripped PR mergeStateStatus=UNSTABLE.
   push:
-    branches: [main, dev, "feat/**"]
+    branches: [main, dev]
     # Same docs-only-skip rationale as ci.yml — see the comment
     # block there for the branch-protection note + the **.md
     # caveat.
@@ -63,6 +67,7 @@ on:
       - 'CHANGELOG.md'
       - '.github/ISSUE_TEMPLATE/**'
       - 'LICENSE'
+  workflow_dispatch:
 
 concurrency:
   group: ui-pr-${{ github.workflow }}-${{ github.ref }}

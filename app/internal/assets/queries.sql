@@ -292,3 +292,60 @@ UPDATE assets
    SET sensitivity = $2,
        updated_at = NOW()
  WHERE id = $1;
+
+-- ---------------------------------------------------------------------------
+-- Phase 1.14.A-bridge — AI bridge queries.
+--
+-- AssetLookup + TagWriter implementations on assets.Handler consume
+-- these. Mirrored on the file_hash + thumbhash columns since the
+-- assets schema doesn't carry separate primary_image / primary_audio
+-- references (that was an audit-first finding vs the brief's
+-- assumption).
+-- ---------------------------------------------------------------------------
+
+-- name: GetAssetForAIBridge :one
+-- Read-side projection for the ai.AssetLookup bridge. Returns the
+-- minimal column set the AI handlers need; the asset row stays
+-- untouched.
+--
+-- existing_tags is the JSON-aggregated list of (tag, source) pairs
+-- so the AI handler can pass operator-set tags as prompt context
+-- (don't re-suggest those) without a second round-trip.
+SELECT
+    a.id,
+    a.asset_type,
+    a.sensitivity,
+    a.team_id,
+    a.title,
+    a.file_hash,
+    a.has_image,
+    COALESCE(
+        (SELECT json_agg(json_build_object('tag', t.tag, 'source', t.source))
+           FROM asset_tag t
+          WHERE t.asset_id = a.id),
+        '[]'::json
+    )::TEXT AS existing_tags_json
+FROM assets a
+WHERE a.id = $1 AND a.deleted_at IS NULL;
+
+-- name: DeleteAITagsForAsset :exec
+-- Idempotent: removes every AI-source tag for one asset. Called by
+-- SetAITagsForAsset inside the same tx as the fresh inserts so the
+-- merge is atomic.
+DELETE FROM asset_tag
+ WHERE asset_id = $1 AND source = 'ai';
+
+-- name: InsertAITagForAsset :exec
+-- Per-tag insert (one row per AI-generated tag). SetAITagsForAsset
+-- loops over the AI output + inserts each. Single-row inserts are
+-- fine — typical AI returns < 30 tags per asset.
+INSERT INTO asset_tag
+    (asset_id, tag, source, confidence, created_by_provider, created_by_model)
+VALUES ($1, $2, 'ai', sqlc.narg('confidence')::REAL, sqlc.narg('provider')::TEXT, sqlc.narg('model')::TEXT);
+
+-- name: AssetExistsForAI :one
+-- Cheap existence probe for the bridge. Returns true when the
+-- asset exists + isn't soft-deleted.
+SELECT EXISTS (
+    SELECT 1 FROM assets WHERE id = $1 AND deleted_at IS NULL
+)::BOOLEAN AS exists;

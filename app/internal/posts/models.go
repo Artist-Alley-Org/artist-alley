@@ -156,9 +156,13 @@ type AssetSubtitleTrack struct {
 }
 
 type AssetTag struct {
-	AssetID pgtype.UUID
-	Tag     string
-	AddedAt pgtype.Timestamptz
+	AssetID           pgtype.UUID
+	Tag               string
+	AddedAt           pgtype.Timestamptz
+	Source            string
+	Confidence        *float32
+	CreatedByProvider *string
+	CreatedByModel    *string
 }
 
 type AssetType struct {
