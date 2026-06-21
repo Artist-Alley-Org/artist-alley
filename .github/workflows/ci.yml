@@ -79,29 +79,32 @@ jobs:
     name: Frontend type-check + build
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 10
+    # Run inside the same node:22-alpine image our dev web container
+    # uses so the @rolldown/binding-linux-x64-musl binary (the one
+    # in our lockfile) installs without npm needing to swap in the
+    # gnu variant. The previous setup ran on the ubuntu (glibc)
+    # runner and tried to use the gnu rolldown binding, which has
+    # had a TS-in-svelte parser regression we kept hitting. Alpine
+    # sidesteps the gnu binary entirely.
+    container:
+      image: node:22-alpine
     steps:
+      # alpine's node image doesn't ship git; actions/checkout@v4
+      # needs it for the clone step. Install before checkout so the
+      # rest of the job has a real git tree.
+      - name: Install git
+        run: apk add --no-cache git
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: web/package-lock.json
-
       - name: Install web deps
-        # Our committed lockfile was generated inside the alpine web
-        # container so it only pins @rolldown/binding-linux-x64-musl.
-        # On an ubuntu runner (glibc), rolldown wants the gnu variant
-        # and neither `npm ci` nor `npm install` will backfill it
-        # because the lockfile says it's not in the tree.
-        # Per https://github.com/npm/cli/issues/4828 the documented
-        # fix is to nuke the lockfile before install so resolution
-        # picks the right per-platform optional dep. We don't commit
-        # the regenerated lockfile back.
+        # `npm ci` honours the committed lockfile exactly. The lock
+        # was generated inside the dev web container (also musl) so
+        # the platform binding entry matches the runner's libc.
+        # When upstream rolldown gnu binding regains parser parity,
+        # we can move back to ubuntu-latest with `npm ci` and drop
+        # the alpine container override.
         working-directory: web
-        run: |
-          rm -f package-lock.json
-          npm install --no-audit
+        run: npm ci --no-audit
 
       - name: Generate API schema (TypeScript types from openapi.yaml)
         working-directory: web
@@ -160,14 +163,16 @@ jobs:
           (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
 
       - name: Regenerate frontend TypeScript schema
-        # See frontend-check for why we drop the lockfile.
+        # Use npx -y to fetch openapi-typescript on demand instead
+        # of running npm install — the drift check only needs the
+        # TS-from-yaml generator, not the full vite/rolldown
+        # toolchain. Avoids the per-platform rolldown binding issue
+        # that previously forced us to nuke the lockfile here.
         working-directory: web
         env:
           AA_OPENAPI_SPEC: ../app/api/openapi.yaml
         run: |
-          rm -f package-lock.json
-          npm install --no-audit
-          npm run generate:api
+          npx -y openapi-typescript "$AA_OPENAPI_SPEC" -o src/lib/api/schema.d.ts
 
       - name: Fail if Go-generated files drifted
         # 1.22.I-f hardening: the prior check globbed
