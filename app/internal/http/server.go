@@ -466,6 +466,18 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.api.capabilitySweeper.Run(ctx)
 		s.logger.LogAttrs(ctx, slog.LevelInfo, "auth.capability_sweeper.start")
 	}
+	// Phase 1.53.A — MCP-client per-server health-check supervisor.
+	// Spawns one polling goroutine per currently-enabled MCP server;
+	// supervisor + children exit when ctx cancels.
+	if s.api != nil && s.api.mcpHealth != nil {
+		go func() {
+			if err := s.api.mcpHealth.Run(ctx); err != nil {
+				s.logger.LogAttrs(ctx, slog.LevelWarn, "mcp.healthcheck.exit",
+					slog.String("err", err.Error()))
+			}
+		}()
+		s.logger.LogAttrs(ctx, slog.LevelInfo, "mcp.healthcheck.start")
+	}
 
 	listenErr := make(chan error, 1)
 	go func() {

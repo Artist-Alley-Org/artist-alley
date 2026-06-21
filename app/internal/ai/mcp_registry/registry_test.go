@@ -74,7 +74,12 @@ func sampleInsert(name string) mcpregistry.InsertParams {
 
 func TestRegistry_Insert_PersistsAndReadsBack(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const name = "test_registry_insert"
@@ -108,7 +113,12 @@ func TestRegistry_Insert_PersistsAndReadsBack(t *testing.T) {
 
 func TestRegistry_Insert_DuplicateName_ReturnsSentinel(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const name = "test_registry_duplicate"
@@ -125,7 +135,12 @@ func TestRegistry_Insert_DuplicateName_ReturnsSentinel(t *testing.T) {
 
 func TestRegistry_GetServerByID_NotFound_ReturnsSentinel(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	missing := mustParseUUID(t, "deadbeef-dead-beef-dead-beefdeadbeef")
@@ -137,7 +152,12 @@ func TestRegistry_GetServerByID_NotFound_ReturnsSentinel(t *testing.T) {
 
 func TestRegistry_Update_PartialFields(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const name = "test_registry_update"
@@ -173,7 +193,12 @@ func TestRegistry_Update_PartialFields(t *testing.T) {
 
 func TestRegistry_UpdateHealthStatus_SetsAndClears(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const name = "test_registry_health"
@@ -205,7 +230,12 @@ func TestRegistry_UpdateHealthStatus_SetsAndClears(t *testing.T) {
 
 func TestRegistry_Delete_CascadesToToolGrants(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const name = "test_registry_delete_cascade"
@@ -243,7 +273,12 @@ func TestRegistry_Delete_CascadesToToolGrants(t *testing.T) {
 
 func TestRegistry_ListEnabledServers_FiltersByFlag(t *testing.T) {
 	pool := openPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER defers, so closing the pool inside the
+	// Cleanup (instead of defer) keeps cleanupServer's DELETE alive
+	// long enough to actually run. Otherwise the pool is closed
+	// first and the DELETE silently no-ops, leaving stale rows that
+	// trip the duplicate-name guard on the next run.
+	t.Cleanup(func() { pool.Close() })
 	r := freshRegistry(t, pool)
 
 	const enabledName = "test_registry_list_enabled_on"
