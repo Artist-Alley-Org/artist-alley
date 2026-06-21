@@ -79,56 +79,73 @@ jobs:
     name: Frontend type-check + build
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 10
-    # Run inside the same node:22-alpine image our dev web container
-    # uses so the @rolldown/binding-linux-x64-musl binary (the one
-    # in our lockfile) installs without npm needing to swap in the
-    # gnu variant. The previous setup ran on the ubuntu (glibc)
-    # runner and tried to use the gnu rolldown binding, which has
-    # had a TS-in-svelte parser regression we kept hitting. Alpine
-    # sidesteps the gnu binary entirely.
-    container:
-      image: node:22-alpine
+    # All node work runs inside `docker run node:22-alpine` rather
+    # than via the workflow's `container:` directive. Why:
+    #
+    # `container:` makes GitHub Actions inject a node24_alpine
+    # binary at /__e/node24_alpine for JS actions like
+    # actions/checkout — github-hosted runners ship that binary;
+    # our self-hosted runner doesn't, so the inject fails with
+    # "stat /__e/node24_alpine/bin/node: no such file or directory"
+    # before any user step runs.
+    #
+    # Doing the alpine work as per-step `docker run` keeps the
+    # runner itself off alpine — actions/checkout uses the runner's
+    # bare node like every other job — and the build tools (npm,
+    # vite, rolldown) execute against musl inside the container,
+    # matching the lockfile and dodging the gnu rolldown parser
+    # regression.
     steps:
-      # alpine's node image doesn't ship git; actions/checkout@v4
-      # needs it for the clone step. Install before checkout so the
-      # rest of the job has a real git tree.
-      - name: Install git
-        run: apk add --no-cache git
       - uses: actions/checkout@v4
 
-      - name: Install web deps
-        # `npm ci` honours the committed lockfile exactly. The lock
-        # was generated inside the dev web container (also musl) so
-        # the platform binding entry matches the runner's libc.
-        # When upstream rolldown gnu binding regains parser parity,
-        # we can move back to ubuntu-latest with `npm ci` and drop
-        # the alpine container override.
-        working-directory: web
-        run: npm ci --no-audit
+      # Pre-pull once so subsequent steps don't each pay the
+      # cold-start cost.
+      - name: Pull alpine node image
+        run: docker pull node:22-alpine
+
+      - name: Install web deps (npm ci against committed lockfile)
+        # npm 10 (alpine default) tolerates the lockfile not listing
+        # every cross-platform optional binding; the lock was
+        # generated on alpine so its musl-binding entry matches.
+        # Sidesteps both the upstream gnu-rolldown parser bug AND
+        # the npm 11 strictness mismatch we hit chasing this.
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            node:22-alpine \
+            sh -c 'npm ci --no-audit'
 
       - name: Generate API schema (TypeScript types from openapi.yaml)
-        working-directory: web
-        env:
-          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
-        run: npm run generate:api
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e AA_OPENAPI_SPEC=../app/api/openapi.yaml \
+            node:22-alpine \
+            npm run generate:api
 
       - name: svelte-check
-        working-directory: web
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: npm run check
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm run check
 
       - name: vitest (frontend unit tests)
-        working-directory: web
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: npm test
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm test
 
       - name: vite build (catches errors svelte-check can't)
-        working-directory: web
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: npm run build
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm run build
 
   # ── Detect stale generated code. Re-runs sqlc + oapi-codegen +
   # openapi-typescript against the in-tree specs and `git diff`s the
