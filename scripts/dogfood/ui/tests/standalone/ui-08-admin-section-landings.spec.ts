@@ -30,7 +30,7 @@ const SECTION_LANDINGS = [
   },
   {
     slug: 'system',
-    expectedTiles: ['Site', 'SMTP', 'Authentication', 'AI providers'],
+    expectedTiles: ['Site', 'SMTP', 'Authentication', 'AI'],
   },
 ];
 
