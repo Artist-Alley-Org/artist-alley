@@ -179,6 +179,41 @@ func (r *Router) Embed(ctx context.Context, in EmbedInput, privacy PrivacyClass)
 	return nil, fmt.Errorf("ai: all embedding providers failed: %w", lastErr)
 }
 
+// Transcribe dispatches a transcription request. Same walk shape as
+// Complete + Embed. Privacy gate clamps restricted/embargo assets
+// to local-only providers; budget gate runs before each provider
+// attempt; transient errors walk the fallback chain, terminal
+// errors short-circuit.
+func (r *Router) Transcribe(ctx context.Context, audio AudioInput, opts TranscribeOpts, privacy PrivacyClass) (Transcript, error) {
+	candidates, terminal := r.candidatesForTranscription(ctx, privacy)
+	if terminal != nil {
+		return Transcript{}, terminal
+	}
+
+	var lastErr error
+	for _, p := range candidates {
+		if err := r.budget.CheckBudgetBefore(ctx, p.Name(), 0); err != nil {
+			lastErr = err
+			if isTerminal(err) {
+				return Transcript{}, err
+			}
+			continue
+		}
+		tx, err := p.Transcribe(ctx, audio, opts)
+		if err == nil {
+			return tx, nil
+		}
+		lastErr = err
+		if isTerminal(err) {
+			return Transcript{}, err
+		}
+	}
+	if lastErr == nil {
+		return Transcript{}, ErrNoProviderAvailable
+	}
+	return Transcript{}, fmt.Errorf("ai: all transcription providers failed: %w", lastErr)
+}
+
 // Tag dispatches a tagging request.
 func (r *Router) Tag(ctx context.Context, asset AssetRef, opts TagOpts, privacy PrivacyClass) ([]Tag, error) {
 	candidates, terminal := r.candidatesForTag(ctx, privacy)
@@ -272,6 +307,20 @@ func (r *Router) candidatesForEmbedding(ctx context.Context, privacy PrivacyClas
 	out := make([]EmbeddingProvider, 0, len(names))
 	for _, n := range names {
 		if p, ok := r.providers[n].(EmbeddingProvider); ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (r *Router) candidatesForTranscription(ctx context.Context, privacy PrivacyClass) ([]TranscriptionProvider, error) {
+	names, terminal := r.orderedNames(ctx, ConcernTranscribe, privacy)
+	if terminal != nil {
+		return nil, terminal
+	}
+	out := make([]TranscriptionProvider, 0, len(names))
+	for _, n := range names {
+		if p, ok := r.providers[n].(TranscriptionProvider); ok {
 			out = append(out, p)
 		}
 	}

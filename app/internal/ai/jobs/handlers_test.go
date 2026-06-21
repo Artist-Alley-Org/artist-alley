@@ -528,3 +528,109 @@ func TestEmbedIdempotencyKey_StableAcrossCalls(t *testing.T) {
 var _ EmbedRouter = (*stubEmbedRouter)(nil)
 var _ EmbedAssetLookup = (*stubEmbedAssets)(nil)
 var _ EmbedWriter = (*stubEmbedWriter)(nil)
+
+// ---------------------------------------------------------------------------
+// TranscribeHandler — Phase 1.14.C
+// ---------------------------------------------------------------------------
+
+type stubTranscribeOrch struct {
+	got    uuid.UUID
+	gotOpts TranscribeOrchestratorOpts
+	result TranscribeOrchestratorResult
+	err    error
+}
+
+func (s *stubTranscribeOrch) TranscribeAsset(_ context.Context, id uuid.UUID, opts TranscribeOrchestratorOpts) (TranscribeOrchestratorResult, error) {
+	s.got = id
+	s.gotOpts = opts
+	return s.result, s.err
+}
+
+func TestTranscribeHandler_HappyPath_ReturnsLanguage(t *testing.T) {
+	id := uuid.New()
+	orch := &stubTranscribeOrch{result: TranscribeOrchestratorResult{Language: "en", VTTBytes: 1024}}
+	h := NewTranscribeHandler(orch)
+
+	payload, _ := json.Marshal(TranscribePayload{AssetID: id, LangHint: "en"})
+	res, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if orch.got != id {
+		t.Errorf("orch asset = %s, want %s", orch.got, id)
+	}
+	if orch.gotOpts.LanguageHint != "en" {
+		t.Errorf("orch LanguageHint = %q, want en", orch.gotOpts.LanguageHint)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatalf("result unmarshal: %v", err)
+	}
+	if got["language"] != "en" {
+		t.Errorf("result language = %v, want en", got["language"])
+	}
+}
+
+func TestTranscribeHandler_BadPayload_TerminalError(t *testing.T) {
+	h := NewTranscribeHandler(&stubTranscribeOrch{})
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: []byte("not-json")})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("got %v, want TerminalError", err)
+	}
+}
+
+func TestTranscribeHandler_MissingAssetID_TerminalError(t *testing.T) {
+	h := NewTranscribeHandler(&stubTranscribeOrch{})
+	payload, _ := json.Marshal(TranscribePayload{})
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("got %v, want TerminalError for missing asset_id", err)
+	}
+}
+
+func TestTranscribeHandler_AssetNotFound_TerminalError(t *testing.T) {
+	orch := &stubTranscribeOrch{err: ai.ErrAssetNotFound}
+	h := NewTranscribeHandler(orch)
+	payload, _ := json.Marshal(TranscribePayload{AssetID: uuid.New()})
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("got %v, want TerminalError for asset not found", err)
+	}
+	if !errors.Is(err, ai.ErrAssetNotFound) {
+		t.Errorf("err chain should contain ai.ErrAssetNotFound; got %v", err)
+	}
+}
+
+func TestTranscribeHandler_PermanentAIError_Terminal(t *testing.T) {
+	orch := &stubTranscribeOrch{
+		err: &ai.ProviderError{Class: ai.ErrClassPermanent, Wrapped: errors.New("model not found")},
+	}
+	h := NewTranscribeHandler(orch)
+	payload, _ := json.Marshal(TranscribePayload{AssetID: uuid.New()})
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("permanent provider error should be terminal; got %v", err)
+	}
+}
+
+func TestTranscribeIdempotencyKey_StableAndModelSpecific(t *testing.T) {
+	id := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	k1 := TranscribeIdempotencyKey(id, "large-v3")
+	k2 := TranscribeIdempotencyKey(id, "large-v3")
+	k3 := TranscribeIdempotencyKey(id, "small")
+	if k1 != k2 {
+		t.Errorf("same (asset, model) → different keys")
+	}
+	if k1 == k3 {
+		t.Errorf("different models → same key (bumping model must trigger fresh job)")
+	}
+	if len(k1) != 64 {
+		t.Errorf("idem key not 64-char hex; got %q", k1)
+	}
+}
+
+var _ TranscribeOrchestrator = (*stubTranscribeOrch)(nil)

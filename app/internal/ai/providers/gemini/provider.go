@@ -4,8 +4,9 @@
 // the brief (~150 LOC).
 //
 // Phase 1.14.A scope: CompletionProvider + EmbeddingProvider +
-// TagProvider + CaptionProvider. Transcription via Gemini is
-// supported but deferred to 1.14.C alongside whisper-local.
+// TagProvider + CaptionProvider. Phase 1.14.C added the
+// TranscriptionProvider via inlineData on the generateContent
+// surface (see transcribe.go).
 //
 // Wire reference: https://ai.google.dev/api/generate-content
 //   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}
@@ -413,5 +414,6 @@ func estimateChatCost(model string, inputTokens, outputTokens int) int64 {
 
 var _ ai.CompletionProvider = (*Provider)(nil)
 var _ ai.EmbeddingProvider = (*Provider)(nil)
+var _ ai.TranscriptionProvider = (*Provider)(nil) // Phase 1.14.C
 var _ ai.TagProvider = (*Provider)(nil)
 var _ ai.CaptionProvider = (*Provider)(nil)
