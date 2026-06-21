@@ -162,6 +162,15 @@ func NewHandler(
 	}
 }
 
+// OrchestratorResult is the small return shape the ai/jobs package
+// reads to populate the job's result_json. Mirrors
+// jobs.TranscribeOrchestratorResult; defined here so the boot wire
+// adapter is trivially typed.
+type OrchestratorResult struct {
+	Language string
+	VTTBytes int
+}
+
 // TranscribeOpts knobs the per-asset run.
 type TranscribeOpts struct {
 	// LanguageHint — ISO 639-1 (e.g. "en"). Empty lets the provider

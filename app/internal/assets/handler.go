@@ -382,6 +382,34 @@ func (h *Handler) CreateAsset(
 				slog.String("err", err.Error()),
 			)
 		}
+
+		// Phase 1.14.C — fan out an ai.transcribe job for audio and
+		// video uploads. Video without an audio track surfaces as
+		// an empty transcript downstream (the orchestrator ProbeDuration
+		// returns 0 and the chunker rejects); cheap to enqueue
+		// either way + the dedup-on-idempotency-key gate prevents
+		// duplicate work if the upload retries.
+		ext := strings.ToLower(strings.TrimPrefix(strDefault(in.FileExtension, ""), "."))
+		_, isVideo := videoExts[ext]
+		_, isAudio := audioExtsHandler[ext]
+		if isVideo || isAudio {
+			transcribePriority := jobs.PriorityLow
+			transcribePayload := map[string]string{
+				"asset_id": newID.String(),
+				// Empty lang_hint + force_model → orchestrator uses
+				// system_config.ai.transcribe.* defaults.
+			}
+			transcribeIdem := aiTranscribeIdempotencyKey(newID.String(), "")
+			if _, err := h.Jobs.Enqueue(ctx, aiTranscribeJobType, transcribePayload, jobs.EnqueueOpts{
+				Priority:       &transcribePriority,
+				IdempotencyKey: transcribeIdem,
+			}); err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_transcribe_failed",
+					slog.String("asset_id", newID.String()),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
 	}
 
 	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
@@ -399,6 +427,19 @@ func aiEmbedIdempotencyKey(assetID, model string) string {
 	// aijobs.EmbedIdempotencyKey. Pure-string compute here avoids
 	// the cycle.
 	sum := sha256.Sum256([]byte("ai.embed|" + assetID + "|" + model))
+	return hex.EncodeToString(sum[:])
+}
+
+// aiTranscribeJobType + aiTranscribeIdempotencyKey duplicate the
+// constants from app/internal/ai/jobs for the same reason as the
+// embed pair above. Cross-package pinning test lives in
+// embed_fanout_test.go's sibling check.
+const aiTranscribeJobType jobs.JobType = "ai.transcribe"
+
+func aiTranscribeIdempotencyKey(assetID, model string) string {
+	// SHA-256("ai.transcribe|<asset_id>|<model>") hex; mirrors
+	// aijobs.TranscribeIdempotencyKey.
+	sum := sha256.Sum256([]byte("ai.transcribe|" + assetID + "|" + model))
 	return hex.EncodeToString(sum[:])
 }
 

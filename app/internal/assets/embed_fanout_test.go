@@ -36,3 +36,21 @@ func TestAIEmbedJobType_IsCanonicalString(t *testing.T) {
 		t.Errorf("aiEmbedJobType = %q, want ai.embed (must match aijobs.JobTypeEmbed)", aiEmbedJobType)
 	}
 }
+
+// Phase 1.14.C — same pinning shape for the ai.transcribe pair.
+
+func TestAITranscribeIdempotencyKey_MatchesAIJobsFormat(t *testing.T) {
+	id := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	model := "large-v3"
+	got := aiTranscribeIdempotencyKey(id.String(), model)
+	want := sha256.Sum256([]byte(fmt.Sprintf("ai.transcribe|%s|%s", id, model)))
+	if got != hex.EncodeToString(want[:]) {
+		t.Errorf("aiTranscribeIdempotencyKey drift:\n  got  %s\n  want %s", got, hex.EncodeToString(want[:]))
+	}
+}
+
+func TestAITranscribeJobType_IsCanonicalString(t *testing.T) {
+	if string(aiTranscribeJobType) != "ai.transcribe" {
+		t.Errorf("aiTranscribeJobType = %q, want ai.transcribe (must match aijobs.JobTypeTranscribe)", aiTranscribeJobType)
+	}
+}

@@ -37,9 +37,10 @@ import (
 // into the jobs.type column AND the keys the worker pool uses to
 // route to handlers.
 const (
-	JobTypeTag     jobs.JobType = "ai.tag"
-	JobTypeCaption jobs.JobType = "ai.caption"
-	JobTypeEmbed   jobs.JobType = "ai.embed"
+	JobTypeTag        jobs.JobType = "ai.tag"
+	JobTypeCaption    jobs.JobType = "ai.caption"
+	JobTypeEmbed      jobs.JobType = "ai.embed"
+	JobTypeTranscribe jobs.JobType = "ai.transcribe"
 )
 
 // ---------------------------------------------------------------------------
@@ -463,7 +464,106 @@ func isPermanentAIError(err error) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// Transcribe handler — Phase 1.14.C
+// ---------------------------------------------------------------------------
+
+// TranscribeOrchestrator is the narrow surface the transcribe job
+// handler needs. transcribe.Handler.TranscribeAsset satisfies it
+// (consumer-defined; keeps the ai/transcribe package out of this
+// one's import graph — handlers depends on transcribe via the boot
+// wire injection).
+type TranscribeOrchestrator interface {
+	TranscribeAsset(ctx context.Context, assetID uuid.UUID, opts TranscribeOrchestratorOpts) (TranscribeOrchestratorResult, error)
+}
+
+// TranscribeOrchestratorOpts mirrors transcribe.TranscribeOpts via a
+// local type so this package doesn't pull ai/transcribe in. The boot
+// wire adapter converts between the two.
+type TranscribeOrchestratorOpts struct {
+	LanguageHint  string
+	ForceModel    string
+	SubtitleLabel string
+}
+
+// TranscribeOrchestratorResult carries the resulting language for
+// the job's result payload. We don't surface the full subtitle row
+// because the job's result_json shape stays small.
+type TranscribeOrchestratorResult struct {
+	Language string
+	VTTBytes int
+}
+
+// TranscribePayload is the JSON shape the asset upload fanout writes
+// into the job payload.
+type TranscribePayload struct {
+	AssetID    uuid.UUID `json:"asset_id"`
+	LangHint   string    `json:"lang_hint,omitempty"`   // operator-supplied override
+	ForceModel string    `json:"force_model,omitempty"` // operator-supplied model override
+}
+
+// TranscribeHandler implements jobs.Handler for ai.transcribe.
+type TranscribeHandler struct {
+	Orchestrator TranscribeOrchestrator
+}
+
+// NewTranscribeHandler builds a handler.
+func NewTranscribeHandler(orch TranscribeOrchestrator) *TranscribeHandler {
+	return &TranscribeHandler{Orchestrator: orch}
+}
+
+// Type returns the dispatch identifier.
+func (h *TranscribeHandler) Type() jobs.JobType { return JobTypeTranscribe }
+
+// Handle runs the transcribe flow for one asset. The orchestrator
+// does extract → chunk → router → stitch → marshal VTT → subtitle
+// upsert; this handler just wraps payload parsing + error
+// classification.
+//
+// Error mapping mirrors EmbedHandler:
+//   - parse failure / missing asset id → TerminalError
+//   - asset lookup miss → TerminalError (ai.ErrAssetNotFound)
+//   - router permanent / budget / privacy → TerminalError
+//   - router transient → plain error (worker retries)
+func (h *TranscribeHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, error) {
+	var p TranscribePayload
+	if err := json.Unmarshal(job.Payload, &p); err != nil {
+		return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.transcribe: parse payload: %w", err)}
+	}
+	if p.AssetID == uuid.Nil {
+		return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.transcribe: asset_id required")}
+	}
+
+	res, err := h.Orchestrator.TranscribeAsset(ctx, p.AssetID, TranscribeOrchestratorOpts{
+		LanguageHint: p.LangHint,
+		ForceModel:   p.ForceModel,
+	})
+	if err != nil {
+		if errors.Is(err, ai.ErrAssetNotFound) {
+			return nil, &jobs.TerminalError{Err: err}
+		}
+		if isPermanentAIError(err) {
+			return nil, &jobs.TerminalError{Err: fmt.Errorf("ai.transcribe: %w", err)}
+		}
+		return nil, fmt.Errorf("ai.transcribe: %w", err)
+	}
+
+	result, _ := json.Marshal(map[string]any{
+		"language":  res.Language,
+		"vtt_bytes": res.VTTBytes,
+	})
+	return result, nil
+}
+
+// TranscribeIdempotencyKey produces the canonical idempotency key.
+// Model bump → fresh job. Re-fanout for the same asset+model dedups
+// against the in-flight row.
+func TranscribeIdempotencyKey(assetID uuid.UUID, model string) string {
+	return derivedKey("ai.transcribe", assetID, model)
+}
+
 // Compile-time interface checks.
 var _ jobs.Handler = (*TagHandler)(nil)
 var _ jobs.Handler = (*CaptionHandler)(nil)
 var _ jobs.Handler = (*EmbedHandler)(nil)
+var _ jobs.Handler = (*TranscribeHandler)(nil)

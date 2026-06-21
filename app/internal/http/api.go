@@ -56,6 +56,7 @@ import (
 	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
 	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
 	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
+	aiwhisperlocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/whisper_local"
 	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
@@ -219,6 +220,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// path. Operator overrides (alternate base URL / model / API key)
 	// land via the admin UI in a follow-up phase.
 	s.aiRouter.Register(aicliplocal.NewProvider(aicliplocal.Config{}, aiCallAuditor))
+	// Phase 1.14.C — register the whisper_local transcription
+	// provider. Same shape as clip_local: a sibling container per
+	// ADR 0034; the operator's enabled=false default in the
+	// system_config registration (migration 00012) means the
+	// admin UI gates the runtime call until the operator flips it.
+	s.aiRouter.Register(aiwhisperlocal.NewProvider(aiwhisperlocal.Config{}, aiCallAuditor))
 
 	// Phase 1.14.B — register ai.embed job handler so the worker
 	// pool can drain ai.embed jobs enqueued by the asset upload
@@ -234,6 +241,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			s.aiBridge.EmbeddingWriter,
 			aiPrivacyCfg.Privacy,
 			defaultEmbedModel,
+		))
+
+		// Phase 1.14.C — ai.transcribe handler. The full
+		// extract→chunk→route→stitch→VTT→subtitle pipeline lives in
+		// transcribe.Handler; the job handler is a thin wrapper that
+		// parses the payload + classifies errors. Operator's
+		// chunker config (system_config seeds from 00012) flows in
+		// via the Config struct.
+		transcribeOrch := aitranscribe.NewHandler(
+			transcribeStorage,    // same storage adapter as the Writer
+			s.subtitles,
+			s.aiRouter,
+			s.assets,
+			aiPrivacyCfg.Privacy,
+			logger,
+			"", // tempDir — defaults to os.TempDir()
+			aitranscribe.Config{}, // empty → handler picks 25/5 defaults
+		)
+		jobSvc.Registry.Register(aijobs.NewTranscribeHandler(
+			transcribeOrchestratorAdapter{orch: transcribeOrch},
 		))
 	}
 
@@ -1147,6 +1174,39 @@ func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
 }
 
 // --- cross-package adapters for the notifications wiring ----------
+
+// transcribeOrchestratorAdapter bridges aitranscribe.Handler to the
+// aijobs.TranscribeOrchestrator consumer-defined interface. The
+// dual-type pattern keeps ai/jobs out of ai/transcribe's import
+// graph (and vice versa) — the boot wire is the only place both
+// types meet.
+type transcribeOrchestratorAdapter struct {
+	orch *aitranscribe.Handler
+}
+
+func (a transcribeOrchestratorAdapter) TranscribeAsset(
+	ctx context.Context,
+	assetID uuid.UUID,
+	opts aijobs.TranscribeOrchestratorOpts,
+) (aijobs.TranscribeOrchestratorResult, error) {
+	track, err := a.orch.TranscribeAsset(ctx, assetID, aitranscribe.TranscribeOpts{
+		LanguageHint:  opts.LanguageHint,
+		ForceModel:    opts.ForceModel,
+		SubtitleLabel: opts.SubtitleLabel,
+	})
+	if err != nil {
+		return aijobs.TranscribeOrchestratorResult{}, err
+	}
+	// Subtitle FileHash isn't a meaningful number; report the
+	// VTT-bytes count as 0 (the orchestrator doesn't bubble that
+	// up today). Future enhancement: surface size_bytes from the
+	// storage_objects row. Language is the load-bearing field for
+	// the job's result payload.
+	return aijobs.TranscribeOrchestratorResult{
+		Language: track.Lang,
+		VTTBytes: 0,
+	}, nil
+}
 
 // similarReaderAdapter bridges the embeddings package's Reader to
 // the assets package's consumer-defined SimilarReader interface.
