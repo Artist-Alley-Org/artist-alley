@@ -156,9 +156,13 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'smtp',         status: 'live',   href: '/admin/system/smtp' },
       { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
       { key: 'self_edit_gates', status: 'live', href: '/admin/system/users' },
+      // Phase 1.14.A-bridge — collapsed three AI tiles into one
+      // landing tile. /admin/system/ai is now a hub pointing at the
+      // provider list, the inference config, the usage dashboard,
+      // and the tag-provenance operator doc. Each surface is still
+      // directly reachable; the tile grid is the discoverable
+      // entry point.
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
-      { key: 'ai_inference_config', status: 'live', href: '/admin/ai/config' },
-      { key: 'ai_inference_usage',  status: 'live', href: '/admin/ai/usage' },
       { key: 'log',          status: 'stub',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
       // Federation tiles moved to the dedicated `federation` section
