@@ -44,8 +44,11 @@ test.describe('UI-08 admin section landings', () => {
       await page.goto(`/admin/${section.slug}`);
       await expect(page.locator('main')).toBeVisible();
       for (const tile of section.expectedTiles) {
+        // exact:true — substring match silently flips to a strict-mode
+        // failure when another tile title contains the chip text as a
+        // substring (e.g. "AI" matches "Maintenance" via the "ai" infix).
         await expect(
-          page.getByRole('heading', { name: tile, level: 3 }),
+          page.getByRole('heading', { name: tile, level: 3, exact: true }),
         ).toBeVisible();
       }
     });
