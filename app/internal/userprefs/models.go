@@ -120,6 +120,17 @@ type AssetCompanion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type AssetEmbeddingD768 struct {
+	AssetID     pgtype.UUID
+	Provider    string
+	Model       string
+	Modality    interface{}
+	Embedding   interface{}
+	ContentHash *string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type AssetFieldValue struct {
 	AssetID      pgtype.UUID
 	FieldID      pgtype.UUID

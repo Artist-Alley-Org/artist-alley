@@ -19,6 +19,7 @@ require (
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/nwaples/rardecode/v2 v2.2.3
 	github.com/oapi-codegen/runtime v1.4.1
+	github.com/pgvector/pgvector-go v0.4.0
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/qmuntal/gltf v0.28.0
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
@@ -30,6 +31,7 @@ require (
 	golang.org/x/image v0.32.0
 	golang.org/x/net v0.54.0
 	golang.org/x/text v0.37.0
+	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -75,7 +77,6 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 )
 
 // Supply-chain forks — pinned to mscrnt/* mirrors so a small-
