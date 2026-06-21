@@ -54,6 +54,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/ai"
 	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
+	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
 	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
@@ -196,6 +197,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// path. Operator overrides (alternate base URL / model / API key)
 	// land via the admin UI in a follow-up phase.
 	s.aiRouter.Register(aicliplocal.NewProvider(aicliplocal.Config{}, aiCallAuditor))
+
+	// Phase 1.14.B — register ai.embed job handler so the worker
+	// pool can drain ai.embed jobs enqueued by the asset upload
+	// fanout. Privacy policy + default model load best-effort from
+	// system_config; defaults if the rows aren't present yet
+	// (pre-migration state) so boot doesn't wedge.
+	aiPrivacyCfg, _ := aiLoader.Load(context.Background())
+	defaultEmbedModel := "nomic-embed-text"
+	if jobSvc != nil {
+		jobSvc.Registry.Register(aijobs.NewEmbedHandler(
+			s.aiRouter,
+			s.assets,         // ai.AssetLookup (bridge)
+			s.aiBridge.EmbeddingWriter,
+			aiPrivacyCfg.Privacy,
+			defaultEmbedModel,
+		))
+	}
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done

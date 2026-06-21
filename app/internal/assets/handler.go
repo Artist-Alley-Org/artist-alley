@@ -9,7 +9,9 @@ package assets
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -326,9 +328,48 @@ func (h *Handler) CreateAsset(
 				slog.String("err", err.Error()),
 			)
 		}
+
+		// Phase 1.14.B — fan out an ai.embed job alongside the
+		// preview job so the asset becomes searchable via vector
+		// similarity within seconds of upload. PriorityLow because
+		// the search-side use case is asynchronous; the operator
+		// wants previews first. Idempotency key dedups against
+		// in-flight runs for the same (asset, model) — re-enqueue
+		// from a fanout retry returns the existing job's id.
+		embedPriority := jobs.PriorityLow
+		embedPayload := map[string]string{
+			"asset_id": newID.String(),
+			// Empty model + modality → handler falls back to
+			// system_config.ai.embedding.default_model + "text".
+		}
+		embedIdem := aiEmbedIdempotencyKey(newID.String(), "")
+		if _, err := h.Jobs.Enqueue(ctx, aiEmbedJobType, embedPayload, jobs.EnqueueOpts{
+			Priority:       &embedPriority,
+			IdempotencyKey: embedIdem,
+		}); err != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_embed_failed",
+				slog.String("asset_id", newID.String()),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 
 	return openapi.CreateAsset201JSONResponse(rowToAsset(rowToAssetRow(row), tags)), nil
+}
+
+// aiEmbedJobType + aiEmbedIdempotencyKey duplicate the constants
+// from app/internal/ai/jobs to avoid an import cycle (ai/jobs depends
+// on jobs which depends on assets-side enqueueing). The string + key
+// format are part of the bridge contract — a future test in
+// app/internal/ai/jobs/handlers_test.go asserts the values match.
+const aiEmbedJobType jobs.JobType = "ai.embed"
+
+func aiEmbedIdempotencyKey(assetID, model string) string {
+	// SHA-256("ai.embed|<asset_id>|<model>") hex; mirrors
+	// aijobs.EmbedIdempotencyKey. Pure-string compute here avoids
+	// the cycle.
+	sum := sha256.Sum256([]byte("ai.embed|" + assetID + "|" + model))
+	return hex.EncodeToString(sum[:])
 }
 
 // jobTypeForExt picks the preview-job type for a given file extension.

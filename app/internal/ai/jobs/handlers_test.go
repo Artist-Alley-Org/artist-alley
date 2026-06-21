@@ -350,3 +350,181 @@ var _ CaptionRouter = (*stubCaptionRouter)(nil)
 var _ AssetLookup = (*stubAssets)(nil)
 var _ TagWriter = (*stubTagWriter)(nil)
 var _ CaptionWriter = (*stubCaptionWriter)(nil)
+
+// ---------------------------------------------------------------------------
+// EmbedHandler — Phase 1.14.B
+// ---------------------------------------------------------------------------
+
+type stubEmbedRouter struct {
+	vec []float32
+	err error
+
+	gotIn      ai.EmbedInput
+	gotPrivacy ai.PrivacyClass
+}
+
+func (s *stubEmbedRouter) Embed(_ context.Context, in ai.EmbedInput, privacy ai.PrivacyClass) ([]float32, error) {
+	s.gotIn = in
+	s.gotPrivacy = privacy
+	return s.vec, s.err
+}
+
+type stubEmbedAssets struct {
+	asset ai.AssetForAI
+	err   error
+}
+
+func (s *stubEmbedAssets) GetAssetForAI(_ context.Context, _ uuid.UUID) (ai.AssetForAI, error) {
+	return s.asset, s.err
+}
+
+type stubEmbedWriter struct {
+	got ai.EmbeddingInput
+	err error
+}
+
+func (s *stubEmbedWriter) UpsertAssetEmbedding(_ context.Context, in ai.EmbeddingInput) error {
+	s.got = in
+	return s.err
+}
+
+func TestEmbedHandler_HappyPath_ComposesTextAndPersists(t *testing.T) {
+	id := uuid.New()
+	asset := ai.AssetForAI{
+		ID:          id,
+		Title:       "kittens",
+		Sensitivity: ai.SensitivityPublic,
+		ContentHash: "abc123",
+		ExistingTags: []ai.TagInput{
+			{Value: "fluffy", Source: ai.TagSourceManual},
+			{Value: "basket", Source: ai.TagSourceAI},
+		},
+	}
+	router := &stubEmbedRouter{vec: make([]float32, 768)}
+	writer := &stubEmbedWriter{}
+	h := NewEmbedHandler(router, &stubEmbedAssets{asset: asset}, writer,
+		ai.PrivacyPolicy{}, "nomic-embed-text")
+
+	payload, _ := json.Marshal(EmbedPayload{AssetID: id})
+	res, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	// Text composition: title + tags joined with ". " and ", ".
+	if got, want := router.gotIn.Text, "kittens. fluffy, basket"; got != want {
+		t.Errorf("composed text = %q, want %q", got, want)
+	}
+	if got, want := router.gotIn.Model, "nomic-embed-text"; got != want {
+		t.Errorf("model = %q, want %q", got, want)
+	}
+	if writer.got.AssetID != id {
+		t.Errorf("writer asset = %s, want %s", writer.got.AssetID, id)
+	}
+	if writer.got.Modality != "text" {
+		t.Errorf("modality = %q, want text", writer.got.Modality)
+	}
+	if writer.got.ContentHash != "abc123" {
+		t.Errorf("content hash = %q, want abc123", writer.got.ContentHash)
+	}
+	if len(writer.got.Vector) != 768 {
+		t.Errorf("vector dim = %d, want 768", len(writer.got.Vector))
+	}
+
+	// Result JSON includes dim + model + text_len.
+	var got map[string]any
+	if err := json.Unmarshal(res, &got); err != nil {
+		t.Fatalf("result unmarshal: %v", err)
+	}
+	if got["dim"].(float64) != 768 {
+		t.Errorf("result dim = %v", got["dim"])
+	}
+}
+
+func TestEmbedHandler_EmptyText_SkipsCleanly(t *testing.T) {
+	id := uuid.New()
+	// Untitled + untagged asset: nothing to embed.
+	asset := ai.AssetForAI{ID: id, Sensitivity: ai.SensitivityPublic}
+	router := &stubEmbedRouter{}
+	writer := &stubEmbedWriter{}
+	h := NewEmbedHandler(router, &stubEmbedAssets{asset: asset}, writer,
+		ai.PrivacyPolicy{}, "nomic-embed-text")
+
+	payload, _ := json.Marshal(EmbedPayload{AssetID: id})
+	res, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if router.gotIn.Text != "" {
+		t.Error("router should not be called when text is empty")
+	}
+	var got map[string]any
+	_ = json.Unmarshal(res, &got)
+	if got["skipped"] != "no_embeddable_text" {
+		t.Errorf("result = %v, want skipped=no_embeddable_text", got)
+	}
+}
+
+func TestEmbedHandler_AssetNotFound_TerminalError(t *testing.T) {
+	router := &stubEmbedRouter{}
+	writer := &stubEmbedWriter{}
+	h := NewEmbedHandler(router, &stubEmbedAssets{err: ai.ErrAssetNotFound}, writer,
+		ai.PrivacyPolicy{}, "nomic-embed-text")
+
+	payload, _ := json.Marshal(EmbedPayload{AssetID: uuid.New()})
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("got %v, want TerminalError", err)
+	}
+	if !errors.Is(err, ai.ErrAssetNotFound) {
+		t.Errorf("err chain should contain ai.ErrAssetNotFound; got %v", err)
+	}
+}
+
+func TestEmbedHandler_BadPayload_TerminalError(t *testing.T) {
+	h := NewEmbedHandler(&stubEmbedRouter{}, &stubEmbedAssets{}, &stubEmbedWriter{},
+		ai.PrivacyPolicy{}, "nomic-embed-text")
+	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: []byte("not-json")})
+	var term *jobs.TerminalError
+	if !errors.As(err, &term) {
+		t.Errorf("got %v, want TerminalError", err)
+	}
+}
+
+func TestEmbedHandler_PrivacyClampToLocal_OnRestricted(t *testing.T) {
+	id := uuid.New()
+	asset := ai.AssetForAI{ID: id, Title: "secret", Sensitivity: ai.SensitivityRestricted}
+	router := &stubEmbedRouter{vec: make([]float32, 768)}
+	policy := ai.PrivacyPolicy{LockSensitiveToLocal: true, LocalProviders: []string{"clip_local"}}
+	h := NewEmbedHandler(router, &stubEmbedAssets{asset: asset}, &stubEmbedWriter{},
+		policy, "nomic-embed-text")
+
+	payload, _ := json.Marshal(EmbedPayload{AssetID: id})
+	if _, err := h.Handle(context.Background(), &jobs.Claim{Payload: payload}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if router.gotPrivacy != ai.PrivacyClassLocalOnly {
+		t.Errorf("privacy = %q, want PrivacyClassLocalOnly for restricted asset", router.gotPrivacy)
+	}
+}
+
+func TestEmbedIdempotencyKey_StableAcrossCalls(t *testing.T) {
+	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	k1 := EmbedIdempotencyKey(id, "nomic-embed-text")
+	k2 := EmbedIdempotencyKey(id, "nomic-embed-text")
+	k3 := EmbedIdempotencyKey(id, "different-model")
+	if k1 != k2 {
+		t.Errorf("same (asset, model) produced different keys: %q vs %q", k1, k2)
+	}
+	if k1 == k3 {
+		t.Errorf("different models produced the same key — bumping model must trigger a fresh job")
+	}
+	if len(k1) != 64 {
+		t.Errorf("idem key should be 64-char hex; got len=%d (%q)", len(k1), k1)
+	}
+}
+
+var _ EmbedRouter = (*stubEmbedRouter)(nil)
+var _ EmbedAssetLookup = (*stubEmbedAssets)(nil)
+var _ EmbedWriter = (*stubEmbedWriter)(nil)
