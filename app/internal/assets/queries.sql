@@ -103,6 +103,22 @@ LIMIT sqlc.arg('row_limit')::INTEGER;
 -- name: ListAssetTags :many
 SELECT tag FROM asset_tag WHERE asset_id = $1 ORDER BY tag;
 
+-- name: ListAssetTagsDetailed :many
+-- Phase 1.14.B — typed read returning per-tag source/confidence/
+-- provenance. Backs the openapi.Asset.tag_details field that the
+-- frontend AssetTagBadge consumes. Same ordering as ListAssetTags
+-- so the legacy flat `tags` array stays index-aligned with this
+-- list (consumers can zip them when needed).
+SELECT
+    tag,
+    source,
+    confidence,
+    created_by_provider,
+    created_by_model
+FROM asset_tag
+WHERE asset_id = $1
+ORDER BY tag;
+
 -- name: AddAssetTag :exec
 INSERT INTO asset_tag (asset_id, tag)
 VALUES ($1, $2)

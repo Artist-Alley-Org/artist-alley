@@ -904,6 +904,14 @@
         "manual": "Operator-set tag — AI never overwrites this.",
         "ai": "AI-generated tag — replaceable by later AI runs.",
         "import": "Imported tag (CSV / EXIF / upstream) — AI never overwrites this."
+      },
+      "similar": {
+        "title": "Similar assets",
+        "count": "{n} found",
+        "load_error": "Couldn't load similar assets.",
+        "embedding_pending": "Embedding pending — check back after the indexer catches up.",
+        "empty": "No similar assets in your library yet.",
+        "distance_label": "cosine distance: {d}"
       }
     },
     "asset_types": {
@@ -1302,6 +1310,7 @@
     "back": "Back",
     "add": "Add",
     "done": "Done",
+    "retry": "Retry",
     "copy_link": "Copy link",
     "copied": "Copied",
     "coming_soon": "Coming soon",

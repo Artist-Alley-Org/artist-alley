@@ -521,7 +521,16 @@ func (h *Handler) GetAsset(
 	if err != nil {
 		return nil, fmt.Errorf("assets: list tags: %w", err)
 	}
-	return openapi.GetAsset200JSONResponse(rowToAsset(row, tags)), nil
+	// Phase 1.14.B — also fetch per-tag source/confidence/provenance
+	// so the response includes the typed tag_details projection.
+	// Two queries instead of one for now; trading a round-trip for
+	// clarity. A future sqlc query can combine into a single
+	// json_agg if profiling shows the second hop matters.
+	details, err := q.ListAssetTagsDetailed(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("assets: list tag details: %w", err)
+	}
+	return openapi.GetAsset200JSONResponse(rowToAssetWithDetails(row, tags, details)), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1091,6 +1100,15 @@ func decodeCursor(s string) (time.Time, uuid.UUID, error) {
 // Asset response. Several sqlc-generated row types share the same
 // columns; we normalise via rowToAssetRow/listRowToGetRow etc.
 func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
+	return rowToAssetWithDetails(row, tags, nil)
+}
+
+// rowToAssetWithDetails populates both `tags` (flat string list,
+// backwards-compat) and `tag_details` (typed Phase 1.14.B
+// projection). Callers that don't have the detailed list can call
+// rowToAsset above which leaves tag_details empty (omitted from
+// JSON — pointer field).
+func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTagsDetailedRow) openapi.Asset {
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
 		Title:            row.Title,
@@ -1100,6 +1118,29 @@ func rowToAsset(row GetAssetRow, tags []string) openapi.Asset {
 		CreatedAt:        row.CreatedAt.Time,
 		UpdatedAt:        row.UpdatedAt.Time,
 		Tags:             tags,
+	}
+	if len(details) > 0 {
+		td := make([]openapi.AssetTagDetail, 0, len(details))
+		for _, d := range details {
+			item := openapi.AssetTagDetail{
+				Value:  d.Tag,
+				Source: openapi.AssetTagDetailSource(d.Source),
+			}
+			if d.Confidence != nil {
+				c := float64(*d.Confidence)
+				item.Confidence = &c
+			}
+			if d.CreatedByProvider != nil && *d.CreatedByProvider != "" {
+				v := *d.CreatedByProvider
+				item.CreatedByProvider = &v
+			}
+			if d.CreatedByModel != nil && *d.CreatedByModel != "" {
+				v := *d.CreatedByModel
+				item.CreatedByModel = &v
+			}
+			td = append(td, item)
+		}
+		a.TagDetails = &td
 	}
 	if row.Description != "" {
 		d := row.Description

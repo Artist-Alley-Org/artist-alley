@@ -47,7 +47,18 @@ func TestReader_FindSimilarByAnchor_HappyPath_RanksByDistance(t *testing.T) {
 	nearVec := tiltedFirstAxis(0.9, 0.1, 768)
 	farVec := negUnitVector(0, 768)
 
-	const provider, model, modality = "router", "nomic-embed-text", "text"
+	// Unique provider so the kNN scan can't pick up stale rows from
+	// previous test runs that share the (router, nomic-embed-text)
+	// space. Each test gets its own namespace + a pre-clean sweeps
+	// previous failed-run rows (asset_id changes per run; cleanup-
+	// by-asset-id can't catch them).
+	const provider, model, modality = "test_reader_happy_path", "nomic-embed-text", "text"
+	_, _ = pool.Exec(context.Background(),
+		`DELETE FROM asset_embedding_d768 WHERE provider = $1`, provider)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM asset_embedding_d768 WHERE provider = $1`, provider)
+	})
 	for _, ww := range []struct {
 		id  uuid.UUID
 		vec []float32
@@ -111,7 +122,7 @@ func TestReader_FindSimilarByAnchor_NoAnchorEmbedding_ReturnsSentinel(t *testing
 	cleanupAsset(t, pool, lonelyID)
 
 	_, err := r.FindSimilarByAnchor(context.Background(), lonelyID,
-		"router", "nomic-embed-text", "text", 10)
+		"test_reader_no_embedding", "nomic-embed-text", "text", 10)
 	if !errors.Is(err, embeddings.ErrAnchorHasNoEmbedding) {
 		t.Errorf("got %v, want ErrAnchorHasNoEmbedding", err)
 	}
@@ -137,15 +148,22 @@ func TestReader_HasEmbedding_HitsAndMisses(t *testing.T) {
 	cleanupAsset(t, pool, withEmbed)
 	cleanupAsset(t, pool, noEmbed)
 
+	const provider = "test_reader_has_embedding"
+	_, _ = pool.Exec(context.Background(),
+		`DELETE FROM asset_embedding_d768 WHERE provider = $1`, provider)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM asset_embedding_d768 WHERE provider = $1`, provider)
+	})
 	_ = w.UpsertAssetEmbedding(context.Background(), ai.EmbeddingInput{
 		AssetID:  withEmbed,
-		Provider: "router",
+		Provider: provider,
 		Model:    "nomic-embed-text",
 		Modality: "text",
 		Vector:   unitVector(0, 768),
 	})
 
-	yes, err := r.HasEmbedding(context.Background(), withEmbed, "router", "nomic-embed-text", "text")
+	yes, err := r.HasEmbedding(context.Background(), withEmbed, provider, "nomic-embed-text", "text")
 	if err != nil {
 		t.Fatalf("HasEmbedding: %v", err)
 	}
@@ -153,7 +171,7 @@ func TestReader_HasEmbedding_HitsAndMisses(t *testing.T) {
 		t.Error("HasEmbedding should be true for the embedded asset")
 	}
 
-	no, err := r.HasEmbedding(context.Background(), noEmbed, "router", "nomic-embed-text", "text")
+	no, err := r.HasEmbedding(context.Background(), noEmbed, provider, "nomic-embed-text", "text")
 	if err != nil {
 		t.Fatalf("HasEmbedding: %v", err)
 	}
