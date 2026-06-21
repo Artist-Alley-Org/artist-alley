@@ -1,16 +1,34 @@
 # PR + branch validation. Runs on every push to a long-lived branch
-# (main, dev, feat/*) and on every PR targeting main or dev. PRs use
+# (main, dev) and on every PR targeting main or dev. PRs use
 # `ubuntu-latest` so fork PRs can't run code on the self-hosted
 # runner. Branch pushes are routed to the self-hosted runner for
 # speed + Docker layer cache reuse.
 #
 # This is the merge-gate. Edge/release workflows assume CI was green.
+#
+# # No feat/** push trigger — by design
+#
+# Push to feat/** previously triggered CI here AND the PR pulse below
+# (via pull_request:synchronize) once the PR was open, producing two
+# parallel runs per commit. The runs ended up in different
+# concurrency groups (push: refs/heads/feat/X; PR: refs/pull/N/merge),
+# so cancel-in-progress couldn't collapse them; one ran to success,
+# the duplicate cancelled, GitHub showed the PR as "UNSTABLE" even
+# though every real check passed.
+#
+# Dropping the feat/** push trigger means:
+#   - First push to a brand-new feat/** branch with NO PR: no CI runs.
+#     Open a draft PR for CI feedback before merging — that's the
+#     standard pattern and matches our branch hygiene.
+#   - Push to feat/** with an open PR: pull_request:synchronize runs
+#     CI exactly once. No duplicates, no UNSTABLE flag.
+#   - Workflow_dispatch remains available for manual runs.
 
 name: CI
 
 on:
   push:
-    branches: [main, dev, "feat/**"]
+    branches: [main, dev]
     # Skip CI on docs-only changes — no Go / TS / wire-format edit
     # means nothing CI cares about. Branch protection on dev/main
     # does NOT list any path-filtered check as required (single-
@@ -38,6 +56,7 @@ on:
       - 'CHANGELOG.md'
       - '.github/ISSUE_TEMPLATE/**'
       - 'LICENSE'
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref so a force-push doesn't burn
 # minutes on the previous commit.
