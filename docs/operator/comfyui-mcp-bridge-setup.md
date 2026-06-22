@@ -120,6 +120,38 @@ Use `<<UPPER_SNAKE_CASE>>` placeholders in the JSON for the values the bridge su
 
 The bridge auto-discovers any other `*.json` file you drop and exposes it as a `workflow:<filename>` tool, but **AA-side only `img2img` is currently wired through the typed surface**. To call a custom workflow:<name> tool from AA you'd add a `workflow:my_thing` row to the per-server tool grants and write a future feature against `mcpdispatch.Dispatcher.Invoke`. Phase 1.14.E-2 will expand the AA-side surface.
 
+### Flux Kontext (recommended for img2img)
+
+If you have a Flux-capable GPU, [Flux Kontext Dev](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev) is the right base model for image editing — purpose-built for instruction-following edits while preserving composition, much better at "change the boats to glass yachts, keep the wave intact" than vanilla SDXL img2img.
+
+A tested, ready-to-drop-in Kontext workflow lives at [`tools/comfyui-mcp-bridge/examples/flux_kontext_img2img.json`](../../tools/comfyui-mcp-bridge/examples/flux_kontext_img2img.json):
+
+```bash
+# Pick where operator workflows live (any path the bridge has read access to)
+export CMB_EXTRA_WORKFLOWS_DIR=$HOME/aa-bridge-workflows
+mkdir -p "$CMB_EXTRA_WORKFLOWS_DIR"
+
+# Drop in the Kontext example, renaming to the typed-op slot it overrides
+cp tools/comfyui-mcp-bridge/examples/flux_kontext_img2img.json \
+   "$CMB_EXTRA_WORKFLOWS_DIR/img2img.json"
+
+# Confirm the bridge picks up the override on restart — the placeholders
+# line in the log should change from DENOISE+PROMPT+SEED+SOURCE+STEPS to
+# just PROMPT+SEED+SOURCE+STEPS (Kontext doesn't expose denoise).
+docker restart comfyui-mcp-bridge
+```
+
+Required models (the example's `_meta` block lists the HuggingFace URLs):
+
+- `models/diffusion_models/flux1-dev-kontext_fp8_scaled.safetensors` (~11 GB; FP8 scaled fits in 16 GB VRAM)
+- `models/vae/ae.safetensors` (Flux VAE)
+- `models/text_encoders/clip_l.safetensors`
+- `models/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors`
+
+**Tested 2026-06-22** against ComfyUI 0.17.2 on an RTX 5090 (32 GB VRAM): cold-start (first call, model load included) was 43 s; subsequent calls landed in **14 s wall-clock** on a 1024-edge source. Output dimensions match Kontext's native 1248×832 / 1024×1024 / etc. depending on the source aspect ratio.
+
+**Why CFG=1 / denoise=1 in the Kontext workflow** — Kontext blends the reference image via the `ReferenceLatent` conditioning node, NOT via partial-noise injection like SDXL img2img. Setting denoise<1 or CFG>1 produces degraded output. The example's `_meta.tuning_notes` documents this for future maintainers.
+
 ## Privacy + cost decision tree
 
 Re-cap of [docs/operator/mcp-client-setup.md](mcp-client-setup.md) applied to ComfyUI specifically:
