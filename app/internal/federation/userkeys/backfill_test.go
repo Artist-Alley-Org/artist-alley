@@ -192,7 +192,98 @@ func TestBackfillMissingKeys_UnapprovedUser_Skipped(t *testing.T) {
 	}
 }
 
-// --- 4. idempotency ---
+// --- 4. race-loser classification (issue #153) ---
+
+// TestBackfillMissingKeys_OrphanRetiredKey_NotCountedAsError pins
+// the contract from #153: a user with a retired version=1 keypair
+// (is_current=false, retained_until set) but no current keypair
+// trips the PK constraint on (user_ref, version) when the sweep
+// tries to INSERT a fresh version=1 row. Before the fix this
+// surfaced as stats.Errors; the fix classifies it as a race-loser
+// (same code path as the brief's concurrent-mint scenario, same
+// SQLSTATE 23505, different upstream cause) and returns nil
+// without incrementing the error counter.
+//
+// This test ALSO doubles as the smoke test for the upstream cause
+// of the dev-DB flake: the userkeys-test orphans currently sitting
+// in the shared test DB are exactly this shape (retired keypairs
+// left by some prior rotation path) and the fix makes them
+// harmless to the boot sweep.
+//
+// Note: the FK-violation branch (user_ref deleted mid-sweep) is
+// covered ONLY by [TestIsRaceLoserError] at the unit level —
+// reproducing it end-to-end inside [BackfillMissingKeys] requires
+// intercepting between ListUsersWithoutCurrentKey and the INSERT,
+// which would need test scaffolding more invasive than the bug
+// warrants. The two SQLSTATEs route through the same
+// isRaceLoserError predicate, so the unique-violation end-to-end
+// + the FK-violation unit test together pin the contract.
+func TestBackfillMissingKeys_OrphanRetiredKey_NotCountedAsError(t *testing.T) {
+	initAtrestOnce(t)
+	pool := openPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	ref := keylessUserAtState(t, ctx, pool, 1)
+
+	// Pre-stage the orphan condition: insert a retired version=1
+	// row directly. retained_until satisfies the CHECK constraint
+	// (federation_user_keys_current_xor_retained). public_key and
+	// private_key_enc must satisfy their length CHECKs too.
+	// 32 zero bytes for public_key (CHECK: octet_length=32); 16
+	// zero bytes for private_key_enc (CHECK: octet_length>=13).
+	pub := make([]byte, 32)
+	priv := make([]byte, 16)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO federation_user_keys
+		    (user_ref, version, algorithm, public_key, private_key_enc,
+		     is_current, retained_until)
+		VALUES
+		    ($1, 1, 'x25519', $2, $3, FALSE, NOW() + INTERVAL '1 hour')
+	`, ref, pub, priv); err != nil {
+		t.Fatalf("seed retired key: %v", err)
+	}
+
+	// Confirm the user IS visible to the sweep — no is_current=TRUE
+	// row, but the user is approved and the listing filter doesn't
+	// know about the orphan row.
+	refs, err := userkeys.New(pool).ListUsersWithoutCurrentKey(ctx, userkeys.BackfillBatchSize)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	found := false
+	for _, r := range refs {
+		if r == ref {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("orphan-retired-key user ref=%d not visible to ListUsersWithoutCurrentKey", ref)
+	}
+
+	spy := &auditSpy{}
+	stats, err := userkeys.BackfillMissingKeys(ctx, pool, nil, spy.hook)
+	if err != nil {
+		t.Fatalf("BackfillMissingKeys: %v", err)
+	}
+
+	// The audit MUST NOT fire — no key was minted for our user.
+	if spy.calledFor(ref) != 0 {
+		t.Errorf("audit should NOT fire for orphan-retired-key user; spy fired %d times for ref=%d",
+			spy.calledFor(ref), ref)
+	}
+
+	// stats.Errors must be 0 globally — both our user AND any other
+	// orphan-retired-key leftovers in the dev DB should land on the
+	// race-loser branch. This is the assertion that fails without
+	// the fix (#153).
+	if stats.Errors != 0 {
+		t.Errorf("stats.Errors = %d, want 0 (race-loser classification should keep the counter clean)", stats.Errors)
+	}
+}
+
+// --- 5. idempotency ---
 
 // TestBackfillMissingKeys_Idempotent_SecondCallIsNoOp proves the
 // safety net is safe to invoke on every boot — repeated calls
