@@ -93,7 +93,8 @@ type Asset struct {
 	ProcessingError      *string
 	ProcessingStartedAt  pgtype.Timestamptz
 	ProcessingFinishedAt pgtype.Timestamptz
-	Sensitivity          string
+	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
+	Sensitivity string
 }
 
 type AssetAlternate struct {
@@ -156,14 +157,16 @@ type AssetFieldValueHistory struct {
 	SetBy            string
 }
 
+// Subtitle / caption tracks attached to video or audio assets. NOT first-class assets — excluded from asset counts. FK + CASCADE binds tracks to their parent. Phase 1.18.B-3.
 type AssetSubtitleTrack struct {
 	AssetID      pgtype.UUID
 	Lang         string
 	Label        string
 	FileHash     string
 	SourceFormat string
-	Confidence   float32
-	CreatedAt    pgtype.Timestamptz
+	// Quality of the source-to-VTT conversion. 1.0 for text-based sources; lower for OCR'd bitmap sources (IDX). UI surfaces a warning below 0.8.
+	Confidence float32
+	CreatedAt  pgtype.Timestamptz
 }
 
 type AssetTag struct {
@@ -349,6 +352,18 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type ExtractionFailure struct {
+	ID          pgtype.UUID
+	AssetID     pgtype.UUID
+	Format      string
+	ErrorKind   string
+	Message     string
+	FieldKey    string
+	RawValue    []byte
+	OccurredAt  pgtype.Timestamptz
+	DismissedAt pgtype.Timestamptz
+}
+
 type FederationDirectory struct {
 	ID                    pgtype.UUID
 	DirectoryUrl          string
@@ -396,6 +411,7 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz
 }
 
+// Single-row cursor for the outbox dispatcher. Atomically advanced with the outbox INSERTs in one transaction; restart picks up at the cursor without duplicates.
 type FederationDispatchState struct {
 	ID                       int32
 	LastDispatchedActivityID pgtype.UUID
@@ -403,30 +419,34 @@ type FederationDispatchState struct {
 	UpdatedAt                pgtype.Timestamptz
 }
 
+// One row per inbound federation activity. Pipeline ingest persists status=pending; background worker transitions to processed/rejected/failed per §2.2 of the 1.22.D design proposal. activity_uri UNIQUE is the load-bearing replay guard.
 type FederationInbox struct {
-	ID                      pgtype.UUID
-	ActivityUri             string
-	PeerID                  pgtype.UUID
-	ActorUri                string
-	ActivityType            string
-	ObjectKind              *string
-	ObjectID                pgtype.UUID
-	EnvelopeJson            []byte
-	HttpSigKey              string
-	ReceivedAt              pgtype.Timestamptz
-	Status                  string
-	RejectReason            *string
-	DispatchAttempts        int32
-	LastAttemptAt           pgtype.Timestamptz
-	LastError               string
-	ProcessedAt             pgtype.Timestamptz
-	CorrelationActivityID   pgtype.UUID
-	CreatedAt               pgtype.Timestamptz
-	UpdatedAt               pgtype.Timestamptz
-	WasEncrypted            bool
+	ID                    pgtype.UUID
+	ActivityUri           string
+	PeerID                pgtype.UUID
+	ActorUri              string
+	ActivityType          string
+	ObjectKind            *string
+	ObjectID              pgtype.UUID
+	EnvelopeJson          []byte
+	HttpSigKey            string
+	ReceivedAt            pgtype.Timestamptz
+	Status                string
+	RejectReason          *string
+	DispatchAttempts      int32
+	LastAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ProcessedAt           pgtype.Timestamptz
+	CorrelationActivityID pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	// Phase 1.22.I-f: TRUE when the dispatcher took the decrypt branch for this row (envelope had a non-empty encryption block). FALSE for the legacy 1.22.D plaintext path. Mirrors federation_outbox.was_encrypted on the sender side.
+	WasEncrypted bool
+	// Phase 1.22.I-f: which version of the receiver's X25519 key successfully decrypted the envelope. NULL when was_encrypted=false. Surfaces rotation health to operator analytics via the I-h admin federation page.
 	DecryptedWithKeyVersion *int32
 }
 
+// Per-recipient outbound queue. Derived from activities ledger via the dispatcher (Phase 1.22.D-b). Idempotent on (activity_id, peer_id, target_user_url) so the dispatcher is re-runnable. Sender-side emission refusal for restricted/embargo content (until 1.22.I ships X25519) is enforced at the dispatcher; refused activities never get an outbox row, they emit federation.emission.skipped audit instead.
 type FederationOutbox struct {
 	ID                 pgtype.UUID
 	ActivityID         pgtype.UUID
@@ -441,28 +461,31 @@ type FederationOutbox struct {
 	DeliveredWithKeyID *string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
-	WasEncrypted       bool
-	Sensitivity        *string
-	RefusedReason      *string
+	// Phase 1.22.I-e: TRUE when the dispatcher took the encryption branch for this row (peer.Capabilities.SupportsE2E + recipient key cached). FALSE for the legacy 1.22.D plaintext path. The wire envelope is the source of truth; this column is an observability mirror for scenario 09 + the admin federation surface.
+	WasEncrypted  bool
+	Sensitivity   *string
+	RefusedReason *string
 }
 
 type FederationPeer struct {
-	ID                       pgtype.UUID
-	InstanceUrl              string
-	DisplayName              string
-	InstancePublicKey        string
-	TrustTier                string
-	EncryptionPolicy         string
-	Enabled                  bool
-	Status                   string
-	HandshakeAt              pgtype.Timestamptz
-	HandshakeByUserRef       int64
-	LastSeenAt               pgtype.Timestamptz
-	Notes                    string
-	ShareInVisibleList       bool
-	CreatedAt                pgtype.Timestamptz
-	UpdatedAt                pgtype.Timestamptz
-	Capabilities             []byte
+	ID                 pgtype.UUID
+	InstanceUrl        string
+	DisplayName        string
+	InstancePublicKey  string
+	TrustTier          string
+	EncryptionPolicy   string
+	Enabled            bool
+	Status             string
+	HandshakeAt        pgtype.Timestamptz
+	HandshakeByUserRef int64
+	LastSeenAt         pgtype.Timestamptz
+	Notes              string
+	ShareInVisibleList bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	// Bilateral capability intersection (what BOTH peers support). JSONB array of typed strings per federation/peer.Capability. Open vocabulary on the wire, closed dispatch in code. See ADR 0049 §Track B Decision 3.
+	Capabilities []byte
+	// When the handshake completed with capability exchange. NULL means "never negotiated" (pre-1.22.I-d peer); peers in that state are surfaced via ListPeersMissingCapabilities for operator re-pairing. Distinct from `capabilities = '[]'` which means "we negotiated and got an empty intersection" — also legal.
 	CapabilitiesNegotiatedAt pgtype.Timestamptz
 }
 
@@ -476,16 +499,20 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz
 }
 
+// Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).
 type FederationRemoteActor struct {
-	ActorUri                     string
-	PeerID                       pgtype.UUID
-	DisplayName                  string
-	AvatarUrl                    string
-	FirstSeenAt                  pgtype.Timestamptz
-	LastSeenAt                   pgtype.Timestamptz
-	UpdatedAt                    pgtype.Timestamptz
-	EncryptionPublicKey          []byte
-	EncryptionPublicKeyVersion   *int32
+	ActorUri    string
+	PeerID      pgtype.UUID
+	DisplayName string
+	AvatarUrl   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	// X25519 public key advertised by the remote actor in their envelope's aa:encryptionPublicKey block. NULL when the peer is on a pre-1.22.I-c build. 32 bytes when populated.
+	EncryptionPublicKey []byte
+	// Per-actor version number, monotonic. Bumped by the remote side on key rotation (1.22.I-h on their end); we just observe the value + persist alongside the key bytes.
+	EncryptionPublicKeyVersion *int32
+	// When we last observed a key for this actor. Updated on every inbound envelope carrying the block (even when the value did not change) so an operator can see how stale our knowledge is.
 	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz
 }
 
@@ -507,16 +534,22 @@ type FederationShare struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+// Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.
 type FederationUserKey struct {
-	UserRef          int64
-	Version          int32
-	Algorithm        string
-	PublicKey        []byte
-	PrivateKeyEnc    []byte
-	IsCurrent        bool
-	CreatedAt        pgtype.Timestamptz
-	RetainedUntil    pgtype.Timestamptz
-	RotatedAt        pgtype.Timestamptz
+	UserRef int64
+	Version int32
+	// Algorithm-version token. Single value today: naclbox-x25519-v1. Future algorithms add new tokens without a schema migration.
+	Algorithm     string
+	PublicKey     []byte
+	PrivateKeyEnc []byte
+	// Exactly one row per user has is_current=true (enforced by partial unique index federation_user_keys_one_current_idx).
+	IsCurrent bool
+	CreatedAt pgtype.Timestamptz
+	// Inbound-decrypt window for a rotated-aside key. NULL on the current key; NOW()+grace_period when a rotation flips this row aside.
+	RetainedUntil pgtype.Timestamptz
+	// When the rotation that produced (or flipped aside) this row occurred. NULL on pre-I-h rows. Non-NULL on the new current row AND on the previously-current row that was demoted in the same rotation.
+	RotatedAt pgtype.Timestamptz
+	// user.ref of whoever triggered the rotation. Equals user_ref for self-rotation (/account/security); differs for admin-initiated compromised-key recovery (/admin/federation/users/{ref}/rotate-keys). NULL on pre-I-h rows.
 	RotatedByUserRef *int64
 }
 
@@ -544,6 +577,15 @@ type FieldDefinition struct {
 	CreatedByUserRef        *int64
 	UpdatedByUserRef        *int64
 	SubjectKind             string
+	ExtractionSource        string
+	ExtractionMode          string
+}
+
+type GooseDbVersion struct {
+	ID        int32
+	VersionID int64
+	IsApplied bool
+	Tstamp    pgtype.Timestamp
 }
 
 type Job struct {
@@ -606,6 +648,19 @@ type McpServerToolGrant struct {
 	Enabled              bool
 }
 
+type MetadataBackfillRun struct {
+	ID               pgtype.UUID
+	Scope            []byte
+	Total            int64
+	Processed        int64
+	Succeeded        int64
+	Failed           int64
+	StartedAt        pgtype.Timestamptz
+	CompletedAt      pgtype.Timestamptz
+	CancelledAt      pgtype.Timestamptz
+	StartedByUserRef *int64
+}
+
 type Notification struct {
 	ID               pgtype.UUID
 	RecipientUserRef int64
@@ -639,6 +694,7 @@ type Post struct {
 	StateID               pgtype.UUID
 	TeamID                pgtype.UUID
 	CoverThumbnailAssetID pgtype.UUID
+	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
 	SubtitleTrackOverride []byte
 }
 

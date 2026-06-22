@@ -106,7 +106,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind
+          subject_kind, extraction_source, extraction_mode
 `
 
 type CreateFieldDefinitionParams struct {
@@ -174,6 +174,8 @@ func (q *Queries) CreateFieldDefinition(ctx context.Context, arg CreateFieldDefi
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
 		&i.SubjectKind,
+		&i.ExtractionSource,
+		&i.ExtractionMode,
 	)
 	return i, err
 }
@@ -292,7 +294,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition WHERE code = $1
 `
 
@@ -323,6 +325,8 @@ func (q *Queries) GetFieldDefinitionByCode(ctx context.Context, code string) (Fi
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
 		&i.SubjectKind,
+		&i.ExtractionSource,
+		&i.ExtractionMode,
 	)
 	return i, err
 }
@@ -333,7 +337,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition WHERE id = $1
 `
 
@@ -364,6 +368,8 @@ func (q *Queries) GetFieldDefinitionByID(ctx context.Context, id pgtype.UUID) (F
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
 		&i.SubjectKind,
+		&i.ExtractionSource,
+		&i.ExtractionMode,
 	)
 	return i, err
 }
@@ -591,7 +597,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition
 WHERE ($1::TEXT IS NULL OR status = $1::TEXT)
   AND ($2::TEXT IS NULL OR subject_kind = $2::TEXT)
@@ -642,6 +648,8 @@ func (q *Queries) ListFieldDefinitions(ctx context.Context, arg ListFieldDefinit
 			&i.CreatedByUserRef,
 			&i.UpdatedByUserRef,
 			&i.SubjectKind,
+			&i.ExtractionSource,
+			&i.ExtractionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -659,7 +667,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -702,6 +710,8 @@ func (q *Queries) ListFieldDefinitionsForAssetType(ctx context.Context, rt int64
 			&i.CreatedByUserRef,
 			&i.UpdatedByUserRef,
 			&i.SubjectKind,
+			&i.ExtractionSource,
+			&i.ExtractionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -783,7 +793,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind
+          subject_kind, extraction_source, extraction_mode
 `
 
 type UpdateFieldDefinitionParams struct {
@@ -853,6 +863,8 @@ func (q *Queries) UpdateFieldDefinition(ctx context.Context, arg UpdateFieldDefi
 		&i.CreatedByUserRef,
 		&i.UpdatedByUserRef,
 		&i.SubjectKind,
+		&i.ExtractionSource,
+		&i.ExtractionMode,
 	)
 	return i, err
 }
