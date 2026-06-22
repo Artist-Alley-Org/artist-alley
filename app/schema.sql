@@ -519,6 +519,53 @@ CREATE TABLE public.ai_provider_call (
 
 
 --
+-- Name: mcp_server_registration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_server_registration (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    url text NOT NULL,
+    transport text DEFAULT 'http'::text NOT NULL,
+    auth_kind text DEFAULT 'none'::text NOT NULL,
+    auth_secret_ref text,
+    auth_header_name text,
+    privacy_class text DEFAULT 'cloud'::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    rate_limit_per_second integer DEFAULT 2 NOT NULL,
+    rate_limit_per_minute integer DEFAULT 60 NOT NULL,
+    health_check_interval_s integer DEFAULT 60 NOT NULL,
+    last_health_check_at timestamp with time zone,
+    last_health_status text,
+    last_health_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    registered_by_user_ref bigint,
+    CONSTRAINT mcp_server_registration_auth_kind_check CHECK ((auth_kind = ANY (ARRAY['none'::text, 'bearer'::text, 'header'::text, 'mtls'::text]))),
+    CONSTRAINT mcp_server_registration_health_check_interval_s_check CHECK ((health_check_interval_s > 0)),
+    CONSTRAINT mcp_server_registration_last_health_status_check CHECK (((last_health_status IS NULL) OR (last_health_status = ANY (ARRAY['healthy'::text, 'degraded'::text, 'unreachable'::text])))),
+    CONSTRAINT mcp_server_registration_privacy_class_check CHECK ((privacy_class = ANY (ARRAY['local'::text, 'cloud'::text]))),
+    CONSTRAINT mcp_server_registration_rate_limit_per_minute_check CHECK ((rate_limit_per_minute > 0)),
+    CONSTRAINT mcp_server_registration_rate_limit_per_second_check CHECK ((rate_limit_per_second > 0)),
+    CONSTRAINT mcp_server_registration_transport_check CHECK ((transport = ANY (ARRAY['http'::text, 'stdio'::text])))
+);
+
+
+--
+-- Name: mcp_server_tool_grant; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_server_tool_grant (
+    server_id uuid NOT NULL,
+    tool_name text NOT NULL,
+    additional_capability text,
+    cost_estimate_micros bigint DEFAULT 0 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    CONSTRAINT mcp_server_tool_grant_cost_estimate_micros_check CHECK ((cost_estimate_micros >= 0))
+);
+
+
+--
 -- Name: api_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1665,6 +1712,45 @@ ALTER TABLE ONLY public.activities
 
 ALTER TABLE ONLY public.ai_provider_call
     ADD CONSTRAINT ai_provider_call_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_server_registration mcp_server_registration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_registration
+    ADD CONSTRAINT mcp_server_registration_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_server_registration mcp_server_registration_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_registration
+    ADD CONSTRAINT mcp_server_registration_name_key UNIQUE (name);
+
+
+--
+-- Name: mcp_server_tool_grant mcp_server_tool_grant_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_tool_grant
+    ADD CONSTRAINT mcp_server_tool_grant_pkey PRIMARY KEY (server_id, tool_name);
+
+
+--
+-- Name: mcp_server_tool_grant mcp_server_tool_grant_server_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_tool_grant
+    ADD CONSTRAINT mcp_server_tool_grant_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.mcp_server_registration(id) ON DELETE CASCADE;
+
+
+--
+-- Name: idx_mcp_server_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mcp_server_enabled ON public.mcp_server_registration USING btree (enabled) WHERE (enabled = true);
 
 
 --

@@ -135,6 +135,41 @@ func (*PanicShim) UpdateAIInferenceConfig(context.Context, openapi.UpdateAIInfer
 	panic("PanicShim: UpdateAIInferenceConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListMCPClients panics by default; test shims override.
+func (*PanicShim) ListMCPClients(context.Context, openapi.ListMCPClientsRequestObject) (openapi.ListMCPClientsResponseObject, error) {
+	panic("PanicShim: ListMCPClients called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RegisterMCPClient panics by default; test shims override.
+func (*PanicShim) RegisterMCPClient(context.Context, openapi.RegisterMCPClientRequestObject) (openapi.RegisterMCPClientResponseObject, error) {
+	panic("PanicShim: RegisterMCPClient called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteMCPClient panics by default; test shims override.
+func (*PanicShim) DeleteMCPClient(context.Context, openapi.DeleteMCPClientRequestObject) (openapi.DeleteMCPClientResponseObject, error) {
+	panic("PanicShim: DeleteMCPClient called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateMCPClient panics by default; test shims override.
+func (*PanicShim) UpdateMCPClient(context.Context, openapi.UpdateMCPClientRequestObject) (openapi.UpdateMCPClientResponseObject, error) {
+	panic("PanicShim: UpdateMCPClient called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListMCPClientToolGrants panics by default; test shims override.
+func (*PanicShim) ListMCPClientToolGrants(context.Context, openapi.ListMCPClientToolGrantsRequestObject) (openapi.ListMCPClientToolGrantsResponseObject, error) {
+	panic("PanicShim: ListMCPClientToolGrants called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DeleteMCPClientToolGrant panics by default; test shims override.
+func (*PanicShim) DeleteMCPClientToolGrant(context.Context, openapi.DeleteMCPClientToolGrantRequestObject) (openapi.DeleteMCPClientToolGrantResponseObject, error) {
+	panic("PanicShim: DeleteMCPClientToolGrant called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpsertMCPClientToolGrant panics by default; test shims override.
+func (*PanicShim) UpsertMCPClientToolGrant(context.Context, openapi.UpsertMCPClientToolGrantRequestObject) (openapi.UpsertMCPClientToolGrantResponseObject, error) {
+	panic("PanicShim: UpsertMCPClientToolGrant called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAIUsage panics by default; test shims override.
 func (*PanicShim) GetAIUsage(context.Context, openapi.GetAIUsageRequestObject) (openapi.GetAIUsageResponseObject, error) {
 	panic("PanicShim: GetAIUsage called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

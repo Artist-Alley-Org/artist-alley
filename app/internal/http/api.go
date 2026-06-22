@@ -56,7 +56,11 @@ import (
 	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
 	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
 	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
+	mcpserver "github.com/mscrnt/artist-alley/app/internal/ai/providers/mcp_server"
 	aiwhisperlocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/whisper_local"
+	mcpadmin "github.com/mscrnt/artist-alley/app/internal/ai/mcp_admin"
+	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
+	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
 	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
@@ -93,9 +97,14 @@ type apiServer struct {
 	audit         *audit.HTTPHandler
 	licensing     *licensing.Handler
 	userprefs     *userprefs.Handler
-	aiAdmin       *aiadmin.Handler // Phase 1.14.A inference subsystem admin surface
-	aiBridge      ai.Bridge        // Phase 1.14.A-bridge — read/write seam for AI handlers
-	aiRouter      *ai.Router       // Phase 1.14.B — typed inference dispatch w/ registered providers
+	aiAdmin       *aiadmin.Handler   // Phase 1.14.A inference subsystem admin surface
+	aiBridge      ai.Bridge          // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter      *ai.Router         // Phase 1.14.B — typed inference dispatch w/ registered providers
+	mcpRegistry   *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
+	mcpDispatch   *mcpdispatch.Dispatcher
+	mcpHealth     *mcpdispatch.HealthChecker
+	mcpProviders  *mcpProviderTable
+	mcpAdmin      *mcpadmin.Handler
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -227,12 +236,52 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// admin UI gates the runtime call until the operator flips it.
 	s.aiRouter.Register(aiwhisperlocal.NewProvider(aiwhisperlocal.Config{}, aiCallAuditor))
 
+	// Load AI privacy policy once — the MCP dispatcher + the embed
+	// job handler below both consume it. Best-effort; defaults to a
+	// no-clamp policy if the config row is missing (pre-migration
+	// state) so boot doesn't wedge.
+	aiPrivacyCfg, _ := aiLoader.Load(context.Background())
+
+	// Phase 1.53.A — MCP-client subsystem. Each enabled MCP server
+	// becomes one ai.Provider in the router (so audit + cost +
+	// privacy machinery applies uniformly); the dispatcher exposes
+	// the generic mcp.invoke(server, tool, args) entry point with
+	// the guard chain (caller cap → tool whitelist + per-tool cap →
+	// privacy → budget → call → audit). Health-check goroutine
+	// runs per server; spawned in Server.Run alongside the other
+	// background workers.
+	s.mcpRegistry = mcpregistry.NewRegistry(pool, cacheReg, logger)
+	s.mcpProviders = newMCPProviderTable()
+	if mcpServers, err := s.mcpRegistry.ListEnabledServers(context.Background()); err == nil {
+		for _, mc := range mcpServers {
+			prov := mcpserver.NewProvider(mcpserver.Config{
+				Name:               mc.Name,
+				URL:                mc.URL,
+				AuthKind:           mc.AuthKind,
+				AuthSecret:         mc.AuthSecretRef, // resolved-in-place for v1; vault lookup is a follow-up
+				AuthHeaderName:     mc.AuthHeaderName,
+				PrivacyClass:       mc.PrivacyClass,
+				RateLimitPerSecond: float64(mc.RateLimitPerSecond),
+				RateLimitBurst:     int(mc.RateLimitPerSecond), // burst = per-second by default
+			}, aiCallAuditor)
+			s.aiRouter.Register(prov)
+			s.mcpProviders.add(mc.Name, prov)
+		}
+	} else {
+		logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"mcp.bootwire.list_failed",
+			slog.String("err", err.Error()),
+			slog.String("impact", "no MCP servers will be available until DB recovers"),
+		)
+	}
+	s.mcpDispatch = mcpdispatch.New(s.mcpRegistry, s.mcpProviders,
+		aiBudget, aiCallAuditor, aiPrivacyCfg.Privacy, logger)
+	s.mcpHealth = mcpdispatch.NewHealthChecker(s.mcpRegistry, s.mcpProviders, logger)
+	s.mcpAdmin = mcpadmin.NewHandler(s.mcpRegistry)
+
 	// Phase 1.14.B — register ai.embed job handler so the worker
 	// pool can drain ai.embed jobs enqueued by the asset upload
-	// fanout. Privacy policy + default model load best-effort from
-	// system_config; defaults if the rows aren't present yet
-	// (pre-migration state) so boot doesn't wedge.
-	aiPrivacyCfg, _ := aiLoader.Load(context.Background())
+	// fanout. Uses the aiPrivacyCfg loaded above the MCP block.
 	defaultEmbedModel := "nomic-embed-text"
 	if jobSvc != nil {
 		jobSvc.Registry.Register(aijobs.NewEmbedHandler(
@@ -1175,6 +1224,30 @@ func peerDisplayFor(reg *peer.Registry) shares.PeerDisplay {
 
 // --- cross-package adapters for the notifications wiring ----------
 
+// mcpProviderTable is the concrete ProviderRegistry the dispatcher +
+// health-check goroutine read from. Holds a copy of every registered
+// *mcpserver.Provider, keyed by operator-chosen name. Same lifetime
+// as the apiServer — providers are created at boot from the
+// mcp_server_registration rows + don't mutate at runtime in v1.
+// (Hot-reload on registry changes is a follow-up; for now the
+// operator restarts the app to add a new server.)
+type mcpProviderTable struct {
+	byName map[string]*mcpserver.Provider
+}
+
+func newMCPProviderTable() *mcpProviderTable {
+	return &mcpProviderTable{byName: map[string]*mcpserver.Provider{}}
+}
+
+func (t *mcpProviderTable) add(name string, p *mcpserver.Provider) {
+	t.byName[name] = p
+}
+
+func (t *mcpProviderTable) Provider(name string) (*mcpserver.Provider, bool) {
+	p, ok := t.byName[name]
+	return p, ok
+}
+
 // transcribeOrchestratorAdapter bridges aitranscribe.Handler to the
 // aijobs.TranscribeOrchestrator consumer-defined interface. The
 // dual-type pattern keeps ai/jobs out of ai/transcribe's import
@@ -1524,6 +1597,32 @@ func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.Recrea
 
 func (s *apiServer) ListSimilarAssets(ctx context.Context, req openapi.ListSimilarAssetsRequestObject) (openapi.ListSimilarAssetsResponseObject, error) {
 	return s.assets.ListSimilarAssets(ctx, req)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.53.A — MCP-client admin endpoints
+// ---------------------------------------------------------------------------
+
+func (s *apiServer) ListMCPClients(ctx context.Context, req openapi.ListMCPClientsRequestObject) (openapi.ListMCPClientsResponseObject, error) {
+	return s.mcpAdmin.ListMCPClients(ctx, req)
+}
+func (s *apiServer) RegisterMCPClient(ctx context.Context, req openapi.RegisterMCPClientRequestObject) (openapi.RegisterMCPClientResponseObject, error) {
+	return s.mcpAdmin.RegisterMCPClient(ctx, req)
+}
+func (s *apiServer) UpdateMCPClient(ctx context.Context, req openapi.UpdateMCPClientRequestObject) (openapi.UpdateMCPClientResponseObject, error) {
+	return s.mcpAdmin.UpdateMCPClient(ctx, req)
+}
+func (s *apiServer) DeleteMCPClient(ctx context.Context, req openapi.DeleteMCPClientRequestObject) (openapi.DeleteMCPClientResponseObject, error) {
+	return s.mcpAdmin.DeleteMCPClient(ctx, req)
+}
+func (s *apiServer) ListMCPClientToolGrants(ctx context.Context, req openapi.ListMCPClientToolGrantsRequestObject) (openapi.ListMCPClientToolGrantsResponseObject, error) {
+	return s.mcpAdmin.ListMCPClientToolGrants(ctx, req)
+}
+func (s *apiServer) UpsertMCPClientToolGrant(ctx context.Context, req openapi.UpsertMCPClientToolGrantRequestObject) (openapi.UpsertMCPClientToolGrantResponseObject, error) {
+	return s.mcpAdmin.UpsertMCPClientToolGrant(ctx, req)
+}
+func (s *apiServer) DeleteMCPClientToolGrant(ctx context.Context, req openapi.DeleteMCPClientToolGrantRequestObject) (openapi.DeleteMCPClientToolGrantResponseObject, error) {
+	return s.mcpAdmin.DeleteMCPClientToolGrant(ctx, req)
 }
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {
