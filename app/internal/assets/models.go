@@ -332,6 +332,13 @@ type Comment struct {
 	ActivityUri    *string
 }
 
+type CreativeLineage struct {
+	DerivativeAssetID  pgtype.UUID
+	SourceAssetID      pgtype.UUID
+	GenerationMetadata []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
 type DirectMessage struct {
 	ID               pgtype.UUID
 	SenderUserRef    int64
