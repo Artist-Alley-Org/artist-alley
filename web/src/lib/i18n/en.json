@@ -1369,6 +1369,29 @@
     "verb_license_expiring_soon": "License expiring soon",
     "verb_license_expired": "License expired"
   },
+  "aiedit": {
+    "img2img": {
+      "button_label": "Generate variation (AI)",
+      "button_title": "Generate an AI variation of this image via the configured ComfyUI MCP bridge",
+      "heading": "Generate variation",
+      "hint": "Describe the variation you want. The source image stays — a new asset will be created with this prompt applied.",
+      "prompt_label": "Prompt",
+      "prompt_placeholder": "e.g. watercolour sketch, soft lighting",
+      "prompt_required": "Enter a prompt to describe the variation.",
+      "btn_submit": "Generate",
+      "btn_submitting": "Submitting…",
+      "btn_polling": "Generating…",
+      "status_polling": "Waiting for ComfyUI to finish. This can take 30 s – 5 min.",
+      "status_done": "Done — opening the new asset…",
+      "job_failed": "The generation job failed. Check the bridge logs and try again.",
+      "err_unauth": "You need to sign in to use this.",
+      "err_forbidden": "Your account doesn't have the mcp.client.images.write capability. Ask an admin.",
+      "err_not_found": "Source asset not found.",
+      "err_server_not_configured": "No image-edit MCP server is configured. Operator setup needed (see /admin/system/aiedit).",
+      "err_not_image": "img2img only works on image assets.",
+      "err_generic": "Something went wrong. Try again or check the bridge logs."
+    }
+  },
   "common": {
     "loading": "Loading…",
     "save": "Save",

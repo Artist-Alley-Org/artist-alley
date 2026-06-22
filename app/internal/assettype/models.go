@@ -332,6 +332,13 @@ type Comment struct {
 	ActivityUri    *string            `json:"activity_uri"`
 }
 
+type CreativeLineage struct {
+	DerivativeAssetID  pgtype.UUID        `json:"derivative_asset_id"`
+	SourceAssetID      pgtype.UUID        `json:"source_asset_id"`
+	GenerationMetadata []byte             `json:"generation_metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
 type DirectMessage struct {
 	ID               pgtype.UUID        `json:"id"`
 	SenderUserRef    int64              `json:"sender_user_ref"`

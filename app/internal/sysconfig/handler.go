@@ -305,6 +305,67 @@ func (h *Handler) UpdateAIConfig(
 }
 
 // ---------------------------------------------------------------------------
+// AI image-edit (Phase 1.14.E-1)
+// ---------------------------------------------------------------------------
+//
+// Lives in this handler (not aiedit's own) so the
+// /admin/system/aiedit endpoint composes with the same auth gate +
+// audit + denial machinery as the other system config surfaces. The
+// aiedit package owns the runtime endpoint (POST
+// /assets/{id}/edit/img2img); sysconfig owns the operator settings.
+
+func (h *Handler) GetAIEditConfig(
+	ctx context.Context,
+	_ openapi.GetAIEditConfigRequestObject,
+) (openapi.GetAIEditConfigResponseObject, error) {
+	if _, denied := h.requireCap(ctx, CapConfigRead); denied != nil {
+		return aiEditConfigDenial(denied), nil
+	}
+	cfg, err := h.Store.GetAIEdit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: get aiedit: %w", err)
+	}
+	return openapi.GetAIEditConfig200JSONResponse(aiEditToAPI(cfg)), nil
+}
+
+func (h *Handler) UpdateAIEditConfig(
+	ctx context.Context,
+	req openapi.UpdateAIEditConfigRequestObject,
+) (openapi.UpdateAIEditConfigResponseObject, error) {
+	id, denied := h.requireCap(ctx, CapAIWrite)
+	if denied != nil {
+		return aiEditConfigUpdateDenial(denied), nil
+	}
+	if req.Body == nil {
+		return openapi.UpdateAIEditConfig400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	before, beforeErr := h.Store.GetAIEdit(ctx)
+	cfg := apiToAIEdit(*req.Body)
+	if err := h.Store.SetAIEdit(ctx, cfg); err != nil {
+		return openapi.UpdateAIEditConfig400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+	if h.Audit != nil {
+		var beforeArg any = &before
+		if beforeErr != nil {
+			beforeArg = (*AIEditConfig)(nil)
+		}
+		actor := &id.UserRef
+		// Re-uses EventAdminAIConfigUpdated event kind — aiedit
+		// settings are conceptually part of the AI surface for the
+		// audit feed even though they live under a separate key.
+		h.Audit.RecordChange(ctx, auth.RequestFromContext(ctx),
+			audit.EventAdminAIConfigUpdated,
+			nil, actor,
+			beforeArg, &cfg, nil)
+	}
+	return openapi.UpdateAIEditConfig200JSONResponse(aiEditToAPI(cfg)), nil
+}
+
+// ---------------------------------------------------------------------------
 // Appearance
 // ---------------------------------------------------------------------------
 //

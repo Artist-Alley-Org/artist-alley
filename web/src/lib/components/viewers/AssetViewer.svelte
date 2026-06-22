@@ -32,6 +32,7 @@
   import PlaceholderView from './PlaceholderView.svelte';
   import ViewerMenuBar from './ViewerMenuBar.svelte';
   import ToolPanelShell from './ToolPanelShell.svelte';
+  import Img2ImgPopover from './Img2ImgPopover.svelte';
   import { TOOLS } from './tools/registry';
   import type { ToolContext, ToolDef } from './tools/contract';
 
@@ -981,6 +982,15 @@
         {/if}
       {/key}
     </div>
+    {/if}
+
+    <!-- Phase 1.14.E-1 — Generate variation (AI) trigger. Image
+         assets only; the popover handles its own state, auth +
+         server-not-configured errors surface in-popover. -->
+    {#if kind === 'image'}
+      <div class="pointer-events-auto absolute right-3 top-3 z-10">
+        <Img2ImgPopover assetId={asset.id} />
+      </div>
     {/if}
 
     <!-- HUD: live frame counter / zoom %. The static asset info

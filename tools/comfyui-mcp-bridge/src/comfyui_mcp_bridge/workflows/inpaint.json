@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "description": "Placeholder inpaint workflow. The AA-side 1.14.E-1 release does NOT yet call inpaint; the bundled JSON here is a minimum-viable shape so the bridge can advertise the tool via tools/list (operator-discoverable in /admin/ai/mcp-clients). Drop a real inpaint workflow at CMB_EXTRA_WORKFLOWS_DIR/inpaint.json to override.",
+    "version": 1,
+    "status": "stub — needs operator-supplied workflow for real use",
+    "placeholders": ["<<PROMPT>>", "<<SOURCE_IMAGE_NAME>>", "<<MASK_IMAGE_NAME>>", "<<DENOISE>>", "<<STEPS>>", "<<SEED>>"]
+  },
+  "1": {
+    "inputs": {"text": "inpaint workflow not configured — drop a real JSON in CMB_EXTRA_WORKFLOWS_DIR"},
+    "class_type": "ShowText"
+  }
+}

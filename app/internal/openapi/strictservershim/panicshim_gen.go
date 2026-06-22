@@ -370,6 +370,16 @@ func (*PanicShim) UpdateAIConfig(context.Context, openapi.UpdateAIConfigRequestO
 	panic("PanicShim: UpdateAIConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetAIEditConfig panics by default; test shims override.
+func (*PanicShim) GetAIEditConfig(context.Context, openapi.GetAIEditConfigRequestObject) (openapi.GetAIEditConfigResponseObject, error) {
+	panic("PanicShim: GetAIEditConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// UpdateAIEditConfig panics by default; test shims override.
+func (*PanicShim) UpdateAIEditConfig(context.Context, openapi.UpdateAIEditConfigRequestObject) (openapi.UpdateAIEditConfigResponseObject, error) {
+	panic("PanicShim: UpdateAIEditConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAppearanceConfig panics by default; test shims override.
 func (*PanicShim) GetAppearanceConfig(context.Context, openapi.GetAppearanceConfigRequestObject) (openapi.GetAppearanceConfigResponseObject, error) {
 	panic("PanicShim: GetAppearanceConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -563,6 +573,11 @@ func (*PanicShim) RemoveAssetCompanion(context.Context, openapi.RemoveAssetCompa
 // DownloadAssetCompanion panics by default; test shims override.
 func (*PanicShim) DownloadAssetCompanion(context.Context, openapi.DownloadAssetCompanionRequestObject) (openapi.DownloadAssetCompanionResponseObject, error) {
 	panic("PanicShim: DownloadAssetCompanion called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GenerateImg2ImgVariation panics by default; test shims override.
+func (*PanicShim) GenerateImg2ImgVariation(context.Context, openapi.GenerateImg2ImgVariationRequestObject) (openapi.GenerateImg2ImgVariationResponseObject, error) {
+	panic("PanicShim: GenerateImg2ImgVariation called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetEpubChapter panics by default; test shims override.

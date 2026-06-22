@@ -566,6 +566,18 @@ CREATE TABLE public.mcp_server_tool_grant (
 
 
 --
+-- Name: creative_lineage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.creative_lineage (
+    derivative_asset_id uuid NOT NULL,
+    source_asset_id uuid NOT NULL,
+    generation_metadata jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: api_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1744,6 +1756,37 @@ ALTER TABLE ONLY public.mcp_server_tool_grant
 
 ALTER TABLE ONLY public.mcp_server_tool_grant
     ADD CONSTRAINT mcp_server_tool_grant_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.mcp_server_registration(id) ON DELETE CASCADE;
+
+
+--
+-- Name: creative_lineage creative_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_pkey PRIMARY KEY (derivative_asset_id);
+
+
+--
+-- Name: creative_lineage creative_lineage_derivative_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_derivative_asset_id_fkey FOREIGN KEY (derivative_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: creative_lineage creative_lineage_source_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_source_asset_id_fkey FOREIGN KEY (source_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: idx_creative_lineage_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_creative_lineage_source ON public.creative_lineage USING btree (source_asset_id);
 
 
 --
