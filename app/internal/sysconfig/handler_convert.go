@@ -361,6 +361,55 @@ func aiConfigUpdateDenial(err error401or403) openapi.UpdateAIConfigResponseObjec
 }
 
 // ---------------------------------------------------------------------------
+// AI image-edit (Phase 1.14.E-1)
+// ---------------------------------------------------------------------------
+
+func aiEditToAPI(v AIEditConfig) openapi.AIEditConfig {
+	out := openapi.AIEditConfig{}
+	if v.ImageEditServer != "" {
+		s := v.ImageEditServer
+		out.ImageEditServer = &s
+	}
+	return out
+}
+
+func apiToAIEdit(v openapi.AIEditConfig) AIEditConfig {
+	out := AIEditConfig{}
+	if v.ImageEditServer != nil {
+		out.ImageEditServer = *v.ImageEditServer
+	}
+	return out
+}
+
+func aiEditConfigDenial(err error401or403) openapi.GetAIEditConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.GetAIEditConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.GetAIEditConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+func aiEditConfigUpdateDenial(err error401or403) openapi.UpdateAIEditConfigResponseObject {
+	switch e := err.(type) {
+	case errUnauthenticated:
+		return openapi.UpdateAIEditConfig401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}
+	case errForbidden:
+		return openapi.UpdateAIEditConfig403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Appearance
 // ---------------------------------------------------------------------------
 

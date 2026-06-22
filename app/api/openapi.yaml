@@ -3524,6 +3524,65 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /assets/{id}/edit/img2img:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: generateImg2ImgVariation
+      summary: Generate an AI image variation of the source asset (Phase 1.14.E-1)
+      description: |
+        Enqueues an `aiedit.img2img` job that dispatches a prompt +
+        the source image's bytes to the operator-configured MCP
+        image-edit server (see /admin/system/aiedit). The job runs
+        async (ComfyUI generation can take seconds-to-minutes);
+        endpoint returns 202 + the job id. Poll /jobs/{id} for
+        status; on completion the job result carries the new
+        derivative asset id. A creative_lineage row links the
+        derivative back to the source for the asset detail panel.
+
+        Requires capabilities `mcp.client.use` (umbrella) plus the
+        per-tool capability operator pinned on the img2img grant
+        (typically `mcp.client.images.write`).
+
+        Errors:
+        - 400 if the request body is missing / malformed.
+        - 401 if the caller is unauthenticated.
+        - 403 if the caller lacks the required capabilities.
+        - 404 if the source asset doesn't exist.
+        - 409 if no MCP image-edit server is configured.
+        - 422 if the source asset is not an image (audio / video /
+          doc / archive — img2img only applies to images).
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Img2ImgRequest" }
+      responses:
+        "202":
+          description: img2img job enqueued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssetEditJobAccepted" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /assets/{id}/epub/spine:
     parameters:
       - name: id
@@ -7148,6 +7207,60 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/aiedit:
+    get:
+      operationId: getAIEditConfig
+      summary: Read the AI image-edit (1.14.E) configuration
+      description: |
+        Returns the operator-set MCP server name that handles
+        image-edit dispatch. Empty means the feature is disabled —
+        the viewer hides the Generate variation button and the
+        runtime endpoint returns 409.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current image-edit config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIEditConfig" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateAIEditConfig
+      summary: Update the AI image-edit configuration
+      description: |
+        Names the operator-registered MCP server (see
+        /admin/ai/mcp-clients) the aiedit dispatcher routes calls
+        to. The named server must already be registered + enabled +
+        have the "img2img" tool whitelisted before the runtime
+        endpoint will succeed.
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIEditConfig" }
+      responses:
+        "200":
+          description: Updated image-edit config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIEditConfig" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/system/appearance:
     get:
       operationId: getAppearanceConfig
@@ -7978,6 +8091,76 @@ components:
                   Per-kind opaque config (temperature defaults,
                   system prompts, rate limits, ...). Integration code
                   owns the schema.
+    AIEditConfig:
+      type: object
+      description: |
+        Phase 1.14.E-1 — AI image-edit subsystem configuration. E-1
+        ships one field; E-2 expands the typed surface (per-op MCP
+        server overrides, default workflow selection, ...).
+      properties:
+        image_edit_server:
+          type: string
+          description: |
+            Name of an operator-registered MCP server (see
+            /admin/ai/mcp-clients) the aiedit dispatcher routes
+            image-edit calls to. Must match a row in
+            mcp_server_registration.name exactly. Empty = feature
+            disabled (viewer hides the Generate variation button +
+            the runtime endpoint returns 409).
+    Img2ImgRequest:
+      type: object
+      description: |
+        Phase 1.14.E-1 — payload for POST
+        /assets/{id}/edit/img2img. Zero-value knobs (denoise_strength,
+        steps, seed) tell the bridge to apply its own defaults; the
+        operator's workflow defaults stay authoritative unless the
+        caller explicitly overrides.
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Steers the variation. Required even when empty-like
+            (e.g. ".") to keep the operator's audit trail
+            human-readable.
+        denoise_strength:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            0 = no change from source; 1 = ignore source entirely
+            (effectively txt2img). Bridge default is 0.7.
+        steps:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: |
+            Inference step count. Bridge default is 20.
+        seed:
+          type: integer
+          description: |
+            0 (or omitted) = random; the response carries the
+            actual seed used.
+    AssetEditJobAccepted:
+      type: object
+      description: |
+        Phase 1.14.E-1 — 202 response for the enqueue endpoints.
+        Caller polls /jobs/{job_id} for status; on completion the
+        job result carries the new derivative asset id.
+      required: [job_id, source_asset_id]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: The enqueued jobs.* row id.
+        source_asset_id:
+          type: string
+          format: uuid
+          description: |
+            The asset the variation derives from. Echoed for
+            caller-side correlation.
     AppearanceConfig:
       type: object
       description: |

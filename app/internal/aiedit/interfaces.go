@@ -70,11 +70,21 @@ type Img2ImgRequest struct {
 	// ID here lets the audit + lineage layers cross-reference.
 	SourceAssetID uuid.UUID
 
-	// SourceImageURL is the URL the bridge can GET to fetch the
-	// source bytes. The caller is responsible for ensuring the URL
-	// is reachable from the bridge (typically a presigned URL or an
-	// AA endpoint that doesn't require auth).
-	SourceImageURL string
+	// SourceImageBytes is the raw source-image bytes. The provider
+	// base64-encodes them into the MCP tool args so the bridge
+	// doesn't need credentials to fetch the source independently.
+	//
+	// Tradeoff: payload size grows by ~33%. For typical asset sizes
+	// (1-10 MB) that's still well under MCP server limits; for
+	// larger sources we may switch to presigned-URL handoff later
+	// (E-2 work; FS backend would need a temporary-signed-URL
+	// shim).
+	SourceImageBytes []byte
+
+	// SourceContentType describes [SourceImageBytes] (e.g.
+	// "image/png"). The bridge uses it to pick the right ComfyUI
+	// loader node.
+	SourceContentType string
 
 	// Prompt steers the variation. Empty is allowed for providers
 	// that support unconditional re-rendering; ComfyUI treats empty

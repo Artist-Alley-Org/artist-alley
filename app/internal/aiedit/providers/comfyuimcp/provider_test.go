@@ -78,13 +78,15 @@ func TestProvider_Img2Img_HappyPath_DecodesBytesAndMetadata(t *testing.T) {
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
 
 	srcID := uuid.New()
+	srcBytes := []byte("fake-source-png-bytes")
 	out, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{
-		SourceAssetID:   srcID,
-		SourceImageURL:  "http://aa.lan/file/abc",
-		Prompt:          "watercolour sketch",
-		DenoiseStrength: 0.65,
-		Steps:           20,
-		Seed:            42,
+		SourceAssetID:     srcID,
+		SourceImageBytes:  srcBytes,
+		SourceContentType: "image/png",
+		Prompt:            "watercolour sketch",
+		DenoiseStrength:   0.65,
+		Steps:             20,
+		Seed:              42,
 	})
 	if err != nil {
 		t.Fatalf("Img2Img: %v", err)
@@ -105,6 +107,18 @@ func TestProvider_Img2Img_HappyPath_DecodesBytesAndMetadata(t *testing.T) {
 	}
 	if got, ok := stub.gotOpts.Arguments["denoise_strength"].(float64); !ok || got != 0.65 {
 		t.Errorf("denoise_strength arg = %v (%T), want 0.65", got, stub.gotOpts.Arguments["denoise_strength"])
+	}
+	// Source bytes round-trip through base64.
+	if got, ok := stub.gotOpts.Arguments["source_image_base64"].(string); !ok {
+		t.Errorf("source_image_base64 not forwarded: %v", stub.gotOpts.Arguments)
+	} else {
+		decoded, err := base64.StdEncoding.DecodeString(got)
+		if err != nil || string(decoded) != string(srcBytes) {
+			t.Errorf("source bytes mis-encoded: decoded=%q err=%v", string(decoded), err)
+		}
+	}
+	if got := stub.gotOpts.Arguments["source_content_type"]; got != "image/png" {
+		t.Errorf("source_content_type = %v, want image/png", got)
 	}
 
 	// Bytes round-trip.
@@ -135,8 +149,9 @@ func TestProvider_Img2Img_ZeroValueKnobs_NotForwarded(t *testing.T) {
 	}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
 	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{
-		SourceImageURL: "http://x/img",
-		Prompt:         "x",
+		SourceImageBytes:  []byte("x-bytes"),
+		SourceContentType: "image/png",
+		Prompt:            "x",
 		// All knobs zero — should NOT appear in args so bridge
 		// applies its own defaults.
 	})
@@ -152,7 +167,7 @@ func TestProvider_Img2Img_ZeroValueKnobs_NotForwarded(t *testing.T) {
 
 func TestProvider_Img2Img_ServerNotConfigured_ReturnsErr(t *testing.T) {
 	p := comfyuimcp.NewProvider(&stubDispatcher{}, "")
-	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if !errors.Is(err, aiedit.ErrServerNotConfigured) {
 		t.Errorf("got %v, want ErrServerNotConfigured", err)
 	}
@@ -161,7 +176,7 @@ func TestProvider_Img2Img_ServerNotConfigured_ReturnsErr(t *testing.T) {
 func TestProvider_Img2Img_DispatcherError_Propagates(t *testing.T) {
 	stub := &stubDispatcher{err: mcpdispatch.ErrPrivacyBlocked}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
-	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if !errors.Is(err, mcpdispatch.ErrPrivacyBlocked) {
 		t.Errorf("got %v, want ErrPrivacyBlocked propagated unchanged", err)
 	}
@@ -172,7 +187,7 @@ func TestProvider_Img2Img_MalformedResponse_NoImage_ReturnsErr(t *testing.T) {
 	body := `{"content":[{"type":"text","text":"no image here"}]}`
 	stub := &stubDispatcher{resp: json.RawMessage(body)}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
-	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if !errors.Is(err, aiedit.ErrBridgeResponseMalformed) {
 		t.Errorf("got %v, want ErrBridgeResponseMalformed", err)
 	}
@@ -182,7 +197,7 @@ func TestProvider_Img2Img_MalformedResponse_BadBase64_ReturnsErr(t *testing.T) {
 	body := `{"content":[{"type":"image","data":"@@@not-base64@@@","mimeType":"image/png"}]}`
 	stub := &stubDispatcher{resp: json.RawMessage(body)}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
-	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if !errors.Is(err, aiedit.ErrBridgeResponseMalformed) {
 		t.Errorf("got %v, want ErrBridgeResponseMalformed", err)
 	}
@@ -192,7 +207,7 @@ func TestProvider_Img2Img_MalformedResponse_EmptyContent_ReturnsErr(t *testing.T
 	body := `{"content":[]}`
 	stub := &stubDispatcher{resp: json.RawMessage(body)}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
-	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	_, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if !errors.Is(err, aiedit.ErrBridgeResponseMalformed) {
 		t.Errorf("got %v, want ErrBridgeResponseMalformed", err)
 	}
@@ -209,7 +224,7 @@ func TestProvider_Img2Img_MissingMetadata_StillSucceeds(t *testing.T) {
 	})
 	stub := &stubDispatcher{resp: body}
 	p := comfyuimcp.NewProvider(stub, "comfyui-lan")
-	out, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x"})
+	out, err := p.Img2Img(context.Background(), aiedit.Img2ImgRequest{Prompt: "x", SourceImageBytes: []byte("png"), SourceContentType: "image/png"})
 	if err != nil {
 		t.Fatalf("Img2Img: %v", err)
 	}

@@ -38,14 +38,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
-	"github.com/mscrnt/artist-alley/app/internal/ai"
 	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/aiedit"
-	"github.com/mscrnt/artist-alley/app/internal/auth"
 )
 
 // Name is the stable provider identifier recorded in audit rows.
@@ -98,10 +95,14 @@ func (p *Provider) Img2Img(ctx context.Context, req aiedit.Img2ImgRequest) (aied
 	if p.serverName == "" {
 		return aiedit.Img2ImgResult{}, aiedit.ErrServerNotConfigured
 	}
+	if len(req.SourceImageBytes) == 0 {
+		return aiedit.Img2ImgResult{}, errors.New("comfyuimcp.Img2Img: source image bytes required")
+	}
 
 	args := map[string]any{
-		"prompt":           req.Prompt,
-		"source_image_url": req.SourceImageURL,
+		"prompt":              req.Prompt,
+		"source_image_base64": base64.StdEncoding.EncodeToString(req.SourceImageBytes),
+		"source_content_type": req.SourceContentType,
 	}
 	// Zero-value knobs let the bridge apply its default; only forward
 	// non-zero values so operator-configured workflow defaults
@@ -121,8 +122,8 @@ func (p *Provider) Img2Img(ctx context.Context, req aiedit.Img2ImgRequest) (aied
 		ServerName:  p.serverName,
 		Tool:        ToolImg2Img,
 		Arguments:   args,
-		Caller:      callerFromContext(ctx),
-		Sensitivity: sensitivityFromContext(ctx),
+		Caller:      aiedit.CallerFromContext(ctx),
+		Sensitivity: aiedit.SensitivityFromContext(ctx),
 		AssetID:     req.SourceAssetID,
 	})
 	if err != nil {
@@ -250,45 +251,8 @@ func decodeImg2ImgResponse(raw json.RawMessage) (aiedit.Img2ImgResult, error) {
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// Context plumbing — caller identity + asset sensitivity ride the
-// context so the provider doesn't need a wider request shape.
-// ---------------------------------------------------------------------------
-
-// callerCtxKey + sensitivityCtxKey are unexported so external
-// callers can't accidentally collide; the handler sets them via
-// WithCaller / WithSensitivity below.
-type callerCtxKeyT struct{}
-type sensitivityCtxKeyT struct{}
-
-var callerCtxKey callerCtxKeyT
-var sensitivityCtxKey sensitivityCtxKeyT
-
-// WithCaller attaches the calling identity to ctx. The provider
-// forwards it to [mcpdispatch.InvokeOpts.Caller] for the cap gate.
-func WithCaller(ctx context.Context, id *auth.Identity) context.Context {
-	return context.WithValue(ctx, callerCtxKey, id)
-}
-
-// WithSensitivity attaches the source asset's sensitivity tier so
-// the dispatcher's privacy gate can clamp restricted/embargo bytes
-// to local-only MCP servers.
-func WithSensitivity(ctx context.Context, tier ai.SensitivityTier) context.Context {
-	return context.WithValue(ctx, sensitivityCtxKey, tier)
-}
-
-func callerFromContext(ctx context.Context) *auth.Identity {
-	v := ctx.Value(callerCtxKey)
-	id, _ := v.(*auth.Identity)
-	return id
-}
-
-func sensitivityFromContext(ctx context.Context) ai.SensitivityTier {
-	v := ctx.Value(sensitivityCtxKey)
-	tier, _ := v.(ai.SensitivityTier)
-	return tier
-}
-
-// Static guards so the unused-uuid import doesn't drift if a future
-// refactor drops the asset ID forwarding.
-var _ = uuid.Nil
+// Re-exported context helpers — aiedit owns the canonical
+// [aiedit.WithCaller] / [aiedit.WithSensitivity] (lives in
+// app/internal/aiedit/ctx.go) to keep this provider sub-package
+// free of cycles. Callers in aiedit/jobs.go use the aiedit-package
+// helpers directly.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -62,6 +63,8 @@ import (
 	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
 	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
 	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
+	"github.com/mscrnt/artist-alley/app/internal/aiedit"
+	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -135,6 +138,7 @@ type apiServer struct {
 	requestsHTTP       *requests.HTTPHandler
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
+	aieditHTTP       *aiedit.HTTPHandler
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -278,6 +282,31 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		aiBudget, aiCallAuditor, aiPrivacyCfg.Privacy, logger)
 	s.mcpHealth = mcpdispatch.NewHealthChecker(s.mcpRegistry, s.mcpProviders, logger)
 	s.mcpAdmin = mcpadmin.NewHandler(s.mcpRegistry)
+
+	// Phase 1.14.E-1 — aiedit subsystem boot wire.
+	//
+	// The ComfyUI-via-MCP provider takes the dispatcher + the
+	// operator-configured server name (read once at boot from
+	// sysconfig; operator re-points → app restart). The job
+	// handler wires the provider against the source-asset reader +
+	// derivative writer; both adapters live below. The HTTP
+	// handler validates the request synchronously + enqueues the
+	// async job.
+	aieditCfg, _ := sysCfg.GetAIEdit(context.Background())
+	aieditProvider := comfyuimcp.NewProvider(s.mcpDispatch, aieditCfg.ImageEditServer)
+	if jobSvc != nil {
+		aieditWriter := aiedit.NewDefaultDerivativeWriter(storageSvc, pool)
+		jobSvc.Registry.Register(aiedit.NewImg2ImgJobHandler(
+			aieditProvider,
+			aieditSourceAdapter{pool: pool, storage: storageSvc},
+			aieditWriter,
+		))
+	}
+	s.aieditHTTP = aiedit.NewHTTPHandler(
+		aieditAssetAdapter{pool: pool},
+		aieditConfigAdapter{store: sysCfg},
+		jobSvc,
+	)
 
 	// Phase 1.14.B — register ai.embed job handler so the worker
 	// pool can drain ai.embed jobs enqueued by the asset upload
@@ -1583,6 +1612,18 @@ func (s *apiServer) BurnSubtitleTrack(ctx context.Context, req openapi.BurnSubti
 	return s.subtitlesHTTP.BurnSubtitleTrack(ctx, req)
 }
 
+func (s *apiServer) GenerateImg2ImgVariation(ctx context.Context, req openapi.GenerateImg2ImgVariationRequestObject) (openapi.GenerateImg2ImgVariationResponseObject, error) {
+	return s.aieditHTTP.GenerateImg2ImgVariation(ctx, req)
+}
+
+func (s *apiServer) GetAIEditConfig(ctx context.Context, req openapi.GetAIEditConfigRequestObject) (openapi.GetAIEditConfigResponseObject, error) {
+	return s.sysconfigH.GetAIEditConfig(ctx, req)
+}
+
+func (s *apiServer) UpdateAIEditConfig(ctx context.Context, req openapi.UpdateAIEditConfigRequestObject) (openapi.UpdateAIEditConfigResponseObject, error) {
+	return s.sysconfigH.UpdateAIEditConfig(ctx, req)
+}
+
 func (s *apiServer) DownloadAssetVariant(ctx context.Context, req openapi.DownloadAssetVariantRequestObject) (openapi.DownloadAssetVariantResponseObject, error) {
 	return s.assets.DownloadAssetVariant(ctx, req)
 }
@@ -2667,4 +2708,91 @@ func newAIAdminHandler(pool *pgxpool.Pool, registry *cache.Registry) *aiadmin.Ha
 	caches := ai.NewCaches(registry)
 	loader := ai.NewLoader(pool, caches)
 	return aiadmin.NewHandler(pool, loader, caches)
+}
+
+// ---------------------------------------------------------------------------
+// aiedit adapters (Phase 1.14.E-1)
+// ---------------------------------------------------------------------------
+//
+// Three narrow adapter types so the aiedit package doesn't import
+// the assets / sysconfig packages directly. Same dual-type pattern
+// as transcribeOrchestratorAdapter above — boot wire is the only
+// place all sides meet.
+
+type aieditAssetAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a aieditAssetAdapter) AssetTypeAndSensitivity(
+	ctx context.Context,
+	id uuid.UUID,
+) (assetType int64, sensitivity string, found bool, err error) {
+	row := a.pool.QueryRow(ctx,
+		`SELECT asset_type, COALESCE(sensitivity, 'public') FROM assets WHERE id = $1`,
+		id,
+	)
+	err = row.Scan(&assetType, &sensitivity)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, "", false, nil
+		}
+		return 0, "", false, err
+	}
+	return assetType, sensitivity, true, nil
+}
+
+type aieditConfigAdapter struct {
+	store *sysconfig.Store
+}
+
+func (a aieditConfigAdapter) ImageEditServer(ctx context.Context) (string, error) {
+	cfg, err := a.store.GetAIEdit(ctx)
+	if err != nil {
+		return "", err
+	}
+	return cfg.ImageEditServer, nil
+}
+
+type aieditSourceAdapter struct {
+	pool    *pgxpool.Pool
+	storage *storage.Service
+}
+
+func (a aieditSourceAdapter) FetchSourceImage(
+	ctx context.Context,
+	id uuid.UUID,
+) (data []byte, contentType string, title string, ownerUserRef *int64, ok bool, err error) {
+	var (
+		fileHash *string
+		owner    *int64
+	)
+	row := a.pool.QueryRow(ctx,
+		`SELECT file_hash, owner_user_ref, title FROM assets WHERE id = $1`,
+		id,
+	)
+	if err := row.Scan(&fileHash, &owner, &title); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", "", nil, false, nil
+		}
+		return nil, "", "", nil, false, err
+	}
+	if fileHash == nil || *fileHash == "" {
+		return nil, "", "", nil, false, fmt.Errorf("aiedit: source asset %s has no file bytes", id)
+	}
+
+	reader, info, err := a.storage.Backend.Get(ctx, *fileHash, storage.VariantOriginal)
+	if err != nil {
+		return nil, "", "", nil, false, fmt.Errorf("aiedit: read source bytes: %w", err)
+	}
+	defer reader.Close()
+
+	buf, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", "", nil, false, fmt.Errorf("aiedit: copy source bytes: %w", err)
+	}
+	ct := "application/octet-stream"
+	if info != nil && info.ContentType != "" {
+		ct = info.ContentType
+	}
+	return buf, ct, title, owner, true, nil
 }
