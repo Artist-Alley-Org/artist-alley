@@ -47,11 +47,23 @@ package userkeys
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// SQLSTATE codes the boot sweep treats as race-loser collisions —
+// the desired post-condition ("this user already has a key OR the
+// user is no longer eligible to receive one") is satisfied without
+// our INSERT landing. See [isRaceLoserError].
+//
+// https://www.postgresql.org/docs/current/errcodes-appendix.html
+const (
+	sqlStateUniqueViolation     = "23505"
+	sqlStateForeignKeyViolation = "23503"
 )
 
 // BackfillBatchSize caps how many users the sweep processes per
@@ -155,7 +167,25 @@ func BackfillMissingKeys(
 
 		for _, ref := range refs {
 			stats.UsersScanned++
-			if err := backfillOne(ctx, pool, q, ref, auditFire); err != nil {
+			err := backfillOne(ctx, pool, q, ref, auditFire)
+			switch {
+			case err == nil:
+				stats.KeysGenerated++
+			case errors.Is(err, errRaceLoser):
+				// Concurrent write committed past our defensive
+				// recheck, OR the user row vanished mid-sweep, OR
+				// a retired-key orphan blocks a fresh version=1
+				// INSERT. None of these are bugs in the sweep —
+				// see [isRaceLoserError]. Debug-level so healthy
+				// boots stay quiet.
+				if logger != nil {
+					logger.LogAttrs(ctx, slog.LevelDebug,
+						"userkeys.backfill.user.race_loser",
+						slog.Int64("user_ref", ref),
+						slog.String("err", err.Error()),
+					)
+				}
+			default:
 				stats.Errors++
 				if logger != nil {
 					logger.LogAttrs(ctx, slog.LevelWarn,
@@ -164,9 +194,7 @@ func BackfillMissingKeys(
 						slog.String("err", err.Error()),
 					)
 				}
-				continue
 			}
-			stats.KeysGenerated++
 		}
 
 		// Defensive: if the batch returned BackfillBatchSize rows
@@ -228,6 +256,12 @@ func backfillOne(
 	qtx := New(tx)
 	alreadyHadKey, err := EnsureCurrentForUser(ctx, qtx, userRef)
 	if err != nil {
+		if isRaceLoserError(err) {
+			// Don't wrap — caller compares against errRaceLoser via
+			// errors.Is. The deferred tx.Rollback releases the
+			// connection; no commit needed (and no row to commit).
+			return fmt.Errorf("%w: ensure: %w", errRaceLoser, err)
+		}
 		return fmt.Errorf("ensure: %w", err)
 	}
 	if alreadyHadKey {
@@ -259,3 +293,55 @@ func backfillOne(
 // helper kept here even though unused in the prod path so future
 // inline-tx tests can compose against the same shape.
 var _ = pgx.ErrNoRows
+
+// errRaceLoser is the sentinel [backfillOne] wraps around a
+// classified race-loser error so [BackfillMissingKeys] can route
+// it through the "Debug log, don't count" branch via errors.Is.
+//
+// Kept private — only the in-package boot sweep distinguishes
+// these cases. The three in-tx callers (bootstrap, /setup,
+// /admin/seed/users) deliberately treat the SAME SQLSTATEs as
+// real errors: inside a user-create transaction a unique- or
+// FK-violation means the caller's own user-create raced with
+// itself, which is a bug worth surfacing.
+var errRaceLoser = errors.New("userkeys.backfill: race-loser")
+
+// isRaceLoserError reports whether err is a Postgres error code
+// the boot sweep treats as a "the post-condition is already
+// satisfied (or this user can't be backfilled anymore)" signal
+// rather than a sweep bug:
+//
+//   - 23505 (unique_violation) — three sub-cases all benign for
+//     the sweep:
+//     1. Concurrent EnsureCurrentForUser for the same user
+//        committed past our defensive recheck (the partial
+//        unique index on (user_ref) WHERE is_current=true wins).
+//     2. PK collision on (user_ref, version) when the user has
+//        a retired version=1 row but no current one — leftover
+//        from a rolled-back rotation, broken test fixture, or
+//        pre-I-b orphan. The sweep can't fix this; an operator
+//        cleanup or rotation can. Counting it as a sweep error
+//        masked the real backfill flake (#153).
+//     3. Concurrent winner inserted at a higher version. Re-
+//        check would have found their current row.
+//   - 23503 (foreign_key_violation) — the user_ref row was
+//     deleted between [ListUsersWithoutCurrentKey] and our
+//     INSERT INTO federation_user_keys. CASCADE from "user"
+//     ensures any subsequent state stays consistent.
+//
+// Match by SQLSTATE on *pgconn.PgError via the SQLState()
+// interface — message text differs across Postgres versions.
+func isRaceLoserError(err error) bool {
+	type pgerr interface {
+		SQLState() string
+	}
+	var pe pgerr
+	if !errors.As(err, &pe) {
+		return false
+	}
+	switch pe.SQLState() {
+	case sqlStateUniqueViolation, sqlStateForeignKeyViolation:
+		return true
+	}
+	return false
+}
