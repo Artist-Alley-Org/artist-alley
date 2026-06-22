@@ -383,6 +383,26 @@ func (h *Handler) CreateAsset(
 			)
 		}
 
+		// Phase 1.18.A-2 — fan out a metadata.extract job for
+		// image uploads. Worker reads the source bytes, pulls
+		// EXIF / ICC / orientation via the asset/metadata
+		// subsystem, then applies the values into the
+		// operator-configured field-definitions. The applier's
+		// equal-value short-circuit means re-runs over assets
+		// that already have the extracted values are silent
+		// no-ops.
+		if isExifExtractableImageExt(in.FileExtension) {
+			metaPayload := map[string]string{
+				"asset_id": newID.String(),
+			}
+			if _, err := h.Jobs.Enqueue(ctx, metadataExtractJobType, metaPayload, jobs.EnqueueOpts{}); err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_metadata_extract_failed",
+					slog.String("asset_id", newID.String()),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+
 		// Phase 1.14.C — fan out an ai.transcribe job for audio and
 		// video uploads. Video without an audio track surfaces as
 		// an empty transcript downstream (the orchestrator ProbeDuration
@@ -435,6 +455,31 @@ func aiEmbedIdempotencyKey(assetID, model string) string {
 // embed pair above. Cross-package pinning test lives in
 // embed_fanout_test.go's sibling check.
 const aiTranscribeJobType jobs.JobType = "ai.transcribe"
+
+// metadataExtractJobType duplicates the constant from
+// app/internal/asset/metadata.JobTypeExtract — same
+// avoid-import-cycle rationale as the ai.embed + ai.transcribe
+// pairs above. If you change one you MUST change the other; the
+// next call to ./scripts/test.sh --go will catch a mismatch via
+// the boot-wire build error.
+const metadataExtractJobType jobs.JobType = "metadata.extract"
+
+// isExifExtractableImageExt is narrower than [isImageExt] — it
+// reports true only for formats the asset/metadata/exif extractor
+// claims via Supports(). Used by the upload-fanout to decide
+// whether to enqueue a metadata.extract job. HEIC/AVIF/SVG/etc.
+// are images but we don't extract from them yet (HEIC needs the
+// future libheif add-on).
+func isExifExtractableImageExt(ext *string) bool {
+	if ext == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimPrefix(*ext, ".")) {
+	case "jpg", "jpeg", "png", "tif", "tiff", "webp":
+		return true
+	}
+	return false
+}
 
 func aiTranscribeIdempotencyKey(assetID, model string) string {
 	// SHA-256("ai.transcribe|<asset_id>|<model>") hex; mirrors
