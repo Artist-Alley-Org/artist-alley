@@ -136,8 +136,19 @@ current focus:
   load-bearing UX: a SyncSketch / Keyframe-Pro-2 replacement built
   into the post modal. See "Review tool" arc below for the full
   feature plan.
-- **AI auto-tagging** (Phase 1.14). Use the configured AI providers
-  for tag inference on upload + reverse-image search via embeddings.
+- **AI arc** (Phase 1.14). The AI inference subsystem is shipped:
+  multi-provider abstraction + router + jobs + admin surface
+  (1.14.A, PR #149), asset/AI bridge layer + tag provenance
+  (1.14.A-bridge, PR #150), CLIP embeddings + pgvector similarity
+  (1.14.B, PR #151), Whisper transcription + subtitle integration
+  (1.14.C, PR #152), and the first internal MCP caller — img2img
+  via the ComfyUI MCP bridge (1.14.E-1, PR #156). **AI auto-tagging
+  itself remains in-flight** (issue #18): the inference + provenance
+  scaffolding is there, but the upload-time tag inference call is
+  not yet wired. Reverse-image search runs against the 1.14.B CLIP
+  embeddings today. Next AI sub-phases: 1.14.D (bridge consumption
+  cleanup), 1.14.E-2 (full Creative tools panel + mask UI + four
+  remaining ops), 1.14.F (caption persistence).
 
 ## Review tool — the load-bearing UX arc
 
@@ -822,7 +833,14 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   tier governs which providers are available + monthly token budgets.
   Community: ComfyUI local only. Pro: + OpenAI + Stability with
   caps. Enterprise: unlimited + bring-your-own API keys. See
-  ADR 0026.
+  ADR 0026. **Status:** first realization shipped 2026-06-22 as
+  Phase 1.14.E-1 (PR #156) — `img2img` via the ComfyUI MCP bridge
+  using the ADR 0051 MCP-mediated path, `creative_lineage` table
+  live (migration 00014), viewer trigger via `Img2ImgPopover`,
+  bridge at `tools/comfyui-mcp-bridge/` with Flux Kontext example
+  validated end-to-end. Remaining ops + mask UI ship in 1.14.E-2;
+  OpenAI / Stability providers + tier gating in 1.14.E-3 (gated on
+  licensing arc).
 
 - **Artist Alley as an MCP server** (Phase 1.52). Expose the
   instance's asset catalogue via the Model Context Protocol so AI
@@ -863,7 +881,13 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   infrastructure — every MCP tool call records to `ai_provider_call`
   with the MCP-server name as the "provider" + the tool name as
   the "model." Local-only by default; no MCP traffic federates.
-  See ADR 0051. Depends on Phase 1.14.A shipping first.
+  See ADR 0051. **Status:** foundation shipped 2026-06-21 as Phase
+  1.53.A (PR #154) — registration tables + dispatcher 6-step guard
+  chain + `mcp.client.{use,admin,images.read,images.write}` capabilities
+  + health checker + JSON-RPC over HTTP provider + admin UI at
+  `/admin/ai/mcp-clients`. First internal caller shipped 2026-06-22
+  as Phase 1.14.E-1 (PR #156) — `aiedit` subsystem dispatching
+  `img2img` through the bridge. ADR 0051 status flipped to `accepted`.
 
 - **Featured collections & homepage curation** (Phase 1.35). Tree
   edges on the collection model (`collection_parent_id`, capped at

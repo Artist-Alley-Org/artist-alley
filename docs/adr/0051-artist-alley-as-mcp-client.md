@@ -1,11 +1,12 @@
 ---
 id: "0051"
 title: Artist Alley as a Model Context Protocol (MCP) client
-status: proposed
+status: accepted
 date: 2026-06-20
 area: extensibility
 phases:
   - "1.53"
+  - "1.14.E"
 supersedes: []
 related:
   - "0034"
@@ -19,6 +20,14 @@ tags:
 excerpt: >-
   Consume external MCP servers as tool sources from AA's AI orchestrator. Inverse of ADR 0050 — instead of AA exposing its catalogue to external agents, AA's own provider abstraction calls out to operator-registered MCP servers (ComfyUI, custom studio bridges, etc.).
 ---
+
+## Status (2026-06-22)
+
+Foundation shipped via PR #154 (Phase 1.53.A): `mcp_server_registration` + `mcp_server_tool_grant` tables (migration 00013), `mcp.client.{use,admin,images.read,images.write}` capabilities, `mcpdispatch.Dispatcher.Invoke` 6-step guard chain (server-resolve → caller cap → tool whitelist + per-tool cap → privacy class vs sensitivity → budget gate → provider call + audit), per-server health-check goroutine, JSON-RPC over HTTP provider (`mcp_server.Provider`), admin UI at `/admin/ai/mcp-clients`.
+
+First internal caller shipped via PR #156 (Phase 1.14.E-1): `app/internal/aiedit/` subsystem with `ImageEditProvider` interface, ComfyUI-via-MCP provider, `creative_lineage` table (migration 00014), async img2img job, `POST /assets/{id}/edit/img2img` endpoint, viewer `Img2ImgPopover` trigger. Operator-side ComfyUI MCP bridge ships at `tools/comfyui-mcp-bridge/` (Python 3.11+; HTTP + stdio transports; 5 typed tools + workflow drop-in discovery). Flux Kontext Dev validated end-to-end on operator's ComfyUI (14s wall-clock on RTX 5090 at 1024-edge).
+
+Remaining (1.14.E-2 / 1.14.E-3): the other four image-edit operations (inpaint / outpaint / variations / remove-bg) with mask drawing UI; tier-aware provider routing gated on the licensing arc.
 
 ## Context
 

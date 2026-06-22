@@ -9,6 +9,7 @@ phases:
   - "1.22"
   - "1.23"
   - "1.34"
+  - "1.14.E"
 supersedes: []
 related: 
   - "0017"
@@ -20,6 +21,12 @@ tags:
 excerpt: >-
   The DALL-E erase + regenerate pattern is widely used for marketing asset prep (remove background, regenerate a logo placement, generate variations for A / B testing), concept-art ideation (mask part of a sketch and regenerate it), and reference-image cleanup.
 ---
+## Status (2026-06-22)
+
+First op shipped via PR #156 (Phase 1.14.E-1): `img2img` against an operator-run ComfyUI MCP bridge through the ADR 0051 MCP-mediated path. The ComfyUI provider is implemented as an MCP client (`app/internal/aiedit/providers/comfyuimcp/`), not as a bespoke HTTP integration — the MCP composition gets the audit + cost + privacy infrastructure from Phase 1.14.A for free and stays consistent with the wider operator tool surface. Source-of-truth preserved: generated images land as new assets linked to the source via the `creative_lineage` table (migration 00014), exactly per the "output as new asset, not replacement" rule below.
+
+Remaining (1.14.E-2 / 1.14.E-3): the other four ops (inpaint / outpaint / variations / remove-bg), the full Creative tools panel with mask drawing UI, OpenAI + Stability hosted providers, and tier-aware provider gating (Community vs Pro vs Enterprise per the per-tier table below).
+
 ## Context
 
 The DALL-E erase + regenerate pattern is widely used for marketing
@@ -56,8 +63,12 @@ Provider packages live in `app/internal/aiedit/<name>/`.
 - **OpenAI** (DALL-E + GPT-Image) — the easiest on-ramp, hosted.
 - **Stability AI** — second hosted option, different aesthetic.
 - **ComfyUI local** — for studios who run their own GPUs and don't
-  want to send pixels off-network. Talks to a local ComfyUI HTTP
-  endpoint configured per-instance.
+  want to send pixels off-network. Implemented as an MCP client per
+  ADR 0051: operator runs the ComfyUI MCP bridge (ships at
+  `tools/comfyui-mcp-bridge/`) alongside ComfyUI; AA registers the
+  bridge and dispatches through `mcpdispatch.Dispatcher.Invoke`. The
+  bespoke-HTTP path remains available for operators who don't want
+  to run an MCP bridge but is not the recommended shape.
 
 ### Viewer integration
 
