@@ -1,0 +1,91 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "comfyui-mcp-bridge"
+version = "0.1.0"
+description = "Model Context Protocol bridge for ComfyUI — exposes ComfyUI workflows as MCP tools (img2img, inpaint, outpaint, variations, remove-bg + arbitrary workflow:<name> tools)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "artist-alley contributors" }]
+keywords = ["mcp", "model-context-protocol", "comfyui", "stable-diffusion", "img2img"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # ComfyUI client + workflow execution. websockets for the
+    # progress stream; httpx for the queue + history REST endpoints.
+    # We deliberately speak MCP's JSON-RPC wire format ourselves
+    # (in server.py) rather than linking the official `mcp` SDK —
+    # gives us freedom to upgrade SDK versions without churning
+    # the wire shape AA-side depends on.
+    "httpx>=0.27,<0.29",
+    "websockets>=12,<14",
+    # HTTP server for the HTTP transport. aiohttp keeps the
+    # runtime deps small (no starlette/uvicorn chain) and ships
+    # an asyncio-native web server out of the box.
+    "aiohttp>=3.9,<4.0",
+    # Image bytes manipulation (resize, format conversion when
+    # ComfyUI returns PNG but the workflow asked for JPEG).
+    "Pillow>=10,<12",
+    # Typed config from environment variables.
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.4,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+    "pytest-httpx>=0.30,<1.0",
+    "ruff>=0.6,<1.0",
+    "mypy>=1.11,<2.0",
+]
+
+[project.scripts]
+# Both stdio and HTTP entry points. The HTTP one is the canonical
+# AA-side integration (registered as transport=http on the
+# /admin/ai/mcp-clients screen); stdio is for direct Claude
+# Desktop / single-process use.
+comfyui-mcp-bridge = "comfyui_mcp_bridge.server:main_http"
+comfyui-mcp-bridge-stdio = "comfyui_mcp_bridge.server:main_stdio"
+
+[project.urls]
+Homepage = "https://github.com/mscrnt/artist-alley"
+Repository = "https://github.com/mscrnt/artist-alley/tree/main/tools/comfyui-mcp-bridge"
+Issues = "https://github.com/mscrnt/artist-alley/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comfyui_mcp_bridge"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "README.md", "LICENSE", "workflows"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
