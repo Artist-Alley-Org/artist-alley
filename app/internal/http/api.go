@@ -58,6 +58,7 @@ import (
 	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
 	mcpserver "github.com/mscrnt/artist-alley/app/internal/ai/providers/mcp_server"
 	aiwhisperlocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/whisper_local"
+	mcpadmin "github.com/mscrnt/artist-alley/app/internal/ai/mcp_admin"
 	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
 	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
 	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
@@ -103,6 +104,7 @@ type apiServer struct {
 	mcpDispatch   *mcpdispatch.Dispatcher
 	mcpHealth     *mcpdispatch.HealthChecker
 	mcpProviders  *mcpProviderTable
+	mcpAdmin      *mcpadmin.Handler
 	notifications   *notifications.Handler
 	messages        *messages.Handler
 	activities      *activities.Writer
@@ -275,6 +277,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.mcpDispatch = mcpdispatch.New(s.mcpRegistry, s.mcpProviders,
 		aiBudget, aiCallAuditor, aiPrivacyCfg.Privacy, logger)
 	s.mcpHealth = mcpdispatch.NewHealthChecker(s.mcpRegistry, s.mcpProviders, logger)
+	s.mcpAdmin = mcpadmin.NewHandler(s.mcpRegistry)
 
 	// Phase 1.14.B — register ai.embed job handler so the worker
 	// pool can drain ai.embed jobs enqueued by the asset upload
@@ -1594,6 +1597,32 @@ func (s *apiServer) RecreateAssetPreview(ctx context.Context, req openapi.Recrea
 
 func (s *apiServer) ListSimilarAssets(ctx context.Context, req openapi.ListSimilarAssetsRequestObject) (openapi.ListSimilarAssetsResponseObject, error) {
 	return s.assets.ListSimilarAssets(ctx, req)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.53.A — MCP-client admin endpoints
+// ---------------------------------------------------------------------------
+
+func (s *apiServer) ListMCPClients(ctx context.Context, req openapi.ListMCPClientsRequestObject) (openapi.ListMCPClientsResponseObject, error) {
+	return s.mcpAdmin.ListMCPClients(ctx, req)
+}
+func (s *apiServer) RegisterMCPClient(ctx context.Context, req openapi.RegisterMCPClientRequestObject) (openapi.RegisterMCPClientResponseObject, error) {
+	return s.mcpAdmin.RegisterMCPClient(ctx, req)
+}
+func (s *apiServer) UpdateMCPClient(ctx context.Context, req openapi.UpdateMCPClientRequestObject) (openapi.UpdateMCPClientResponseObject, error) {
+	return s.mcpAdmin.UpdateMCPClient(ctx, req)
+}
+func (s *apiServer) DeleteMCPClient(ctx context.Context, req openapi.DeleteMCPClientRequestObject) (openapi.DeleteMCPClientResponseObject, error) {
+	return s.mcpAdmin.DeleteMCPClient(ctx, req)
+}
+func (s *apiServer) ListMCPClientToolGrants(ctx context.Context, req openapi.ListMCPClientToolGrantsRequestObject) (openapi.ListMCPClientToolGrantsResponseObject, error) {
+	return s.mcpAdmin.ListMCPClientToolGrants(ctx, req)
+}
+func (s *apiServer) UpsertMCPClientToolGrant(ctx context.Context, req openapi.UpsertMCPClientToolGrantRequestObject) (openapi.UpsertMCPClientToolGrantResponseObject, error) {
+	return s.mcpAdmin.UpsertMCPClientToolGrant(ctx, req)
+}
+func (s *apiServer) DeleteMCPClientToolGrant(ctx context.Context, req openapi.DeleteMCPClientToolGrantRequestObject) (openapi.DeleteMCPClientToolGrantResponseObject, error) {
+	return s.mcpAdmin.DeleteMCPClientToolGrant(ctx, req)
 }
 
 func (s *apiServer) RemoveAssetTag(ctx context.Context, req openapi.RemoveAssetTagRequestObject) (openapi.RemoveAssetTagResponseObject, error) {

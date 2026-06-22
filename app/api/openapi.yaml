@@ -6898,6 +6898,207 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/ai/mcp-clients:
+    get:
+      operationId: listMCPClients
+      summary: List registered MCP-client servers (Phase 1.53.A)
+      description: |
+        Returns every operator-registered MCP server (enabled +
+        disabled). Each entry carries the connection config, the
+        last-known health status from the per-server poller, and
+        the tool-grant whitelist count.
+
+        Requires `mcp.client.admin` capability.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Server list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: registerMCPClient
+      summary: Register a new MCP-client server
+      description: |
+        Creates a new mcp_server_registration row. The operator-
+        chosen `name` is the audit-dashboard identifier + the
+        router's slot key; collisions return 409.
+
+        Newly-registered servers default to enabled=false; the
+        operator flips the toggle after whitelisting the tools they
+        want to expose.
+
+        Requires `mcp.client.admin`.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPServerCreate" }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServer" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/ai/mcp-clients/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateMCPClient
+      summary: Update an MCP-client server registration
+      description: |
+        Partial update — only the supplied fields mutate. Use this
+        to flip `enabled`, change the URL after the server moves,
+        rotate auth secrets, etc.
+
+        Requires `mcp.client.admin`.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPServerUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServer" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteMCPClient
+      summary: Unregister an MCP-client server
+      description: |
+        Removes the registration + cascades to its tool grants via
+        FK. The runtime provider stays in the router until the next
+        app restart; until then, dispatcher calls against this
+        server's name return ErrServerNotFound.
+
+        Requires `mcp.client.admin`.
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/ai/mcp-clients/{id}/tools:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listMCPClientToolGrants
+      summary: List a server's tool whitelist (with per-tool capability + cost)
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Grants
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MCPServerToolGrant" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/ai/mcp-clients/{id}/tools/{tool}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: tool
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    put:
+      operationId: upsertMCPClientToolGrant
+      summary: Whitelist a tool (or update its cap / cost)
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MCPServerToolGrantUpsert" }
+      responses:
+        "200":
+          description: Grant upserted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MCPServerToolGrant" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteMCPClientToolGrant
+      summary: Remove a tool from the whitelist
+      tags: [ai-admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Grant removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/system/ai:
     get:
       operationId: getAIConfig
@@ -7610,6 +7811,99 @@ components:
         message:
           type: string
           description: Operator-readable English fallback message.
+    MCPServer:
+      type: object
+      description: |
+        One registered MCP server. Each registration becomes one
+        ai.Provider in the router; the operator-chosen `name` is
+        the audit-dashboard identifier and the dispatcher slot key.
+      required: [id, name, url, transport, auth_kind, privacy_class, enabled,
+                 rate_limit_per_second, rate_limit_per_minute,
+                 health_check_interval_s, created_at, updated_at]
+      properties:
+        id:                       { type: string, format: uuid }
+        name:                     { type: string, minLength: 1, maxLength: 128 }
+        url:                      { type: string, minLength: 1 }
+        transport:                { type: string, enum: [http, stdio] }
+        auth_kind:                { type: string, enum: [none, bearer, header, mtls] }
+        auth_secret_ref:          { type: string, nullable: true }
+        auth_header_name:         { type: string, nullable: true }
+        privacy_class:            { type: string, enum: [local, cloud] }
+        enabled:                  { type: boolean }
+        rate_limit_per_second:    { type: integer, minimum: 1 }
+        rate_limit_per_minute:    { type: integer, minimum: 1 }
+        health_check_interval_s:  { type: integer, minimum: 1 }
+        last_health_check_at:     { type: string, format: date-time, nullable: true }
+        last_health_status:
+          type: string
+          nullable: true
+          enum: [healthy, degraded, unreachable, null]
+        last_health_error:        { type: string, nullable: true }
+        created_at:               { type: string, format: date-time }
+        updated_at:               { type: string, format: date-time }
+    MCPServerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MCPServer" }
+    MCPServerCreate:
+      type: object
+      required: [name, url]
+      description: Create payload for POST /admin/ai/mcp-clients.
+      properties:
+        name:                     { type: string, minLength: 1, maxLength: 128 }
+        url:                      { type: string, minLength: 1 }
+        transport:                { type: string, enum: [http, stdio], default: http }
+        auth_kind:                { type: string, enum: [none, bearer, header, mtls], default: none }
+        auth_secret_ref:          { type: string }
+        auth_header_name:         { type: string }
+        privacy_class:            { type: string, enum: [local, cloud], default: cloud }
+        enabled:                  { type: boolean, default: false }
+        rate_limit_per_second:    { type: integer, minimum: 1, default: 2 }
+        rate_limit_per_minute:    { type: integer, minimum: 1, default: 60 }
+        health_check_interval_s:  { type: integer, minimum: 1, default: 60 }
+    MCPServerUpdate:
+      type: object
+      description: |
+        Partial-update payload for PATCH /admin/ai/mcp-clients/{id}.
+        Omitted fields keep their existing value. Health-check fields
+        are owned by the per-server poller and not editable here.
+      properties:
+        url:                      { type: string, minLength: 1 }
+        transport:                { type: string, enum: [http, stdio] }
+        auth_kind:                { type: string, enum: [none, bearer, header, mtls] }
+        auth_secret_ref:          { type: string }
+        auth_header_name:         { type: string }
+        privacy_class:            { type: string, enum: [local, cloud] }
+        enabled:                  { type: boolean }
+        rate_limit_per_second:    { type: integer, minimum: 1 }
+        rate_limit_per_minute:    { type: integer, minimum: 1 }
+        health_check_interval_s:  { type: integer, minimum: 1 }
+    MCPServerToolGrant:
+      type: object
+      required: [server_id, tool_name, cost_estimate_micros, enabled]
+      description: |
+        One whitelisted tool on an MCP server. Per-tool capability
+        is the gate ON TOP of the umbrella mcp.client.use; empty
+        means "umbrella cap is sufficient". Cost estimate is the
+        operator-declared per-call cost in USD micros (0 for free /
+        local tools).
+      properties:
+        server_id:             { type: string, format: uuid }
+        tool_name:             { type: string, minLength: 1, maxLength: 128 }
+        additional_capability: { type: string, nullable: true }
+        cost_estimate_micros:  { type: integer, format: int64, minimum: 0 }
+        enabled:               { type: boolean }
+    MCPServerToolGrantUpsert:
+      type: object
+      required: [cost_estimate_micros, enabled]
+      description: PUT payload for /admin/ai/mcp-clients/{id}/tools/{tool}.
+      properties:
+        additional_capability: { type: string }
+        cost_estimate_micros:  { type: integer, format: int64, minimum: 0 }
+        enabled:               { type: boolean }
     AIUsageReport:
       type: object
       required: [billing_period, total_cost_usd_micros, providers]

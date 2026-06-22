@@ -23,10 +23,11 @@
   }
 
   const TILES: Tile[] = [
-    { key: 'providers', href: '/admin/system/ai/providers' },
-    { key: 'inference', href: '/admin/ai/config' },
-    { key: 'usage',     href: '/admin/ai/usage' },
-    { key: 'provenance', href: '/docs/observability/ai-provenance.md', external: true },
+    { key: 'providers',   href: '/admin/system/ai/providers' },
+    { key: 'mcp_clients', href: '/admin/ai/mcp-clients' },
+    { key: 'inference',   href: '/admin/ai/config' },
+    { key: 'usage',       href: '/admin/ai/usage' },
+    { key: 'provenance',  href: '/docs/observability/ai-provenance.md', external: true },
   ];
 </script>
 
