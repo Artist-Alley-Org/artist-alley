@@ -11,7 +11,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition
 WHERE (sqlc.narg('status')::TEXT IS NULL OR status = sqlc.narg('status')::TEXT)
   AND (sqlc.narg('subject_kind')::TEXT IS NULL OR subject_kind = sqlc.narg('subject_kind')::TEXT)
@@ -25,7 +25,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition
 WHERE status = 'active'
   AND subject_kind = 'asset'
@@ -38,7 +38,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition WHERE id = $1;
 
 -- name: GetFieldDefinitionByCode :one
@@ -47,7 +47,7 @@ SELECT id, code, label, description, type, options, required, searchable,
        display_order, display_group, source, status,
        deprecated_replacement_id, origin_server_id,
        created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-       subject_kind
+       subject_kind, extraction_source, extraction_mode
 FROM field_definition WHERE code = $1;
 
 -- name: CreateFieldDefinition :one
@@ -62,7 +62,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind;
+          subject_kind, extraction_source, extraction_mode;
 
 -- name: UpdateFieldDefinition :one
 -- COALESCE pattern: NULL args keep current value. `applies_to` is a
@@ -92,7 +92,7 @@ RETURNING id, code, label, description, type, options, required, searchable,
           display_order, display_group, source, status,
           deprecated_replacement_id, origin_server_id,
           created_at, updated_at, created_by_user_ref, updated_by_user_ref,
-          subject_kind;
+          subject_kind, extraction_source, extraction_mode;
 
 -- name: ArchiveFieldDefinition :exec
 -- Soft-archive — keeps the row and any historic values so audit

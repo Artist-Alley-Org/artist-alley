@@ -1,11 +1,100 @@
--- app/schema.sql — denormalized view of the migration sequence.
--- Mirrors the baseline + seed migrations under
--- app/internal/db/migrations/. Used by sqlc for type discovery;
--- sqlc's CHECK-constraint visibility derives from this file,
--- NOT from the migration files. If you add a CHECK constraint
--- in a migration, mirror it here.
+--
+-- PostgreSQL database dump
+--
+
+\restrict 1IJUgRqBJbvKt5eNJOjug1qmq4a7ABQqOsiFHqezNyOJN1m7A2UloJslFAYoJWf
+
+-- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
+-- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
 
 --
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
+--
+
+-- *not* creating schema, since initdb creates it
+
+
+--
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA public IS '';
+
+
+--
+-- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
+-- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
+
+
+--
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
+
+
+--
+-- Name: ai_embedding_modality; Type: DOMAIN; Schema: public; Owner: -
+--
+
+CREATE DOMAIN public.ai_embedding_modality AS text
+	CONSTRAINT ai_embedding_modality_check CHECK ((VALUE = ANY (ARRAY['text'::text, 'image'::text, 'multimodal'::text])));
+
 
 --
 -- Name: acl_sweep_on_role_delete(); Type: FUNCTION; Schema: public; Owner: -
@@ -178,6 +267,48 @@ BEGIN
             UPDATE posts SET comment_count = comment_count + 1 WHERE id = NEW.target_id;
         END IF;
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: federation_dispatch_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_dispatch_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('federation_dispatch_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: federation_inbox_dispatch_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_inbox_dispatch_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('federation_inbox_pending', NEW.id::text);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: federation_outbox_dispatch_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.federation_outbox_dispatch_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('federation_outbox_pending', NEW.id::text);
     RETURN NEW;
 END;
 $$;
@@ -519,65 +650,6 @@ CREATE TABLE public.ai_provider_call (
 
 
 --
--- Name: mcp_server_registration; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.mcp_server_registration (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    url text NOT NULL,
-    transport text DEFAULT 'http'::text NOT NULL,
-    auth_kind text DEFAULT 'none'::text NOT NULL,
-    auth_secret_ref text,
-    auth_header_name text,
-    privacy_class text DEFAULT 'cloud'::text NOT NULL,
-    enabled boolean DEFAULT false NOT NULL,
-    rate_limit_per_second integer DEFAULT 2 NOT NULL,
-    rate_limit_per_minute integer DEFAULT 60 NOT NULL,
-    health_check_interval_s integer DEFAULT 60 NOT NULL,
-    last_health_check_at timestamp with time zone,
-    last_health_status text,
-    last_health_error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    registered_by_user_ref bigint,
-    CONSTRAINT mcp_server_registration_auth_kind_check CHECK ((auth_kind = ANY (ARRAY['none'::text, 'bearer'::text, 'header'::text, 'mtls'::text]))),
-    CONSTRAINT mcp_server_registration_health_check_interval_s_check CHECK ((health_check_interval_s > 0)),
-    CONSTRAINT mcp_server_registration_last_health_status_check CHECK (((last_health_status IS NULL) OR (last_health_status = ANY (ARRAY['healthy'::text, 'degraded'::text, 'unreachable'::text])))),
-    CONSTRAINT mcp_server_registration_privacy_class_check CHECK ((privacy_class = ANY (ARRAY['local'::text, 'cloud'::text]))),
-    CONSTRAINT mcp_server_registration_rate_limit_per_minute_check CHECK ((rate_limit_per_minute > 0)),
-    CONSTRAINT mcp_server_registration_rate_limit_per_second_check CHECK ((rate_limit_per_second > 0)),
-    CONSTRAINT mcp_server_registration_transport_check CHECK ((transport = ANY (ARRAY['http'::text, 'stdio'::text])))
-);
-
-
---
--- Name: mcp_server_tool_grant; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.mcp_server_tool_grant (
-    server_id uuid NOT NULL,
-    tool_name text NOT NULL,
-    additional_capability text,
-    cost_estimate_micros bigint DEFAULT 0 NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    CONSTRAINT mcp_server_tool_grant_cost_estimate_micros_check CHECK ((cost_estimate_micros >= 0))
-);
-
-
---
--- Name: creative_lineage; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.creative_lineage (
-    derivative_asset_id uuid NOT NULL,
-    source_asset_id uuid NOT NULL,
-    generation_metadata jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: api_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -635,6 +707,22 @@ CREATE TABLE public.asset_companions (
 
 
 --
+-- Name: asset_embedding_d768; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.asset_embedding_d768 (
+    asset_id uuid NOT NULL,
+    provider text NOT NULL,
+    model text NOT NULL,
+    modality public.ai_embedding_modality NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    content_hash text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: asset_field_value; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -654,6 +742,13 @@ CREATE TABLE public.asset_field_value (
 
 
 --
+-- Name: COLUMN asset_field_value.value_ref; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.asset_field_value.value_ref IS 'UUID reference value for ref-typed fields. The _ref suffix follows the table''s local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.';
+
+
+--
 -- Name: asset_field_value_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -670,6 +765,38 @@ CREATE TABLE public.asset_field_value_history (
 
 
 --
+-- Name: asset_subtitle_tracks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.asset_subtitle_tracks (
+    asset_id uuid NOT NULL,
+    lang text NOT NULL,
+    label text DEFAULT ''::text NOT NULL,
+    file_hash text NOT NULL,
+    source_format text NOT NULL,
+    confidence real DEFAULT 1.0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT asset_subtitle_tracks_confidence_check CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision))),
+    CONSTRAINT asset_subtitle_tracks_lang_check CHECK (((lang ~ '^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$'::text) OR (lang = 'und'::text))),
+    CONSTRAINT asset_subtitle_tracks_source_format_check CHECK ((source_format = ANY (ARRAY['vtt'::text, 'srt'::text, 'ssa'::text, 'ass'::text, 'sub'::text, 'idx'::text, 'whisper'::text])))
+);
+
+
+--
+-- Name: TABLE asset_subtitle_tracks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.asset_subtitle_tracks IS 'Subtitle / caption tracks attached to video or audio assets. NOT first-class assets — excluded from asset counts. FK + CASCADE binds tracks to their parent. Phase 1.18.B-3.';
+
+
+--
+-- Name: COLUMN asset_subtitle_tracks.confidence; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.asset_subtitle_tracks.confidence IS 'Quality of the source-to-VTT conversion. 1.0 for text-based sources; lower for OCR''d bitmap sources (IDX). UI surfaces a warning below 0.8.';
+
+
+--
 -- Name: asset_tag; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -681,32 +808,8 @@ CREATE TABLE public.asset_tag (
     confidence real,
     created_by_provider text,
     created_by_model text,
-    CONSTRAINT asset_tag_confidence_check CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
-    CONSTRAINT asset_tag_source_check CHECK (source = ANY (ARRAY['manual'::text, 'ai'::text, 'import'::text]))
-);
-
-
---
--- Name: ai_embedding_modality; Type: DOMAIN; Schema: public; Owner: -
---
-
-CREATE DOMAIN public.ai_embedding_modality AS text
-    CONSTRAINT ai_embedding_modality_check CHECK ((VALUE = ANY (ARRAY['text'::text, 'image'::text, 'multimodal'::text])));
-
-
---
--- Name: asset_embedding_d768; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.asset_embedding_d768 (
-    asset_id uuid NOT NULL,
-    provider text NOT NULL,
-    model text NOT NULL,
-    modality public.ai_embedding_modality NOT NULL,
-    embedding public.vector(768) NOT NULL,
-    content_hash text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    CONSTRAINT asset_tag_confidence_check CHECK (((confidence IS NULL) OR ((confidence >= (0.0)::double precision) AND (confidence <= (1.0)::double precision)))),
+    CONSTRAINT asset_tag_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'ai'::text, 'import'::text])))
 );
 
 
@@ -781,9 +884,13 @@ CREATE TABLE public.assets (
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
 );
-CREATE INDEX idx_assets_sensitivity_restricted
-    ON public.assets (sensitivity)
-    WHERE sensitivity IN ('restricted', 'embargo');
+
+
+--
+-- Name: COLUMN assets.sensitivity; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.sensitivity IS 'Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default ''public'' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.';
 
 
 --
@@ -833,10 +940,6 @@ CREATE TABLE public.brush_pack_stamps (
 -- Name: brush_packs; Type: TABLE; Schema: public; Owner: -
 --
 
--- F-023 (cleanup-audit-2026-06.md): column renamed
--- brush_packs.owner_ref → owner_user_ref to match the
--- schema-wide ownership-FK convention used by assets,
--- collections, posts, comments (`{owner,author}_user_ref`).
 CREATE TABLE public.brush_packs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner_user_ref bigint NOT NULL,
@@ -877,34 +980,6 @@ CREATE TABLE public.collection_acls (
 
 
 --
--- Name: collection_posts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.collection_posts (
-    collection_id uuid NOT NULL,
-    post_id uuid NOT NULL,
-    sort_order integer DEFAULT 0 NOT NULL,
-    pinned boolean DEFAULT true NOT NULL,
-    expires_at timestamp with time zone,
-    added_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: collection_resources; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.collection_resources (
-    collection_id uuid NOT NULL,
-    asset_id uuid NOT NULL,
-    sort_order integer DEFAULT 0 NOT NULL,
-    pinned boolean DEFAULT true NOT NULL,
-    expires_at timestamp with time zone,
-    added_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: collection_field_value; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -936,6 +1011,34 @@ CREATE TABLE public.collection_field_value_history (
     set_by text DEFAULT 'manual'::text NOT NULL,
     changed_by_user_ref bigint,
     changed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: collection_posts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collection_posts (
+    collection_id uuid NOT NULL,
+    post_id uuid NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    pinned boolean DEFAULT true NOT NULL,
+    expires_at timestamp with time zone,
+    added_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: collection_resources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collection_resources (
+    collection_id uuid NOT NULL,
+    asset_id uuid NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    pinned boolean DEFAULT true NOT NULL,
+    expires_at timestamp with time zone,
+    added_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -972,7 +1075,7 @@ CREATE TABLE public.comments (
     parent_id uuid,
     root_id uuid NOT NULL,
     depth integer DEFAULT 0 NOT NULL,
-    author_user_ref bigint NOT NULL,
+    author_user_ref bigint,
     body text NOT NULL,
     body_html text DEFAULT ''::text NOT NULL,
     annotation_type text,
@@ -983,8 +1086,24 @@ CREATE TABLE public.comments (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    peer_id uuid,
+    actor_uri text,
+    activity_uri text,
     CONSTRAINT comments_annotation_type_check CHECK ((annotation_type = ANY (ARRAY['point'::text, 'rect'::text, 'timestamp'::text, 'frame'::text, 'whiteboard'::text, 'text-range'::text]))),
+    CONSTRAINT comments_origin_check CHECK ((((author_user_ref IS NOT NULL) AND (peer_id IS NULL) AND (actor_uri IS NULL)) OR ((author_user_ref IS NULL) AND (peer_id IS NOT NULL) AND (actor_uri IS NOT NULL)))),
     CONSTRAINT comments_target_kind_check CHECK ((target_kind = ANY (ARRAY['post'::text, 'asset'::text, 'collection'::text])))
+);
+
+
+--
+-- Name: creative_lineage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.creative_lineage (
+    derivative_asset_id uuid NOT NULL,
+    source_asset_id uuid NOT NULL,
+    generation_metadata jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1002,6 +1121,24 @@ CREATE TABLE public.direct_messages (
     origin_server_id uuid,
     CONSTRAINT direct_messages_body_check CHECK ((length(body) > 0)),
     CONSTRAINT direct_messages_check CHECK ((sender_user_ref <> recipient_user_ref))
+);
+
+
+--
+-- Name: extraction_failure; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.extraction_failure (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    asset_id uuid NOT NULL,
+    format text NOT NULL,
+    error_kind text NOT NULL,
+    message text NOT NULL,
+    field_key text DEFAULT ''::text NOT NULL,
+    raw_value jsonb DEFAULT '{}'::jsonb NOT NULL,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    dismissed_at timestamp with time zone,
+    CONSTRAINT extraction_failure_error_kind_check CHECK ((error_kind = ANY (ARRAY['unsupported_format'::text, 'malformed_file'::text, 'library_panic'::text, 'validation'::text, 'no_metadata'::text])))
 );
 
 
@@ -1066,6 +1203,116 @@ CREATE TABLE public.federation_directory_entries (
 
 
 --
+-- Name: federation_dispatch_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_dispatch_state (
+    id integer NOT NULL,
+    last_dispatched_activity_id uuid,
+    last_dispatched_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT federation_dispatch_state_id_check CHECK ((id = 1))
+);
+
+
+--
+-- Name: TABLE federation_dispatch_state; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_dispatch_state IS 'Single-row cursor for the outbox dispatcher. Atomically advanced with the outbox INSERTs in one transaction; restart picks up at the cursor without duplicates.';
+
+
+--
+-- Name: federation_inbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_inbox (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    activity_uri text NOT NULL,
+    peer_id uuid NOT NULL,
+    actor_uri text NOT NULL,
+    activity_type text NOT NULL,
+    object_kind text,
+    object_id uuid,
+    envelope_json jsonb NOT NULL,
+    http_sig_key text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    reject_reason text,
+    dispatch_attempts integer DEFAULT 0 NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    processed_at timestamp with time zone,
+    correlation_activity_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    was_encrypted boolean DEFAULT false NOT NULL,
+    decrypted_with_key_version integer,
+    CONSTRAINT federation_inbox_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processed'::text, 'rejected'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE federation_inbox; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_inbox IS 'One row per inbound federation activity. Pipeline ingest persists status=pending; background worker transitions to processed/rejected/failed per §2.2 of the 1.22.D design proposal. activity_uri UNIQUE is the load-bearing replay guard.';
+
+
+--
+-- Name: COLUMN federation_inbox.was_encrypted; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_inbox.was_encrypted IS 'Phase 1.22.I-f: TRUE when the dispatcher took the decrypt branch for this row (envelope had a non-empty encryption block). FALSE for the legacy 1.22.D plaintext path. Mirrors federation_outbox.was_encrypted on the sender side.';
+
+
+--
+-- Name: COLUMN federation_inbox.decrypted_with_key_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_inbox.decrypted_with_key_version IS 'Phase 1.22.I-f: which version of the receiver''s X25519 key successfully decrypted the envelope. NULL when was_encrypted=false. Surfaces rotation health to operator analytics via the I-h admin federation page.';
+
+
+--
+-- Name: federation_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_outbox (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    activity_id uuid NOT NULL,
+    peer_id uuid NOT NULL,
+    target_user_url text,
+    status text DEFAULT 'queued'::text NOT NULL,
+    attempts smallint DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_attempt_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    sent_at timestamp with time zone,
+    delivered_with_key_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    was_encrypted boolean DEFAULT false NOT NULL,
+    sensitivity text,
+    refused_reason text,
+    CONSTRAINT federation_outbox_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'sent'::text, 'failed'::text, 'cancelled'::text, 'refused'::text])))
+);
+
+
+--
+-- Name: TABLE federation_outbox; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_outbox IS 'Per-recipient outbound queue. Derived from activities ledger via the dispatcher (Phase 1.22.D-b). Idempotent on (activity_id, peer_id, target_user_url) so the dispatcher is re-runnable. Sender-side emission refusal for restricted/embargo content (until 1.22.I ships X25519) is enforced at the dispatcher; refused activities never get an outbox row, they emit federation.emission.skipped audit instead.';
+
+
+--
+-- Name: COLUMN federation_outbox.was_encrypted; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_outbox.was_encrypted IS 'Phase 1.22.I-e: TRUE when the dispatcher took the encryption branch for this row (peer.Capabilities.SupportsE2E + recipient key cached). FALSE for the legacy 1.22.D plaintext path. The wire envelope is the source of truth; this column is an observability mirror for scenario 09 + the admin federation surface.';
+
+
+--
 -- Name: federation_peer_suggestions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1100,22 +1347,73 @@ CREATE TABLE public.federation_peers (
     share_in_visible_list boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    capabilities jsonb DEFAULT '[]'::jsonb NOT NULL,
+    capabilities_negotiated_at timestamp with time zone,
     CONSTRAINT federation_peers_encryption_policy_check CHECK ((encryption_policy = ANY (ARRAY['plaintext'::text, 'e2e-encrypted'::text]))),
     CONSTRAINT federation_peers_status_check CHECK ((status = ANY (ARRAY['pending_outbound'::text, 'pending_inbound'::text, 'connected'::text]))),
     CONSTRAINT federation_peers_trust_tier_check CHECK ((trust_tier = ANY (ARRAY['connected'::text, 'directory-listed'::text, 'auto-sync'::text])))
 );
--- Migration 00009 (Phase 1.22.I-d) — federation_peers gains
--- bilateral capability intersection + negotiation timestamp.
--- NOT NULL DEFAULT '[]' so existing peers reach a deterministic
--- "never negotiated" steady state surfaced via the partial
--- index. JSONB because the vocabulary is open on the wire +
--- closed in code (federation/peer.KnownCapabilities).
-ALTER TABLE public.federation_peers
-    ADD COLUMN capabilities                jsonb       NOT NULL DEFAULT '[]'::jsonb,
-    ADD COLUMN capabilities_negotiated_at  timestamptz NULL;
-CREATE INDEX federation_peers_unnegotiated_idx
-    ON public.federation_peers (id)
-    WHERE capabilities_negotiated_at IS NULL;
+
+
+--
+-- Name: COLUMN federation_peers.capabilities; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_peers.capabilities IS 'Bilateral capability intersection (what BOTH peers support). JSONB array of typed strings per federation/peer.Capability. Open vocabulary on the wire, closed dispatch in code. See ADR 0049 §Track B Decision 3.';
+
+
+--
+-- Name: COLUMN federation_peers.capabilities_negotiated_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_peers.capabilities_negotiated_at IS 'When the handshake completed with capability exchange. NULL means "never negotiated" (pre-1.22.I-d peer); peers in that state are surfaced via ListPeersMissingCapabilities for operator re-pairing. Distinct from `capabilities = ''[]''` which means "we negotiated and got an empty intersection" — also legal.';
+
+
+--
+-- Name: federation_remote_actors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_remote_actors (
+    actor_uri text NOT NULL,
+    peer_id uuid NOT NULL,
+    display_name text DEFAULT ''::text NOT NULL,
+    avatar_url text DEFAULT ''::text NOT NULL,
+    first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    encryption_public_key bytea,
+    encryption_public_key_version integer,
+    encryption_public_key_updated_at timestamp with time zone,
+    CONSTRAINT federation_remote_actors_encryption_key_atomic CHECK ((((encryption_public_key IS NULL) AND (encryption_public_key_version IS NULL) AND (encryption_public_key_updated_at IS NULL)) OR ((encryption_public_key IS NOT NULL) AND (octet_length(encryption_public_key) = 32) AND (encryption_public_key_version IS NOT NULL) AND (encryption_public_key_version >= 1) AND (encryption_public_key_updated_at IS NOT NULL))))
+);
+
+
+--
+-- Name: TABLE federation_remote_actors; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_remote_actors IS 'Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).';
+
+
+--
+-- Name: COLUMN federation_remote_actors.encryption_public_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.encryption_public_key IS 'X25519 public key advertised by the remote actor in their envelope''s aa:encryptionPublicKey block. NULL when the peer is on a pre-1.22.I-c build. 32 bytes when populated.';
+
+
+--
+-- Name: COLUMN federation_remote_actors.encryption_public_key_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.encryption_public_key_version IS 'Per-actor version number, monotonic. Bumped by the remote side on key rotation (1.22.I-h on their end); we just observe the value + persist alongside the key bytes.';
+
+
+--
+-- Name: COLUMN federation_remote_actors.encryption_public_key_updated_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_remote_actors.encryption_public_key_updated_at IS 'When we last observed a key for this actor. Updated on every inbound envelope carrying the block (even when the value did not change) so an operator can see how stale our knowledge is.';
 
 
 --
@@ -1141,6 +1439,70 @@ CREATE TABLE public.federation_shares (
     CONSTRAINT federation_shares_object_kind_check CHECK ((object_kind = ANY (ARRAY['asset'::text, 'post'::text, 'collection'::text, 'workspace'::text, 'brand_kit'::text, 'user'::text]))),
     CONSTRAINT federation_shares_scope_check CHECK ((scope = ANY (ARRAY['view'::text, 'comment'::text, 'annotate'::text, 'remix'::text])))
 );
+
+
+--
+-- Name: federation_user_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.federation_user_keys (
+    user_ref bigint NOT NULL,
+    version integer NOT NULL,
+    algorithm text DEFAULT 'naclbox-x25519-v1'::text NOT NULL,
+    public_key bytea NOT NULL,
+    private_key_enc bytea NOT NULL,
+    is_current boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    retained_until timestamp with time zone,
+    rotated_at timestamp with time zone,
+    rotated_by_user_ref bigint,
+    CONSTRAINT federation_user_keys_current_xor_retained CHECK ((((is_current = true) AND (retained_until IS NULL)) OR ((is_current = false) AND (retained_until IS NOT NULL)))),
+    CONSTRAINT federation_user_keys_private_key_enc_check CHECK ((octet_length(private_key_enc) >= 13)),
+    CONSTRAINT federation_user_keys_public_key_check CHECK ((octet_length(public_key) = 32)),
+    CONSTRAINT federation_user_keys_version_check CHECK ((version >= 1))
+);
+
+
+--
+-- Name: TABLE federation_user_keys; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.federation_user_keys IS 'Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.';
+
+
+--
+-- Name: COLUMN federation_user_keys.algorithm; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_user_keys.algorithm IS 'Algorithm-version token. Single value today: naclbox-x25519-v1. Future algorithms add new tokens without a schema migration.';
+
+
+--
+-- Name: COLUMN federation_user_keys.is_current; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_user_keys.is_current IS 'Exactly one row per user has is_current=true (enforced by partial unique index federation_user_keys_one_current_idx).';
+
+
+--
+-- Name: COLUMN federation_user_keys.retained_until; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_user_keys.retained_until IS 'Inbound-decrypt window for a rotated-aside key. NULL on the current key; NOW()+grace_period when a rotation flips this row aside.';
+
+
+--
+-- Name: COLUMN federation_user_keys.rotated_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_user_keys.rotated_at IS 'When the rotation that produced (or flipped aside) this row occurred. NULL on pre-I-h rows. Non-NULL on the new current row AND on the previously-current row that was demoted in the same rotation.';
+
+
+--
+-- Name: COLUMN federation_user_keys.rotated_by_user_ref; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.federation_user_keys.rotated_by_user_ref IS 'user.ref of whoever triggered the rotation. Equals user_ref for self-rotation (/account/security); differs for admin-initiated compromised-key recovery (/admin/federation/users/{ref}/rotate-keys). NULL on pre-I-h rows.';
 
 
 --
@@ -1171,9 +1533,38 @@ CREATE TABLE public.field_definition (
     created_by_user_ref bigint,
     updated_by_user_ref bigint,
     subject_kind text DEFAULT 'asset'::text NOT NULL,
+    extraction_source text DEFAULT ''::text NOT NULL,
+    extraction_mode text DEFAULT 'skip_if_set'::text NOT NULL,
+    CONSTRAINT field_definition_extraction_mode_check CHECK ((extraction_mode = ANY (ARRAY['skip_if_set'::text, 'replace'::text, 'append'::text, 'prepend'::text]))),
     CONSTRAINT field_definition_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deprecated'::text, 'archived'::text]))),
     CONSTRAINT field_definition_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text]))),
     CONSTRAINT field_definition_type_check CHECK ((type = ANY (ARRAY['text'::text, 'longtext'::text, 'rich_text'::text, 'number'::text, 'boolean'::text, 'date'::text, 'datetime'::text, 'select'::text, 'multi_select'::text, 'tree'::text, 'reference'::text])))
+);
+
+
+--
+-- Name: goose_db_version; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.goose_db_version (
+    id integer NOT NULL,
+    version_id bigint NOT NULL,
+    is_applied boolean NOT NULL,
+    tstamp timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.goose_db_version_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -1211,9 +1602,78 @@ CREATE TABLE public.jobs (
 CREATE TABLE public.likes (
     target_kind text NOT NULL,
     target_id uuid NOT NULL,
-    user_ref bigint NOT NULL,
+    user_ref bigint,
     liked_at timestamp with time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    peer_id uuid,
+    actor_uri text,
+    CONSTRAINT likes_origin_check CHECK ((((user_ref IS NOT NULL) AND (peer_id IS NULL) AND (actor_uri IS NULL)) OR ((user_ref IS NULL) AND (peer_id IS NOT NULL) AND (actor_uri IS NOT NULL)))),
     CONSTRAINT likes_target_kind_check CHECK ((target_kind = ANY (ARRAY['post'::text, 'asset'::text, 'comment'::text])))
+);
+
+
+--
+-- Name: mcp_server_registration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_server_registration (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    url text NOT NULL,
+    transport text DEFAULT 'http'::text NOT NULL,
+    auth_kind text DEFAULT 'none'::text NOT NULL,
+    auth_secret_ref text,
+    auth_header_name text,
+    privacy_class text DEFAULT 'cloud'::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    rate_limit_per_second integer DEFAULT 2 NOT NULL,
+    rate_limit_per_minute integer DEFAULT 60 NOT NULL,
+    health_check_interval_s integer DEFAULT 60 NOT NULL,
+    last_health_check_at timestamp with time zone,
+    last_health_status text,
+    last_health_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    registered_by_user_ref bigint,
+    CONSTRAINT mcp_server_registration_auth_kind_check CHECK ((auth_kind = ANY (ARRAY['none'::text, 'bearer'::text, 'header'::text, 'mtls'::text]))),
+    CONSTRAINT mcp_server_registration_health_check_interval_s_check CHECK ((health_check_interval_s > 0)),
+    CONSTRAINT mcp_server_registration_last_health_status_check CHECK (((last_health_status IS NULL) OR (last_health_status = ANY (ARRAY['healthy'::text, 'degraded'::text, 'unreachable'::text])))),
+    CONSTRAINT mcp_server_registration_privacy_class_check CHECK ((privacy_class = ANY (ARRAY['local'::text, 'cloud'::text]))),
+    CONSTRAINT mcp_server_registration_rate_limit_per_minute_check CHECK ((rate_limit_per_minute > 0)),
+    CONSTRAINT mcp_server_registration_rate_limit_per_second_check CHECK ((rate_limit_per_second > 0)),
+    CONSTRAINT mcp_server_registration_transport_check CHECK ((transport = ANY (ARRAY['http'::text, 'stdio'::text])))
+);
+
+
+--
+-- Name: mcp_server_tool_grant; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_server_tool_grant (
+    server_id uuid NOT NULL,
+    tool_name text NOT NULL,
+    additional_capability text,
+    cost_estimate_micros bigint DEFAULT 0 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    CONSTRAINT mcp_server_tool_grant_cost_estimate_micros_check CHECK ((cost_estimate_micros >= 0))
+);
+
+
+--
+-- Name: metadata_backfill_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.metadata_backfill_run (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    scope jsonb DEFAULT '{}'::jsonb NOT NULL,
+    total bigint DEFAULT 0 NOT NULL,
+    processed bigint DEFAULT 0 NOT NULL,
+    succeeded bigint DEFAULT 0 NOT NULL,
+    failed bigint DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    started_by_user_ref bigint
 );
 
 
@@ -1298,7 +1758,35 @@ CREATE TABLE public.posts (
     state_id uuid,
     team_id uuid,
     cover_thumbnail_asset_id uuid,
+    subtitle_track_override jsonb,
     CONSTRAINT posts_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text])))
+);
+
+
+--
+-- Name: COLUMN posts.subtitle_track_override; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for the parent asset''s subtitle tracks. NULL means use the asset''s intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.';
+
+
+--
+-- Name: resource_request; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.resource_request (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    requester_user_ref bigint NOT NULL,
+    target_asset_id uuid NOT NULL,
+    requested_capability text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    decided_at timestamp with time zone,
+    decided_by_user_ref bigint,
+    decision_reason text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text])))
 );
 
 
@@ -1469,12 +1957,6 @@ CREATE TABLE public.teams (
 -- Name: user; Type: TABLE; Schema: public; Owner: -
 --
 
--- "user" table — post-1.49.C-2 baseline-squash trim. 17
--- legacy columns (F-001..F-017 in the cleanup-audit-2026-06.md
--- report) were dropped because they had zero non-generated Go
--- consumers. Remaining columns are the ones actually used by
--- the artist-alley auth / session / profile / federation
--- surfaces.
 CREATE TABLE public."user" (
     ref bigint NOT NULL,
     username character varying(50),
@@ -1527,26 +2009,6 @@ CREATE TABLE public.user_capability_grants (
     team_id uuid,
     expires_at timestamp with time zone,
     request_ref uuid
-);
-
-
---
--- Name: resource_request; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.resource_request (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    requester_user_ref bigint NOT NULL,
-    target_asset_id uuid NOT NULL,
-    requested_capability text NOT NULL,
-    reason text DEFAULT ''::text NOT NULL,
-    state text DEFAULT 'pending'::text NOT NULL,
-    decided_at timestamp with time zone,
-    decided_by_user_ref bigint,
-    decision_reason text DEFAULT ''::text NOT NULL,
-    expires_at timestamp with time zone,
-    requested_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT resource_request_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'granted'::text, 'denied'::text, 'expired'::text])))
 );
 
 
@@ -1727,76 +2189,6 @@ ALTER TABLE ONLY public.ai_provider_call
 
 
 --
--- Name: mcp_server_registration mcp_server_registration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.mcp_server_registration
-    ADD CONSTRAINT mcp_server_registration_pkey PRIMARY KEY (id);
-
-
---
--- Name: mcp_server_registration mcp_server_registration_name_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.mcp_server_registration
-    ADD CONSTRAINT mcp_server_registration_name_key UNIQUE (name);
-
-
---
--- Name: mcp_server_tool_grant mcp_server_tool_grant_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.mcp_server_tool_grant
-    ADD CONSTRAINT mcp_server_tool_grant_pkey PRIMARY KEY (server_id, tool_name);
-
-
---
--- Name: mcp_server_tool_grant mcp_server_tool_grant_server_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.mcp_server_tool_grant
-    ADD CONSTRAINT mcp_server_tool_grant_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.mcp_server_registration(id) ON DELETE CASCADE;
-
-
---
--- Name: creative_lineage creative_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.creative_lineage
-    ADD CONSTRAINT creative_lineage_pkey PRIMARY KEY (derivative_asset_id);
-
-
---
--- Name: creative_lineage creative_lineage_derivative_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.creative_lineage
-    ADD CONSTRAINT creative_lineage_derivative_asset_id_fkey FOREIGN KEY (derivative_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
-
-
---
--- Name: creative_lineage creative_lineage_source_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.creative_lineage
-    ADD CONSTRAINT creative_lineage_source_asset_id_fkey FOREIGN KEY (source_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
-
-
---
--- Name: idx_creative_lineage_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_creative_lineage_source ON public.creative_lineage USING btree (source_asset_id);
-
-
---
--- Name: idx_mcp_server_enabled; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_mcp_server_enabled ON public.mcp_server_registration USING btree (enabled) WHERE (enabled = true);
-
-
---
 -- Name: api_tokens api_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1845,6 +2237,14 @@ ALTER TABLE ONLY public.asset_companions
 
 
 --
+-- Name: asset_embedding_d768 asset_embedding_d768_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_embedding_d768
+    ADD CONSTRAINT asset_embedding_d768_pkey PRIMARY KEY (asset_id, provider, model, modality);
+
+
+--
 -- Name: asset_field_value_history asset_field_value_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1861,19 +2261,19 @@ ALTER TABLE ONLY public.asset_field_value
 
 
 --
+-- Name: asset_subtitle_tracks asset_subtitle_tracks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_subtitle_tracks
+    ADD CONSTRAINT asset_subtitle_tracks_pkey PRIMARY KEY (asset_id, lang);
+
+
+--
 -- Name: asset_tag asset_tag_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.asset_tag
     ADD CONSTRAINT asset_tag_pkey PRIMARY KEY (asset_id, tag);
-
-
---
--- Name: asset_embedding_d768 asset_embedding_d768_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.asset_embedding_d768
-    ADD CONSTRAINT asset_embedding_d768_pkey PRIMARY KEY (asset_id, provider, model, modality);
 
 
 --
@@ -1933,11 +2333,11 @@ ALTER TABLE ONLY public.collection_acls
 
 
 --
--- Name: collection_posts collection_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: collection_field_value_history collection_field_value_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.collection_posts
-    ADD CONSTRAINT collection_posts_pkey PRIMARY KEY (collection_id, post_id);
+ALTER TABLE ONLY public.collection_field_value_history
+    ADD CONSTRAINT collection_field_value_history_pkey PRIMARY KEY (id);
 
 
 --
@@ -1949,11 +2349,11 @@ ALTER TABLE ONLY public.collection_field_value
 
 
 --
--- Name: collection_field_value_history collection_field_value_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: collection_posts collection_posts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.collection_field_value_history
-    ADD CONSTRAINT collection_field_value_history_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.collection_posts
+    ADD CONSTRAINT collection_posts_pkey PRIMARY KEY (collection_id, post_id);
 
 
 --
@@ -1981,11 +2381,27 @@ ALTER TABLE ONLY public.comments
 
 
 --
+-- Name: creative_lineage creative_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_pkey PRIMARY KEY (derivative_asset_id);
+
+
+--
 -- Name: direct_messages direct_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.direct_messages
     ADD CONSTRAINT direct_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: extraction_failure extraction_failure_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.extraction_failure
+    ADD CONSTRAINT extraction_failure_pkey PRIMARY KEY (id);
 
 
 --
@@ -2021,6 +2437,38 @@ ALTER TABLE ONLY public.federation_directory_entries
 
 
 --
+-- Name: federation_dispatch_state federation_dispatch_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_dispatch_state
+    ADD CONSTRAINT federation_dispatch_state_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: federation_inbox federation_inbox_activity_uri_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_inbox
+    ADD CONSTRAINT federation_inbox_activity_uri_key UNIQUE (activity_uri);
+
+
+--
+-- Name: federation_inbox federation_inbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_inbox
+    ADD CONSTRAINT federation_inbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: federation_outbox federation_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_outbox
+    ADD CONSTRAINT federation_outbox_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: federation_peer_suggestions federation_peer_suggestions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2053,11 +2501,27 @@ ALTER TABLE ONLY public.federation_peers
 
 
 --
+-- Name: federation_remote_actors federation_remote_actors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_actors
+    ADD CONSTRAINT federation_remote_actors_pkey PRIMARY KEY (actor_uri);
+
+
+--
 -- Name: federation_shares federation_shares_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.federation_shares
     ADD CONSTRAINT federation_shares_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: federation_user_keys federation_user_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_user_keys
+    ADD CONSTRAINT federation_user_keys_pkey PRIMARY KEY (user_ref, version);
 
 
 --
@@ -2077,6 +2541,14 @@ ALTER TABLE ONLY public.field_definition
 
 
 --
+-- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.goose_db_version
+    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2089,7 +2561,39 @@ ALTER TABLE ONLY public.jobs
 --
 
 ALTER TABLE ONLY public.likes
-    ADD CONSTRAINT likes_pkey PRIMARY KEY (target_kind, target_id, user_ref);
+    ADD CONSTRAINT likes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_server_registration mcp_server_registration_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_registration
+    ADD CONSTRAINT mcp_server_registration_name_key UNIQUE (name);
+
+
+--
+-- Name: mcp_server_registration mcp_server_registration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_registration
+    ADD CONSTRAINT mcp_server_registration_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_server_tool_grant mcp_server_tool_grant_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_tool_grant
+    ADD CONSTRAINT mcp_server_tool_grant_pkey PRIMARY KEY (server_id, tool_name);
+
+
+--
+-- Name: metadata_backfill_run metadata_backfill_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_backfill_run
+    ADD CONSTRAINT metadata_backfill_run_pkey PRIMARY KEY (id);
 
 
 --
@@ -2130,6 +2634,14 @@ ALTER TABLE ONLY public.post_tags
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: resource_request resource_request_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_request
+    ADD CONSTRAINT resource_request_pkey PRIMARY KEY (id);
 
 
 --
@@ -2407,34 +2919,6 @@ CREATE INDEX afvh_field_idx ON public.asset_field_value_history USING btree (fie
 
 
 --
--- Name: idx_ai_provider_call_billing; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ai_provider_call_billing ON public.ai_provider_call USING btree (provider, triggered_at DESC);
-
-
---
--- Name: idx_ai_provider_call_asset; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ai_provider_call_asset ON public.ai_provider_call USING btree (asset_id, concern, triggered_at DESC) WHERE (asset_id IS NOT NULL);
-
-
---
--- Name: idx_ai_provider_call_job; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ai_provider_call_job ON public.ai_provider_call USING btree (job_id) WHERE (job_id IS NOT NULL);
-
-
---
--- Name: uq_jobs_idempotency_key; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_jobs_idempotency_key ON public.jobs USING btree (type, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::text, 'running'::text])));
-
-
---
 -- Name: api_tokens__active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2537,34 +3021,6 @@ CREATE INDEX asset_field_value_text_idx ON public.asset_field_value USING btree 
 --
 
 CREATE INDEX asset_tag_tag_idx ON public.asset_tag USING btree (tag);
-
-
---
--- Name: idx_asset_embedding_d768_asset; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_asset_embedding_d768_asset ON public.asset_embedding_d768 USING btree (asset_id);
-
-
---
--- Name: idx_asset_embedding_d768_hnsw_cosine; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_asset_embedding_d768_hnsw_cosine ON public.asset_embedding_d768 USING hnsw (embedding public.vector_cosine_ops) WITH (m='16', ef_construction='64');
-
-
---
--- Name: idx_asset_tag_ai_provenance; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_asset_tag_ai_provenance ON public.asset_tag USING btree (created_by_model, added_at DESC) WHERE (source = 'ai'::text);
-
-
---
--- Name: idx_asset_tag_asset_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_asset_tag_asset_source ON public.asset_tag USING btree (asset_id, source);
 
 
 --
@@ -2687,20 +3143,6 @@ CREATE INDEX brush_packs_owner_idx ON public.brush_packs USING btree (owner_user
 
 
 --
--- Name: collection_acls_expires_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX collection_acls_expires_idx ON public.collection_acls USING btree (expires_at) WHERE (expires_at IS NOT NULL);
-
-
---
--- Name: collection_acls_principal_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX collection_acls_principal_idx ON public.collection_acls USING btree (principal_type, principal_id);
-
-
---
 -- Name: cfvh_collection_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2715,24 +3157,17 @@ CREATE INDEX cfvh_field_idx ON public.collection_field_value_history USING btree
 
 
 --
--- Name: idx_collection_field_value_collection_id; Type: INDEX; Schema: public; Owner: -
+-- Name: collection_acls_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_collection_field_value_collection_id ON public.collection_field_value USING btree (collection_id);
-
-
---
--- Name: idx_collection_field_value_field_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_collection_field_value_field_id ON public.collection_field_value USING btree (field_id);
+CREATE INDEX collection_acls_expires_idx ON public.collection_acls USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
--- Name: idx_field_definition_subject_kind; Type: INDEX; Schema: public; Owner: -
+-- Name: collection_acls_principal_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_field_definition_subject_kind ON public.field_definition USING btree (subject_kind, status, display_order);
+CREATE INDEX collection_acls_principal_idx ON public.collection_acls USING btree (principal_type, principal_id);
 
 
 --
@@ -2813,6 +3248,13 @@ CREATE INDEX collections_visibility_idx ON public.collections USING btree (visib
 
 
 --
+-- Name: comments_activity_uri_uniq_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX comments_activity_uri_uniq_idx ON public.comments USING btree (activity_uri) WHERE (activity_uri IS NOT NULL);
+
+
+--
 -- Name: comments_annotation_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2876,6 +3318,55 @@ CREATE INDEX federation_directory_entries_by_url_idx ON public.federation_direct
 
 
 --
+-- Name: federation_inbox_by_peer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_inbox_by_peer_idx ON public.federation_inbox USING btree (peer_id, received_at DESC);
+
+
+--
+-- Name: federation_inbox_by_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_inbox_by_status_idx ON public.federation_inbox USING btree (status, received_at DESC);
+
+
+--
+-- Name: federation_inbox_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_inbox_pending_idx ON public.federation_inbox USING btree (received_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: federation_outbox_by_peer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_outbox_by_peer_idx ON public.federation_outbox USING btree (peer_id, created_at DESC);
+
+
+--
+-- Name: federation_outbox_dedup_broadcast_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_outbox_dedup_broadcast_idx ON public.federation_outbox USING btree (activity_id, peer_id) WHERE (target_user_url IS NULL);
+
+
+--
+-- Name: federation_outbox_dedup_targeted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_outbox_dedup_targeted_idx ON public.federation_outbox USING btree (activity_id, peer_id, target_user_url) WHERE (target_user_url IS NOT NULL);
+
+
+--
+-- Name: federation_outbox_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_outbox_due_idx ON public.federation_outbox USING btree (next_attempt_at) WHERE (status = 'queued'::text);
+
+
+--
 -- Name: federation_peer_suggestions_by_source_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2911,10 +3402,31 @@ CREATE INDEX federation_peers_pending_inbound_idx ON public.federation_peers USI
 
 
 --
+-- Name: federation_peers_unnegotiated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_peers_unnegotiated_idx ON public.federation_peers USING btree (id) WHERE (capabilities_negotiated_at IS NULL);
+
+
+--
 -- Name: federation_peers_visible_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX federation_peers_visible_idx ON public.federation_peers USING btree (instance_url) WHERE ((enabled = true) AND (status = 'connected'::text) AND (share_in_visible_list = true));
+
+
+--
+-- Name: federation_remote_actors_by_peer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_remote_actors_by_peer_idx ON public.federation_remote_actors USING btree (peer_id, last_seen_at DESC);
+
+
+--
+-- Name: federation_remote_actors_missing_encryption_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_remote_actors_missing_encryption_key_idx ON public.federation_remote_actors USING btree (peer_id) WHERE (encryption_public_key IS NULL);
 
 
 --
@@ -2960,6 +3472,20 @@ CREATE INDEX federation_shares_lookup_idx ON public.federation_shares USING btre
 
 
 --
+-- Name: federation_user_keys_one_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX federation_user_keys_one_current_idx ON public.federation_user_keys USING btree (user_ref) WHERE (is_current = true);
+
+
+--
+-- Name: federation_user_keys_retained_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX federation_user_keys_retained_idx ON public.federation_user_keys USING btree (retained_until) WHERE (retained_until IS NOT NULL);
+
+
+--
 -- Name: field_definition_applies_to_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2988,6 +3514,83 @@ CREATE INDEX field_definition_status_idx ON public.field_definition USING btree 
 
 
 --
+-- Name: idx_ai_provider_call_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_asset ON public.ai_provider_call USING btree (asset_id, concern, triggered_at DESC) WHERE (asset_id IS NOT NULL);
+
+
+--
+-- Name: idx_ai_provider_call_billing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_billing ON public.ai_provider_call USING btree (provider, triggered_at DESC);
+
+
+--
+-- Name: idx_ai_provider_call_job; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_provider_call_job ON public.ai_provider_call USING btree (job_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: idx_asset_embedding_d768_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_embedding_d768_asset ON public.asset_embedding_d768 USING btree (asset_id);
+
+
+--
+-- Name: idx_asset_embedding_d768_hnsw_cosine; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_embedding_d768_hnsw_cosine ON public.asset_embedding_d768 USING hnsw (embedding public.vector_cosine_ops) WITH (m='16', ef_construction='64');
+
+
+--
+-- Name: idx_asset_tag_ai_provenance; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_tag_ai_provenance ON public.asset_tag USING btree (created_by_model, added_at DESC) WHERE (source = 'ai'::text);
+
+
+--
+-- Name: idx_asset_tag_asset_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_asset_tag_asset_source ON public.asset_tag USING btree (asset_id, source);
+
+
+--
+-- Name: idx_assets_sensitivity_restricted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assets_sensitivity_restricted ON public.assets USING btree (sensitivity) WHERE (sensitivity = ANY (ARRAY['restricted'::text, 'embargo'::text]));
+
+
+--
+-- Name: idx_collection_field_value_collection_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collection_field_value_collection_id ON public.collection_field_value USING btree (collection_id);
+
+
+--
+-- Name: idx_collection_field_value_field_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collection_field_value_field_id ON public.collection_field_value USING btree (field_id);
+
+
+--
+-- Name: idx_creative_lineage_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_creative_lineage_source ON public.creative_lineage USING btree (source_asset_id);
+
+
+--
 -- Name: idx_dm_recipient_recent; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3006,6 +3609,48 @@ CREATE INDEX idx_dm_sender_recent ON public.direct_messages USING btree (sender_
 --
 
 CREATE INDEX idx_dm_unread ON public.direct_messages USING btree (recipient_user_ref) WHERE (read_at IS NULL);
+
+
+--
+-- Name: idx_extraction_failure_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_extraction_failure_asset ON public.extraction_failure USING btree (asset_id);
+
+
+--
+-- Name: idx_extraction_failure_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_extraction_failure_pending ON public.extraction_failure USING btree (occurred_at DESC) WHERE (dismissed_at IS NULL);
+
+
+--
+-- Name: idx_field_definition_extraction_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_field_definition_extraction_source ON public.field_definition USING btree (extraction_source) WHERE (extraction_source <> ''::text);
+
+
+--
+-- Name: idx_field_definition_subject_kind; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_field_definition_subject_kind ON public.field_definition USING btree (subject_kind, status, display_order);
+
+
+--
+-- Name: idx_mcp_server_enabled; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mcp_server_enabled ON public.mcp_server_registration USING btree (enabled) WHERE (enabled = true);
+
+
+--
+-- Name: idx_metadata_backfill_run_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_metadata_backfill_run_active ON public.metadata_backfill_run USING btree (started_at DESC) WHERE ((completed_at IS NULL) AND (cancelled_at IS NULL));
 
 
 --
@@ -3030,10 +3675,52 @@ CREATE INDEX idx_notifications_unread ON public.notifications USING btree (recip
 
 
 --
+-- Name: idx_resource_request_by_asset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_resource_request_by_asset ON public.resource_request USING btree (target_asset_id);
+
+
+--
+-- Name: idx_resource_request_by_requester; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_resource_request_by_requester ON public.resource_request USING btree (requester_user_ref, requested_at DESC);
+
+
+--
+-- Name: idx_resource_request_pending_oldest_first; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_resource_request_pending_oldest_first ON public.resource_request USING btree (requested_at) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: idx_user_blocks_blocked; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_user_blocks_blocked ON public.user_blocks USING btree (blocked_user_ref);
+
+
+--
+-- Name: idx_user_capability_grants_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_capability_grants_expires_at ON public.user_capability_grants USING btree (expires_at) WHERE (expires_at IS NOT NULL);
+
+
+--
+-- Name: idx_user_capability_grants_request_ref; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_capability_grants_request_ref ON public.user_capability_grants USING btree (request_ref) WHERE (request_ref IS NOT NULL);
+
+
+--
+-- Name: idx_user_capability_revokes_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_capability_revokes_expires_at ON public.user_capability_revokes USING btree (expires_at) WHERE (expires_at IS NOT NULL);
 
 
 --
@@ -3062,6 +3749,20 @@ CREATE INDEX jobs_pending_idx ON public.jobs USING btree (priority, enqueued_at)
 --
 
 CREATE INDEX jobs_type_status_idx ON public.jobs USING btree (type, status);
+
+
+--
+-- Name: likes_local_uniq_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX likes_local_uniq_idx ON public.likes USING btree (target_kind, target_id, user_ref) WHERE (user_ref IS NOT NULL);
+
+
+--
+-- Name: likes_remote_uniq_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX likes_remote_uniq_idx ON public.likes USING btree (target_kind, target_id, peer_id, actor_uri) WHERE (peer_id IS NOT NULL);
 
 
 --
@@ -3233,6 +3934,13 @@ CREATE INDEX teams_origin_idx ON public.teams USING btree (origin_server_id) WHE
 
 
 --
+-- Name: uq_jobs_idempotency_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_jobs_idempotency_key ON public.jobs USING btree (type, idempotency_key) WHERE ((idempotency_key IS NOT NULL) AND (status = ANY (ARRAY['pending'::text, 'running'::text])));
+
+
+--
 -- Name: user_actor_uri_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3328,13 +4036,6 @@ CREATE INDEX user_roles_team_idx ON public.user_roles USING btree (team_id) WHER
 --
 
 CREATE INDEX user_roles_user_idx ON public.user_roles USING btree (user_ref);
-
-
---
--- Name: user_session_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX user_session_idx ON public."user" USING btree (session);
 
 
 --
@@ -3450,6 +4151,27 @@ CREATE TRIGGER comments_maintain_counter_update AFTER UPDATE OF deleted_at ON pu
 
 
 --
+-- Name: activities federation_dispatch_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_dispatch_notify_trg AFTER INSERT ON public.activities FOR EACH ROW EXECUTE FUNCTION public.federation_dispatch_notify();
+
+
+--
+-- Name: federation_inbox federation_inbox_dispatch_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_inbox_dispatch_notify_trg AFTER INSERT ON public.federation_inbox FOR EACH ROW EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
+
+
+--
+-- Name: federation_outbox federation_outbox_dispatch_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER federation_outbox_dispatch_notify_trg AFTER INSERT ON public.federation_outbox FOR EACH ROW EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
+
+
+--
 -- Name: likes likes_maintain_counter_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3560,6 +4282,14 @@ ALTER TABLE ONLY public.asset_companions
 
 
 --
+-- Name: asset_embedding_d768 asset_embedding_d768_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_embedding_d768
+    ADD CONSTRAINT asset_embedding_d768_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: asset_field_value asset_field_value_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3576,19 +4306,19 @@ ALTER TABLE ONLY public.asset_field_value
 
 
 --
+-- Name: asset_subtitle_tracks asset_subtitle_tracks_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.asset_subtitle_tracks
+    ADD CONSTRAINT asset_subtitle_tracks_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: asset_tag asset_tag_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.asset_tag
     ADD CONSTRAINT asset_tag_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
-
-
---
--- Name: asset_embedding_d768 asset_embedding_d768_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.asset_embedding_d768
-    ADD CONSTRAINT asset_embedding_d768_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
 
 
 --
@@ -3640,7 +4370,7 @@ ALTER TABLE ONLY public.brush_pack_stamps
 
 
 --
--- Name: brush_packs brush_packs_owner_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: brush_packs brush_packs_owner_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.brush_packs
@@ -3728,6 +4458,38 @@ ALTER TABLE ONLY public.comments
 
 
 --
+-- Name: comments comments_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.comments
+    ADD CONSTRAINT comments_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: creative_lineage creative_lineage_derivative_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_derivative_asset_id_fkey FOREIGN KEY (derivative_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: creative_lineage creative_lineage_source_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.creative_lineage
+    ADD CONSTRAINT creative_lineage_source_asset_id_fkey FOREIGN KEY (source_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: extraction_failure extraction_failure_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.extraction_failure
+    ADD CONSTRAINT extraction_failure_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: federation_directory_entries federation_directory_entries_directory_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3736,11 +4498,51 @@ ALTER TABLE ONLY public.federation_directory_entries
 
 
 --
+-- Name: federation_inbox federation_inbox_correlation_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_inbox
+    ADD CONSTRAINT federation_inbox_correlation_activity_id_fkey FOREIGN KEY (correlation_activity_id) REFERENCES public.activities(id) ON DELETE SET NULL;
+
+
+--
+-- Name: federation_inbox federation_inbox_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_inbox
+    ADD CONSTRAINT federation_inbox_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_outbox federation_outbox_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_outbox
+    ADD CONSTRAINT federation_outbox_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.activities(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_outbox federation_outbox_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_outbox
+    ADD CONSTRAINT federation_outbox_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: federation_peer_suggestions federation_peer_suggestions_source_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.federation_peer_suggestions
     ADD CONSTRAINT federation_peer_suggestions_source_peer_id_fkey FOREIGN KEY (source_peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: federation_remote_actors federation_remote_actors_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_remote_actors
+    ADD CONSTRAINT federation_remote_actors_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
 
 
 --
@@ -3768,11 +4570,51 @@ ALTER TABLE ONLY public.federation_shares
 
 
 --
+-- Name: federation_user_keys federation_user_keys_rotated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_user_keys
+    ADD CONSTRAINT federation_user_keys_rotated_by_user_ref_fkey FOREIGN KEY (rotated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: federation_user_keys federation_user_keys_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.federation_user_keys
+    ADD CONSTRAINT federation_user_keys_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: field_definition field_definition_deprecated_replacement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.field_definition
     ADD CONSTRAINT field_definition_deprecated_replacement_id_fkey FOREIGN KEY (deprecated_replacement_id) REFERENCES public.field_definition(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: likes likes_peer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.likes
+    ADD CONSTRAINT likes_peer_id_fkey FOREIGN KEY (peer_id) REFERENCES public.federation_peers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_server_tool_grant mcp_server_tool_grant_server_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_server_tool_grant
+    ADD CONSTRAINT mcp_server_tool_grant_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.mcp_server_registration(id) ON DELETE CASCADE;
+
+
+--
+-- Name: metadata_backfill_run metadata_backfill_run_started_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.metadata_backfill_run
+    ADD CONSTRAINT metadata_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
 
 
 --
@@ -3837,6 +4679,22 @@ ALTER TABLE ONLY public.posts
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE SET NULL;
+
+
+--
+-- Name: resource_request resource_request_decided_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_request
+    ADD CONSTRAINT resource_request_decided_by_user_ref_fkey FOREIGN KEY (decided_by_user_ref) REFERENCES public."user"(ref);
+
+
+--
+-- Name: resource_request resource_request_requester_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_request
+    ADD CONSTRAINT resource_request_requester_user_ref_fkey FOREIGN KEY (requester_user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --
@@ -3928,6 +4786,14 @@ ALTER TABLE ONLY public.user_capability_grants
 
 
 --
+-- Name: user_capability_grants user_capability_grants_request_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_capability_grants
+    ADD CONSTRAINT user_capability_grants_request_ref_fkey FOREIGN KEY (request_ref) REFERENCES public.resource_request(id) ON DELETE SET NULL;
+
+
+--
 -- Name: user_capability_grants user_capability_grants_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4011,390 +4877,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
--- Migration 00003 — federation_inbox (Phase 1.22.D-a).
-CREATE TABLE public.federation_inbox (
-    id                       uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
-    activity_uri             text         NOT NULL UNIQUE,
-    peer_id                  uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    actor_uri                text         NOT NULL,
-    activity_type            text         NOT NULL,
-    object_kind              text         NULL,
-    object_id                uuid         NULL,
-    envelope_json            jsonb        NOT NULL,
-    http_sig_key             text         NOT NULL,
-    received_at              timestamptz  NOT NULL DEFAULT now(),
-    status                   text         NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'processed', 'rejected', 'failed')),
-    reject_reason            text         NULL,
-    dispatch_attempts        int          NOT NULL DEFAULT 0,
-    last_attempt_at          timestamptz  NULL,
-    last_error               text         NOT NULL DEFAULT '',
-    processed_at             timestamptz  NULL,
-    correlation_activity_id  uuid         NULL REFERENCES public.activities(id) ON DELETE SET NULL,
-    created_at               timestamptz  NOT NULL DEFAULT now(),
-    updated_at               timestamptz  NOT NULL DEFAULT now()
-);
-CREATE INDEX federation_inbox_pending_idx
-    ON public.federation_inbox (received_at) WHERE status = 'pending';
-CREATE INDEX federation_inbox_by_peer_idx
-    ON public.federation_inbox (peer_id, received_at DESC);
-CREATE INDEX federation_inbox_by_status_idx
-    ON public.federation_inbox (status, received_at DESC);
--- Migration 00011 — federation_inbox observability for the
--- decrypt branch (Phase 1.22.I-f). Mirrors 00010's
--- federation_outbox.was_encrypted shape.
-ALTER TABLE public.federation_inbox
-    ADD COLUMN was_encrypted               boolean  NOT NULL DEFAULT false,
-    ADD COLUMN decrypted_with_key_version  integer  NULL;
+\unrestrict 1IJUgRqBJbvKt5eNJOjug1qmq4a7ABQqOsiFHqezNyOJN1m7A2UloJslFAYoJWf
 
--- Migration 00004 — inbound-federation columns on likes + comments
--- + federation_remote_actors display cache (Phase 1.22.D-a-4).
-ALTER TABLE public.likes
-    ADD COLUMN id          uuid         NOT NULL DEFAULT gen_random_uuid(),
-    ADD COLUMN peer_id     uuid         NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    ADD COLUMN actor_uri   text         NULL,
-    ALTER COLUMN user_ref  DROP NOT NULL;
-ALTER TABLE public.likes DROP CONSTRAINT likes_pkey;
-ALTER TABLE public.likes ADD CONSTRAINT likes_pkey PRIMARY KEY (id);
-CREATE UNIQUE INDEX likes_local_uniq_idx
-    ON public.likes (target_kind, target_id, user_ref)
-    WHERE user_ref IS NOT NULL;
-CREATE UNIQUE INDEX likes_remote_uniq_idx
-    ON public.likes (target_kind, target_id, peer_id, actor_uri)
-    WHERE peer_id IS NOT NULL;
-ALTER TABLE public.likes ADD CONSTRAINT likes_origin_check
-    CHECK (
-        (user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
-        OR
-        (user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
-    );
-ALTER TABLE public.comments
-    ADD COLUMN peer_id            uuid NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    ADD COLUMN actor_uri          text NULL,
-    ADD COLUMN activity_uri       text NULL,
-    ALTER COLUMN author_user_ref  DROP NOT NULL;
-CREATE UNIQUE INDEX comments_activity_uri_uniq_idx
-    ON public.comments (activity_uri)
-    WHERE activity_uri IS NOT NULL;
-ALTER TABLE public.comments ADD CONSTRAINT comments_origin_check
-    CHECK (
-        (author_user_ref IS NOT NULL AND peer_id IS NULL AND actor_uri IS NULL)
-        OR
-        (author_user_ref IS NULL AND peer_id IS NOT NULL AND actor_uri IS NOT NULL)
-    );
-CREATE TABLE public.federation_remote_actors (
-    actor_uri         text         PRIMARY KEY,
-    peer_id           uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    display_name      text         NOT NULL DEFAULT '',
-    avatar_url        text         NOT NULL DEFAULT '',
-    first_seen_at     timestamptz  NOT NULL DEFAULT now(),
-    last_seen_at      timestamptz  NOT NULL DEFAULT now(),
-    updated_at        timestamptz  NOT NULL DEFAULT now()
-);
-CREATE INDEX federation_remote_actors_by_peer_idx
-    ON public.federation_remote_actors (peer_id, last_seen_at DESC);
-
--- Migration 00008 — federation_remote_actors gains the inbound
--- encryption-key cache columns (Phase 1.22.I-c). 32-byte X25519
--- public key advertised by the remote actor in their envelope's
--- aa:encryptionPublicKey block; nullable for pre-I-c peers. The
--- atomic CHECK ensures the three columns move together so the
--- read path's "has a key?" check is unambiguous.
--- (Declared next to the table even though the migration runs
--- after 00005-00007; schema.sql groups by table for readability.)
-ALTER TABLE public.federation_remote_actors
-    ADD COLUMN encryption_public_key            bytea       NULL,
-    ADD COLUMN encryption_public_key_version    integer     NULL,
-    ADD COLUMN encryption_public_key_updated_at timestamptz NULL,
-    ADD CONSTRAINT federation_remote_actors_encryption_key_atomic CHECK (
-        (encryption_public_key IS NULL
-            AND encryption_public_key_version IS NULL
-            AND encryption_public_key_updated_at IS NULL)
-     OR (encryption_public_key IS NOT NULL
-            AND octet_length(encryption_public_key) = 32
-            AND encryption_public_key_version IS NOT NULL
-            AND encryption_public_key_version >= 1
-            AND encryption_public_key_updated_at IS NOT NULL)
-    );
-CREATE INDEX federation_remote_actors_missing_encryption_key_idx
-    ON public.federation_remote_actors (peer_id)
-    WHERE encryption_public_key IS NULL;
-
--- Migration 00005 — federation_outbox + cursor state + LISTEN/NOTIFY
--- trigger (Phase 1.22.D-b-1).
-CREATE TABLE public.federation_outbox (
-    id                     uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
-    activity_id            uuid         NOT NULL REFERENCES public.activities(id) ON DELETE CASCADE,
-    peer_id                uuid         NOT NULL REFERENCES public.federation_peers(id) ON DELETE CASCADE,
-    target_user_url        text         NULL,
-    status                 text         NOT NULL DEFAULT 'queued',
-    CONSTRAINT federation_outbox_status_check CHECK (
-        status IN ('queued', 'sent', 'failed', 'cancelled')
-    ),
-    attempts               smallint     NOT NULL DEFAULT 0,
-    next_attempt_at        timestamptz  NOT NULL DEFAULT NOW(),
-    last_attempt_at        timestamptz  NULL,
-    last_error             text         NOT NULL DEFAULT '',
-    sent_at                timestamptz  NULL,
-    delivered_with_key_id  text         NULL,
-    created_at             timestamptz  NOT NULL DEFAULT NOW(),
-    updated_at             timestamptz  NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX federation_outbox_dedup_targeted_idx
-    ON public.federation_outbox (activity_id, peer_id, target_user_url)
-    WHERE target_user_url IS NOT NULL;
-CREATE UNIQUE INDEX federation_outbox_dedup_broadcast_idx
-    ON public.federation_outbox (activity_id, peer_id)
-    WHERE target_user_url IS NULL;
-CREATE INDEX federation_outbox_due_idx
-    ON public.federation_outbox (next_attempt_at)
-    WHERE status = 'queued';
-CREATE INDEX federation_outbox_by_peer_idx
-    ON public.federation_outbox (peer_id, created_at DESC);
--- Migration 00010 — federation_outbox.was_encrypted (Phase 1.22.I-e).
--- Observability mirror of the dispatcher's encryption decision.
-ALTER TABLE public.federation_outbox
-    ADD COLUMN was_encrypted boolean NOT NULL DEFAULT false;
--- Migration 00012 — sender-refusal policy state (Phase 1.22.I-g).
--- sensitivity is denormalized from activities at INSERT time so the
--- delivery Worker can consult outbox.ChoosePathFor without a JOIN.
--- refused_reason is populated alongside status='refused' (new status
--- value, terminal — refused rows never retry).
-ALTER TABLE public.federation_outbox
-    ADD COLUMN sensitivity    text NULL,
-    ADD COLUMN refused_reason text NULL;
-ALTER TABLE public.federation_outbox
-    DROP CONSTRAINT federation_outbox_status_check;
-ALTER TABLE public.federation_outbox
-    ADD CONSTRAINT federation_outbox_status_check CHECK (
-        status IN ('queued', 'sent', 'failed', 'cancelled', 'refused')
-    );
-CREATE TABLE public.federation_dispatch_state (
-    id                            int          PRIMARY KEY CHECK (id = 1),
-    last_dispatched_activity_id   uuid         NULL,
-    last_dispatched_at            timestamptz  NULL,
-    updated_at                    timestamptz  NOT NULL DEFAULT NOW()
-);
-INSERT INTO public.federation_dispatch_state (id) VALUES (1);
-CREATE OR REPLACE FUNCTION public.federation_dispatch_notify()
-RETURNS TRIGGER AS $$
-BEGIN
-    PERFORM pg_notify('federation_dispatch_pending', NEW.id::text);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE TRIGGER federation_dispatch_notify_trg
-    AFTER INSERT ON public.activities
-    FOR EACH ROW
-    EXECUTE FUNCTION public.federation_dispatch_notify();
-
--- Migration 00006 — LISTEN/NOTIFY extension to federation_outbox
--- + federation_inbox (Phase 1.22.D-b-6 G1).
-CREATE OR REPLACE FUNCTION public.federation_outbox_dispatch_notify()
-RETURNS TRIGGER AS $$
-BEGIN
-    PERFORM pg_notify('federation_outbox_pending', NEW.id::text);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE TRIGGER federation_outbox_dispatch_notify_trg
-    AFTER INSERT ON public.federation_outbox
-    FOR EACH ROW
-    EXECUTE FUNCTION public.federation_outbox_dispatch_notify();
-CREATE OR REPLACE FUNCTION public.federation_inbox_dispatch_notify()
-RETURNS TRIGGER AS $$
-BEGIN
-    PERFORM pg_notify('federation_inbox_pending', NEW.id::text);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE TRIGGER federation_inbox_dispatch_notify_trg
-    AFTER INSERT ON public.federation_inbox
-    FOR EACH ROW
-    EXECUTE FUNCTION public.federation_inbox_dispatch_notify();
-
--- Migration 00007 — federation_user_keys (Phase 1.22.I-b).
--- Per-user X25519 keypairs for NaCl-box encrypted federation.
--- Private key column is atrest-wrapped (AES-256-GCM, host master
--- key per app/internal/atrest). Multi-version retention supports
--- the I-h rotation flow; the inbox decrypt path (I-f) falls back
--- from current to retained versions during a peer's catch-up
--- window. See ADR 0049 §Track B.
--- rotated_at / rotated_by_user_ref added in migration 00013 (Phase
--- 1.22.I-h). Both nullable: legacy rows pre-I-h have NULL; rows
--- minted or demoted by the rotation primitive carry both fields.
--- F-021 (cleanup-audit-2026-06.md): column renamed
--- federation_user_keys.user_id → user_ref to match the
--- schema-wide BIGINT-FK-to-"user"(ref) convention (28+ other
--- tables use `_user_ref`).
-CREATE TABLE public.federation_user_keys (
-    user_ref            bigint       NOT NULL REFERENCES public."user"(ref) ON DELETE CASCADE,
-    version             integer      NOT NULL CHECK (version >= 1),
-    algorithm           text         NOT NULL DEFAULT 'naclbox-x25519-v1',
-    public_key          bytea        NOT NULL CHECK (octet_length(public_key) = 32),
-    private_key_enc     bytea        NOT NULL CHECK (octet_length(private_key_enc) >= 13),
-    is_current          boolean      NOT NULL,
-    created_at          timestamptz  NOT NULL DEFAULT NOW(),
-    retained_until      timestamptz  NULL,
-    rotated_at          timestamptz  NULL,
-    rotated_by_user_ref bigint       NULL REFERENCES public."user"(ref) ON DELETE SET NULL,
-    PRIMARY KEY (user_ref, version),
-    CONSTRAINT federation_user_keys_current_xor_retained CHECK (
-        (is_current = TRUE  AND retained_until IS NULL)
-     OR (is_current = FALSE AND retained_until IS NOT NULL)
-    )
-);
-CREATE UNIQUE INDEX federation_user_keys_one_current_idx
-    ON public.federation_user_keys (user_ref)
-    WHERE is_current = TRUE;
-CREATE INDEX federation_user_keys_retained_idx
-    ON public.federation_user_keys (retained_until)
-    WHERE retained_until IS NOT NULL;
-
--- Seeds (from 00002_seeds.sql)
-
-INSERT INTO public.asset_types VALUES (2, 'Document', NULL, 20, NULL, NULL, NULL, 'file-text', NULL, NULL);
-INSERT INTO public.asset_types VALUES (3, 'Video', NULL, 30, NULL, NULL, NULL, 'video', NULL, NULL);
-INSERT INTO public.asset_types VALUES (4, 'Audio', NULL, 40, NULL, NULL, NULL, 'music', NULL, NULL);
-INSERT INTO public.asset_types VALUES (5, '3D Object', NULL, 50, NULL, NULL, NULL, 'box', NULL, NULL);
-INSERT INTO public.asset_types VALUES (6, 'Archive', NULL, 60, NULL, NULL, NULL, 'archive', NULL, NULL);
-INSERT INTO public.asset_types VALUES (7, 'Font', NULL, 70, NULL, NULL, NULL, 'type', NULL, NULL);
-INSERT INTO public.asset_types VALUES (1, 'Image', NULL, 10, NULL, NULL, NULL, 'image', NULL, NULL);
-INSERT INTO public.asset_types VALUES (8, 'Comic', NULL, 80, NULL, NULL, NULL, 'book-open', NULL, NULL);
-INSERT INTO public.asset_types VALUES (10, 'Ebook', NULL, 100, NULL, NULL, NULL, 'book', NULL, NULL);
-INSERT INTO public.asset_types VALUES (11, 'Audiobook', NULL, 110, NULL, NULL, NULL, 'headphones', NULL, NULL);
-INSERT INTO public.asset_types VALUES (12, 'Texture', NULL, 120, NULL, NULL, NULL, 'grid-3x3', NULL, NULL);
-INSERT INTO public.asset_types VALUES (13, 'Sprite', NULL, 130, NULL, NULL, NULL, 'grid-2x2', NULL, NULL);
-INSERT INTO public.asset_types VALUES (14, 'Code', NULL, 140, NULL, NULL, NULL, 'file-code-2', NULL, NULL);
-
-INSERT INTO public.capabilities VALUES ('system.admin', 'Superpower — bypasses every capability check', '2026-06-06 18:04:06.825478+00', NULL);
-INSERT INTO public.capabilities VALUES ('users.read', 'Read other users'' profiles and metadata', '2026-06-06 18:04:06.825478+00', NULL);
-INSERT INTO public.capabilities VALUES ('users.write', 'Modify other users (role, capability grants/revokes)', '2026-06-06 18:04:06.825478+00', NULL);
-INSERT INTO public.capabilities VALUES ('roles.read', 'List available roles and their capabilities', '2026-06-06 18:04:06.825478+00', NULL);
-INSERT INTO public.capabilities VALUES ('caps.read', 'List defined capability codes', '2026-06-06 18:04:06.825478+00', NULL);
-INSERT INTO public.capabilities VALUES ('teams.read', 'List teams and view team membership', '2026-06-06 18:04:07.512666+00', NULL);
-INSERT INTO public.capabilities VALUES ('teams.create', 'Create new teams', '2026-06-06 18:04:07.512666+00', NULL);
-INSERT INTO public.capabilities VALUES ('teams.admin', 'Edit any team (rename, re-parent, delete, manage members)', '2026-06-06 18:04:07.512666+00', NULL);
-INSERT INTO public.capabilities VALUES ('workflow.admin', 'Manage workflow_states and workflow_transitions', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('posts.publish', 'Move a post into the published state', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('assets.submit', 'Submit an asset for review (draft → pending_review)', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('assets.review', 'Approve or reject an asset in review (pending_review → published)', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('assets.publish', 'Publish an asset directly without review (draft → published)', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('assets.archive', 'Archive a published asset (published → archived)', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('assets.unarchive', 'Restore an archived asset (archived → published)', '2026-06-06 18:04:07.602388+00', NULL);
-INSERT INTO public.capabilities VALUES ('posts.comment', 'Write comments on posts', '2026-06-06 18:04:07.650956+00', NULL);
-INSERT INTO public.capabilities VALUES ('posts.like', 'Like (and unlike) posts and comments', '2026-06-06 18:04:07.650956+00', NULL);
-INSERT INTO public.capabilities VALUES ('comments.delete.own', 'Delete a comment you authored', '2026-06-06 18:04:07.650956+00', NULL);
-INSERT INTO public.capabilities VALUES ('comments.delete.any', 'Delete any comment (moderator)', '2026-06-06 18:04:07.650956+00', NULL);
-INSERT INTO public.capabilities VALUES ('users.profile.edit.any', 'Edit any user''s profile (moderator)', '2026-06-06 18:04:07.681466+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.config.read', 'View system configuration (site, SMTP, auth, AI providers).', '2026-06-06 18:04:07.700808+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.config.write', 'Modify system configuration.', '2026-06-06 18:04:07.700808+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.auth.write', 'Modify authentication / SSO configuration.', '2026-06-06 18:04:07.700808+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.ai.write', 'Modify AI provider configuration.', '2026-06-06 18:04:07.700808+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.appearance.write', 'Modify the per-install brand and typography settings.', '2026-06-06 18:04:07.703148+00', NULL);
-INSERT INTO public.capabilities VALUES ('users.approve', 'Approve, suspend, or restore user accounts (lifecycle state machine)', '2026-06-06 18:04:07.809993+00', NULL);
-INSERT INTO public.capabilities VALUES ('users.password.reset', 'Issue a one-shot password reset for any user (admin helpdesk action)', '2026-06-06 18:04:07.81184+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.asset_types.admin', 'Edit asset_type definitions and manage their per-type ACLs', '2026-06-06 18:04:07.818966+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.audit.read', 'Read the system-wide audit event log via the admin viewer', '2026-06-06 18:04:07.833355+00', NULL);
-INSERT INTO public.capabilities VALUES ('system.sso.ldap.read', 'View LDAP/AD identity-provider configuration', '2026-06-06 18:04:07.836887+00', 'sso_ldap');
-INSERT INTO public.capabilities VALUES ('system.sso.ldap.write', 'Configure LDAP/AD identity-provider connections', '2026-06-06 18:04:07.836887+00', 'sso_ldap');
-INSERT INTO public.capabilities VALUES ('system.sso.saml.read', 'View SAML 2.0 IdP trust configuration', '2026-06-06 18:04:07.836887+00', 'sso_saml');
-INSERT INTO public.capabilities VALUES ('system.sso.saml.write', 'Configure SAML 2.0 IdP trust + service-provider metadata', '2026-06-06 18:04:07.836887+00', 'sso_saml');
-INSERT INTO public.capabilities VALUES ('system.tenancy.read', 'View multi-tenant deployment configuration', '2026-06-06 18:04:07.836887+00', 'multi_tenant');
-INSERT INTO public.capabilities VALUES ('system.tenancy.write', 'Manage tenants, quotas, and per-tenant administration', '2026-06-06 18:04:07.836887+00', 'multi_tenant');
-
-INSERT INTO public.field_definition VALUES ('7cf56f14-f68b-43ef-9b52-ca349bb836b5', 'title', 'Title', 'Primary display title for the asset.', 'text', '{}', true, true, '{}', NULL, NULL, NULL, 10, 'core', '{"tag": "ObjectName", "type": "iptc"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('42b3bb29-8807-4946-abc8-fdaa3d890f50', 'description', 'Description', 'Long-form description of the work.', 'longtext', '{}', false, true, '{}', NULL, NULL, NULL, 20, 'core', NULL, 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('e86aa34e-820f-4a29-93cb-01d5d6a2141f', 'credit', 'Credit', 'Person or studio credited for the work.', 'text', '{}', false, true, '{}', NULL, NULL, NULL, 10, 'rights', '{"tag": "Credit", "type": "iptc"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('ccbdecf3-bddc-4316-928b-3e7333378cd9', 'copyright', 'Copyright', 'Copyright notice / rights statement.', 'text', '{}', false, true, '{}', NULL, NULL, NULL, 20, 'rights', '{"tag": "dc:rights", "type": "xmp"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('e4bc6773-025a-4277-a0b8-a0b71163134a', 'capture_date', 'Capture date', 'When the original was captured (EXIF).', 'datetime', '{}', false, true, '{}', NULL, NULL, NULL, 10, 'technical', '{"tag": "DateTimeOriginal", "type": "exif"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('7d8c0ca9-aff8-482f-8d20-348304aeec75', 'keywords', 'Keywords', 'Multi-value tagging.', 'multi_select', '{}', false, true, '{}', NULL, NULL, NULL, 30, 'core', '{"tag": "Keywords", "type": "iptc"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-INSERT INTO public.field_definition VALUES ('da8dc72c-3b1d-4d90-b0a6-c38f53d87e46', 'country', 'Country', 'Country / region / city tree.', 'tree', '{}', false, true, '{}', NULL, NULL, NULL, 40, 'general', '{"tag": "Country-PrimaryLocationName", "type": "iptc"}', 'active', NULL, NULL, '2026-06-06 18:04:07.364619+00', '2026-06-06 18:04:07.364619+00', NULL, NULL);
-
-INSERT INTO public.roles VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', NULL, 'Base', 'Minimal sign-in user; can read public catalogs', NULL, '2026-06-06 18:04:06.825478+00', '2026-06-06 18:04:06.825478+00');
-INSERT INTO public.roles VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', '80ec6003-7fd5-4dac-9415-d26d39169d42', 'Admin', 'Full administrative access', NULL, '2026-06-06 18:04:06.825478+00', '2026-06-06 18:04:06.825478+00');
-INSERT INTO public.roles VALUES ('a09769d4-968f-4df8-881f-d5b0822fa62d', NULL, 'Anonymous', 'Synthetic role for unauthenticated requests; caps gate which public surfaces anonymous users may read', NULL, '2026-06-06 18:04:07.649058+00', '2026-06-06 18:04:07.649058+00');
-
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'caps.read');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'roles.read');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'users.read');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'users.write');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.admin');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'teams.read');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'teams.create');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'teams.admin');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'assets.submit');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'posts.publish');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'assets.review');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'assets.publish');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'assets.archive');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'assets.unarchive');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'workflow.admin');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'posts.comment');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'posts.like');
-INSERT INTO public.role_capabilities VALUES ('80ec6003-7fd5-4dac-9415-d26d39169d42', 'comments.delete.own');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'comments.delete.any');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'users.profile.edit.any');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.config.read');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.config.write');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.auth.write');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.ai.write');
-INSERT INTO public.role_capabilities VALUES ('aa6b632d-5bef-4924-93d4-aba070dfe503', 'system.appearance.write');
-
-INSERT INTO public.workflow_states VALUES ('48a7ec39-9ab8-463e-984a-9f0c3037fee1', 'post', 'published', 'Published', 0, true, false, true, '2026-06-06 18:04:07.602388+00', 'check-circle', '#16a34a', false);
-INSERT INTO public.workflow_states VALUES ('a4fb6ed4-16f0-405b-a172-f0049a07feda', 'asset:1', 'draft', 'Draft', 0, true, false, false, '2026-06-06 18:04:07.602388+00', 'file-edit', '#64748b', false);
-INSERT INTO public.workflow_states VALUES ('2c68c34f-fdbf-4080-a958-e8418b4e4def', 'asset:1', 'pending_review', 'Pending Review', 1, false, false, false, '2026-06-06 18:04:07.602388+00', 'clock', '#f59e0b', false);
-INSERT INTO public.workflow_states VALUES ('daf8045b-0b32-49c9-87eb-e7ff72db206c', 'asset:1', 'published', 'Published', 2, false, false, true, '2026-06-06 18:04:07.602388+00', 'check-circle', '#16a34a', false);
-INSERT INTO public.workflow_states VALUES ('def32f01-1912-4d43-8c51-95f527d163dd', 'asset:1', 'archived', 'Archived', 3, false, false, false, '2026-06-06 18:04:07.602388+00', 'archive', '#0ea5e9', false);
-INSERT INTO public.workflow_states VALUES ('0489ffd2-9ec4-454f-9604-02f8c4390a7b', 'asset:1', 'deleted', 'Deleted', 4, false, true, false, '2026-06-06 18:04:07.602388+00', 'trash-2', '#ef4444', false);
-INSERT INTO public.workflow_states VALUES ('3c318b8b-572c-4ed8-a87f-6f531ce42028', 'post', 'wip', 'WIP', -10, false, false, true, '2026-06-06 18:04:07.691197+00', 'pencil-line', '#f59e0b', false);
-
-INSERT INTO public.workflow_transitions VALUES ('6af6c8d9-8d19-4976-b060-3121153f874c', 'a4fb6ed4-16f0-405b-a172-f0049a07feda', '2c68c34f-fdbf-4080-a958-e8418b4e4def', 'assets.submit', false);
-INSERT INTO public.workflow_transitions VALUES ('036187b0-0065-4834-93d1-c5cc6a7b19c1', '2c68c34f-fdbf-4080-a958-e8418b4e4def', 'daf8045b-0b32-49c9-87eb-e7ff72db206c', 'assets.review', true);
-INSERT INTO public.workflow_transitions VALUES ('f8c0b52b-ef0c-406d-be49-bcba2935bd58', '2c68c34f-fdbf-4080-a958-e8418b4e4def', 'a4fb6ed4-16f0-405b-a172-f0049a07feda', 'assets.review', true);
-INSERT INTO public.workflow_transitions VALUES ('c5411fe5-bf35-487e-9c71-761ebb418e58', 'a4fb6ed4-16f0-405b-a172-f0049a07feda', 'daf8045b-0b32-49c9-87eb-e7ff72db206c', 'assets.publish', true);
-INSERT INTO public.workflow_transitions VALUES ('6cd17ebe-c92b-4c1c-be81-d2080944985d', 'daf8045b-0b32-49c9-87eb-e7ff72db206c', 'def32f01-1912-4d43-8c51-95f527d163dd', 'assets.archive', true);
-INSERT INTO public.workflow_transitions VALUES ('d6310dbd-8a3e-4289-9726-ea2e477f3fb6', 'def32f01-1912-4d43-8c51-95f527d163dd', 'daf8045b-0b32-49c9-87eb-e7ff72db206c', 'assets.unarchive', true);
-INSERT INTO public.workflow_transitions VALUES ('db548e79-b233-4396-82bf-bdc4302f1112', NULL, 'a4fb6ed4-16f0-405b-a172-f0049a07feda', NULL, false);
-INSERT INTO public.workflow_transitions VALUES ('13681f73-8ff7-4d69-a805-084365305467', NULL, '48a7ec39-9ab8-463e-984a-9f0c3037fee1', NULL, false);
-INSERT INTO public.workflow_transitions VALUES ('a9d5c140-ba58-4bb9-9643-3b5880a93c41', NULL, '3c318b8b-572c-4ed8-a87f-6f531ce42028', NULL, false);
-INSERT INTO public.workflow_transitions VALUES ('8b398b4a-4a35-49f8-922a-370910176ef3', '3c318b8b-572c-4ed8-a87f-6f531ce42028', '48a7ec39-9ab8-463e-984a-9f0c3037fee1', 'posts.publish', false);
-INSERT INTO public.workflow_transitions VALUES ('23306b7c-c570-4d50-9c22-875f778111b2', '48a7ec39-9ab8-463e-984a-9f0c3037fee1', '3c318b8b-572c-4ed8-a87f-6f531ce42028', 'posts.publish', false);
-
---
--- Name: resource_type_ref_seq; Type: SEQUENCE SET; Schema: public; Owner: -
---
-
--- F-022 (cleanup-audit-2026-06.md): document that the _ref suffix
--- on asset_field_value.value_ref is the table's local multi-type
--- value-column convention (sibling to value_text / value_num /
--- value_date / value_options), NOT the schema-wide BIGINT-FK _ref
--- rule. The column is a UUID storing a domain-object reference for
--- ref-typed field values; renaming to value_id would break the
--- sibling pattern. See the audit doc for the full rationale.
-COMMENT ON COLUMN public.asset_field_value.value_ref IS
-    'UUID reference value for ref-typed fields. The _ref suffix follows the table''s local multi-type value-column convention (sibling to value_text / value_num / value_date / value_options), distinct from the schema-wide BIGINT-FK _ref rule.';
-
--- Phase 1.18.B-3 — Subtitle / caption tracks (migration 00002).
--- Child table of `assets` with CASCADE delete. NOT counted toward
--- asset totals (separate table). See subtitles package + the
--- 00002_subtitle_tracks.sql migration for the full rationale.
-CREATE TABLE public.asset_subtitle_tracks (
-    asset_id       uuid   NOT NULL
-        REFERENCES public.assets(id) ON DELETE CASCADE,
-    lang           text   NOT NULL
-        CHECK (lang ~ '^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$' OR lang = 'und'),
-    label          text   NOT NULL DEFAULT '',
-    file_hash      text   NOT NULL,
-    source_format  text   NOT NULL
-        CHECK (source_format IN ('vtt','srt','ssa','ass','sub','idx','whisper')),
-    confidence     real   NOT NULL DEFAULT 1.0
-        CHECK (confidence >= 0 AND confidence <= 1),
-    created_at     timestamptz NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (asset_id, lang)
-);
-
--- Per-post override for the parent asset's subtitle tracks.
--- NULL means use the asset's intrinsic tracks (99% case).
-ALTER TABLE public.posts
-    ADD COLUMN subtitle_track_override jsonb;

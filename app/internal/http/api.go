@@ -16,6 +16,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/httpsig"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
@@ -65,6 +66,8 @@ import (
 	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
 	"github.com/mscrnt/artist-alley/app/internal/aiedit"
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
+	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
+	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -339,6 +342,29 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		)
 		jobSvc.Registry.Register(aijobs.NewTranscribeHandler(
 			transcribeOrchestratorAdapter{orch: transcribeOrch},
+		))
+	}
+
+	// Phase 1.18.A-2 — metadata-extraction job handler. Wires
+	// the EXIF extractor + the apply layer against DB-backed
+	// concrete impls (see meta*Adapter types at the bottom of
+	// this file). One ExtractJobHandler per process; the upload
+	// handler enqueues metadata.extract jobs per image upload.
+	if jobSvc != nil {
+		metaSrc := metaSourceAdapter{pool: pool, storage: storageSvc}
+		metaLookup := metaAssetAdapter{pool: pool}
+		metaCfg := metaConfigAdapter{pool: pool}
+		metaValues := metaValueReaderAdapter{pool: pool}
+		metaWriter := metaValueWriterAdapter{pool: pool}
+		metaFailures := metaFailureAdapter{pool: pool}
+		metaApplier := assetmetadata.NewApplier(metaCfg, metaValues, metaWriter, metaFailures)
+		jobSvc.Registry.Register(assetmetadata.NewExtractJobHandler(
+			metaSrc,
+			metaLookup,
+			metaApplier,
+			metaFailures,
+			[]assetmetadata.Extractor{exifext.New()},
+			logger,
 		))
 	}
 
@@ -2795,4 +2821,212 @@ func (a aieditSourceAdapter) FetchSourceImage(
 		ct = info.ContentType
 	}
 	return buf, ct, title, owner, true, nil
+}
+
+// ---------------------------------------------------------------------------
+// asset/metadata adapters (Phase 1.18.A-2)
+// ---------------------------------------------------------------------------
+//
+// Six narrow adapters so the asset/metadata package + its
+// ExtractJobHandler don't import assets / metadata / storage
+// directly. Same dual-type pattern as transcribeOrchestratorAdapter +
+// the aiedit adapters above.
+
+type metaSourceAdapter struct {
+	pool    *pgxpool.Pool
+	storage *storage.Service
+}
+
+func (a metaSourceAdapter) LoadSource(ctx context.Context, asset assetmetadata.AssetRef) (io.ReadCloser, string, error) {
+	if asset.FileHash == "" {
+		return nil, "", fmt.Errorf("asset %s has no file_hash", asset.ID)
+	}
+	rc, info, err := a.storage.Backend.Get(ctx, asset.FileHash, storage.VariantOriginal)
+	if err != nil {
+		return nil, "", fmt.Errorf("storage get: %w", err)
+	}
+	mime := asset.MimeType
+	if mime == "" && info != nil {
+		mime = info.ContentType
+	}
+	return rc, mime, nil
+}
+
+type metaAssetAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a metaAssetAdapter) GetAssetRef(ctx context.Context, id uuid.UUID) (assetmetadata.AssetRef, bool, error) {
+	var (
+		ownerRef *int64
+		teamID   pgtype.UUID
+		fileHash *string
+		fileExt  *string
+	)
+	err := a.pool.QueryRow(ctx, `
+		SELECT owner_user_ref, owning_team_id, file_hash, file_extension
+		  FROM assets WHERE id = $1
+	`, id).Scan(&ownerRef, &teamID, &fileHash, &fileExt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return assetmetadata.AssetRef{}, false, nil
+		}
+		return assetmetadata.AssetRef{}, false, err
+	}
+	ref := assetmetadata.AssetRef{
+		ID:           id,
+		OwnerUserRef: ownerRef,
+		FileHash:     deref(fileHash),
+	}
+	if teamID.Valid {
+		t := uuid.UUID(teamID.Bytes)
+		ref.OwningTeamID = &t
+	}
+	if fileExt != nil {
+		ref.MimeType = mimeForExt(*fileExt)
+	}
+	return ref, true, nil
+}
+
+// mimeForExt — local copy of preview/preview.go's helper so the
+// metadata package doesn't have to import preview. Same six-format
+// list the EXIF extractor handles.
+func mimeForExt(ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "png":
+		return "image/png"
+	case "tif", "tiff":
+		return "image/tiff"
+	case "webp":
+		return "image/webp"
+	}
+	return "application/octet-stream"
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+type metaConfigAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a metaConfigAdapter) ListExtractionConfig(ctx context.Context) ([]assetmetadata.FieldExtractionConfig, error) {
+	rows, err := a.pool.Query(ctx, `
+		SELECT id, extraction_source, extraction_mode
+		  FROM field_definition
+		 WHERE extraction_source != ''
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []assetmetadata.FieldExtractionConfig{}
+	for rows.Next() {
+		var (
+			id     pgtype.UUID
+			source string
+			mode   string
+		)
+		if err := rows.Scan(&id, &source, &mode); err != nil {
+			return nil, err
+		}
+		out = append(out, assetmetadata.FieldExtractionConfig{
+			FieldID: uuid.UUID(id.Bytes),
+			Source:  assetmetadata.CanonicalField(source),
+			Mode:    assetmetadata.ExtractionMode(mode),
+		})
+	}
+	return out, rows.Err()
+}
+
+type metaValueReaderAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a metaValueReaderAdapter) GetAssetFieldValue(ctx context.Context, assetID, fieldID uuid.UUID) (assetmetadata.FieldValueSnapshot, bool, error) {
+	var (
+		valText *string
+		valNum  *float64
+		valDate pgtype.Timestamptz
+	)
+	err := a.pool.QueryRow(ctx, `
+		SELECT value_text, value_num, value_date
+		  FROM asset_field_value
+		 WHERE asset_id = $1 AND field_id = $2
+	`, assetID, fieldID).Scan(&valText, &valNum, &valDate)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return assetmetadata.FieldValueSnapshot{}, false, nil
+		}
+		return assetmetadata.FieldValueSnapshot{}, false, err
+	}
+	out := assetmetadata.FieldValueSnapshot{
+		ValueText: valText,
+		ValueNum:  valNum,
+	}
+	if valDate.Valid {
+		t := valDate.Time
+		out.ValueDate = &t
+	}
+	return out, true, nil
+}
+
+type metaValueWriterAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p assetmetadata.WriteAssetFieldValueParams) error {
+	// Direct UPSERT — bypass the metadata.Handler HTTP shape
+	// (which checks identity caps). Extraction is system-owned;
+	// there's no caller identity to check against.
+	var (
+		valText *string
+		valNum  *float64
+		valDate pgtype.Timestamptz
+	)
+	switch p.Value.Kind {
+	case assetmetadata.ValueKindText:
+		s := p.Value.Text
+		valText = &s
+	case assetmetadata.ValueKindNum:
+		n := p.Value.Num
+		valNum = &n
+	case assetmetadata.ValueKindTime:
+		valDate = pgtype.Timestamptz{Time: p.Value.Time, Valid: true}
+	}
+	_, err := a.pool.Exec(ctx, `
+		INSERT INTO asset_field_value
+		    (asset_id, field_id, value_text, value_num, value_date, set_by, set_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		ON CONFLICT (asset_id, field_id) DO UPDATE SET
+		    value_text = EXCLUDED.value_text,
+		    value_num  = EXCLUDED.value_num,
+		    value_date = EXCLUDED.value_date,
+		    set_by     = EXCLUDED.set_by,
+		    set_at     = NOW()
+	`, p.AssetID, p.FieldID, valText, valNum, valDate, p.SetBy)
+	return err
+}
+
+type metaFailureAdapter struct {
+	pool *pgxpool.Pool
+}
+
+func (a metaFailureAdapter) RecordExtractionFailure(ctx context.Context, p assetmetadata.RecordExtractionFailureParams) error {
+	raw, err := json.Marshal(p.RawValue)
+	if err != nil || raw == nil {
+		raw = []byte(`null`)
+	}
+	_, err = a.pool.Exec(ctx, `
+		INSERT INTO extraction_failure
+		    (asset_id, format, error_kind, message, field_key, raw_value)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, p.AssetID, p.Format, p.ErrorKind, p.Message, string(p.FieldKey), raw)
+	return err
 }

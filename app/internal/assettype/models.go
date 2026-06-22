@@ -93,7 +93,8 @@ type Asset struct {
 	ProcessingError      *string            `json:"processing_error"`
 	ProcessingStartedAt  pgtype.Timestamptz `json:"processing_started_at"`
 	ProcessingFinishedAt pgtype.Timestamptz `json:"processing_finished_at"`
-	Sensitivity          string             `json:"sensitivity"`
+	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
+	Sensitivity string `json:"sensitivity"`
 }
 
 type AssetAlternate struct {
@@ -156,14 +157,16 @@ type AssetFieldValueHistory struct {
 	SetBy            string             `json:"set_by"`
 }
 
+// Subtitle / caption tracks attached to video or audio assets. NOT first-class assets — excluded from asset counts. FK + CASCADE binds tracks to their parent. Phase 1.18.B-3.
 type AssetSubtitleTrack struct {
-	AssetID      pgtype.UUID        `json:"asset_id"`
-	Lang         string             `json:"lang"`
-	Label        string             `json:"label"`
-	FileHash     string             `json:"file_hash"`
-	SourceFormat string             `json:"source_format"`
-	Confidence   float32            `json:"confidence"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	AssetID      pgtype.UUID `json:"asset_id"`
+	Lang         string      `json:"lang"`
+	Label        string      `json:"label"`
+	FileHash     string      `json:"file_hash"`
+	SourceFormat string      `json:"source_format"`
+	// Quality of the source-to-VTT conversion. 1.0 for text-based sources; lower for OCR'd bitmap sources (IDX). UI surfaces a warning below 0.8.
+	Confidence float32            `json:"confidence"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type AssetTag struct {
@@ -349,6 +352,18 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type ExtractionFailure struct {
+	ID          pgtype.UUID        `json:"id"`
+	AssetID     pgtype.UUID        `json:"asset_id"`
+	Format      string             `json:"format"`
+	ErrorKind   string             `json:"error_kind"`
+	Message     string             `json:"message"`
+	FieldKey    string             `json:"field_key"`
+	RawValue    []byte             `json:"raw_value"`
+	OccurredAt  pgtype.Timestamptz `json:"occurred_at"`
+	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
+}
+
 type FederationDirectory struct {
 	ID                    pgtype.UUID        `json:"id"`
 	DirectoryUrl          string             `json:"directory_url"`
@@ -396,6 +411,7 @@ type FederationDirectoryEntry struct {
 	CachedAt          pgtype.Timestamptz `json:"cached_at"`
 }
 
+// Single-row cursor for the outbox dispatcher. Atomically advanced with the outbox INSERTs in one transaction; restart picks up at the cursor without duplicates.
 type FederationDispatchState struct {
 	ID                       int32              `json:"id"`
 	LastDispatchedActivityID pgtype.UUID        `json:"last_dispatched_activity_id"`
@@ -403,30 +419,34 @@ type FederationDispatchState struct {
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }
 
+// One row per inbound federation activity. Pipeline ingest persists status=pending; background worker transitions to processed/rejected/failed per §2.2 of the 1.22.D design proposal. activity_uri UNIQUE is the load-bearing replay guard.
 type FederationInbox struct {
-	ID                      pgtype.UUID        `json:"id"`
-	ActivityUri             string             `json:"activity_uri"`
-	PeerID                  pgtype.UUID        `json:"peer_id"`
-	ActorUri                string             `json:"actor_uri"`
-	ActivityType            string             `json:"activity_type"`
-	ObjectKind              *string            `json:"object_kind"`
-	ObjectID                pgtype.UUID        `json:"object_id"`
-	EnvelopeJson            []byte             `json:"envelope_json"`
-	HttpSigKey              string             `json:"http_sig_key"`
-	ReceivedAt              pgtype.Timestamptz `json:"received_at"`
-	Status                  string             `json:"status"`
-	RejectReason            *string            `json:"reject_reason"`
-	DispatchAttempts        int32              `json:"dispatch_attempts"`
-	LastAttemptAt           pgtype.Timestamptz `json:"last_attempt_at"`
-	LastError               string             `json:"last_error"`
-	ProcessedAt             pgtype.Timestamptz `json:"processed_at"`
-	CorrelationActivityID   pgtype.UUID        `json:"correlation_activity_id"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-	WasEncrypted            bool               `json:"was_encrypted"`
-	DecryptedWithKeyVersion *int32             `json:"decrypted_with_key_version"`
+	ID                    pgtype.UUID        `json:"id"`
+	ActivityUri           string             `json:"activity_uri"`
+	PeerID                pgtype.UUID        `json:"peer_id"`
+	ActorUri              string             `json:"actor_uri"`
+	ActivityType          string             `json:"activity_type"`
+	ObjectKind            *string            `json:"object_kind"`
+	ObjectID              pgtype.UUID        `json:"object_id"`
+	EnvelopeJson          []byte             `json:"envelope_json"`
+	HttpSigKey            string             `json:"http_sig_key"`
+	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
+	Status                string             `json:"status"`
+	RejectReason          *string            `json:"reject_reason"`
+	DispatchAttempts      int32              `json:"dispatch_attempts"`
+	LastAttemptAt         pgtype.Timestamptz `json:"last_attempt_at"`
+	LastError             string             `json:"last_error"`
+	ProcessedAt           pgtype.Timestamptz `json:"processed_at"`
+	CorrelationActivityID pgtype.UUID        `json:"correlation_activity_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	// Phase 1.22.I-f: TRUE when the dispatcher took the decrypt branch for this row (envelope had a non-empty encryption block). FALSE for the legacy 1.22.D plaintext path. Mirrors federation_outbox.was_encrypted on the sender side.
+	WasEncrypted bool `json:"was_encrypted"`
+	// Phase 1.22.I-f: which version of the receiver's X25519 key successfully decrypted the envelope. NULL when was_encrypted=false. Surfaces rotation health to operator analytics via the I-h admin federation page.
+	DecryptedWithKeyVersion *int32 `json:"decrypted_with_key_version"`
 }
 
+// Per-recipient outbound queue. Derived from activities ledger via the dispatcher (Phase 1.22.D-b). Idempotent on (activity_id, peer_id, target_user_url) so the dispatcher is re-runnable. Sender-side emission refusal for restricted/embargo content (until 1.22.I ships X25519) is enforced at the dispatcher; refused activities never get an outbox row, they emit federation.emission.skipped audit instead.
 type FederationOutbox struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ActivityID         pgtype.UUID        `json:"activity_id"`
@@ -441,28 +461,31 @@ type FederationOutbox struct {
 	DeliveredWithKeyID *string            `json:"delivered_with_key_id"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	WasEncrypted       bool               `json:"was_encrypted"`
-	Sensitivity        *string            `json:"sensitivity"`
-	RefusedReason      *string            `json:"refused_reason"`
+	// Phase 1.22.I-e: TRUE when the dispatcher took the encryption branch for this row (peer.Capabilities.SupportsE2E + recipient key cached). FALSE for the legacy 1.22.D plaintext path. The wire envelope is the source of truth; this column is an observability mirror for scenario 09 + the admin federation surface.
+	WasEncrypted  bool    `json:"was_encrypted"`
+	Sensitivity   *string `json:"sensitivity"`
+	RefusedReason *string `json:"refused_reason"`
 }
 
 type FederationPeer struct {
-	ID                       pgtype.UUID        `json:"id"`
-	InstanceUrl              string             `json:"instance_url"`
-	DisplayName              string             `json:"display_name"`
-	InstancePublicKey        string             `json:"instance_public_key"`
-	TrustTier                string             `json:"trust_tier"`
-	EncryptionPolicy         string             `json:"encryption_policy"`
-	Enabled                  bool               `json:"enabled"`
-	Status                   string             `json:"status"`
-	HandshakeAt              pgtype.Timestamptz `json:"handshake_at"`
-	HandshakeByUserRef       int64              `json:"handshake_by_user_ref"`
-	LastSeenAt               pgtype.Timestamptz `json:"last_seen_at"`
-	Notes                    string             `json:"notes"`
-	ShareInVisibleList       bool               `json:"share_in_visible_list"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	Capabilities             []byte             `json:"capabilities"`
+	ID                 pgtype.UUID        `json:"id"`
+	InstanceUrl        string             `json:"instance_url"`
+	DisplayName        string             `json:"display_name"`
+	InstancePublicKey  string             `json:"instance_public_key"`
+	TrustTier          string             `json:"trust_tier"`
+	EncryptionPolicy   string             `json:"encryption_policy"`
+	Enabled            bool               `json:"enabled"`
+	Status             string             `json:"status"`
+	HandshakeAt        pgtype.Timestamptz `json:"handshake_at"`
+	HandshakeByUserRef int64              `json:"handshake_by_user_ref"`
+	LastSeenAt         pgtype.Timestamptz `json:"last_seen_at"`
+	Notes              string             `json:"notes"`
+	ShareInVisibleList bool               `json:"share_in_visible_list"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	// Bilateral capability intersection (what BOTH peers support). JSONB array of typed strings per federation/peer.Capability. Open vocabulary on the wire, closed dispatch in code. See ADR 0049 §Track B Decision 3.
+	Capabilities []byte `json:"capabilities"`
+	// When the handshake completed with capability exchange. NULL means "never negotiated" (pre-1.22.I-d peer); peers in that state are surfaced via ListPeersMissingCapabilities for operator re-pairing. Distinct from `capabilities = '[]'` which means "we negotiated and got an empty intersection" — also legal.
 	CapabilitiesNegotiatedAt pgtype.Timestamptz `json:"capabilities_negotiated_at"`
 }
 
@@ -476,16 +499,20 @@ type FederationPeerSuggestion struct {
 	CachedAt             pgtype.Timestamptz `json:"cached_at"`
 }
 
+// Display cache for remote actors surfaced in UI. The inbound dispatch handler upserts on every activity from a remote actor; display fields refresh naturally on each interaction. Keyed on actor_uri (globally unique per spec §8.3).
 type FederationRemoteActor struct {
-	ActorUri                     string             `json:"actor_uri"`
-	PeerID                       pgtype.UUID        `json:"peer_id"`
-	DisplayName                  string             `json:"display_name"`
-	AvatarUrl                    string             `json:"avatar_url"`
-	FirstSeenAt                  pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt                   pgtype.Timestamptz `json:"last_seen_at"`
-	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
-	EncryptionPublicKey          []byte             `json:"encryption_public_key"`
-	EncryptionPublicKeyVersion   *int32             `json:"encryption_public_key_version"`
+	ActorUri    string             `json:"actor_uri"`
+	PeerID      pgtype.UUID        `json:"peer_id"`
+	DisplayName string             `json:"display_name"`
+	AvatarUrl   string             `json:"avatar_url"`
+	FirstSeenAt pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	// X25519 public key advertised by the remote actor in their envelope's aa:encryptionPublicKey block. NULL when the peer is on a pre-1.22.I-c build. 32 bytes when populated.
+	EncryptionPublicKey []byte `json:"encryption_public_key"`
+	// Per-actor version number, monotonic. Bumped by the remote side on key rotation (1.22.I-h on their end); we just observe the value + persist alongside the key bytes.
+	EncryptionPublicKeyVersion *int32 `json:"encryption_public_key_version"`
+	// When we last observed a key for this actor. Updated on every inbound envelope carrying the block (even when the value did not change) so an operator can see how stale our knowledge is.
 	EncryptionPublicKeyUpdatedAt pgtype.Timestamptz `json:"encryption_public_key_updated_at"`
 }
 
@@ -507,17 +534,23 @@ type FederationShare struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Per-user X25519 keypairs for NaCl-box encrypted federation. Phase 1.22.I-b. Private key column is atrest-wrapped (AES-GCM, host master key per app/internal/atrest). See ADR 0049 §Track B.
 type FederationUserKey struct {
-	UserRef          int64              `json:"user_ref"`
-	Version          int32              `json:"version"`
-	Algorithm        string             `json:"algorithm"`
-	PublicKey        []byte             `json:"public_key"`
-	PrivateKeyEnc    []byte             `json:"private_key_enc"`
-	IsCurrent        bool               `json:"is_current"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	RetainedUntil    pgtype.Timestamptz `json:"retained_until"`
-	RotatedAt        pgtype.Timestamptz `json:"rotated_at"`
-	RotatedByUserRef *int64             `json:"rotated_by_user_ref"`
+	UserRef int64 `json:"user_ref"`
+	Version int32 `json:"version"`
+	// Algorithm-version token. Single value today: naclbox-x25519-v1. Future algorithms add new tokens without a schema migration.
+	Algorithm     string `json:"algorithm"`
+	PublicKey     []byte `json:"public_key"`
+	PrivateKeyEnc []byte `json:"private_key_enc"`
+	// Exactly one row per user has is_current=true (enforced by partial unique index federation_user_keys_one_current_idx).
+	IsCurrent bool               `json:"is_current"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	// Inbound-decrypt window for a rotated-aside key. NULL on the current key; NOW()+grace_period when a rotation flips this row aside.
+	RetainedUntil pgtype.Timestamptz `json:"retained_until"`
+	// When the rotation that produced (or flipped aside) this row occurred. NULL on pre-I-h rows. Non-NULL on the new current row AND on the previously-current row that was demoted in the same rotation.
+	RotatedAt pgtype.Timestamptz `json:"rotated_at"`
+	// user.ref of whoever triggered the rotation. Equals user_ref for self-rotation (/account/security); differs for admin-initiated compromised-key recovery (/admin/federation/users/{ref}/rotate-keys). NULL on pre-I-h rows.
+	RotatedByUserRef *int64 `json:"rotated_by_user_ref"`
 }
 
 type FieldDefinition struct {
@@ -544,6 +577,15 @@ type FieldDefinition struct {
 	CreatedByUserRef        *int64             `json:"created_by_user_ref"`
 	UpdatedByUserRef        *int64             `json:"updated_by_user_ref"`
 	SubjectKind             string             `json:"subject_kind"`
+	ExtractionSource        string             `json:"extraction_source"`
+	ExtractionMode          string             `json:"extraction_mode"`
+}
+
+type GooseDbVersion struct {
+	ID        int32            `json:"id"`
+	VersionID int64            `json:"version_id"`
+	IsApplied bool             `json:"is_applied"`
+	Tstamp    pgtype.Timestamp `json:"tstamp"`
 }
 
 type Job struct {
@@ -606,6 +648,19 @@ type McpServerToolGrant struct {
 	Enabled              bool        `json:"enabled"`
 }
 
+type MetadataBackfillRun struct {
+	ID               pgtype.UUID        `json:"id"`
+	Scope            []byte             `json:"scope"`
+	Total            int64              `json:"total"`
+	Processed        int64              `json:"processed"`
+	Succeeded        int64              `json:"succeeded"`
+	Failed           int64              `json:"failed"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt      pgtype.Timestamptz `json:"cancelled_at"`
+	StartedByUserRef *int64             `json:"started_by_user_ref"`
+}
+
 type Notification struct {
 	ID               pgtype.UUID        `json:"id"`
 	RecipientUserRef int64              `json:"recipient_user_ref"`
@@ -639,7 +694,8 @@ type Post struct {
 	StateID               pgtype.UUID        `json:"state_id"`
 	TeamID                pgtype.UUID        `json:"team_id"`
 	CoverThumbnailAssetID pgtype.UUID        `json:"cover_thumbnail_asset_id"`
-	SubtitleTrackOverride []byte             `json:"subtitle_track_override"`
+	// Per-post override for the parent asset's subtitle tracks. NULL means use the asset's intrinsic tracks (99% case). Non-NULL JSONB carries director-cut overrides — see the subtitles package for the consumed shape. Phase 1.18.B-3.
+	SubtitleTrackOverride []byte `json:"subtitle_track_override"`
 }
 
 type PostAcl struct {
