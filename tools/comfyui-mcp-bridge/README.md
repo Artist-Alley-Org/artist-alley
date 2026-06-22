@@ -71,6 +71,12 @@ Restart the bridge; the workflow becomes callable as `workflow:your_workflow` ov
 
 **Special placeholder**: if your workflow uses `<<SOURCE_IMAGE_NAME>>` in a `LoadImage` node, the bridge auto-uploads the caller's `source_image_base64` argument to ComfyUI's `/upload/image` endpoint and substitutes the filed name. `<<SEED>>` of 0 gets resolved to a fresh random seed and echoed back in the metadata response.
 
+### Pre-baked examples
+
+`examples/` ships operator-ready workflow JSONs that override the bundled defaults. Current set:
+
+- **`flux_kontext_img2img.json`** — drop at `$CMB_EXTRA_WORKFLOWS_DIR/img2img.json` to replace the bundled SDXL workflow with a Flux Kontext Dev workflow. Edit-focused base model, much better at instruction-following ("change the boats to glass yachts, keep the wave"). Tested 14 s wall-clock on RTX 5090. See [`examples/README.md`](examples/README.md) for the install + model-prereq walkthrough.
+
 ## Configuration reference
 
 All knobs are environment variables prefixed `CMB_`. See `src/comfyui_mcp_bridge/config.py` for the typed definitions + per-field docstrings.
