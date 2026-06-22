@@ -55,11 +55,18 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
+	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/orientation"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
+
+// exifExtractor is the single Phase 1.18.A-2 EXIF extractor used
+// for variant-time orientation lookup. Stateless + concurrency-
+// safe; one instance per process is enough.
+var exifExtractor = exif.New()
 
 // RasterPayload is the JSON body of a preview.raster job. We carry
 // the file_hash + file_extension explicitly so an external worker
@@ -127,10 +134,25 @@ func (h *RasterHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMe
 
 	h.markProcessing(ctx, p.AssetID)
 
-	src, err := h.loadSourceWithExt(ctx, p.FileHash, p.FileExtension)
+	src, sourceBytes, err := h.loadSourceWithMeta(ctx, p.FileHash, p.FileExtension)
 	if err != nil {
 		h.markFailed(ctx, p.AssetID, err.Error())
 		return nil, &jobs.TerminalError{Err: err}
+	}
+
+	// Phase 1.18.A-2: apply EXIF orientation before any resize /
+	// encode. Source bytes are NEVER modified — we rotate the
+	// decoded pixels, and stdlib jpeg/png/webp encoders don't
+	// write EXIF tags, so the variants are implicitly
+	// orientation=1. Failure to extract orientation (no EXIF /
+	// unsupported format) leaves the image as-is — best-effort
+	// only.
+	if len(sourceBytes) > 0 {
+		if result, err := exifExtractor.Extract(ctx, bytes.NewReader(sourceBytes), mimeForExt(p.FileExtension)); err == nil {
+			if result.Orientation > 1 && result.Orientation <= 8 {
+				src = orientation.RotateFromEXIF(src, result.Orientation)
+			}
+		}
 	}
 
 	srcBounds := src.Bounds()
@@ -178,32 +200,75 @@ func (h *RasterHandler) loadSource(ctx context.Context, hash string) (image.Imag
 // a 2048² square so the downstream variant chain has a high-DPI
 // source to resize from. Other formats fall through to image.Decode.
 func (h *RasterHandler) loadSourceWithExt(ctx context.Context, hash, ext string) (image.Image, error) {
+	img, _, err := h.loadSourceWithMeta(ctx, hash, ext)
+	return img, err
+}
+
+// loadSourceWithMeta is the EXIF-aware variant of loadSourceWithExt.
+// Returns both the decoded image AND the raw source bytes so the
+// caller can extract metadata (orientation, ICC) without a
+// second download round-trip. The bytes are nil for formats that
+// take a separate decode path (SVG, HDR/EXR) — those don't carry
+// EXIF orientation anyway.
+//
+// For typical preview-pipeline sources (under MaxSourceBytes,
+// usually 32 MB), buffering the bytes in memory adds a few MB of
+// transient overhead per variant job. Variant generation is
+// CPU-bound after this point, so the memory cost is dwarfed by
+// the resize/encode passes.
+func (h *RasterHandler) loadSourceWithMeta(ctx context.Context, hash, ext string) (image.Image, []byte, error) {
 	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
-		return nil, fmt.Errorf("download original: %w", err)
+		return nil, nil, fmt.Errorf("download original: %w", err)
 	}
 	defer rc.Close()
 	if info != nil && info.Size > h.MaxSourceBytes {
-		return nil, fmt.Errorf("source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
+		return nil, nil, fmt.Errorf("source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
 	}
-	r := io.LimitReader(rc, h.MaxSourceBytes+1)
 	e := strings.ToLower(strings.TrimPrefix(ext, "."))
 	switch e {
 	case "svg":
-		return decodeSVG(r)
+		img, err := decodeSVG(io.LimitReader(rc, h.MaxSourceBytes+1))
+		return img, nil, err
 	case "hdr", "exr", "pic":
 		// HDR / EXR / Radiance .pic carry float-per-channel pixel
 		// data — image.Decode doesn't have a stdlib decoder, and
 		// even with one we'd need a tone-map to downscale to the
 		// 8-bit-per-channel range every other variant expects.
 		// ffmpeg handles both in one call: see decodeHDR.
-		return decodeHDR(r, e)
+		img, err := decodeHDR(io.LimitReader(rc, h.MaxSourceBytes+1), e)
+		return img, nil, err
 	}
-	img, _, err := image.Decode(r)
+	// Buffer the bytes so we can both decode + return them for
+	// EXIF extraction without re-downloading.
+	raw, err := io.ReadAll(io.LimitReader(rc, h.MaxSourceBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, nil, fmt.Errorf("read source: %w", err)
 	}
-	return img, nil
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode: %w", err)
+	}
+	return img, raw, nil
+}
+
+// mimeForExt maps the file extension to the MIME type the
+// metadata extractor recognises. Returns "application/octet-stream"
+// for unknown extensions so the extractor returns
+// ErrUnsupportedFormat cleanly (orientation extraction is then
+// a no-op, source passes through un-rotated).
+func mimeForExt(ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "png":
+		return "image/png"
+	case "tif", "tiff":
+		return "image/tiff"
+	case "webp":
+		return "image/webp"
+	}
+	return "application/octet-stream"
 }
 
 func (h *RasterHandler) variantExists(ctx context.Context, hash, key string) bool {
