@@ -2894,6 +2894,17 @@ paths:
             schema:
               $ref: "#/components/schemas/AssetCreate"
       responses:
+        "200":
+          description: |
+            Asset already exists with the same content hash and
+            the operator's `upload.dedup_behavior` is `warn` —
+            returns the EXISTING asset (no new row created) with
+            a `duplicate_warning` field set so the UI surfaces a
+            dialog. See `AssetWithDedup.duplicate_warning`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetWithDedup"
         "201":
           description: Asset created
           content:
@@ -2904,6 +2915,17 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: |
+            Asset with the same content hash already exists in the
+            user's library and the operator's
+            `upload.dedup_behavior` is `block`. Response carries
+            the existing asset id under `existing_asset_id` so
+            the UI can navigate there.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadConflict"
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -8897,6 +8919,59 @@ components:
         created_at:
           type: string
           format: date-time
+
+    AssetWithDedup:
+      type: object
+      description: |
+        Phase 1.18.A-2 follow-up A — Asset payload extended with
+        a `duplicate_warning` field. Returned from POST /assets
+        with HTTP 200 when the operator's `upload.dedup_behavior`
+        is `warn` and a duplicate hash was detected: the EXISTING
+        asset row is returned (no new asset created), and the
+        field signals the UI to surface a "this file was already
+        uploaded as X" dialog.
+      allOf:
+        - $ref: "#/components/schemas/Asset"
+        - type: object
+          required: [duplicate_warning]
+          properties:
+            duplicate_warning:
+              type: object
+              required: [existing_asset_id, message]
+              properties:
+                existing_asset_id:
+                  type: string
+                  format: uuid
+                  description: |
+                    The asset id the caller is being redirected
+                    to (same as `id` at the top level — duplicated
+                    here so client code can branch on the
+                    presence of `duplicate_warning` without
+                    re-reading the top-level id).
+                message:
+                  type: string
+                  description: |
+                    Human-readable warning surfaced in the UI
+                    dedup dialog.
+
+    UploadConflict:
+      type: object
+      description: |
+        Phase 1.18.A-2 follow-up A — 409 response shape returned
+        from POST /assets when `upload.dedup_behavior` is `block`
+        and a duplicate hash was detected. The caller is expected
+        to either navigate to the existing asset or change their
+        upload.
+      required: [error, existing_asset_id]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+        existing_asset_id:
+          type: string
+          format: uuid
+          description: |
+            The asset id the duplicate hash already maps to.
 
     AssetCreate:
       type: object

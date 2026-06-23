@@ -225,6 +225,16 @@ func seedAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64, title, hash str
 	if err != nil {
 		t.Fatalf("seed storage_object: %v", err)
 	}
+	// Phase 1.18.A-2 follow-up A added a partial unique index on
+	// (owner_user_ref, file_hash) WHERE deleted_at IS NULL.
+	// Sweep any leftover live row before insert so prior-run
+	// fixtures in the shared dev DB don't block this seed.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM assets WHERE owner_user_ref = $1 AND file_hash = $2`,
+		ownerRef, hash,
+	); err != nil {
+		t.Fatalf("sweep prior asset: %v", err)
+	}
 	_, err = pool.Exec(ctx, `
 		INSERT INTO assets (
 			id, title, asset_type, owner_user_ref, status,

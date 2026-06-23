@@ -381,6 +381,70 @@ func (q *Queries) GetAssetAlternateByLabel(ctx context.Context, arg GetAssetAlte
 	return i, err
 }
 
+const getAssetByOwnerHash = `-- name: GetAssetByOwnerHash :one
+SELECT id, title, description, asset_type, owner_user_ref, status,
+       file_hash, file_extension, file_size_bytes, metadata,
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
+FROM assets
+WHERE owner_user_ref = $1 AND file_hash = $2 AND deleted_at IS NULL
+`
+
+type GetAssetByOwnerHashParams struct {
+	OwnerUserRef *int64
+	FileHash     *string
+}
+
+type GetAssetByOwnerHashRow struct {
+	ID               pgtype.UUID
+	Title            string
+	Description      string
+	AssetType        int64
+	OwnerUserRef     *int64
+	Status           string
+	FileHash         *string
+	FileExtension    *string
+	FileSizeBytes    *int64
+	Metadata         []byte
+	OriginServerID   pgtype.UUID
+	StateID          pgtype.UUID
+	ProcessingStatus string
+	Thumbhash        []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// Phase 1.18.A-2 follow-up A — per-user dedup lookup. Returns the
+// live asset row matching (owner_user_ref, file_hash) when present;
+// pgx.ErrNoRows otherwise. The partial unique index from migration
+// 00016 guarantees at most one row matches. Caller uses this both
+// (a) pre-insert to short-circuit duplicate uploads and (b) post-
+// insert to recover the existing asset id when a concurrent
+// upload won the unique-constraint race.
+func (q *Queries) GetAssetByOwnerHash(ctx context.Context, arg GetAssetByOwnerHashParams) (GetAssetByOwnerHashRow, error) {
+	row := q.db.QueryRow(ctx, getAssetByOwnerHash, arg.OwnerUserRef, arg.FileHash)
+	var i GetAssetByOwnerHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.AssetType,
+		&i.OwnerUserRef,
+		&i.Status,
+		&i.FileHash,
+		&i.FileExtension,
+		&i.FileSizeBytes,
+		&i.Metadata,
+		&i.OriginServerID,
+		&i.StateID,
+		&i.ProcessingStatus,
+		&i.Thumbhash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAssetCompanion = `-- name: GetAssetCompanion :one
 SELECT id, asset_id, companion_path, object_hash,
        content_type, size_bytes, created_at
