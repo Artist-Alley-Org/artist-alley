@@ -30,16 +30,32 @@ var (
 // fields aren't touched by GetAssetForAI or SetAITagsForAsset.
 func newBridgeHandler(t *testing.T, pool *pgxpool.Pool) *assets.Handler {
 	t.Helper()
-	return assets.NewHandler(pool, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	return assets.NewHandler(pool, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil)
 }
 
 // seedBridgeAsset inserts a row directly via SQL — avoids dragging in
 // the whole storage + upload flow for a read/write-side bridge test.
 // Returns the new asset id. Caller schedules its own cleanup.
+//
+// Phase 1.18.A-2 follow-up A added a partial unique index on
+// (owner_user_ref, file_hash) WHERE deleted_at IS NULL. To stay
+// independent of prior-run leftovers in the shared dev DB, this
+// helper hard-deletes any live row matching (ownerRef, hash)
+// before inserting. The tests using this helper pin specific
+// owner+hash pairs for narrative clarity, not because the values
+// are load-bearing.
 func seedBridgeAsset(t *testing.T, pool *pgxpool.Pool, ownerRef int64, title, hash string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	ctx := context.Background()
+	// Sweep any leftover live row for this (owner, hash) so the
+	// unique index doesn't block our fresh insert.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM assets WHERE owner_user_ref = $1 AND file_hash = $2`,
+		ownerRef, hash,
+	); err != nil {
+		t.Fatalf("sweep prior asset: %v", err)
+	}
 	// file_hash FK → storage_objects(hash); the check constraint
 	// demands 64-char hex. Seed a parent storage row so the FK
 	// resolves. ON CONFLICT DO NOTHING in case two test cases

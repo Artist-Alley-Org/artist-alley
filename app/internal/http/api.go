@@ -150,7 +150,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
-		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg),
+		assets:       assets.NewHandler(pool, storageSvc, logger, jobSvc, cacheReg, sysCfg),
 		subtitles:    subtitles.NewHandler(pool, cacheReg, logger),
 		metadata:     metadata.NewHandler(pool, logger, cacheReg),
 		collections:  collections.NewHandler(pool, logger, cacheReg),

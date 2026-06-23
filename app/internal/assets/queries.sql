@@ -20,6 +20,21 @@ SELECT id, title, description, asset_type, owner_user_ref, status,
 FROM assets
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: GetAssetByOwnerHash :one
+-- Phase 1.18.A-2 follow-up A — per-user dedup lookup. Returns the
+-- live asset row matching (owner_user_ref, file_hash) when present;
+-- pgx.ErrNoRows otherwise. The partial unique index from migration
+-- 00016 guarantees at most one row matches. Caller uses this both
+-- (a) pre-insert to short-circuit duplicate uploads and (b) post-
+-- insert to recover the existing asset id when a concurrent
+-- upload won the unique-constraint race.
+SELECT id, title, description, asset_type, owner_user_ref, status,
+       file_hash, file_extension, file_size_bytes, metadata,
+       origin_server_id, state_id, processing_status, thumbhash,
+       created_at, updated_at
+FROM assets
+WHERE owner_user_ref = $1 AND file_hash = $2 AND deleted_at IS NULL;
+
 -- name: UpdateAsset :one
 -- Partial update via COALESCE: any field passed as NULL keeps its
 -- current value. Tag changes go through a separate set of queries.

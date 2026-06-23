@@ -30,6 +30,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -43,6 +44,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
+	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // PinSubjectTypeAsset is the storage-pin subject_type assets use to
@@ -86,6 +88,13 @@ type Handler struct {
 	// after a successful asset create. Nil-safe — tests may pass nil
 	// to skip the enqueue.
 	Jobs *jobs.Service
+
+	// SysConfig powers operator-set knobs the handler reads on the
+	// hot path (currently: upload.dedup_scope + .dedup_behavior
+	// from Phase 1.18.A-2 follow-up A). Nil-safe — tests can
+	// construct without; absent config falls back to documented
+	// defaults.
+	SysConfig *sysconfig.Store
 
 	// companions caches the per-asset list of sidecar files (the
 	// model viewer fetches this on every 3D mount; cache hit rate is
@@ -136,8 +145,8 @@ func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
-func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry) *Handler {
-	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc}
+func NewHandler(pool *pgxpool.Pool, storageSvc *storage.Service, logger *slog.Logger, jobSvc *jobs.Service, registry *cache.Registry, sysCfg *sysconfig.Store) *Handler {
+	h := &Handler{Pool: pool, Storage: storageSvc, Logger: logger, Jobs: jobSvc, SysConfig: sysCfg}
 	if registry != nil {
 		// 5_000 keys × ~512 bytes/entry ≈ 2.5MB resident. Working set
 		// is "active assets being reviewed" which is well under that
@@ -253,6 +262,43 @@ func (h *Handler) CreateAsset(
 		cancel()
 	}
 
+	// Phase 1.18.A-2 follow-up A — per-user dedup pre-check. Per
+	// the operator-configured dedup_scope + dedup_behavior:
+	//
+	//   - scope=per_user (default): lookup via partial unique
+	//     index on (owner_user_ref, file_hash). On hit, the
+	//     behavior decides what to do.
+	//   - scope=off or fileHashPtr=nil: skip the check entirely.
+	//   - scope=per_team / global: application-level check NOT
+	//     yet implemented (TODO follow-up). Falls through to the
+	//     per-user partial index for now (which still fires the
+	//     constraint for the same user uploading twice).
+	//
+	// The DB-side partial unique index from migration 00016
+	// provides the load-bearing concurrency guarantee — even if
+	// the pre-check passes, two concurrent uploads of the same
+	// file by the same user can still race; one wins the unique
+	// constraint, the other catches 23505 + re-runs the
+	// dedup-response path below.
+	var uploadCfg sysconfig.UploadConfig
+	if h.SysConfig != nil {
+		uploadCfg, _ = h.SysConfig.GetUpload(ctx)
+	} else {
+		uploadCfg = sysconfig.UploadConfig{DedupScope: sysconfig.DedupScopePerUser, DedupBehavior: sysconfig.DedupBehaviorWarn}
+	}
+	if fileHashPtr != nil && uploadCfg.DedupScope != sysconfig.DedupScopeOff && uploadCfg.DedupBehavior != sysconfig.DedupBehaviorAllow {
+		existing, err := New(h.Pool).GetAssetByOwnerHash(ctx, GetAssetByOwnerHashParams{
+			OwnerUserRef: &id.UserRef,
+			FileHash:     fileHashPtr,
+		})
+		if err == nil {
+			// Pre-check hit. Behavior gates the response shape.
+			return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("assets: dedup lookup: %w", err)
+		}
+	}
+
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("assets: begin tx: %w", err)
@@ -276,6 +322,20 @@ func (h *Handler) CreateAsset(
 		Thumbhash:        thumbhashBytes,
 	})
 	if err != nil {
+		// Race-loser: a concurrent upload won the unique
+		// constraint between our pre-check + this INSERT. Re-
+		// fetch + return the same dedup-response the pre-check
+		// path would have. Classified via SQLSTATE 23505 (same
+		// pattern as userkeys.backfill #155).
+		if isPgUniqueViolation(err) && fileHashPtr != nil {
+			existing, fetchErr := New(h.Pool).GetAssetByOwnerHash(ctx, GetAssetByOwnerHashParams{
+				OwnerUserRef: &id.UserRef,
+				FileHash:     fileHashPtr,
+			})
+			if fetchErr == nil {
+				return h.dedupResponse(uploadCfg.DedupBehavior, existing)
+			}
+		}
 		return nil, fmt.Errorf("assets: insert: %w", err)
 	}
 	newID := uuid.UUID(row.ID.Bytes)
@@ -486,6 +546,104 @@ func aiTranscribeIdempotencyKey(assetID, model string) string {
 	// aijobs.TranscribeIdempotencyKey.
 	sum := sha256.Sum256([]byte("ai.transcribe|" + assetID + "|" + model))
 	return hex.EncodeToString(sum[:])
+}
+
+// dedupResponse renders the existing-asset row into one of the
+// two dedup-aware HTTP response shapes per the operator's
+// configured [sysconfig.DedupBehavior]:
+//
+//   - warn  → HTTP 200 with AssetWithDedup (existing asset row +
+//     duplicate_warning sub-object).
+//   - block → HTTP 409 with UploadConflict ({error,
+//     existing_asset_id}).
+//   - allow → never reaches here (dedup skip is decided upstream
+//     before this helper is called).
+//
+// The "warn" response carries the FULL existing-asset projection
+// so the UI doesn't need a second round-trip to render the
+// "this file was already uploaded as X" dialog with thumbnail +
+// title.
+func (h *Handler) dedupResponse(behavior sysconfig.DedupBehavior, existing GetAssetByOwnerHashRow) (openapi.CreateAssetResponseObject, error) {
+	existingID := openapi_types.UUID(uuid.UUID(existing.ID.Bytes))
+	switch behavior {
+	case sysconfig.DedupBehaviorBlock:
+		return openapi.CreateAsset409JSONResponse{
+			Error:           "an asset with this file already exists in your library",
+			ExistingAssetId: existingID,
+		}, nil
+	default:
+		// warn (also fall-through for any future behavior we
+		// haven't shipped yet — defaulting to "non-destructive
+		// + visible" is the conservative choice).
+		full := assetFromGetByOwnerHashRow(existing)
+		out := openapi.AssetWithDedup{
+			AssetType:        full.AssetType,
+			CreatedAt:        full.CreatedAt,
+			Description:      full.Description,
+			FileExtension:    full.FileExtension,
+			FileHash:         full.FileHash,
+			FileSizeBytes:    full.FileSizeBytes,
+			Id:               full.Id,
+			Metadata:         full.Metadata,
+			OwnerUserRef:     full.OwnerUserRef,
+			ProcessingStatus: openapi.AssetWithDedupProcessingStatus(full.ProcessingStatus),
+			Status:           openapi.AssetWithDedupStatus(full.Status),
+			Title:            full.Title,
+			UpdatedAt:        full.UpdatedAt,
+		}
+		out.DuplicateWarning.ExistingAssetId = existingID
+		out.DuplicateWarning.Message = "this file was already uploaded — returning the existing asset"
+		return openapi.CreateAsset200JSONResponse(out), nil
+	}
+}
+
+// assetFromGetByOwnerHashRow narrows the sqlc row shape to the
+// openapi.Asset surface so dedupResponse can splice the fields
+// into AssetWithDedup. Keeps the splice in one tested place.
+func assetFromGetByOwnerHashRow(r GetAssetByOwnerHashRow) openapi.Asset {
+	out := openapi.Asset{
+		Id:               openapi_types.UUID(uuid.UUID(r.ID.Bytes)),
+		Title:            r.Title,
+		AssetType:        r.AssetType,
+		Status:           openapi.AssetStatus(r.Status),
+		ProcessingStatus: openapi.AssetProcessingStatus(r.ProcessingStatus),
+		FileHash:         r.FileHash,
+		FileExtension:    r.FileExtension,
+		FileSizeBytes:    r.FileSizeBytes,
+		OwnerUserRef:     r.OwnerUserRef,
+	}
+	if r.Description != "" {
+		s := r.Description
+		out.Description = &s
+	}
+	if r.CreatedAt.Valid {
+		out.CreatedAt = r.CreatedAt.Time
+	}
+	if r.UpdatedAt.Valid {
+		out.UpdatedAt = r.UpdatedAt.Time
+	}
+	if len(r.Metadata) > 0 {
+		var m map[string]any
+		if err := json.Unmarshal(r.Metadata, &m); err == nil {
+			out.Metadata = &m
+		}
+	}
+	return out
+}
+
+// isPgUniqueViolation reports whether err is a Postgres SQLSTATE
+// 23505 (unique_violation). The dedup path uses it to recognize
+// the race-loser case where another goroutine won the unique
+// constraint between this caller's pre-check and INSERT.
+//
+// Match by SQLSTATE on *pgconn.PgError — never by message text
+// (varies across Postgres versions).
+func isPgUniqueViolation(err error) bool {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "23505"
+	}
+	return false
 }
 
 // jobTypeForExt picks the preview-job type for a given file extension.

@@ -54,7 +54,7 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 	const userRef int64 = 424343
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger, nil, nil)
+	assetsH := assets.NewHandler(pool, svc, logger, nil, nil, nil)
 
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
@@ -284,7 +284,7 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 	const userRef int64 = 424344
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger, nil, nil)
+	assetsH := assets.NewHandler(pool, svc, logger, nil, nil, nil)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +337,7 @@ func TestCreateAssetInputValidation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	storageH := storage.NewHandler(svc, logger)
-	assetsH := assets.NewHandler(pool, svc, logger, nil, nil)
+	assetsH := assets.NewHandler(pool, svc, logger, nil, nil, nil)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
