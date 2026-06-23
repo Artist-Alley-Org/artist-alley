@@ -142,6 +142,7 @@ type apiServer struct {
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
 	aieditHTTP       *aiedit.HTTPHandler
+	metaCounter      *assetmetadata.Counter
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -358,6 +359,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		metaWriter := metaValueWriterAdapter{pool: pool}
 		metaFailures := metaFailureAdapter{pool: pool}
 		metaApplier := assetmetadata.NewApplier(metaCfg, metaValues, metaWriter, metaFailures)
+		// Phase 1.18.A-2 follow-up B (commit 2) — extraction
+		// counter wired into the job handler. Surfaced via
+		// /admin/metadata-extraction/health below.
+		s.metaCounter = assetmetadata.NewCounter()
 		jobSvc.Registry.Register(assetmetadata.NewExtractJobHandler(
 			metaSrc,
 			metaLookup,
@@ -365,7 +370,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			metaFailures,
 			[]assetmetadata.Extractor{exifext.New()},
 			logger,
-		))
+		).WithCounter(s.metaCounter))
 	}
 
 	// Wire the social-graph seam into posts so visibility='followers'
