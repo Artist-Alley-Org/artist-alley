@@ -227,7 +227,7 @@
         <th class="py-2">{t('admin.fields.subject_kind')}</th>
         <th class="py-2">{t('admin.fields.applies_to')}</th>
         <th class="py-2">{t('admin.fields.group')}</th>
-        <th class="py-2">Extraction</th>
+        <th class="py-2">{t('admin.fields.extraction')}</th>
       </tr>
     </thead>
     <tbody>

@@ -876,6 +876,7 @@
       "type": "Type",
       "applies_to": "Applies to",
       "group": "Group",
+      "extraction": "Extraction",
       "subject_kind": "Subject",
       "subject_asset": "Asset",
       "subject_collection": "Collection",
