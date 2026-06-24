@@ -143,6 +143,7 @@ type apiServer struct {
 	subtitlesHTTP    *subtitles.HTTPHandler
 	aieditHTTP       *aiedit.HTTPHandler
 	metaCounter      *assetmetadata.Counter
+	metaAdmin        *assetmetadata.AdminHandler
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -372,6 +373,11 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			logger,
 		).WithCounter(s.metaCounter))
 	}
+	// Phase 1.18.A-2 follow-up B (commit 3) — admin failures-queue
+	// surface. Always wired so the queue is readable even on
+	// installs where the extract job is currently disabled (rows
+	// from prior runs stay for audit).
+	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
@@ -2419,6 +2425,98 @@ func adminInboxToAPI(r outbox.AdminInboxRow) openapi.FederationInboxRow {
 	if r.CorrelationActivityID != nil {
 		cid := openapi_types.UUID(*r.CorrelationActivityID)
 		out.CorrelationActivityId = &cid
+	}
+	return out
+}
+
+// --- metadata-extraction admin (Phase 1.18.A-2 follow-up B) -----------
+
+func (s *apiServer) ListMetadataExtractionFailures(ctx context.Context, req openapi.ListMetadataExtractionFailuresRequestObject) (openapi.ListMetadataExtractionFailuresResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListMetadataExtractionFailures401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.ListMetadataExtractionFailures403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	f := assetmetadata.ListFailuresFilter{}
+	if req.Params.ErrorKind != nil {
+		v := *req.Params.ErrorKind
+		f.ErrorKind = &v
+	}
+	if req.Params.Format != nil {
+		v := *req.Params.Format
+		f.Format = &v
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		f.Offset = int32(*req.Params.Offset)
+	}
+	rows, total, err := s.metaAdmin.ListFailures(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.ExtractionFailure, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, metaFailureToAPI(r))
+	}
+	return openapi.ListMetadataExtractionFailures200JSONResponse{
+		Items: items,
+		Total: total,
+	}, nil
+}
+
+func (s *apiServer) DismissMetadataExtractionFailure(ctx context.Context, req openapi.DismissMetadataExtractionFailureRequestObject) (openapi.DismissMetadataExtractionFailureResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.DismissMetadataExtractionFailure401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.DismissMetadataExtractionFailure403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if err := s.metaAdmin.DismissFailure(ctx, uuid.UUID(req.Id)); err != nil {
+		if errors.Is(err, assetmetadata.ErrFailureNotFound) {
+			return openapi.DismissMetadataExtractionFailure404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "extraction failure not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.DismissMetadataExtractionFailure204Response{}, nil
+}
+
+func metaFailureToAPI(r assetmetadata.FailureRow) openapi.ExtractionFailure {
+	out := openapi.ExtractionFailure{
+		Id:         openapi_types.UUID(r.ID),
+		AssetId:    openapi_types.UUID(r.AssetID),
+		Format:     r.Format,
+		ErrorKind:  r.ErrorKind,
+		Message:    r.Message,
+		OccurredAt: r.OccurredAt,
+	}
+	if r.FieldKey != "" {
+		fk := r.FieldKey
+		out.FieldKey = &fk
+	}
+	if len(r.RawValue) > 0 {
+		var v any
+		if err := json.Unmarshal(r.RawValue, &v); err == nil {
+			out.RawValue = v
+		}
+	}
+	if r.DismissedAt != nil {
+		t := *r.DismissedAt
+		out.DismissedAt = &t
 	}
 	return out
 }

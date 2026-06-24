@@ -7484,6 +7484,82 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/metadata-extraction/failures:
+    get:
+      operationId: listMetadataExtractionFailures
+      summary: List pending metadata-extraction failures (Phase 1.18.A-2 follow-up B)
+      description: |
+        Returns paginated pending (not-yet-dismissed) rows from
+        extraction_failure. Filterable by error_kind + format.
+        Gated on `system.admin`.
+
+        Pending count for the admin nav badge is returned alongside
+        the page so the UI can render the badge from one round-trip.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: error_kind
+          in: query
+          required: false
+          description: |
+            Filter by failure kind (unsupported_format / malformed_file /
+            library_panic / validation). Omit for all kinds.
+          schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          description: Filter by source MIME type (e.g. image/jpeg).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Pending failure rows + the total pending count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtractionFailureList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/metadata-extraction/failures/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: dismissMetadataExtractionFailure
+      summary: Soft-dismiss one extraction failure (Phase 1.18.A-2 follow-up B)
+      description: |
+        Marks the row dismissed (keeps it for audit). Idempotent —
+        re-dismissing an already-dismissed row returns 204 without
+        complaint. 404 if the row never existed.
+
+        Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Dismissed (or already-dismissed).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -12199,6 +12275,59 @@ components:
             that move INTO this state with an empty note. Useful for
             rejection / needs-work states where the reason matters
             for audit and the originating user.
+
+    ExtractionFailure:
+      type: object
+      description: |
+        One row in the metadata extraction_failure queue (Phase
+        1.18.A-2). Represents a single per-asset failure the
+        operator should review — unsupported MIME, malformed file,
+        validator-rejected field value, or a recovered library
+        panic. Dismissal is soft so the row stays for audit.
+      required:
+        [id, asset_id, format, error_kind, message, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid }
+        format:
+          type: string
+          description: Source MIME type at the time the failure occurred.
+        error_kind:
+          type: string
+          description: |
+            One of: `unsupported_format`, `malformed_file`,
+            `library_panic`, `validation`.
+        message: { type: string }
+        field_key:
+          type: string
+          description: |
+            CanonicalField for validation failures (empty for
+            whole-file errors). Example: `camera_model`.
+        raw_value:
+          description: |
+            Operator-displayable raw value the extractor produced,
+            JSONB. Empty / null for whole-file failures.
+        occurred_at: { type: string, format: date-time }
+        dismissed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL while pending; set by the dismiss endpoint.
+
+    ExtractionFailureList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ExtractionFailure" }
+        total:
+          type: integer
+          format: int64
+          description: |
+            Total pending (not-yet-dismissed) failure rows ignoring
+            limit/offset but obeying the error_kind + format filters.
+            Powers the admin nav badge.
   responses:
     BadRequest:
       description: Malformed request

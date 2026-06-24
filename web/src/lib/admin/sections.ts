@@ -50,6 +50,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     tiles: [
       { key: 'asset_types', status: 'live',   href: '/admin/asset-types' },
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
+      { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures' },
       { key: 'field_options',  status: 'future', phase: '1.17' },
       { key: 'field_sets',     status: 'future', phase: '1.17' },
       { key: 'taxonomy',       status: 'future', phase: '1.18' },

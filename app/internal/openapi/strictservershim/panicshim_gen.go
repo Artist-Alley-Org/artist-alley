@@ -335,6 +335,16 @@ func (*PanicShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLic
 	panic("PanicShim: ValidateAdminLicense called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListMetadataExtractionFailures panics by default; test shims override.
+func (*PanicShim) ListMetadataExtractionFailures(context.Context, openapi.ListMetadataExtractionFailuresRequestObject) (openapi.ListMetadataExtractionFailuresResponseObject, error) {
+	panic("PanicShim: ListMetadataExtractionFailures called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// DismissMetadataExtractionFailure panics by default; test shims override.
+func (*PanicShim) DismissMetadataExtractionFailure(context.Context, openapi.DismissMetadataExtractionFailureRequestObject) (openapi.DismissMetadataExtractionFailureResponseObject, error) {
+	panic("PanicShim: DismissMetadataExtractionFailure called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAdminRequests panics by default; test shims override.
 func (*PanicShim) ListAdminRequests(context.Context, openapi.ListAdminRequestsRequestObject) (openapi.ListAdminRequestsResponseObject, error) {
 	panic("PanicShim: ListAdminRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

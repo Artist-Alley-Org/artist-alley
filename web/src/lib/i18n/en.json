@@ -562,6 +562,7 @@
         "tiles": {
           "asset_types":  { "title": "Asset types",   "blurb": "Asset type registry and the fields each applies." },
           "fields":          { "title": "Field definitions","blurb": "Metadata schema across every domain." },
+          "metadata_extraction": { "title": "Extraction failures", "blurb": "Per-asset EXIF/IPTC/XMP extraction failures the upload + backfill jobs recorded." },
           "field_options":   { "title": "Field options",   "blurb": "Controlled vocabularies for select / multiselect fields." },
           "field_sets":      { "title": "Field sets",      "blurb": "Bundle related fields for reuse across types." },
           "taxonomy":        { "title": "Tag taxonomy",    "blurb": "Tag hierarchy, aliases, and merge tools." },
