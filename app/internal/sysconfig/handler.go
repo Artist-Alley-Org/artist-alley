@@ -175,7 +175,7 @@ func (h *Handler) UpdateSMTPConfig(
 		}, nil
 	}
 	before, beforeErr := h.Store.GetSMTP(ctx)
-	smtp, err := apiToSMTP(*req.Body)
+	smtp, err := apiToSMTP(*req.Body, before)
 	if err != nil {
 		return openapi.UpdateSMTPConfig400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},

@@ -8015,7 +8015,23 @@ components:
           enum: [none, starttls, tls]
           example: starttls
         username: { type: string }
-        password: { type: string, format: password }
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: |
+            Write-only. Provide to set or rotate the SMTP password;
+            omit (or send empty string) on PATCH to keep the current
+            value. The response never echoes this field — read
+            `password_set` instead to check whether one is on file.
+            Stored at rest encrypted via the AA_MASTER_KEY-backed
+            atrest package; never sent back to clients.
+        password_set:
+          type: boolean
+          readOnly: true
+          description: |
+            True when a password is currently stored. Set by the
+            server on GET responses; ignored if sent on PATCH.
         from_address:
           type: string
           example: "ArtSite <noreply@example.com>"

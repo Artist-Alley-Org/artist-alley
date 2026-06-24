@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/audiobook"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
@@ -95,7 +96,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	sessions := auth.NewSessionManager(pool)
 	limiter := auth.NewLoginLimiter()
 	auditRec := audit.NewRecorder(pool, logger)
-	sysCfg := sysconfig.NewStore(pool)
+	sysCfg := sysconfig.NewStore(pool).WithEncrypter(atrest.PackageEncrypter{})
 
 	// License state — verifies the .lic file at cfg.LicensePath (if
 	// any), caches the resulting Status, and exposes a Source

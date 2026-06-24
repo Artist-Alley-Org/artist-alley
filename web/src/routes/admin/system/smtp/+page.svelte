@@ -7,6 +7,7 @@
   let port = $state(587);
   let username = $state('');
   let password = $state('');
+  let passwordSet = $state(false);
   let encryption = $state<'none' | 'starttls' | 'tls'>('starttls');
   let fromAddress = $state('');
   let loading = $state(true);
@@ -21,12 +22,13 @@
     try {
       const { data } = await api.GET('/admin/system/smtp');
       if (data) {
-        const d = data as { host?: string; port?: number; username?: string; encryption?: string; from_address?: string };
+        const d = data as { host?: string; port?: number; username?: string; encryption?: string; from_address?: string; password_set?: boolean };
         host = d.host ?? '';
         port = d.port ?? 587;
         username = d.username ?? '';
         encryption = (d.encryption as typeof encryption) ?? 'starttls';
         fromAddress = d.from_address ?? '';
+        passwordSet = d.password_set ?? false;
       }
     } finally {
       loading = false;
@@ -88,7 +90,14 @@
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.password')}</span>
-      <input type="password" bind:value={password} placeholder="(unchanged)" class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+      <input
+        type="password"
+        bind:value={password}
+        placeholder={passwordSet ? t('admin.system.smtp.password_on_file') : t('admin.system.smtp.password_unset')}
+        autocomplete="new-password"
+        class="mt-1 w-full rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+      />
+      <p class="mt-1 text-xs text-fg-muted">{t('admin.system.smtp.password_help')}</p>
     </label>
     <label class="block">
       <span class="text-sm text-fg-muted">{t('admin.system.smtp.from_address')}</span>
