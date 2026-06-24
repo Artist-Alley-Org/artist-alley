@@ -65,6 +65,13 @@ type Handler struct {
 	// a registry skips the cache and reads always go to the DB.
 	fieldsByID *cache.Cache[FieldDefinition]
 
+	// registry is held for cross-domain NOTIFYs — specifically the
+	// metadata.extraction_config domain that the asset/metadata
+	// extraction package owns. SetFieldExtraction emits on that
+	// domain after a successful write so the asset/metadata cache
+	// picks up the new wiring on the next extract job. Nil-safe.
+	registry *cache.Registry
+
 	// collectionValues caches the full collection_field_value list
 	// per collection (Phase 1.9.B). Per-collection eviction on
 	// upsert/delete; cross-instance NOTIFY via the same Registry.
@@ -78,7 +85,7 @@ type Handler struct {
 // handler falls back to direct DB reads (useful in tests that
 // don't want to spin up the LISTEN goroutine).
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
-	h := &Handler{Pool: pool, Logger: logger}
+	h := &Handler{Pool: pool, Logger: logger, registry: registry}
 	if registry != nil {
 		// 5000 entries comfortably covers thousand-field installs
 		// while staying ~1MB of resident memory. The LRU evicts
@@ -374,6 +381,108 @@ func (h *Handler) UpdateField(
 	}
 	h.invalidateField(ctx, row.ID)
 	return openapi.UpdateField200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+// ---------------------------------------------------------------------------
+// SetFieldExtraction
+// ---------------------------------------------------------------------------
+
+// SetFieldExtraction wires (or unwires) the metadata-extraction
+// pipeline against one field definition. Phase 1.18.A-2 follow-up B.
+//
+// source == "" clears extraction; mode is normalised to
+// "skip_if_set" when empty so the DB constraint + the Applier's
+// fall-through default stay aligned.
+//
+// On success: invalidates the field-by-id cache (so the next
+// GetField reflects the new wiring) AND emits on the
+// metadata.extraction_config domain so the asset/metadata
+// extraction package's cache rebuilds on the next job.
+func (h *Handler) SetFieldExtraction(
+	ctx context.Context,
+	req openapi.SetFieldExtractionRequestObject,
+) (openapi.SetFieldExtractionResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
+		return openapi.SetFieldExtraction401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !canAdminFields(id) {
+		return openapi.SetFieldExtraction403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "field admin capability required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.SetFieldExtraction400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"},
+		}, nil
+	}
+	source := strings.TrimSpace(req.Body.Source)
+	mode := ""
+	if req.Body.Mode != nil {
+		mode = strings.TrimSpace(string(*req.Body.Mode))
+	}
+	// DB CHECK requires extraction_mode IN the four-value enum even
+	// when source is empty (unwired). Normalise empty to skip_if_set
+	// so the row's default stays valid through clear/re-wire cycles.
+	if mode == "" {
+		mode = "skip_if_set"
+	}
+	if !validExtractionMode(mode) {
+		return openapi.SetFieldExtraction400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "mode must be one of skip_if_set, replace, append, prepend"},
+		}, nil
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	q := New(h.Pool)
+	if _, err := q.GetFieldDefinitionByID(ctx, pgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return openapi.SetFieldExtraction404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "field not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	row, err := q.SetFieldExtractionConfig(ctx, SetFieldExtractionConfigParams{
+		ID:               pgID,
+		ExtractionSource: source,
+		ExtractionMode:   mode,
+		UpdatedByUserRef: &id.UserRef,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("metadata: set extraction: %w", err)
+	}
+	h.invalidateField(ctx, row.ID)
+	if h.registry != nil {
+		// Best-effort: peers (and our own LISTEN goroutine) drop
+		// the cached extraction-config list so the next extract
+		// job rebuilds.
+		if err := h.registry.Emit(ctx, "metadata.extraction_config", "all"); err != nil && h.Logger != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn,
+				"metadata.cache.extraction_config.emit_error",
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+	return openapi.SetFieldExtraction200JSONResponse(fieldDefToAPI(row)), nil
+}
+
+func validExtractionMode(m string) bool {
+	switch m {
+	case "skip_if_set", "replace", "append", "prepend":
+		return true
+	}
+	return false
+}
+
+// apiExtractionMode converts the DB string into the typed openapi
+// pointer-enum. Empty string maps to a non-nil pointer with the
+// empty value so the JSON shape is stable across "explicitly off"
+// and "default unset".
+func apiExtractionMode(s string) *openapi.FieldDefinitionExtractionMode {
+	v := openapi.FieldDefinitionExtractionMode(s)
+	return &v
 }
 
 // ---------------------------------------------------------------------------
@@ -783,22 +892,24 @@ func valueRowToJSON(
 // all return the same model, so one helper covers them.
 func fieldDefToAPI(r FieldDefinition) openapi.FieldDefinition {
 	def := openapi.FieldDefinition{
-		Id:              openapi_types.UUID(r.ID.Bytes),
-		Code:            r.Code,
-		Label:           r.Label,
-		Description:     &r.Description,
-		Type:            openapi.FieldDefinitionType(r.Type),
-		SubjectKind:     openapi.FieldDefinitionSubjectKind(r.SubjectKind),
-		Required:        r.Required,
-		Searchable:      r.Searchable,
-		AppliesTo:       r.AppliesTo,
-		ReadCapability:  r.ReadCapability,
-		WriteCapability: r.WriteCapability,
-		DisplayOrder:    int(r.DisplayOrder),
-		DisplayGroup:    r.DisplayGroup,
-		Status:          openapi.FieldDefinitionStatus(r.Status),
-		CreatedAt:       r.CreatedAt.Time,
-		UpdatedAt:       r.UpdatedAt.Time,
+		Id:               openapi_types.UUID(r.ID.Bytes),
+		Code:             r.Code,
+		Label:            r.Label,
+		Description:      &r.Description,
+		Type:             openapi.FieldDefinitionType(r.Type),
+		SubjectKind:      openapi.FieldDefinitionSubjectKind(r.SubjectKind),
+		Required:         r.Required,
+		Searchable:       r.Searchable,
+		AppliesTo:        r.AppliesTo,
+		ReadCapability:   r.ReadCapability,
+		WriteCapability:  r.WriteCapability,
+		DisplayOrder:     int(r.DisplayOrder),
+		DisplayGroup:     r.DisplayGroup,
+		Status:           openapi.FieldDefinitionStatus(r.Status),
+		CreatedAt:        r.CreatedAt.Time,
+		UpdatedAt:        r.UpdatedAt.Time,
+		ExtractionSource: &r.ExtractionSource,
+		ExtractionMode:   apiExtractionMode(r.ExtractionMode),
 	}
 	if r.FieldSetID.Valid {
 		v := openapi_types.UUID(r.FieldSetID.Bytes)

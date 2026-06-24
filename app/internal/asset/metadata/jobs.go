@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -69,6 +70,11 @@ type ExtractJobHandler struct {
 	failures    FailureWriter
 	extractors  []Extractor
 	logger      *slog.Logger
+	// counter is the per-process extraction event counter from
+	// Phase 1.18.A-2 follow-up B (commit 2). Bumped per Handle()
+	// outcome; surfaced via /admin/metadata-extraction/health.
+	// Nil-safe — tests can construct without a counter.
+	counter *Counter
 }
 
 // NewExtractJobHandler wires the dependency graph. extractors are
@@ -89,6 +95,23 @@ func NewExtractJobHandler(
 		failures:   failures,
 		extractors: extractors,
 		logger:     logger,
+	}
+}
+
+// WithCounter attaches a [Counter] for observability. Boot wire
+// calls this post-construction to keep NewExtractJobHandler's
+// signature stable for callers that don't care about metrics
+// (tests, single-instance dev runs without the admin UI mounted).
+func (h *ExtractJobHandler) WithCounter(c *Counter) *ExtractJobHandler {
+	h.counter = c
+	return h
+}
+
+// recordResult bumps the counter when one is attached. No-op
+// when nil so the test surface stays cheap.
+func (h *ExtractJobHandler) recordResult(format string, result ExtractionResult) {
+	if h.counter != nil {
+		h.counter.Record(format, result, time.Time{})
 	}
 }
 
@@ -140,6 +163,7 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	if ext == nil {
 		h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format",
 			fmt.Sprintf("no registered extractor for %q", mimeType), "")
+		h.recordResult(mimeType, ResultUnsupportedFormat)
 		return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 	}
 
@@ -148,15 +172,19 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 		switch {
 		case errors.Is(extErr, ErrNoMetadata):
 			// Normal outcome; no failure row.
+			h.recordResult(mimeType, ResultNoMetadata)
 			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 		case errors.Is(extErr, ErrUnsupportedFormat):
 			h.recordFailure(ctx, asset.ID, mimeType, "unsupported_format", extErr.Error(), "")
+			h.recordResult(mimeType, ResultUnsupportedFormat)
 			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 		case errors.Is(extErr, ErrMalformedFile):
 			h.recordFailure(ctx, asset.ID, mimeType, "malformed_file", extErr.Error(), "")
+			h.recordResult(mimeType, ResultMalformedFile)
 			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 		case errors.Is(extErr, ErrLibraryPanic):
 			h.recordFailure(ctx, asset.ID, mimeType, "library_panic", extErr.Error(), "")
+			h.recordResult(mimeType, ResultLibraryError)
 			return jsonMarshalIgnoreErr(ExtractJobResult{Format: mimeType}), nil
 		default:
 			// Unknown error class — treat as transient + let the
@@ -172,6 +200,16 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	summary, err := h.applier.Apply(ctx, asset, result)
 	if err != nil {
 		return nil, fmt.Errorf("metadata.extract: apply: %w", err)
+	}
+	// Per-Apply observability: if every field that was extracted
+	// got rejected by the validator we record validation_failed;
+	// otherwise success (which includes the "everything was a
+	// no-op via equal-value" path — the asset DID have the
+	// values, just nothing changed this run).
+	if len(summary.FieldsSet) == 0 && len(summary.FieldsSkippedValid) > 0 && len(summary.FieldsSkippedNoChange) == 0 && len(summary.FieldsSkippedMode) == 0 {
+		h.recordResult(mimeType, ResultValidationFailed)
+	} else {
+		h.recordResult(mimeType, ResultSuccess)
 	}
 
 	out := ExtractJobResult{

@@ -102,6 +102,23 @@ UPDATE field_definition
    SET status = 'archived', updated_at = NOW(), updated_by_user_ref = $2
  WHERE id = $1 AND status <> 'archived';
 
+-- name: SetFieldExtractionConfig :one
+-- Phase 1.18.A-2. Wires (or unwires) the metadata-extraction
+-- pipeline against one field. source='' clears the wiring;
+-- mode='' is normalised to skip_if_set by the caller.
+UPDATE field_definition
+   SET extraction_source = $2,
+       extraction_mode   = $3,
+       updated_at        = NOW(),
+       updated_by_user_ref = $4
+ WHERE id = $1
+RETURNING id, code, label, description, type, options, required, searchable,
+          applies_to, field_set_id, read_capability, write_capability,
+          display_order, display_group, source, status,
+          deprecated_replacement_id, origin_server_id,
+          created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+          subject_kind, extraction_source, extraction_mode;
+
 -- ---------------------------------------------------------------------------
 -- asset_field_value — the actual values
 -- ---------------------------------------------------------------------------

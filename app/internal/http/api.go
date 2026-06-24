@@ -142,6 +142,9 @@ type apiServer struct {
 	subtitles        *subtitles.Handler
 	subtitlesHTTP    *subtitles.HTTPHandler
 	aieditHTTP       *aiedit.HTTPHandler
+	metaCounter      *assetmetadata.Counter
+	metaAdmin        *assetmetadata.AdminHandler
+	jobsSvc          *jobs.Service
 	seedAdmin        *seed.AdminHandler
 }
 
@@ -163,6 +166,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
+		jobsSvc:      jobSvc,
 		brushpacks:   brushpacks.NewHandler(brushpacks.NewService(pool, storageSvc.Backend)),
 		audit:        audit.NewHTTPHandler(pool, logger),
 		licensing:    licensing.NewHandler(licState, logger),
@@ -358,6 +362,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		metaWriter := metaValueWriterAdapter{pool: pool}
 		metaFailures := metaFailureAdapter{pool: pool}
 		metaApplier := assetmetadata.NewApplier(metaCfg, metaValues, metaWriter, metaFailures)
+		// Phase 1.18.A-2 follow-up B (commit 2) — extraction
+		// counter wired into the job handler. Surfaced via
+		// /admin/metadata-extraction/health below.
+		s.metaCounter = assetmetadata.NewCounter()
 		jobSvc.Registry.Register(assetmetadata.NewExtractJobHandler(
 			metaSrc,
 			metaLookup,
@@ -365,8 +373,22 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			metaFailures,
 			[]assetmetadata.Extractor{exifext.New()},
 			logger,
+		).WithCounter(s.metaCounter))
+		// Phase 1.18.A-2 follow-up B (commit 4) — coordinator job
+		// for operator-initiated re-extract sweeps. Walks active
+		// image assets matching the scope + enqueues one
+		// metadata.extract child job per eligible asset.
+		jobSvc.Registry.Register(assetmetadata.NewBackfillJobHandler(
+			pool,
+			metaExtractEnqueuer{svc: jobSvc},
+			logger,
 		))
 	}
+	// Phase 1.18.A-2 follow-up B (commit 3) — admin failures-queue
+	// surface. Always wired so the queue is readable even on
+	// installs where the extract job is currently disabled (rows
+	// from prior runs stay for audit).
+	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
@@ -1752,6 +1774,9 @@ func (s *apiServer) UpdateField(ctx context.Context, req openapi.UpdateFieldRequ
 func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
 	return s.metadata.ArchiveField(ctx, req)
 }
+func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
+	return s.metadata.SetFieldExtraction(ctx, req)
+}
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }
@@ -2418,6 +2443,225 @@ func adminInboxToAPI(r outbox.AdminInboxRow) openapi.FederationInboxRow {
 	return out
 }
 
+// --- metadata-extraction admin (Phase 1.18.A-2 follow-up B) -----------
+
+func (s *apiServer) ListMetadataExtractionFailures(ctx context.Context, req openapi.ListMetadataExtractionFailuresRequestObject) (openapi.ListMetadataExtractionFailuresResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListMetadataExtractionFailures401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.ListMetadataExtractionFailures403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	f := assetmetadata.ListFailuresFilter{}
+	if req.Params.ErrorKind != nil {
+		v := *req.Params.ErrorKind
+		f.ErrorKind = &v
+	}
+	if req.Params.Format != nil {
+		v := *req.Params.Format
+		f.Format = &v
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		f.Offset = int32(*req.Params.Offset)
+	}
+	rows, total, err := s.metaAdmin.ListFailures(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.ExtractionFailure, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, metaFailureToAPI(r))
+	}
+	return openapi.ListMetadataExtractionFailures200JSONResponse{
+		Items: items,
+		Total: total,
+	}, nil
+}
+
+func (s *apiServer) DismissMetadataExtractionFailure(ctx context.Context, req openapi.DismissMetadataExtractionFailureRequestObject) (openapi.DismissMetadataExtractionFailureResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.DismissMetadataExtractionFailure401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.DismissMetadataExtractionFailure403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if err := s.metaAdmin.DismissFailure(ctx, uuid.UUID(req.Id)); err != nil {
+		if errors.Is(err, assetmetadata.ErrFailureNotFound) {
+			return openapi.DismissMetadataExtractionFailure404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "extraction failure not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.DismissMetadataExtractionFailure204Response{}, nil
+}
+
+func (s *apiServer) ListMetadataExtractionBackfills(ctx context.Context, req openapi.ListMetadataExtractionBackfillsRequestObject) (openapi.ListMetadataExtractionBackfillsResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.ListMetadataExtractionBackfills401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.ListMetadataExtractionBackfills403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	var limit int32
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	rows, err := s.metaAdmin.ListRecentBackfills(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.MetadataBackfillRun, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, metaBackfillToAPI(r))
+	}
+	return openapi.ListMetadataExtractionBackfills200JSONResponse{Items: items}, nil
+}
+
+func (s *apiServer) StartMetadataExtractionBackfill(ctx context.Context, req openapi.StartMetadataExtractionBackfillRequestObject) (openapi.StartMetadataExtractionBackfillResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.StartMetadataExtractionBackfill401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.StartMetadataExtractionBackfill403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	p := assetmetadata.BackfillStartParams{
+		StartedBy: &caller.UserRef,
+	}
+	if req.Body != nil && req.Body.AssetTypeRef != nil {
+		v := *req.Body.AssetTypeRef
+		p.Scope.AssetTypeRef = &v
+	}
+	row, err := s.metaAdmin.StartBackfill(ctx, s.jobsSvc, p)
+	if err != nil {
+		return nil, err
+	}
+	resp := openapi.StartMetadataExtractionBackfill200JSONResponse(metaBackfillToAPI(row))
+	return resp, nil
+}
+
+func (s *apiServer) GetMetadataExtractionBackfill(ctx context.Context, req openapi.GetMetadataExtractionBackfillRequestObject) (openapi.GetMetadataExtractionBackfillResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.GetMetadataExtractionBackfill401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.GetMetadataExtractionBackfill403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	row, err := s.metaAdmin.GetBackfill(ctx, uuid.UUID(req.Id))
+	if err != nil {
+		if errors.Is(err, assetmetadata.ErrBackfillNotFound) {
+			return openapi.GetMetadataExtractionBackfill404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "backfill run not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	resp := openapi.GetMetadataExtractionBackfill200JSONResponse(metaBackfillToAPI(row))
+	return resp, nil
+}
+
+func (s *apiServer) CancelMetadataExtractionBackfill(ctx context.Context, req openapi.CancelMetadataExtractionBackfillRequestObject) (openapi.CancelMetadataExtractionBackfillResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.CancelMetadataExtractionBackfill401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !caller.Can("system.admin") {
+		return openapi.CancelMetadataExtractionBackfill403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if err := s.metaAdmin.CancelBackfill(ctx, uuid.UUID(req.Id)); err != nil {
+		if errors.Is(err, assetmetadata.ErrBackfillNotFound) {
+			return openapi.CancelMetadataExtractionBackfill404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "backfill run not found"},
+			}, nil
+		}
+		return nil, err
+	}
+	return openapi.CancelMetadataExtractionBackfill204Response{}, nil
+}
+
+func metaBackfillToAPI(r assetmetadata.BackfillRunRow) openapi.MetadataBackfillRun {
+	out := openapi.MetadataBackfillRun{
+		Id:               openapi_types.UUID(r.ID),
+		Total:            r.Total,
+		Processed:        r.Processed,
+		Succeeded:        r.Succeeded,
+		Failed:           r.Failed,
+		StartedAt:        r.StartedAt,
+		StartedByUserRef: r.StartedByUserRef,
+	}
+	if r.Scope.AssetTypeRef != nil {
+		v := *r.Scope.AssetTypeRef
+		out.AssetTypeRef = &v
+	}
+	if r.CompletedAt != nil {
+		t := *r.CompletedAt
+		out.CompletedAt = &t
+	}
+	if r.CancelledAt != nil {
+		t := *r.CancelledAt
+		out.CancelledAt = &t
+	}
+	return out
+}
+
+func metaFailureToAPI(r assetmetadata.FailureRow) openapi.ExtractionFailure {
+	out := openapi.ExtractionFailure{
+		Id:         openapi_types.UUID(r.ID),
+		AssetId:    openapi_types.UUID(r.AssetID),
+		Format:     r.Format,
+		ErrorKind:  r.ErrorKind,
+		Message:    r.Message,
+		OccurredAt: r.OccurredAt,
+	}
+	if r.FieldKey != "" {
+		fk := r.FieldKey
+		out.FieldKey = &fk
+	}
+	if len(r.RawValue) > 0 {
+		var v any
+		if err := json.Unmarshal(r.RawValue, &v); err == nil {
+			out.RawValue = v
+		}
+	}
+	if r.DismissedAt != nil {
+		t := *r.DismissedAt
+		out.DismissedAt = &t
+	}
+	return out
+}
+
 // --- demo-seed loader (post-1.22.D dogfood unblock) -------------------
 
 func (s *apiServer) SeedBackfillTimestamps(ctx context.Context, req openapi.SeedBackfillTimestampsRequestObject) (openapi.SeedBackfillTimestampsResponseObject, error) {
@@ -3011,6 +3255,22 @@ func (a metaValueWriterAdapter) WriteAssetFieldValue(ctx context.Context, p asse
 		    set_by     = EXCLUDED.set_by,
 		    set_at     = NOW()
 	`, p.AssetID, p.FieldID, valText, valNum, valDate, p.SetBy)
+	return err
+}
+
+// metaExtractEnqueuer adapts jobs.Service into the
+// assetmetadata.ChildEnqueuer contract — when the backfill
+// coordinator walks the asset list it asks for one extract
+// child per id; this is the seam.
+type metaExtractEnqueuer struct {
+	svc *jobs.Service
+}
+
+func (e metaExtractEnqueuer) EnqueueExtract(ctx context.Context, assetID uuid.UUID) error {
+	_, err := e.svc.Enqueue(ctx, assetmetadata.JobTypeExtract,
+		assetmetadata.ExtractJobPayload{AssetID: assetID},
+		jobs.EnqueueOpts{},
+	)
 	return err
 }
 

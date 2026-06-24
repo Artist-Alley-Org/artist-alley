@@ -4119,6 +4119,47 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /fields/{id}/extraction:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setFieldExtraction
+      summary: Configure a field's metadata-extraction source + mode (Phase 1.18.A-2)
+      description: |
+        Sets which extraction-source canonical field this
+        field-definition receives values from + the apply mode.
+        Empty source clears extraction. Empty mode defaults to
+        skip_if_set. Edits invalidate the metadata.extraction_
+        config cache so the next extract job sees the new wiring.
+
+        Gated on the same admin capability as updateField.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldExtractionConfig" }
+      responses:
+        "200":
+          description: Updated field definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefinition" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/fields:
     parameters:
       - name: id
@@ -7484,6 +7525,201 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/metadata-extraction/failures:
+    get:
+      operationId: listMetadataExtractionFailures
+      summary: List pending metadata-extraction failures (Phase 1.18.A-2 follow-up B)
+      description: |
+        Returns paginated pending (not-yet-dismissed) rows from
+        extraction_failure. Filterable by error_kind + format.
+        Gated on `system.admin`.
+
+        Pending count for the admin nav badge is returned alongside
+        the page so the UI can render the badge from one round-trip.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: error_kind
+          in: query
+          required: false
+          description: |
+            Filter by failure kind (unsupported_format / malformed_file /
+            library_panic / validation). Omit for all kinds.
+          schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          description: Filter by source MIME type (e.g. image/jpeg).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Pending failure rows + the total pending count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtractionFailureList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/metadata-extraction/failures/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: dismissMetadataExtractionFailure
+      summary: Soft-dismiss one extraction failure (Phase 1.18.A-2 follow-up B)
+      description: |
+        Marks the row dismissed (keeps it for audit). Idempotent —
+        re-dismissing an already-dismissed row returns 204 without
+        complaint. 404 if the row never existed.
+
+        Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Dismissed (or already-dismissed).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/metadata-extraction/backfills:
+    get:
+      operationId: listMetadataExtractionBackfills
+      summary: List recent metadata-extraction backfill runs
+      description: |
+        Returns up to `limit` most-recently-started backfill runs
+        (default 20, cap 50). Gated on `system.admin`. Powers the
+        operator-history table on the backfill admin page.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: Backfill runs newest-first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRunList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: startMetadataExtractionBackfill
+      summary: Start a new metadata-extraction backfill run
+      description: |
+        Inserts a metadata_backfill_run row + enqueues the
+        coordinator job. The job walks every active image asset
+        matching the scope + enqueues one metadata.extract child
+        per asset. Returns the new run row; progress polls land
+        via GET …/backfills/{id}. Gated on `system.admin`.
+
+        Empty scope = all active image assets. Optional
+        asset_type_ref narrows to one asset type's population.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MetadataBackfillStart" }
+      responses:
+        "200":
+          description: Run inserted + coordinator job enqueued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRun" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/metadata-extraction/backfills/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getMetadataExtractionBackfill
+      summary: Get one backfill run by id (progress poll)
+      description: |
+        Returns the current row state — processed / succeeded /
+        failed counters move with each coordinator-job batch
+        boundary. Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current run state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRun" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/metadata-extraction/backfills/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: cancelMetadataExtractionBackfill
+      summary: Cancel an in-flight backfill run
+      description: |
+        Flips cancelled_at to NOW(). The running coordinator job
+        observes the flag on the next batch boundary + exits
+        cleanly. Already-cancelled / already-completed runs are
+        no-ops (returns 204). 404 if the id never existed.
+
+        Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Cancellation accepted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -8420,6 +8656,19 @@ components:
           additionalProperties: true
           nullable: true
           description: "Auto-extraction source, e.g. {\"type\":\"exif\",\"tag\":\"DateTimeOriginal\"}."
+        extraction_source:
+          type: string
+          description: |
+            CanonicalField the metadata-extraction pipeline writes
+            into this field. Empty = no extraction (the field stays
+            operator-managed). Phase 1.18.A-2. Edited via the
+            dedicated PUT …/extraction endpoint.
+        extraction_mode:
+          type: string
+          enum: ["", skip_if_set, replace, append, prepend]
+          description: |
+            Write behaviour when extraction has a value. Empty =
+            default (skip_if_set). Phase 1.18.A-2.
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -8453,6 +8702,27 @@ components:
         display_order:   { type: integer, default: 100 }
         display_group:   { type: string, default: general }
         source:          { type: object, additionalProperties: true, nullable: true }
+    FieldExtractionConfig:
+      type: object
+      description: |
+        Per-field extraction wiring. Empty source clears extraction;
+        the operator can then re-attach it later without losing the
+        field-definition's other settings.
+      required: [source]
+      properties:
+        source:
+          type: string
+          description: |
+            Canonical field name the extractor produces (e.g.
+            capture_datetime, camera_make, gps_coordinates). Empty
+            disables extraction for this field.
+        mode:
+          type: string
+          enum: ["", skip_if_set, replace, append, prepend]
+          description: |
+            Apply behaviour. Empty defaults to skip_if_set — the
+            conservative choice that never clobbers operator work.
+
     FieldDefinitionUpdate:
       type: object
       description: "Partial update; only present fields are touched."
@@ -12199,6 +12469,116 @@ components:
             that move INTO this state with an empty note. Useful for
             rejection / needs-work states where the reason matters
             for audit and the originating user.
+
+    ExtractionFailure:
+      type: object
+      description: |
+        One row in the metadata extraction_failure queue (Phase
+        1.18.A-2). Represents a single per-asset failure the
+        operator should review — unsupported MIME, malformed file,
+        validator-rejected field value, or a recovered library
+        panic. Dismissal is soft so the row stays for audit.
+      required:
+        [id, asset_id, format, error_kind, message, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid }
+        format:
+          type: string
+          description: Source MIME type at the time the failure occurred.
+        error_kind:
+          type: string
+          description: |
+            One of: `unsupported_format`, `malformed_file`,
+            `library_panic`, `validation`.
+        message: { type: string }
+        field_key:
+          type: string
+          description: |
+            CanonicalField for validation failures (empty for
+            whole-file errors). Example: `camera_model`.
+        raw_value:
+          description: |
+            Operator-displayable raw value the extractor produced,
+            JSONB. Empty / null for whole-file failures.
+        occurred_at: { type: string, format: date-time }
+        dismissed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL while pending; set by the dismiss endpoint.
+
+    ExtractionFailureList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ExtractionFailure" }
+        total:
+          type: integer
+          format: int64
+          description: |
+            Total pending (not-yet-dismissed) failure rows ignoring
+            limit/offset but obeying the error_kind + format filters.
+            Powers the admin nav badge.
+
+    MetadataBackfillStart:
+      type: object
+      description: |
+        Operator-facing input to start a new backfill run. All
+        fields optional — empty body = "all active image assets".
+      properties:
+        asset_type_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Narrow to one asset type. Null / omitted = every type.
+
+    MetadataBackfillRun:
+      type: object
+      description: |
+        One backfill-coordinator run row. Counters move as the
+        coordinator job walks the population.
+      required: [id, total, processed, succeeded, failed, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        asset_type_ref:
+          type: integer
+          format: int64
+          nullable: true
+        total:
+          type: integer
+          format: int64
+          description: |
+            Unknown at start (0). Reserved for a future "count first"
+            pre-walk pass; current implementation leaves at 0 and
+            the UI shows "—" when zero + not-yet-completed.
+        processed: { type: integer, format: int64 }
+        succeeded: { type: integer, format: int64 }
+        failed:    { type: integer, format: int64 }
+        started_at: { type: string, format: date-time }
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+
+    MetadataBackfillRunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MetadataBackfillRun" }
   responses:
     BadRequest:
       description: Malformed request

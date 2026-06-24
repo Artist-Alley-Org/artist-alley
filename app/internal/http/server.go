@@ -26,6 +26,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/ldapauth"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
+	"github.com/mscrnt/artist-alley/app/internal/observability/healthhandler"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/samlauth"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -247,6 +248,16 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		impl.auth.SetProviderRegistry(providers)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
+
+		// Phase 1.18.A-2 follow-up B (commit 2) — generic
+		// /admin/{subsystem}/health pattern. First user:
+		// metadata-extraction. Future subsystems (email in
+		// 1.19.A, search in 1.16, iiif in 1.54) plug in here
+		// one line each.
+		if impl.metaCounter != nil {
+			r.Method(http.MethodGet, "/admin/metadata-extraction/health",
+				healthhandler.HandlerFor("metadata-extraction", impl.metaCounter, "system.admin"))
+		}
 
 		// SAML redirect-flow routes. Always mounted, but the handlers
 		// look the provider up from the (hot-swappable) registry at

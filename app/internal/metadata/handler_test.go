@@ -142,6 +142,95 @@ func TestFieldDefinitionLifecycle(t *testing.T) {
 	_ = ctx
 }
 
+// TestSetFieldExtraction covers the PR-B PUT /fields/{id}/extraction
+// surface: wire on, normalise empty mode → skip_if_set, reject bad
+// mode, clear, capability gate, 404 on unknown id.
+func TestSetFieldExtraction(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestFields(t, pool)
+	t.Cleanup(func() { cleanTestFields(t, pool) })
+
+	adminRouter, _ := makeRouter(t, pool, true)
+	fieldID := mustCreateField(t, adminRouter, map[string]any{
+		"code":  "metadata_test_extract_target",
+		"label": "Capture",
+		"type":  "datetime",
+	})
+
+	// Wire source with no explicit mode → server normalises to skip_if_set.
+	rr := putJSON(t, adminRouter, "/fields/"+fieldID+"/extraction", map[string]any{
+		"source": "capture_datetime",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set extraction: %d body=%s", rr.Code, rr.Body.String())
+	}
+	var got openapi.FieldDefinition
+	mustDecode(t, rr.Body.Bytes(), &got)
+	if got.ExtractionSource == nil || *got.ExtractionSource != "capture_datetime" {
+		t.Errorf("ExtractionSource = %v, want capture_datetime", got.ExtractionSource)
+	}
+	if got.ExtractionMode == nil || *got.ExtractionMode != openapi.FieldDefinitionExtractionModeSkipIfSet {
+		t.Errorf("ExtractionMode = %v, want skip_if_set", got.ExtractionMode)
+	}
+
+	// Explicit mode replace.
+	rr = putJSON(t, adminRouter, "/fields/"+fieldID+"/extraction", map[string]any{
+		"source": "capture_datetime",
+		"mode":   "replace",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set replace: %d", rr.Code)
+	}
+	mustDecode(t, rr.Body.Bytes(), &got)
+	if got.ExtractionMode == nil || *got.ExtractionMode != openapi.FieldDefinitionExtractionModeReplace {
+		t.Errorf("ExtractionMode = %v, want replace", got.ExtractionMode)
+	}
+
+	// Bogus mode → 400.
+	rr = putJSON(t, adminRouter, "/fields/"+fieldID+"/extraction", map[string]any{
+		"source": "capture_datetime",
+		"mode":   "DELETE_THE_DATABASE",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("bogus mode: %d want 400", rr.Code)
+	}
+
+	// Clear extraction (empty source).
+	rr = putJSON(t, adminRouter, "/fields/"+fieldID+"/extraction", map[string]any{
+		"source": "",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear extraction: %d", rr.Code)
+	}
+	mustDecode(t, rr.Body.Bytes(), &got)
+	if got.ExtractionSource == nil || *got.ExtractionSource != "" {
+		t.Errorf("ExtractionSource after clear = %v, want empty", got.ExtractionSource)
+	}
+
+	// Unknown id → 404.
+	rr = putJSON(t, adminRouter, "/fields/00000000-0000-0000-0000-000000000000/extraction", map[string]any{
+		"source": "capture_datetime",
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown id: %d want 404", rr.Code)
+	}
+
+	// Non-admin → 403.
+	nonAdminRouter, _ := makeRouter(t, pool, false)
+	rr = putJSON(t, nonAdminRouter, "/fields/"+fieldID+"/extraction", map[string]any{
+		"source": "capture_datetime",
+	})
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("non-admin: %d want 403", rr.Code)
+	}
+}
+
 // TestNonAdminCannotCreateField verifies the capability gate works.
 func TestNonAdminCannotCreateField(t *testing.T) {
 	pwd := os.Getenv("AA_DB_PASSWORD")
@@ -473,6 +562,9 @@ func (s metaShim) UpdateField(ctx context.Context, req openapi.UpdateFieldReques
 }
 func (s metaShim) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
 	return s.h.ArchiveField(ctx, req)
+}
+func (s metaShim) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
+	return s.h.SetFieldExtraction(ctx, req)
 }
 func (s metaShim) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.h.GetAssetFields(ctx, req)
