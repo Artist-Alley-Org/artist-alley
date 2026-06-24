@@ -135,6 +135,8 @@
     Validation failures carry the rejected raw value; library /
     format failures carry the parser's message. Dismiss is soft —
     rows stay queryable for audit.
+    Re-extract everything via the
+    <a class="text-accent hover:underline" href="/admin/metadata-extraction/backfills">backfill page</a>.
   </p>
 </header>
 

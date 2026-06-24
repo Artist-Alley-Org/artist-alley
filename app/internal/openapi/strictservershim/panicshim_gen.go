@@ -335,6 +335,26 @@ func (*PanicShim) ValidateAdminLicense(context.Context, openapi.ValidateAdminLic
 	panic("PanicShim: ValidateAdminLicense called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListMetadataExtractionBackfills panics by default; test shims override.
+func (*PanicShim) ListMetadataExtractionBackfills(context.Context, openapi.ListMetadataExtractionBackfillsRequestObject) (openapi.ListMetadataExtractionBackfillsResponseObject, error) {
+	panic("PanicShim: ListMetadataExtractionBackfills called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// StartMetadataExtractionBackfill panics by default; test shims override.
+func (*PanicShim) StartMetadataExtractionBackfill(context.Context, openapi.StartMetadataExtractionBackfillRequestObject) (openapi.StartMetadataExtractionBackfillResponseObject, error) {
+	panic("PanicShim: StartMetadataExtractionBackfill called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetMetadataExtractionBackfill panics by default; test shims override.
+func (*PanicShim) GetMetadataExtractionBackfill(context.Context, openapi.GetMetadataExtractionBackfillRequestObject) (openapi.GetMetadataExtractionBackfillResponseObject, error) {
+	panic("PanicShim: GetMetadataExtractionBackfill called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelMetadataExtractionBackfill panics by default; test shims override.
+func (*PanicShim) CancelMetadataExtractionBackfill(context.Context, openapi.CancelMetadataExtractionBackfillRequestObject) (openapi.CancelMetadataExtractionBackfillResponseObject, error) {
+	panic("PanicShim: CancelMetadataExtractionBackfill called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListMetadataExtractionFailures panics by default; test shims override.
 func (*PanicShim) ListMetadataExtractionFailures(context.Context, openapi.ListMetadataExtractionFailuresRequestObject) (openapi.ListMetadataExtractionFailuresResponseObject, error) {
 	panic("PanicShim: ListMetadataExtractionFailures called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

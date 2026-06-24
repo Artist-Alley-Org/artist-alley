@@ -7560,6 +7560,125 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/metadata-extraction/backfills:
+    get:
+      operationId: listMetadataExtractionBackfills
+      summary: List recent metadata-extraction backfill runs
+      description: |
+        Returns up to `limit` most-recently-started backfill runs
+        (default 20, cap 50). Gated on `system.admin`. Powers the
+        operator-history table on the backfill admin page.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: Backfill runs newest-first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRunList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: startMetadataExtractionBackfill
+      summary: Start a new metadata-extraction backfill run
+      description: |
+        Inserts a metadata_backfill_run row + enqueues the
+        coordinator job. The job walks every active image asset
+        matching the scope + enqueues one metadata.extract child
+        per asset. Returns the new run row; progress polls land
+        via GET …/backfills/{id}. Gated on `system.admin`.
+
+        Empty scope = all active image assets. Optional
+        asset_type_ref narrows to one asset type's population.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MetadataBackfillStart" }
+      responses:
+        "200":
+          description: Run inserted + coordinator job enqueued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRun" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/metadata-extraction/backfills/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getMetadataExtractionBackfill
+      summary: Get one backfill run by id (progress poll)
+      description: |
+        Returns the current row state — processed / succeeded /
+        failed counters move with each coordinator-job batch
+        boundary. Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current run state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetadataBackfillRun" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/metadata-extraction/backfills/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: cancelMetadataExtractionBackfill
+      summary: Cancel an in-flight backfill run
+      description: |
+        Flips cancelled_at to NOW(). The running coordinator job
+        observes the flag on the next batch boundary + exits
+        cleanly. Already-cancelled / already-completed runs are
+        no-ops (returns 204). 404 if the id never existed.
+
+        Gated on `system.admin`.
+      tags: [admin, metadata]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Cancellation accepted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -12328,6 +12447,63 @@ components:
             Total pending (not-yet-dismissed) failure rows ignoring
             limit/offset but obeying the error_kind + format filters.
             Powers the admin nav badge.
+
+    MetadataBackfillStart:
+      type: object
+      description: |
+        Operator-facing input to start a new backfill run. All
+        fields optional — empty body = "all active image assets".
+      properties:
+        asset_type_ref:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Narrow to one asset type. Null / omitted = every type.
+
+    MetadataBackfillRun:
+      type: object
+      description: |
+        One backfill-coordinator run row. Counters move as the
+        coordinator job walks the population.
+      required: [id, total, processed, succeeded, failed, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        asset_type_ref:
+          type: integer
+          format: int64
+          nullable: true
+        total:
+          type: integer
+          format: int64
+          description: |
+            Unknown at start (0). Reserved for a future "count first"
+            pre-walk pass; current implementation leaves at 0 and
+            the UI shows "—" when zero + not-yet-completed.
+        processed: { type: integer, format: int64 }
+        succeeded: { type: integer, format: int64 }
+        failed:    { type: integer, format: int64 }
+        started_at: { type: string, format: date-time }
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_by_user_ref:
+          type: integer
+          format: int64
+          nullable: true
+
+    MetadataBackfillRunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MetadataBackfillRun" }
   responses:
     BadRequest:
       description: Malformed request
