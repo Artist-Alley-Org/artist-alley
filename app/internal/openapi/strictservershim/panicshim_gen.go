@@ -920,6 +920,11 @@ func (*PanicShim) UpdateField(context.Context, openapi.UpdateFieldRequestObject)
 	panic("PanicShim: UpdateField called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SetFieldExtraction panics by default; test shims override.
+func (*PanicShim) SetFieldExtraction(context.Context, openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
+	panic("PanicShim: SetFieldExtraction called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListLocales panics by default; test shims override.
 func (*PanicShim) ListLocales(context.Context, openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("PanicShim: ListLocales called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

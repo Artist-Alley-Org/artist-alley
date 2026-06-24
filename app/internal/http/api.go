@@ -1774,6 +1774,9 @@ func (s *apiServer) UpdateField(ctx context.Context, req openapi.UpdateFieldRequ
 func (s *apiServer) ArchiveField(ctx context.Context, req openapi.ArchiveFieldRequestObject) (openapi.ArchiveFieldResponseObject, error) {
 	return s.metadata.ArchiveField(ctx, req)
 }
+func (s *apiServer) SetFieldExtraction(ctx context.Context, req openapi.SetFieldExtractionRequestObject) (openapi.SetFieldExtractionResponseObject, error) {
+	return s.metadata.SetFieldExtraction(ctx, req)
+}
 func (s *apiServer) GetAssetFields(ctx context.Context, req openapi.GetAssetFieldsRequestObject) (openapi.GetAssetFieldsResponseObject, error) {
 	return s.metadata.GetAssetFields(ctx, req)
 }

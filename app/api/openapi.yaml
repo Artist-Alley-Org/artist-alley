@@ -4119,6 +4119,47 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /fields/{id}/extraction:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: setFieldExtraction
+      summary: Configure a field's metadata-extraction source + mode (Phase 1.18.A-2)
+      description: |
+        Sets which extraction-source canonical field this
+        field-definition receives values from + the apply mode.
+        Empty source clears extraction. Empty mode defaults to
+        skip_if_set. Edits invalidate the metadata.extraction_
+        config cache so the next extract job sees the new wiring.
+
+        Gated on the same admin capability as updateField.
+      tags: [metadata, admin]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldExtractionConfig" }
+      responses:
+        "200":
+          description: Updated field definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FieldDefinition" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /assets/{id}/fields:
     parameters:
       - name: id
@@ -8615,6 +8656,19 @@ components:
           additionalProperties: true
           nullable: true
           description: "Auto-extraction source, e.g. {\"type\":\"exif\",\"tag\":\"DateTimeOriginal\"}."
+        extraction_source:
+          type: string
+          description: |
+            CanonicalField the metadata-extraction pipeline writes
+            into this field. Empty = no extraction (the field stays
+            operator-managed). Phase 1.18.A-2. Edited via the
+            dedicated PUT …/extraction endpoint.
+        extraction_mode:
+          type: string
+          enum: ["", skip_if_set, replace, append, prepend]
+          description: |
+            Write behaviour when extraction has a value. Empty =
+            default (skip_if_set). Phase 1.18.A-2.
         status:
           type: string
           enum: [active, deprecated, archived]
@@ -8648,6 +8702,27 @@ components:
         display_order:   { type: integer, default: 100 }
         display_group:   { type: string, default: general }
         source:          { type: object, additionalProperties: true, nullable: true }
+    FieldExtractionConfig:
+      type: object
+      description: |
+        Per-field extraction wiring. Empty source clears extraction;
+        the operator can then re-attach it later without losing the
+        field-definition's other settings.
+      required: [source]
+      properties:
+        source:
+          type: string
+          description: |
+            Canonical field name the extractor produces (e.g.
+            capture_datetime, camera_make, gps_coordinates). Empty
+            disables extraction for this field.
+        mode:
+          type: string
+          enum: ["", skip_if_set, replace, append, prepend]
+          description: |
+            Apply behaviour. Empty defaults to skip_if_set — the
+            conservative choice that never clobbers operator work.
+
     FieldDefinitionUpdate:
       type: object
       description: "Partial update; only present fields are touched."

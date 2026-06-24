@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
+  import ExtractionConfigPicker from '$components/ExtractionConfigPicker.svelte';
 
   interface Field {
     id: string;
@@ -12,7 +13,13 @@
     required: boolean;
     applies_to: number[];
     display_group?: string;
+    extraction_source?: string;
+    extraction_mode?: string;
   }
+
+  // Per-row toggle for the extraction picker. Keyed by field id.
+  let expanded = $state<Record<string, boolean>>({});
+  function toggleExtraction(id: string) { expanded[id] = !expanded[id]; }
 
   let fields = $state<Field[]>([]);
   let loading = $state(true);
@@ -220,6 +227,7 @@
         <th class="py-2">{t('admin.fields.subject_kind')}</th>
         <th class="py-2">{t('admin.fields.applies_to')}</th>
         <th class="py-2">{t('admin.fields.group')}</th>
+        <th class="py-2">Extraction</th>
       </tr>
     </thead>
     <tbody>
@@ -233,7 +241,33 @@
           </td>
           <td class="py-2 text-fg-muted">{f.applies_to?.length ? f.applies_to.join(', ') : 'all'}</td>
           <td class="py-2 text-fg-muted">{f.display_group ?? ''}</td>
+          <td class="py-2">
+            <button
+              type="button"
+              onclick={() => toggleExtraction(f.id)}
+              class="rounded border border-border px-2 py-0.5 text-xs text-fg-muted hover:bg-state-hover"
+              data-testid="admin-fields-extraction-toggle-{f.code}"
+            >
+              {#if f.extraction_source}
+                <code class="text-xs">{f.extraction_source}</code> · {f.extraction_mode || 'skip_if_set'}
+              {:else}
+                — wire —
+              {/if}
+            </button>
+          </td>
         </tr>
+        {#if expanded[f.id]}
+          <tr class="border-t border-border/30 bg-bg-soft/40">
+            <td class="px-2 py-2" colspan="7">
+              <ExtractionConfigPicker
+                fieldId={f.id}
+                initialSource={f.extraction_source ?? ''}
+                initialMode={f.extraction_mode ?? ''}
+                onSaved={() => load()}
+              />
+            </td>
+          </tr>
+        {/if}
       {/each}
     </tbody>
   </table>

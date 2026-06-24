@@ -769,6 +769,69 @@ func (q *Queries) ListRequiredCollectionFields(ctx context.Context) ([]ListRequi
 	return items, nil
 }
 
+const setFieldExtractionConfig = `-- name: SetFieldExtractionConfig :one
+UPDATE field_definition
+   SET extraction_source = $2,
+       extraction_mode   = $3,
+       updated_at        = NOW(),
+       updated_by_user_ref = $4
+ WHERE id = $1
+RETURNING id, code, label, description, type, options, required, searchable,
+          applies_to, field_set_id, read_capability, write_capability,
+          display_order, display_group, source, status,
+          deprecated_replacement_id, origin_server_id,
+          created_at, updated_at, created_by_user_ref, updated_by_user_ref,
+          subject_kind, extraction_source, extraction_mode
+`
+
+type SetFieldExtractionConfigParams struct {
+	ID               pgtype.UUID
+	ExtractionSource string
+	ExtractionMode   string
+	UpdatedByUserRef *int64
+}
+
+// Phase 1.18.A-2. Wires (or unwires) the metadata-extraction
+// pipeline against one field. source=” clears the wiring;
+// mode=” is normalised to skip_if_set by the caller.
+func (q *Queries) SetFieldExtractionConfig(ctx context.Context, arg SetFieldExtractionConfigParams) (FieldDefinition, error) {
+	row := q.db.QueryRow(ctx, setFieldExtractionConfig,
+		arg.ID,
+		arg.ExtractionSource,
+		arg.ExtractionMode,
+		arg.UpdatedByUserRef,
+	)
+	var i FieldDefinition
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Label,
+		&i.Description,
+		&i.Type,
+		&i.Options,
+		&i.Required,
+		&i.Searchable,
+		&i.AppliesTo,
+		&i.FieldSetID,
+		&i.ReadCapability,
+		&i.WriteCapability,
+		&i.DisplayOrder,
+		&i.DisplayGroup,
+		&i.Source,
+		&i.Status,
+		&i.DeprecatedReplacementID,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CreatedByUserRef,
+		&i.UpdatedByUserRef,
+		&i.SubjectKind,
+		&i.ExtractionSource,
+		&i.ExtractionMode,
+	)
+	return i, err
+}
+
 const updateFieldDefinition = `-- name: UpdateFieldDefinition :one
 UPDATE field_definition SET
     label                     = COALESCE($1,                     label),
