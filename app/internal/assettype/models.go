@@ -750,16 +750,17 @@ type RoleCapability struct {
 }
 
 type Session struct {
-	ID             pgtype.UUID        `json:"id"`
-	UserRef        int64              `json:"user_ref"`
-	TokenHash      []byte             `json:"token_hash"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
-	Ip             *netip.Addr        `json:"ip"`
-	UserAgent      *string            `json:"user_agent"`
-	OriginServerID pgtype.UUID        `json:"origin_server_id"`
+	ID                    pgtype.UUID        `json:"id"`
+	UserRef               int64              `json:"user_ref"`
+	TokenHash             []byte             `json:"token_hash"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
+	Ip                    *netip.Addr        `json:"ip"`
+	UserAgent             *string            `json:"user_agent"`
+	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
+	ImpersonatedByUserRef *int64             `json:"impersonated_by_user_ref"`
 }
 
 type StorageObject struct {

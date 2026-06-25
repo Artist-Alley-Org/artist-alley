@@ -789,6 +789,13 @@
       "reset_result_label": "Temporary password — copy now; this won't be shown again:",
       "reset_copy": "Copy",
       "reset_copied": "Copied.",
+      "impersonate_title": "Impersonate this user",
+      "impersonate_help": "Sign in as this user for a 30-minute support / debugging session. Every action you take is audit-attributed to both you and the target. End impersonation from the banner at any time.",
+      "impersonate_reason_label": "Reason (optional, recorded in audit)",
+      "impersonate_reason_placeholder": "Ticket #1234 — debugging upload failure",
+      "impersonate_button": "Sign in as this user",
+      "impersonate_confirm": "Sign in as @{username}? You will leave your own session and act as this user until you click \"End impersonation\".",
+      "impersonate_failed": "Could not start impersonation.",
       "overrides_section": "Capability overrides",
       "overrides_intro": "Per-user grants add a capability on top of the user's roles; per-user revokes subtract one. Both can be scoped to a single team (paste the team UUID) or left global.",
       "overrides_grants_label": "Grants (additive)",
@@ -1402,6 +1409,12 @@
       "err_not_image": "img2img only works on image assets.",
       "err_generic": "Something went wrong. Try again or check the bridge logs."
     }
+  },
+  "impersonation": {
+    "banner_acting_as_label": "Acting as",
+    "banner_started_by": "(started by {admin})",
+    "end_button": "End impersonation",
+    "end_failed": "Could not end impersonation."
   },
   "common": {
     "loading": "Loading…",

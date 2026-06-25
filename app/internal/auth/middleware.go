@@ -48,7 +48,24 @@ type Identity struct {
 	// session is a footgun — the next request 401s).
 	Capabilities []string // GLOBAL capability codes (closure-expanded, NULL team_id)
 
+	// ImpersonatedBy is the admin user ref that issued this
+	// session via /admin/users/{ref}/impersonate (Phase
+	// 1.19.A-2). nil = normal session. When non-nil:
+	//   - UserRef + Capabilities still reflect the TARGET (so
+	//     the admin sees the target's UI exactly).
+	//   - Audit recorder picks up the admin separately for
+	//     attribution honesty.
+	//   - Server refuses dangerous mutations (password change,
+	//     starting another impersonation) — defense in depth.
+	ImpersonatedBy *int64
+
 	scopedCaps map[string]map[uuid.UUID]struct{} // code -> set of effective team IDs
+}
+
+// IsImpersonating reports whether this Identity is operating
+// under an admin impersonation session.
+func (id *Identity) IsImpersonating() bool {
+	return id != nil && id.ImpersonatedBy != nil
 }
 
 // SuperAdminCapability bypasses every Can() check. Matches the
@@ -437,6 +454,10 @@ func (r *Resolver) resolveBySession(ctx context.Context, q *Queries, sessionToke
 	id.AuthMethod = "session"
 	sessID := info.ID
 	id.SessionID = &sessID
+	if info.ImpersonatedBy != nil {
+		v := *info.ImpersonatedBy
+		id.ImpersonatedBy = &v
+	}
 	// Best-effort: bump last_used_at so the session keeps living and
 	// the next idle-timeout check uses now as the baseline. Done in a
 	// goroutine so it never blocks the request.

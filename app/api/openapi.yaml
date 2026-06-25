@@ -2175,6 +2175,91 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /admin/users/{ref}/impersonate:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: adminImpersonateUser
+      summary: Start an admin-impersonation session for a target user (Phase 1.19.A-2)
+      description: |
+        Issues a NEW session bound to the target user but
+        attributed to the calling admin via
+        sessions.impersonated_by_user_ref. Sets the session
+        cookie on the response so the very next request runs
+        under the target's identity. The admin's prior session
+        is NOT revoked — ending impersonation issues a fresh
+        admin session via /auth/impersonation/end.
+
+        Gated on `auth.impersonate` (admin-only by seed).
+        Refusals (defense-in-depth):
+          - 400 — self-impersonation (admin impersonating themself).
+          - 400 — chain attempt (admin tries to impersonate while
+            already impersonating).
+          - 403 — target holds `system.admin` (no privilege-
+            escalation by chaining; admins must coordinate
+            out-of-band to impersonate each other).
+          - 404 — target user not found.
+
+        Audit emits admin.impersonation.started with subject =
+        target, actor = admin, metadata.session_id + reason.
+      tags: [admin, users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminImpersonateRequest"
+      responses:
+        "200":
+          description: Impersonation session minted + cookie set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminImpersonateResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /auth/impersonation/end:
+    post:
+      operationId: endImpersonation
+      summary: End the current admin-impersonation session (Phase 1.19.A-2)
+      description: |
+        Revokes the current impersonation session + issues a
+        fresh session for the original admin so the response
+        leaves the caller signed in as themselves. No-op (400)
+        when the current session is not an impersonation.
+
+        Audit emits admin.impersonation.ended with subject =
+        target, actor = admin.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Impersonation ended + admin session restored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EndImpersonationResult" }
+        "400":
+          description: Current session is not an impersonation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /account/sessions:
     get:
       operationId: listMySessions
@@ -8600,6 +8685,22 @@ components:
           description: |
             User's theme pref. Empty string = follow system. Same
             "join on /auth/me" rationale as `language`.
+        impersonated_by:
+          type: object
+          nullable: true
+          description: |
+            Non-null when the session was minted via
+            POST /admin/users/{ref}/impersonate (Phase 1.19.A-2).
+            Carries the acting admin's ref + username so the
+            persistent "you are acting as @target" banner can
+            render without a separate round-trip.
+          required: [ref, username]
+          properties:
+            ref:
+              type: integer
+              format: int64
+            username:
+              type: string
     ApiTokenSummary:
       type: object
       required: [id, name, created_at, scopes]
@@ -10053,6 +10154,55 @@ components:
         generated_at:
           type: string
           format: date-time
+
+    AdminImpersonateRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Admin-supplied justification (ticket number, brief
+            context). Recorded in the impersonation.started audit
+            event. Encouraged but not required.
+
+    AdminImpersonateResult:
+      type: object
+      required: [target_user_ref, target_username, expires_at, session_id]
+      description: |
+        Returned by POST /admin/users/{ref}/impersonate when the
+        impersonation session has been minted + the cookie set.
+        The frontend uses this to render the persistent "you are
+        acting as @target" banner without an immediate reload.
+      properties:
+        target_user_ref:
+          type: integer
+          format: int64
+        target_username:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+          description: The newly-minted impersonation session's id.
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the impersonation session hard-expires (default
+            30 min from start). The admin can end earlier via the
+            "End impersonation" button.
+
+    EndImpersonationResult:
+      type: object
+      required: [admin_user_ref, admin_username]
+      properties:
+        admin_user_ref:
+          type: integer
+          format: int64
+          description: The original admin's ref — confirms who the
+            caller is now signed in as after the rotation.
+        admin_username:
+          type: string
 
     SessionRow:
       type: object

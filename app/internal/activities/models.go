@@ -750,16 +750,17 @@ type RoleCapability struct {
 }
 
 type Session struct {
-	ID             pgtype.UUID
-	UserRef        int64
-	TokenHash      []byte
-	CreatedAt      pgtype.Timestamptz
-	LastUsedAt     pgtype.Timestamptz
-	ExpiresAt      pgtype.Timestamptz
-	RevokedAt      pgtype.Timestamptz
-	Ip             *netip.Addr
-	UserAgent      *string
-	OriginServerID pgtype.UUID
+	ID                    pgtype.UUID
+	UserRef               int64
+	TokenHash             []byte
+	CreatedAt             pgtype.Timestamptz
+	LastUsedAt            pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
+	RevokedAt             pgtype.Timestamptz
+	Ip                    *netip.Addr
+	UserAgent             *string
+	OriginServerID        pgtype.UUID
+	ImpersonatedByUserRef *int64
 }
 
 type StorageObject struct {

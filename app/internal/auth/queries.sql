@@ -47,6 +47,16 @@ INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, user_ref, created_at, last_used_at, expires_at;
 
+-- name: InsertImpersonationSession :one
+-- Phase 1.19.A-2. Issues a session bound to the target user but
+-- attributed to the calling admin via impersonated_by_user_ref.
+-- Caller passes a shorter expiry (default 30 min) so abandoned
+-- impersonation sessions can't sit forever — distinct from the
+-- normal login TTL.
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent, impersonated_by_user_ref)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_ref, created_at, last_used_at, expires_at, impersonated_by_user_ref;
+
 -- name: FindActiveSession :one
 -- Resolves an incoming cookie. Only returns rows that haven't been revoked
 -- and haven't passed their hard expiry. The idle-timeout check lives in
@@ -57,7 +67,8 @@ SELECT s.id,
        s.last_used_at,
        s.expires_at,
        s.ip,
-       s.user_agent
+       s.user_agent,
+       s.impersonated_by_user_ref
 FROM sessions s
 WHERE s.token_hash = $1
   AND s.revoked_at IS NULL
