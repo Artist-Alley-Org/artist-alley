@@ -699,3 +699,76 @@ ORDER BY capability_code;
 
 -- name: GetRole :one
 SELECT id, name, description, parent_id FROM roles WHERE id = $1;
+
+-- ---------------------------------------------------------------------------
+-- Phase 1.19.B — self-service TOTP (RFC 6238 2FA)
+-- ---------------------------------------------------------------------------
+
+-- name: GetUserTOTP :one
+-- Returns the user's TOTP row (or pgx.ErrNoRows when not enrolled).
+-- Caller decrypts secret_enc via atrest before passing to totp.Verify.
+SELECT user_ref, secret_enc, confirmed_at, created_at, last_used_at
+FROM user_totp
+WHERE user_ref = $1;
+
+-- name: UpsertUserTOTP :exec
+-- Used on enroll AND re-enroll. confirmed_at intentionally reset to
+-- NULL so a re-enroll re-proves the secret before it gates login.
+INSERT INTO user_totp (user_ref, secret_enc, confirmed_at, created_at)
+VALUES ($1, $2, NULL, NOW())
+ON CONFLICT (user_ref) DO UPDATE
+   SET secret_enc   = EXCLUDED.secret_enc,
+       confirmed_at = NULL,
+       created_at   = NOW(),
+       last_used_at = NULL;
+
+-- name: ConfirmUserTOTP :exec
+-- Flips confirmed_at to NOW on the first valid verify. Once set, the
+-- login flow refuses password-only authentication for this user.
+UPDATE user_totp
+   SET confirmed_at = NOW()
+ WHERE user_ref = $1
+   AND confirmed_at IS NULL;
+
+-- name: TouchUserTOTP :exec
+-- Records last successful TOTP verification — surfaced on the
+-- /account/security page so the user sees their authenticator is
+-- still in use.
+UPDATE user_totp
+   SET last_used_at = NOW()
+ WHERE user_ref = $1;
+
+-- name: DeleteUserTOTP :exec
+-- Disable 2FA wholesale. Also cascades the recovery codes via the
+-- FK ON DELETE CASCADE — see migration 00018.
+DELETE FROM user_totp WHERE user_ref = $1;
+
+-- name: InsertRecoveryCode :exec
+-- One row per backup code. code_hash is sha256 of the normalized
+-- plaintext; the plaintext is shown to the user once and never
+-- reachable again.
+INSERT INTO user_totp_recovery_code (user_ref, code_hash) VALUES ($1, $2);
+
+-- name: DeleteRecoveryCodesForUser :exec
+-- Wipes the prior batch — called by the regenerate path before
+-- inserting fresh codes so the user sees exactly N unused codes.
+DELETE FROM user_totp_recovery_code WHERE user_ref = $1;
+
+-- name: FindUnusedRecoveryCodeByHash :one
+-- Returns the row id when a hash matches an unused recovery code
+-- for the user. Caller then marks it used.
+SELECT id FROM user_totp_recovery_code
+ WHERE user_ref = $1
+   AND code_hash = $2
+   AND used_at IS NULL
+ LIMIT 1;
+
+-- name: MarkRecoveryCodeUsed :exec
+UPDATE user_totp_recovery_code
+   SET used_at = NOW()
+ WHERE id = $1
+   AND used_at IS NULL;
+
+-- name: CountUnusedRecoveryCodes :one
+SELECT COUNT(*) FROM user_totp_recovery_code
+ WHERE user_ref = $1 AND used_at IS NULL;

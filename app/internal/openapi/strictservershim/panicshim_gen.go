@@ -100,6 +100,31 @@ func (*PanicShim) ListOwnRequests(context.Context, openapi.ListOwnRequestsReques
 	panic("PanicShim: ListOwnRequests called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// DisableMyTOTP panics by default; test shims override.
+func (*PanicShim) DisableMyTOTP(context.Context, openapi.DisableMyTOTPRequestObject) (openapi.DisableMyTOTPResponseObject, error) {
+	panic("PanicShim: DisableMyTOTP called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// GetMyTOTP panics by default; test shims override.
+func (*PanicShim) GetMyTOTP(context.Context, openapi.GetMyTOTPRequestObject) (openapi.GetMyTOTPResponseObject, error) {
+	panic("PanicShim: GetMyTOTP called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// EnrollMyTOTP panics by default; test shims override.
+func (*PanicShim) EnrollMyTOTP(context.Context, openapi.EnrollMyTOTPRequestObject) (openapi.EnrollMyTOTPResponseObject, error) {
+	panic("PanicShim: EnrollMyTOTP called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ConfirmMyTOTP panics by default; test shims override.
+func (*PanicShim) ConfirmMyTOTP(context.Context, openapi.ConfirmMyTOTPRequestObject) (openapi.ConfirmMyTOTPResponseObject, error) {
+	panic("PanicShim: ConfirmMyTOTP called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RegenerateMyRecoveryCodes panics by default; test shims override.
+func (*PanicShim) RegenerateMyRecoveryCodes(context.Context, openapi.RegenerateMyRecoveryCodesRequestObject) (openapi.RegenerateMyRecoveryCodesResponseObject, error) {
+	panic("PanicShim: RegenerateMyRecoveryCodes called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // RotateOwnFederationKeys panics by default; test shims override.
 func (*PanicShim) RotateOwnFederationKeys(context.Context, openapi.RotateOwnFederationKeysRequestObject) (openapi.RotateOwnFederationKeysResponseObject, error) {
 	panic("PanicShim: RotateOwnFederationKeys called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

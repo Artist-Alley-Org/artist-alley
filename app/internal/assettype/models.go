@@ -924,6 +924,22 @@ type UserRole struct {
 	TeamID            pgtype.UUID        `json:"team_id"`
 }
 
+type UserTotp struct {
+	UserRef     int64              `json:"user_ref"`
+	SecretEnc   []byte             `json:"secret_enc"`
+	ConfirmedAt pgtype.Timestamptz `json:"confirmed_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type UserTotpRecoveryCode struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserRef   int64              `json:"user_ref"`
+	CodeHash  []byte             `json:"code_hash"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkflowAudit struct {
 	ID             pgtype.UUID        `json:"id"`
 	ResourceKind   string             `json:"resource_kind"`

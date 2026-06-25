@@ -1543,6 +1543,21 @@ func (s *apiServer) AdminImpersonateUser(ctx context.Context, req openapi.AdminI
 func (s *apiServer) EndImpersonation(ctx context.Context, req openapi.EndImpersonationRequestObject) (openapi.EndImpersonationResponseObject, error) {
 	return s.auth.EndImpersonation(ctx, req)
 }
+func (s *apiServer) GetMyTOTP(ctx context.Context, req openapi.GetMyTOTPRequestObject) (openapi.GetMyTOTPResponseObject, error) {
+	return s.auth.GetMyTOTP(ctx, req)
+}
+func (s *apiServer) EnrollMyTOTP(ctx context.Context, req openapi.EnrollMyTOTPRequestObject) (openapi.EnrollMyTOTPResponseObject, error) {
+	return s.auth.EnrollMyTOTP(ctx, req)
+}
+func (s *apiServer) ConfirmMyTOTP(ctx context.Context, req openapi.ConfirmMyTOTPRequestObject) (openapi.ConfirmMyTOTPResponseObject, error) {
+	return s.auth.ConfirmMyTOTP(ctx, req)
+}
+func (s *apiServer) DisableMyTOTP(ctx context.Context, req openapi.DisableMyTOTPRequestObject) (openapi.DisableMyTOTPResponseObject, error) {
+	return s.auth.DisableMyTOTP(ctx, req)
+}
+func (s *apiServer) RegenerateMyRecoveryCodes(ctx context.Context, req openapi.RegenerateMyRecoveryCodesRequestObject) (openapi.RegenerateMyRecoveryCodesResponseObject, error) {
+	return s.auth.RegenerateMyRecoveryCodes(ctx, req)
+}
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	return s.auth.ListCapabilities(ctx, req)

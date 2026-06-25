@@ -58,6 +58,20 @@ func (q *Queries) AssignedRolesForUser(ctx context.Context, userRef int64) ([]As
 	return items, nil
 }
 
+const confirmUserTOTP = `-- name: ConfirmUserTOTP :exec
+UPDATE user_totp
+   SET confirmed_at = NOW()
+ WHERE user_ref = $1
+   AND confirmed_at IS NULL
+`
+
+// Flips confirmed_at to NOW on the first valid verify. Once set, the
+// login flow refuses password-only authentication for this user.
+func (q *Queries) ConfirmUserTOTP(ctx context.Context, userRef int64) error {
+	_, err := q.db.Exec(ctx, confirmUserTOTP, userRef)
+	return err
+}
+
 const countActiveAdminsIfRowRemoved = `-- name: CountActiveAdminsIfRowRemoved :one
 WITH admin_candidates AS (
     SELECT u.ref
@@ -149,6 +163,18 @@ func (q *Queries) CountSystemAdmins(ctx context.Context) (int64, error) {
 	var value int64
 	err := row.Scan(&value)
 	return value, err
+}
+
+const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
+SELECT COUNT(*) FROM user_totp_recovery_code
+ WHERE user_ref = $1 AND used_at IS NULL
+`
+
+func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context, userRef int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnusedRecoveryCodes, userRef)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createApiToken = `-- name: CreateApiToken :one
@@ -247,6 +273,17 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteRecoveryCodesForUser = `-- name: DeleteRecoveryCodesForUser :exec
+DELETE FROM user_totp_recovery_code WHERE user_ref = $1
+`
+
+// Wipes the prior batch — called by the regenerate path before
+// inserting fresh codes so the user sees exactly N unused codes.
+func (q *Queries) DeleteRecoveryCodesForUser(ctx context.Context, userRef int64) error {
+	_, err := q.db.Exec(ctx, deleteRecoveryCodesForUser, userRef)
+	return err
+}
+
 const deleteUserGrant = `-- name: DeleteUserGrant :execrows
 DELETE FROM user_capability_grants
 WHERE user_ref = $1
@@ -290,6 +327,17 @@ func (q *Queries) DeleteUserRevoke(ctx context.Context, arg DeleteUserRevokePara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteUserTOTP = `-- name: DeleteUserTOTP :exec
+DELETE FROM user_totp WHERE user_ref = $1
+`
+
+// Disable 2FA wholesale. Also cascades the recovery codes via the
+// FK ON DELETE CASCADE — see migration 00018.
+func (q *Queries) DeleteUserTOTP(ctx context.Context, userRef int64) error {
+	_, err := q.db.Exec(ctx, deleteUserTOTP, userRef)
+	return err
 }
 
 const effectiveCapabilitiesForRoleName = `-- name: EffectiveCapabilitiesForRoleName :many
@@ -620,6 +668,28 @@ func (q *Queries) FindRoleByName(ctx context.Context, name string) (Role, error)
 	return i, err
 }
 
+const findUnusedRecoveryCodeByHash = `-- name: FindUnusedRecoveryCodeByHash :one
+SELECT id FROM user_totp_recovery_code
+ WHERE user_ref = $1
+   AND code_hash = $2
+   AND used_at IS NULL
+ LIMIT 1
+`
+
+type FindUnusedRecoveryCodeByHashParams struct {
+	UserRef  int64
+	CodeHash []byte
+}
+
+// Returns the row id when a hash matches an unused recovery code
+// for the user. Caller then marks it used.
+func (q *Queries) FindUnusedRecoveryCodeByHash(ctx context.Context, arg FindUnusedRecoveryCodeByHashParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, findUnusedRecoveryCodeByHash, arg.UserRef, arg.CodeHash)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const findUserByRef = `-- name: FindUserByRef :one
 SELECT ref,
        username,
@@ -749,6 +819,31 @@ func (q *Queries) GetUserPasswordHashByRef(ctx context.Context, ref int64) (GetU
 	return i, err
 }
 
+const getUserTOTP = `-- name: GetUserTOTP :one
+
+SELECT user_ref, secret_enc, confirmed_at, created_at, last_used_at
+FROM user_totp
+WHERE user_ref = $1
+`
+
+// ---------------------------------------------------------------------------
+// Phase 1.19.B — self-service TOTP (RFC 6238 2FA)
+// ---------------------------------------------------------------------------
+// Returns the user's TOTP row (or pgx.ErrNoRows when not enrolled).
+// Caller decrypts secret_enc via atrest before passing to totp.Verify.
+func (q *Queries) GetUserTOTP(ctx context.Context, userRef int64) (UserTotp, error) {
+	row := q.db.QueryRow(ctx, getUserTOTP, userRef)
+	var i UserTotp
+	err := row.Scan(
+		&i.UserRef,
+		&i.SecretEnc,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
 const insertImpersonationSession = `-- name: InsertImpersonationSession :one
 INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent, impersonated_by_user_ref)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -814,6 +909,23 @@ type InsertPasswordHistoryParams struct {
 // reset) so the reuse-prevention check has the data it needs.
 func (q *Queries) InsertPasswordHistory(ctx context.Context, arg InsertPasswordHistoryParams) error {
 	_, err := q.db.Exec(ctx, insertPasswordHistory, arg.UserRef, arg.PasswordHash)
+	return err
+}
+
+const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
+INSERT INTO user_totp_recovery_code (user_ref, code_hash) VALUES ($1, $2)
+`
+
+type InsertRecoveryCodeParams struct {
+	UserRef  int64
+	CodeHash []byte
+}
+
+// One row per backup code. code_hash is sha256 of the normalized
+// plaintext; the plaintext is shown to the user once and never
+// reachable again.
+func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error {
+	_, err := q.db.Exec(ctx, insertRecoveryCode, arg.UserRef, arg.CodeHash)
 	return err
 }
 
@@ -1377,6 +1489,18 @@ func (q *Queries) LoadCapabilityLicenseFeatures(ctx context.Context) ([]LoadCapa
 	return items, nil
 }
 
+const markRecoveryCodeUsed = `-- name: MarkRecoveryCodeUsed :exec
+UPDATE user_totp_recovery_code
+   SET used_at = NOW()
+ WHERE id = $1
+   AND used_at IS NULL
+`
+
+func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markRecoveryCodeUsed, id)
+	return err
+}
+
 const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :execrows
 UPDATE sessions
 SET revoked_at = NOW()
@@ -1681,6 +1805,20 @@ func (q *Queries) TouchUserLastActive(ctx context.Context, ref int64) error {
 	return err
 }
 
+const touchUserTOTP = `-- name: TouchUserTOTP :exec
+UPDATE user_totp
+   SET last_used_at = NOW()
+ WHERE user_ref = $1
+`
+
+// Records last successful TOTP verification — surfaced on the
+// /account/security page so the user sees their authenticator is
+// still in use.
+func (q *Queries) TouchUserTOTP(ctx context.Context, userRef int64) error {
+	_, err := q.db.Exec(ctx, touchUserTOTP, userRef)
+	return err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE "user"
 SET password = $2,
@@ -1700,6 +1838,28 @@ type UpdateUserPasswordParams struct {
 // is the leaf write.
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
 	_, err := q.db.Exec(ctx, updateUserPassword, arg.Ref, arg.Password)
+	return err
+}
+
+const upsertUserTOTP = `-- name: UpsertUserTOTP :exec
+INSERT INTO user_totp (user_ref, secret_enc, confirmed_at, created_at)
+VALUES ($1, $2, NULL, NOW())
+ON CONFLICT (user_ref) DO UPDATE
+   SET secret_enc   = EXCLUDED.secret_enc,
+       confirmed_at = NULL,
+       created_at   = NOW(),
+       last_used_at = NULL
+`
+
+type UpsertUserTOTPParams struct {
+	UserRef   int64
+	SecretEnc []byte
+}
+
+// Used on enroll AND re-enroll. confirmed_at intentionally reset to
+// NULL so a re-enroll re-proves the secret before it gates login.
+func (q *Queries) UpsertUserTOTP(ctx context.Context, arg UpsertUserTOTPParams) error {
+	_, err := q.db.Exec(ctx, upsertUserTOTP, arg.UserRef, arg.SecretEnc)
 	return err
 }
 
