@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mscrnt/artist-alley/app/internal/email"
-	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
 // fakeSMTPRelay is a minimal in-process SMTP-over-plaintext server
@@ -162,10 +161,10 @@ func TestSMTPSender_DeliversPlainNoAuth(t *testing.T) {
 	relay := newFakeSMTPRelay(t)
 	host, port := splitHostPort(t, relay.Addr())
 
-	provider := func(_ context.Context) (sysconfig.SMTP, error) {
-		return sysconfig.SMTP{
+	provider := func(_ context.Context) (email.Config, error) {
+		return email.Config{
 			Host: host, Port: port,
-			Encryption: sysconfig.SMTPEncryptionNone,
+			Encryption: email.EncryptionNone,
 			FromAddr:   "ops@example.com",
 		}, nil
 	}
@@ -207,10 +206,10 @@ func TestSMTPSender_AuthPlainWhenUsernameSet(t *testing.T) {
 	relay := newFakeSMTPRelay(t)
 	host, port := splitHostPort(t, relay.Addr())
 
-	provider := func(_ context.Context) (sysconfig.SMTP, error) {
-		return sysconfig.SMTP{
+	provider := func(_ context.Context) (email.Config, error) {
+		return email.Config{
 			Host: host, Port: port,
-			Encryption: sysconfig.SMTPEncryptionNone,
+			Encryption: email.EncryptionNone,
 			Username:   "alice", Password: "s3cret",
 			FromAddr: "ops@example.com",
 		}, nil
@@ -230,8 +229,8 @@ func TestSMTPSender_AuthPlainWhenUsernameSet(t *testing.T) {
 }
 
 func TestSMTPSender_ErrNotConfigured(t *testing.T) {
-	provider := func(_ context.Context) (sysconfig.SMTP, error) {
-		return sysconfig.SMTP{}, nil
+	provider := func(_ context.Context) (email.Config, error) {
+		return email.Config{}, nil
 	}
 	sender := email.NewSMTPSender(provider)
 	err := sender.Send(context.Background(), email.Message{
@@ -246,10 +245,10 @@ func TestSMTPSender_DefaultsFromAddrFromConfig(t *testing.T) {
 	relay := newFakeSMTPRelay(t)
 	host, port := splitHostPort(t, relay.Addr())
 
-	provider := func(_ context.Context) (sysconfig.SMTP, error) {
-		return sysconfig.SMTP{
+	provider := func(_ context.Context) (email.Config, error) {
+		return email.Config{
 			Host: host, Port: port,
-			Encryption: sysconfig.SMTPEncryptionNone,
+			Encryption: email.EncryptionNone,
 			FromAddr:   "default-from@example.com",
 		}, nil
 	}

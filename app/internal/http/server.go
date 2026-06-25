@@ -218,8 +218,17 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// already enqueues whenever a recipient's prefs include
 	// "email" — without a handler the rows sit pending forever.
 	emailMode := email.PickMode(logger)
-	emailSender := email.BuildSender(emailMode, func(ctx context.Context) (sysconfig.SMTP, error) {
-		return sysCfg.GetSMTP(ctx)
+	emailSender := email.BuildSender(emailMode, func(ctx context.Context) (email.Config, error) {
+		s, err := sysCfg.GetSMTP(ctx)
+		if err != nil {
+			return email.Config{}, err
+		}
+		return email.Config{
+			Host: s.Host, Port: s.Port,
+			Encryption: email.Encryption(string(s.Encryption)),
+			Username:   s.Username, Password: s.Password,
+			FromAddr: s.FromAddr,
+		}, nil
 	}, logger)
 	emailSite := func(ctx context.Context) (email.SiteContext, error) {
 		s, err := sysCfg.GetSite(ctx)
@@ -229,6 +238,16 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		return email.SiteContext{Name: s.Name, URL: s.BaseURL}, nil
 	}
 	jobRegistry.Register(email.NewNotificationJobHandler(pool, emailSender, emailSite, logger))
+
+	// Bind the email seam onto the sysconfig.Handler so its
+	// /admin/system/smtp/test surface can render+send via the
+	// boot-configured Sender. Done up-front (before apiServer
+	// construction) so the handler delegate finds it ready.
+	emailDeps := &sysconfig.EmailDeps{
+		Sender: emailSender,
+		Mode:   emailMode,
+		Site:   emailSite,
+	}
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
@@ -266,6 +285,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// newAPIServer's positional args — same shape as the
 		// password-policy + audit-recorder setters above.
 		impl.auth.SetProviderRegistry(providers)
+		// Bind the email seam onto the sysconfig handler so the
+		// /admin/system/smtp/test endpoint can render + drive the
+		// boot-configured Sender.
+		impl.sysconfigH.SetEmail(emailDeps)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 

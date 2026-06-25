@@ -15,6 +15,12 @@
   let saved = $state(false);
   let error = $state<string | null>(null);
 
+  // Test-send state (Phase 1.19.A-1, commit 4).
+  let testTo = $state('');
+  let testing = $state(false);
+  let testResult = $state<string | null>(null);
+  let testError = $state<string | null>(null);
+
   onMount(() => { void load(); });
 
   async function load() {
@@ -32,6 +38,28 @@
       }
     } finally {
       loading = false;
+    }
+  }
+
+  async function sendTest() {
+    if (testing) return;
+    testing = true;
+    testResult = null;
+    testError = null;
+    try {
+      const body: Record<string, unknown> = {};
+      if (testTo.trim()) body.to = testTo.trim();
+      const r = await api.POST('/admin/system/smtp/test', { body: body as never });
+      if (r.error) {
+        testError = (r.error as { error?: string }).error ?? t('admin.system.smtp.test_failed');
+        return;
+      }
+      const d = r.data as { sent: boolean; mode: string; recipient: string; message?: string };
+      testResult = d.message
+        ? `${d.recipient}: ${d.message}`
+        : `${d.recipient}: ${d.sent ? 'sent' : 'not sent'} (mode=${d.mode})`;
+    } finally {
+      testing = false;
     }
   }
 
@@ -115,4 +143,32 @@
       {saving ? t('common.loading') : t('admin.system.smtp.save')}
     </button>
   </form>
+
+  <section class="mt-8 max-w-xl rounded border border-border bg-bg-soft p-4">
+    <h3 class="text-sm font-semibold">{t('admin.system.smtp.test_title')}</h3>
+    <p class="mt-1 text-xs text-fg-muted">{t('admin.system.smtp.test_help')}</p>
+    <div class="mt-3 flex flex-wrap items-end gap-2">
+      <label class="flex flex-1 flex-col gap-1 text-sm">
+        <span class="text-xs text-fg-muted">{t('admin.system.smtp.test_to')}</span>
+        <input
+          type="email"
+          bind:value={testTo}
+          placeholder={t('admin.system.smtp.test_to_placeholder')}
+          class="rounded border border-border bg-bg px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
+        />
+      </label>
+      <button
+        type="button"
+        onclick={sendTest}
+        disabled={testing}
+        class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
+      >{testing ? t('common.loading') : t('admin.system.smtp.test_send')}</button>
+    </div>
+    {#if testError}
+      <p role="alert" class="mt-3 rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{testError}</p>
+    {/if}
+    {#if testResult}
+      <p class="mt-3 rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">{testResult}</p>
+    {/if}
+  </section>
 {/if}

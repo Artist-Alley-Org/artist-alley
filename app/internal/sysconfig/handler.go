@@ -18,13 +18,19 @@ package sysconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/email"
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
@@ -48,7 +54,27 @@ type Handler struct {
 	// emit is silently skipped. Production attaches the pool-bound
 	// *audit.Recorder via SetAuditRecorder at boot.
 	Audit *audit.Recorder
+
+	// Email holds the boot-time email seam used by the
+	// /admin/system/smtp/test endpoint. nil-safe — when unwired
+	// (test fixtures that don't exercise email), SendSMTPTestEmail
+	// returns a 500 explaining the boot wire is missing.
+	Email *EmailDeps
 }
+
+// EmailDeps bundles the email-related dependencies the handler
+// needs for the test-send surface. Held behind a single struct so
+// the boot wire passes one [Handler.SetEmail] call.
+type EmailDeps struct {
+	Sender email.Sender
+	Mode   email.Mode
+	Site   email.SiteContextProvider
+}
+
+// SetEmail wires the email seam post-construction. Boot calls this
+// after building the Sender so the sysconfig handler can render
+// the admin_test template + drive the configured Sender.
+func (h *Handler) SetEmail(d *EmailDeps) { h.Email = d }
 
 // NewHTTPHandler returns a Handler wired against an existing Store —
 // `NewHandler` is reserved by some packages for the Store factory, so
@@ -199,6 +225,139 @@ func (h *Handler) UpdateSMTPConfig(
 	}
 	return openapi.UpdateSMTPConfig200JSONResponse(smtpToAPI(smtp)), nil
 }
+
+// SendSMTPTestEmail renders the admin_test template + sends it
+// through the boot-configured email.Sender. Synchronous so the
+// operator sees the outcome (sent / not-configured / SMTP error)
+// in one round-trip instead of digging through the job queue.
+func (h *Handler) SendSMTPTestEmail(
+	ctx context.Context,
+	req openapi.SendSMTPTestEmailRequestObject,
+) (openapi.SendSMTPTestEmailResponseObject, error) {
+	id, denied := h.requireCap(ctx, CapConfigWrite)
+	if denied != nil {
+		switch e := denied.(type) {
+		case errUnauthenticated:
+			_ = e
+			return openapi.SendSMTPTestEmail401JSONResponse{
+				UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+			}, nil
+		case errForbidden:
+			return openapi.SendSMTPTestEmail403JSONResponse{
+				ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "missing capability: " + e.Cap},
+			}, nil
+		}
+		return nil, fmt.Errorf("sysconfig: unknown denial type")
+	}
+	if h.Email == nil || h.Email.Sender == nil {
+		return openapi.SendSMTPTestEmail400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "email subsystem not wired"},
+		}, nil
+	}
+
+	// Recipient — explicit override or the caller's own email.
+	to := ""
+	if req.Body != nil && req.Body.To != nil {
+		to = strings.TrimSpace(string(*req.Body.To))
+	}
+	if to == "" {
+		caller, err := h.lookupCallerEmail(ctx, id.UserRef)
+		if err != nil {
+			return nil, fmt.Errorf("sysconfig: lookup caller email: %w", err)
+		}
+		if caller == "" {
+			return openapi.SendSMTPTestEmail400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "no recipient: caller has no email on file; pass `to` to override",
+				},
+			}, nil
+		}
+		to = caller
+	}
+
+	// Build the data map. Site context is best-effort — if the
+	// Store hasn't been written yet the template renders with
+	// empty placeholders and the operator sees the misconfiguration
+	// in the captured/delivered body.
+	site := email.SiteContext{}
+	if h.Email.Site != nil {
+		if sc, err := h.Email.Site(ctx); err == nil {
+			site = sc
+		}
+	}
+	data := map[string]any{
+		"site_name":      site.Name,
+		"site_url":       site.URL,
+		"recipient_name": to,
+		"triggered_by":   triggeredByLabel(id),
+		"triggered_at":   time.Now().UTC().Format(time.RFC3339),
+	}
+	msg, err := email.Render(email.TemplateAdminTest, []string{to}, data)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: render admin_test: %w", err)
+	}
+
+	if err := h.Email.Sender.Send(ctx, msg); err != nil {
+		if errors.Is(err, email.ErrNotConfigured) {
+			return openapi.SendSMTPTestEmail503JSONResponse{Error: "SMTP host is not configured"}, nil
+		}
+		// Surface the underlying error to the operator — this is an
+		// admin-only diagnostic surface, exposing the relay error
+		// message is the whole point.
+		return openapi.SendSMTPTestEmail400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+
+	mode := openapi.SMTPTestResultMode(string(h.Email.Mode))
+	human := senderModeSummary(h.Email.Mode)
+	return openapi.SendSMTPTestEmail200JSONResponse{
+		Sent:      true,
+		Mode:      mode,
+		Recipient: to,
+		Message:   &human,
+	}, nil
+}
+
+func (h *Handler) lookupCallerEmail(ctx context.Context, ref int64) (string, error) {
+	var email *string
+	err := h.Pool.QueryRow(ctx, `SELECT email FROM "user" WHERE ref = $1`, ref).Scan(&email)
+	if err != nil {
+		return "", err
+	}
+	if email == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*email), nil
+}
+
+func triggeredByLabel(id *auth.Identity) string {
+	if id == nil {
+		return "anonymous"
+	}
+	if id.Email != nil && *id.Email != "" {
+		return *id.Email
+	}
+	if id.Username != "" {
+		return "@" + id.Username
+	}
+	return fmt.Sprintf("user_ref=%d", id.UserRef)
+}
+
+func senderModeSummary(m email.Mode) string {
+	switch m {
+	case email.ModeCapture:
+		return "captured locally; not delivered (AA_EMAIL_MODE=capture)"
+	case email.ModeDisabled:
+		return "logged + dropped (AA_EMAIL_MODE=disabled)"
+	default:
+		return "handed to SMTP relay"
+	}
+}
+
+// Force-use of openapi_types alias to satisfy the linter when the
+// generated types reuse it. Defensive — no actual call needed.
+var _ openapi_types.Email
 
 // ---------------------------------------------------------------------------
 // Auth

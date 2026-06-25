@@ -9,13 +9,36 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
-
-	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
+
+// Encryption is the SMTP transport mode. Stable strings matching
+// sysconfig's enum on the wire so the boot-time adapter is a
+// no-op type conversion.
+type Encryption string
+
+const (
+	EncryptionNone     Encryption = "none"
+	EncryptionStartTLS Encryption = "starttls"
+	EncryptionTLS      Encryption = "tls"
+)
+
+// Config is the minimal SMTP config the sender needs. Defined
+// here (rather than referencing sysconfig.SMTP) so the email
+// package has no dependency edge into sysconfig — that would
+// invert the natural direction (sysconfig wires the email seam
+// for its admin test-send endpoint).
+type Config struct {
+	Host       string
+	Port       int
+	Encryption Encryption
+	Username   string
+	Password   string
+	FromAddr   string
+}
 
 // ConfigProvider returns the current SMTP config. SMTPSender calls
 // this once per send so admin changes propagate without restart.
-type ConfigProvider func(ctx context.Context) (sysconfig.SMTP, error)
+type ConfigProvider func(ctx context.Context) (Config, error)
 
 // SMTPSender is the production [Sender] over the stdlib net/smtp +
 // crypto/tls. Stateless beyond the provider — one instance per
@@ -77,7 +100,7 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 
 	var client *smtp.Client
 	switch cfg.Encryption {
-	case sysconfig.SMTPEncryptionTLS:
+	case EncryptionTLS:
 		conn, dErr := tls.DialWithDialer(d, "tcp", addr, &tls.Config{ServerName: cfg.Host})
 		if dErr != nil {
 			return fmt.Errorf("email.smtp: dial tls %s: %w", addr, dErr)
@@ -97,7 +120,7 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 			conn.Close()
 			return fmt.Errorf("email.smtp: smtp handshake: %w", err)
 		}
-		if cfg.Encryption == sysconfig.SMTPEncryptionStartTLS {
+		if cfg.Encryption == EncryptionStartTLS {
 			if err := client.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
 				client.Close()
 				return fmt.Errorf("email.smtp: starttls: %w", err)

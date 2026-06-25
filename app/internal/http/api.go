@@ -2028,6 +2028,9 @@ func (s *apiServer) GetSMTPConfig(ctx context.Context, req openapi.GetSMTPConfig
 func (s *apiServer) UpdateSMTPConfig(ctx context.Context, req openapi.UpdateSMTPConfigRequestObject) (openapi.UpdateSMTPConfigResponseObject, error) {
 	return s.sysconfigH.UpdateSMTPConfig(ctx, req)
 }
+func (s *apiServer) SendSMTPTestEmail(ctx context.Context, req openapi.SendSMTPTestEmailRequestObject) (openapi.SendSMTPTestEmailResponseObject, error) {
+	return s.sysconfigH.SendSMTPTestEmail(ctx, req)
+}
 func (s *apiServer) GetAuthConfig(ctx context.Context, req openapi.GetAuthConfigRequestObject) (openapi.GetAuthConfigResponseObject, error) {
 	return s.sysconfigH.GetAuthConfig(ctx, req)
 }

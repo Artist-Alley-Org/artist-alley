@@ -450,6 +450,11 @@ func (*PanicShim) UpdateSMTPConfig(context.Context, openapi.UpdateSMTPConfigRequ
 	panic("PanicShim: UpdateSMTPConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// SendSMTPTestEmail panics by default; test shims override.
+func (*PanicShim) SendSMTPTestEmail(context.Context, openapi.SendSMTPTestEmailRequestObject) (openapi.SendSMTPTestEmailResponseObject, error) {
+	panic("PanicShim: SendSMTPTestEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAdminUserGates panics by default; test shims override.
 func (*PanicShim) GetAdminUserGates(context.Context, openapi.GetAdminUserGatesRequestObject) (openapi.GetAdminUserGatesResponseObject, error) {
 	panic("PanicShim: GetAdminUserGates called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

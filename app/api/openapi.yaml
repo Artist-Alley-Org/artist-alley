@@ -6863,6 +6863,50 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/system/smtp/test:
+    post:
+      operationId: sendSMTPTestEmail
+      summary: Send a test email through the configured SMTP relay (Phase 1.19.A-1)
+      description: |
+        Renders the admin_test template + sends it via the currently
+        configured Sender (SMTP / capture / disabled per the boot
+        mode). The recipient defaults to the calling admin's own
+        email; an explicit `to` overrides for diagnosing relay-side
+        routing issues.
+
+        Synchronous — the response carries the outcome (sent +
+        delivery mode) so the operator sees the failure immediately
+        instead of digging in the job queue.
+
+        Gated on `system.config.write` (same gate as the SMTP
+        config-write surface).
+      tags: [system]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SMTPTestRequest" }
+      responses:
+        "200":
+          description: Test email accepted by the configured Sender.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SMTPTestResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: SMTP not configured (relay host empty).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /admin/system/auth:
     get:
       operationId: getAuthConfig
@@ -8035,6 +8079,36 @@ components:
         from_address:
           type: string
           example: "ArtSite <noreply@example.com>"
+    SMTPTestRequest:
+      type: object
+      properties:
+        to:
+          type: string
+          format: email
+          description: |
+            Recipient override. When omitted, the server uses the
+            calling admin's email on file. Useful for diagnosing
+            relay-side routing (e.g. send to an external Gmail
+            account to verify deliverability).
+
+    SMTPTestResult:
+      type: object
+      required: [sent, mode, recipient]
+      properties:
+        sent:
+          type: boolean
+          description: True when the Sender accepted the message.
+        mode:
+          type: string
+          enum: [smtp, capture, disabled]
+          description: The boot-time Sender mode (informational).
+        recipient:
+          type: string
+          description: The email the test was sent to.
+        message:
+          type: string
+          description: Human-readable summary (e.g. "captured locally; not delivered").
+
     AuthConfig:
       type: object
       description: |
