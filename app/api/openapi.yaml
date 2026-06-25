@@ -8140,6 +8140,16 @@ components:
             a bad password, so a probing client can't enumerate
             which enterprise providers are active.
           example: password
+        totp_code:
+          type: string
+          description: |
+            Phase 1.19.B — TOTP code (6 digits) or recovery code
+            (10 chars + optional hyphen) for users with 2FA
+            confirmed. When 2FA is enabled and this field is
+            missing or wrong the server returns 401 with
+            `error: "2fa_required"` (no totp_code on the request)
+            or `error: "invalid_2fa_code"` (wrong code) so the
+            frontend can re-prompt.
     IdentityProviderSummary:
       type: object
       description: |

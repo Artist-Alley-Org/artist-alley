@@ -287,3 +287,93 @@ func (h *Handler) verifyCurrentPassword(ctx context.Context, userRef int64, cand
 // Force-use of pgtype to suppress linter if no other reference
 // remains after future refactors.
 var _ = pgtype.Timestamptz{}
+
+// ---------------------------------------------------------------------------
+// Login-flow gate (Phase 1.19.B commit 3)
+// ---------------------------------------------------------------------------
+
+// TOTPGateResult describes the outcome of the second-factor
+// check that runs after password verification in the login
+// handlers.
+type TOTPGateResult int
+
+const (
+	// TOTPGateNotEnrolled — user has no TOTP enrollment. Login
+	// proceeds without a second factor.
+	TOTPGateNotEnrolled TOTPGateResult = iota
+
+	// TOTPGateOK — user has a confirmed enrollment AND submitted
+	// a valid TOTP code (or single-use recovery code). Login
+	// continues to session issuance.
+	TOTPGateOK
+
+	// TOTPGateRequired — user has a confirmed enrollment but the
+	// request carried no totp_code. Login handler returns 401
+	// with error="2fa_required" so the frontend re-prompts.
+	TOTPGateRequired
+
+	// TOTPGateInvalid — user submitted a code that didn't match
+	// TOTP (±1 window) AND didn't match any unused recovery
+	// code. Login handler returns 401 with error="invalid_2fa_code".
+	TOTPGateInvalid
+)
+
+// CheckTOTPForLogin runs the second-factor decision for one
+// login attempt. Called by both registry + inline-password
+// paths after the password is verified + the account-state
+// gate is past.
+//
+// The candidate is BOTH the 6-digit TOTP path AND the recovery-
+// code path: we try TOTP first (overwhelming common case), then
+// fall back to recovery on miss. Recovery hits mark the code
+// used in the same call.
+func (h *Handler) CheckTOTPForLogin(ctx context.Context, userRef int64, candidate string) TOTPGateResult {
+	q := New(h.Pool)
+	row, err := q.GetUserTOTP(ctx, userRef)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TOTPGateNotEnrolled
+	}
+	if err != nil {
+		// Soft-fail closed: rather than block every login on a
+		// transient DB error we treat it as "not enrolled" so the
+		// non-2FA users keep working. The audit recorder catches
+		// it; alerting picks up the spike.
+		if h.Logger != nil {
+			h.Logger.Warn("auth.totp.gate.load_error", "user_ref", userRef, "err", err.Error())
+		}
+		return TOTPGateNotEnrolled
+	}
+	if !row.ConfirmedAt.Valid {
+		// Enrollment in progress but never confirmed — don't
+		// gate login on it; the user can't authenticate against
+		// a secret they haven't proven.
+		return TOTPGateNotEnrolled
+	}
+	if candidate == "" {
+		return TOTPGateRequired
+	}
+	secret, err := atrest.Decrypt(row.SecretEnc)
+	if err != nil {
+		// Same soft-fail rationale.
+		if h.Logger != nil {
+			h.Logger.Warn("auth.totp.gate.decrypt_error", "user_ref", userRef, "err", err.Error())
+		}
+		return TOTPGateRequired
+	}
+	// TOTP fast path.
+	if totp.Verify(secret, candidate, time.Now()) {
+		_ = q.TouchUserTOTP(ctx, userRef)
+		return TOTPGateOK
+	}
+	// Recovery-code fallback. Normalised hash lookup; on hit,
+	// mark the row used so it's single-shot.
+	id, err := q.FindUnusedRecoveryCodeByHash(ctx, FindUnusedRecoveryCodeByHashParams{
+		UserRef:  userRef,
+		CodeHash: totp.HashRecoveryCode(candidate),
+	})
+	if err == nil && id.Valid {
+		_ = q.MarkRecoveryCodeUsed(ctx, id)
+		return TOTPGateOK
+	}
+	return TOTPGateInvalid
+}

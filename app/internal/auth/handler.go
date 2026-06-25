@@ -232,18 +232,27 @@ func (h *Handler) Login(
 		return loginRateLimitedResponse{}, nil
 	}
 
+	// totpCandidate is the optional second-factor input the
+	// caller can supply on the first request. Empty when the
+	// user is logging in for the first time + the frontend
+	// hasn't seen a 2fa_required response yet.
+	totpCandidate := ""
+	if req.Body.TotpCode != nil {
+		totpCandidate = strings.TrimSpace(*req.Body.TotpCode)
+	}
+
 	// Dispatch to the identity-provider registry when wired. The
 	// registry handles the credential check; the handler stays in
 	// charge of session minting, account-state gating, and audit.
 	if h.Providers != nil {
-		return h.loginViaRegistry(ctx, providerName, username, password, httpReq, ipKey, userKey)
+		return h.loginViaRegistry(ctx, providerName, username, password, totpCandidate, httpReq, ipKey, userKey)
 	}
 
 	// Legacy path: no registry attached (tests). Inline password flow,
 	// equivalent to the pre-registry behaviour. New code MUST attach a
 	// registry; this branch is preserved for the auth package's own
 	// tests which construct Handler directly.
-	return h.loginInlinePassword(ctx, username, password, httpReq, ipKey, userKey)
+	return h.loginInlinePassword(ctx, username, password, totpCandidate, httpReq, ipKey, userKey)
 }
 
 // loginViaRegistry runs the registry-dispatched login path. Provider
@@ -253,7 +262,7 @@ func (h *Handler) Login(
 // which enterprise providers are configured.
 func (h *Handler) loginViaRegistry(
 	ctx context.Context,
-	providerName, username, password string,
+	providerName, username, password, totpCandidate string,
 	httpReq *http.Request,
 	ipKey, userKey string,
 ) (openapi.LoginResponseObject, error) {
@@ -323,6 +332,20 @@ func (h *Handler) loginViaRegistry(
 		return resp, nil
 	}
 
+	// Phase 1.19.B — second-factor gate.
+	switch h.CheckTOTPForLogin(ctx, user.Ref, totpCandidate) {
+	case TOTPGateRequired:
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "2fa_required")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "2fa_required"},
+		}, nil
+	case TOTPGateInvalid:
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "invalid_2fa_code")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid_2fa_code"},
+		}, nil
+	}
+
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
 	if err != nil {
 		return nil, err
@@ -352,7 +375,7 @@ func (h *Handler) loginViaRegistry(
 // normal operation.
 func (h *Handler) loginInlinePassword(
 	ctx context.Context,
-	username, password string,
+	username, password, totpCandidate string,
 	httpReq *http.Request,
 	ipKey, userKey string,
 ) (openapi.LoginResponseObject, error) {
@@ -389,6 +412,19 @@ func (h *Handler) loginInlinePassword(
 		return nil, err
 	} else if resp != nil {
 		return resp, nil
+	}
+	// Phase 1.19.B — second-factor gate (same shape as registry path).
+	switch h.CheckTOTPForLogin(ctx, user.Ref, totpCandidate) {
+	case TOTPGateRequired:
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "2fa_required")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "2fa_required"},
+		}, nil
+	case TOTPGateInvalid:
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "invalid_2fa_code")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid_2fa_code"},
+		}, nil
 	}
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
 	if err != nil {
