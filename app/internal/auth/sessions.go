@@ -61,6 +61,11 @@ type SessionInfo struct {
 	ExpiresAt  *time.Time
 	IP         string
 	UserAgent  string
+
+	// ImpersonatedBy carries the admin user_ref that issued
+	// this session via /admin/users/{ref}/impersonate. nil =
+	// normal login session. Phase 1.19.A-2.
+	ImpersonatedBy *int64
 }
 
 // Issue creates a new session for userRef and returns the plaintext
@@ -145,8 +150,63 @@ func (m *SessionManager) Lookup(ctx context.Context, plaintext string) (*Session
 	if row.UserAgent != nil {
 		info.UserAgent = *row.UserAgent
 	}
+	if row.ImpersonatedByUserRef != nil {
+		v := *row.ImpersonatedByUserRef
+		info.ImpersonatedBy = &v
+	}
 	return info, nil
 }
+
+// IssueImpersonation mints a session bound to targetRef but
+// attributed to adminRef via sessions.impersonated_by_user_ref.
+// Caller picks the expiry; ImpersonationDefaultLifetime is the
+// sensible default (30 min). Returns the plaintext cookie value.
+func (m *SessionManager) IssueImpersonation(ctx context.Context, adminRef, targetRef int64, lifetime time.Duration, r *http.Request) (token string, info SessionInfo, err error) {
+	token, err = NewSessionToken()
+	if err != nil {
+		return "", SessionInfo{}, fmt.Errorf("auth: mint impersonation token: %w", err)
+	}
+	hash := hashCookieValue(token)
+
+	if lifetime <= 0 {
+		lifetime = ImpersonationDefaultLifetime
+	}
+	expires := pgtype.Timestamptz{Time: time.Now().Add(lifetime), Valid: true}
+	admin := adminRef
+	q := New(m.Pool)
+	row, err := q.InsertImpersonationSession(ctx, InsertImpersonationSessionParams{
+		UserRef:               targetRef,
+		TokenHash:             hash,
+		ExpiresAt:             expires,
+		Ip:                    addrFromRequest(r),
+		UserAgent:             userAgentPtr(r),
+		ImpersonatedByUserRef: &admin,
+	})
+	if err != nil {
+		return "", SessionInfo{}, fmt.Errorf("auth: insert impersonation session: %w", err)
+	}
+	out := SessionInfo{
+		ID:        uuid.UUID(row.ID.Bytes),
+		UserRef:   row.UserRef,
+		CreatedAt: row.CreatedAt.Time,
+		LastUsedAt: row.LastUsedAt.Time,
+	}
+	if row.ExpiresAt.Valid {
+		t := row.ExpiresAt.Time
+		out.ExpiresAt = &t
+	}
+	if row.ImpersonatedByUserRef != nil {
+		v := *row.ImpersonatedByUserRef
+		out.ImpersonatedBy = &v
+	}
+	return token, out, nil
+}
+
+// ImpersonationDefaultLifetime caps a fresh impersonation session.
+// 30 minutes is short enough that an abandoned tab can't sit logged
+// in as another user overnight, long enough for a real support
+// session (read a bug, click around, end).
+const ImpersonationDefaultLifetime = 30 * time.Minute
 
 // Touch bumps last_used_at on every authenticated request. Cheap, and
 // safe to call best-effort (errors are swallowed by the caller).

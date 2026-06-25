@@ -8600,6 +8600,22 @@ components:
           description: |
             User's theme pref. Empty string = follow system. Same
             "join on /auth/me" rationale as `language`.
+        impersonated_by:
+          type: object
+          nullable: true
+          description: |
+            Non-null when the session was minted via
+            POST /admin/users/{ref}/impersonate (Phase 1.19.A-2).
+            Carries the acting admin's ref + username so the
+            persistent "you are acting as @target" banner can
+            render without a separate round-trip.
+          required: [ref, username]
+          properties:
+            ref:
+              type: integer
+              format: int64
+            username:
+              type: string
     ApiTokenSummary:
       type: object
       required: [id, name, created_at, scopes]

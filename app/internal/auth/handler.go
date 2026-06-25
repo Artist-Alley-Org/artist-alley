@@ -533,6 +533,25 @@ func (h *Handler) GetCurrentUser(
 	}
 	cu := identityToCurrentUser(id)
 
+	// If this session was minted via /admin/users/{ref}/impersonate,
+	// hydrate the impersonator's ref + username so the frontend
+	// can render its "you are acting as @target" banner without
+	// an extra round-trip.
+	if id.ImpersonatedBy != nil {
+		var adminUsername *string
+		if err := h.Pool.QueryRow(ctx,
+			`SELECT username FROM "user" WHERE ref = $1`, *id.ImpersonatedBy,
+		).Scan(&adminUsername); err == nil && adminUsername != nil {
+			cu.ImpersonatedBy = &struct {
+				Ref      int64  `json:"ref"`
+				Username string `json:"username"`
+			}{
+				Ref:      *id.ImpersonatedBy,
+				Username: *adminUsername,
+			}
+		}
+	}
+
 	// Pull language + theme from the user's profile so the frontend
 	// can hydrate the language store + theme on the first paint
 	// without a separate round-trip. One small SELECT; the row is

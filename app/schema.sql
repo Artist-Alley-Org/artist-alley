@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 1IJUgRqBJbvKt5eNJOjug1qmq4a7ABQqOsiFHqezNyOJN1m7A2UloJslFAYoJWf
+\restrict Wbf4X9fsQs7J7YAJRnHjKos7hb6g31DRl1jA01THuYYLwsQdTVrdqWtsTumIrbr
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -1843,7 +1843,8 @@ CREATE TABLE public.sessions (
     revoked_at timestamp with time zone,
     ip inet,
     user_agent text,
-    origin_server_id uuid
+    origin_server_id uuid,
+    impersonated_by_user_ref bigint
 );
 
 
@@ -3563,6 +3564,13 @@ CREATE INDEX idx_asset_tag_asset_source ON public.asset_tag USING btree (asset_i
 
 
 --
+-- Name: idx_assets_owner_hash_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_assets_owner_hash_unique ON public.assets USING btree (owner_user_ref, file_hash) WHERE ((file_hash IS NOT NULL) AND (deleted_at IS NULL));
+
+
+--
 -- Name: idx_assets_sensitivity_restricted; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3693,6 +3701,13 @@ CREATE INDEX idx_resource_request_by_requester ON public.resource_request USING 
 --
 
 CREATE INDEX idx_resource_request_pending_oldest_first ON public.resource_request USING btree (requested_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: idx_sessions_impersonated_by_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sessions_impersonated_by_active ON public.sessions USING btree (impersonated_by_user_ref, created_at DESC) WHERE ((impersonated_by_user_ref IS NOT NULL) AND (revoked_at IS NULL));
 
 
 --
@@ -4722,6 +4737,14 @@ ALTER TABLE ONLY public.roles
 
 
 --
+-- Name: sessions sessions_impersonated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_impersonated_by_user_ref_fkey FOREIGN KEY (impersonated_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
 -- Name: storage_pins storage_pins_object_hash_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4877,5 +4900,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 1IJUgRqBJbvKt5eNJOjug1qmq4a7ABQqOsiFHqezNyOJN1m7A2UloJslFAYoJWf
+\unrestrict Wbf4X9fsQs7J7YAJRnHjKos7hb6g31DRl1jA01THuYYLwsQdTVrdqWtsTumIrbr
 

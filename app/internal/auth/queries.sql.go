@@ -557,7 +557,8 @@ SELECT s.id,
        s.last_used_at,
        s.expires_at,
        s.ip,
-       s.user_agent
+       s.user_agent,
+       s.impersonated_by_user_ref
 FROM sessions s
 WHERE s.token_hash = $1
   AND s.revoked_at IS NULL
@@ -566,13 +567,14 @@ LIMIT 1
 `
 
 type FindActiveSessionRow struct {
-	ID         pgtype.UUID
-	UserRef    int64
-	CreatedAt  pgtype.Timestamptz
-	LastUsedAt pgtype.Timestamptz
-	ExpiresAt  pgtype.Timestamptz
-	Ip         *netip.Addr
-	UserAgent  *string
+	ID                    pgtype.UUID
+	UserRef               int64
+	CreatedAt             pgtype.Timestamptz
+	LastUsedAt            pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
+	Ip                    *netip.Addr
+	UserAgent             *string
+	ImpersonatedByUserRef *int64
 }
 
 // Resolves an incoming cookie. Only returns rows that haven't been revoked
@@ -589,6 +591,7 @@ func (q *Queries) FindActiveSession(ctx context.Context, tokenHash []byte) (Find
 		&i.ExpiresAt,
 		&i.Ip,
 		&i.UserAgent,
+		&i.ImpersonatedByUserRef,
 	)
 	return i, err
 }
@@ -743,6 +746,56 @@ func (q *Queries) GetUserPasswordHashByRef(ctx context.Context, ref int64) (GetU
 	row := q.db.QueryRow(ctx, getUserPasswordHashByRef, ref)
 	var i GetUserPasswordHashByRefRow
 	err := row.Scan(&i.UserRef, &i.Username, &i.Password)
+	return i, err
+}
+
+const insertImpersonationSession = `-- name: InsertImpersonationSession :one
+INSERT INTO sessions (user_ref, token_hash, expires_at, ip, user_agent, impersonated_by_user_ref)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_ref, created_at, last_used_at, expires_at, impersonated_by_user_ref
+`
+
+type InsertImpersonationSessionParams struct {
+	UserRef               int64
+	TokenHash             []byte
+	ExpiresAt             pgtype.Timestamptz
+	Ip                    *netip.Addr
+	UserAgent             *string
+	ImpersonatedByUserRef *int64
+}
+
+type InsertImpersonationSessionRow struct {
+	ID                    pgtype.UUID
+	UserRef               int64
+	CreatedAt             pgtype.Timestamptz
+	LastUsedAt            pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
+	ImpersonatedByUserRef *int64
+}
+
+// Phase 1.19.A-2. Issues a session bound to the target user but
+// attributed to the calling admin via impersonated_by_user_ref.
+// Caller passes a shorter expiry (default 30 min) so abandoned
+// impersonation sessions can't sit forever — distinct from the
+// normal login TTL.
+func (q *Queries) InsertImpersonationSession(ctx context.Context, arg InsertImpersonationSessionParams) (InsertImpersonationSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertImpersonationSession,
+		arg.UserRef,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.Ip,
+		arg.UserAgent,
+		arg.ImpersonatedByUserRef,
+	)
+	var i InsertImpersonationSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserRef,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.ImpersonatedByUserRef,
+	)
 	return i, err
 }
 
