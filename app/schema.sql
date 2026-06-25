@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Wbf4X9fsQs7J7YAJRnHjKos7hb6g31DRl1jA01THuYYLwsQdTVrdqWtsTumIrbr
+\restrict dJiCxW5glRm4oyxhtM3lPVmFGBcewqn9ahnXuYiC3nQeRiOVAbJU4AEgMB6L1k9
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -2117,6 +2117,32 @@ CREATE TABLE public.user_roles (
 
 
 --
+-- Name: user_totp; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_totp (
+    user_ref bigint NOT NULL,
+    secret_enc bytea NOT NULL,
+    confirmed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone
+);
+
+
+--
+-- Name: user_totp_recovery_code; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_totp_recovery_code (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_ref bigint NOT NULL,
+    code_hash bytea NOT NULL,
+    used_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: workflow_audit; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2835,6 +2861,30 @@ ALTER TABLE ONLY public.user_profiles
 
 ALTER TABLE ONLY public.user_roles
     ADD CONSTRAINT user_roles_unique UNIQUE NULLS NOT DISTINCT (user_ref, role_id, team_id);
+
+
+--
+-- Name: user_totp user_totp_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_totp
+    ADD CONSTRAINT user_totp_pkey PRIMARY KEY (user_ref);
+
+
+--
+-- Name: user_totp_recovery_code user_totp_recovery_code_code_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_totp_recovery_code
+    ADD CONSTRAINT user_totp_recovery_code_code_hash_key UNIQUE (code_hash);
+
+
+--
+-- Name: user_totp_recovery_code user_totp_recovery_code_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_totp_recovery_code
+    ADD CONSTRAINT user_totp_recovery_code_pkey PRIMARY KEY (id);
 
 
 --
@@ -3743,6 +3793,20 @@ CREATE INDEX idx_user_capability_revokes_expires_at ON public.user_capability_re
 --
 
 CREATE INDEX idx_user_follows_followee ON public.user_follows USING btree (followee_user_ref, created_at DESC);
+
+
+--
+-- Name: idx_user_totp_confirmed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_totp_confirmed ON public.user_totp USING btree (user_ref) WHERE (confirmed_at IS NOT NULL);
+
+
+--
+-- Name: idx_user_totp_recovery_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_totp_recovery_active ON public.user_totp_recovery_code USING btree (user_ref) WHERE (used_at IS NULL);
 
 
 --
@@ -4857,6 +4921,22 @@ ALTER TABLE ONLY public.user_roles
 
 
 --
+-- Name: user_totp_recovery_code user_totp_recovery_code_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_totp_recovery_code
+    ADD CONSTRAINT user_totp_recovery_code_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
+-- Name: user_totp user_totp_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_totp
+    ADD CONSTRAINT user_totp_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_audit workflow_audit_from_state_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4900,5 +4980,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Wbf4X9fsQs7J7YAJRnHjKos7hb6g31DRl1jA01THuYYLwsQdTVrdqWtsTumIrbr
+\unrestrict dJiCxW5glRm4oyxhtM3lPVmFGBcewqn9ahnXuYiC3nQeRiOVAbJU4AEgMB6L1k9
 
