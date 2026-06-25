@@ -24,6 +24,12 @@ export interface AuthUser {
   /** User's persisted UI prefs (joined into the response by the API). */
   language?: string | null;
   theme?: 'light' | 'dark' | '' | null;
+  /**
+   * Non-null when the session was minted via
+   * POST /admin/users/{ref}/impersonate. Drives the persistent
+   * "you are acting as @target" banner. Phase 1.19.A-2.
+   */
+  impersonatedBy?: { ref: number; username: string } | null;
 }
 
 // Capability the backend wildcards over all other capability checks.
@@ -127,6 +133,7 @@ class AuthState {
 export const auth = new AuthState();
 
 function mapUser(u: Record<string, unknown>): AuthUser {
+  const ib = u.impersonated_by as { ref?: number; username?: string } | null | undefined;
   return {
     ref: Number(u.ref),
     username: String(u.username),
@@ -136,6 +143,9 @@ function mapUser(u: Record<string, unknown>): AuthUser {
     authMethod: u.auth_method as string | undefined,
     language: (u.language ?? null) as string | null,
     theme: (u.theme ?? null) as 'light' | 'dark' | '' | null,
+    impersonatedBy: ib && ib.ref != null && ib.username != null
+      ? { ref: ib.ref, username: ib.username }
+      : null,
   };
 }
 

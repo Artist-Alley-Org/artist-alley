@@ -3,8 +3,10 @@
   // status (Phase 1.17.B).
 
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
+  import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import Avatar from '$components/Avatar.svelte';
   import {
@@ -176,6 +178,35 @@
     } catch {
       // clipboard write blocked (insecure context, etc.) — leave the
       // password visible so the admin can copy it manually.
+    }
+  }
+
+  // Impersonation (Phase 1.19.A-2).
+  let impReason = $state('');
+  let impStarting = $state(false);
+  let impError = $state<string | null>(null);
+
+  async function startImpersonation() {
+    if (impStarting) return;
+    if (!confirm(t('admin.user_detail.impersonate_confirm', { username: user?.username ?? '' }))) return;
+    impStarting = true;
+    impError = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/impersonate', {
+        params: { path: { ref } },
+        body: { reason: impReason || undefined },
+      });
+      if (r.error || !r.data) {
+        impError = (r.error as { error?: string } | undefined)?.error ?? t('admin.user_detail.impersonate_failed');
+        return;
+      }
+      // Cookie has been rotated server-side. Refresh auth state +
+      // navigate to the target's view (anywhere they have
+      // permission to land — home is the safe default).
+      await auth.refresh();
+      await goto('/');
+    } finally {
+      impStarting = false;
     }
   }
 
@@ -464,6 +495,35 @@
             {resetResult.copied ? t('admin.user_detail.reset_copied') : t('admin.user_detail.reset_copy')}
           </button>
         </div>
+      </div>
+    {/if}
+
+    {#if auth.can('auth.impersonate') && user && user.ref !== auth.user?.ref}
+      <div class="mt-4 border-t border-border pt-3">
+        <h4 class="text-sm font-medium text-fg">{t('admin.user_detail.impersonate_title')}</h4>
+        <p class="mt-1 text-xs text-fg-muted">{t('admin.user_detail.impersonate_help')}</p>
+        <label class="mt-2 block text-xs text-fg-muted">
+          {t('admin.user_detail.impersonate_reason_label')}
+          <input
+            type="text"
+            bind:value={impReason}
+            maxlength="500"
+            placeholder={t('admin.user_detail.impersonate_reason_placeholder')}
+            class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-sm focus:border-accent focus:outline-none"
+          />
+        </label>
+        <button
+          type="button"
+          onclick={startImpersonation}
+          disabled={impStarting}
+          data-testid="admin-user-impersonate"
+          class="mt-2 rounded border border-warning bg-warning/10 px-3 py-1 text-xs font-medium text-warning hover:bg-warning/20 disabled:opacity-50"
+        >
+          {impStarting ? t('common.loading') : t('admin.user_detail.impersonate_button')}
+        </button>
+        {#if impError}
+          <p role="alert" class="mt-2 rounded border border-danger/40 bg-danger-container px-2 py-1 text-xs text-danger">{impError}</p>
+        {/if}
       </div>
     {/if}
   </section>

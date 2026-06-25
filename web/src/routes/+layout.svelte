@@ -14,6 +14,7 @@
   import UploadDropZone from '$components/upload/UploadDropZone.svelte';
   import UserMenu from '$components/UserMenu.svelte';
   import AdminMenu from '$components/AdminMenu.svelte';
+  import ImpersonationBanner from '$components/ImpersonationBanner.svelte';
   import MessagesButton from '$components/MessagesButton.svelte';
   import NotificationsButton from '$components/NotificationsButton.svelte';
   import ExploreMenu from '$components/ExploreMenu.svelte';
@@ -97,6 +98,10 @@
 
 <div class="flex h-screen flex-col overflow-hidden bg-surface text-fg">
   {#if showChrome}
+    <!-- Persistent impersonation banner — only renders when the
+         active session was minted via /admin/users/{ref}/impersonate.
+         Above the header so it stays visible across navigation. -->
+    <ImpersonationBanner />
     <!-- Header anchors at the top of the fixed-height shell. <main>
          is the scroll context for normal pages; admin overrides main
          with its own h-full / overflow-hidden flex container.
