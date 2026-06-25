@@ -70,6 +70,10 @@ func siteConfigUpdateDenial(err error401or403) openapi.UpdateSiteConfigResponseO
 // SMTP
 // ---------------------------------------------------------------------------
 
+// smtpToAPI is the GET-response converter — NEVER echoes the
+// password back. `password_set` reports whether one is on file so
+// the admin UI can render a "current secret on file" badge plus a
+// "rotate" affordance.
 func smtpToAPI(v SMTP) openapi.SMTPConfig {
 	out := openapi.SMTPConfig{
 		Host:        v.Host,
@@ -81,24 +85,27 @@ func smtpToAPI(v SMTP) openapi.SMTPConfig {
 		u := v.Username
 		out.Username = &u
 	}
-	if v.Password != "" {
-		p := v.Password
-		out.Password = &p
-	}
+	set := v.Password != ""
+	out.PasswordSet = &set
 	return out
 }
 
-func apiToSMTP(v openapi.SMTPConfig) (SMTP, error) {
+// apiToSMTP is the PATCH-input converter. The existing in-store
+// password is merged in when the caller omits / sends empty — this
+// is the standard write-only-secret pattern, so admins editing
+// "host name" don't blank the password by accident.
+func apiToSMTP(v openapi.SMTPConfig, current SMTP) (SMTP, error) {
 	out := SMTP{
 		Host:       v.Host,
 		Port:       v.Port,
 		Encryption: SMTPEncryption(v.Encryption),
 		FromAddr:   v.FromAddress,
+		Password:   current.Password,
 	}
 	if v.Username != nil {
 		out.Username = *v.Username
 	}
-	if v.Password != nil {
+	if v.Password != nil && *v.Password != "" {
 		out.Password = *v.Password
 	}
 	return out, nil

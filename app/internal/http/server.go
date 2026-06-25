@@ -15,11 +15,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/audiobook"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -95,7 +97,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	sessions := auth.NewSessionManager(pool)
 	limiter := auth.NewLoginLimiter()
 	auditRec := audit.NewRecorder(pool, logger)
-	sysCfg := sysconfig.NewStore(pool)
+	sysCfg := sysconfig.NewStore(pool).WithEncrypter(atrest.PackageEncrypter{})
 
 	// License state — verifies the .lic file at cfg.LicensePath (if
 	// any), caches the resulting Status, and exposes a Source
@@ -210,6 +212,43 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// deferred to 1.18.B-3-b.
 	jobRegistry.Register(subtitles.NewBurnHandler(pool, storageSvc, sysCfg, logger))
 
+	// Email substrate (Phase 1.19.A-1). Pick the Sender mode from
+	// AA_EMAIL_MODE (smtp|capture|disabled; default smtp). The
+	// notification.email job is what the notifications writer
+	// already enqueues whenever a recipient's prefs include
+	// "email" — without a handler the rows sit pending forever.
+	emailMode := email.PickMode(logger)
+	emailSender := email.BuildSender(emailMode, func(ctx context.Context) (email.Config, error) {
+		s, err := sysCfg.GetSMTP(ctx)
+		if err != nil {
+			return email.Config{}, err
+		}
+		return email.Config{
+			Host: s.Host, Port: s.Port,
+			Encryption: email.Encryption(string(s.Encryption)),
+			Username:   s.Username, Password: s.Password,
+			FromAddr: s.FromAddr,
+		}, nil
+	}, logger)
+	emailSite := func(ctx context.Context) (email.SiteContext, error) {
+		s, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return email.SiteContext{}, err
+		}
+		return email.SiteContext{Name: s.Name, URL: s.BaseURL}, nil
+	}
+	jobRegistry.Register(email.NewNotificationJobHandler(pool, emailSender, emailSite, logger))
+
+	// Bind the email seam onto the sysconfig.Handler so its
+	// /admin/system/smtp/test surface can render+send via the
+	// boot-configured Sender. Done up-front (before apiServer
+	// construction) so the handler delegate finds it ready.
+	emailDeps := &sysconfig.EmailDeps{
+		Sender: emailSender,
+		Mode:   emailMode,
+		Site:   emailSite,
+	}
+
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package
 	// into a single struct that satisfies openapi.StrictServerInterface.
@@ -246,6 +285,10 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// newAPIServer's positional args — same shape as the
 		// password-policy + audit-recorder setters above.
 		impl.auth.SetProviderRegistry(providers)
+		// Bind the email seam onto the sysconfig handler so the
+		// /admin/system/smtp/test endpoint can render + drive the
+		// boot-configured Sender.
+		impl.sysconfigH.SetEmail(emailDeps)
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 

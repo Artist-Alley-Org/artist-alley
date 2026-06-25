@@ -211,6 +211,23 @@ func Decrypt(blob []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// PackageEncrypter is an instance-shaped adapter over the
+// package-level Encrypt/Decrypt functions. Some consumers (e.g.
+// sysconfig.Store) accept an interface for at-rest wrapping so
+// tests can substitute a fake; production boot passes this type's
+// zero value to satisfy that interface.
+type PackageEncrypter struct{}
+
+// Encrypt delegates to the package-level [Encrypt].
+func (PackageEncrypter) Encrypt(plaintext []byte) ([]byte, error) {
+	return Encrypt(plaintext)
+}
+
+// Decrypt delegates to the package-level [Decrypt].
+func (PackageEncrypter) Decrypt(ciphertext []byte) ([]byte, error) {
+	return Decrypt(ciphertext)
+}
+
 // decodeMasterKey accepts either standard or URL-safe base64,
 // with or without padding — accommodates whatever the operator
 // pipes in.

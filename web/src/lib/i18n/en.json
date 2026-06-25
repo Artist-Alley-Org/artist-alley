@@ -1022,10 +1022,19 @@
         "port": "Port",
         "username": "Username",
         "password": "Password",
+        "password_on_file": "(unchanged — leave blank to keep current)",
+        "password_unset": "(no password configured)",
+        "password_help": "Write-only — stored encrypted at rest. Leave blank to keep the current value.",
         "encryption": "Encryption",
         "from_address": "From address",
         "save": "Save SMTP",
-        "saved": "SMTP saved."
+        "saved": "SMTP saved.",
+        "test_title": "Send a test email",
+        "test_help": "Renders the admin_test template + sends it through the configured Sender. The result is synchronous — the relay's outcome (or capture-mode confirmation) shows here.",
+        "test_to": "To (optional)",
+        "test_to_placeholder": "(leave blank to send to your own email)",
+        "test_send": "Send test",
+        "test_failed": "Send failed."
       },
       "auth": {
         "title": "Authentication",

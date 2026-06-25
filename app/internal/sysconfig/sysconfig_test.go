@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/atrest"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
 
@@ -71,6 +72,85 @@ func TestSMTPRoundTrip(t *testing.T) {
 			t.Errorf("round-trip mismatch:\n  got:  %+v\n  want: %+v", got, want)
 		}
 	})
+}
+
+// TestSMTPPassword_EncryptedAtRest confirms that with an Encrypter
+// wired the persisted JSONB row carries `password_enc` (an opaque
+// blob) instead of plaintext `password`. Read-back transparently
+// decrypts so the in-memory value the caller sees is the original.
+func TestSMTPPassword_EncryptedAtRest(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; sysconfig integration test skipped")
+	}
+	// Stand up a master key for this test (Reset on exit so other
+	// tests aren't affected — atrest is process-global).
+	key := make([]byte, atrest.MasterKeyLen)
+	for i := range key {
+		key[i] = byte(i ^ 0x5a)
+	}
+	if err := atrest.InitWithKey(key); err != nil {
+		t.Fatalf("InitWithKey: %v", err)
+	}
+	t.Cleanup(atrest.Reset)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool := openPool(t, pwd)
+	defer pool.Close()
+	clean := func() { _, _ = pool.Exec(context.Background(), `DELETE FROM system_config WHERE key = 'smtp'`) }
+	clean()
+	t.Cleanup(clean)
+
+	store := sysconfig.NewStore(pool).WithEncrypter(atrest.PackageEncrypter{})
+
+	const plaintext = "unguessable-secret-abc123"
+	in := sysconfig.SMTP{
+		Host: "smtp.example.com", Port: 587,
+		Encryption: sysconfig.SMTPEncryptionStartTLS,
+		Username:   "noreply", Password: plaintext,
+		FromAddr: "noreply@example.com",
+	}
+	if err := store.SetSMTP(ctx, in); err != nil {
+		t.Fatalf("SetSMTP: %v", err)
+	}
+
+	// Round-trip via the Store gives plaintext back.
+	got, err := store.GetSMTP(ctx)
+	if err != nil {
+		t.Fatalf("GetSMTP: %v", err)
+	}
+	if got.Password != plaintext {
+		t.Errorf("round-trip password = %q, want %q", got.Password, plaintext)
+	}
+
+	// Raw JSONB column MUST NOT contain the plaintext (sanity check
+	// — guards against accidentally regressing the marshal path).
+	var raw string
+	if err := pool.QueryRow(ctx,
+		`SELECT value::text FROM system_config WHERE key = 'smtp'`).Scan(&raw); err != nil {
+		t.Fatalf("read raw smtp row: %v", err)
+	}
+	if strings.Contains(raw, plaintext) {
+		t.Errorf("plaintext password leaked into raw JSONB row: %s", raw)
+	}
+	if !strings.Contains(raw, "password_enc") {
+		t.Errorf("expected password_enc field in raw JSONB row, got: %s", raw)
+	}
+
+	// Reading WITHOUT an encrypter just leaves Password blank — the
+	// cipher is opaque to a Store that can't decrypt.
+	bareStore := sysconfig.NewStore(pool)
+	bare, err := bareStore.GetSMTP(ctx)
+	if err != nil {
+		t.Fatalf("bare GetSMTP: %v", err)
+	}
+	if bare.Password != "" {
+		t.Errorf("bare-store Password = %q, want empty (cipher should be opaque)", bare.Password)
+	}
+	if bare.Host != "smtp.example.com" {
+		t.Errorf("bare-store Host = %q, want smtp.example.com (other fields should still round-trip)", bare.Host)
+	}
 }
 
 // TestSMTPValidation rejects bad encryption / port when host is set.
