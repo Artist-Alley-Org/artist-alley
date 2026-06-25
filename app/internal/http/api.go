@@ -1537,6 +1537,12 @@ func (s *apiServer) ChangeMyPassword(ctx context.Context, req openapi.ChangeMyPa
 func (s *apiServer) AdminResetUserPassword(ctx context.Context, req openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	return s.auth.AdminResetUserPassword(ctx, req)
 }
+func (s *apiServer) AdminImpersonateUser(ctx context.Context, req openapi.AdminImpersonateUserRequestObject) (openapi.AdminImpersonateUserResponseObject, error) {
+	return s.auth.AdminImpersonateUser(ctx, req)
+}
+func (s *apiServer) EndImpersonation(ctx context.Context, req openapi.EndImpersonationRequestObject) (openapi.EndImpersonationResponseObject, error) {
+	return s.auth.EndImpersonation(ctx, req)
+}
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	return s.auth.ListCapabilities(ctx, req)

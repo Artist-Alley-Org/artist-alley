@@ -485,6 +485,11 @@ func (*PanicShim) RemoveAdminUserGrant(context.Context, openapi.RemoveAdminUserG
 	panic("PanicShim: RemoveAdminUserGrant called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// AdminImpersonateUser panics by default; test shims override.
+func (*PanicShim) AdminImpersonateUser(context.Context, openapi.AdminImpersonateUserRequestObject) (openapi.AdminImpersonateUserResponseObject, error) {
+	panic("PanicShim: AdminImpersonateUser called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // AdminResetUserPassword panics by default; test shims override.
 func (*PanicShim) AdminResetUserPassword(context.Context, openapi.AdminResetUserPasswordRequestObject) (openapi.AdminResetUserPasswordResponseObject, error) {
 	panic("PanicShim: AdminResetUserPassword called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -723,6 +728,11 @@ func (*PanicShim) DownloadAssetVariant(context.Context, openapi.DownloadAssetVar
 // ListCapabilities panics by default; test shims override.
 func (*PanicShim) ListCapabilities(context.Context, openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	panic("PanicShim: ListCapabilities called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// EndImpersonation panics by default; test shims override.
+func (*PanicShim) EndImpersonation(context.Context, openapi.EndImpersonationRequestObject) (openapi.EndImpersonationResponseObject, error) {
+	panic("PanicShim: EndImpersonation called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // Login panics by default; test shims override.

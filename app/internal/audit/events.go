@@ -55,6 +55,15 @@ const (
 
 	EventPasswordChanged   = "user.password_changed"
 	EventPasswordReset     = "user.password_reset"
+
+	// Phase 1.19.A-2 — admin impersonation lifecycle. Two
+	// events, both with subject=target_user_ref + actor=admin_
+	// user_ref so the audit viewer pivots on either side. The
+	// END event is fired by the explicit "end impersonation"
+	// path; expirations / forced revokes show up on the
+	// generic EventSessionRevoked event instead.
+	EventAdminImpersonationStarted = "admin.impersonation.started"
+	EventAdminImpersonationEnded   = "admin.impersonation.ended"
 	EventCapabilityGranted = "user.capability_granted"
 	EventCapabilityRevoked = "user.capability_revoked"
 	EventCapabilityGrantRemoved = "user.capability_grant_removed"
@@ -419,6 +428,28 @@ func (r *Recorder) PasswordChanged(ctx context.Context, req *http.Request, userR
 func (r *Recorder) PasswordReset(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, reason string) {
 	r.write(ctx, EventPasswordReset, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"reason": reason,
+	})
+}
+
+// ImpersonationStarted records an admin issuing an impersonation
+// session for a target user. subject = target, actor = admin. The
+// session_id lets the audit viewer correlate with the
+// EventSessionRevoked row that fires whenever the impersonation
+// session ends (whether via explicit end, expiry, or forced revoke).
+func (r *Recorder) ImpersonationStarted(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID, reason string) {
+	r.write(ctx, EventAdminImpersonationStarted, &targetUserRef, &adminUserRef, ctxFromRequest(req), map[string]any{
+		"session_id": sessionID,
+		"reason":     reason,
+	})
+}
+
+// ImpersonationEnded records the explicit end-of-impersonation
+// path (admin clicks "End impersonation" in the banner). The
+// session is also revoked separately; this event is the
+// intent-level signal distinct from the generic session.revoked.
+func (r *Recorder) ImpersonationEnded(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID string) {
+	r.write(ctx, EventAdminImpersonationEnded, &targetUserRef, &adminUserRef, ctxFromRequest(req), map[string]any{
+		"session_id": sessionID,
 	})
 }
 

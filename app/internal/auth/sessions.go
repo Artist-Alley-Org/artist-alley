@@ -215,6 +215,14 @@ func (m *SessionManager) Touch(ctx context.Context, id uuid.UUID) error {
 	return q.TouchSession(ctx, pgtype.UUID{Bytes: id, Valid: true})
 }
 
+// Revoke soft-deletes one session by id. Used by the end-
+// impersonation path to dispose of the impersonation session
+// before minting the admin's fresh one.
+func (m *SessionManager) Revoke(ctx context.Context, id uuid.UUID) error {
+	q := New(m.Pool)
+	return q.RevokeSession(ctx, pgtype.UUID{Bytes: id, Valid: true})
+}
+
 // RevokeAllForUser cascade-revokes every active session a user has.
 // Phase 1.17.A — fired by users.SetAdminUserStatus when a transition
 // moves the user OUT OF UserStateActive. Returns rows-affected so

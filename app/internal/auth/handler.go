@@ -102,6 +102,8 @@ type auditRecorder interface {
 	CapabilityRevoked(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID, note string)
 	CapabilityGrantRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
 	CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
+	ImpersonationStarted(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID, reason string)
+	ImpersonationEnded(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID string)
 }
 
 // passwordPolicySource is the minimal interface the password
@@ -143,6 +145,10 @@ func (nopAudit) CapabilityRevoked(context.Context, *http.Request, int64, int64, 
 func (nopAudit) CapabilityGrantRemoved(context.Context, *http.Request, int64, int64, string, string) {
 }
 func (nopAudit) CapabilityRevokeRemoved(context.Context, *http.Request, int64, int64, string, string) {
+}
+func (nopAudit) ImpersonationStarted(context.Context, *http.Request, int64, int64, string, string) {
+}
+func (nopAudit) ImpersonationEnded(context.Context, *http.Request, int64, int64, string) {
 }
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
