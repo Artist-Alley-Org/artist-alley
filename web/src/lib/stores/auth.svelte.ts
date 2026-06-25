@@ -88,13 +88,24 @@ class AuthState {
     }
   }
 
-  /** Throws on failure with a user-presentable message. */
-  async login(username: string, password: string, provider?: string): Promise<void> {
-    const body: { username: string; password: string; provider?: string } = { username, password };
+  /**
+   * Throws on failure with a user-presentable message. Throws a
+   * dedicated [LoginNeedsTOTPError] when the server returns
+   * `2fa_required` so the login page can re-prompt with a code
+   * input rather than show a generic error.
+   */
+  async login(username: string, password: string, provider?: string, totpCode?: string): Promise<void> {
+    const body: { username: string; password: string; provider?: string; totp_code?: string } = {
+      username, password,
+    };
     if (provider && provider !== 'password') body.provider = provider;
+    if (totpCode) body.totp_code = totpCode;
     const { data, error } = await api.POST('/auth/login', { body });
     if (error || !data) {
-      throw new Error(extractError(error) ?? 'Invalid credentials');
+      const code = extractError(error) ?? 'Invalid credentials';
+      if (code === '2fa_required') throw new LoginNeedsTOTPError();
+      if (code === 'invalid_2fa_code') throw new LoginNeedsTOTPError('invalid_2fa_code');
+      throw new Error(code);
     }
     this.user = mapUser(data);
     this.ready = true;
@@ -131,6 +142,21 @@ class AuthState {
 }
 
 export const auth = new AuthState();
+
+/**
+ * Thrown by [AuthState.login] when the server responded
+ * `error: "2fa_required"` (kind="required") or
+ * `error: "invalid_2fa_code"` (kind="invalid"). The login page
+ * pivots on this to render the TOTP code input.
+ */
+export class LoginNeedsTOTPError extends Error {
+  kind: 'required' | 'invalid';
+  constructor(code: '2fa_required' | 'invalid_2fa_code' = '2fa_required') {
+    super(code);
+    this.name = 'LoginNeedsTOTPError';
+    this.kind = code === 'invalid_2fa_code' ? 'invalid' : 'required';
+  }
+}
 
 function mapUser(u: Record<string, unknown>): AuthUser {
   const ib = u.impersonated_by as { ref?: number; username?: string } | null | undefined;

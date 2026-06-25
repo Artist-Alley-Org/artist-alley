@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
-  import { auth } from '$stores/auth.svelte';
+  import { auth, LoginNeedsTOTPError } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
   import Button from '$components/Button.svelte';
   import TextField from '$components/TextField.svelte';
@@ -27,6 +27,12 @@
   let password = $state('');
   let submitting = $state(false);
   let error = $state<string | null>(null);
+
+  // Phase 1.19.B — 2FA second step. needTOTP flips to true after a
+  // 2fa_required response; the form replaces username+password with
+  // a TOTP-code input + retries the original credentials.
+  let needTOTP = $state(false);
+  let totpCode = $state('');
 
   onMount(() => {
     void loadProviders();
@@ -62,14 +68,29 @@
     error = null;
     submitting = true;
     try {
-      await auth.login(username, password, selectedProvider);
+      await auth.login(username, password, selectedProvider, needTOTP ? totpCode : undefined);
       const next = page.url.searchParams.get('next') ?? '/';
       await goto(next);
     } catch (err) {
+      if (err instanceof LoginNeedsTOTPError) {
+        needTOTP = true;
+        if (err.kind === 'invalid') {
+          error = t('login.twofa_invalid');
+        } else {
+          error = null;
+        }
+        return;
+      }
       error = err instanceof Error ? err.message : t('login.error_generic');
     } finally {
       submitting = false;
     }
+  }
+
+  function cancelTOTP() {
+    needTOTP = false;
+    totpCode = '';
+    error = null;
   }
 
   function beginRedirectFlow(provider: ProviderSummary): void {
@@ -139,31 +160,53 @@
         <Alert tone="error">{error}</Alert>
       {/if}
 
-      <TextField
-        label={t('login.username_label')}
-        name="username"
-        autocomplete="username"
-        required
-        autofocus
-        bind:value={username}
-        disabled={submitting}
-        testId="login-username"
-      />
+      {#if needTOTP}
+        <p class="text-sm text-fg-muted">{t('login.twofa_prompt', { username })}</p>
+        <TextField
+          label={t('login.twofa_label')}
+          name="totp_code"
+          autocomplete="one-time-code"
+          required
+          autofocus
+          bind:value={totpCode}
+          disabled={submitting}
+          testId="login-totp"
+        />
+        <Button type="submit" variant="primary" fullWidth loading={submitting} testId="login-submit">
+          {t('login.twofa_verify')}
+        </Button>
+        <button
+          type="button"
+          onclick={cancelTOTP}
+          class="block w-full text-center text-xs text-fg-muted hover:text-fg"
+        >{t('login.twofa_cancel')}</button>
+      {:else}
+        <TextField
+          label={t('login.username_label')}
+          name="username"
+          autocomplete="username"
+          required
+          autofocus
+          bind:value={username}
+          disabled={submitting}
+          testId="login-username"
+        />
 
-      <TextField
-        label={t('login.password_label')}
-        name="password"
-        type="password"
-        autocomplete="current-password"
-        required
-        bind:value={password}
-        disabled={submitting}
-        testId="login-password"
-      />
+        <TextField
+          label={t('login.password_label')}
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+          bind:value={password}
+          disabled={submitting}
+          testId="login-password"
+        />
 
-      <Button type="submit" variant="primary" fullWidth loading={submitting} testId="login-submit">
-        {t('login.submit')}
-      </Button>
+        <Button type="submit" variant="primary" fullWidth loading={submitting} testId="login-submit">
+          {t('login.submit')}
+        </Button>
+      {/if}
     </form>
 
     {#if redirectProviders.length > 0}
