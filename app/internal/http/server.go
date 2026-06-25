@@ -21,6 +21,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -210,6 +211,24 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// Subtitle burn — Phase 1.18.B-3 stub; ffmpeg integration
 	// deferred to 1.18.B-3-b.
 	jobRegistry.Register(subtitles.NewBurnHandler(pool, storageSvc, sysCfg, logger))
+
+	// Email substrate (Phase 1.19.A-1). Pick the Sender mode from
+	// AA_EMAIL_MODE (smtp|capture|disabled; default smtp). The
+	// notification.email job is what the notifications writer
+	// already enqueues whenever a recipient's prefs include
+	// "email" — without a handler the rows sit pending forever.
+	emailMode := email.PickMode(logger)
+	emailSender := email.BuildSender(emailMode, func(ctx context.Context) (sysconfig.SMTP, error) {
+		return sysCfg.GetSMTP(ctx)
+	}, logger)
+	emailSite := func(ctx context.Context) (email.SiteContext, error) {
+		s, err := sysCfg.GetSite(ctx)
+		if err != nil {
+			return email.SiteContext{}, err
+		}
+		return email.SiteContext{Name: s.Name, URL: s.BaseURL}, nil
+	}
+	jobRegistry.Register(email.NewNotificationJobHandler(pool, emailSender, emailSite, logger))
 
 	// /api/v1 — endpoints derive from the OpenAPI spec at
 	// app/api/openapi.yaml. apiServer composes every feature package

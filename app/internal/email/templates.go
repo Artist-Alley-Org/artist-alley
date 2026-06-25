@@ -22,6 +22,13 @@ const (
 	// proves SMTP wiring works end-to-end. Variables: site_name,
 	// site_url, recipient_name.
 	TemplateAdminTest = "admin_test"
+
+	// TemplateNotificationGeneric is the verb-agnostic fallback the
+	// notification-email job handler uses when no per-verb template
+	// is registered. Variables: site_name, site_url, recipient_name,
+	// verb, target_kind. Per-verb templates land incrementally and
+	// override via the templateForVerb() lookup.
+	TemplateNotificationGeneric = "notification_generic"
 )
 
 // Render produces a [Message] from a registered template + the
@@ -69,7 +76,7 @@ func init() {
 			panic("email: template registry: " + err.Error())
 		}
 	}
-	for _, name := range []string{TemplateAdminTest} {
+	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric} {
 		must(loadInto(registry, name))
 	}
 }
