@@ -85,6 +85,33 @@ type AuthConfig struct {
 	// aware. Operators see "auth config updated"; provider list
 	// edits are visible via the API.
 	SSOProviders []SSOProvider `json:"sso_providers" audit:"-"`
+	// SelfRegistration controls whether anonymous callers can
+	// create their own accounts via /auth/register. Phase 1.19.C.
+	// Default zero-valued (Enabled=false) — operators opt in.
+	SelfRegistration SelfRegistrationConfig `json:"self_registration"`
+}
+
+// SelfRegistrationConfig is the operator-tunable knob set for the
+// /auth/register surface. The endpoint refuses with 403 when
+// Enabled is false, so the existence of /auth/register on a closed
+// install is harmless.
+type SelfRegistrationConfig struct {
+	// Enabled is the master switch. Default false — admins must
+	// opt-in explicitly; the surface is dormant otherwise.
+	Enabled bool `json:"enabled"`
+
+	// RequireEmailVerification refuses login until the user's
+	// email is confirmed via the verification link. Default true
+	// when self-registration is on; flipping it off should be a
+	// deliberate choice (e.g. closed-network installs where
+	// outbound SMTP isn't configured + admin-supplied invite is
+	// the only signup path).
+	RequireEmailVerification bool `json:"require_email_verification"`
+
+	// DefaultRole is the seeded role name freshly-registered users
+	// are assigned. Default "Base"; operators can point it at a
+	// stricter role for moderated communities.
+	DefaultRole string `json:"default_role"`
 }
 
 // GetAuth returns the auth config or, if unset, an empty AuthConfig

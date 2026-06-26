@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict dJiCxW5glRm4oyxhtM3lPVmFGBcewqn9ahnXuYiC3nQeRiOVAbJU4AEgMB6L1k9
+\restrict lL48fiqG0dmi8qEbGXbtqdtK65LV6PfZyXUzacUN5aO4cT1V1PaYyiSEubnQ0un
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -1125,6 +1125,22 @@ CREATE TABLE public.direct_messages (
 
 
 --
+-- Name: email_verification_token; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.email_verification_token (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_ref bigint NOT NULL,
+    token_hash bytea NOT NULL,
+    purpose text DEFAULT 'register'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT email_verification_token_purpose_check CHECK ((purpose = ANY (ARRAY['register'::text, 'email_change'::text])))
+);
+
+
+--
 -- Name: extraction_failure; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1979,6 +1995,7 @@ CREATE TABLE public."user" (
     signing_private_key_enc bytea,
     encryption_public_key bytea,
     encryption_private_key_enc bytea,
+    email_verified_at timestamp with time zone,
     CONSTRAINT user_approved_check CHECK ((approved = ANY (ARRAY[(0)::bigint, (1)::bigint, (2)::bigint, (3)::bigint])))
 );
 
@@ -2421,6 +2438,22 @@ ALTER TABLE ONLY public.creative_lineage
 
 ALTER TABLE ONLY public.direct_messages
     ADD CONSTRAINT direct_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_verification_token email_verification_token_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_token
+    ADD CONSTRAINT email_verification_token_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_verification_token email_verification_token_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_token
+    ADD CONSTRAINT email_verification_token_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -3670,6 +3703,13 @@ CREATE INDEX idx_dm_unread ON public.direct_messages USING btree (recipient_user
 
 
 --
+-- Name: idx_email_verification_token_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_email_verification_token_active ON public.email_verification_token USING btree (user_ref, expires_at) WHERE (consumed_at IS NULL);
+
+
+--
 -- Name: idx_extraction_failure_asset; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4561,6 +4601,14 @@ ALTER TABLE ONLY public.creative_lineage
 
 
 --
+-- Name: email_verification_token email_verification_token_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_token
+    ADD CONSTRAINT email_verification_token_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: extraction_failure extraction_failure_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4980,5 +5028,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dJiCxW5glRm4oyxhtM3lPVmFGBcewqn9ahnXuYiC3nQeRiOVAbJU4AEgMB6L1k9
+\unrestrict lL48fiqG0dmi8qEbGXbtqdtK65LV6PfZyXUzacUN5aO4cT1V1PaYyiSEubnQ0un
 
