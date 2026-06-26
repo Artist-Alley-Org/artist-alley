@@ -65,7 +65,7 @@ func adminIdentity(t *testing.T, pool *pgxpool.Pool, adminRef int64) *auth.Ident
 func handlerFor(t *testing.T, pool *pgxpool.Pool) *auth.Handler {
 	t.Helper()
 	sm := auth.NewSessionManager(pool)
-	return auth.NewHandler(pool, nil, "" /*scrambleKey*/, 0 /*sessionDays*/, sm, nil /*limiter*/, nil /*audit*/, nil /*cacheReg*/)
+	return auth.NewHandler(pool, nil, "test-scramble-key" /*scrambleKey*/, 0 /*sessionDays*/, sm, nil /*limiter*/, nil /*audit*/, nil /*cacheReg*/)
 }
 
 func ctxWithIdentity(id *auth.Identity, req *http.Request) context.Context {

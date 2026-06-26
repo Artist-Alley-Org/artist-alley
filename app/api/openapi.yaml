@@ -2260,6 +2260,138 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /account/security/2fa:
+    get:
+      operationId: getMyTOTP
+      summary: Read the caller's 2FA enrollment status (Phase 1.19.B)
+      description: |
+        Returns whether the caller has enrolled, whether the
+        enrollment is confirmed, when it was last used, and how
+        many unused recovery codes remain. Used by the /account/
+        security page to render the "enroll" vs "manage" branch.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Caller's TOTP status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TOTPStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: enrollMyTOTP
+      summary: Begin TOTP enrollment (Phase 1.19.B)
+      description: |
+        Generates a fresh shared secret + returns the base32 form
+        plus the otpauth:// URI for QR rendering. The row is
+        persisted UNCONFIRMED — login flow is NOT yet gated.
+        Caller must POST /account/security/2fa/confirm with a
+        valid code to flip the enrollment to active + receive
+        backup codes.
+
+        Re-calling overwrites any prior unconfirmed enrollment;
+        a CONFIRMED enrollment is left in place (caller must
+        DELETE first to re-enroll — that surfaces a "you're
+        about to disable 2FA" confirmation in the UI).
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Enrollment in progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TOTPEnrollResult" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: 2FA already confirmed; disable first to re-enroll.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: disableMyTOTP
+      summary: Disable 2FA on the caller's account (Phase 1.19.B)
+      description: |
+        Requires the caller's current password to prevent a
+        stolen-session attacker from disabling 2FA. Cascades the
+        recovery codes via FK.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TOTPDisableRequest" }
+      responses:
+        "204":
+          description: 2FA disabled.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/security/2fa/confirm:
+    post:
+      operationId: confirmMyTOTP
+      summary: Confirm TOTP enrollment by submitting a valid code (Phase 1.19.B)
+      description: |
+        On first valid code: flips confirmed_at, mints + returns
+        N single-use recovery codes (plaintext, shown ONCE).
+        After this call the login flow refuses password-only.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TOTPConfirmRequest" }
+      responses:
+        "200":
+          description: Enrollment confirmed; recovery codes shown ONCE.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TOTPConfirmResult" }
+        "400":
+          description: No pending enrollment or wrong code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /account/security/2fa/recovery/regenerate:
+    post:
+      operationId: regenerateMyRecoveryCodes
+      summary: Mint a fresh batch of recovery codes (Phase 1.19.B)
+      description: |
+        Invalidates the prior batch (even unused codes) +
+        returns N new plaintext codes shown ONCE. Requires the
+        caller's current password.
+      tags: [auth]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TOTPDisableRequest" }
+      responses:
+        "200":
+          description: New recovery codes shown ONCE.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TOTPRecoveryCodes" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /account/sessions:
     get:
       operationId: listMySessions
@@ -8008,6 +8140,16 @@ components:
             a bad password, so a probing client can't enumerate
             which enterprise providers are active.
           example: password
+        totp_code:
+          type: string
+          description: |
+            Phase 1.19.B — TOTP code (6 digits) or recovery code
+            (10 chars + optional hyphen) for users with 2FA
+            confirmed. When 2FA is enabled and this field is
+            missing or wrong the server returns 401 with
+            `error: "2fa_required"` (no totp_code on the request)
+            or `error: "invalid_2fa_code"` (wrong code) so the
+            frontend can re-prompt.
     IdentityProviderSummary:
       type: object
       description: |
@@ -10203,6 +10345,96 @@ components:
             caller is now signed in as after the rotation.
         admin_username:
           type: string
+
+    TOTPStatus:
+      type: object
+      required: [enrolled, confirmed, recovery_codes_remaining]
+      description: |
+        Phase 1.19.B caller-facing 2FA enrollment status.
+      properties:
+        enrolled:
+          type: boolean
+          description: True when any user_totp row exists for the caller.
+        confirmed:
+          type: boolean
+          description: |
+            True when the enrollment is past the confirm step.
+            Only confirmed enrollments gate the login flow.
+        enrolled_at:
+          type: string
+          format: date-time
+          nullable: true
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        recovery_codes_remaining:
+          type: integer
+          description: |
+            Number of unused single-use backup codes. Drops as
+            the user redeems them; regenerate via the dedicated
+            endpoint when low.
+
+    TOTPEnrollResult:
+      type: object
+      required: [secret_base32, otpauth_url]
+      properties:
+        secret_base32:
+          type: string
+          description: |
+            The shared secret as RFC 4648 base32 (no padding).
+            Authenticator apps that can't scan QR fall back to
+            manual paste.
+        otpauth_url:
+          type: string
+          description: |
+            otpauth://totp/<issuer>:<account>?secret=...&issuer=...
+            URI. Frontend renders as a QR code via client-side
+            JS — no QR-generation Go dep needed.
+
+    TOTPConfirmRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: 6-digit TOTP code from the authenticator app.
+
+    TOTPConfirmResult:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          description: |
+            Single-use backup codes — shown ONCE. Plaintext;
+            never reachable again from any API. The server only
+            persists sha256(normalize(code)).
+          items: { type: string }
+
+    TOTPDisableRequest:
+      type: object
+      required: [current_password]
+      description: |
+        Body for the disable + regenerate-recovery surfaces.
+        Re-asks for the current password so a stolen-session
+        attacker can't kill 2FA + lock the owner out in one move.
+      properties:
+        current_password:
+          type: string
+          format: password
+
+    TOTPRecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          items: { type: string }
 
     SessionRow:
       type: object

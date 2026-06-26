@@ -924,6 +924,22 @@ type UserRole struct {
 	TeamID            pgtype.UUID
 }
 
+type UserTotp struct {
+	UserRef     int64
+	SecretEnc   []byte
+	ConfirmedAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+}
+
+type UserTotpRecoveryCode struct {
+	ID        pgtype.UUID
+	UserRef   int64
+	CodeHash  []byte
+	UsedAt    pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type WorkflowAudit struct {
 	ID             pgtype.UUID
 	ResourceKind   string
