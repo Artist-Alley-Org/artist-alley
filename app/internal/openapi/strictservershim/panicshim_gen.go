@@ -790,6 +790,16 @@ func (*PanicShim) ListIdentityProviders(context.Context, openapi.ListIdentityPro
 	panic("PanicShim: ListIdentityProviders called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// Register panics by default; test shims override.
+func (*PanicShim) Register(context.Context, openapi.RegisterRequestObject) (openapi.RegisterResponseObject, error) {
+	panic("PanicShim: Register called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ResendVerificationEmail panics by default; test shims override.
+func (*PanicShim) ResendVerificationEmail(context.Context, openapi.ResendVerificationEmailRequestObject) (openapi.ResendVerificationEmailResponseObject, error) {
+	panic("PanicShim: ResendVerificationEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListRoles panics by default; test shims override.
 func (*PanicShim) ListRoles(context.Context, openapi.ListRolesRequestObject) (openapi.ListRolesResponseObject, error) {
 	panic("PanicShim: ListRoles called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -813,6 +823,11 @@ func (*PanicShim) RevokeApiToken(context.Context, openapi.RevokeApiTokenRequestO
 // SetUserRole panics by default; test shims override.
 func (*PanicShim) SetUserRole(context.Context, openapi.SetUserRoleRequestObject) (openapi.SetUserRoleResponseObject, error) {
 	panic("PanicShim: SetUserRole called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// VerifyEmail panics by default; test shims override.
+func (*PanicShim) VerifyEmail(context.Context, openapi.VerifyEmailRequestObject) (openapi.VerifyEmailResponseObject, error) {
+	panic("PanicShim: VerifyEmail called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListBrushPacks panics by default; test shims override.

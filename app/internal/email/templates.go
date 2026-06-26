@@ -29,6 +29,12 @@ const (
 	// verb, target_kind. Per-verb templates land incrementally and
 	// override via the templateForVerb() lookup.
 	TemplateNotificationGeneric = "notification_generic"
+
+	// TemplateRegisterVerify is the email sent by the
+	// /auth/register endpoint (Phase 1.19.C) carrying the
+	// click-to-verify link. Variables: site_name, site_url,
+	// recipient_name, verify_url, expires_in.
+	TemplateRegisterVerify = "register_verify"
 )
 
 // Render produces a [Message] from a registered template + the
@@ -76,7 +82,7 @@ func init() {
 			panic("email: template registry: " + err.Error())
 		}
 	}
-	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric} {
+	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric, TemplateRegisterVerify} {
 		must(loadInto(registry, name))
 	}
 }

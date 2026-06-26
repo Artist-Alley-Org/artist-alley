@@ -64,6 +64,10 @@ const (
 	// generic EventSessionRevoked event instead.
 	EventAdminImpersonationStarted = "admin.impersonation.started"
 	EventAdminImpersonationEnded   = "admin.impersonation.ended"
+
+	// Phase 1.19.C — self-service registration lifecycle.
+	EventUserRegistered     = "user.registered"
+	EventUserEmailVerified  = "user.email_verified"
 	EventCapabilityGranted = "user.capability_granted"
 	EventCapabilityRevoked = "user.capability_revoked"
 	EventCapabilityGrantRemoved = "user.capability_grant_removed"
@@ -429,6 +433,23 @@ func (r *Recorder) PasswordReset(ctx context.Context, req *http.Request, subject
 	r.write(ctx, EventPasswordReset, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"reason": reason,
 	})
+}
+
+// UserRegistered records a fresh self-registration. subject =
+// the new user; actor = nil (anonymous endpoint). Metadata
+// carries the email so the audit row alone explains who came
+// in via /auth/register.
+func (r *Recorder) UserRegistered(ctx context.Context, req *http.Request, userRef int64, emailAddr string) {
+	r.write(ctx, EventUserRegistered, &userRef, nil, ctxFromRequest(req), map[string]any{
+		"email": emailAddr,
+	})
+}
+
+// UserEmailVerified fires when a verification token is consumed.
+// subject = user; actor = nil (the link click is anonymous from
+// the auth-resolver perspective).
+func (r *Recorder) UserEmailVerified(ctx context.Context, req *http.Request, userRef int64) {
+	r.write(ctx, EventUserEmailVerified, &userRef, nil, ctxFromRequest(req), nil)
 }
 
 // ImpersonationStarted records an admin issuing an impersonation

@@ -150,6 +150,110 @@ paths:
         "204":
           description: Logged out (or wasn't logged in).
 
+  /auth/register:
+    post:
+      operationId: register
+      summary: Self-service account creation (Phase 1.19.C)
+      description: |
+        Anonymous endpoint. Creates a new local account when
+        sysconfig `auth.self_registration.enabled` is true,
+        otherwise returns 403. Username must match
+        `^[a-zA-Z0-9_-]{3,32}$` + be globally unique. Password
+        must satisfy the policy block. Email is required.
+
+        When `auth.self_registration.require_email_verification`
+        is true (the default), the user is created with
+        `email_verified_at IS NULL` and the response is 202 —
+        they cannot sign in until they click the verification
+        link in the email we send. With verification off, the
+        response is 200 + a session cookie.
+
+        Rate-limited by both IP and attempted email so spam
+        clients can't enumerate.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "200":
+          description: Account created + signed in (verification disabled).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentUser" }
+        "202":
+          description: Account created; verification email sent. Caller must verify before login.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegisterPendingResult" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Self-registration is disabled on this install.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Username or email already in use.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/verify-email:
+    post:
+      operationId: verifyEmail
+      summary: Consume a verification token (Phase 1.19.C)
+      description: |
+        Single-use. The link the user receives carries a
+        plaintext token that hashes to a stored row. On match:
+        flips email_verified_at + consumes the token + returns
+        the verified user shape (no cookie set — caller must
+        sign in normally on the next page).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyEmailRequest" }
+      responses:
+        "200":
+          description: Email verified.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerifyEmailResult" }
+        "400":
+          description: Token missing / malformed / expired / already used.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/resend-verification:
+    post:
+      operationId: resendVerificationEmail
+      summary: Re-issue a verification email (Phase 1.19.C)
+      description: |
+        Anonymous. Takes the email the user signed up with;
+        when it matches a still-unverified account, mints a
+        fresh token + sends the email. Returns 202 ALWAYS,
+        regardless of whether the email is known — anti-
+        enumeration measure.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResendVerificationRequest" }
+      responses:
+        "202":
+          description: Acknowledged. The email is sent when applicable; the response is the same when the address is unknown to prevent enumeration.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
   /auth/me:
     get:
       operationId: getCurrentUser
@@ -10346,6 +10450,78 @@ components:
         admin_username:
           type: string
 
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      description: |
+        Phase 1.19.C self-registration payload. Validation is
+        server-side authoritative; the frontend mirrors the same
+        regexes for early UX feedback.
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          pattern: "^[a-zA-Z0-9_-]+$"
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          description: Must satisfy the install's sysconfig password policy.
+        fullname:
+          type: string
+          maxLength: 200
+          description: Optional display name; defaults to the username when empty.
+
+    RegisterPendingResult:
+      type: object
+      required: [user_ref, email, message]
+      description: |
+        202 response when require_email_verification is on. The
+        caller is not signed in yet; the verification link they
+        receive by email completes the flow.
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+        email:
+          type: string
+          format: email
+        message:
+          type: string
+          description: Human-readable next-step prompt.
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Plaintext token from the email link.
+
+    VerifyEmailResult:
+      type: object
+      required: [user_ref, username, email]
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+
+    ResendVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
     TOTPStatus:
       type: object
       required: [enrolled, confirmed, recovery_codes_remaining]
@@ -13090,6 +13266,12 @@ components:
             $ref: "#/components/schemas/Error"
     InternalError:
       description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate-limited; retry after a brief pause.
       content:
         application/json:
           schema:
