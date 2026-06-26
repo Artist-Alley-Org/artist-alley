@@ -88,6 +88,42 @@ const (
 	FieldOrientation        CanonicalField = "orientation"
 	FieldPixelWidth         CanonicalField = "pixel_width"
 	FieldPixelHeight        CanonicalField = "pixel_height"
+
+	// --- Phase 1.18.A-3: IPTC IIM (legacy news-photo metadata) ---
+	// IPTC fields embedded in JPEG/TIFF Photoshop image-resource
+	// segments. Extracted by the iptc package. Where IPTC and EXIF
+	// disagree on the same semantic field (e.g. capture date, artist)
+	// the per-field extraction config picks which wins; both write
+	// with their own SetBy provenance.
+	FieldIPTCKeywords     CanonicalField = "iptc_keywords"      // dataset 2:25 — comma-joined free-tag set
+	FieldIPTCByline       CanonicalField = "iptc_byline"        // 2:80 — primary photographer
+	FieldIPTCBylineTitle  CanonicalField = "iptc_byline_title"  // 2:85
+	FieldIPTCCaption      CanonicalField = "iptc_caption"       // 2:120 — long-form abstract
+	FieldIPTCHeadline     CanonicalField = "iptc_headline"      // 2:105 — short summary
+	FieldIPTCCredit       CanonicalField = "iptc_credit"        // 2:110 — agency / publication
+	FieldIPTCSource       CanonicalField = "iptc_source"        // 2:115 — original supplier
+	FieldIPTCCity         CanonicalField = "iptc_city"          // 2:90
+	FieldIPTCState        CanonicalField = "iptc_state"         // 2:95 — province / state
+	FieldIPTCCountry      CanonicalField = "iptc_country"       // 2:101
+	FieldIPTCObjectName   CanonicalField = "iptc_object_name"   // 2:5  — title-of-work
+	FieldIPTCInstructions CanonicalField = "iptc_instructions"  // 2:40 — editor's notes
+	FieldIPTCCopyright    CanonicalField = "iptc_copyright"     // 2:116 — distinct from EXIF copyright
+
+	// --- Phase 1.18.A-3: XMP (Adobe XML metadata packet) ---
+	// XMP namespaces we pull values from: dc (Dublin Core),
+	// photoshop, xmpRights, Iptc4xmpCore, lr (Lightroom hierarchy).
+	// Operators map these to their preferred field-definitions via
+	// the existing extraction_config picker.
+	FieldXMPTitle             CanonicalField = "xmp_title"              // dc:title (rdf:Alt — default lang wins)
+	FieldXMPDescription       CanonicalField = "xmp_description"        // dc:description
+	FieldXMPCreator           CanonicalField = "xmp_creator"            // dc:creator (rdf:Seq — joined)
+	FieldXMPSubjects          CanonicalField = "xmp_subjects"           // dc:subject (rdf:Bag — keyword set)
+	FieldXMPRights            CanonicalField = "xmp_rights"             // dc:rights / xmpRights:UsageTerms
+	FieldXMPHierarchicalTags  CanonicalField = "xmp_hierarchical_tags"  // lr:hierarchicalSubject ("People|Family|...")
+	FieldXMPRating            CanonicalField = "xmp_rating"             // xmp:Rating (0-5)
+	FieldXMPLabel             CanonicalField = "xmp_label"              // xmp:Label ("Red"/"Yellow"/etc.)
+	FieldXMPPhotoshopHeadline CanonicalField = "xmp_photoshop_headline" // photoshop:Headline
+	FieldXMPInstructions      CanonicalField = "xmp_instructions"       // photoshop:Instructions
 )
 
 // Value is the typed extracted value. Exactly ONE of the fields
