@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/email"
+	"github.com/mscrnt/artist-alley/app/internal/iiif"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -342,6 +344,22 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			r.Method(http.MethodGet, "/admin/metadata-extraction/health",
 				healthhandler.HandlerFor("metadata-extraction", impl.metaCounter, "system.admin"))
 		}
+
+		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted
+		// inside /api/v1 so the auth resolver middleware above
+		// has already run; RequireID just checks the resolved
+		// Identity. The URL grammar is per-segment so it can't
+		// be expressed in OpenAPI; mounted as raw chi routes.
+		iiifH := &iiif.Handler{
+			Lookup:   iiif.PoolLookup{Pool: pool},
+			Variants: iiifVariantLister{store: sysCfg},
+			Streamer: iiifStreamer{storage: storageSvc},
+			Logger:   logger,
+			RequireID: func(r *http.Request) bool {
+				return auth.IdentityFromContext(r.Context()) != nil
+			},
+		}
+		iiifH.Mount(r)
 
 		// SAML redirect-flow routes. Always mounted, but the handlers
 		// look the provider up from the (hot-swappable) registry at
@@ -697,4 +715,45 @@ func loadCapLicenseFeatures(ctx context.Context, pool *pgxpool.Pool) (map[string
 		out[r.Code] = *r.RequiredLicenseFeature
 	}
 	return out, nil
+}
+
+// iiifVariantLister adapts sysconfig.Store into the
+// iiif.VariantLister interface. Maps each PreviewVariant to a
+// VariantSize, flagging Cover-fit ones so the IIIF info.json
+// generator excludes them from the proportional sizes block (it
+// uses them for the square-crop region only).
+type iiifVariantLister struct {
+	store *sysconfig.Store
+}
+
+func (l iiifVariantLister) ListIIIFVariants(ctx context.Context) ([]iiif.VariantSize, error) {
+	cfg, err := l.store.GetPreviews(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]iiif.VariantSize, 0, len(cfg.Variants))
+	for _, v := range cfg.Variants {
+		out = append(out, iiif.VariantSize{
+			Key:    v.Key,
+			MaxDim: v.MaxDim,
+			Cover:  v.Fit == sysconfig.PreviewFitCover,
+		})
+	}
+	return out, nil
+}
+
+// iiifStreamer adapts storage.Service into the iiif.VariantStreamer
+// interface. The /file vs /variants distinction the asset handler
+// makes doesn't apply here — IIIF Level 0 only ever serves
+// pre-baked variants.
+type iiifStreamer struct {
+	storage *storage.Service
+}
+
+func (s iiifStreamer) OpenVariant(ctx context.Context, hash, key string) (io.ReadCloser, int64, string, error) {
+	body, info, err := s.storage.Download(ctx, hash, key)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return body, info.Size, info.ContentType, nil
 }
