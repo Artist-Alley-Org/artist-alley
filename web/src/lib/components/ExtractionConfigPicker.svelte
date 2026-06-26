@@ -45,6 +45,31 @@
     { value: 'orientation',      label: 'EXIF orientation' },
     { value: 'pixel_width',      label: 'Pixel width' },
     { value: 'pixel_height',     label: 'Pixel height' },
+    // --- IPTC IIM (Phase 1.18.A-3) — JPEG only today ---
+    { value: 'iptc_keywords',     label: 'IPTC keywords (joined)' },
+    { value: 'iptc_byline',       label: 'IPTC by-line (photographer)' },
+    { value: 'iptc_byline_title', label: 'IPTC by-line title' },
+    { value: 'iptc_caption',      label: 'IPTC caption / abstract' },
+    { value: 'iptc_headline',     label: 'IPTC headline' },
+    { value: 'iptc_credit',       label: 'IPTC credit (agency)' },
+    { value: 'iptc_source',       label: 'IPTC source' },
+    { value: 'iptc_city',         label: 'IPTC city' },
+    { value: 'iptc_state',        label: 'IPTC state / province' },
+    { value: 'iptc_country',      label: 'IPTC country' },
+    { value: 'iptc_object_name',  label: 'IPTC object name (title)' },
+    { value: 'iptc_instructions', label: 'IPTC special instructions' },
+    { value: 'iptc_copyright',    label: 'IPTC copyright notice' },
+    // --- XMP (Phase 1.18.A-3) — JPEG + PNG ---
+    { value: 'xmp_title',                label: 'XMP dc:title' },
+    { value: 'xmp_description',          label: 'XMP dc:description' },
+    { value: 'xmp_creator',              label: 'XMP dc:creator (joined)' },
+    { value: 'xmp_subjects',             label: 'XMP dc:subject (tags)' },
+    { value: 'xmp_rights',               label: 'XMP rights / usage terms' },
+    { value: 'xmp_hierarchical_tags',    label: 'XMP Lightroom hierarchy' },
+    { value: 'xmp_rating',               label: 'XMP rating (0-5)' },
+    { value: 'xmp_label',                label: 'XMP color label' },
+    { value: 'xmp_photoshop_headline',   label: 'XMP photoshop:Headline' },
+    { value: 'xmp_instructions',         label: 'XMP photoshop:Instructions' },
   ];
 
   const MODES = [

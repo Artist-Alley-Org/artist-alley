@@ -68,6 +68,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
+	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
+	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
@@ -371,7 +373,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			metaLookup,
 			metaApplier,
 			metaFailures,
-			[]assetmetadata.Extractor{exifext.New()},
+			// Order matters: EXIF first (largest catalog), then IPTC + XMP
+			// (overlapping semantics in different namespaces). Operators
+			// resolve same-field conflicts via the per-field extraction-
+			// config picker shipped in 1.18.A-2 PR-B.
+			[]assetmetadata.Extractor{
+				exifext.New(),
+				iptcext.New(),
+				xmpext.New(),
+			},
 			logger,
 		).WithCounter(s.metaCounter))
 		// Phase 1.18.A-2 follow-up B (commit 4) — coordinator job
