@@ -8496,6 +8496,29 @@ components:
                   (Google/GitHub/X): client_id, client_secret,
                   redirect_uri, scopes. Validated at use time by the
                   integration code, not by this endpoint.
+        self_registration:
+          type: object
+          description: |
+            Phase 1.19.C — self-service signup tunables. Default
+            zero-valued (disabled, verification on, role "Base") so
+            installs upgrading without opting in stay closed.
+          properties:
+            enabled:
+              type: boolean
+              description: Master switch. /auth/register returns 403 when false.
+            require_email_verification:
+              type: boolean
+              description: |
+                When true (recommended), new accounts must click a
+                verification link before they can sign in. Disable
+                only for closed-network installs where outbound
+                SMTP isn't available.
+            default_role:
+              type: string
+              description: |
+                Role name assigned to fresh signups. Default "Base".
+                Operators can point this at a more restricted role
+                for moderated communities.
     AIInferenceConfig:
       type: object
       description: |

@@ -227,6 +227,10 @@
       </div>
     {/if}
 
+    <p class="text-center text-sm text-fg-muted">
+      {t('login.no_account')}
+      <a href="/register" class="text-accent hover:underline" data-testid="login-register-link">{t('login.create_account')}</a>
+    </p>
     <p class="text-center text-xs text-fg-muted">
       {t('login.self_hosted_note')}
     </p>
