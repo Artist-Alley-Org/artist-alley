@@ -69,6 +69,15 @@ type Handler struct {
 	// attaches a non-nil registry.
 	Providers *Registry
 
+	// RegisterDeps holds the cross-package seams the self-
+	// registration surface (Phase 1.19.C) needs — email sender,
+	// site context, the sysconfig knobs. Zero-value disables the
+	// path (the handler returns 403 "self-registration is
+	// disabled"). Boot wires via SetRegistrationSurface. Named
+	// with the -Deps suffix to disambiguate from the
+	// strict-server Register METHOD that handles POST /register.
+	RegisterDeps RegisterSurface
+
 	tokenPrefix string // overridable in tests
 }
 
@@ -104,6 +113,8 @@ type auditRecorder interface {
 	CapabilityRevokeRemoved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, capability, teamID string)
 	ImpersonationStarted(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID, reason string)
 	ImpersonationEnded(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID string)
+	UserRegistered(ctx context.Context, req *http.Request, userRef int64, emailAddr string)
+	UserEmailVerified(ctx context.Context, req *http.Request, userRef int64)
 }
 
 // passwordPolicySource is the minimal interface the password
@@ -150,6 +161,8 @@ func (nopAudit) ImpersonationStarted(context.Context, *http.Request, int64, int6
 }
 func (nopAudit) ImpersonationEnded(context.Context, *http.Request, int64, int64, string) {
 }
+func (nopAudit) UserRegistered(context.Context, *http.Request, int64, string) {}
+func (nopAudit) UserEmailVerified(context.Context, *http.Request, int64)      {}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching the legacy rs_setcookie default) is used. The
@@ -346,6 +359,18 @@ func (h *Handler) loginViaRegistry(
 		}, nil
 	}
 
+	// Phase 1.19.C — email-verification gate. Refuses login when
+	// the user signed up via /auth/register and hasn't clicked
+	// the link yet AND the install requires verification. Admin-
+	// created users have email_verified_at backfilled to NOW(),
+	// so this only ever fires for fresh self-registrations.
+	if h.shouldGateOnEmailVerify(ctx, user.EmailVerifiedAt.Valid) {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "email_not_verified")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "email_not_verified"},
+		}, nil
+	}
+
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)
 	if err != nil {
 		return nil, err
@@ -367,6 +392,25 @@ func (h *Handler) loginViaRegistry(
 		sessionDays: h.SessionDays,
 		body:        current,
 	}, nil
+}
+
+// shouldGateOnEmailVerify reports whether login should be refused
+// because the install requires email verification AND the user
+// hasn't verified yet. Soft-fail open on a missing RegisterDeps
+// (closed install / tests) so non-self-registered users keep
+// working.
+func (h *Handler) shouldGateOnEmailVerify(ctx context.Context, alreadyVerified bool) bool {
+	if alreadyVerified {
+		return false
+	}
+	if h.RegisterDeps.RegistrationPolicy == nil {
+		return false
+	}
+	cfg, err := h.RegisterDeps.RegistrationPolicy(ctx)
+	if err != nil {
+		return false
+	}
+	return cfg.RequireEmailVerification
 }
 
 // loginInlinePassword is the pre-registry password flow, kept for
@@ -424,6 +468,13 @@ func (h *Handler) loginInlinePassword(
 		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "invalid_2fa_code")
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid_2fa_code"},
+		}, nil
+	}
+	// Phase 1.19.C — email-verification gate (mirrors registry path).
+	if h.shouldGateOnEmailVerify(ctx, user.EmailVerifiedAt.Valid) {
+		h.Audit.LoginFailed(ctx, httpReq, username, &user.Ref, "email_not_verified")
+		return openapi.Login401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "email_not_verified"},
 		}, nil
 	}
 	token, sessionInfo, err := h.Sessions.Issue(ctx, user.Ref, httpReq)

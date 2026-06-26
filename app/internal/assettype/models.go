@@ -352,6 +352,16 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID        `json:"origin_server_id"`
 }
 
+type EmailVerificationToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	UserRef    int64              `json:"user_ref"`
+	TokenHash  []byte             `json:"token_hash"`
+	Purpose    string             `json:"purpose"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `json:"consumed_at"`
+}
+
 type ExtractionFailure struct {
 	ID          pgtype.UUID        `json:"id"`
 	AssetID     pgtype.UUID        `json:"asset_id"`
@@ -846,6 +856,7 @@ type User struct {
 	SigningPrivateKeyEnc    []byte             `json:"signing_private_key_enc"`
 	EncryptionPublicKey     []byte             `json:"encryption_public_key"`
 	EncryptionPrivateKeyEnc []byte             `json:"encryption_private_key_enc"`
+	EmailVerifiedAt         pgtype.Timestamptz `json:"email_verified_at"`
 }
 
 type UserBlock struct {

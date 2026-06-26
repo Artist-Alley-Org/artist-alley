@@ -72,6 +72,18 @@ func (q *Queries) ConfirmUserTOTP(ctx context.Context, userRef int64) error {
 	return err
 }
 
+const consumeEmailVerificationToken = `-- name: ConsumeEmailVerificationToken :exec
+UPDATE email_verification_token
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL
+`
+
+func (q *Queries) ConsumeEmailVerificationToken(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, consumeEmailVerificationToken, id)
+	return err
+}
+
 const countActiveAdminsIfRowRemoved = `-- name: CountActiveAdminsIfRowRemoved :one
 WITH admin_candidates AS (
     SELECT u.ref
@@ -271,6 +283,58 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.Created,
 	)
 	return i, err
+}
+
+const createUserForRegistration = `-- name: CreateUserForRegistration :one
+INSERT INTO "user" (username, password, email, fullname, approved, email_verified_at)
+VALUES ($1, $2, $3, $4, 1, NULL)
+RETURNING ref, username, email
+`
+
+type CreateUserForRegistrationParams struct {
+	Username *string
+	Password *string
+	Email    *string
+	Fullname *string
+}
+
+type CreateUserForRegistrationRow struct {
+	Ref      int64
+	Username *string
+	Email    *string
+}
+
+// Inserts a freshly-registered user with the standard "approved=1
+// + email_verified_at IS NULL" shape Phase 1.19.C expects. Done
+// as a typed query (not the catch-all CreateUser) so the column
+// defaults are explicit + the audit row in commit 2 captures
+// "self_registered" intent.
+func (q *Queries) CreateUserForRegistration(ctx context.Context, arg CreateUserForRegistrationParams) (CreateUserForRegistrationRow, error) {
+	row := q.db.QueryRow(ctx, createUserForRegistration,
+		arg.Username,
+		arg.Password,
+		arg.Email,
+		arg.Fullname,
+	)
+	var i CreateUserForRegistrationRow
+	err := row.Scan(&i.Ref, &i.Username, &i.Email)
+	return i, err
+}
+
+const deleteExpiredEmailVerificationTokens = `-- name: DeleteExpiredEmailVerificationTokens :execrows
+DELETE FROM email_verification_token
+ WHERE consumed_at IS NOT NULL OR expires_at < NOW() - INTERVAL '7 days'
+`
+
+// Sweeper-friendly cleanup of expired/consumed rows. The active-
+// index partial-WHERE-clause already keeps the hot path narrow;
+// this just bounds total table size.
+func (q *Queries) DeleteExpiredEmailVerificationTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredEmailVerificationTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteRecoveryCodesForUser = `-- name: DeleteRecoveryCodesForUser :exec
@@ -598,6 +662,31 @@ func (q *Queries) FindActiveApiToken(ctx context.Context, tokenHash []byte) (Fin
 	return i, err
 }
 
+const findActiveEmailVerificationToken = `-- name: FindActiveEmailVerificationToken :one
+SELECT id, user_ref, purpose
+  FROM email_verification_token
+ WHERE token_hash = $1
+   AND consumed_at IS NULL
+   AND expires_at > NOW()
+ LIMIT 1
+`
+
+type FindActiveEmailVerificationTokenRow struct {
+	ID      pgtype.UUID
+	UserRef int64
+	Purpose string
+}
+
+// Verifies one incoming link click. Returns the row id + user
+// when the hash matches an unconsumed, unexpired row. Caller
+// marks consumed_at + flips user.email_verified_at in one tx.
+func (q *Queries) FindActiveEmailVerificationToken(ctx context.Context, tokenHash []byte) (FindActiveEmailVerificationTokenRow, error) {
+	row := q.db.QueryRow(ctx, findActiveEmailVerificationToken, tokenHash)
+	var i FindActiveEmailVerificationTokenRow
+	err := row.Scan(&i.ID, &i.UserRef, &i.Purpose)
+	return i, err
+}
+
 const findActiveSession = `-- name: FindActiveSession :one
 SELECT s.id,
        s.user_ref,
@@ -690,6 +779,37 @@ func (q *Queries) FindUnusedRecoveryCodeByHash(ctx context.Context, arg FindUnus
 	return id, err
 }
 
+const findUserByEmail = `-- name: FindUserByEmail :one
+SELECT ref, username, email, email_verified_at, password
+  FROM "user"
+ WHERE LOWER(email) = LOWER($1)
+ LIMIT 1
+`
+
+type FindUserByEmailRow struct {
+	Ref             int64
+	Username        *string
+	Email           *string
+	EmailVerifiedAt pgtype.Timestamptz
+	Password        *string
+}
+
+// Used by the resend-verification path so a logged-out caller
+// can re-request their link by email instead of having to
+// remember which exact username they signed up with.
+func (q *Queries) FindUserByEmail(ctx context.Context, lower string) (FindUserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, findUserByEmail, lower)
+	var i FindUserByEmailRow
+	err := row.Scan(
+		&i.Ref,
+		&i.Username,
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.Password,
+	)
+	return i, err
+}
+
 const findUserByRef = `-- name: FindUserByRef :one
 SELECT ref,
        username,
@@ -697,20 +817,22 @@ SELECT ref,
        email,
        usergroup,
        approved,
-       account_expires
+       account_expires,
+       email_verified_at
 FROM "user"
 WHERE ref = $1
 LIMIT 1
 `
 
 type FindUserByRefRow struct {
-	Ref            int64
-	Username       *string
-	Fullname       *string
-	Email          *string
-	Usergroup      *int64
-	Approved       int64
-	AccountExpires pgtype.Timestamptz
+	Ref             int64
+	Username        *string
+	Fullname        *string
+	Email           *string
+	Usergroup       *int64
+	Approved        int64
+	AccountExpires  pgtype.Timestamptz
+	EmailVerifiedAt pgtype.Timestamptz
 }
 
 // Used by the registry-dispatched login flow after a provider has
@@ -728,6 +850,7 @@ func (q *Queries) FindUserByRef(ctx context.Context, ref int64) (FindUserByRefRo
 		&i.Usergroup,
 		&i.Approved,
 		&i.AccountExpires,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -740,21 +863,23 @@ SELECT ref,
        email,
        usergroup,
        approved,
-       account_expires
+       account_expires,
+       email_verified_at
 FROM "user"
 WHERE username = $1
 LIMIT 1
 `
 
 type FindUserByUsernameRow struct {
-	Ref            int64
-	Username       *string
-	Password       *string
-	Fullname       *string
-	Email          *string
-	Usergroup      *int64
-	Approved       int64
-	AccountExpires pgtype.Timestamptz
+	Ref             int64
+	Username        *string
+	Password        *string
+	Fullname        *string
+	Email           *string
+	Usergroup       *int64
+	Approved        int64
+	AccountExpires  pgtype.Timestamptz
+	EmailVerifiedAt pgtype.Timestamptz
 }
 
 // Used by /auth/login to verify credentials.
@@ -770,6 +895,7 @@ func (q *Queries) FindUserByUsername(ctx context.Context, username *string) (Fin
 		&i.Usergroup,
 		&i.Approved,
 		&i.AccountExpires,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -842,6 +968,35 @@ func (q *Queries) GetUserTOTP(ctx context.Context, userRef int64) (UserTotp, err
 		&i.LastUsedAt,
 	)
 	return i, err
+}
+
+const insertEmailVerificationToken = `-- name: InsertEmailVerificationToken :exec
+
+INSERT INTO email_verification_token (user_ref, token_hash, purpose, expires_at)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertEmailVerificationTokenParams struct {
+	UserRef   int64
+	TokenHash []byte
+	Purpose   string
+	ExpiresAt pgtype.Timestamptz
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.19.C — self-service registration + email verification
+// ---------------------------------------------------------------------------
+// Persists a token-hash for a freshly-generated verification link.
+// The plaintext token only exists in the email body; the server
+// only ever sees its sha256 hash.
+func (q *Queries) InsertEmailVerificationToken(ctx context.Context, arg InsertEmailVerificationTokenParams) error {
+	_, err := q.db.Exec(ctx, insertEmailVerificationToken,
+		arg.UserRef,
+		arg.TokenHash,
+		arg.Purpose,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const insertImpersonationSession = `-- name: InsertImpersonationSession :one
@@ -1498,6 +1653,19 @@ UPDATE user_totp_recovery_code
 
 func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markRecoveryCodeUsed, id)
+	return err
+}
+
+const markUserEmailVerified = `-- name: MarkUserEmailVerified :exec
+UPDATE "user"
+   SET email_verified_at = NOW()
+ WHERE ref = $1
+   AND email_verified_at IS NULL
+`
+
+// Idempotent — re-applying is a no-op.
+func (q *Queries) MarkUserEmailVerified(ctx context.Context, ref int64) error {
+	_, err := q.db.Exec(ctx, markUserEmailVerified, ref)
 	return err
 }
 

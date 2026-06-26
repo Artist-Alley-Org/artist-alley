@@ -7,7 +7,8 @@ SELECT ref,
        email,
        usergroup,
        approved,
-       account_expires
+       account_expires,
+       email_verified_at
 FROM "user"
 WHERE username = $1
 LIMIT 1;
@@ -23,7 +24,8 @@ SELECT ref,
        email,
        usergroup,
        approved,
-       account_expires
+       account_expires,
+       email_verified_at
 FROM "user"
 WHERE ref = $1
 LIMIT 1;
@@ -772,3 +774,64 @@ UPDATE user_totp_recovery_code
 -- name: CountUnusedRecoveryCodes :one
 SELECT COUNT(*) FROM user_totp_recovery_code
  WHERE user_ref = $1 AND used_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Phase 1.19.C — self-service registration + email verification
+-- ---------------------------------------------------------------------------
+
+-- name: InsertEmailVerificationToken :exec
+-- Persists a token-hash for a freshly-generated verification link.
+-- The plaintext token only exists in the email body; the server
+-- only ever sees its sha256 hash.
+INSERT INTO email_verification_token (user_ref, token_hash, purpose, expires_at)
+VALUES ($1, $2, $3, $4);
+
+-- name: FindActiveEmailVerificationToken :one
+-- Verifies one incoming link click. Returns the row id + user
+-- when the hash matches an unconsumed, unexpired row. Caller
+-- marks consumed_at + flips user.email_verified_at in one tx.
+SELECT id, user_ref, purpose
+  FROM email_verification_token
+ WHERE token_hash = $1
+   AND consumed_at IS NULL
+   AND expires_at > NOW()
+ LIMIT 1;
+
+-- name: ConsumeEmailVerificationToken :exec
+UPDATE email_verification_token
+   SET consumed_at = NOW()
+ WHERE id = $1
+   AND consumed_at IS NULL;
+
+-- name: MarkUserEmailVerified :exec
+-- Idempotent — re-applying is a no-op.
+UPDATE "user"
+   SET email_verified_at = NOW()
+ WHERE ref = $1
+   AND email_verified_at IS NULL;
+
+-- name: DeleteExpiredEmailVerificationTokens :execrows
+-- Sweeper-friendly cleanup of expired/consumed rows. The active-
+-- index partial-WHERE-clause already keeps the hot path narrow;
+-- this just bounds total table size.
+DELETE FROM email_verification_token
+ WHERE consumed_at IS NOT NULL OR expires_at < NOW() - INTERVAL '7 days';
+
+-- name: FindUserByEmail :one
+-- Used by the resend-verification path so a logged-out caller
+-- can re-request their link by email instead of having to
+-- remember which exact username they signed up with.
+SELECT ref, username, email, email_verified_at, password
+  FROM "user"
+ WHERE LOWER(email) = LOWER($1)
+ LIMIT 1;
+
+-- name: CreateUserForRegistration :one
+-- Inserts a freshly-registered user with the standard "approved=1
+-- + email_verified_at IS NULL" shape Phase 1.19.C expects. Done
+-- as a typed query (not the catch-all CreateUser) so the column
+-- defaults are explicit + the audit row in commit 2 captures
+-- "self_registered" intent.
+INSERT INTO "user" (username, password, email, fullname, approved, email_verified_at)
+VALUES ($1, $2, $3, $4, 1, NULL)
+RETURNING ref, username, email;

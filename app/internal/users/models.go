@@ -352,6 +352,16 @@ type DirectMessage struct {
 	OriginServerID   pgtype.UUID
 }
 
+type EmailVerificationToken struct {
+	ID         pgtype.UUID
+	UserRef    int64
+	TokenHash  []byte
+	Purpose    string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+}
+
 type ExtractionFailure struct {
 	ID          pgtype.UUID
 	AssetID     pgtype.UUID
@@ -846,6 +856,7 @@ type User struct {
 	SigningPrivateKeyEnc    []byte
 	EncryptionPublicKey     []byte
 	EncryptionPrivateKeyEnc []byte
+	EmailVerifiedAt         pgtype.Timestamptz
 }
 
 type UserBlock struct {

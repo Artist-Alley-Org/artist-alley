@@ -1558,6 +1558,15 @@ func (s *apiServer) DisableMyTOTP(ctx context.Context, req openapi.DisableMyTOTP
 func (s *apiServer) RegenerateMyRecoveryCodes(ctx context.Context, req openapi.RegenerateMyRecoveryCodesRequestObject) (openapi.RegenerateMyRecoveryCodesResponseObject, error) {
 	return s.auth.RegenerateMyRecoveryCodes(ctx, req)
 }
+func (s *apiServer) Register(ctx context.Context, req openapi.RegisterRequestObject) (openapi.RegisterResponseObject, error) {
+	return s.auth.Register(ctx, req)
+}
+func (s *apiServer) VerifyEmail(ctx context.Context, req openapi.VerifyEmailRequestObject) (openapi.VerifyEmailResponseObject, error) {
+	return s.auth.VerifyEmail(ctx, req)
+}
+func (s *apiServer) ResendVerificationEmail(ctx context.Context, req openapi.ResendVerificationEmailRequestObject) (openapi.ResendVerificationEmailResponseObject, error) {
+	return s.auth.ResendVerificationEmail(ctx, req)
+}
 
 func (s *apiServer) ListCapabilities(ctx context.Context, req openapi.ListCapabilitiesRequestObject) (openapi.ListCapabilitiesResponseObject, error) {
 	return s.auth.ListCapabilities(ctx, req)

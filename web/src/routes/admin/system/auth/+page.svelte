@@ -20,6 +20,12 @@
     max_age_days: 0,
   });
   let providers = $state<SSOProvider[]>([]);
+  // Phase 1.19.C — self-registration knobs.
+  let selfRegistration = $state({
+    enabled: false,
+    require_email_verification: true,
+    default_role: 'Base',
+  });
   let loading = $state(true);
   let saving = $state(false);
   let saved = $state(false);
@@ -32,9 +38,14 @@
     try {
       const { data } = await api.GET('/admin/system/auth');
       if (data) {
-        const d = data as { password_policy?: typeof policy; sso_providers?: SSOProvider[] };
+        const d = data as {
+          password_policy?: typeof policy;
+          sso_providers?: SSOProvider[];
+          self_registration?: typeof selfRegistration;
+        };
         if (d.password_policy) policy = { ...policy, ...d.password_policy };
         providers = d.sso_providers ?? [];
+        if (d.self_registration) selfRegistration = { ...selfRegistration, ...d.self_registration };
       }
     } finally {
       loading = false;
@@ -59,6 +70,7 @@
         body: {
           password_policy: policy,
           sso_providers: providers,
+          self_registration: selfRegistration,
         } as never,
       });
       if (apiErr) {
@@ -99,6 +111,23 @@
         <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={policy.require_symbol} class="h-4 w-4 accent-accent" />{t('admin.system.auth.require_symbol')}</label>
         <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={policy.disallow_common} class="h-4 w-4 accent-accent" />{t('admin.system.auth.disallow_common')}</label>
       </div>
+    </section>
+
+    <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
+      <h3 class="text-sm font-medium text-fg">{t('admin.system.auth.self_registration_heading')}</h3>
+      <p class="text-xs text-fg-muted">{t('admin.system.auth.self_registration_help')}</p>
+      <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" bind:checked={selfRegistration.enabled} class="h-4 w-4 accent-accent" data-testid="auth-selfreg-enabled" />
+        {t('admin.system.auth.self_registration_enabled')}
+      </label>
+      <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" bind:checked={selfRegistration.require_email_verification} class="h-4 w-4 accent-accent" data-testid="auth-selfreg-verify" />
+        {t('admin.system.auth.self_registration_require_verify')}
+      </label>
+      <label class="block">
+        <span class="block text-xs text-fg-muted">{t('admin.system.auth.self_registration_default_role')}</span>
+        <input type="text" bind:value={selfRegistration.default_role} placeholder="Base" class="mt-1 w-full max-w-xs rounded border border-border bg-surface px-3 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none" />
+      </label>
     </section>
 
     <section class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">

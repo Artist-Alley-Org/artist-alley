@@ -289,6 +289,47 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// /admin/system/smtp/test endpoint can render + drive the
 		// boot-configured Sender.
 		impl.sysconfigH.SetEmail(emailDeps)
+		// Phase 1.19.C — self-service registration surface. The
+		// handler refuses 403 when auth.self_registration.enabled
+		// is false (the default), so wiring is harmless on
+		// closed installs. The seam types live in auth so the
+		// auth package stays clear of the email + sysconfig
+		// dependency edges; the closures below adapt at the
+		// boundary.
+		impl.auth.SetRegistrationSurface(auth.RegisterSurface{
+			SendVerification: func(ctx context.Context, to, recipientName, verifyURL, expiresIn string) error {
+				site, _ := emailSite(ctx)
+				msg, err := email.Render(email.TemplateRegisterVerify, []string{to}, map[string]any{
+					"site_name":      site.Name,
+					"site_url":       site.URL,
+					"recipient_name": recipientName,
+					"verify_url":     verifyURL,
+					"expires_in":     expiresIn,
+				})
+				if err != nil {
+					return err
+				}
+				return emailSender.Send(ctx, msg)
+			},
+			SiteForVerify: func(ctx context.Context) (auth.SiteForVerify, error) {
+				s, err := emailSite(ctx)
+				if err != nil {
+					return auth.SiteForVerify{}, err
+				}
+				return auth.SiteForVerify{Name: s.Name, URL: s.URL}, nil
+			},
+			RegistrationPolicy: func(ctx context.Context) (auth.RegistrationConfig, error) {
+				cfg, err := sysCfg.GetAuth(ctx)
+				if err != nil {
+					return auth.RegistrationConfig{}, err
+				}
+				return auth.RegistrationConfig{
+					Enabled:                  cfg.SelfRegistration.Enabled,
+					RequireEmailVerification: cfg.SelfRegistration.RequireEmailVerification,
+					DefaultRole:              cfg.SelfRegistration.DefaultRole,
+				}, nil
+			},
+		})
 		strict := openapi.NewStrictHandler(impl, nil)
 		openapi.HandlerFromMux(strict, r)
 
