@@ -840,6 +840,39 @@ func (h *Handler) UpdateAsset(
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := New(tx)
 
+	// Phase 1.16 optimistic-concurrency check. Done inside the tx
+	// so two simultaneous edits can't both pass the gate + both
+	// commit (the tx isolation guarantees this row is locked by
+	// the UPDATE that follows). Caller opts in by passing
+	// if_unchanged_since; absent = legacy last-write-wins.
+	if in.IfUnchangedSince != nil {
+		var currentUpdatedAt time.Time
+		err := tx.QueryRow(ctx,
+			`SELECT updated_at FROM assets WHERE id = $1 AND deleted_at IS NULL`,
+			pgID,
+		).Scan(&currentUpdatedAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return openapi.UpdateAsset404JSONResponse{
+					NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
+				}, nil
+			}
+			return nil, fmt.Errorf("assets: load updated_at: %w", err)
+		}
+		// Truncate both sides to microsecond precision — Postgres
+		// stores timestamptz at µs while Go's JSON marshalling
+		// round-trips at ns. A bare equality check would false-
+		// positive on the trailing ns.
+		stored := currentUpdatedAt.Truncate(time.Microsecond)
+		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
+		if !stored.Equal(sent) {
+			return openapi.UpdateAsset409JSONResponse{
+				Error:     "asset was edited by someone else after your last load; reload and try again",
+				UpdatedAt: currentUpdatedAt,
+			}, nil
+		}
+	}
+
 	row, err := q.UpdateAsset(ctx, UpdateAssetParams{
 		ID:          pgID,
 		Title:       titlePtr,
