@@ -3,7 +3,7 @@ id: "0052"
 title: Optimistic-concurrency edit-safety on mutable entities
 status: accepted
 date: 2026-06-26
-area: backend
+area: architecture
 phases:
   - "1.16"
 supersedes: []

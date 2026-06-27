@@ -3,7 +3,7 @@ id: "0054"
 title: Account lifecycle + email substrate + admin impersonation + self-service 2FA
 status: accepted
 date: 2026-06-26
-area: auth
+area: security
 phases:
   - "1.19"
 supersedes: []
