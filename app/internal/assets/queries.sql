@@ -211,6 +211,16 @@ UPDATE assets
  WHERE id = $1
    AND thumbhash IS NULL;
 
+-- name: SetAssetPageCount :exec
+-- Idempotent page-count stamp from the metadata pipeline (PDF today;
+-- comics + ebooks later). Always overwrites — re-extraction on the
+-- same asset should converge to the current truth, not preserve a
+-- stale value from an older extractor. Does not touch updated_at
+-- because page_count is asset-intrinsic, not an editorial change.
+UPDATE assets
+   SET page_count = $2
+ WHERE id = $1;
+
 -- name: AddAssetCompanion :one
 -- Attach a companion blob to an asset under a given relative path.
 -- Companion bytes live in storage_objects (deduped by hash); this

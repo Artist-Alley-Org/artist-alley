@@ -205,6 +205,136 @@ func TestBackfillJob_AssetTypeScopeNarrowsPopulation(t *testing.T) {
 	}
 }
 
+func TestBackfillJob_FileExtensionScopeFilters(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+
+	// seedAsset writes file_extension='jpg'. Re-stamp two of the
+	// assets to .cr2 so we can verify the extension filter narrows
+	// the walk.
+	a1 := seedAsset(t, pool)
+	a2 := seedAsset(t, pool)
+	a3 := seedAsset(t, pool)
+	if _, err := pool.Exec(ctx,
+		`UPDATE assets SET file_extension = 'cr2' WHERE id = ANY($1)`,
+		[]uuid.UUID{a1, a3},
+	); err != nil {
+		t.Fatalf("re-stamp extensions: %v", err)
+	}
+
+	enq := &fakeEnqueuer{}
+	h := metadata.NewBackfillJobHandler(pool, enq, nil)
+	runID := seedBackfillRun(t, pool, metadata.BackfillScope{
+		FileExtensions: []string{"cr2"},
+	})
+	payload, _ := json.Marshal(metadata.BackfillJobPayload{RunID: runID})
+	if _, err := h.Handle(ctx, &jobs.Claim{Payload: payload}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	got := map[uuid.UUID]bool{}
+	for _, id := range enq.calls {
+		got[id] = true
+	}
+	if !got[a1] || !got[a3] {
+		t.Errorf("extension filter dropped expected raws: a1=%v a3=%v", got[a1], got[a3])
+	}
+	if got[a2] {
+		t.Errorf("extension filter let .jpg through: a2 enqueued")
+	}
+}
+
+func TestBackfillJob_AssetTypeRefsMultiSelect(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+
+	a1 := seedAsset(t, pool)
+	// Re-stamp asset_type=2 + 3 + 4 so each row is its own type.
+	a2 := seedAsset(t, pool)
+	a3 := seedAsset(t, pool)
+	a4 := seedAsset(t, pool)
+	if _, err := pool.Exec(ctx,
+		`UPDATE assets SET asset_type = CASE id WHEN $1 THEN 2 WHEN $2 THEN 3 WHEN $3 THEN 4 ELSE asset_type END WHERE id = ANY($4)`,
+		a2, a3, a4, []uuid.UUID{a2, a3, a4},
+	); err != nil {
+		t.Fatalf("re-stamp asset_type: %v", err)
+	}
+
+	enq := &fakeEnqueuer{}
+	h := metadata.NewBackfillJobHandler(pool, enq, nil)
+	// Multi-select for types 2 + 4 only — should pick up a2 + a4,
+	// skip a1 (type 1) and a3 (type 3).
+	runID := seedBackfillRun(t, pool, metadata.BackfillScope{
+		AssetTypeRefs: []int64{2, 4},
+	})
+	payload, _ := json.Marshal(metadata.BackfillJobPayload{RunID: runID})
+	if _, err := h.Handle(ctx, &jobs.Claim{Payload: payload}); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	got := map[uuid.UUID]bool{}
+	for _, id := range enq.calls {
+		got[id] = true
+	}
+	if got[a1] || got[a3] {
+		t.Errorf("multi-select leaked: a1=%v a3=%v", got[a1], got[a3])
+	}
+	if !got[a2] || !got[a4] {
+		t.Errorf("multi-select missed in-scope rows: a2=%v a4=%v", got[a2], got[a4])
+	}
+}
+
+func TestBackfillJob_IncludeNonImageOpensPDFs(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+
+	// Seed two assets, flip one to has_image=false (representing a
+	// PDF or other paginated non-image type).
+	a1 := seedAsset(t, pool) // stays has_image=true
+	a2 := seedAsset(t, pool) // becomes has_image=false
+	if _, err := pool.Exec(ctx,
+		`UPDATE assets SET has_image = false, file_extension = 'pdf' WHERE id = $1`,
+		a2,
+	); err != nil {
+		t.Fatalf("flip has_image: %v", err)
+	}
+
+	// Default scope (IncludeNonImage=false) excludes a2.
+	enqA := &fakeEnqueuer{}
+	hA := metadata.NewBackfillJobHandler(pool, enqA, nil)
+	runA := seedBackfillRun(t, pool, metadata.BackfillScope{})
+	pA, _ := json.Marshal(metadata.BackfillJobPayload{RunID: runA})
+	if _, err := hA.Handle(ctx, &jobs.Claim{Payload: pA}); err != nil {
+		t.Fatalf("handle (default scope): %v", err)
+	}
+	if didEnqueue(enqA.calls, a2) {
+		t.Errorf("default scope shouldn't enqueue non-image asset")
+	}
+	if !didEnqueue(enqA.calls, a1) {
+		t.Errorf("default scope should still enqueue image asset")
+	}
+
+	// IncludeNonImage=true opens up to PDFs.
+	enqB := &fakeEnqueuer{}
+	hB := metadata.NewBackfillJobHandler(pool, enqB, nil)
+	runB := seedBackfillRun(t, pool, metadata.BackfillScope{IncludeNonImage: true})
+	pB, _ := json.Marshal(metadata.BackfillJobPayload{RunID: runB})
+	if _, err := hB.Handle(ctx, &jobs.Claim{Payload: pB}); err != nil {
+		t.Fatalf("handle (open scope): %v", err)
+	}
+	if !didEnqueue(enqB.calls, a2) {
+		t.Errorf("IncludeNonImage scope should enqueue non-image asset a2")
+	}
+}
+
+func didEnqueue(calls []uuid.UUID, want uuid.UUID) bool {
+	for _, id := range calls {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestAdminHandler_BackfillLifecycle(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()

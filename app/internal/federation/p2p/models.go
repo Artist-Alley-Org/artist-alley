@@ -95,6 +95,8 @@ type Asset struct {
 	ProcessingFinishedAt pgtype.Timestamptz
 	// Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default 'public' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.
 	Sensitivity string
+	// For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.
+	PageCount *int32
 }
 
 type AssetAlternate struct {

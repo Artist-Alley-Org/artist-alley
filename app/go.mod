@@ -20,6 +20,7 @@ require (
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/nwaples/rardecode/v2 v2.2.3
 	github.com/oapi-codegen/runtime v1.4.1
+	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/pgvector/pgvector-go v0.4.0
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/qmuntal/gltf v0.28.0
@@ -29,7 +30,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	go.n16f.net/thumbhash v1.1.0
 	golang.org/x/crypto v0.52.0
-	golang.org/x/image v0.32.0
+	golang.org/x/image v0.41.0
 	golang.org/x/net v0.54.0
 	golang.org/x/text v0.37.0
 	golang.org/x/time v0.15.0
@@ -55,24 +56,30 @@ require (
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dsoprea/go-logging v0.0.0-20200710184922-b02d349568dd // indirect
 	github.com/dsoprea/go-utility/v2 v2.0.0-20221003172846-a3e1774ef349 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
+	github.com/hhrutter/lzw v1.0.0 // indirect
+	github.com/hhrutter/pkcs7 v0.2.2 // indirect
+	github.com/hhrutter/tiff v1.0.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/oasdiff/yaml v0.1.0 // indirect
 	github.com/oasdiff/yaml3 v0.0.13 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect

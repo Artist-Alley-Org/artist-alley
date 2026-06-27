@@ -28,6 +28,11 @@
   let loading = $state(false);
   let error = $state('');
   let assetTypeFilter = $state('');
+  // Phase 1.18.A-3.B: comma-separated file extensions (cr2,nef,...)
+  // + a "include non-image assets" gate for the PDF case. Empty
+  // input = backend defaults preserved (image-only, every type).
+  let fileExtensionsInput = $state('');
+  let includeNonImage = $state(false);
   let pollHandle: ReturnType<typeof setInterval> | null = null;
 
   async function loadRuns() {
@@ -58,7 +63,11 @@
     starting = true;
     error = '';
     try {
-      const body: { asset_type_ref?: number } = {};
+      const body: {
+        asset_type_ref?: number;
+        file_extensions?: string[];
+        include_non_image?: boolean;
+      } = {};
       if (assetTypeFilter) {
         const n = Number(assetTypeFilter);
         if (!Number.isFinite(n)) {
@@ -67,6 +76,12 @@
         }
         body.asset_type_ref = n;
       }
+      const exts = fileExtensionsInput
+        .split(',')
+        .map((s) => s.trim().toLowerCase().replace(/^\./, ''))
+        .filter((s) => s.length > 0);
+      if (exts.length > 0) body.file_extensions = exts;
+      if (includeNonImage) body.include_non_image = true;
       const r = await api.POST('/admin/metadata-extraction/backfills', { body });
       if (r.error) {
         error = (r.error as { error?: string }).error || 'start failed';
@@ -154,6 +169,18 @@
         placeholder="leave blank for all types"
         class="w-64 rounded border border-border bg-bg p-2 text-fg"
       />
+    </label>
+    <label class="flex flex-col gap-1 text-sm">
+      <span class="text-fg-muted">File extensions (comma-separated)</span>
+      <input
+        bind:value={fileExtensionsInput}
+        placeholder="e.g. cr2,nef,dng or pdf"
+        class="w-64 rounded border border-border bg-bg p-2 text-fg"
+      />
+    </label>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" bind:checked={includeNonImage} />
+      <span>Include non-image assets (PDF)</span>
     </label>
     <button
       onclick={startRun}

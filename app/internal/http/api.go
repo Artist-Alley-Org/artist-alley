@@ -69,6 +69,8 @@ import (
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
+	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
+	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
 	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
 	"github.com/mscrnt/artist-alley/app/internal/messages"
@@ -376,14 +378,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			// Order matters: EXIF first (largest catalog), then IPTC + XMP
 			// (overlapping semantics in different namespaces). Operators
 			// resolve same-field conflicts via the per-field extraction-
-			// config picker shipped in 1.18.A-2 PR-B.
+			// config picker shipped in 1.18.A-2 PR-B. PDF + raw extractors
+			// (Phase 1.18.A-3.B) own disjoint MIME ranges so their relative
+			// order doesn't matter; placed last for readability.
 			[]assetmetadata.Extractor{
 				exifext.New(),
 				iptcext.New(),
 				xmpext.New(),
+				pdfext.New(),
+				rawpkg.New(),
 			},
 			logger,
-		).WithCounter(s.metaCounter))
+		).
+			WithCounter(s.metaCounter).
+			WithAssetAttributes(assetmetadata.NewPoolAssetAttributeWriter(pool)).
+			WithPreviewVariants(assetmetadata.NewStoragePreviewVariantWriter(pool, storageSvc)))
 		// Phase 1.18.A-2 follow-up B (commit 4) — coordinator job
 		// for operator-initiated re-extract sweeps. Walks active
 		// image assets matching the scope + enqueues one
@@ -2594,9 +2603,20 @@ func (s *apiServer) StartMetadataExtractionBackfill(ctx context.Context, req ope
 	p := assetmetadata.BackfillStartParams{
 		StartedBy: &caller.UserRef,
 	}
-	if req.Body != nil && req.Body.AssetTypeRef != nil {
-		v := *req.Body.AssetTypeRef
-		p.Scope.AssetTypeRef = &v
+	if req.Body != nil {
+		if req.Body.AssetTypeRef != nil {
+			v := *req.Body.AssetTypeRef
+			p.Scope.AssetTypeRef = &v
+		}
+		if req.Body.AssetTypeRefs != nil {
+			p.Scope.AssetTypeRefs = append(p.Scope.AssetTypeRefs, *req.Body.AssetTypeRefs...)
+		}
+		if req.Body.FileExtensions != nil {
+			p.Scope.FileExtensions = append(p.Scope.FileExtensions, *req.Body.FileExtensions...)
+		}
+		if req.Body.IncludeNonImage != nil {
+			p.Scope.IncludeNonImage = *req.Body.IncludeNonImage
+		}
 	}
 	row, err := s.metaAdmin.StartBackfill(ctx, s.jobsSvc, p)
 	if err != nil {
@@ -3188,8 +3208,25 @@ func mimeForExt(ext string) string {
 		return "image/tiff"
 	case "webp":
 		return "image/webp"
+	case "pdf":
+		return "application/pdf"
+	}
+	// Raw camera formats (Phase 1.18.A-3.B). Returns the canonical
+	// mediatype the raw extractor's Supports() check looks for;
+	// empty string means the extension isn't a known raw and we
+	// fall through to the generic octet-stream default.
+	if m := rawExtMimeShim(ext); m != "" {
+		return m
 	}
 	return "application/octet-stream"
+}
+
+// rawExtMimeShim is a thin wrapper so we don't pull the raw package
+// into the per-extension switch above. Keeps the mime mapping in one
+// place (raw.MimeTypeForExt) while letting the http package own the
+// dispatcher.
+func rawExtMimeShim(ext string) string {
+	return rawpkg.MimeTypeForExt(ext)
 }
 
 func deref(s *string) string {

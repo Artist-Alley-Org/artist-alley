@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,11 +24,80 @@ import (
 const JobTypeBackfill jobs.JobType = "metadata.backfill"
 
 // BackfillScope narrows the asset population the backfill walks.
-// Empty scope = every active image asset with a file_hash.
+// Empty scope = every active asset (image OR paginated) with a
+// file_hash. Filters compose with AND.
 type BackfillScope struct {
 	// AssetTypeRef limits to one asset type (e.g. the photo type's
-	// numeric ref). nil = all asset types.
+	// numeric ref). nil = all asset types. Single-value for
+	// historical compatibility; multi-select callers use
+	// AssetTypeRefs below.
 	AssetTypeRef *int64 `json:"asset_type_ref,omitempty"`
+
+	// AssetTypeRefs is the multi-select extension introduced in
+	// Phase 1.18.A-3.B. Empty = no filter (single-select
+	// AssetTypeRef still applies if set). When both are populated,
+	// AssetTypeRef is folded into the multi-select set + treated as
+	// "any of these".
+	AssetTypeRefs []int64 `json:"asset_type_refs,omitempty"`
+
+	// FileExtensions narrows by file extension (lowercase, no leading
+	// dot). Empty = no filter. Lets operators target a backfill at
+	// "just my new raw uploads" or "just my PDFs" — the canonical
+	// Phase 1.18.A-3.B use case for the new extractors.
+	FileExtensions []string `json:"file_extensions,omitempty"`
+
+	// IncludeNonImage opens the population to non-image assets
+	// (PDFs today; comics + ebooks later). Defaults to false so
+	// older callers keep their image-only scope behaviour from
+	// Phase 1.18.A-2 PR-B.
+	IncludeNonImage bool `json:"include_non_image,omitempty"`
+}
+
+// effectiveAssetTypeRefs returns the union of AssetTypeRef +
+// AssetTypeRefs as a deduplicated slice. Empty result = no
+// asset-type filter applies.
+func (s BackfillScope) effectiveAssetTypeRefs() []int64 {
+	if s.AssetTypeRef == nil && len(s.AssetTypeRefs) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(s.AssetTypeRefs)+1)
+	out := make([]int64, 0, len(s.AssetTypeRefs)+1)
+	add := func(v int64) {
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	if s.AssetTypeRef != nil {
+		add(*s.AssetTypeRef)
+	}
+	for _, v := range s.AssetTypeRefs {
+		add(v)
+	}
+	return out
+}
+
+// effectiveExtensions returns the lowercase, no-leading-dot file
+// extensions to filter by. Empty result = no extension filter.
+func (s BackfillScope) effectiveExtensions() []string {
+	if len(s.FileExtensions) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(s.FileExtensions))
+	out := make([]string, 0, len(s.FileExtensions))
+	for _, e := range s.FileExtensions {
+		norm := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(e), "."))
+		if norm == "" {
+			continue
+		}
+		if _, ok := seen[norm]; ok {
+			continue
+		}
+		seen[norm] = struct{}{}
+		out = append(out, norm)
+	}
+	return out
 }
 
 // BackfillJobPayload is the JSON shape the worker receives. Tiny —
@@ -206,21 +276,41 @@ type backfillAssetRow struct {
 
 // listAssetsPage returns up to `limit` eligible asset ids past
 // `afterID` (keyset pagination on id). Filters by scope.
+//
+// Three knobs (any combination):
+//
+//   - asset_type filter: scope.AssetTypeRef + AssetTypeRefs are
+//     folded into one IN-list. NULL list = no asset-type filter.
+//   - file-extension filter: scope.FileExtensions is matched against
+//     assets.file_extension (lowercased on both sides). Empty list =
+//     no extension filter.
+//   - has_image gate: by default we keep the Phase 1.18.A-2 PR-B
+//     image-only behaviour. scope.IncludeNonImage opens up to PDFs
+//     + future paginated asset types.
+//
+// Pure SQL — no dynamic strcat, so the EXPLAIN plan stays stable
+// across scope combinations. The COALESCE+ANY-OR-NULL idiom keeps
+// the query parameter-only.
 func (h *BackfillJobHandler) listAssetsPage(ctx context.Context, scope BackfillScope, afterID pgtype.UUID, limit int32) ([]backfillAssetRow, error) {
+	assetTypeFilter := scope.effectiveAssetTypeRefs()
+	extensions := scope.effectiveExtensions()
 	rows, err := h.pool.Query(ctx, `
 		SELECT id FROM assets
 		 WHERE status = 'active'
 		   AND deleted_at IS NULL
-		   AND has_image = TRUE
+		   AND ($5::BOOLEAN = TRUE OR has_image = TRUE)
 		   AND file_hash IS NOT NULL
 		   AND ($1::UUID IS NULL OR id > $1::UUID)
-		   AND ($2::BIGINT IS NULL OR asset_type = $2::BIGINT)
+		   AND ($2::BIGINT[] IS NULL OR asset_type = ANY($2::BIGINT[]))
+		   AND ($3::TEXT[] IS NULL OR LOWER(file_extension) = ANY($3::TEXT[]))
 		 ORDER BY id ASC
-		 LIMIT $3
+		 LIMIT $4
 	`,
 		nullableUUID(afterID),
-		scope.AssetTypeRef,
+		nullableInt64Slice(assetTypeFilter),
+		nullableStringSlice(extensions),
 		limit,
+		scope.IncludeNonImage,
 	)
 	if err != nil {
 		return nil, err
@@ -235,6 +325,26 @@ func (h *BackfillJobHandler) listAssetsPage(ctx context.Context, scope BackfillS
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// nullableInt64Slice returns nil so pgx binds NULL when the input is
+// empty — letting the COALESCE-style "IS NULL OR ..." filter become
+// a no-op. Returns the slice unchanged otherwise.
+func nullableInt64Slice(in []int64) any {
+	if len(in) == 0 {
+		return nil
+	}
+	return in
+}
+
+// nullableStringSlice is the string analogue. pgx serialises a
+// nil-typed any as SQL NULL; a populated []string becomes a
+// TEXT[] literal.
+func nullableStringSlice(in []string) any {
+	if len(in) == 0 {
+		return nil
+	}
+	return in
 }
 
 func nullableUUID(id pgtype.UUID) any {

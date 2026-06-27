@@ -1549,6 +1549,11 @@ var imageExts = map[string]struct{}{
 	// High-dynamic-range — routed through preview.raster's HDR
 	// branch (ffmpeg tonemap → PNG → standard variant ladder).
 	"hdr": {}, "exr": {}, "pic": {},
+	// Raw camera (Phase 1.18.A-3.B). Treated as images so they get
+	// thumbhash + processing_status=pending; the raster pipeline's
+	// loadRawPreview hook decodes the embedded JPEG preview into the
+	// variant ladder (no demosaic on this path).
+	"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
 }
 
 func isImageExt(ext *string) bool {
