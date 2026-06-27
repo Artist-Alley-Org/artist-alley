@@ -410,6 +410,21 @@ func (h *Handler) UpdatePost(
 	}
 
 	in := req.Body
+
+	// Phase 1.16 optimistic-concurrency check. Compared against
+	// the row loaded inside the tx (one consistent snapshot).
+	// Truncate both sides to µs (Postgres stores at µs; Go marshals
+	// at ns).
+	if in.IfUnchangedSince != nil && current.UpdatedAt.Valid {
+		stored := current.UpdatedAt.Time.Truncate(time.Microsecond)
+		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
+		if !stored.Equal(sent) {
+			return openapi.UpdatePost409JSONResponse{
+				Error:     "post was edited by someone else after your last load; reload and try again",
+				UpdatedAt: current.UpdatedAt.Time,
+			}, nil
+		}
+	}
 	var visPtr *string
 	if in.Visibility != nil {
 		s := string(*in.Visibility)

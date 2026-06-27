@@ -4866,6 +4866,10 @@ paths:
     patch:
       operationId: updatePost
       summary: Partial update of a post
+      description: |
+        Phase 1.16 optimistic concurrency: pass the post's last-
+        known `updated_at` as `if_unchanged_since`; 409 if the
+        row has been edited since.
       tags: [posts]
       security:
         - cookieAuth: []
@@ -4889,6 +4893,11 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Edited by someone else after `if_unchanged_since`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EditConflict" }
     delete:
       operationId: deletePost
       summary: Soft-delete a post
@@ -5608,6 +5617,10 @@ paths:
         Only fields present in the body are touched. Pass
         `expires_at: null` to remove the TTL; omit the field to keep
         the current value.
+
+        Phase 1.16 optimistic concurrency: pass the collection's
+        last-known `updated_at` as `if_unchanged_since`; 409 if
+        the row has been edited since.
       tags: [collections]
       security:
         - cookieAuth: []
@@ -5631,6 +5644,11 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Edited by someone else after `if_unchanged_since`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EditConflict" }
     delete:
       operationId: deleteCollection
       summary: Hard-delete a collection
@@ -9441,6 +9459,14 @@ components:
         purpose:
           type: string
           nullable: true
+        if_unchanged_since:
+          type: string
+          format: date-time
+          description: |
+            Phase 1.16 optimistic-concurrency guard. When set, the
+            server returns 409 EditConflict if the collection's
+            `updated_at` has advanced past this value. Omit to
+            opt out of the check (legacy behaviour).
     CollectionList:
       type: object
       required: [items]
@@ -10029,6 +10055,14 @@ components:
         tags:
           type: array
           items: { type: string, minLength: 1, maxLength: 64 }
+        if_unchanged_since:
+          type: string
+          format: date-time
+          description: |
+            Phase 1.16 optimistic-concurrency guard. When set, the
+            server returns 409 EditConflict if the post's
+            `updated_at` has advanced past this value. Omit to
+            opt out of the check (legacy behaviour).
     PostAssetWrite:
       type: object
       required: [asset_id]

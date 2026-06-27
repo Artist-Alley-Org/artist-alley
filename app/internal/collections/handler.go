@@ -378,6 +378,22 @@ func (h *Handler) UpdateCollection(
 	}
 
 	in := req.Body
+
+	// Phase 1.16 optimistic-concurrency check. Compares the
+	// loaded row's updated_at against the caller's last-known
+	// value. Truncate both sides to µs (Postgres stores at µs;
+	// Go marshals at ns). Caller opts in by sending the field;
+	// absent = legacy last-write-wins.
+	if in.IfUnchangedSince != nil && cur.UpdatedAt.Valid {
+		stored := cur.UpdatedAt.Time.Truncate(time.Microsecond)
+		sent := in.IfUnchangedSince.Truncate(time.Microsecond)
+		if !stored.Equal(sent) {
+			return openapi.UpdateCollection409JSONResponse{
+				Error:     "collection was edited by someone else after your last load; reload and try again",
+				UpdatedAt: cur.UpdatedAt.Time,
+			}, nil
+		}
+	}
 	var namePtr *string
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
