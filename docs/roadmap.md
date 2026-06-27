@@ -150,6 +150,59 @@ current focus:
   cleanup), 1.14.E-2 (full Creative tools panel + mask UI + four
   remaining ops), 1.14.F (caption persistence).
 
+- **Upload-side metadata extraction** (Phase 1.18.A-2 / 1.18.A-3 —
+  shipped 2026-06-22 → 2026-06-26). Every uploaded image now extracts
+  EXIF (1.18.A-2, PR #158), preserves the ICC chunk through the
+  variant pipeline, applies EXIF orientation at variant-render time
+  (source bytes pristine), and per-user dedups via a partial unique
+  index (PR-A, PR #159). Operators wire extraction config per
+  field-definition via an admin picker, review failures in a paginated
+  queue, and trigger backfill against existing photos through the
+  admin UI (1.18.A-2 PR-B, PR #160). 1.18.A-3 (PR #166) added IPTC
+  + XMP extractors against the existing extractor interface. **HEIC
+  remains deliberately unsupported** (only pure-Go HEIF reader pulls
+  libde265 via CGo; vetoed by the no-CGo guardrail; tracked as
+  capability add-on per ADR 0034). Remaining: 1.18.A-3.B (raw camera
+  embedded thumbs CR2/NEF/ARW/DNG + PDF page count + title/author),
+  1.18.A-4 (video thumbnail at configurable timecode).
+
+- **Account lifecycle** (Phase 1.19 — shipped 2026-06-23 → 2026-06-25).
+  AA can now accept a public user without admin handholding. Four
+  PRs landed: email substrate with SMTP-at-rest + template library +
+  test-mode capture (1.19.A-1, PR #161); admin impersonation with
+  capability-intersected effective caps + always-visible banner +
+  audit recording both actor IDs (1.19.A-2, PR #162); self-service
+  TOTP 2FA with enrollment + login gate + recovery codes (1.19.B,
+  PR #163); self-registration + email verification + admin approval
+  queue with email-enumeration-safe responses (1.19.C, PR #164).
+  See ADR 0054. **Per-username account lockout** remains as a
+  follow-up (deferred from the original 1.19.B brief in favour of
+  2FA). No SMS / no email-OTP fallback in v1 — TOTP only.
+
+- **IIIF interoperability** (Phase 1.54.A — shipped 2026-06-25).
+  IIIF Image API 3.0 Level 0 over the existing variant pipeline
+  (PR #165). Manifest endpoints (`info.json`), region / size /
+  rotation / format / quality parameters, content-hash-keyed tile
+  cache, anonymous `iiif.read` capability gated on existing
+  visibility, `/admin/iiif/health` per the generic subsystem-health
+  pattern. Tile cache is content-addressable forever; no persisted
+  derivatives. See ADR 0053. **Remaining (1.54.B)**: Presentation
+  API 3.0 collection + asset manifests; Mirador / Universal Viewer
+  interop snapshot tests; Content Search 2.0.
+
+- **Edit-safety** (Phase 1.16 — partial; shipped 2026-06-26).
+  Optimistic-concurrency edit-safety on `PATCH /assets/{id}` +
+  `PATCH /collections/{id}` + `PATCH /posts/{id}` (PR #167) using
+  `If-Unmodified-Since` headers against the entity's `updated_at`
+  timestamp; 409 Conflict with full current-state body on stale
+  writes; frontend modals capture baseline + surface 409 with
+  explicit "overwrite" action. Lock-free, federation-safe. See ADR
+  0052. **Remaining (1.16.B)**: search activation — unified `/search`
+  endpoint, collections tsvector, vector-search ranking, facets,
+  saved searches, advanced query builder. Resource locking, batch
+  multi-asset metadata edit, and custom per-resource ACL also remain
+  for follow-ups within the 1.16 bracket.
+
 ## Review tool — the load-bearing UX arc
 
 The post modal is becoming the animator's review tool. Phase 1.18.B
