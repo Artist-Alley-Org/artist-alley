@@ -32,6 +32,12 @@
   let featured = $state(false);
   let submitting = $state(false);
   let error = $state<string | null>(null);
+  // Phase 1.16 edit-safety: capture updated_at on open so the
+  // PATCH can detect "someone else edited this while my modal
+  // was open" + show a reload-prompt instead of silently
+  // clobbering.
+  let baselineUpdatedAt = $state<string>('');
+  let conflict = $state<{ updatedAt: string } | null>(null);
 
   $effect(() => {
     if (open) {
@@ -39,7 +45,9 @@
       description = collection.description;
       visibility = collection.visibility as 'private' | 'org-only' | 'followers' | 'explicit-share';
       featured = collection.featured;
+      baselineUpdatedAt = collection.updated_at;
       error = null;
+      conflict = null;
     }
   });
 
@@ -48,15 +56,21 @@
     submitting = true;
     error = null;
     try {
-      const { data, error: apiErr } = await api.PATCH('/collections/{id}', {
+      const { data, error: apiErr, response } = await api.PATCH('/collections/{id}', {
         params: { path: { id: collection.id } },
         body: {
           name: name.trim(),
           description,
           visibility,
           featured,
+          if_unchanged_since: baselineUpdatedAt || undefined,
         },
       });
+      if (response.status === 409) {
+        const c = apiErr as { error?: string; updated_at?: string } | undefined;
+        conflict = { updatedAt: c?.updated_at ?? '' };
+        return;
+      }
       if (apiErr || !data) {
         error = (apiErr as { error?: string } | undefined)?.error ?? t('collections.error_save');
         return;
@@ -67,6 +81,17 @@
       submitting = false;
     }
   }
+
+  // Operator clicked "reload + keep my edits" — refresh the
+  // baseline timestamp so the next submit doesn't 409 again.
+  // The edited form values stay in-place so the operator can
+  // choose to keep them, merge manually, or hit Cancel.
+  function acknowledgeConflict() {
+    if (conflict) {
+      baselineUpdatedAt = conflict.updatedAt;
+      conflict = null;
+    }
+  }
 </script>
 
 <CollectionModal title={t('collections.edit_title')} {open} {onclose}>
@@ -75,6 +100,17 @@
       <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">
         {error}
       </p>
+    {/if}
+    {#if conflict}
+      <div role="alert" class="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+        <p class="font-medium text-warning">{t('collections.conflict_heading')}</p>
+        <p class="mt-1 text-xs text-fg-muted">{t('collections.conflict_body')}</p>
+        <button
+          type="button"
+          onclick={acknowledgeConflict}
+          class="mt-2 rounded border border-warning/60 px-2 py-1 text-xs font-medium text-warning hover:bg-warning/20"
+        >{t('collections.conflict_overwrite')}</button>
+      </div>
     {/if}
     <label class="block">
       <span class="mb-1 block text-xs font-medium text-fg-muted">{t('collections.name')}</span>

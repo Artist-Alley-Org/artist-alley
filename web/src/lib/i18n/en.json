@@ -1587,6 +1587,9 @@
     "error_create": "Couldn't create the collection.",
     "error_save": "Couldn't save the collection.",
     "error_not_found": "Collection not found.",
+    "conflict_heading": "Someone else edited this collection",
+    "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
+    "conflict_overwrite": "Overwrite their changes with mine",
     "error_load_share": "Couldn't load sharing settings.",
     "error_add_share": "Couldn't add the grant.",
     "error_remove_share": "Couldn't revoke the grant."
