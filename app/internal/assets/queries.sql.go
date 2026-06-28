@@ -1123,6 +1123,27 @@ func (q *Queries) ReplaceAssetTags(ctx context.Context, arg ReplaceAssetTagsPara
 	return err
 }
 
+const setAssetPageCount = `-- name: SetAssetPageCount :exec
+UPDATE assets
+   SET page_count = $2
+ WHERE id = $1
+`
+
+type SetAssetPageCountParams struct {
+	ID        pgtype.UUID
+	PageCount *int32
+}
+
+// Idempotent page-count stamp from the metadata pipeline (PDF today;
+// comics + ebooks later). Always overwrites — re-extraction on the
+// same asset should converge to the current truth, not preserve a
+// stale value from an older extractor. Does not touch updated_at
+// because page_count is asset-intrinsic, not an editorial change.
+func (q *Queries) SetAssetPageCount(ctx context.Context, arg SetAssetPageCountParams) error {
+	_, err := q.db.Exec(ctx, setAssetPageCount, arg.ID, arg.PageCount)
+	return err
+}
+
 const setAssetSensitivity = `-- name: SetAssetSensitivity :exec
 UPDATE assets
    SET sensitivity = $2,

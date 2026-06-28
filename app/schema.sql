@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict lL48fiqG0dmi8qEbGXbtqdtK65LV6PfZyXUzacUN5aO4cT1V1PaYyiSEubnQ0un
+\restrict ZgHYBi2IToKP6DjPtXVNubwVcZ3U6JElp4hoskvSLINbK6RBPdwgNyHcSyAJc1g
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -880,6 +880,7 @@ CREATE TABLE public.assets (
     processing_started_at timestamp with time zone,
     processing_finished_at timestamp with time zone,
     sensitivity text DEFAULT 'public'::text NOT NULL,
+    page_count integer,
     CONSTRAINT assets_processing_status_check CHECK ((processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT assets_sensitivity_check CHECK ((sensitivity = ANY (ARRAY['public'::text, 'team'::text, 'restricted'::text, 'embargo'::text]))),
     CONSTRAINT assets_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])))
@@ -891,6 +892,13 @@ CREATE TABLE public.assets (
 --
 
 COMMENT ON COLUMN public.assets.sensitivity IS 'Intrinsic sensitivity tier (public / team / restricted / embargo). Consumed by the federation outbox sender-refusal gate (1.22.I-g) + the inbox receiver-defense gate (1.22.I-h activated at I-i) when activities target this asset. Default ''public'' matches the pre-arc plaintext-everywhere behavior; operator-explicit upgrades are the load-bearing flow.';
+
+
+--
+-- Name: COLUMN assets.page_count; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.assets.page_count IS 'For paginated assets (PDF today; comics + ebooks later), the total page count extracted by the metadata pipeline. NULL = not paginated OR extractor has not run yet; both are read the same way by clients.';
 
 
 --
@@ -5028,5 +5036,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict lL48fiqG0dmi8qEbGXbtqdtK65LV6PfZyXUzacUN5aO4cT1V1PaYyiSEubnQ0un
+\unrestrict ZgHYBi2IToKP6DjPtXVNubwVcZ3U6JElp4hoskvSLINbK6RBPdwgNyHcSyAJc1g
 

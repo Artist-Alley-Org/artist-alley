@@ -75,6 +75,18 @@ type ExtractJobHandler struct {
 	// outcome; surfaced via /admin/metadata-extraction/health.
 	// Nil-safe — tests can construct without a counter.
 	counter *Counter
+
+	// attrs writes asset-row attributes like page_count that come
+	// out of extraction but aren't field-values. Nil-safe — set
+	// post-construction via WithAssetAttributes; tests can leave
+	// it nil and Result.PageCount will be silently dropped.
+	attrs AssetAttributeWriter
+
+	// previews persists the embedded-preview storage variant when
+	// an extractor returns Result.PreviewImageBytes (raw cameras).
+	// Nil-safe — wire post-construction via WithPreviewVariants;
+	// tests can leave it nil.
+	previews PreviewVariantWriter
 }
 
 // NewExtractJobHandler wires the dependency graph. extractors are
@@ -104,6 +116,25 @@ func NewExtractJobHandler(
 // (tests, single-instance dev runs without the admin UI mounted).
 func (h *ExtractJobHandler) WithCounter(c *Counter) *ExtractJobHandler {
 	h.counter = c
+	return h
+}
+
+// WithAssetAttributes attaches an [AssetAttributeWriter] for
+// post-Apply asset-row writes (page_count today). Same nil-safe
+// post-construction pattern as WithCounter — older callers that
+// don't pass one see a no-op for these side-effects.
+func (h *ExtractJobHandler) WithAssetAttributes(w AssetAttributeWriter) *ExtractJobHandler {
+	h.attrs = w
+	return h
+}
+
+// WithPreviewVariants attaches a [PreviewVariantWriter] for
+// post-Apply embedded-preview persistence (raw cameras today).
+// Nil-safe — Phase 1.18.A-2 extractors don't populate
+// Result.PreviewImageBytes so older boot wires keep working
+// untouched.
+func (h *ExtractJobHandler) WithPreviewVariants(w PreviewVariantWriter) *ExtractJobHandler {
+	h.previews = w
 	return h
 }
 
@@ -201,6 +232,32 @@ func (h *ExtractJobHandler) Handle(ctx context.Context, job *jobs.Claim) (json.R
 	if err != nil {
 		return nil, fmt.Errorf("metadata.extract: apply: %w", err)
 	}
+
+	// Post-Apply: persist the non-field Result side-channels (page
+	// count + embedded preview). Both are best-effort: a failure
+	// here logs but does NOT fail the job — the field-value writes
+	// already landed and re-extraction will converge.
+	if result.PageCount > 0 && h.attrs != nil {
+		if err := h.attrs.SetAssetPageCount(ctx, asset.ID, result.PageCount); err != nil && h.logger != nil {
+			h.logger.LogAttrs(ctx, slog.LevelWarn,
+				"metadata.extract.page_count_write_error",
+				slog.String("asset_id", asset.ID.String()),
+				slog.Int("page_count", result.PageCount),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+	if len(result.PreviewImageBytes) > 0 && h.previews != nil && asset.FileHash != "" {
+		if err := h.previews.WriteEmbeddedPreview(ctx, asset.FileHash, result.PreviewImageBytes); err != nil && h.logger != nil {
+			h.logger.LogAttrs(ctx, slog.LevelWarn,
+				"metadata.extract.embedded_preview_write_error",
+				slog.String("asset_id", asset.ID.String()),
+				slog.Int("bytes", len(result.PreviewImageBytes)),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+
 	// Per-Apply observability: if every field that was extracted
 	// got rejected by the validator we record validation_failed;
 	// otherwise success (which includes the "everything was a

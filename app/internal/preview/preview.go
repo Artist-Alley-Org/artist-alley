@@ -55,8 +55,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	metadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/orientation"
+	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -217,6 +219,24 @@ func (h *RasterHandler) loadSourceWithExt(ctx context.Context, hash, ext string)
 // CPU-bound after this point, so the memory cost is dwarfed by
 // the resize/encode passes.
 func (h *RasterHandler) loadSourceWithMeta(ctx context.Context, hash, ext string) (image.Image, []byte, error) {
+	e := strings.ToLower(strings.TrimPrefix(ext, "."))
+
+	// Raw camera files (CR2 / NEF / DNG / ARW / RW2) carry an
+	// embedded JPEG preview baked by the camera ISP. The metadata
+	// pipeline extracts that preview to the `embedded-preview`
+	// storage variant; the raster pipeline uses it directly instead
+	// of trying to demosaic the raw (which would need libraw / CGo).
+	//
+	// We fall through to ExtractPreviews on the original bytes if
+	// the variant isn't yet on storage — happens during backfill
+	// before the metadata.extract job has had a chance to run, or
+	// when metadata.extract failed for an unrelated reason. The
+	// extra cost is one IFD walk, which is microseconds.
+	if isRawExt(e) {
+		img, err := h.loadRawPreview(ctx, hash, e)
+		return img, nil, err
+	}
+
 	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download original: %w", err)
@@ -225,7 +245,6 @@ func (h *RasterHandler) loadSourceWithMeta(ctx context.Context, hash, ext string
 	if info != nil && info.Size > h.MaxSourceBytes {
 		return nil, nil, fmt.Errorf("source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
 	}
-	e := strings.ToLower(strings.TrimPrefix(ext, "."))
 	switch e {
 	case "svg":
 		img, err := decodeSVG(io.LimitReader(rc, h.MaxSourceBytes+1))
@@ -498,17 +517,94 @@ func (h *RasterHandler) markFailed(ctx context.Context, id uuid.UUID, msg string
 // ---------------------------------------------------------------------------
 
 // rasterExts is the extension allowlist for preview.raster. Mirrors
-// assets.imageExts (kept in sync by convention).
+// assets.imageExts (kept in sync by convention). Includes raw-camera
+// formats (CR2/NEF/DNG/ARW/RW2) — handled via the embedded-preview
+// fallback in loadRawPreview rather than image.Decode.
 var rasterExts = map[string]struct{}{
 	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "bmp": {},
 	"tif": {}, "tiff": {}, "webp": {},
 	"svg": {},
 	"hdr": {}, "exr": {}, "pic": {},
+	// Raw camera (Phase 1.18.A-3.B):
+	"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
 }
 
 func isRasterExt(ext string) bool {
 	_, ok := rasterExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
+}
+
+// rawExts is the raw-camera subset of rasterExts. Used by the
+// loadSourceWithMeta dispatch to route raws through
+// loadRawPreview instead of the standard image.Decode path.
+var rawExts = map[string]struct{}{
+	"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
+}
+
+func isRawExt(ext string) bool {
+	_, ok := rawExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	return ok
+}
+
+// rawExtractor is the shared pure-Go raw preview extractor.
+// Stateless + concurrency-safe; one per process is enough.
+var rawExtractor = raw.New()
+
+// loadRawPreview returns a decoded image source for raw-camera
+// uploads. Tries the persisted `embedded-preview` variant first
+// (cheap, ~1 ms storage read); falls back to extracting the
+// preview inline from the original raw bytes if the variant
+// isn't present yet (the metadata.extract job stamps it, but the
+// raster pipeline shouldn't fail just because that job hasn't
+// run yet — e.g., during backfill).
+func (h *RasterHandler) loadRawPreview(ctx context.Context, hash, ext string) (image.Image, error) {
+	if rc, _, err := h.Storage.Download(ctx, hash, metadata.EmbeddedPreviewVariantKey); err == nil {
+		defer rc.Close()
+		blob, err := io.ReadAll(io.LimitReader(rc, h.MaxSourceBytes+1))
+		if err != nil {
+			return nil, fmt.Errorf("read embedded-preview: %w", err)
+		}
+		img, _, err := image.Decode(bytes.NewReader(blob))
+		if err != nil {
+			return nil, fmt.Errorf("decode embedded-preview: %w", err)
+		}
+		return img, nil
+	}
+
+	// Fallback: extract inline from the original. Slower path but
+	// keeps the pipeline working when the metadata job hasn't
+	// stamped the variant yet. We don't persist here — the
+	// metadata.extract job is the right place to do that so the
+	// embedded preview shows up in every consumer including
+	// federation peers.
+	rc, info, err := h.Storage.Download(ctx, hash, storage.VariantOriginal)
+	if err != nil {
+		return nil, fmt.Errorf("download raw original: %w", err)
+	}
+	defer rc.Close()
+	if info != nil && info.Size > h.MaxSourceBytes {
+		return nil, fmt.Errorf("raw source too large: %d bytes > cap %d", info.Size, h.MaxSourceBytes)
+	}
+	srcBytes, err := io.ReadAll(io.LimitReader(rc, h.MaxSourceBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read raw original: %w", err)
+	}
+	mime := raw.MimeTypeForExt(ext)
+	if mime == "" {
+		return nil, fmt.Errorf("raw: no MIME mapping for extension %q", ext)
+	}
+	res, err := rawExtractor.Extract(ctx, bytes.NewReader(srcBytes), mime)
+	if err != nil {
+		return nil, fmt.Errorf("raw extract: %w", err)
+	}
+	if len(res.PreviewImageBytes) == 0 {
+		return nil, fmt.Errorf("raw extract produced no preview bytes")
+	}
+	img, _, err := image.Decode(bytes.NewReader(res.PreviewImageBytes))
+	if err != nil {
+		return nil, fmt.Errorf("decode raw preview: %w", err)
+	}
+	return img, nil
 }
 
 func minInt(a, b int) int {

@@ -244,6 +244,11 @@ const IMAGE_EXTS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif',
   'avif', 'heic', 'heif', 'svg',
   'hdr', 'exr', 'pic',
+  // Raw camera (Phase 1.18.A-3.B). Backend extracts the embedded
+  // JPEG preview baked by the camera ISP and fans it through the
+  // standard raster ladder — the viewer never sees the raw bytes
+  // and never tries to demosaic in the browser.
+  'cr2', 'nef', 'dng', 'arw', 'rw2',
   // Vector + Photoshop sources — backend preview workers
   // rasterise these to a WEBP hires variant.
   'eps', 'ps', 'psd', 'psb',

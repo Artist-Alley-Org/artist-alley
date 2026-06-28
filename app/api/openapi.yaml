@@ -13272,6 +13272,15 @@ components:
       description: |
         Operator-facing input to start a new backfill run. All
         fields optional — empty body = "all active image assets".
+
+        Filters compose with AND. `asset_type_ref` (singleton) and
+        `asset_type_refs` (multi-select) are merged into one IN-list
+        — populating both is equivalent to passing the singleton's
+        value inside the array.
+
+        Phase 1.18.A-3.B adds `file_extensions` + `include_non_image`
+        so operators can target raws / PDFs without spilling the
+        backfill over their entire image catalogue.
       properties:
         asset_type_ref:
           type: integer
@@ -13279,6 +13288,31 @@ components:
           nullable: true
           description: |
             Narrow to one asset type. Null / omitted = every type.
+        asset_type_refs:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: |
+            Multi-select asset-type filter (Phase 1.18.A-3.B).
+            Empty / omitted = no asset-type filter from this field;
+            singleton `asset_type_ref` still applies if set.
+        file_extensions:
+          type: array
+          items:
+            type: string
+          description: |
+            Lowercase file extensions (no leading dot) to include.
+            Empty / omitted = no extension filter. Typical Phase
+            1.18.A-3.B uses: `["cr2","nef","dng","arw","rw2"]` to
+            backfill raw embedded previews, or `["pdf"]` to backfill
+            PDF /Info metadata + page counts.
+        include_non_image:
+          type: boolean
+          description: |
+            Open the population to non-image assets (PDFs today;
+            comics + ebooks later). Defaults to false so older
+            callers keep the Phase 1.18.A-2 PR-B image-only scope.
 
     MetadataBackfillRun:
       type: object

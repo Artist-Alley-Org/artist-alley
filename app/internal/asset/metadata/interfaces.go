@@ -62,6 +62,21 @@ type Result struct {
 	// absent). Variant pipeline reads this to rotate the variant
 	// at encode time; source bytes are never modified.
 	Orientation int
+
+	// PreviewImageBytes is an embedded preview JPEG extracted from
+	// a container we can't natively decode at variant time (raw
+	// camera files — CR2/NEF/DNG/ARW/RW2). The applier persists
+	// these as the `embedded-preview` storage variant; the variant
+	// pipeline then fans them out instead of trying to demosaic the
+	// raw. Nil for any source without an embedded preview (every
+	// non-raw format today).
+	PreviewImageBytes []byte
+
+	// PageCount is the total page / frame count for paginated
+	// assets (PDF today; comics + ebooks land in follow-up phases).
+	// Zero = "not paginated" OR "extractor didn't fill it in".
+	// Applier writes assets.page_count when non-zero.
+	PageCount int
 }
 
 // CanonicalField is the stable string the extractor + applier +
@@ -124,6 +139,20 @@ const (
 	FieldXMPLabel             CanonicalField = "xmp_label"              // xmp:Label ("Red"/"Yellow"/etc.)
 	FieldXMPPhotoshopHeadline CanonicalField = "xmp_photoshop_headline" // photoshop:Headline
 	FieldXMPInstructions      CanonicalField = "xmp_instructions"       // photoshop:Instructions
+
+	// --- Phase 1.18.A-3.B: PDF info dict ---
+	// Values pulled from the PDF /Info dictionary (PDF 1.7 §14.3.3)
+	// via pdfcpu. The page_count itself does NOT go through the
+	// field-value system — it's an asset-intrinsic column stamped by
+	// the applier (see Result.PageCount). These are operator-routable
+	// like the XMP fields above: pick which field-definition gets the
+	// title vs the document name vs the original author.
+	FieldPDFTitle    CanonicalField = "pdf_title"    // /Info /Title
+	FieldPDFAuthor   CanonicalField = "pdf_author"   // /Info /Author
+	FieldPDFSubject  CanonicalField = "pdf_subject"  // /Info /Subject
+	FieldPDFKeywords CanonicalField = "pdf_keywords" // /Info /Keywords (comma-joined)
+	FieldPDFCreator  CanonicalField = "pdf_creator"  // /Info /Creator  (authoring app)
+	FieldPDFProducer CanonicalField = "pdf_producer" // /Info /Producer (PDF library)
 )
 
 // Value is the typed extracted value. Exactly ONE of the fields
@@ -267,6 +296,31 @@ type ApplySummary struct {
 	FieldsSkippedMode    []CanonicalField  // skip_if_set hit a populated field
 	FieldsSkippedValid   []CanonicalField  // validator rejected
 	FailureRows          []FailureRecord
+}
+
+// AssetAttributeWriter persists asset-row attributes that come out
+// of extraction but aren't user-managed field-values (page_count
+// today; future: duration_seconds for video). Optional — the job
+// handler treats a nil writer as "skip this side-effect".
+type AssetAttributeWriter interface {
+	// SetAssetPageCount writes assets.page_count. Idempotent — safe
+	// to call on every extraction. Zero pageCount is a no-op so
+	// extractors can freely call it without guarding.
+	SetAssetPageCount(ctx context.Context, assetID uuid.UUID, pageCount int) error
+}
+
+// PreviewVariantWriter persists the `embedded-preview` storage
+// variant. Wired against the storage service in production; tests
+// use an in-memory stub or nil to skip the write. Optional like
+// AssetAttributeWriter — extractors emit Result.PreviewImageBytes
+// unconditionally and the job handler skips persistence when nil.
+type PreviewVariantWriter interface {
+	// WriteEmbeddedPreview uploads the JPEG bytes to storage under
+	// the embedded-preview variant key and registers the variant
+	// row. fileHash is the asset's storage hash (assets.file_hash);
+	// the call is a no-op if the embedded-preview already exists at
+	// that hash (idempotent re-extraction).
+	WriteEmbeddedPreview(ctx context.Context, fileHash string, jpeg []byte) error
 }
 
 // FailureRecord is one validator-rejected (or extraction-failed)

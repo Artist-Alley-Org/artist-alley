@@ -56,6 +56,11 @@
   let loadError = $state<string | null>(null);
   let renderedPages = $state(0);
   let totalPages = $state(0);
+  // Scroll-based "page X of Y" indicator (Phase 1.18.A-3.B). Each
+  // rendered page is a <canvas> with a data-page-num attribute; the
+  // scroll listener picks whichever canvas's top is nearest to the
+  // viewport top and reports that page number in the HUD.
+  let currentPage = $state(1);
 
   // PDF.js render passes return a Promise-shaped task; keep refs
   // so we can cancel mid-flight when the user navigates away.
@@ -67,6 +72,9 @@
   });
   onDestroy(() => {
     cancelled = true;
+    if (container) {
+      container.removeEventListener('scroll', updateCurrentPageFromScroll);
+    }
     if (activeDoc) {
       try { activeDoc.destroy(); } catch { /* ignore */ }
       activeDoc = null;
@@ -89,13 +97,9 @@
       activeDoc = doc;
       totalPages = doc.numPages;
 
-      controller = {
-        ...defaultController(),
-        hudExtra: [
-          meta.title || asset.title || '',
-          totalPages > 0 ? `${totalPages} pages` : '',
-        ].filter(Boolean).join(' · '),
-      };
+      // Initial controller — `currentPage` updates the HUD as the
+      // user scrolls (see updateCurrentPageFromScroll below).
+      updateHud();
 
       // Render every page sequentially. For very long PDFs we'd
       // want virtual scrolling (mount/unmount canvases as they
@@ -108,6 +112,7 @@
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.className = 'mb-3 max-w-full bg-white shadow-md';
+        canvas.dataset.pageNum = String(pageNum);
         const ctx = canvas.getContext('2d');
         if (!ctx) continue;
         await page.render({ canvas, canvasContext: ctx, viewport }).promise;
@@ -117,10 +122,51 @@
         if (pageNum === 1) loading = false; // first page lights up the viewer
       }
       loading = false;
+
+      // Wire scroll listener AFTER pages are rendered so the page
+      // canvases exist for the closest-to-top scan.
+      container.addEventListener('scroll', updateCurrentPageFromScroll, { passive: true });
+      updateCurrentPageFromScroll();
     } catch (e) {
       loading = false;
       loadError = e instanceof Error ? e.message : 'Failed to load PDF.';
     }
+  }
+
+  // updateCurrentPageFromScroll picks whichever canvas has its top
+  // edge closest to (but not past) the viewport top. Matches how
+  // every other PDF viewer (Chrome, Acrobat) defines "current page"
+  // — the one the user is actively reading, not the one halfway
+  // off-screen above.
+  function updateCurrentPageFromScroll() {
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    const canvases = container.querySelectorAll<HTMLCanvasElement>('canvas[data-page-num]');
+    let best = currentPage;
+    let bestDelta = Infinity;
+    for (const c of canvases) {
+      const rel = c.getBoundingClientRect().top - containerTop;
+      // Prefer pages already scrolled to (rel <= 0); among those,
+      // pick the one nearest the top edge.
+      if (rel <= 16 && Math.abs(rel) < bestDelta) {
+        bestDelta = Math.abs(rel);
+        best = Number(c.dataset.pageNum);
+      }
+    }
+    if (best !== currentPage) {
+      currentPage = best;
+      updateHud();
+    }
+  }
+
+  function updateHud() {
+    controller = {
+      ...defaultController(),
+      hudExtra: [
+        meta.title || asset.title || '',
+        totalPages > 0 ? `Page ${currentPage} of ${totalPages}` : '',
+      ].filter(Boolean).join(' · '),
+    };
   }
 </script>
 
