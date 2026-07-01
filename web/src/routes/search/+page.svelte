@@ -216,8 +216,10 @@
     </div>
   </aside>
 
-  <!-- Main results column -->
-  <main class="flex-1 min-w-0">
+  <!-- Main results column — <section> not <main> to keep the outer
+       layout's single <main> element authoritative (Playwright
+       strict-mode locator('main') requires this). -->
+  <section class="flex-1 min-w-0">
     <div class="mb-4 flex items-center justify-between gap-3">
       <h1 class="font-display text-3xl font-semibold">{t('nav.advanced_search')}</h1>
       <div class="flex items-center gap-2">
@@ -299,7 +301,7 @@
         >{loadingMore ? 'Loading…' : 'Load more'}</button>
       </div>
     {/if}
-  </main>
+  </section>
 </div>
 
 <!-- Save-as-collection modal -->
