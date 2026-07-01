@@ -125,10 +125,25 @@ type CreateCollectionParams struct {
 	OriginServerID pgtype.UUID
 }
 
+type CreateCollectionRow struct {
+	ID             pgtype.UUID
+	OwnerUserRef   int64
+	Name           string
+	Description    string
+	Visibility     string
+	Membership     string
+	ExpiresAt      pgtype.Timestamptz
+	Featured       bool
+	Purpose        *string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 // ---------------------------------------------------------------------------
 // collections (the entity)
 // ---------------------------------------------------------------------------
-func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
+func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (CreateCollectionRow, error) {
 	row := q.db.QueryRow(ctx, createCollection,
 		arg.OwnerUserRef,
 		arg.Name,
@@ -140,7 +155,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		arg.Purpose,
 		arg.OriginServerID,
 	)
-	var i Collection
+	var i CreateCollectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
@@ -178,9 +193,24 @@ FROM collections
 WHERE id = $1
 `
 
-func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection, error) {
+type GetCollectionRow struct {
+	ID             pgtype.UUID
+	OwnerUserRef   int64
+	Name           string
+	Description    string
+	Visibility     string
+	Membership     string
+	ExpiresAt      pgtype.Timestamptz
+	Featured       bool
+	Purpose        *string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (GetCollectionRow, error) {
 	row := q.db.QueryRow(ctx, getCollection, id)
-	var i Collection
+	var i GetCollectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
@@ -354,6 +384,21 @@ type ListCollectionsPageParams struct {
 	RowLimit        int32
 }
 
+type ListCollectionsPageRow struct {
+	ID             pgtype.UUID
+	OwnerUserRef   int64
+	Name           string
+	Description    string
+	Visibility     string
+	Membership     string
+	ExpiresAt      pgtype.Timestamptz
+	Featured       bool
+	Purpose        *string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 // Cursor pagination on (created_at DESC, id DESC). Filters are
 // nullable narg() so a single query covers every combo.
 //
@@ -363,7 +408,7 @@ type ListCollectionsPageParams struct {
 // `shared_with_user` powers the "Shared" hub tab: collections the
 // caller has an ACL grant on but doesn't own. The handler also passes
 // the caller's user_ref into `exclude_owner` to drop owned rows.
-func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]Collection, error) {
+func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]ListCollectionsPageRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionsPage,
 		arg.OwnerUserRef,
 		arg.ExcludeOwner,
@@ -379,9 +424,9 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Collection
+	var items []ListCollectionsPageRow
 	for rows.Next() {
-		var i Collection
+		var i ListCollectionsPageRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerUserRef,
@@ -475,8 +520,23 @@ type UpdateCollectionParams struct {
 	ID          pgtype.UUID
 }
 
+type UpdateCollectionRow struct {
+	ID             pgtype.UUID
+	OwnerUserRef   int64
+	Name           string
+	Description    string
+	Visibility     string
+	Membership     string
+	ExpiresAt      pgtype.Timestamptz
+	Featured       bool
+	Purpose        *string
+	OriginServerID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 // Partial update via COALESCE — NULL args keep current values.
-func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (Collection, error) {
+func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (UpdateCollectionRow, error) {
 	row := q.db.QueryRow(ctx, updateCollection,
 		arg.Name,
 		arg.Description,
@@ -487,7 +547,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.ExpiresAt,
 		arg.ID,
 	)
-	var i Collection
+	var i UpdateCollectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
