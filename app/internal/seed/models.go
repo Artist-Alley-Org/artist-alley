@@ -261,6 +261,8 @@ type Collection struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	SearchText     interface{}
+	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
+	SmartQuery *string
 }
 
 type CollectionAcl struct {
