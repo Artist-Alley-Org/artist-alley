@@ -24,6 +24,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/email"
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
+	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
@@ -343,6 +344,25 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		if impl.metaCounter != nil {
 			r.Method(http.MethodGet, "/admin/metadata-extraction/health",
 				healthhandler.HandlerFor("metadata-extraction", impl.metaCounter, "system.admin"))
+		}
+
+		// Phase 1.16.B-1 — unified /search endpoint. Mounted as
+		// a raw chi route inside /api/v1 so auth-resolver
+		// middleware has run; the endpoint is anonymous-safe
+		// (visibility gate reduces the anonymous view to public
+		// entities). /admin/search/health uses the same
+		// healthhandler shim as metadata-extraction.
+		if impl.searchService != nil {
+			r.Method(http.MethodGet, "/search", &search.Handler{
+				Service: impl.searchService,
+				Logger:  logger,
+			})
+			if impl.searchService.Counter() != nil {
+				r.Method(http.MethodGet, "/admin/search/health",
+					healthhandler.HandlerFor("search",
+						impl.searchService.Counter().AsSnapshot(),
+						"system.admin"))
+			}
 		}
 
 		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted

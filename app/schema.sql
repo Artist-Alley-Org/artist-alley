@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ZgHYBi2IToKP6DjPtXVNubwVcZ3U6JElp4hoskvSLINbK6RBPdwgNyHcSyAJc1g
+\restrict alR4eDy8aVWpMeRNejXJ4jvzhpllaeFgxHyZ5cjzppXMxFObIivJ3K8eJZwcXJi
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -208,6 +208,17 @@ BEGIN
      WHERE principal_type = 'team' AND principal_id = OLD.id::text;
     RETURN OLD;
 END;
+$$;
+
+
+--
+-- Name: collections_search_text_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.collections_search_text_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN PERFORM rebuild_collection_search_text(NEW.id); RETURN NEW; END;
 $$;
 
 
@@ -429,6 +440,20 @@ BEGIN
                             COALESCE(description, '') || ' ' ||
                             COALESCE(new_text, ''))
      WHERE id = p_asset_id;
+END;
+$$;
+
+
+--
+-- Name: rebuild_collection_search_text(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.rebuild_collection_search_text(p_collection_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE collections SET search_text = to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, ''))
+     WHERE id = p_collection_id;
 END;
 $$;
 
@@ -1067,6 +1092,7 @@ CREATE TABLE public.collections (
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_text tsvector,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text])))
 );
@@ -3333,6 +3359,13 @@ CREATE INDEX collections_owner_idx ON public.collections USING btree (owner_user
 
 
 --
+-- Name: collections_search_text_gin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_search_text_gin ON public.collections USING gin (search_text);
+
+
+--
 -- Name: collections_visibility_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4257,6 +4290,13 @@ CREATE TRIGGER assets_search_text_trigger AFTER INSERT OR UPDATE ON public.asset
 
 
 --
+-- Name: collections collections_search_text; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER collections_search_text AFTER INSERT OR UPDATE OF name, description ON public.collections FOR EACH ROW EXECUTE FUNCTION public.collections_search_text_trigger();
+
+
+--
 -- Name: comments comments_maintain_counter_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5036,5 +5076,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ZgHYBi2IToKP6DjPtXVNubwVcZ3U6JElp4hoskvSLINbK6RBPdwgNyHcSyAJc1g
+\unrestrict alR4eDy8aVWpMeRNejXJ4jvzhpllaeFgxHyZ5cjzppXMxFObIivJ3K8eJZwcXJi
 

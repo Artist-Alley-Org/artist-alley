@@ -67,6 +67,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/aiedit"
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
+	"github.com/mscrnt/artist-alley/app/internal/search"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
@@ -150,6 +151,10 @@ type apiServer struct {
 	metaAdmin        *assetmetadata.AdminHandler
 	jobsSvc          *jobs.Service
 	seedAdmin        *seed.AdminHandler
+	// Phase 1.16.B-1 — unified search foundation. Nil when boot
+	// intentionally disables /search (tests that spin up a
+	// minimal server without the search subsystem).
+	searchService *search.Service
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -234,6 +239,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// they would dedup if held by a shared subsystem object, but for
 	// now the doubled construction is cheap (cache.Registry handles
 	// the dedup at the row level).
+	// Phase 1.16.B-1 — unified search foundation. Engine + Cache
+	// (registered with the shared cache.Registry so peer instances
+	// receive purges over the existing LISTEN/NOTIFY channel) +
+	// Counter (surfaced via /admin/search/health).
+	searchCache := search.NewCache(cacheReg, 0, 0, logger)
+	searchCounter := search.NewCounter(0)
+	searchCounter.SetCacheStatsProvider(func() search.CacheStatsSnapshot { return searchCache.Stats() })
+	s.searchService = search.NewService(search.NewEngine(pool), searchCache, searchCounter)
+
 	aiCaches := ai.NewCaches(cacheReg)
 	aiLoader := ai.NewLoader(pool, aiCaches)
 	aiCallAuditor := ai.NewCallAuditor(pool, logger)
@@ -1651,7 +1665,9 @@ func (s *apiServer) DownloadStorageObjectVariant(ctx context.Context, req openap
 // --- assets (entity layer) -------------------------------------------------
 
 func (s *apiServer) CreateAsset(ctx context.Context, req openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
-	return s.assets.CreateAsset(ctx, req)
+	resp, err := s.assets.CreateAsset(ctx, req)
+	s.invalidateSearchOnAssetWrite(ctx, err)
+	return resp, err
 }
 
 func (s *apiServer) ListAssets(ctx context.Context, req openapi.ListAssetsRequestObject) (openapi.ListAssetsResponseObject, error) {
@@ -1681,11 +1697,43 @@ func (s *apiServer) GetAsset(ctx context.Context, req openapi.GetAssetRequestObj
 }
 
 func (s *apiServer) UpdateAsset(ctx context.Context, req openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
-	return s.assets.UpdateAsset(ctx, req)
+	resp, err := s.assets.UpdateAsset(ctx, req)
+	s.invalidateSearchOnAssetWrite(ctx, err)
+	return resp, err
 }
 
 func (s *apiServer) DeleteAsset(ctx context.Context, req openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
-	return s.assets.DeleteAsset(ctx, req)
+	resp, err := s.assets.DeleteAsset(ctx, req)
+	s.invalidateSearchOnAssetWrite(ctx, err)
+	return resp, err
+}
+
+// invalidateSearchOnAssetWrite drops the query-result cache when a
+// successful asset write commits. Broadcasts to peers over the
+// existing cache_invalidate LISTEN/NOTIFY channel. Skipped on
+// error so a failed request doesn't churn the cache. Nil-safe when
+// the search subsystem is disabled.
+func (s *apiServer) invalidateSearchOnAssetWrite(ctx context.Context, err error) {
+	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
+		return
+	}
+	s.searchService.Cache().InvalidateOnAssetWrite(ctx, uuid.Nil)
+}
+
+// invalidateSearchOnCollectionWrite — same as above for collections.
+func (s *apiServer) invalidateSearchOnCollectionWrite(ctx context.Context, err error) {
+	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
+		return
+	}
+	s.searchService.Cache().InvalidateOnCollectionWrite(ctx, uuid.Nil)
+}
+
+// invalidateSearchOnPostWrite — same for posts.
+func (s *apiServer) invalidateSearchOnPostWrite(ctx context.Context, err error) {
+	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
+		return
+	}
+	s.searchService.Cache().InvalidateOnPostWrite(ctx, uuid.Nil)
 }
 
 func (s *apiServer) DownloadAssetFile(ctx context.Context, req openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
@@ -1861,16 +1909,22 @@ func (s *apiServer) ListCollections(ctx context.Context, req openapi.ListCollect
 	return s.collections.ListCollections(ctx, req)
 }
 func (s *apiServer) CreateCollection(ctx context.Context, req openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
-	return s.collections.CreateCollection(ctx, req)
+	resp, err := s.collections.CreateCollection(ctx, req)
+	s.invalidateSearchOnCollectionWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) GetCollection(ctx context.Context, req openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
 	return s.collections.GetCollection(ctx, req)
 }
 func (s *apiServer) UpdateCollection(ctx context.Context, req openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
-	return s.collections.UpdateCollection(ctx, req)
+	resp, err := s.collections.UpdateCollection(ctx, req)
+	s.invalidateSearchOnCollectionWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) DeleteCollection(ctx context.Context, req openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
-	return s.collections.DeleteCollection(ctx, req)
+	resp, err := s.collections.DeleteCollection(ctx, req)
+	s.invalidateSearchOnCollectionWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	return s.collections.ListCollectionResources(ctx, req)
@@ -1936,16 +1990,22 @@ func (s *apiServer) ListPosts(ctx context.Context, req openapi.ListPostsRequestO
 	return s.posts.ListPosts(ctx, req)
 }
 func (s *apiServer) CreatePost(ctx context.Context, req openapi.CreatePostRequestObject) (openapi.CreatePostResponseObject, error) {
-	return s.posts.CreatePost(ctx, req)
+	resp, err := s.posts.CreatePost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) GetPost(ctx context.Context, req openapi.GetPostRequestObject) (openapi.GetPostResponseObject, error) {
 	return s.posts.GetPost(ctx, req)
 }
 func (s *apiServer) UpdatePost(ctx context.Context, req openapi.UpdatePostRequestObject) (openapi.UpdatePostResponseObject, error) {
-	return s.posts.UpdatePost(ctx, req)
+	resp, err := s.posts.UpdatePost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) DeletePost(ctx context.Context, req openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
-	return s.posts.DeletePost(ctx, req)
+	resp, err := s.posts.DeletePost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
 }
 func (s *apiServer) AddPostAsset(ctx context.Context, req openapi.AddPostAssetRequestObject) (openapi.AddPostAssetResponseObject, error) {
 	return s.posts.AddPostAsset(ctx, req)

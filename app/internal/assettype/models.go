@@ -260,6 +260,7 @@ type Collection struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	SearchText     interface{}        `json:"search_text"`
 }
 
 type CollectionAcl struct {

@@ -110,7 +110,7 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at
+          created_at, updated_at, search_text
 `
 
 type CreateCollectionParams struct {
@@ -154,6 +154,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }
@@ -173,7 +174,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, id pgtype.UUID) error {
 const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections
 WHERE id = $1
 `
@@ -194,6 +195,7 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }
@@ -320,7 +322,7 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections c
 WHERE ($1::BIGINT  IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT   IS NULL OR owner_user_ref <> $2::BIGINT)
@@ -395,6 +397,7 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SearchText,
 		); err != nil {
 			return nil, err
 		}
@@ -461,7 +464,7 @@ UPDATE collections SET
 WHERE id = $8
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at
+          created_at, updated_at, search_text
 `
 
 type UpdateCollectionParams struct {
@@ -501,6 +504,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }

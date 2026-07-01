@@ -260,6 +260,7 @@ type Collection struct {
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	SearchText     interface{}
 }
 
 type CollectionAcl struct {

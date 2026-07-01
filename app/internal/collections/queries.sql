@@ -9,12 +9,12 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at;
+          created_at, updated_at, search_text;
 
 -- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections
 WHERE id = $1;
 
@@ -32,7 +32,7 @@ UPDATE collections SET
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at;
+          created_at, updated_at, search_text;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -57,7 +57,7 @@ DELETE FROM collections WHERE id = $1;
 -- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections c
 WHERE (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('exclude_owner')::BIGINT   IS NULL OR owner_user_ref <> sqlc.narg('exclude_owner')::BIGINT)
