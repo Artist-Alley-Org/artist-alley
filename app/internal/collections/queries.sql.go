@@ -110,7 +110,7 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at
+          created_at, updated_at, search_text
 `
 
 type CreateCollectionParams struct {
@@ -125,25 +125,10 @@ type CreateCollectionParams struct {
 	OriginServerID pgtype.UUID
 }
 
-type CreateCollectionRow struct {
-	ID             pgtype.UUID
-	OwnerUserRef   int64
-	Name           string
-	Description    string
-	Visibility     string
-	Membership     string
-	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
-	Purpose        *string
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
 // ---------------------------------------------------------------------------
 // collections (the entity)
 // ---------------------------------------------------------------------------
-func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (CreateCollectionRow, error) {
+func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, createCollection,
 		arg.OwnerUserRef,
 		arg.Name,
@@ -155,7 +140,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		arg.Purpose,
 		arg.OriginServerID,
 	)
-	var i CreateCollectionRow
+	var i Collection
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
@@ -169,6 +154,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }
@@ -188,29 +174,14 @@ func (q *Queries) DeleteCollection(ctx context.Context, id pgtype.UUID) error {
 const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections
 WHERE id = $1
 `
 
-type GetCollectionRow struct {
-	ID             pgtype.UUID
-	OwnerUserRef   int64
-	Name           string
-	Description    string
-	Visibility     string
-	Membership     string
-	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
-	Purpose        *string
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
-func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (GetCollectionRow, error) {
+func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection, error) {
 	row := q.db.QueryRow(ctx, getCollection, id)
-	var i GetCollectionRow
+	var i Collection
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
@@ -224,6 +195,7 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (GetCollect
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }
@@ -350,7 +322,7 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at
+       created_at, updated_at, search_text
 FROM collections c
 WHERE ($1::BIGINT  IS NULL OR owner_user_ref = $1::BIGINT)
   AND ($2::BIGINT   IS NULL OR owner_user_ref <> $2::BIGINT)
@@ -384,21 +356,6 @@ type ListCollectionsPageParams struct {
 	RowLimit        int32
 }
 
-type ListCollectionsPageRow struct {
-	ID             pgtype.UUID
-	OwnerUserRef   int64
-	Name           string
-	Description    string
-	Visibility     string
-	Membership     string
-	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
-	Purpose        *string
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
 // Cursor pagination on (created_at DESC, id DESC). Filters are
 // nullable narg() so a single query covers every combo.
 //
@@ -408,7 +365,7 @@ type ListCollectionsPageRow struct {
 // `shared_with_user` powers the "Shared" hub tab: collections the
 // caller has an ACL grant on but doesn't own. The handler also passes
 // the caller's user_ref into `exclude_owner` to drop owned rows.
-func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]ListCollectionsPageRow, error) {
+func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]Collection, error) {
 	rows, err := q.db.Query(ctx, listCollectionsPage,
 		arg.OwnerUserRef,
 		arg.ExcludeOwner,
@@ -424,9 +381,9 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListCollectionsPageRow
+	var items []Collection
 	for rows.Next() {
-		var i ListCollectionsPageRow
+		var i Collection
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerUserRef,
@@ -440,6 +397,7 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SearchText,
 		); err != nil {
 			return nil, err
 		}
@@ -506,7 +464,7 @@ UPDATE collections SET
 WHERE id = $8
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at
+          created_at, updated_at, search_text
 `
 
 type UpdateCollectionParams struct {
@@ -520,23 +478,8 @@ type UpdateCollectionParams struct {
 	ID          pgtype.UUID
 }
 
-type UpdateCollectionRow struct {
-	ID             pgtype.UUID
-	OwnerUserRef   int64
-	Name           string
-	Description    string
-	Visibility     string
-	Membership     string
-	ExpiresAt      pgtype.Timestamptz
-	Featured       bool
-	Purpose        *string
-	OriginServerID pgtype.UUID
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-}
-
 // Partial update via COALESCE — NULL args keep current values.
-func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (UpdateCollectionRow, error) {
+func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, updateCollection,
 		arg.Name,
 		arg.Description,
@@ -547,7 +490,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		arg.ExpiresAt,
 		arg.ID,
 	)
-	var i UpdateCollectionRow
+	var i Collection
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerUserRef,
@@ -561,6 +504,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SearchText,
 	)
 	return i, err
 }
