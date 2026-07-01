@@ -16,6 +16,10 @@ type Service struct {
 	counter *Counter
 }
 
+// Engine exposes the underlying engine for adjacent HTTP handlers
+// (save-as-collection needs a cache-bypassing execution).
+func (s *Service) Engine() *Engine { return s.engine }
+
 // NewService wires the Service. Any component can be nil for tests —
 // nil cache = never-cache (all misses); nil counter = no
 // observability; nil engine = deliberate: the constructor panics

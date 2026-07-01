@@ -365,6 +365,29 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			}
 		}
 
+		// Phase 1.16.B-2 — facets + suggestions + save-as-collection.
+		// Same raw-chi pattern as B-1's /search: mounted under
+		// /api/v1 so auth-resolver has run; endpoints are anonymous-
+		// safe (visibility.Filter reduces the anonymous view).
+		if impl.facetDispatcher != nil {
+			r.Method(http.MethodGet, "/search/facets", &search.FacetHandler{
+				Dispatcher: impl.facetDispatcher,
+				Logger:     logger,
+			})
+		}
+		if impl.suggestService != nil {
+			r.Method(http.MethodGet, "/search/suggest", &search.SuggestHandler{
+				Service: impl.suggestService,
+				Logger:  logger,
+			})
+		}
+		if impl.searchService != nil {
+			r.Method(http.MethodPost, "/search/save-as-collection", &search.SaveAsCollectionHandler{
+				Service: impl.searchService,
+				Pool:    pool,
+			})
+		}
+
 		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted
 		// inside /api/v1 so the auth resolver middleware above
 		// has already run; RequireID just checks the resolved

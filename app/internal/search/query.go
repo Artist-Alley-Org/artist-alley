@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // DefaultLimit is the /search page size when the caller doesn't
@@ -206,29 +208,37 @@ var ErrEmptyQuery = errors.New("search: query text is required")
 // (see doc.go).
 // ---------------------------------------------------------------------------
 
-// runAssets queries the assets table. No visibility filter — matches
-// ListAssetsPage behaviour today. Sensitivity gating is a follow-up
-// (already documented in the 00001 baseline).
+// runAssets queries the assets table. Visibility gate composed via
+// visibility.Predicate — see the shared package (Phase 1.16.B-2).
+// The base search_text @@ predicate stays inline; the visibility
+// AND clause is appended by the shared helper.
 func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
+	pred, err := visibility.Filter(ctx, visibility.EntityAsset, visibility.NewCaller(q.CallerUserRef))
+	if err != nil {
+		return nil, 0, err
+	}
+	visFrag, visArgs := pred.ToSQL("", 2) // $1=query, next placeholder = $3
+
 	sqlHits := `
 		SELECT id, title, description, owner_user_ref, origin_server_id,
 		       thumbhash, created_at, updated_at,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM assets
-		 WHERE deleted_at IS NULL
-		   AND search_text @@ plainto_tsquery('english', $1)
+		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 		 ORDER BY score DESC, id DESC
 		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM assets
-			 WHERE deleted_at IS NULL
-			   AND search_text @@ plainto_tsquery('english', $1)
+			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 			 LIMIT $2
 		) x
 	`
-	rows, err := e.Pool.Query(ctx, sqlHits, q.Text, limit)
+	// Compose args: $1=query text, $2=limit, then visibility args.
+	hitsArgs := append([]any{q.Text, limit}, visArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -268,58 +278,42 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	total, err := e.scalarInt(ctx, sqlCount, q.Text, TotalCountCap+1)
+	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
 	return hits, total, nil
 }
 
-// runCollections queries collections. Visibility mirrors the
-// existing ListCollectionsPage handler: caller sees rows they own
-// OR rows they've been ACL-granted on. Anonymous callers see no
-// collections (matches today's behaviour).
+// runCollections queries collections. Visibility gate composed via
+// visibility.Predicate — see the shared package (Phase 1.16.B-2).
+// Anonymous callers get an always-false predicate → zero hits.
 func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	if q.CallerUserRef == nil {
-		return nil, 0, nil
+	pred, err := visibility.Filter(ctx, visibility.EntityCollection, visibility.NewCaller(q.CallerUserRef))
+	if err != nil {
+		return nil, 0, err
 	}
+	visFrag, visArgs := pred.ToSQL("c", 2) // $1=query, $2=limit index reserved for hits query
+
 	sqlHits := `
 		SELECT c.id, c.name, c.description, c.owner_user_ref, c.origin_server_id,
 		       c.featured, c.created_at, c.updated_at,
 		       ts_rank_cd(c.search_text, plainto_tsquery('english', $1)) AS score
 		  FROM collections c
-		 WHERE c.search_text @@ plainto_tsquery('english', $1)
-		   AND (
-		       c.owner_user_ref = $2
-		       OR EXISTS (
-		           SELECT 1 FROM collection_acls a
-		            WHERE a.collection_id = c.id
-		              AND a.principal_type = 'user'
-		              AND a.principal_id   = $2::TEXT
-		              AND (a.expires_at IS NULL OR a.expires_at > NOW())
-		       )
-		   )
+		 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 		 ORDER BY score DESC, id DESC
-		 LIMIT $3
+		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM collections c
-			 WHERE c.search_text @@ plainto_tsquery('english', $1)
-			   AND (
-			       c.owner_user_ref = $2
-			       OR EXISTS (
-			           SELECT 1 FROM collection_acls a
-			            WHERE a.collection_id = c.id
-			              AND a.principal_type = 'user'
-			              AND a.principal_id   = $2::TEXT
-			              AND (a.expires_at IS NULL OR a.expires_at > NOW())
-			       )
-			   )
-			 LIMIT $3
+			 WHERE c.search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 LIMIT $2
 		) x
 	`
-	rows, err := e.Pool.Query(ctx, sqlHits, q.Text, *q.CallerUserRef, limit)
+	hitsArgs := append([]any{q.Text, limit}, visArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -357,42 +351,41 @@ func (e *Engine) runCollections(ctx context.Context, q Query, limit int) ([]Hit,
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	total, err := e.scalarInt(ctx, sqlCount, q.Text, *q.CallerUserRef, TotalCountCap+1)
+	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
 	return hits, total, nil
 }
 
-// runPosts queries posts. Visibility: 'public' rows for everyone;
-// non-public rows only for their author. Matches the effective
-// behaviour of the existing ListPostsPage narg surface.
+// runPosts queries posts. Visibility gate composed via
+// visibility.Predicate — see the shared package (Phase 1.16.B-2).
 func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, error) {
-	caller := int64(0)
-	if q.CallerUserRef != nil {
-		caller = *q.CallerUserRef
+	pred, err := visibility.Filter(ctx, visibility.EntityPost, visibility.NewCaller(q.CallerUserRef))
+	if err != nil {
+		return nil, 0, err
 	}
+	visFrag, visArgs := pred.ToSQL("", 2)
+
 	sqlHits := `
 		SELECT id, title, description, author_user_ref, origin_server_id,
 		       cover_asset_id, created_at, updated_at,
 		       ts_rank_cd(search_text, plainto_tsquery('english', $1)) AS score
 		  FROM posts
-		 WHERE deleted_at IS NULL
-		   AND search_text @@ plainto_tsquery('english', $1)
-		   AND (visibility = 'public' OR author_user_ref = $2)
+		 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
 		 ORDER BY score DESC, id DESC
-		 LIMIT $3
+		 LIMIT $2
 	`
 	sqlCount := `
 		SELECT COUNT(*)::BIGINT FROM (
 			SELECT 1 FROM posts
-			 WHERE deleted_at IS NULL
-			   AND search_text @@ plainto_tsquery('english', $1)
-			   AND (visibility = 'public' OR author_user_ref = $2)
-			 LIMIT $3
+			 WHERE search_text @@ plainto_tsquery('english', $1)` + visFrag + `
+			 LIMIT $2
 		) x
 	`
-	rows, err := e.Pool.Query(ctx, sqlHits, q.Text, caller, limit)
+	hitsArgs := append([]any{q.Text, limit}, visArgs...)
+	countArgs := append([]any{q.Text, TotalCountCap + 1}, visArgs...)
+	rows, err := e.Pool.Query(ctx, sqlHits, hitsArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -434,7 +427,7 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	total, err := e.scalarInt(ctx, sqlCount, q.Text, caller, TotalCountCap+1)
+	total, err := e.scalarInt(ctx, sqlCount, countArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

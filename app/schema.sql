@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict alR4eDy8aVWpMeRNejXJ4jvzhpllaeFgxHyZ5cjzppXMxFObIivJ3K8eJZwcXJi
+\restrict EIINuLKSkQUnf4eCYUgBruw0O39bWvAFq09jgeHhNceoETRNVWeLAGOrqIDZZzq
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -411,37 +411,19 @@ $$;
 CREATE FUNCTION public.rebuild_asset_search_text(p_asset_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE
-    new_text TEXT;
+DECLARE field_text TEXT;
 BEGIN
-    SELECT COALESCE(
-        STRING_AGG(
-            CASE
-                WHEN v.value_text     IS NOT NULL THEN v.value_text
-                WHEN v.value_options  IS NOT NULL THEN array_to_string(v.value_options, ' ')
-                ELSE NULL
-            END,
-            ' '
-        ),
-        ''
-    )
-    INTO new_text
-    FROM asset_field_value v
-    JOIN field_definition f ON f.id = v.field_id
-    WHERE v.asset_id = p_asset_id
-      AND f.searchable = TRUE
-      AND f.status = 'active';
-
-    -- Include the asset's own title + description so they're searchable
-    -- even before any field values land.
-    UPDATE assets
-       SET search_text = to_tsvector('english',
-                            COALESCE(title, '') || ' ' ||
-                            COALESCE(description, '') || ' ' ||
-                            COALESCE(new_text, ''))
+    SELECT COALESCE(STRING_AGG(CASE WHEN v.value_text IS NOT NULL THEN v.value_text WHEN v.value_options IS NOT NULL THEN array_to_string(v.value_options, ' ') ELSE NULL END, ' '), '')
+    INTO field_text
+    FROM asset_field_value v JOIN field_definition f ON f.id = v.field_id
+    WHERE v.asset_id = p_asset_id AND f.searchable = TRUE AND f.status = 'active';
+    UPDATE assets SET search_text =
+        setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
+        setweight(to_tsvector('english', ''), 'C') ||
+        setweight(to_tsvector('english', COALESCE(field_text, '')), 'D')
      WHERE id = p_asset_id;
-END;
-$$;
+END; $$;
 
 
 --
@@ -452,10 +434,11 @@ CREATE FUNCTION public.rebuild_collection_search_text(p_collection_id uuid) RETU
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    UPDATE collections SET search_text = to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(description, ''))
+    UPDATE collections SET search_text =
+        setweight(to_tsvector('english', COALESCE(name, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(description, '')), 'B')
      WHERE id = p_collection_id;
-END;
-$$;
+END; $$;
 
 
 --
@@ -465,30 +448,19 @@ $$;
 CREATE FUNCTION public.rebuild_post_search_text(p_post_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE
-    asset_search TEXT;
-    post_tag_text TEXT;
+DECLARE asset_search TEXT; post_tag_text TEXT;
 BEGIN
-    SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '')
-      INTO asset_search
-      FROM post_assets pa
-      JOIN assets a ON a.id = pa.asset_id
+    SELECT COALESCE(string_agg(COALESCE(a.search_text::text, ''), ' '), '') INTO asset_search
+      FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
      WHERE pa.post_id = p_post_id AND a.deleted_at IS NULL;
-
-    SELECT COALESCE(string_agg(tag, ' '), '')
-      INTO post_tag_text
-      FROM post_tags
-     WHERE post_id = p_post_id;
-
-    UPDATE posts
-       SET search_text = to_tsvector('english',
-                coalesce(title, '')       || ' ' ||
-                coalesce(description, '') || ' ' ||
-                coalesce(post_tag_text, '') || ' ' ||
-                coalesce(asset_search, ''))
+    SELECT COALESCE(string_agg(tag, ' '), '') INTO post_tag_text FROM post_tags WHERE post_id = p_post_id;
+    UPDATE posts SET search_text =
+        setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(description, '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(post_tag_text, '')), 'C') ||
+        setweight(to_tsvector('english', COALESCE(asset_search, '')), 'D')
      WHERE id = p_post_id;
-END;
-$$;
+END; $$;
 
 
 --
@@ -1093,9 +1065,17 @@ CREATE TABLE public.collections (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     search_text tsvector,
+    smart_query text,
     CONSTRAINT collections_membership_check CHECK ((membership = ANY (ARRAY['manual'::text, 'query'::text, 'hybrid'::text]))),
     CONSTRAINT collections_visibility_check CHECK ((visibility = ANY (ARRAY['private'::text, 'org-only'::text, 'followers'::text, 'explicit-share'::text])))
 );
+
+
+--
+-- Name: COLUMN collections.smart_query; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.collections.smart_query IS 'DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.';
 
 
 --
@@ -3219,6 +3199,13 @@ CREATE INDEX assets_team_idx ON public.assets USING btree (team_id) WHERE (team_
 
 
 --
+-- Name: assets_title_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX assets_title_trgm ON public.assets USING gin (title public.gin_trgm_ops) WHERE ((deleted_at IS NULL) AND (title <> ''::text));
+
+
+--
 -- Name: assets_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3349,6 +3336,13 @@ CREATE INDEX collections_expires_idx ON public.collections USING btree (expires_
 --
 
 CREATE INDEX collections_featured_idx ON public.collections USING btree (featured) WHERE featured;
+
+
+--
+-- Name: collections_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX collections_name_trgm ON public.collections USING gin (name public.gin_trgm_ops) WHERE (name <> ''::text);
 
 
 --
@@ -3975,6 +3969,13 @@ CREATE INDEX post_tags_tag_idx ON public.post_tags USING btree (tag);
 
 
 --
+-- Name: post_tags_tag_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX post_tags_tag_trgm ON public.post_tags USING gin (tag public.gin_trgm_ops);
+
+
+--
 -- Name: posts_author_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4014,6 +4015,13 @@ CREATE INDEX posts_state_idx ON public.posts USING btree (state_id) WHERE (state
 --
 
 CREATE INDEX posts_team_idx ON public.posts USING btree (team_id) WHERE (team_id IS NOT NULL);
+
+
+--
+-- Name: posts_title_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_title_trgm ON public.posts USING gin (title public.gin_trgm_ops) WHERE ((deleted_at IS NULL) AND (title <> ''::text));
 
 
 --
@@ -5076,5 +5084,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict alR4eDy8aVWpMeRNejXJ4jvzhpllaeFgxHyZ5cjzppXMxFObIivJ3K8eJZwcXJi
+\unrestrict EIINuLKSkQUnf4eCYUgBruw0O39bWvAFq09jgeHhNceoETRNVWeLAGOrqIDZZzq
 
