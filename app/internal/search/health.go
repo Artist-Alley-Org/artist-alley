@@ -1,0 +1,185 @@
+package search
+
+import (
+	"sort"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/mscrnt/artist-alley/app/internal/observability/healthhandler"
+)
+
+func strconvFormatInt(n int64) string { return strconv.FormatInt(n, 10) }
+
+// Counter is the observability surface for the search subsystem.
+// Wired through observability/healthhandler.HandlerFor to expose
+// GET /admin/search/health for admin dashboards.
+//
+// Counters:
+//   - Requests, per result class (hit / empty / error / cache_hit /
+//     cache_miss / rate_limited)
+//   - Latency samples over a rolling window (p50/p95/p99 percentiles)
+//
+// The Cache exposes its own hit/miss/invalidation counters via
+// Cache.Stats(); we surface those alongside the request counters in
+// the Snapshot payload so the admin UI has a single JSON to render.
+type Counter struct {
+	mu       sync.Mutex
+	requests map[string]int64
+
+	// rolling latency window; append-then-slice-to-window
+	latencies []time.Duration
+	windowCap int
+
+	// cacheStats is the callback the health handler uses to pull
+	// live cache counters at snapshot time. Wired by boot; nil in
+	// tests that don't care.
+	cacheStats func() CacheStatsSnapshot
+
+	// startedAt is set by NewCounter; surfaced as an uptime hint
+	// via the shim's Uptime field.
+	startedAt time.Time
+}
+
+// NewCounter constructs a Counter with the requested rolling-
+// window capacity. Passing 0 defaults to 5000 samples — ~10 min
+// of traffic at 8 req/s.
+func NewCounter(windowCap int) *Counter {
+	if windowCap <= 0 {
+		windowCap = 5000
+	}
+	return &Counter{
+		requests:  map[string]int64{},
+		latencies: make([]time.Duration, 0, windowCap),
+		windowCap: windowCap,
+		startedAt: time.Now(),
+	}
+}
+
+// SetCacheStatsProvider wires the callback the Snapshot uses to
+// pull live cache counters. Boot calls this after constructing
+// both the Counter and the Cache.
+func (c *Counter) SetCacheStatsProvider(fn func() CacheStatsSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheStats = fn
+}
+
+// Result classifies the outcome of one /search request for the
+// requests_total counter. String rather than iota so the JSON
+// snapshot is human-readable without a symbol table lookup.
+type Result string
+
+const (
+	ResultHit         Result = "hit"
+	ResultEmpty       Result = "empty"
+	ResultError       Result = "error"
+	ResultCacheHit    Result = "cache_hit"
+	ResultCacheMiss   Result = "cache_miss"
+	ResultRateLimited Result = "rate_limited"
+	ResultBadRequest  Result = "bad_request"
+)
+
+// Record bumps the request counter for the given result class and
+// records the observed latency. Called per /search request from
+// the HTTP handler.
+func (c *Counter) Record(r Result, latency time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests[string(r)]++
+	if len(c.latencies) >= c.windowCap {
+		// slide the window: drop the oldest 25% so we don't
+		// re-alloc on every append. Cheap because the window is
+		// small (5k default).
+		drop := c.windowCap / 4
+		c.latencies = append(c.latencies[:0], c.latencies[drop:]...)
+	}
+	c.latencies = append(c.latencies, latency)
+}
+
+// counterSnapshot implements healthhandler.Counter — the interface
+// the shim expects. Kept on a private type so the exported Counter
+// isn't tied to the shim's shape.
+type counterSnapshot struct {
+	c *Counter
+}
+
+// Snapshot returns the SubsystemHealth payload for the health
+// handler. Thread-safe: takes the counter's mutex once and returns
+// a snapshot value.
+func (s counterSnapshot) Snapshot() healthhandler.SubsystemHealth {
+	s.c.mu.Lock()
+	requests := make(map[string]int64, len(s.c.requests))
+	total := int64(0)
+	for k, v := range s.c.requests {
+		requests[k] = v
+		total += v
+	}
+	lats := make([]time.Duration, len(s.c.latencies))
+	copy(lats, s.c.latencies)
+	cacheProvider := s.c.cacheStats
+	started := s.c.startedAt
+	s.c.mu.Unlock()
+
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	p50 := pct(lats, 0.50)
+	p95 := pct(lats, 0.95)
+	p99 := pct(lats, 0.99)
+
+	notes := []string{
+		"latency_p50_ms=" + itoaMillis(p50),
+		"latency_p95_ms=" + itoaMillis(p95),
+		"latency_p99_ms=" + itoaMillis(p99),
+		"sample_count=" + itoa(int64(len(lats))),
+		"uptime_seconds=" + itoa(int64(time.Since(started).Seconds())),
+	}
+	if cacheProvider != nil {
+		cs := cacheProvider()
+		notes = append(notes,
+			"cache_entries="+itoa(int64(cs.Entries)),
+			"cache_hits="+itoa(cs.Hits),
+			"cache_misses="+itoa(cs.Misses),
+			"cache_invalidations="+itoa(cs.Invalidations),
+		)
+	}
+
+	return healthhandler.SubsystemHealth{
+		Subsystem:    "search",
+		CounterTotal: total,
+		ByResult:     requests,
+		Notes:        notes,
+	}
+}
+
+// AsSnapshot returns the counter wrapped in the healthhandler
+// Counter interface. Boot passes the result to
+// healthhandler.HandlerFor("search", counter, "system.admin").
+func (c *Counter) AsSnapshot() healthhandler.Counter {
+	return counterSnapshot{c: c}
+}
+
+// pct returns the P-percentile latency from a sorted slice. Returns
+// 0 for an empty slice; interpolates between adjacent samples
+// for smoother output on small windows.
+func pct(sorted []time.Duration, p float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := p * float64(len(sorted)-1)
+	lo := int(idx)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := idx - float64(lo)
+	return sorted[lo] + time.Duration(float64(sorted[hi]-sorted[lo])*frac)
+}
+
+// keep atomic imported for future counter additions — some fields
+// will migrate off the mutex once contention shows up in load
+// testing. Explicit no-op so the linter doesn't cull the import.
+var _ atomic.Int64
+
+func itoa(n int64) string { return strconvFormatInt(n) }
+func itoaMillis(d time.Duration) string { return strconvFormatInt(d.Milliseconds()) }
