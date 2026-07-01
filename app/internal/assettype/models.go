@@ -261,6 +261,8 @@ type Collection struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	SearchText     interface{}        `json:"search_text"`
+	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
+	SmartQuery *string `json:"smart_query"`
 }
 
 type CollectionAcl struct {

@@ -29,13 +29,23 @@
 
   const HISTORY_KEY = 'search_history';
   const HISTORY_LIMIT = 10;
+  const SUGGEST_DEBOUNCE_MS = 150;
+
+  type Suggestion = { value: string; kind: string; similarity: number };
 
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let suggestTimer: ReturnType<typeof setTimeout> | null = null;
   let lastCommitted = value;
   let history = $state<string[]>(loadHistory());
   let dropdownOpen = $state(false);
   let highlight = $state<number>(-1);
   let inputEl = $state<HTMLInputElement | null>(null);
+  // Phase 1.16.B-2 autocomplete: pg_trgm-backed suggestions from
+  // /search/suggest fetched with a 150ms debounce. Merged above
+  // the history list when the prefix is non-empty; history alone
+  // when prefix is empty.
+  let suggestions = $state<Suggestion[]>([]);
+  let suggestLoading = $state(false);
 
   function loadHistory(): string[] {
     if (typeof localStorage === 'undefined') return [];
@@ -96,8 +106,35 @@
   }
 
   function onInput() {
-    dropdownOpen = value === '' && history.length > 0;
+    dropdownOpen = (value === '' && history.length > 0) || value !== '';
     scheduleCommit();
+    scheduleSuggest();
+  }
+
+  function scheduleSuggest() {
+    if (suggestTimer) clearTimeout(suggestTimer);
+    if (value === '') {
+      suggestions = [];
+      return;
+    }
+    suggestTimer = setTimeout(async () => {
+      suggestLoading = true;
+      try {
+        const resp = await fetch(`/api/v1/search/suggest?prefix=${encodeURIComponent(value)}&limit=6`, {
+          credentials: 'include',
+        });
+        if (!resp.ok) {
+          suggestions = [];
+          return;
+        }
+        const data = await resp.json();
+        suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+      } catch {
+        suggestions = [];
+      } finally {
+        suggestLoading = false;
+      }
+    }, SUGGEST_DEBOUNCE_MS);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -216,13 +253,32 @@
     </button>
   {/if}
 
-  {#if dropdownOpen && history.length > 0}
+  {#if dropdownOpen && (suggestions.length > 0 || history.length > 0)}
     <div
       id="search-history"
       role="listbox"
-      class="absolute left-0 right-0 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
+      class="absolute left-0 right-0 top-full z-10 mt-1 max-h-96 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
       data-testid="search-history"
     >
+      {#if value !== '' && suggestions.length > 0}
+        <div class="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
+          Suggestions
+        </div>
+        {#each suggestions as sug (sug.kind + ':' + sug.value)}
+          <button
+            type="button"
+            role="option"
+            aria-selected="false"
+            onmousedown={() => pickHistory(sug.value)}
+            class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+            data-testid="search-suggestion"
+          >
+            <span class="rounded bg-info/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-info">{sug.kind}</span>
+            {sug.value}
+          </button>
+        {/each}
+      {/if}
+      {#if history.length > 0}
       <div class="flex items-center justify-between border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
         <span>Recent searches</span>
         <button
@@ -248,6 +304,7 @@
           {h}
         </button>
       {/each}
+      {/if}
     </div>
   {/if}
 </div>

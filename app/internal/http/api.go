@@ -68,6 +68,8 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/search"
+	"github.com/mscrnt/artist-alley/app/internal/search/facet"
+	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
@@ -155,6 +157,11 @@ type apiServer struct {
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
 	searchService *search.Service
+	// Phase 1.16.B-2 — facets + suggestions + save-as-collection.
+	// All three share the searchService's pool + counter; nil when
+	// searchService is nil.
+	facetDispatcher *facet.Dispatcher
+	suggestService  *suggest.Service
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -247,6 +254,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	searchCounter := search.NewCounter(0)
 	searchCounter.SetCacheStatsProvider(func() search.CacheStatsSnapshot { return searchCache.Stats() })
 	s.searchService = search.NewService(search.NewEngine(pool), searchCache, searchCounter)
+
+	// Phase 1.16.B-2 — facet aggregators + trigram suggestions.
+	s.facetDispatcher = facet.NewDispatcher(pool, logger)
+	s.suggestService = suggest.NewService(pool)
 
 	aiCaches := ai.NewCaches(cacheReg)
 	aiLoader := ai.NewLoader(pool, aiCaches)
