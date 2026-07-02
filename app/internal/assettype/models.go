@@ -764,6 +764,23 @@ type RoleCapability struct {
 	CapabilityCode string      `json:"capability_code"`
 }
 
+type SavedSearch struct {
+	ID                    pgtype.UUID        `json:"id"`
+	OwnerUserRef          int64              `json:"owner_user_ref"`
+	Name                  string             `json:"name"`
+	Dsl                   string             `json:"dsl"`
+	NotifyChannel         string             `json:"notify_channel"`
+	NotifyIntervalMinutes int32              `json:"notify_interval_minutes"`
+	Enabled               bool               `json:"enabled"`
+	LastResultHash        *string            `json:"last_result_hash"`
+	LastResultIds         []pgtype.UUID      `json:"last_result_ids"`
+	LastRunAt             pgtype.Timestamptz `json:"last_run_at"`
+	LastNotifiedAt        pgtype.Timestamptz `json:"last_notified_at"`
+	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Session struct {
 	ID                    pgtype.UUID        `json:"id"`
 	UserRef               int64              `json:"user_ref"`

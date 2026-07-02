@@ -87,6 +87,17 @@ const (
 	ResultSimilarToNotEmbedded  Result = "similar_to_not_embedded"
 	ResultByImageNotImplemented Result = "by_image_not_implemented"
 	ResultDSLParseError         Result = "dsl_parse_error"
+	// Phase 1.16.B-4 result classes for the saved-search
+	// coordinator + run jobs. Surfaced in the by_result map on
+	// /admin/search/health so operators see coordinator health +
+	// per-run outcome mix.
+	ResultSavedSearchCoordinatorTick Result = "saved_search_coordinator_tick"
+	ResultSavedSearchRunHit          Result = "saved_search_run_hit"
+	ResultSavedSearchRunEmpty        Result = "saved_search_run_empty"
+	ResultSavedSearchRunDisabled     Result = "saved_search_run_disabled"
+	ResultSavedSearchRunError        Result = "saved_search_run_error"
+	ResultSavedSearchDeltaHit        Result = "saved_search_delta_hit"
+	ResultSavedSearchNotificationSent Result = "saved_search_notification_sent"
 )
 
 // Record bumps the request counter for the given result class and

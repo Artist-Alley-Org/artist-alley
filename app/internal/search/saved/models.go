@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package subtitles
+package saved
 
 import (
 	"net/netip"

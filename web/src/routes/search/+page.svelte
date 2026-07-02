@@ -49,6 +49,16 @@
   // Save-as-collection modal state.
   let saveOpen = $state(false);
   let saveName = $state('');
+  // Phase 1.16.B-4 — Save-search modal state. Distinct from
+  // save-as-collection so a user can persist EITHER a one-shot
+  // snapshot (collection) OR an ongoing notification target
+  // (saved_search) without one closing the other.
+  let saveSearchOpen = $state(false);
+  let saveSearchName = $state('');
+  let saveSearchInterval = $state(60);
+  let saveSearchChannel = $state<'email' | 'none'>('email');
+  let savingSearch = $state(false);
+  let saveSearchResult = $state('');
   let saving = $state(false);
   let saveResult = $state('');
 
@@ -187,6 +197,44 @@
       saving = false;
     }
   }
+
+  async function submitSaveSearch() {
+    if (!saveSearchName.trim()) return;
+    savingSearch = true;
+    saveSearchResult = '';
+    try {
+      // Use ?dsl= as the stored query when the caller reached
+      // this page from /search/advanced (dslMode); otherwise treat
+      // the free-text q as the DSL string (single-token free-text
+      // parses cleanly).
+      const dslString = q;
+      const resp = await fetch('/api/v1/search/saved', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: saveSearchName.trim(),
+          dsl: dslString,
+          notify_channel: saveSearchChannel,
+          notify_interval_minutes: saveSearchInterval,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        saveSearchResult = `Save failed: ${resp.status} ${err}`;
+        return;
+      }
+      const data = await resp.json();
+      saveSearchResult = `Saved. Runs every ${data.notify_interval_minutes} minutes.`;
+      setTimeout(() => {
+        void goto('/account/saved-searches');
+      }, 1000);
+    } catch (e) {
+      saveSearchResult = e instanceof Error ? e.message : String(e);
+    } finally {
+      savingSearch = false;
+    }
+  }
 </script>
 
 <svelte:head><title>{t('nav.advanced_search')} — artist-alley</title></svelte:head>
@@ -243,6 +291,12 @@
           class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
         >Advanced builder</a>
         {#if hits.length > 0}
+          <button
+            type="button"
+            onclick={() => { saveSearchOpen = true; saveSearchName = q; }}
+            class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
+            data-testid="save-search"
+          >Save search</button>
           <button
             type="button"
             onclick={() => { saveOpen = true; saveName = q; }}
@@ -353,6 +407,70 @@
           disabled={saving || !saveName.trim()}
           class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
         >{saving ? 'Saving…' : 'Save collection'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Save-search modal (Phase 1.16.B-4). Persists the query as a
+     notification target rather than a snapshot; the coordinator
+     runs it on the interval + emails when new hits appear. -->
+{#if saveSearchOpen}
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-label="Save search"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    onclick={(e) => { if (e.target === e.currentTarget) saveSearchOpen = false; }}
+  >
+    <div class="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
+      <h3 class="mb-3 text-lg font-semibold">Save this search for updates</h3>
+      <p class="mb-3 text-sm text-fg-muted">
+        We'll re-run this query on your interval and email you when new matches appear.
+      </p>
+      <label class="mb-3 block text-sm">
+        <span class="mb-1 block text-fg-muted">Name</span>
+        <input
+          bind:value={saveSearchName}
+          type="text"
+          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+        />
+      </label>
+      <label class="mb-3 block text-sm">
+        <span class="mb-1 block text-fg-muted">Notify every (minutes)</span>
+        <input
+          bind:value={saveSearchInterval}
+          type="number"
+          min="15"
+          step="15"
+          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+        />
+      </label>
+      <label class="mb-3 block text-sm">
+        <span class="mb-1 block text-fg-muted">Notification channel</span>
+        <select
+          bind:value={saveSearchChannel}
+          class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
+        >
+          <option value="email">Email digest</option>
+          <option value="none">Track only (no email)</option>
+        </select>
+      </label>
+      {#if saveSearchResult}
+        <p class="mb-3 text-sm text-fg-muted" data-testid="save-search-result">{saveSearchResult}</p>
+      {/if}
+      <div class="flex justify-end gap-2">
+        <button
+          type="button"
+          onclick={() => (saveSearchOpen = false)}
+          class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
+        >Cancel</button>
+        <button
+          type="button"
+          onclick={submitSaveSearch}
+          disabled={savingSearch || !saveSearchName.trim()}
+          class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
+        >{savingSearch ? 'Saving…' : 'Save search'}</button>
       </div>
     </div>
   </div>
