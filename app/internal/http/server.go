@@ -386,6 +386,15 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 				Service: impl.searchService,
 				Pool:    pool,
 			})
+			// Phase 1.16.B-3 — POST /search/by-image reserved. Returns
+			// 501 with a structured "sidecar not installed" body until
+			// the CLIP visual-encoder sidecar ships (deferred; see the
+			// by_image.go handler docs for the pre-audit finding that
+			// triggered the deferral).
+			r.Method(http.MethodPost, "/search/by-image", &search.ByImageHandler{
+				Logger:  logger,
+				Counter: impl.searchService.Counter(),
+			})
 		}
 
 		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted

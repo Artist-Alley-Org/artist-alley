@@ -155,6 +155,14 @@
   function openInNewTab() {
     window.open(window.location.href, '_blank');
   }
+  // Phase 1.16.B-3 — vector similarity. Navigates to the unified
+  // /search results view with a similar_to:<id> DSL query; the
+  // backend fetches the anchor's stored embedding + returns
+  // nearest neighbours by cosine similarity, visibility-gated
+  // through the shared filter.
+  function findSimilar() {
+    window.location.href = `/search?dsl=${encodeURIComponent('similar_to:' + asset.id)}`;
+  }
 
   // Menu-trigger class. Helper exists because Tailwind's slash-syntax
   // utilities (bg-white/10) break Svelte's `class:` directive parser —
@@ -220,6 +228,15 @@
       class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
     >
       {t('viewer_menu.open_in_new_tab')}
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={findSimilar}
+      class="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-elevated"
+      data-testid="viewer-find-similar"
+    >
+      Find similar assets
     </button>
     {#if onShareAsset}
       <button

@@ -6,6 +6,11 @@ import (
 )
 
 // CompiledQuery is what the compiler produces. The Engine consumes it.
+//
+// Phase 1.16.B-3 adds SimilarToAssetID — populated when the user
+// wrote similar_to:<uuid>. The compiler doesn't perform the DB
+// embedding-fetch itself (keeps the DSL package pure); the search
+// Service resolves the ID → embedding just before Engine.Run.
 type CompiledQuery struct {
 	// TSQuery is the ts_query STRING the Engine passes to Postgres
 	// as `search_text @@ (TSQuery)::tsquery`. Built by the compiler
@@ -31,6 +36,23 @@ type CompiledQuery struct {
 	// applies as ordinary WHERE clauses. Every text value here is
 	// also passed to pgx via $-parameter, never string-interpolated.
 	Filters Filters
+
+	// SimilarToAssetID is the asset UUID the caller wrote as
+	// similar_to:<uuid>. Empty when no similar_to node appeared.
+	// The search Service resolves this to the actual embedding
+	// via vector.Fetcher before Engine.Run.
+	//
+	// Phase 1.16.B-3 addition.
+	SimilarToAssetID string
+
+	// HybridWeightSuggestion is a hint the compiler emits based
+	// on DSL shape: 1.0 when similar_to is the SOLE non-filter
+	// node (pure-vector intent); 0.5 when combined with
+	// free-text via implicit AND (mixed intent).
+	//
+	// The Service can honour it OR override with the operator's
+	// sysconfig default. Zero when no similar_to appeared.
+	HybridWeightSuggestion float64
 }
 
 // Filters is the typed post-tsvector filter set. Empty fields
@@ -77,10 +99,24 @@ func Compile(q Query) (CompiledQuery, error) {
 	if err != nil {
 		return CompiledQuery{}, err
 	}
+	// Emit hybrid-weight suggestion when similar_to appeared:
+	// pure-vector intent (weight 1.0) if the AST is a lone
+	// SimilarTo or only combined with filter nodes; mixed intent
+	// (weight 0.5) when the AST also produced a non-empty tsQ.
+	var weightHint float64
+	if c.similarToAssetID != "" {
+		if strings.TrimSpace(tsQ) == "" {
+			weightHint = 1.0
+		} else {
+			weightHint = 0.5
+		}
+	}
 	return CompiledQuery{
-		TSQuery:     tsQ,
-		TSQueryArgs: c.args,
-		Filters:     c.filters,
+		TSQuery:                tsQ,
+		TSQueryArgs:            c.args,
+		Filters:                c.filters,
+		SimilarToAssetID:       c.similarToAssetID,
+		HybridWeightSuggestion: weightHint,
 	}, nil
 }
 
@@ -92,6 +128,11 @@ type compiler struct {
 	// paramIndex is the 1-based index the next placeholder will
 	// take. Bumped every time a user text value is appended to args.
 	paramIndex int
+	// similarToAssetID captures the first similar_to:<uuid> node
+	// seen while walking the AST. Multiple similar_to's in one
+	// query aren't supported; the second one wins the same slot
+	// so the compiler doesn't split into two vector passes.
+	similarToAssetID string
 }
 
 // nextPlaceholder allocates the next $N placeholder + appends the
@@ -168,10 +209,19 @@ func (c *compiler) walk(n Node) (string, error) {
 	case FieldMatchNode:
 		return c.walkFieldMatch(x)
 	case SimilarToNode:
-		return "", DSLError{
-			Kind:    SimilarToNotImplemented,
-			Message: fmt.Sprintf("similar_to:%s is reserved for Phase 1.16.B-3 (vector search)", x.ID),
+		// Phase 1.16.B-3 — the compiler records the ID; the
+		// Service resolves it to an embedding + populates
+		// Query.SimilarityHint. The tsQuery contribution is
+		// empty (vector search runs separately from BM25).
+		id := strings.TrimSpace(x.ID)
+		if id == "" {
+			return "", DSLError{
+				Kind:    SyntaxError,
+				Message: "similar_to: value must be a UUID",
+			}
 		}
+		c.similarToAssetID = id
+		return "", nil
 	}
 	return "", fmt.Errorf("dsl: unhandled node type %T", n)
 }
