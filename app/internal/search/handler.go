@@ -6,6 +6,10 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 )
 
 // Service is the boot-time integration point. Wraps the Engine +
@@ -14,11 +18,43 @@ type Service struct {
 	engine  *Engine
 	cache   *Cache
 	counter *Counter
+	// vector is the fetcher for pgvector-backed similarity anchor
+	// lookups. Nil for services constructed pre-B-3; the HTTP
+	// handler treats nil as "vector search disabled" so old boot
+	// wires keep working.
+	vector *vectorFetcher
 }
+
+// vectorFetcher wraps vector.Fetcher so we don't leak the vector
+// package into search.Service's exported API.
+type vectorFetcher = vector.Fetcher
 
 // Engine exposes the underlying engine for adjacent HTTP handlers
 // (save-as-collection needs a cache-bypassing execution).
 func (s *Service) Engine() *Engine { return s.engine }
+
+// Vector exposes the vector-embedding fetcher. Nil when the
+// service was constructed without the B-3 vector wiring; the HTTP
+// layer checks nil and returns an "unsupported" error rather than
+// panicking.
+func (s *Service) Vector() *vector.Fetcher { return s.vector }
+
+// Pool exposes the underlying pgxpool for adjacent HTTP handlers
+// that need one-off queries (visibility spot-checks, etc.).
+func (s *Service) Pool() *pgxpool.Pool {
+	if s.engine == nil {
+		return nil
+	}
+	return s.engine.Pool
+}
+
+// WithVector attaches a vector fetcher. Post-construction so old
+// boot wires that don't care about vectors keep working; new
+// boot passes NewFetcher(pool).
+func (s *Service) WithVector(v *vector.Fetcher) *Service {
+	s.vector = v
+	return s
+}
 
 // NewService wires the Service. Any component can be nil for tests —
 // nil cache = never-cache (all misses); nil counter = no
@@ -71,6 +107,15 @@ func (s *Service) Execute(ctx context.Context, q Query) (QueryResult, error) {
 	} else {
 		s.record(ResultCacheMiss, time.Since(start))
 		s.record(ResultHit, time.Since(start))
+	}
+	// Phase 1.16.B-3 — surface vector-request throughput so
+	// /admin/search/health shows hybrid vs pure-BM25 mix.
+	if q.SimilarityHint != "" {
+		if len(res.Hits) > 0 {
+			s.record(ResultVectorHit, time.Since(start))
+		} else {
+			s.record(ResultVectorMiss, time.Since(start))
+		}
 	}
 	return res, nil
 }
@@ -131,14 +176,16 @@ func MarshalHitJSON(h Hit) json.RawMessage {
 		extras = h.ExtraJSON
 	}
 	out := map[string]any{
-		"type":              h.Type,
-		"id":                h.ID.String(),
-		"title":             h.Title,
-		"summary":           h.Summary,
-		"score":             h.NormalisedScore,
-		"created_at":        h.CreatedAt,
-		"updated_at":        h.UpdatedAt,
-		"extra":             extras,
+		"type":         h.Type,
+		"id":           h.ID.String(),
+		"title":        h.Title,
+		"summary":      h.Summary,
+		"score":        h.NormalisedScore,
+		"vector_score": h.VectorScore,
+		"hybrid_score": h.HybridScore,
+		"created_at":   h.CreatedAt,
+		"updated_at":   h.UpdatedAt,
+		"extra":        extras,
 	}
 	if h.OwnerUserRef != nil {
 		out["owner_user_ref"] = *h.OwnerUserRef

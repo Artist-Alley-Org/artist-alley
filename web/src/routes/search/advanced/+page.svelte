@@ -18,6 +18,10 @@
     { value: 'type',        label: 'Asset type' },
     { value: 'sensitivity', label: 'Sensitivity' },
     { value: 'extension',   label: 'File extension' },
+    // Phase 1.16.B-3 — vector similarity anchor. Value is a
+    // UUID; the backend resolves it to the anchor's stored
+    // embedding.
+    { value: 'similar_to',  label: 'Similar to asset (UUID)' },
   ];
 
   type Row = { field: string; value: string; not: boolean };
@@ -53,7 +57,9 @@
     e.preventDefault();
     const q = compiled;
     if (!q) return;
-    void goto(`/search?q=${encodeURIComponent(q)}`);
+    // Route through the ?dsl= query param so the backend runs
+    // the DSL parser + resolves any similar_to:<uuid> anchors.
+    void goto(`/search?dsl=${encodeURIComponent(q)}`);
   }
 </script>
 

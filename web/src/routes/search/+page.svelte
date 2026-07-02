@@ -57,6 +57,10 @@
     return totalCount.toLocaleString();
   });
 
+  // dsl mode kicks in when the URL had ?dsl= — usually from the
+  // /search/advanced builder or a "Find similar assets" nav.
+  let dslMode = $state(false);
+
   async function runSearch(query: string, opts: { append?: boolean } = {}) {
     if (!query) {
       hits = [];
@@ -74,11 +78,14 @@
     }
     error = '';
     try {
-      const params = new URLSearchParams({ q: query, limit: '25' });
+      const params = new URLSearchParams({ limit: '25' });
+      if (dslMode) params.set('dsl', query); else params.set('q', query);
       if (opts.append && cursor) params.set('cursor', cursor);
       const [searchResp, facetsResp] = await Promise.all([
         fetch(`/api/v1/search?${params.toString()}`, { credentials: 'include' }),
-        opts.append ? Promise.resolve(null) : fetch(`/api/v1/search/facets?q=${encodeURIComponent(query)}`, { credentials: 'include' }),
+        opts.append || dslMode
+          ? Promise.resolve(null)
+          : fetch(`/api/v1/search/facets?q=${encodeURIComponent(query)}`, { credentials: 'include' }),
       ]);
       if (!searchResp.ok) {
         error = `search: ${searchResp.status}`;
@@ -131,7 +138,15 @@
   }
 
   onMount(() => {
-    q = page.url.searchParams.get('q') ?? '';
+    const urlDSL = page.url.searchParams.get('dsl');
+    const urlQ = page.url.searchParams.get('q');
+    if (urlDSL) {
+      dslMode = true;
+      q = urlDSL;
+    } else {
+      dslMode = false;
+      q = urlQ ?? '';
+    }
     if (q) void runSearch(q);
   });
 

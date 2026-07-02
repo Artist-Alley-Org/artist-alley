@@ -99,22 +99,48 @@ func TestParse_ParenGrouping(t *testing.T) {
 	}
 }
 
-func TestParse_SimilarTo_ReservedForB3(t *testing.T) {
-	q, err := dsl.Parse("similar_to:0192abcd")
+func TestParse_SimilarTo_CompilesInB3(t *testing.T) {
+	q, err := dsl.Parse("similar_to:0192abcd-1234-5678-9abc-def012345678")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := q.Root.(dsl.SimilarToNode); !ok {
 		t.Errorf("Root = %T, want SimilarToNode", q.Root)
 	}
-	// Compilation must return the 501 sentinel.
-	_, cerr := dsl.Compile(q)
-	if cerr == nil {
-		t.Fatal("expected compile error for similar_to")
+	// Phase 1.16.B-3: compilation records the asset ID +
+	// suggests HybridWeight=1.0 (pure-vector intent). Actual
+	// embedding fetch happens at the Service layer.
+	cq, cerr := dsl.Compile(q)
+	if cerr != nil {
+		t.Fatalf("compile err = %v; expected nil in B-3", cerr)
 	}
-	var de dsl.DSLError
-	if !errors.As(cerr, &de) || de.Kind != dsl.SimilarToNotImplemented {
-		t.Errorf("compile err = %v, want DSLError{SimilarToNotImplemented}", cerr)
+	if cq.SimilarToAssetID != "0192abcd-1234-5678-9abc-def012345678" {
+		t.Errorf("SimilarToAssetID = %q; want the parsed UUID", cq.SimilarToAssetID)
+	}
+	if cq.HybridWeightSuggestion != 1.0 {
+		t.Errorf("HybridWeightSuggestion = %g; want 1.0 for pure-vector", cq.HybridWeightSuggestion)
+	}
+	if cq.TSQuery != "" {
+		t.Errorf("TSQuery = %q; want empty for pure-vector", cq.TSQuery)
+	}
+}
+
+func TestParse_SimilarTo_CombinedWithFreeText_LowersWeight(t *testing.T) {
+	// `similar_to:X foo` → implicit AND with free-text; hybrid
+	// weight defaults to 0.5 (mixed intent).
+	q, err := dsl.Parse("similar_to:0192abcd-1234-5678-9abc-def012345678 foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cq, cerr := dsl.Compile(q)
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	if cq.HybridWeightSuggestion != 0.5 {
+		t.Errorf("HybridWeightSuggestion = %g; want 0.5 for mixed", cq.HybridWeightSuggestion)
+	}
+	if cq.TSQuery == "" {
+		t.Errorf("TSQuery should carry the free-text plainto_tsquery fragment")
 	}
 }
 

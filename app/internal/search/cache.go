@@ -118,6 +118,15 @@ func keyForQuery(q Query) string {
 	sb.WriteByte('|')
 	sb.WriteString(strconv.Itoa(q.Limit))
 	sb.WriteByte('|')
+	// Phase 1.16.B-3 — vector-hint identifier folds into the key
+	// so similar_to:<uuid> queries cache independently of their
+	// text component. Empty for pure-BM25 queries; asset:<uuid>
+	// for DSL similar_to; image:<sha256> for the reserved
+	// /search/by-image endpoint.
+	sb.WriteString(q.SimilarityHintID)
+	sb.WriteByte('|')
+	sb.WriteString(strconv.FormatFloat(q.HybridWeight, 'g', -1, 64))
+	sb.WriteByte('|')
 	if q.Cursor != nil {
 		sb.WriteString(strconv.FormatFloat(q.Cursor.LastScore, 'g', -1, 64))
 		sb.WriteByte(':')

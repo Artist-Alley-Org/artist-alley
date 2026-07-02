@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
@@ -45,7 +46,10 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 // normalises scores, merges, orders, cuts to the page, computes
 // the next cursor, and stamps total counts.
 func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
-	if q.Text == "" {
+	// Empty text is allowed when the caller supplied a
+	// SimilarityHint — the hybrid path can rank purely on vector
+	// similarity. Pure-BM25 empty queries stay rejected.
+	if q.Text == "" && q.SimilarityHint == "" {
 		return QueryResult{}, ErrEmptyQuery
 	}
 	limit := q.Limit
@@ -97,6 +101,20 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 		mx := maxScoreByType[rawHits[i].Type]
 		if mx > 0 {
 			rawHits[i].NormalisedScore = rawHits[i].RawScore / mx
+		}
+		// Baseline: HybridScore mirrors NormalisedScore for
+		// non-hybrid queries; the hybrid merge below overrides it
+		// with the weighted sum when a SimilarityHint is present.
+		rawHits[i].HybridScore = rawHits[i].NormalisedScore
+	}
+
+	// Phase 1.16.B-3 — hybrid ranking. When a SimilarityHint is
+	// present AND assets are in the requested types, run a kNN
+	// pass against asset_embedding_d768 and merge results into
+	// the BM25 hit set.
+	if q.SimilarityHint != "" && containsHitType(types, HitTypeAsset) {
+		if err := e.applyHybrid(ctx, q, &rawHits); err != nil {
+			return QueryResult{}, fmt.Errorf("search: hybrid merge: %w", err)
 		}
 	}
 
@@ -162,6 +180,200 @@ func (e *Engine) Run(ctx context.Context, q Query) (QueryResult, error) {
 		Facets:           nil, // B-2 placeholder
 	}, nil
 }
+
+// containsHitType is a tiny lookup helper used by the hybrid gate.
+func containsHitType(types []HitType, want HitType) bool {
+	for _, t := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// applyHybrid runs a kNN pass against asset_embedding_d768 and
+// merges the results into rawHits per the hybrid ranking formula:
+//
+//	hybrid = (1 - w) * bm25_normalised + w * cosine_similarity
+//
+// Assets already in the BM25 hit set gain a VectorScore + updated
+// HybridScore; assets found ONLY by the vector pass are appended
+// with zero BM25 score.
+//
+// Hits scoring below q.SimilarityThreshold are dropped (only in
+// hybrid + pure-vector modes; a pure-BM25 query bypasses).
+//
+// This function mutates the slice via the pointer so the caller
+// can re-sort against the updated HybridScore field afterwards.
+func (e *Engine) applyHybrid(ctx context.Context, q Query, hits *[]Hit) error {
+	// Weight defaults: pure-vector when text is empty, mid when
+	// both text + hint present, honour caller override otherwise.
+	w := q.HybridWeight
+	if w <= 0 {
+		if q.Text == "" {
+			w = 1.0
+		} else {
+			w = DefaultHybridWeight
+		}
+	}
+	if w > 1 {
+		w = 1
+	}
+	threshold := q.SimilarityThreshold
+
+	limit := q.Limit
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	anchor := vector.Anchor{
+		Raw:      q.SimilarityHint,
+		Provider: q.SimilarityHintProvider,
+		Model:    q.SimilarityHintModel,
+		Modality: q.SimilarityHintModality,
+	}
+	vecHits, err := vector.Query(ctx, e.Pool, anchor, visibility.NewCaller(q.CallerUserRef), threshold, limit*VectorOverfetchMultiplier)
+	if err != nil {
+		return err
+	}
+
+	// Merge into the existing hit set. Assets in both sets get
+	// updated in-place; vector-only assets require a fresh row
+	// lookup for the Hit projection (title, description, etc.).
+	idx := make(map[[16]byte]int, len(*hits))
+	for i, h := range *hits {
+		if h.Type != HitTypeAsset {
+			continue
+		}
+		idx[h.ID] = i
+	}
+	newRows := make([]Hit, 0, 8)
+	for _, vh := range vecHits {
+		if pos, ok := idx[vh.AssetID]; ok {
+			(*hits)[pos].VectorScore = vh.Similarity
+			(*hits)[pos].HybridScore = (1-w)*(*hits)[pos].NormalisedScore + w*vh.Similarity
+			continue
+		}
+		newRows = append(newRows, Hit{
+			Type:            HitTypeAsset,
+			ID:              vh.AssetID,
+			VectorScore:     vh.Similarity,
+			HybridScore:     w * vh.Similarity,
+			NormalisedScore: w * vh.Similarity, // cursor sort uses this
+		})
+	}
+
+	// Enrich vector-only hits with their asset row projection so
+	// the response body carries titles + timestamps.
+	if len(newRows) > 0 {
+		if err := e.enrichAssetHits(ctx, newRows); err != nil {
+			return err
+		}
+		*hits = append(*hits, newRows...)
+	}
+
+	// For BM25-hits WITHOUT vector match (VectorScore=0), rescale
+	// HybridScore = (1-w) * NormalisedScore so BM25-only hits
+	// don't dominate a pure-vector query. NormalisedScore mirrors
+	// this so the sort + cursor comparison happen on one field.
+	for i := range *hits {
+		if (*hits)[i].Type != HitTypeAsset {
+			continue
+		}
+		if (*hits)[i].VectorScore == 0 {
+			(*hits)[i].HybridScore = (1 - w) * (*hits)[i].NormalisedScore
+		}
+		// Threshold filter fires only in hybrid + pure-vector
+		// modes (skip when weight = 0 — that's pure-BM25).
+		(*hits)[i].NormalisedScore = (*hits)[i].HybridScore
+	}
+	if threshold > 0 && w > 0 {
+		filtered := (*hits)[:0]
+		for _, h := range *hits {
+			if h.Type == HitTypeAsset && h.HybridScore < threshold {
+				continue
+			}
+			filtered = append(filtered, h)
+		}
+		*hits = filtered
+	}
+	return nil
+}
+
+// enrichAssetHits fills in the Title / Summary / timestamps for
+// asset hits that arrived via the vector path (no BM25 row scan).
+// One IN-clause query keeps the round-trip bounded regardless of
+// how many vector-only hits arrived.
+func (e *Engine) enrichAssetHits(ctx context.Context, hits []Hit) error {
+	if len(hits) == 0 {
+		return nil
+	}
+	ids := make([][16]byte, 0, len(hits))
+	for _, h := range hits {
+		ids = append(ids, h.ID)
+	}
+	rows, err := e.Pool.Query(ctx, `
+		SELECT id, title, description, owner_user_ref, origin_server_id,
+		       thumbhash, created_at, updated_at
+		  FROM assets
+		 WHERE id = ANY($1::UUID[])
+		   AND deleted_at IS NULL
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byID := make(map[[16]byte]Hit, len(hits))
+	for rows.Next() {
+		var (
+			id      uuid.UUID
+			title   string
+			descr   string
+			owner   *int64
+			origin  *uuid.UUID
+			thumb   []byte
+			created time.Time
+			updated time.Time
+		)
+		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated); err != nil {
+			return err
+		}
+		extra, _ := json.Marshal(map[string]any{"thumbhash_b64": encodeB64(thumb)})
+		byID[id] = Hit{
+			Title:          title,
+			Summary:        truncate(descr, 240),
+			OwnerUserRef:   owner,
+			OriginServerID: origin,
+			CreatedAt:      created,
+			UpdatedAt:      updated,
+			ExtraJSON:      extra,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i, h := range hits {
+		if enriched, ok := byID[h.ID]; ok {
+			hits[i].Title = enriched.Title
+			hits[i].Summary = enriched.Summary
+			hits[i].OwnerUserRef = enriched.OwnerUserRef
+			hits[i].OriginServerID = enriched.OriginServerID
+			hits[i].CreatedAt = enriched.CreatedAt
+			hits[i].UpdatedAt = enriched.UpdatedAt
+			hits[i].ExtraJSON = enriched.ExtraJSON
+		}
+	}
+	return nil
+}
+
+// DefaultHybridWeight is the fallback when the caller doesn't
+// specify one AND the query has both text + hint. 0.5 balances
+// BM25 relevance against vector proximity.
+const DefaultHybridWeight = 0.5
+
+// VectorOverfetchMultiplier bounds how many vector candidates we
+// pull relative to the requested page limit. Larger = more
+// headroom for the BM25 merge; smaller = less DB work per query.
+const VectorOverfetchMultiplier = 5
 
 // cursorLess reports whether hit h ordering-comes-after the
 // cursor's position (i.e. h should be on a later page than the

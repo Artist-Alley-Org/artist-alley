@@ -67,6 +67,46 @@ type Query struct {
 	// ignores it. Kept here so the outer shape stays stable
 	// when the DSL parser lands.
 	Advanced *AdvancedQuery
+
+	// SimilarityHint is the pgvector-formatted embedding literal
+	// ('[a,b,c,...]') the Engine's hybrid path treats as the
+	// anchor for kNN retrieval. Non-empty when the caller wrote
+	// similar_to:<uuid> in the DSL or hit the reserved
+	// /search/by-image endpoint (once its encoder ships). Nil in
+	// pure-BM25 queries.
+	//
+	// Phase 1.16.B-3 addition.
+	SimilarityHint string
+
+	// SimilarityHintProvider / Model / Modality carry the tuple
+	// the anchor embedding was stored under. Populated by the
+	// Service when resolving similar_to:<uuid>; filters kNN
+	// candidates to the same vector space (cross-space cosine
+	// similarity is meaningless).
+	SimilarityHintProvider string
+	SimilarityHintModel    string
+	SimilarityHintModality string
+
+	// SimilarityHintID is a stable identifier for the hint so
+	// SearchCache can key against it (asset:<uuid> for
+	// similar_to; image:<sha256> for by-image; empty for
+	// pure-BM25). Distinct from SimilarityHint so the cache key
+	// stays small.
+	SimilarityHintID string
+
+	// HybridWeight ∈ [0,1] controls how BM25 and vector scores
+	// combine. 0 = pure BM25 (B-1/B-2 behaviour); 1 = pure
+	// vector; 0.5 = default hybrid. The Engine's hybrid path
+	// computes hybrid_score = (1-w)*bm25 + w*cosine_sim.
+	//
+	// Ignored when SimilarityHint is empty (BM25-only path).
+	HybridWeight float64
+
+	// SimilarityThreshold filters vector hits below this cosine
+	// similarity value ∈ [0,1]. Zero disables the filter (default
+	// per Engine constants). Applied AFTER the hybrid score
+	// merge; a pure-BM25 query bypasses the threshold entirely.
+	SimilarityThreshold float64
 }
 
 // AdvancedQuery is the B-2 placeholder. B-1 never populates it.
@@ -128,6 +168,21 @@ type Hit struct {
 	// from RawScore / (per-entity max score). Cross-entity
 	// ordering happens on this field.
 	NormalisedScore float64
+
+	// VectorScore is the cosine similarity ∈ [0,1] the hit
+	// received from the pgvector kNN pass. Zero for BM25-only
+	// hits (query had no SimilarityHint) OR for hits present in
+	// BM25 results but missing from the vector top-K.
+	//
+	// Phase 1.16.B-3 addition; populated by the hybrid Engine
+	// path.
+	VectorScore float64
+
+	// HybridScore is the weighted merge of NormalisedScore +
+	// VectorScore per Query.HybridWeight. Populated only when
+	// the Engine ran the hybrid path; equal to NormalisedScore
+	// for BM25-only queries.
+	HybridScore float64
 
 	// ExtraJSON is the per-entity extras the frontend uses to
 	// render an entity-specific card (asset thumbhash, post

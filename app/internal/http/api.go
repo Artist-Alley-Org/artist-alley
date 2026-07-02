@@ -70,6 +70,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
+	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
@@ -253,7 +254,8 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	searchCache := search.NewCache(cacheReg, 0, 0, logger)
 	searchCounter := search.NewCounter(0)
 	searchCounter.SetCacheStatsProvider(func() search.CacheStatsSnapshot { return searchCache.Stats() })
-	s.searchService = search.NewService(search.NewEngine(pool), searchCache, searchCounter)
+	s.searchService = search.NewService(search.NewEngine(pool), searchCache, searchCounter).
+		WithVector(searchvector.NewFetcher(pool))
 
 	// Phase 1.16.B-2 — facet aggregators + trigram suggestions.
 	s.facetDispatcher = facet.NewDispatcher(pool, logger)

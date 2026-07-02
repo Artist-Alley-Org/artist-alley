@@ -79,6 +79,14 @@ const (
 	ResultCacheMiss   Result = "cache_miss"
 	ResultRateLimited Result = "rate_limited"
 	ResultBadRequest  Result = "bad_request"
+	// Phase 1.16.B-3 result classes — surfaced alongside the
+	// existing BM25 counters so operators see hybrid + vector
+	// query volume separately.
+	ResultVectorHit             Result = "vector_hit"
+	ResultVectorMiss            Result = "vector_miss"
+	ResultSimilarToNotEmbedded  Result = "similar_to_not_embedded"
+	ResultByImageNotImplemented Result = "by_image_not_implemented"
+	ResultDSLParseError         Result = "dsl_parse_error"
 )
 
 // Record bumps the request counter for the given result class and

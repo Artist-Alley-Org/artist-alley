@@ -7,7 +7,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/search/dsl"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // Handler is the raw http.Handler for the unified GET /search
@@ -43,7 +48,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query().Get("q")
-	if q == "" {
+	dslInput := r.URL.Query().Get("dsl")
+	if q == "" && dslInput == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query_required"})
 		return
 	}
@@ -73,6 +79,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if id := auth.IdentityFromContext(r.Context()); id != nil {
 		ref := id.UserRef
 		query.CallerUserRef = &ref
+	}
+
+	// Phase 1.16.B-3 — if the caller supplied a `dsl=` param
+	// (advanced-mode query), parse + compile + resolve any
+	// similar_to:<uuid> to an embedding hint. The Engine's hybrid
+	// path picks it up via Query.SimilarityHint.
+	if dslInput != "" {
+		if err := h.applyDSL(r, &query, dslInput); err != nil {
+			if de, ok := err.(dsl.DSLError); ok {
+				status := http.StatusBadRequest
+				payload := map[string]any{"error": "dsl_error", "kind": int(de.Kind), "message": de.Message}
+				if len(de.ValidFields) > 0 {
+					payload["valid_fields"] = de.ValidFields
+				}
+				writeJSON(w, status, payload)
+				return
+			}
+			if errors.Is(err, vector.ErrNotEmbedded) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "similar_to_asset_not_embedded"})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dsl_parse_error"})
+			return
+		}
 	}
 
 	res, err := h.Service.Execute(r.Context(), query)
@@ -113,4 +143,74 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// applyDSL parses + compiles the caller's DSL string and mutates
+// `query` with the extracted vector hint (via the search
+// Service's embedding fetcher). Returns dsl.DSLError for parse
+// failures, vector.ErrNotEmbedded when similar_to references an
+// asset without a stored embedding.
+func (h *Handler) applyDSL(r *http.Request, query *Query, input string) error {
+	parsed, err := dsl.Parse(input)
+	if err != nil {
+		return err
+	}
+	compiled, err := dsl.Compile(parsed)
+	if err != nil {
+		return err
+	}
+	// Fold DSL free-text back into query.Text if the caller only
+	// supplied `dsl=` — the Engine's BM25 path still consumes Text.
+	// (Advanced DSL like tag:foo returns an empty tsQuery + Filters;
+	// we don't have a Filters plumbing at Engine layer today, so
+	// the compiled TSQuery is currently informational — feature
+	// flag for a later revision.)
+	if query.Text == "" && compiled.TSQuery != "" {
+		// A synthetic reconstruction of the free-text intent so
+		// the Engine's plainto_tsquery path still works. For
+		// pure similar_to (empty TSQuery), keep Text empty and
+		// let the hybrid path drive.
+		query.Text = input
+	}
+	if compiled.SimilarToAssetID == "" {
+		return nil
+	}
+	// Resolve the anchor asset's embedding.
+	assetID, perr := uuid.Parse(compiled.SimilarToAssetID)
+	if perr != nil {
+		return dsl.DSLError{Kind: dsl.SyntaxError, Message: "similar_to: value must be a UUID"}
+	}
+	if h.Service == nil || h.Service.Vector() == nil {
+		return errors.New("search: vector fetcher not wired")
+	}
+	// Visibility gate: the target asset itself must be visible
+	// to the caller. Otherwise a restricted asset's ID would leak
+	// its neighbourhood to callers who can't see the source.
+	pred, err := visibility.Filter(r.Context(), visibility.EntityAsset, visibility.NewCaller(query.CallerUserRef))
+	if err != nil {
+		return err
+	}
+	frag, args := pred.ToSQL("", 1)
+	var visible bool
+	if err := h.Service.Pool().QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM assets WHERE id = $1`+frag+`)
+	`, append([]any{assetID}, args...)...).Scan(&visible); err != nil {
+		return err
+	}
+	if !visible {
+		return vector.ErrNotEmbedded
+	}
+	anchor, verr := h.Service.Vector().FetchAssetEmbedding(r.Context(), assetID)
+	if verr != nil {
+		return verr
+	}
+	query.SimilarityHint = anchor.Raw
+	query.SimilarityHintProvider = anchor.Provider
+	query.SimilarityHintModel = anchor.Model
+	query.SimilarityHintModality = anchor.Modality
+	query.SimilarityHintID = "asset:" + compiled.SimilarToAssetID
+	if query.HybridWeight <= 0 {
+		query.HybridWeight = compiled.HybridWeightSuggestion
+	}
+	return nil
 }
