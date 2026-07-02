@@ -781,6 +781,21 @@ type SavedSearch struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SearchReindexRun struct {
+	ID               pgtype.UUID        `json:"id"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt      pgtype.Timestamptz `json:"cancelled_at"`
+	Scope            []byte             `json:"scope"`
+	Target           string             `json:"target"`
+	TotalEstimated   *int64             `json:"total_estimated"`
+	Processed        int64              `json:"processed"`
+	Succeeded        int64              `json:"succeeded"`
+	Failed           int64              `json:"failed"`
+	StartedByUserRef *int64             `json:"started_by_user_ref"`
+	LastError        *string            `json:"last_error"`
+}
+
 type Session struct {
 	ID                    pgtype.UUID        `json:"id"`
 	UserRef               int64              `json:"user_ref"`

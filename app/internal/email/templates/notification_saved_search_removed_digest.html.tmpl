@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#111; max-width:640px; margin:0 auto; padding:20px;">
+  <p>Hi {{.recipient_name}},</p>
+
+  <p>Your saved search <strong>"{{.search_name}}"</strong> no longer matches anything.</p>
+
+  {{if .removed_count}}
+  <p>The <strong>{{.removed_count}}</strong> previously-matching asset{{if ne .removed_count 1}}s are{{else}} is{{end}} no longer visible to you — deleted, restricted, or moved.</p>
+  {{end}}
+
+  <p>If you expected new matches, review the query:</p>
+  <p><a href="{{.results_url}}" style="display:inline-block; background:#c22; color:#fff; padding:8px 16px; border-radius:6px; text-decoration:none;">Review query</a></p>
+
+  <hr style="border:none; border-top:1px solid #eee; margin-top:32px;">
+  <p style="color:#888; font-size:0.85em;">
+    You are receiving this because you enabled email notifications on this saved search.
+    <a href="{{.site_url}}/account/saved-searches" style="color:#888;">Manage saved searches</a>.
+  </p>
+</body>
+</html>

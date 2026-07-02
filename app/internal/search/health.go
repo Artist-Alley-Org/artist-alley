@@ -37,6 +37,11 @@ type Counter struct {
 	// tests that don't care.
 	cacheStats func() CacheStatsSnapshot
 
+	// gaugeStats is the callback for pg_stat-backed gauges
+	// (Phase 1.16.B-5). Nil-safe. Returns a map of
+	// "gauge_name" → int64 that gets appended to Notes[].
+	gaugeStats func() map[string]int64
+
 	// startedAt is set by NewCounter; surfaced as an uptime hint
 	// via the shim's Uptime field.
 	startedAt time.Time
@@ -64,6 +69,16 @@ func (c *Counter) SetCacheStatsProvider(fn func() CacheStatsSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cacheStats = fn
+}
+
+// SetGaugeStatsProvider wires the pg_stat-backed gauge callback.
+// Phase 1.16.B-5 addition. Values are appended to Notes[] as
+// "gauge_name=<value>" lines so the flat health JSON surface
+// keeps working without a schema evolution.
+func (c *Counter) SetGaugeStatsProvider(fn func() map[string]int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gaugeStats = fn
 }
 
 // Result classifies the outcome of one /search request for the
@@ -138,6 +153,7 @@ func (s counterSnapshot) Snapshot() healthhandler.SubsystemHealth {
 	lats := make([]time.Duration, len(s.c.latencies))
 	copy(lats, s.c.latencies)
 	cacheProvider := s.c.cacheStats
+	gaugeProvider := s.c.gaugeStats
 	started := s.c.startedAt
 	s.c.mu.Unlock()
 
@@ -161,6 +177,20 @@ func (s counterSnapshot) Snapshot() healthhandler.SubsystemHealth {
 			"cache_misses="+itoa(cs.Misses),
 			"cache_invalidations="+itoa(cs.Invalidations),
 		)
+	}
+	// Phase 1.16.B-5 — pg_stat-backed gauges. Deterministic key
+	// order (sorted) so the JSON diff stays stable across snapshot
+	// polls; the admin dashboard renders each key as its own tile.
+	if gaugeProvider != nil {
+		gauges := gaugeProvider()
+		keys := make([]string, 0, len(gauges))
+		for k := range gauges {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			notes = append(notes, k+"="+itoa(gauges[k]))
+		}
 	}
 
 	return healthhandler.SubsystemHealth{

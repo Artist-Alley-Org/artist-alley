@@ -404,6 +404,20 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			impl.savedSearchHandler.Mount(r)
 		}
 
+		// Phase 1.16.B-5 — arc close: reindex + disk-usage +
+		// admin saved-searches surfaces. All admin-cap gated;
+		// mount via handler's Mount (chi routes) or direct route
+		// registration for the single-route disk-usage handler.
+		if impl.reindexHandler != nil {
+			impl.reindexHandler.Mount(r)
+		}
+		if impl.diskUsageHandler != nil {
+			r.Method(http.MethodGet, "/admin/search/disk-usage", impl.diskUsageHandler)
+		}
+		if impl.savedSearchAdmin != nil {
+			impl.savedSearchAdmin.Mount(r)
+		}
+
 		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted
 		// inside /api/v1 so the auth resolver middleware above
 		// has already run; RequireID just checks the resolved

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 0m3wmy6MaUWbc11oqL6hKU0rzkeJRGSiW5FZIXhIyDBwbpznlt0Ej0xMKKyp2uk
+\restrict BIawPaLNrAa1UYpG7hem3AQptIFpU8M7DvjZ4he0fDcFV12iKTSuRDviek2Uif9
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -1884,6 +1884,27 @@ CREATE TABLE public.saved_search (
 
 
 --
+-- Name: search_reindex_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.search_reindex_run (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    scope jsonb DEFAULT '{}'::jsonb NOT NULL,
+    target text NOT NULL,
+    total_estimated bigint,
+    processed bigint DEFAULT 0 NOT NULL,
+    succeeded bigint DEFAULT 0 NOT NULL,
+    failed bigint DEFAULT 0 NOT NULL,
+    started_by_user_ref bigint,
+    last_error text,
+    CONSTRAINT search_reindex_run_target_check CHECK ((target = ANY (ARRAY['tsvector'::text, 'embedding'::text, 'both'::text])))
+);
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2788,6 +2809,14 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.saved_search
     ADD CONSTRAINT saved_search_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: search_reindex_run search_reindex_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_reindex_run
+    ADD CONSTRAINT search_reindex_run_pkey PRIMARY KEY (id);
 
 
 --
@@ -4093,6 +4122,20 @@ CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_us
 
 
 --
+-- Name: search_reindex_run_active_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX search_reindex_run_active_uniq ON public.search_reindex_run USING btree ((true)) WHERE ((completed_at IS NULL) AND (cancelled_at IS NULL));
+
+
+--
+-- Name: search_reindex_run_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_reindex_run_started_idx ON public.search_reindex_run USING btree (started_at DESC);
+
+
+--
 -- Name: sessions__last_used_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4967,6 +5010,14 @@ ALTER TABLE ONLY public.saved_search
 
 
 --
+-- Name: search_reindex_run search_reindex_run_started_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_reindex_run
+    ADD CONSTRAINT search_reindex_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref);
+
+
+--
 -- Name: sessions sessions_impersonated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5146,5 +5197,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 0m3wmy6MaUWbc11oqL6hKU0rzkeJRGSiW5FZIXhIyDBwbpznlt0Ej0xMKKyp2uk
+\unrestrict BIawPaLNrAa1UYpG7hem3AQptIFpU8M7DvjZ4he0fDcFV12iKTSuRDviek2Uif9
 
