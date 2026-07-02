@@ -35,6 +35,16 @@ const (
 	// click-to-verify link. Variables: site_name, site_url,
 	// recipient_name, verify_url, expires_in.
 	TemplateRegisterVerify = "register_verify"
+
+	// TemplateSavedSearchDigest is the email sent by the
+	// saved-search notifier (Phase 1.16.B-4) when a scheduled
+	// re-run detects new hits. Named with the notification_
+	// prefix so templateForVerb resolves "saved_search.digest"
+	// (dots → underscores) to this template automatically.
+	// Variables: site_name, site_url, recipient_name,
+	// search_name, added_count, results_url, hits
+	// ([]{title, summary, url}).
+	TemplateSavedSearchDigest = "notification_saved_search_digest"
 )
 
 // Render produces a [Message] from a registered template + the
@@ -82,7 +92,7 @@ func init() {
 			panic("email: template registry: " + err.Error())
 		}
 	}
-	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric, TemplateRegisterVerify} {
+	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric, TemplateRegisterVerify, TemplateSavedSearchDigest} {
 		must(loadInto(registry, name))
 	}
 }

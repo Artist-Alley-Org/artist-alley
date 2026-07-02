@@ -397,6 +397,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			})
 		}
 
+		// Phase 1.16.B-4 — saved searches. CRUD mounts via the
+		// handler's Mount method so all six routes share the
+		// same auth-resolver middleware + owner-check helper.
+		if impl.savedSearchHandler != nil {
+			impl.savedSearchHandler.Mount(r)
+		}
+
 		// Phase 1.54.A — IIIF Image API 3.0 Level 0. Mounted
 		// inside /api/v1 so the auth resolver middleware above
 		// has already run; RequireID just checks the resolved

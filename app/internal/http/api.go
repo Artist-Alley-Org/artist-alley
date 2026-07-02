@@ -69,6 +69,7 @@ import (
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
+	"github.com/mscrnt/artist-alley/app/internal/search/saved"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
@@ -163,6 +164,14 @@ type apiServer struct {
 	// searchService is nil.
 	facetDispatcher *facet.Dispatcher
 	suggestService  *suggest.Service
+	// Phase 1.16.B-4 — saved searches. Handler owns the HTTP
+	// CRUD; the coordinator + run job handlers are registered
+	// separately in Server.Run and consume the same Store +
+	// Executor + Notifier.
+	savedSearchStore    *saved.Store
+	savedSearchExecutor *saved.Executor
+	savedSearchNotifier *saved.Notifier
+	savedSearchHandler  *saved.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -260,6 +269,24 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// Phase 1.16.B-2 — facet aggregators + trigram suggestions.
 	s.facetDispatcher = facet.NewDispatcher(pool, logger)
 	s.suggestService = suggest.NewService(pool)
+
+	// Phase 1.16.B-4 — saved searches + email-on-match. Store +
+	// Executor + Notifier + Handler + the two job handlers
+	// (coordinator, run). Coordinator's initial enqueue happens in
+	// server.Run alongside the route mount so a boot that skips
+	// HTTP (embedded worker mode) still boots the workers cleanly.
+	s.savedSearchStore = saved.NewStore(pool)
+	s.savedSearchExecutor = saved.NewExecutor(pool, s.searchService.Engine(), searchvector.NewFetcher(pool))
+	if jobSvc != nil {
+		s.savedSearchNotifier = saved.NewNotifier(jobSvc)
+	}
+	s.savedSearchHandler = &saved.Handler{
+		Store:    s.savedSearchStore,
+		Executor: s.savedSearchExecutor,
+		Notifier: s.savedSearchNotifier,
+		SiteURL:  savedSiteURL(context.Background(), sysCfg),
+		Logger:   logger,
+	}
 
 	aiCaches := ai.NewCaches(cacheReg)
 	aiLoader := ai.NewLoader(pool, aiCaches)
@@ -429,6 +456,40 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			metaExtractEnqueuer{svc: jobSvc},
 			logger,
 		))
+
+		// Phase 1.16.B-4 — saved-search coordinator + per-row
+		// run handler. Coordinator self-re-enqueues via
+		// EnqueueOpts.ScheduledFor; the initial enqueue below
+		// kicks off the tick loop at boot.
+		if s.savedSearchStore != nil && s.savedSearchExecutor != nil {
+			savedCounter := s.searchService.Counter().AsSavedSearchCounter()
+			jobSvc.Registry.Register(&saved.CoordinatorJob{
+				Store:   s.savedSearchStore,
+				Jobs:    jobSvc,
+				Logger:  logger,
+				Counter: savedCounter,
+			})
+			jobSvc.Registry.Register(&saved.RunJob{
+				Store:    s.savedSearchStore,
+				Executor: s.savedSearchExecutor,
+				Notifier: s.savedSearchNotifier,
+				SiteURL:  savedSiteURL(context.Background(), sysCfg),
+				Logger:   logger,
+				Counter:  savedCounter,
+			})
+			// Initial coordinator kick — idempotent via the tick
+			// timestamp key so a re-fired boot doesn't double-enqueue.
+			nextTick := time.Now().Add(time.Second * saved.DefaultCoordinatorWakeSeconds)
+			if _, err := jobSvc.Enqueue(context.Background(), saved.JobTypeCoordinator, saved.CoordinatorPayload{}, jobs.EnqueueOpts{
+				ScheduledFor:   &nextTick,
+				IdempotencyKey: "saved_search.coordinator." + nextTick.UTC().Format(time.RFC3339),
+			}); err != nil {
+				logger.LogAttrs(context.Background(), slog.LevelWarn,
+					"saved.coordinator.initial_enqueue_error",
+					slog.String("err", err.Error()),
+				)
+			}
+		}
 	}
 	// Phase 1.18.A-2 follow-up B (commit 3) — admin failures-queue
 	// surface. Always wired so the queue is readable even on
@@ -3266,6 +3327,23 @@ func (a metaAssetAdapter) GetAssetRef(ctx context.Context, id uuid.UUID) (assetm
 		ref.MimeType = mimeForExt(*fileExt)
 	}
 	return ref, true, nil
+}
+
+// savedSiteURL fetches the front-of-house base URL for permalink
+// rendering in saved-search digest emails. Falls back to the
+// caller's hostname (populated by nginx at request time) when the
+// operator hasn't set the sysconfig Site entry yet — the digest
+// still renders, just with a probably-wrong absolute URL until
+// they configure it.
+func savedSiteURL(ctx context.Context, sc *sysconfig.Store) string {
+	if sc == nil {
+		return ""
+	}
+	site, err := sc.GetSite(ctx)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(site.BaseURL, "/")
 }
 
 // mimeForExt — local copy of preview/preview.go's helper so the

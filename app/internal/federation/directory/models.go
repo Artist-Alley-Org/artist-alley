@@ -764,6 +764,23 @@ type RoleCapability struct {
 	CapabilityCode string
 }
 
+type SavedSearch struct {
+	ID                    pgtype.UUID
+	OwnerUserRef          int64
+	Name                  string
+	Dsl                   string
+	NotifyChannel         string
+	NotifyIntervalMinutes int32
+	Enabled               bool
+	LastResultHash        *string
+	LastResultIds         []pgtype.UUID
+	LastRunAt             pgtype.Timestamptz
+	LastNotifiedAt        pgtype.Timestamptz
+	OriginServerID        pgtype.UUID
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                    pgtype.UUID
 	UserRef               int64

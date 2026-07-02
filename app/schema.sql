@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict EIINuLKSkQUnf4eCYUgBruw0O39bWvAFq09jgeHhNceoETRNVWeLAGOrqIDZZzq
+\restrict 0m3wmy6MaUWbc11oqL6hKU0rzkeJRGSiW5FZIXhIyDBwbpznlt0Ej0xMKKyp2uk
 
 -- Dumped from database version 16.13 (Debian 16.13-1.pgdg12+1)
 -- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg12+1)
@@ -1860,6 +1860,30 @@ CREATE TABLE public.roles (
 
 
 --
+-- Name: saved_search; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_search (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    owner_user_ref bigint NOT NULL,
+    name text NOT NULL,
+    dsl text NOT NULL,
+    notify_channel text DEFAULT 'email'::text NOT NULL,
+    notify_interval_minutes integer DEFAULT 60 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    last_result_hash text,
+    last_result_ids uuid[],
+    last_run_at timestamp with time zone,
+    last_notified_at timestamp with time zone,
+    origin_server_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_search_notify_channel_check CHECK ((notify_channel = ANY (ARRAY['email'::text, 'none'::text]))),
+    CONSTRAINT saved_search_notify_interval_minutes_check CHECK ((notify_interval_minutes >= 1))
+);
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2748,6 +2772,22 @@ ALTER TABLE ONLY public.roles
 
 ALTER TABLE ONLY public.roles
     ADD CONSTRAINT roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: saved_search saved_search_owner_user_ref_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_search
+    ADD CONSTRAINT saved_search_owner_user_ref_name_key UNIQUE (owner_user_ref, name);
+
+
+--
+-- Name: saved_search saved_search_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_search
+    ADD CONSTRAINT saved_search_pkey PRIMARY KEY (id);
 
 
 --
@@ -4039,6 +4079,20 @@ CREATE INDEX roles__parent_idx ON public.roles USING btree (parent_id);
 
 
 --
+-- Name: saved_search_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_search_due_idx ON public.saved_search USING btree (last_run_at NULLS FIRST) WHERE (enabled = true);
+
+
+--
+-- Name: saved_search_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_user_ref, id);
+
+
+--
 -- Name: sessions__last_used_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4905,6 +4959,14 @@ ALTER TABLE ONLY public.roles
 
 
 --
+-- Name: saved_search saved_search_owner_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_search
+    ADD CONSTRAINT saved_search_owner_user_ref_fkey FOREIGN KEY (owner_user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
 -- Name: sessions sessions_impersonated_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5084,5 +5146,5 @@ ALTER TABLE ONLY public.workflow_transitions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict EIINuLKSkQUnf4eCYUgBruw0O39bWvAFq09jgeHhNceoETRNVWeLAGOrqIDZZzq
+\unrestrict 0m3wmy6MaUWbc11oqL6hKU0rzkeJRGSiW5FZIXhIyDBwbpznlt0Ej0xMKKyp2uk
 
