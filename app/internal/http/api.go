@@ -67,6 +67,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/aiedit"
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
+	"github.com/mscrnt/artist-alley/app/internal/iiif"
+	contentsearch "github.com/mscrnt/artist-alley/app/internal/iiif/content_search"
+	iiiffederation "github.com/mscrnt/artist-alley/app/internal/iiif/federation"
+	"github.com/mscrnt/artist-alley/app/internal/iiif/presentation"
+	iiifredirect "github.com/mscrnt/artist-alley/app/internal/iiif/redirect"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
@@ -182,6 +187,18 @@ type apiServer struct {
 	diskUsageCache    *searchdiskusage.Cache
 	diskUsageHandler  *searchdiskusage.Handler
 	savedSearchAdmin  *saved.AdminHandler
+	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0.
+	// One HealthCounter is fanned out to all three sub-package
+	// Counter surfaces (presentation, content_search, redirect) and
+	// exposes /admin/iiif/health via the shared healthhandler shim.
+	iiifCounter              *iiif.HealthCounter
+	iiifManifestCache        *presentation.Cache
+	iiifFedResolver          *iiiffederation.Resolver
+	iiifLoader               *presentation.Loader
+	iiifBuilder              *presentation.Builder
+	iiifPresHandler          *presentation.Handler
+	iiifContentSearchHandler *contentsearch.Handler
+	iiifRedirectHandler      *iiifredirect.Handler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -341,6 +358,40 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		Store:  s.savedSearchStore,
 		Pool:   pool,
 		Logger: logger,
+	}
+
+	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0
+	// + 2.0→3.0 redirect. Single HealthCounter fan-out to all three
+	// sub-package Counter interfaces + healthhandler shim. Manifest
+	// cache is registered with cacheReg so peer instances receive
+	// invalidations via the existing LISTEN/NOTIFY channel.
+	s.iiifCounter = iiif.NewHealthCounter(0)
+	s.iiifManifestCache = presentation.NewCache(cacheReg)
+	s.iiifFedResolver = iiiffederation.NewResolver(pool)
+	s.iiifLoader = presentation.NewLoader(pool)
+	s.iiifBuilder = presentation.NewBuilder(presentation.BuilderConfig{
+		SiteBaseURL: savedSiteURL(context.Background(), sysCfg),
+		// Provider fields default via NewBuilder; operators customise
+		// via a follow-up sysconfig entry (tracked in the PR body).
+	})
+	s.iiifPresHandler = &presentation.Handler{
+		Loader:     s.iiifLoader,
+		Builder:    s.iiifBuilder,
+		Federation: s.iiifFedResolver,
+		Cache:      s.iiifManifestCache,
+		Counter:    s.iiifCounter,
+		Logger:     logger,
+	}
+	s.iiifContentSearchHandler = &contentsearch.Handler{
+		Pool:        pool,
+		Engine:      s.searchService.Engine(),
+		Pairs:       iiifPairAdapter{loader: s.iiifLoader},
+		SiteBaseURL: savedSiteURL(context.Background(), sysCfg),
+		Counter:     s.iiifCounter,
+		Logger:      logger,
+	}
+	s.iiifRedirectHandler = &iiifredirect.Handler{
+		Counter: s.iiifCounter,
 	}
 
 	aiCaches := ai.NewCaches(cacheReg)
@@ -1859,22 +1910,45 @@ func (s *apiServer) DeleteAsset(ctx context.Context, req openapi.DeleteAssetRequ
 // existing cache_invalidate LISTEN/NOTIFY channel. Skipped on
 // error so a failed request doesn't churn the cache. Nil-safe when
 // the search subsystem is disabled.
+//
+// Phase 1.54.B: also drops the IIIF ManifestCache for the asset so
+// the next /iiif/3/asset/{id}/manifest.json request re-renders with
+// the updated metadata / GPS / sensitivity / embargo state. Same
+// LISTEN/NOTIFY channel — peers receive the invalidation over the
+// same cache_invalidate broadcast, targeted at the iiif.presentation
+// domain rather than the search-cache domain.
 func (s *apiServer) invalidateSearchOnAssetWrite(ctx context.Context, err error) {
-	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
+	if err != nil {
 		return
 	}
-	s.searchService.Cache().InvalidateOnAssetWrite(ctx, uuid.Nil)
+	if s.searchService != nil && s.searchService.Cache() != nil {
+		s.searchService.Cache().InvalidateOnAssetWrite(ctx, uuid.Nil)
+	}
+	if s.iiifManifestCache != nil {
+		_ = s.iiifManifestCache.InvalidateAll(ctx)
+	}
 }
 
 // invalidateSearchOnCollectionWrite — same as above for collections.
+// The IIIF ManifestCache is purged in bulk on collection writes
+// because a member add/remove affects every collection manifest
+// that lists the changed collection; a targeted invalidation would
+// need a reverse-lookup (asset → containing collections) we don't
+// currently have. Bulk purge is cheap on the LRU (~4k entries).
 func (s *apiServer) invalidateSearchOnCollectionWrite(ctx context.Context, err error) {
-	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
+	if err != nil {
 		return
 	}
-	s.searchService.Cache().InvalidateOnCollectionWrite(ctx, uuid.Nil)
+	if s.searchService != nil && s.searchService.Cache() != nil {
+		s.searchService.Cache().InvalidateOnCollectionWrite(ctx, uuid.Nil)
+	}
+	if s.iiifManifestCache != nil {
+		_ = s.iiifManifestCache.InvalidateAll(ctx)
+	}
 }
 
-// invalidateSearchOnPostWrite — same for posts.
+// invalidateSearchOnPostWrite — same for posts. Posts have no IIIF
+// Presentation surface (yet); the ManifestCache is untouched.
 func (s *apiServer) invalidateSearchOnPostWrite(ctx context.Context, err error) {
 	if err != nil || s.searchService == nil || s.searchService.Cache() == nil {
 		return
@@ -3344,6 +3418,33 @@ func (a aieditSourceAdapter) FetchSourceImage(
 // ExtractJobHandler don't import assets / metadata / storage
 // directly. Same dual-type pattern as transcribeOrchestratorAdapter +
 // the aiedit adapters above.
+
+// iiifPairAdapter bridges presentation.Loader → contentsearch.AssetPairSource
+// so the Content Search 2.0 handler can substring-scan the same metadata
+// pairs the Presentation manifest surfaces. Flattens LangString labels/
+// values into plain strings (Content Search matches on raw text).
+type iiifPairAdapter struct {
+	loader *presentation.Loader
+}
+
+func (a iiifPairAdapter) LoadMetadataPairs(ctx context.Context, assetID uuid.UUID, isAnonymous bool) ([]contentsearch.Pair, error) {
+	pairs, err := a.loader.LoadMetadataPairs(ctx, assetID, isAnonymous)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contentsearch.Pair, 0, len(pairs))
+	for _, p := range pairs {
+		var label, value string
+		if vs := p.Label["en"]; len(vs) > 0 {
+			label = vs[0]
+		}
+		if vs := p.Value["en"]; len(vs) > 0 {
+			value = vs[0]
+		}
+		out = append(out, contentsearch.Pair{Label: label, Value: value})
+	}
+	return out, nil
+}
 
 type metaSourceAdapter struct {
 	pool    *pgxpool.Pool

@@ -14,6 +14,7 @@
   };
 
   let health = $state<Health | null>(null);
+  let iiifHealth = $state<Health | null>(null);
   let loading = $state(false);
   let error = $state('');
   let pollHandle: ReturnType<typeof setInterval> | null = null;
@@ -31,6 +32,13 @@
     } finally {
       loading = false;
     }
+    // IIIF health is a separate endpoint — fetch alongside so the
+    // dashboard surfaces both subsystems on one poll cycle. Silent
+    // on failure; IIIF might not be enabled on every install.
+    try {
+      const r = await fetch('/api/v1/admin/iiif/health', { credentials: 'include' });
+      if (r.ok) iiifHealth = await r.json();
+    } catch { /* ignore */ }
   }
 
   // Group flat by_result keys by subsystem prefix.
@@ -64,6 +72,24 @@
 
   const grouped = $derived(health ? groupByResult(health.by_result) : null);
   const notes = $derived(health ? parseNotes(health.notes) : {});
+  const iiifNotes = $derived(iiifHealth ? parseNotes(iiifHealth.notes) : {});
+  const iiifManifestCounters = $derived(
+    iiifHealth ? Object.entries(iiifHealth.by_result).filter(([k]) => k.startsWith('manifest_requests/')) : []
+  );
+  const iiifRedirectCounters = $derived(
+    iiifHealth ? Object.entries(iiifHealth.by_result).filter(([k]) => k.startsWith('redirect_2to3/')) : []
+  );
+  const iiifContentSearchCounters = $derived(
+    iiifHealth
+      ? Object.entries(iiifHealth.by_result).filter(
+          ([k]) => k.startsWith('content_search/') && !k.startsWith('content_search_hits/')
+        )
+      : []
+  );
+  // Extract the multi-line "note=..." hints (dashboard renders as bullets).
+  const iiifHints = $derived(
+    iiifHealth ? iiifHealth.notes.filter((n) => n.startsWith('note=')).map((n) => n.slice(5)) : []
+  );
 
   onMount(async () => {
     await load();
@@ -184,6 +210,73 @@
           class="mt-3 inline-block rounded border border-border bg-surface px-3 py-1 text-xs hover:border-border-strong"
         >Open reindex →</a>
       </section>
+
+      <!-- IIIF subsystem (Phase 1.54.B) -->
+      {#if iiifHealth}
+        <section class="rounded border border-border bg-surface p-4 lg:col-span-3">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-fg-muted">
+            IIIF · manifests + content search + tile API
+          </h2>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div class="text-sm">
+              <div class="mb-1 text-xs font-semibold text-fg-muted">Manifests</div>
+              <div class="flex justify-between text-xs">
+                <span class="text-fg-muted">total requests</span>
+                <span class="tabular-nums">{iiifHealth.counter_total}</span>
+              </div>
+              {#each iiifManifestCounters as [k, v] (k)}
+                <div class="flex justify-between text-xs">
+                  <span class="text-fg-muted">{k.replace('manifest_requests/', '')}</span>
+                  <span class="tabular-nums">{v}</span>
+                </div>
+              {/each}
+              <div class="mt-2 border-t border-border pt-1 text-xs text-fg-muted">
+                p50 {iiifNotes.manifest_latency_p50_ms}ms · p95 {iiifNotes.manifest_latency_p95_ms}ms · p99 {iiifNotes.manifest_latency_p99_ms}ms
+              </div>
+              <div class="text-xs text-fg-muted">
+                cache hit ratio {iiifNotes.cache_hit_ratio ?? '0.000'}
+              </div>
+            </div>
+            <div class="text-sm">
+              <div class="mb-1 text-xs font-semibold text-fg-muted">Content Search</div>
+              {#each iiifContentSearchCounters as [k, v] (k)}
+                <div class="flex justify-between text-xs">
+                  <span class="text-fg-muted">{k.replace('content_search/', '')}</span>
+                  <span class="tabular-nums">{v}</span>
+                </div>
+              {/each}
+              {#if iiifContentSearchCounters.length === 0}
+                <div class="text-xs text-fg-muted">No content-search requests yet.</div>
+              {/if}
+              <div class="mt-2 border-t border-border pt-1 text-xs text-fg-muted">
+                p50 {iiifNotes.content_search_latency_p50_ms}ms · p95 {iiifNotes.content_search_latency_p95_ms}ms · p99 {iiifNotes.content_search_latency_p99_ms}ms
+              </div>
+            </div>
+            <div class="text-sm">
+              <div class="mb-1 text-xs font-semibold text-fg-muted">Legacy 2.0 redirects</div>
+              {#each iiifRedirectCounters as [k, v] (k)}
+                <div class="flex justify-between text-xs">
+                  <span class="text-fg-muted">{k.replace('redirect_2to3/', '')}</span>
+                  <span class="tabular-nums">{v}</span>
+                </div>
+              {/each}
+              {#if iiifRedirectCounters.length === 0}
+                <div class="text-xs text-fg-muted">No legacy-URL traffic.</div>
+              {/if}
+              <div class="mt-2 border-t border-border pt-1 text-xs text-fg-muted">
+                federated canvases served: <span class="tabular-nums">{iiifHealth.by_result['federated_canvas/served'] ?? 0}</span>
+              </div>
+            </div>
+          </div>
+          {#if iiifHints.length > 0}
+            <ul class="mt-3 border-t border-border pt-2 text-xs text-fg-muted">
+              {#each iiifHints as hint (hint)}
+                <li class="mt-1">• {hint}</li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
     </div>
   {:else if loading}
     <p class="text-sm text-fg-muted">Loading…</p>
