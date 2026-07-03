@@ -102,3 +102,39 @@ LIMIT $1;
 -- name: CountActiveSavedSearches :one
 -- Gauge query for /admin/search/health.
 SELECT COUNT(*)::BIGINT FROM saved_search WHERE enabled = TRUE;
+
+-- name: AdminListSavedSearches :many
+-- Admin view — walks every user's rows. Filters compose per
+-- narg(): owner_ref narrows to one owner, has_failure=true limits
+-- to rows with a run failure (currently defined as a row where
+-- last_run_at is older than 2x the interval — a coarse "coordinator
+-- missed this one" signal since the current schema doesn't carry
+-- per-row error state).
+--
+-- Keyset pagination on (created_at DESC, id DESC).
+SELECT id, owner_user_ref, name, dsl, notify_channel,
+       notify_interval_minutes, enabled,
+       last_result_hash, last_result_ids,
+       last_run_at, last_notified_at,
+       origin_server_id, created_at, updated_at
+FROM saved_search
+WHERE (sqlc.narg('owner_user_ref')::BIGINT IS NULL
+       OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
+  AND (sqlc.narg('has_failure')::BOOLEAN IS NULL
+       OR (sqlc.narg('has_failure')::BOOLEAN = TRUE
+           AND enabled = TRUE
+           AND last_run_at IS NOT NULL
+           AND last_run_at + (notify_interval_minutes * INTERVAL '1 minute' * 2) < NOW())
+       OR (sqlc.narg('has_failure')::BOOLEAN = FALSE))
+ORDER BY created_at DESC, id DESC
+LIMIT $1;
+
+-- name: AdminCountFailingSavedSearches :one
+-- Nav-badge gauge: enabled rows whose last_run_at is more than 2x
+-- their interval old — coordinator missed them, or the row has
+-- been enabled long enough to have run but hasn't.
+SELECT COUNT(*)::BIGINT
+FROM saved_search
+WHERE enabled = TRUE
+  AND last_run_at IS NOT NULL
+  AND last_run_at + (notify_interval_minutes * INTERVAL '1 minute' * 2) < NOW();

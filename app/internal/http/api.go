@@ -68,7 +68,9 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
 	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/search"
+	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
+	"github.com/mscrnt/artist-alley/app/internal/search/reindex"
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
@@ -172,6 +174,14 @@ type apiServer struct {
 	savedSearchExecutor *saved.Executor
 	savedSearchNotifier *saved.Notifier
 	savedSearchHandler  *saved.Handler
+	// Phase 1.16.B-5 — reindex + disk-usage + admin saved-
+	// searches. All three surface admin routes; reindex also
+	// registers a job type.
+	reindexStore      *reindex.Store
+	reindexHandler    *reindex.Handler
+	diskUsageCache    *searchdiskusage.Cache
+	diskUsageHandler  *searchdiskusage.Handler
+	savedSearchAdmin  *saved.AdminHandler
 }
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
@@ -280,12 +290,57 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	if jobSvc != nil {
 		s.savedSearchNotifier = saved.NewNotifier(jobSvc)
 	}
+	// Phase 1.16.B-5 — surface run-now events into the shared
+	// search Counter (deferred from B-4). Handler's Counter is
+	// nil-safe; the adapter forwards RecordRunResult /
+	// RecordDeltaHit / RecordNotificationSent onto the search
+	// Counter's Result classes.
+	savedCounterAdapter := s.searchService.Counter().AsSavedSearchCounter()
 	s.savedSearchHandler = &saved.Handler{
 		Store:    s.savedSearchStore,
 		Executor: s.savedSearchExecutor,
 		Notifier: s.savedSearchNotifier,
 		SiteURL:  savedSiteURL(context.Background(), sysCfg),
 		Logger:   logger,
+		Counter:  savedCounterAdapter,
+	}
+	// Phase 1.16.B-5 — reindex store + admin handler; job
+	// handler registered separately below with the other job
+	// handlers.
+	s.reindexStore = reindex.NewStore(pool)
+	s.reindexHandler = &reindex.Handler{
+		Store:  s.reindexStore,
+		JobSvc: jobSvc,
+		Logger: logger,
+	}
+	// Phase 1.16.B-5 — disk-usage snapshot + admin handler.
+	s.diskUsageCache = searchdiskusage.NewCache(pool, logger)
+	s.diskUsageHandler = &searchdiskusage.Handler{
+		Cache:  s.diskUsageCache,
+		Logger: logger,
+	}
+	// Phase 1.16.B-5 — pg_stat gauges surface via the shared
+	// search Counter. Bridge callback reads the cached snapshot
+	// and returns the four gauge fields the health Notes[]
+	// section renders.
+	s.searchService.Counter().SetGaugeStatsProvider(func() map[string]int64 {
+		snap, _ := s.diskUsageCache.Get(context.Background())
+		return map[string]int64{
+			"assets_pending_embedding":     snap.AssetsPendingEmbedding,
+			"asset_embedding_row_count":    snap.AssetEmbeddingRowCount,
+			"asset_embedding_index_bytes":  snap.EmbeddingIndexBytes,
+			"saved_search_active":          snap.SavedSearchActive,
+			"saved_search_rows":            snap.SavedSearchRows,
+			"search_reindex_history_rows":  snap.SearchReindexHistoryRows,
+		}
+	})
+	// Phase 1.16.B-5 — admin saved-searches surface. Same Store
+	// + Pool as the user CRUD; distinct auth (system.admin) +
+	// distinct routes.
+	s.savedSearchAdmin = &saved.AdminHandler{
+		Store:  s.savedSearchStore,
+		Pool:   pool,
+		Logger: logger,
 	}
 
 	aiCaches := ai.NewCaches(cacheReg)
@@ -486,6 +541,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			}); err != nil {
 				logger.LogAttrs(context.Background(), slog.LevelWarn,
 					"saved.coordinator.initial_enqueue_error",
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+
+		// Phase 1.16.B-5 — reindex coordinator + one-shot boot
+		// backfill for pre-B-5 federated assets missing embeddings.
+		if s.reindexStore != nil {
+			jobSvc.Registry.Register(&reindex.Job{
+				Pool:   pool,
+				Store:  s.reindexStore,
+				JobSvc: jobSvc,
+				Logger: logger,
+			})
+			if err := reindex.FederationBackfillOnBoot(context.Background(), pool, s.reindexStore, jobSvc, logger); err != nil {
+				logger.LogAttrs(context.Background(), slog.LevelWarn,
+					"reindex.boot_backfill.error",
 					slog.String("err", err.Error()),
 				)
 			}

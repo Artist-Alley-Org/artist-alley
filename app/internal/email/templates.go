@@ -45,6 +45,16 @@ const (
 	// search_name, added_count, results_url, hits
 	// ([]{title, summary, url}).
 	TemplateSavedSearchDigest = "notification_saved_search_digest"
+
+	// TemplateSavedSearchRemovedDigest is the Phase 1.16.B-5
+	// variant sent when a saved-search's previous hit set has
+	// been entirely removed (hits either deleted or newly
+	// invisible to the owner). Distinct verb (per pre-audit Q4
+	// finding: templateForVerb is strictly one-per-verb). Verb:
+	// "saved_search.removed_digest". Variables: site_name,
+	// site_url, recipient_name, search_name, removed_count,
+	// results_url.
+	TemplateSavedSearchRemovedDigest = "notification_saved_search_removed_digest"
 )
 
 // Render produces a [Message] from a registered template + the
@@ -92,7 +102,13 @@ func init() {
 			panic("email: template registry: " + err.Error())
 		}
 	}
-	for _, name := range []string{TemplateAdminTest, TemplateNotificationGeneric, TemplateRegisterVerify, TemplateSavedSearchDigest} {
+	for _, name := range []string{
+		TemplateAdminTest,
+		TemplateNotificationGeneric,
+		TemplateRegisterVerify,
+		TemplateSavedSearchDigest,
+		TemplateSavedSearchRemovedDigest,
+	} {
 		must(loadInto(registry, name))
 	}
 }

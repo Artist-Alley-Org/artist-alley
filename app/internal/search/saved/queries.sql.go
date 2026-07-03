@@ -11,6 +11,92 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminCountFailingSavedSearches = `-- name: AdminCountFailingSavedSearches :one
+SELECT COUNT(*)::BIGINT
+FROM saved_search
+WHERE enabled = TRUE
+  AND last_run_at IS NOT NULL
+  AND last_run_at + (notify_interval_minutes * INTERVAL '1 minute' * 2) < NOW()
+`
+
+// Nav-badge gauge: enabled rows whose last_run_at is more than 2x
+// their interval old — coordinator missed them, or the row has
+// been enabled long enough to have run but hasn't.
+func (q *Queries) AdminCountFailingSavedSearches(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountFailingSavedSearches)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const adminListSavedSearches = `-- name: AdminListSavedSearches :many
+SELECT id, owner_user_ref, name, dsl, notify_channel,
+       notify_interval_minutes, enabled,
+       last_result_hash, last_result_ids,
+       last_run_at, last_notified_at,
+       origin_server_id, created_at, updated_at
+FROM saved_search
+WHERE ($2::BIGINT IS NULL
+       OR owner_user_ref = $2::BIGINT)
+  AND ($3::BOOLEAN IS NULL
+       OR ($3::BOOLEAN = TRUE
+           AND enabled = TRUE
+           AND last_run_at IS NOT NULL
+           AND last_run_at + (notify_interval_minutes * INTERVAL '1 minute' * 2) < NOW())
+       OR ($3::BOOLEAN = FALSE))
+ORDER BY created_at DESC, id DESC
+LIMIT $1
+`
+
+type AdminListSavedSearchesParams struct {
+	Limit        int32
+	OwnerUserRef *int64
+	HasFailure   *bool
+}
+
+// Admin view — walks every user's rows. Filters compose per
+// narg(): owner_ref narrows to one owner, has_failure=true limits
+// to rows with a run failure (currently defined as a row where
+// last_run_at is older than 2x the interval — a coarse "coordinator
+// missed this one" signal since the current schema doesn't carry
+// per-row error state).
+//
+// Keyset pagination on (created_at DESC, id DESC).
+func (q *Queries) AdminListSavedSearches(ctx context.Context, arg AdminListSavedSearchesParams) ([]SavedSearch, error) {
+	rows, err := q.db.Query(ctx, adminListSavedSearches, arg.Limit, arg.OwnerUserRef, arg.HasFailure)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SavedSearch
+	for rows.Next() {
+		var i SavedSearch
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserRef,
+			&i.Name,
+			&i.Dsl,
+			&i.NotifyChannel,
+			&i.NotifyIntervalMinutes,
+			&i.Enabled,
+			&i.LastResultHash,
+			&i.LastResultIds,
+			&i.LastRunAt,
+			&i.LastNotifiedAt,
+			&i.OriginServerID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countActiveSavedSearches = `-- name: CountActiveSavedSearches :one
 SELECT COUNT(*)::BIGINT FROM saved_search WHERE enabled = TRUE
 `

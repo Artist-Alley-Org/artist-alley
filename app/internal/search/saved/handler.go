@@ -23,6 +23,11 @@ type Handler struct {
 	Notifier *Notifier
 	SiteURL  string
 	Logger   *slog.Logger
+
+	// Counter surfaces run-now events into the shared search
+	// Counter (per pre-audit Q5 finding — B-4 deferred these).
+	// Nil-safe.
+	Counter CoordinatorCounter
 }
 
 // Mount attaches the routes to r. Called by the boot wire under
@@ -213,6 +218,9 @@ func (h *Handler) runNow(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Executor.Run(r.Context(), row)
 	if err != nil {
 		h.logError(r.Context(), "saved.run_now.execute", err)
+		if h.Counter != nil {
+			h.Counter.RecordRunResult("error")
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "execute_failed"})
 		return
 	}
@@ -227,6 +235,22 @@ func (h *Handler) runNow(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.Store.RecordRun(r.Context(), row.ID, res.Hash, res.HitIDs, sent); err != nil {
 		h.logError(r.Context(), "saved.run_now.record", err)
+	}
+	// Phase 1.16.B-5 — surface run-now events into the shared
+	// search Counter so /admin/search/health reflects operator +
+	// user-triggered runs alongside scheduled coordinator runs.
+	if h.Counter != nil {
+		if delta.HashChanged {
+			h.Counter.RecordDeltaHit()
+		}
+		if sent {
+			h.Counter.RecordNotificationSent()
+		}
+		if len(res.HitIDs) == 0 {
+			h.Counter.RecordRunResult("empty")
+		} else {
+			h.Counter.RecordRunResult("hit")
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hit_count":    len(res.HitIDs),

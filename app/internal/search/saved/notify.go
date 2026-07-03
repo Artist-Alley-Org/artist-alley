@@ -16,6 +16,14 @@ import (
 // notification_saved_search_digest template automatically.
 const NotifyVerb = "saved_search.digest"
 
+// NotifyVerbRemoved is the Phase 1.16.B-5 variant fired when a
+// saved-search's previous hit set has been entirely removed. Per
+// pre-audit Q4 finding, templateForVerb is strictly one-per-verb,
+// so the "everything removed" case requires a distinct verb (not
+// a template-variant on the same verb the brief originally
+// specified). Maps to notification_saved_search_removed_digest.
+const NotifyVerbRemoved = "saved_search.removed_digest"
+
 // Notifier enqueues a digest email for a Delta. Skips silently
 // when the delta is unchanged or the row has channel='none'.
 //
@@ -42,40 +50,58 @@ func (n *Notifier) Emit(ctx context.Context, row Row, delta Delta, run RunResult
 	if row.NotifyChannel != NotifyChannelEmail {
 		return false, nil
 	}
-	// A hash change with zero Added — everything the user
-	// previously matched was removed. That's meaningful ("your
-	// saved search is now empty") but the current digest template
-	// only surfaces Added; skip the email in this case rather than
-	// send a misleading "0 new matches" note.
-	if len(delta.Added) == 0 {
+	// Phase 1.16.B-5 — "everything removed" digest. A hash change
+	// with zero Added AND zero HitIDs in the fresh run means every
+	// previously-matching asset is gone; the user gets a distinct
+	// email variant ("all matches removed") instead of silence.
+	// Partial removals with any Added still take the normal
+	// digest path below.
+	allRemoved := len(delta.Added) == 0 && len(run.HitIDs) == 0 && len(delta.Removed) > 0
+	if !allRemoved && len(delta.Added) == 0 {
+		// Hash changed but no Added and not "all removed" — this
+		// is the "partial removal, nothing new" case; skip the
+		// email to avoid a misleading "0 new matches" note.
 		return false, nil
 	}
 
-	// Build the per-hit projection. Cross-reference the run's
-	// metadata so each Added ID gets its title + summary + URL.
-	metaByID := make(map[uuid.UUID]HitMeta, len(run.HitsMeta))
-	for _, m := range run.HitsMeta {
-		metaByID[m.ID] = m
-	}
-	hits := make([]map[string]any, 0, len(delta.Added))
-	for _, id := range delta.Added {
-		m := metaByID[id]
-		title := m.Title
-		if title == "" {
-			title = id.String()
+	// Verb + payload branch on the "everything removed" flag. The
+	// two branches share the recipient + target-kind fields but
+	// carry different template data.
+	verb := NotifyVerb
+	var payload map[string]any
+	if allRemoved {
+		verb = NotifyVerbRemoved
+		payload = map[string]any{
+			"search_name":   row.Name,
+			"removed_count": len(delta.Removed),
+			"results_url":   siteURL + "/search?dsl=" + urlEscape(row.DSL),
 		}
-		hits = append(hits, map[string]any{
-			"title":   title,
-			"summary": m.Summary,
-			"url":     siteURL + "/assets/" + id.String(),
-		})
-	}
-
-	payload := map[string]any{
-		"search_name":  row.Name,
-		"added_count":  len(delta.Added),
-		"results_url":  siteURL + "/search?dsl=" + urlEscape(row.DSL),
-		"hits":         hits,
+	} else {
+		// Build the per-hit projection. Cross-reference the run's
+		// metadata so each Added ID gets its title + summary + URL.
+		metaByID := make(map[uuid.UUID]HitMeta, len(run.HitsMeta))
+		for _, m := range run.HitsMeta {
+			metaByID[m.ID] = m
+		}
+		hits := make([]map[string]any, 0, len(delta.Added))
+		for _, id := range delta.Added {
+			m := metaByID[id]
+			title := m.Title
+			if title == "" {
+				title = id.String()
+			}
+			hits = append(hits, map[string]any{
+				"title":   title,
+				"summary": m.Summary,
+				"url":     siteURL + "/assets/" + id.String(),
+			})
+		}
+		payload = map[string]any{
+			"search_name": row.Name,
+			"added_count": len(delta.Added),
+			"results_url": siteURL + "/search?dsl=" + urlEscape(row.DSL),
+			"hits":        hits,
+		}
 	}
 
 	// The generic NotificationJobPayload carries the recipient +
@@ -83,7 +109,7 @@ func (n *Notifier) Emit(ctx context.Context, row Row, delta Delta, run RunResult
 	// per the handler's merge order.
 	body, err := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: row.OwnerUserRef,
-		Verb:             NotifyVerb,
+		Verb:             verb,
 		TargetKind:       "saved_search",
 		TargetID:         row.ID.String(),
 		Payload:          payload,
