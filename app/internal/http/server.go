@@ -434,6 +434,36 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		}
 		iiifH.Mount(r)
 
+		// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search
+		// 2.0 + legacy 2.0 → 3.0 URL rewrites. Mount points match
+		// 1.54.A: routes register on `r` (inside the /api/v1 group)
+		// so the auth-resolver middleware has already run; the
+		// handlers gate anonymous callers at the IIIF layer. URLs
+		// emitted in manifest bodies use publicBaseURL(r) verbatim
+		// per the 1.54.A pattern — pre-audit surfaced that the
+		// emitted URLs at /iiif/3/... don't include the /api/v1
+		// prefix that this mount imposes; nginx has no rewrite for
+		// /iiif/3 today, so external requests to /iiif/3/...
+		// currently fall through to the static SPA. Kept consistent
+		// with 1.54.A shape; the /iiif/3 alias is a follow-up
+		// (mount at both root + /api/v1 or add nginx rewrite).
+		if impl != nil && impl.iiifPresHandler != nil {
+			impl.iiifPresHandler.Mount(r)
+		}
+		if impl != nil && impl.iiifContentSearchHandler != nil {
+			impl.iiifContentSearchHandler.Mount(r)
+		}
+		if impl != nil && impl.iiifRedirectHandler != nil {
+			impl.iiifRedirectHandler.Mount(r)
+		}
+		// /admin/iiif/health — shared healthhandler shim. Same
+		// pattern as /admin/search/health + /admin/metadata-
+		// extraction/health.
+		if impl != nil && impl.iiifCounter != nil {
+			r.Method(http.MethodGet, "/admin/iiif/health",
+				healthhandler.HandlerFor("iiif", impl.iiifCounter, "system.admin"))
+		}
+
 		// SAML redirect-flow routes. Always mounted, but the handlers
 		// look the provider up from the (hot-swappable) registry at
 		// request time — unlicensed installs get a clean 404, and the

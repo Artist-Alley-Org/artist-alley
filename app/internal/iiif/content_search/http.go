@@ -40,7 +40,10 @@ type Pair struct {
 }
 
 // Handler serves both asset-scope + collection-scope Content Search
-// endpoints.
+// endpoints. SiteBaseURL is a boot-time default; the per-request
+// origin is derived from publicBaseURL(r) so the emitted IDs match
+// the request's actual scheme + host (behind a proxy, from
+// X-Forwarded-{Proto,Host}).
 type Handler struct {
 	Pool        *pgxpool.Pool
 	Engine      *search.Engine
@@ -74,17 +77,18 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	q, ignored := parseQuery(r)
 	isAnon := auth.IdentityFromContext(r.Context()) == nil
 
+	baseURL := publicBaseURL(r)
 	items := []Annotation{}
 	if q != "" && h.Pairs != nil {
 		pairs, err := h.Pairs.LoadMetadataPairs(r.Context(), id, isAnon)
 		if err == nil {
 			needle := strings.ToLower(q)
-			canvasID := h.assetCanvasID(id) + "/canvas/1"
+			canvasID := assetCanvasID(baseURL, id) + "/canvas/1"
 			for i, p := range pairs {
 				if strings.Contains(strings.ToLower(p.Label), needle) ||
 					strings.Contains(strings.ToLower(p.Value), needle) {
 					items = append(items, Annotation{
-						ID:         h.assetSearchID(id) + "/annotation/" + itoa(i+1),
+						ID:         assetSearchID(baseURL, id) + "/annotation/" + itoa(i+1),
 						Type:       "Annotation",
 						Motivation: "supplementing",
 						Body: TextualBody{
@@ -104,14 +108,14 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	h.record("asset", len(items), time.Since(start))
 	page := AnnotationPage{
 		Context: Context,
-		ID:      h.assetSearchID(id) + "?q=" + q,
+		ID:      assetSearchID(baseURL, id) + "?q=" + q,
 		Type:    "AnnotationPage",
 		Items:   items,
 		Ignored: ignored,
 	}
 	if len(items) > 0 {
 		page.PartOf = []PartOfRef{{
-			ID:    h.assetSearchID(id),
+			ID:    assetSearchID(baseURL, id),
 			Type:  "SearchService2",
 			Label: en("Search within this asset"),
 		}}
@@ -134,6 +138,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, ignored := parseQuery(r)
+	baseURL := publicBaseURL(r)
 
 	items := []Annotation{}
 	if q != "" && h.Engine != nil {
@@ -157,7 +162,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					items = append(items, Annotation{
-						ID:         h.collectionSearchID(id) + "/annotation/" + itoa(i+1),
+						ID:         collectionSearchID(baseURL, id) + "/annotation/" + itoa(i+1),
 						Type:       "Annotation",
 						Motivation: "supplementing",
 						Body: TextualBody{
@@ -167,7 +172,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 							Language:    "en",
 							Granularity: "manifest",
 						},
-						Target: h.assetManifestID(hit.ID),
+						Target: assetManifestID(baseURL, hit.ID),
 					})
 				}
 			}
@@ -177,14 +182,14 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 	h.record("collection", len(items), time.Since(start))
 	page := AnnotationPage{
 		Context: Context,
-		ID:      h.collectionSearchID(id) + "?q=" + q,
+		ID:      collectionSearchID(baseURL, id) + "?q=" + q,
 		Type:    "AnnotationPage",
 		Items:   items,
 		Ignored: ignored,
 	}
 	if len(items) > 0 {
 		page.PartOf = []PartOfRef{{
-			ID:    h.collectionSearchID(id),
+			ID:    collectionSearchID(baseURL, id),
 			Type:  "SearchService2",
 			Label: en("Search within this collection"),
 		}}
@@ -239,17 +244,38 @@ func (h *Handler) record(scope string, hits int, latency time.Duration) {
 	}
 }
 
-func (h *Handler) assetSearchID(id uuid.UUID) string {
-	return strings.TrimRight(h.SiteBaseURL, "/") + "/iiif/3/asset/" + id.String() + "/search"
+// URL builders. baseURL is the per-request public origin
+// (publicBaseURL(r)); NOT stored on the Handler so tests + prod
+// requests both get URLs consistent with the request that came in.
+func assetSearchID(baseURL string, id uuid.UUID) string {
+	return strings.TrimRight(baseURL, "/") + "/iiif/3/asset/" + id.String() + "/search"
 }
-func (h *Handler) collectionSearchID(id uuid.UUID) string {
-	return strings.TrimRight(h.SiteBaseURL, "/") + "/iiif/3/collection/" + id.String() + "/search"
+func collectionSearchID(baseURL string, id uuid.UUID) string {
+	return strings.TrimRight(baseURL, "/") + "/iiif/3/collection/" + id.String() + "/search"
 }
-func (h *Handler) assetCanvasID(id uuid.UUID) string {
-	return strings.TrimRight(h.SiteBaseURL, "/") + "/iiif/3/asset/" + id.String() + "/manifest.json"
+func assetCanvasID(baseURL string, id uuid.UUID) string {
+	return strings.TrimRight(baseURL, "/") + "/iiif/3/asset/" + id.String() + "/manifest.json"
 }
-func (h *Handler) assetManifestID(id uuid.UUID) string {
-	return strings.TrimRight(h.SiteBaseURL, "/") + "/iiif/3/asset/" + id.String() + "/manifest.json"
+func assetManifestID(baseURL string, id uuid.UUID) string {
+	return strings.TrimRight(baseURL, "/") + "/iiif/3/asset/" + id.String() + "/manifest.json"
+}
+
+// publicBaseURL — mirror of iiif/http.go:239 + iiif/presentation.
+// PublicBaseURL. Local unexported copy so the two sub-packages
+// share no compile-time surface but derive URLs identically.
+func publicBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = strings.SplitN(v, ",", 2)[0]
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = strings.SplitN(v, ",", 2)[0]
+	}
+	return scheme + "://" + host
 }
 
 func writeSearchJSON(w http.ResponseWriter, v any) {

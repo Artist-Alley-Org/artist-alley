@@ -45,6 +45,19 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 	return &Builder{Config: cfg}
 }
 
+// ForRequest returns a shallow-copied Builder whose SiteBaseURL is
+// overridden with the per-request public origin. Matches 1.54.A's
+// publicBaseURL(r) verbatim so both the Image API and Presentation
+// API emit URLs consistent with the request that came in.
+//
+// The receiver is unchanged; callers use the returned pointer for
+// the current request only.
+func (b *Builder) ForRequest(siteBaseURL string) *Builder {
+	cp := *b
+	cp.Config.SiteBaseURL = siteBaseURL
+	return &cp
+}
+
 // BuildAssetManifest emits a full asset manifest OR a stub
 // manifest when the asset is under active embargo.
 //

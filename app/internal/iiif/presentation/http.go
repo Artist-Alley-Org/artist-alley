@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -60,13 +61,14 @@ func (h *Handler) serveAssetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAnon := auth.IdentityFromContext(r.Context()) == nil
+	rb := h.Builder.ForRequest(PublicBaseURL(r))
 	ref, err := h.loadWithCache(r.Context(), EntityAsset, id, isAnon, func() (any, error) {
 		e, err := h.Loader.LoadAsset(r.Context(), id, isAnon)
 		if err != nil {
 			return nil, err
 		}
 		e = h.applyFederation(r.Context(), e)
-		return h.Builder.BuildAssetManifest(e, isAnon)
+		return rb.BuildAssetManifest(e, isAnon)
 	})
 	if err != nil {
 		h.mapError(w, err, EntityAsset, start)
@@ -85,6 +87,7 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	isAnon := auth.IdentityFromContext(r.Context()) == nil
+	rb := h.Builder.ForRequest(PublicBaseURL(r))
 	ref, err := h.loadWithCache(r.Context(), EntityCollection, id, isAnon, func() (any, error) {
 		c, err := h.Loader.LoadCollection(r.Context(), id)
 		if err != nil {
@@ -100,7 +103,7 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		for i := range members {
 			members[i] = h.applyFederation(r.Context(), members[i])
 		}
-		return h.Builder.BuildCollectionManifest(c, members, isAnon)
+		return rb.BuildCollectionManifest(c, members, isAnon)
 	})
 	if err != nil {
 		h.mapError(w, err, EntityCollection, start)
@@ -189,4 +192,25 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// PublicBaseURL reconstructs the externally-visible base URL the
+// request came in on (scheme + host). Mirrors 1.54.A's own
+// publicBaseURL at app/internal/iiif/http.go:239 verbatim so both
+// APIs derive URLs the same way — a fix / follow-up on one applies
+// cleanly to the other. Honours X-Forwarded-{Proto,Host} for
+// reverse-proxied deployments.
+func PublicBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = strings.SplitN(v, ",", 2)[0]
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = strings.SplitN(v, ",", 2)[0]
+	}
+	return scheme + "://" + host
 }
