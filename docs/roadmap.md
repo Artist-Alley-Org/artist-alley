@@ -179,16 +179,33 @@ current focus:
   follow-up (deferred from the original 1.19.B brief in favour of
   2FA). No SMS / no email-OTP fallback in v1 — TOTP only.
 
-- **IIIF interoperability** (Phase 1.54.A — shipped 2026-06-25).
-  IIIF Image API 3.0 Level 0 over the existing variant pipeline
-  (PR #165). Manifest endpoints (`info.json`), region / size /
-  rotation / format / quality parameters, content-hash-keyed tile
-  cache, anonymous `iiif.read` capability gated on existing
-  visibility, `/admin/iiif/health` per the generic subsystem-health
-  pattern. Tile cache is content-addressable forever; no persisted
-  derivatives. See ADR 0053. **Remaining (1.54.B)**: Presentation
-  API 3.0 collection + asset manifests; Mirador / Universal Viewer
-  interop snapshot tests; Content Search 2.0.
+- **IIIF interoperability** (Phase 1.54 — arc shipped 2026-06-25 →
+  2026-07-03). See ADR 0053.
+  - **1.54.A** (PR #165): IIIF Image API 3.0 Level 0 over the
+    existing variant pipeline. Manifest endpoints (`info.json`),
+    region / size / rotation / format / quality parameters,
+    content-hash-keyed tile cache, anonymous `iiif.read` capability
+    gated on existing visibility, `/admin/iiif/health` per the
+    generic subsystem-health pattern. Tile cache is content-
+    addressable forever; no persisted derivatives.
+  - **1.54.B** (PR #187): Presentation API 3.0 collection + asset
+    manifests at `/iiif/3/{kind}/{id}/manifest.json`; navPlace
+    geo-tag extension for GPS-tagged assets; embargo-stub manifests
+    per ADR 0020; Content Search 2.0 at `/iiif/3/{kind}/{id}/search`
+    (asset-scope substring-scans metadata pairs; collection-scope
+    dispatches through the 1.16.B `search.Engine` filtered to pinned
+    members); 2.0→3.0 URL redirect at `/iiif/2/...` (301, `full`→
+    `max` size grammar); federated canvas resolver (5-min in-process
+    cache, outside `app/internal/federation/` per soak rule); IIIF
+    subsystem card on `/admin/search/dashboard`; Playwright
+    structural smoke. **Closes issue #170; IIIF arc complete.**
+    Follow-ups filed: **1.54.C** (`/iiif/3` external URL alias —
+    load-bearing for Mirador operator dogfood; a pre-existing 1.54.A
+    bug the arc surfaced but didn't fix), **1.54.D** Mirador dogfood
+    proof (blocked on 1.54.C), **1.54.E** per-page PDF tile routing,
+    **1.54.F** Content Search per-line text extraction (asset_text
+    FTS table), **1.54.G** Custom Provider block sysconfig UI,
+    **1.54.H** Content Search AnnotationCollection pagination.
 
 - **Edit-safety** (Phase 1.16 — partial; shipped 2026-06-26).
   Optimistic-concurrency edit-safety on `PATCH /assets/{id}` +

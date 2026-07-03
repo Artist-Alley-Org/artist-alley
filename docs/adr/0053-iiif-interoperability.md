@@ -20,11 +20,29 @@ excerpt: >-
   Expose every image asset through the IIIF Image API 3.0 and every collection through the IIIF Presentation API 3.0, so cultural-heritage operators can install AA as a Mirador / Universal Viewer-compatible catalogue without custom builds.
 ---
 
-## Status (2026-06-26; unblock note 2026-07-02)
+## Status (2026-07-03)
 
-Phase 1.54.A shipped via PR #165: IIIF Image API 3.0 Level 0 over the existing variant pipeline. Manifest endpoints (`info.json`), region / size / rotation / format / quality parameters, content-hash-keyed tile cache, capability gate (`iiif.read`), `/admin/iiif/health` per the generic subsystem-health pattern.
+Both sub-phases shipped. IIIF arc complete.
 
-Phase 1.54.B (Presentation API v3 collection + asset manifests; Mirador / Universal Viewer interop snapshot tests; Content Search 2.0) is the open follow-up under issue #170. **Content Search 2.0 dependency unblocked 2026-07-02** with the close of the 1.16.B search arc (PRs #174 → #182; see ADR 0056) — the unified `/search` + DSL + Engine surface can back an IIIF Content Search endpoint without a parallel query pipeline.
+- **Phase 1.54.A** (PR #165, 2026-06-25): IIIF Image API 3.0 Level 0 over the existing variant pipeline. Manifest endpoints (`info.json`), region / size / rotation / format / quality parameters, content-hash-keyed tile cache, capability gate (`iiif.read`), `/admin/iiif/health` per the generic subsystem-health pattern.
+- **Phase 1.54.B** (PR #187, 2026-07-03): IIIF Presentation API 3.0 collection + asset manifests at `/iiif/3/{kind}/{id}/manifest.json` with navPlace geo-tag extension for GPS-tagged assets and embargo-stub manifests per ADR 0020; Content Search 2.0 at `/iiif/3/{kind}/{id}/search` (asset-scope substring-scans metadata pairs; collection-scope dispatches through the 1.16.B `search.Engine` filtered to pinned members); 2.0→3.0 URL redirect at `/iiif/2/...` (301, `full`→`max` size grammar); federated canvas resolver (read-only `federation_peers.instance_url` lookup with 5-min in-process cache, lives at `app/internal/iiif/federation/` NOT `app/internal/federation/` — soak diff empty); `iiif.ManifestCache` via `cache.Registry` + LISTEN/NOTIFY with cross-package invalidator hooks on asset + collection write paths; dashboard subsystem card on `/admin/search/dashboard`. Issue #170 closed.
+
+### 1.54.B carry-forward follow-ups (filed as separate issues)
+
+- **1.54.C** — `/iiif/3` external URL alias (nginx rewrite or dual-mount; load-bearing for Mirador operator dogfood since `iiifH.Mount(r)` runs inside `r.Route("/api/v1", ...)` while `publicBaseURL(r) + "/iiif/3/..."` emits URLs without the `/api/v1` prefix; a pre-existing 1.54.A bug not caught until dogfood attempt)
+- **1.54.D** — Mirador dogfood proof (blocked on 1.54.C)
+- **1.54.E** — Per-page PDF tile routing (multi-page PDFs currently surface as a single canvas with a `Pages: N` metadata pair; per-page canvases wait on Image API `/iiif/3/{id}/pages/{n}/...` URL grammar)
+- **1.54.F** — Content Search asset-scope per-line text extraction (currently substring-scans metadata pairs; real granularity needs `asset_text` FTS table populated by the metadata pipeline)
+- **1.54.G** — Custom `provider` block sysconfig UI (currently uses derived defaults)
+- **1.54.H** — Content Search `AnnotationCollection` pagination when hit count ≥ 50
+
+### 1.54.B design decisions locked
+
+- **Anonymous callers gated at the IIIF layer** rather than modifying the shared `visibility.Filter` (which would have rippled through 1.16.B-1..B-4 test expectations). Consolidation of the two paths tracked at #185.
+- **Federation resolver lives OUTSIDE `app/internal/federation/`** at `app/internal/iiif/federation/` per soak rule. Empty-string fallback keeps a broken peer directory from blocking manifest render (degraded remote canvas, not 500).
+- **No IIIF Auth API in v1** — anonymous-first per 1.54.A extended.
+- **No IIIF Annotation write-back** — read-only Content Search 2.0 only.
+- **Mirador + OpenSeadragon interop asserted structurally** (canvas count, thumbnail render, tile paint). No pixel snapshots — brittle across Mirador upgrades. Operator dogfood is the spec-compliance validator.
 
 ## Context
 
