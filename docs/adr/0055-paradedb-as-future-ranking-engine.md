@@ -41,7 +41,7 @@ This ADR is that record. It is deliberately NOT a commitment.
 
 ### 2. Managed-Postgres provider support
 
-**Materially constrained.** pg_search requires superuser access to install; on Postgres <17 it typically requires `shared_preload_libraries` [7]. This blocks most turnkey managed-Postgres offerings.
+**Materially constrained.** pg_search requires superuser access to install; on Postgres older than 17 it typically requires `shared_preload_libraries` [7]. This blocks most turnkey managed-Postgres offerings.
 
 Confirmed status:
 
