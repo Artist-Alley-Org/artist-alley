@@ -186,7 +186,9 @@ type Manifest struct {
 	Homepage          []Homepage         `json:"homepage,omitempty"`
 	Thumbnail         []Thumbnail        `json:"thumbnail,omitempty"`
 	NavPlace          *NavPlace          `json:"navPlace,omitempty"`
-	Items             []Canvas           `json:"items,omitempty"`
+	// Items is REQUIRED by IIIF Presentation 3.0 on a Manifest —
+	// emitted even when empty (embargo stub has no canvases).
+	Items []Canvas `json:"items"`
 	// SeeAlso surfaces the Content Search 2.0 endpoint so
 	// viewers auto-discover in-manifest search per spec.
 	SeeAlso []SeeAlso `json:"seeAlso,omitempty"`
@@ -204,8 +206,10 @@ type CollectionManifest struct {
 	Provider          []Provider              `json:"provider,omitempty"`
 	Homepage          []Homepage              `json:"homepage,omitempty"`
 	Thumbnail         []Thumbnail             `json:"thumbnail,omitempty"`
-	Items             []CollectionMember      `json:"items,omitempty"`
-	SeeAlso           []SeeAlso               `json:"seeAlso,omitempty"`
+	// Items is REQUIRED by IIIF Presentation 3.0 on a Collection —
+	// emitted even when empty (a fresh collection with no members).
+	Items   []CollectionMember `json:"items"`
+	SeeAlso []SeeAlso          `json:"seeAlso,omitempty"`
 }
 
 // CollectionMember is one reference to a child manifest.

@@ -217,6 +217,9 @@ func (b *Builder) stubManifest(entity EntityRef) *Manifest {
 			Label: EN("Notice"),
 			Value: EN(stmt),
 		},
+		// Items REQUIRED by spec even in the embargo-stub shape;
+		// initialise to an empty slice so JSON emits [] not null.
+		Items: []Canvas{},
 	}
 }
 

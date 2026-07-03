@@ -227,13 +227,13 @@ func (l *Loader) LoadMetadataPairs(ctx context.Context, assetID uuid.UUID, isAno
 func (l *Loader) loadMetadataPairs(ctx context.Context, assetID uuid.UUID, isAnonymous bool) ([]MetadataPair, error) {
 	_ = isAnonymous
 	sql := `
-		SELECT f.display_name, v.value_text, v.value_options
+		SELECT f.label, v.value_text, v.value_options
 		  FROM asset_field_value v
 		  JOIN field_definition f ON f.id = v.field_id
 		 WHERE v.asset_id = $1
 		   AND f.status = 'active'
 		   AND (v.value_text IS NOT NULL OR v.value_options IS NOT NULL)
-		 ORDER BY f.display_name ASC
+		 ORDER BY f.label ASC
 		 LIMIT 50
 	`
 	rows, err := l.Pool.Query(ctx, sql, assetID)
