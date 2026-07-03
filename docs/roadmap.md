@@ -197,11 +197,35 @@ current focus:
   timestamp; 409 Conflict with full current-state body on stale
   writes; frontend modals capture baseline + surface 409 with
   explicit "overwrite" action. Lock-free, federation-safe. See ADR
-  0052. **Remaining (1.16.B)**: search activation — unified `/search`
-  endpoint, collections tsvector, vector-search ranking, facets,
-  saved searches, advanced query builder. Resource locking, batch
-  multi-asset metadata edit, and custom per-resource ACL also remain
-  for follow-ups within the 1.16 bracket.
+  0052. Resource locking, batch multi-asset metadata edit, and
+  custom per-resource ACL remain for follow-ups within the 1.16
+  bracket.
+
+- **Search arc** (Phase 1.16.B — shipped 2026-07-01 → 2026-07-02
+  across five sub-phases). Unified `/search` endpoint over Postgres
+  tsvector with field weighting, DSL parser with strict whitelist,
+  cross-package `visibility.Filter` package, pgvector hybrid
+  ranking, LISTEN/NOTIFY cache invalidation, saved-searches with
+  delta detection + digest emails, admin reindex + observability
+  surface. See ADR 0056. Sub-phase ship list:
+  - **1.16.B-1** (PR #174): foundation — unified endpoint + BM25-
+    shaped ranking + tsvector expansion + cursor pagination +
+    LISTEN/NOTIFY-broadcast `QueryResultCache` + `/admin/search/health`
+  - **1.16.B-2** (PR #176): facets + advanced DSL + autocomplete
+    (`pg_trgm`) + weighted-tsvector retrofit + `visibility` package
+  - **1.16.B-3** (PR #178): vector search — `similar_to:<uuid>`
+    compile + Engine hybrid ranking + `POST /search/by-image`
+    reserved 501 (unblocked when CLIP visual-encoder sidecar ships
+    per issue #183)
+  - **1.16.B-4** (PR #180): saved searches + delta detection +
+    email-on-match via the 1.19.A-1 substrate + digest coordinator
+  - **1.16.B-5** (PR #182): admin reindex tooling + disk-usage view
+    + saved-search admin + full `/admin/search/dashboard` +
+    federation-inbox embed hook (out-of-tree). Issue #168 closed;
+    ADR 0056 accepted.
+  Follow-ups filed: #183 CLIP visual-encoder sidecar; #184
+  search-result feedback loop; #185 list-handler `visibility.Filter`
+  retrofit; #186 shared `AdminJobBackfillPage` extraction.
 
 ## Review tool — the load-bearing UX arc
 

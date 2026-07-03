@@ -20,11 +20,11 @@ excerpt: >-
   Expose every image asset through the IIIF Image API 3.0 and every collection through the IIIF Presentation API 3.0, so cultural-heritage operators can install AA as a Mirador / Universal Viewer-compatible catalogue without custom builds.
 ---
 
-## Status (2026-06-26)
+## Status (2026-06-26; unblock note 2026-07-02)
 
 Phase 1.54.A shipped via PR #165: IIIF Image API 3.0 Level 0 over the existing variant pipeline. Manifest endpoints (`info.json`), region / size / rotation / format / quality parameters, content-hash-keyed tile cache, capability gate (`iiif.read`), `/admin/iiif/health` per the generic subsystem-health pattern.
 
-Phase 1.54.B (Presentation API v3 collection + asset manifests; Mirador / Universal Viewer interop snapshot tests; Content Search 2.0) is the open follow-up.
+Phase 1.54.B (Presentation API v3 collection + asset manifests; Mirador / Universal Viewer interop snapshot tests; Content Search 2.0) is the open follow-up under issue #170. **Content Search 2.0 dependency unblocked 2026-07-02** with the close of the 1.16.B search arc (PRs #174 → #182; see ADR 0056) — the unified `/search` + DSL + Engine surface can back an IIIF Content Search endpoint without a parallel query pipeline.
 
 ## Context
 
