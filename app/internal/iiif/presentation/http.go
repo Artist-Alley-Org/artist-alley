@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,9 +23,10 @@ type FederationResolver interface {
 }
 
 // Counter is the health-hook interface. Nil-safe: the handler
-// checks for nil before every call.
+// checks for nil before every call. Latency is per-request wall
+// time; the health snapshot rolls up p50/p95/p99.
 type Counter interface {
-	RecordManifestRequest(entityType EntityType, statusCode int)
+	RecordManifestRequest(entityType EntityType, statusCode int, latency time.Duration)
 	RecordManifestCacheHit()
 	RecordManifestCacheMiss()
 	RecordFederatedCanvas()
@@ -50,9 +52,10 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) serveAssetManifest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		h.record(EntityAsset, http.StatusNotFound)
+		h.record(EntityAsset, http.StatusNotFound, time.Since(start))
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
@@ -66,17 +69,18 @@ func (h *Handler) serveAssetManifest(w http.ResponseWriter, r *http.Request) {
 		return h.Builder.BuildAssetManifest(e, isAnon)
 	})
 	if err != nil {
-		h.mapError(w, err, EntityAsset)
+		h.mapError(w, err, EntityAsset, start)
 		return
 	}
-	h.record(EntityAsset, http.StatusOK)
+	h.record(EntityAsset, http.StatusOK, time.Since(start))
 	writeManifest(w, ref)
 }
 
 func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		h.record(EntityCollection, http.StatusNotFound)
+		h.record(EntityCollection, http.StatusNotFound, time.Since(start))
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
@@ -99,10 +103,10 @@ func (h *Handler) serveCollectionManifest(w http.ResponseWriter, r *http.Request
 		return h.Builder.BuildCollectionManifest(c, members, isAnon)
 	})
 	if err != nil {
-		h.mapError(w, err, EntityCollection)
+		h.mapError(w, err, EntityCollection, start)
 		return
 	}
-	h.record(EntityCollection, http.StatusOK)
+	h.record(EntityCollection, http.StatusOK, time.Since(start))
 	writeManifest(w, ref)
 }
 
@@ -148,13 +152,13 @@ func (h *Handler) applyFederation(ctx context.Context, e EntityRef) EntityRef {
 	return e
 }
 
-func (h *Handler) mapError(w http.ResponseWriter, err error, kind EntityType) {
+func (h *Handler) mapError(w http.ResponseWriter, err error, kind EntityType, start time.Time) {
 	switch {
 	case errors.Is(err, ErrRestricted), errors.Is(err, ErrNotFound):
-		h.record(kind, http.StatusNotFound)
+		h.record(kind, http.StatusNotFound, time.Since(start))
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 	default:
-		h.record(kind, http.StatusInternalServerError)
+		h.record(kind, http.StatusInternalServerError, time.Since(start))
 		if h.Logger != nil {
 			h.Logger.LogAttrs(context.Background(), slog.LevelWarn,
 				"iiif.presentation.error",
@@ -164,9 +168,9 @@ func (h *Handler) mapError(w http.ResponseWriter, err error, kind EntityType) {
 	}
 }
 
-func (h *Handler) record(kind EntityType, status int) {
+func (h *Handler) record(kind EntityType, status int, latency time.Duration) {
 	if h.Counter != nil {
-		h.Counter.RecordManifestRequest(kind, status)
+		h.Counter.RecordManifestRequest(kind, status, latency)
 	}
 }
 

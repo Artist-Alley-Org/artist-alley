@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -15,9 +16,11 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search"
 )
 
-// Counter is the health-hook interface. Nil-safe.
+// Counter is the health-hook interface. Nil-safe. Latency is the
+// per-request wall time (loader + engine dispatch); the health
+// snapshot rolls into p50/p95/p99.
 type Counter interface {
-	RecordContentSearch(scope string, hitCount int)
+	RecordContentSearch(scope string, hitCount int, latency time.Duration)
 }
 
 // AssetPairSource loads a target asset's metadata pairs so the
@@ -62,6 +65,7 @@ func (h *Handler) Mount(r chi.Router) {
 // items list — per spec, search-not-found is expressed as zero
 // items, not a 404.
 func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -97,7 +101,7 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.record("asset", len(items))
+	h.record("asset", len(items), time.Since(start))
 	page := AnnotationPage{
 		Context: Context,
 		ID:      h.assetSearchID(id) + "?q=" + q,
@@ -123,6 +127,7 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 // viewers open the matched asset when the user clicks the search
 // result. Motivation is "supplementing" per spec.
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -169,7 +174,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.record("collection", len(items))
+	h.record("collection", len(items), time.Since(start))
 	page := AnnotationPage{
 		Context: Context,
 		ID:      h.collectionSearchID(id) + "?q=" + q,
@@ -228,9 +233,9 @@ func parseQuery(r *http.Request) (query string, ignored []string) {
 	return query, ignored
 }
 
-func (h *Handler) record(scope string, hits int) {
+func (h *Handler) record(scope string, hits int, latency time.Duration) {
 	if h.Counter != nil {
-		h.Counter.RecordContentSearch(scope, hits)
+		h.Counter.RecordContentSearch(scope, hits, latency)
 	}
 }
 
