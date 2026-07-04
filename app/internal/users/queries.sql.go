@@ -248,6 +248,8 @@ SELECT u.ref                                            AS user_ref,
        u.last_active,
        u.origin                                         AS auth_origin,
        u.account_expires,
+       u.lockout_until,
+       u.failed_login_count,
        COALESCE(p.display_name, '')                     AS display_name,
        p.avatar_url,
        p.origin_server_id                               AS profile_origin_server_id,
@@ -303,6 +305,8 @@ type ListAdminUsersRow struct {
 	LastActive            pgtype.Timestamptz
 	AuthOrigin            *string
 	AccountExpires        pgtype.Timestamptz
+	LockoutUntil          pgtype.Timestamptz
+	FailedLoginCount      int32
 	DisplayName           string
 	AvatarUrl             *string
 	ProfileOriginServerID pgtype.UUID
@@ -346,6 +350,8 @@ func (q *Queries) ListAdminUsers(ctx context.Context, arg ListAdminUsersParams) 
 			&i.LastActive,
 			&i.AuthOrigin,
 			&i.AccountExpires,
+			&i.LockoutUntil,
+			&i.FailedLoginCount,
 			&i.DisplayName,
 			&i.AvatarUrl,
 			&i.ProfileOriginServerID,

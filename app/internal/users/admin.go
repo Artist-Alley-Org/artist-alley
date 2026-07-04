@@ -248,6 +248,12 @@ func (h *Handler) ListAdminUsers(
 			t := r.AccountExpires.Time
 			row.AccountExpires = &t
 		}
+		if r.LockoutUntil.Valid {
+			t := r.LockoutUntil.Time
+			row.LockoutUntil = &t
+		}
+		fc := r.FailedLoginCount
+		row.FailedLoginCount = &fc
 		if r.ProfileOriginServerID.Valid {
 			id := openapi_types.UUID(r.ProfileOriginServerID.Bytes)
 			row.ProfileOriginServerId = &id

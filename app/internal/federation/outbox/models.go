@@ -894,6 +894,8 @@ type User struct {
 	EncryptionPublicKey     []byte
 	EncryptionPrivateKeyEnc []byte
 	EmailVerifiedAt         pgtype.Timestamptz
+	FailedLoginCount        int32
+	LockoutUntil            pgtype.Timestamptz
 }
 
 type UserBlock struct {
