@@ -23,6 +23,9 @@ export interface AdminUser {
   last_active?: string | null;
   account_expires?: string | null;
   profile_origin_server_id?: string | null;
+  // Phase 1.19.D — persistent per-username lockout state.
+  lockout_until?: string | null;
+  failed_login_count?: number;
 }
 
 /** Tailwind class chip for the per-status badge. Keep the green /

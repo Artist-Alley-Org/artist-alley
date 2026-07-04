@@ -12,19 +12,25 @@ import (
 )
 
 const adminUnlock = `-- name: AdminUnlock :one
-UPDATE "user"
+UPDATE "user" u
 SET
     failed_login_count = 0,
     lockout_until = NULL
-WHERE ref = $1
-  AND (failed_login_count > 0 OR lockout_until IS NOT NULL)
-RETURNING failed_login_count AS prior_failed_count
+FROM (SELECT u2.ref AS orig_ref, u2.failed_login_count AS prior FROM "user" u2 WHERE u2.ref = $1) AS old
+WHERE u.ref = old.orig_ref
+  AND (u.failed_login_count > 0 OR u.lockout_until IS NOT NULL)
+RETURNING old.prior AS prior_failed_count
 `
 
 // Admin-driven unlock: clears counter + deadline. Returns the previous
 // failed_login_count so the audit event can record it. Returns zero
 // rows when the caller hasn't crossed the threshold (idempotent no-op;
 // caller sees zero rows + can skip the audit emit if desired).
+//
+// The FROM subquery evaluates BEFORE the UPDATE writes, so old.prior
+// captures the pre-update failed_login_count for the RETURNING clause.
+// Direct `RETURNING failed_login_count` would give the post-update
+// value (0) — useless for audit reporting.
 func (q *Queries) AdminUnlock(ctx context.Context, ref int64) (int32, error) {
 	row := q.db.QueryRow(ctx, adminUnlock, ref)
 	var prior_failed_count int32
