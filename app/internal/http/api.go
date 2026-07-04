@@ -80,6 +80,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
 	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
 	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
@@ -188,6 +189,14 @@ type apiServer struct {
 	diskUsageCache    *searchdiskusage.Cache
 	diskUsageHandler  *searchdiskusage.Handler
 	savedSearchAdmin  *saved.AdminHandler
+	// Phase 1.16.B-3-followup — CLIP visual encoder sidecar activation
+	// (closes #183). Zero-valued visualProvider means the feature is
+	// disabled (sysconfig.search.visual.enabled=false OR sidecar
+	// unreachable at boot); by_image.ByImageHandler treats a nil
+	// Provider as the pre-existing 501 sidecar_not_installed stub
+	// path. Populated by newAPIServer's visual-provider bootstrap.
+	visualProvider       visualprovider.Provider
+	visualMaxUploadBytes int64
 	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0.
 	// One HealthCounter is fanned out to all three sub-package
 	// Counter surfaces (presentation, content_search, redirect) and
@@ -363,6 +372,42 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 
 	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0
 	// + 2.0→3.0 redirect. Single HealthCounter fan-out to all three
+	// Phase 1.16.B-3-followup — CLIP visual-encoder sidecar bootstrap.
+	// Only touched when sysconfig.search.visual.enabled=true; when
+	// unreachable-at-boot the provider stays nil + ByImageHandler
+	// serves the 501 sidecar_not_installed stub (backward-compatible
+	// with 1.16.B-3). Boot log records the outcome for operators.
+	if searchCfg, cfgErr := sysCfg.GetSearch(context.Background()); cfgErr == nil && searchCfg.Visual.Enabled {
+		s.visualMaxUploadBytes = int64(searchCfg.Visual.MaxUploadBytes)
+		provider := visualprovider.New(
+			searchCfg.Visual.SidecarURL,
+			time.Duration(searchCfg.Visual.TimeoutMs)*time.Millisecond,
+		)
+		bootCtx, bootCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		health, bErr := provider.Bootstrap(bootCtx)
+		bootCancel()
+		switch {
+		case bErr != nil:
+			logger.LogAttrs(context.Background(), slog.LevelWarn,
+				"search.visual.provider.bootstrap_failed",
+				slog.String("url", searchCfg.Visual.SidecarURL),
+				slog.String("err", bErr.Error()))
+		case health.Status != "ok":
+			logger.LogAttrs(context.Background(), slog.LevelWarn,
+				"search.visual.provider.sidecar_not_ready",
+				slog.String("url", searchCfg.Visual.SidecarURL),
+				slog.String("status", health.Status),
+				slog.String("err", health.Error))
+		default:
+			s.visualProvider = provider
+			logger.LogAttrs(context.Background(), slog.LevelInfo,
+				"search.visual.provider.registered",
+				slog.String("url", searchCfg.Visual.SidecarURL),
+				slog.String("model", health.Model),
+				slog.Int("dim", health.Dim))
+		}
+	}
+
 	// sub-package Counter interfaces + healthhandler shim. Manifest
 	// cache is registered with cacheReg so peer instances receive
 	// invalidations via the existing LISTEN/NOTIFY channel.

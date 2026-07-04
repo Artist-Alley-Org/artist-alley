@@ -392,14 +392,19 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 				Service: impl.searchService,
 				Pool:    pool,
 			})
-			// Phase 1.16.B-3 — POST /search/by-image reserved. Returns
-			// 501 with a structured "sidecar not installed" body until
-			// the CLIP visual-encoder sidecar ships (deferred; see the
-			// by_image.go handler docs for the pre-audit finding that
-			// triggered the deferral).
+			// Phase 1.16.B-3 (reserved) + 1.16.B-3-followup (activated
+			// when the CLIP visual-encoder sidecar is installed +
+			// sysconfig.search.visual.enabled=true). ByImageHandler's
+			// Provider field is nil when either condition isn't met,
+			// preserving the 501 sidecar_not_installed stub body.
+			// Populated at boot in newAPIServer if the sysconfig knob
+			// is on + the sidecar responds to /health.
 			r.Method(http.MethodPost, "/search/by-image", &search.ByImageHandler{
-				Logger:  logger,
-				Counter: impl.searchService.Counter(),
+				Logger:         logger,
+				Counter:        impl.searchService.Counter(),
+				Provider:       impl.visualProvider,
+				Pool:           pool,
+				MaxUploadBytes: impl.visualMaxUploadBytes,
 			})
 		}
 
