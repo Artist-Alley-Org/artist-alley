@@ -89,7 +89,34 @@ type AuthConfig struct {
 	// create their own accounts via /auth/register. Phase 1.19.C.
 	// Default zero-valued (Enabled=false) — operators opt in.
 	SelfRegistration SelfRegistrationConfig `json:"self_registration"`
+	// Lockout is the persistent per-username lockout policy.
+	// Phase 1.19.D. Composes with the in-process LoginLimiter
+	// (memory-only rate limiter). Zero values fall back to
+	// DefaultLockoutThreshold + DefaultLockoutDurationMinutes.
+	Lockout LockoutPolicy `json:"lockout"`
 }
+
+// LockoutPolicy is the operator-tunable lockout config. Defaults
+// match OWASP guidance for public-facing auth. Operators tune per
+// their threat model.
+type LockoutPolicy struct {
+	// Threshold is the failed-attempt count that triggers lockout.
+	// Zero disables lockout (relies on LoginLimiter alone; NOT
+	// recommended for public installs). 1..1000.
+	Threshold int32 `json:"threshold"`
+	// DurationMinutes is how long the lockout persists once
+	// triggered. Zero falls back to default; 1..1440 (24h max).
+	DurationMinutes int32 `json:"duration_minutes"`
+}
+
+// DefaultLockoutThreshold + DefaultLockoutDurationMinutes match the
+// lockout package's DefaultConfig. Kept in sync deliberately — the
+// login handler wires a PolicyProvider that reads AuthConfig.Lockout
+// and falls back here on zero values.
+const (
+	DefaultLockoutThreshold       int32 = 5
+	DefaultLockoutDurationMinutes int32 = 15
+)
 
 // SelfRegistrationConfig is the operator-tunable knob set for the
 // /auth/register surface. The endpoint refuses with 403 when
@@ -139,6 +166,12 @@ func (s *Store) SetAuth(ctx context.Context, v AuthConfig) error {
 		if p.DisplayName == "" {
 			return fmt.Errorf("sysconfig: sso_providers[%d]: display_name is required", i)
 		}
+	}
+	if v.Lockout.Threshold < 0 || v.Lockout.Threshold > 1000 {
+		return fmt.Errorf("sysconfig: lockout.threshold must be 0..1000, got %d", v.Lockout.Threshold)
+	}
+	if v.Lockout.DurationMinutes < 0 || v.Lockout.DurationMinutes > 1440 {
+		return fmt.Errorf("sysconfig: lockout.duration_minutes must be 0..1440, got %d", v.Lockout.DurationMinutes)
 	}
 	return s.setKey(ctx, KeyAuth, v)
 }
