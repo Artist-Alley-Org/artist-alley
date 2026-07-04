@@ -223,6 +223,22 @@ func (b *Builder) stubManifest(entity EntityRef) *Manifest {
 	}
 }
 
+// defaultCanvasWidth / defaultCanvasHeight are the placeholder
+// dimensions emitted when the loader hasn't populated real ones.
+// IIIF Presentation 3.0 §5.7 requires Canvas to carry BOTH width
+// and height (or a duration) for viewers to compute layout;
+// Mirador's OpenSeadragon integration crashes with a `null` deref
+// when either is missing. Real dimensions come from the extractor
+// pipeline (asset_field_value rows for image_width/image_height),
+// but the loader doesn't populate EntityRef.Width/Height yet —
+// that's a follow-up (tracked as part of the metadata / asset
+// dimensions read-through). Defaults are chosen to make the aspect
+// ratio close to landscape 4:3 which viewers handle gracefully.
+const (
+	defaultCanvasWidth  = 1200
+	defaultCanvasHeight = 900
+)
+
 // canvasFor renders the asset's single canvas. Federated assets
 // surface as remote actor URIs per ADR 0043 — local instance
 // never proxies tiles.
@@ -231,10 +247,16 @@ func (b *Builder) canvasFor(entity EntityRef) Canvas {
 	canvasID := base + "/canvas/1"
 	imageID := b.imageAPIURL(entity) + "/full/max/0/default.jpg"
 	infoID := b.imageAPIURL(entity) + "/info.json"
+	w, h := defaultCanvasWidth, defaultCanvasHeight
+	if entity.Width > 0 && entity.Height > 0 {
+		w, h = entity.Width, entity.Height
+	}
 	return Canvas{
-		ID:    canvasID,
-		Type:  "Canvas",
-		Label: EN(nonEmpty(entity.Title, entity.ID.String())),
+		ID:     canvasID,
+		Type:   "Canvas",
+		Label:  EN(nonEmpty(entity.Title, entity.ID.String())),
+		Width:  w,
+		Height: h,
 		Items: []AnnotationPage{
 			{
 				ID:   canvasID + "/page/1",
@@ -248,6 +270,8 @@ func (b *Builder) canvasFor(entity EntityRef) Canvas {
 							ID:     imageID,
 							Type:   "Image",
 							Format: "image/jpeg",
+							Width:  w,
+							Height: h,
 							Service: []ImageService{
 								{
 									ID:      infoID,
