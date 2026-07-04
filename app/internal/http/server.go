@@ -259,6 +259,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// Hoisted so we can stash on Server below (the federation
 	// directory poller lives on this struct + Run() needs it).
 	var impl *apiServer
+	// Phase 1.54.C — hoisted 1.54.A IIIF Image API handler so the
+	// dual-mount block after /api/v1 can register it at the root
+	// router too. Constructed inside the /api/v1 callback (needs
+	// nothing from that scope beyond the outer-scope deps, but the
+	// existing site keeps the initialisation local).
+	var iiifRootHandler *iiif.Handler
 	r.Route("/api/v1", func(r chi.Router) {
 		// Resolve identity (cookie or Bearer token) for every request
 		// under /api/v1. Anonymous requests still pass through — each
@@ -423,7 +429,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// has already run; RequireID just checks the resolved
 		// Identity. The URL grammar is per-segment so it can't
 		// be expressed in OpenAPI; mounted as raw chi routes.
-		iiifH := &iiif.Handler{
+		//
+		// Also dual-mounted at the ROOT router (see block below,
+		// outside the /api/v1 group) so third-party IIIF viewers
+		// (Mirador, Universal Viewer, OpenSeadragon) reach the same
+		// handlers at the URLs publicBaseURL(r) actually emits
+		// (`/iiif/3/...` — no `/api/v1` prefix). Phase 1.54.C.
+		iiifRootHandler = &iiif.Handler{
 			Lookup:   iiif.PoolLookup{Pool: pool},
 			Variants: iiifVariantLister{store: sysCfg},
 			Streamer: iiifStreamer{storage: storageSvc},
@@ -432,21 +444,14 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 				return auth.IdentityFromContext(r.Context()) != nil
 			},
 		}
-		iiifH.Mount(r)
+		iiifRootHandler.Mount(r)
 
 		// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search
-		// 2.0 + legacy 2.0 → 3.0 URL rewrites. Mount points match
-		// 1.54.A: routes register on `r` (inside the /api/v1 group)
-		// so the auth-resolver middleware has already run; the
-		// handlers gate anonymous callers at the IIIF layer. URLs
-		// emitted in manifest bodies use publicBaseURL(r) verbatim
-		// per the 1.54.A pattern — pre-audit surfaced that the
-		// emitted URLs at /iiif/3/... don't include the /api/v1
-		// prefix that this mount imposes; nginx has no rewrite for
-		// /iiif/3 today, so external requests to /iiif/3/...
-		// currently fall through to the static SPA. Kept consistent
-		// with 1.54.A shape; the /iiif/3 alias is a follow-up
-		// (mount at both root + /api/v1 or add nginx rewrite).
+		// 2.0 + legacy 2.0 → 3.0 URL rewrites. Same dual-mount
+		// treatment as 1.54.A: register inside /api/v1 (this block)
+		// AND at the root router (block below, outside /api/v1) so
+		// external viewers reach the same handlers at the emitted
+		// URL shape.
 		if impl != nil && impl.iiifPresHandler != nil {
 			impl.iiifPresHandler.Mount(r)
 		}
@@ -505,6 +510,41 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		archBundleH := handlers.NewArchiveBundleHandler(pool, storageSvc, logger)
 		r.Get("/assets/{id}/archive/bundle.zip", archBundleH.ServeHTTP)
 	})
+
+	// Phase 1.54.C — IIIF root-URL alias for third-party viewer
+	// compatibility. The 1.54.A + 1.54.B handlers emit URLs at
+	// `/iiif/{2,3}/...` (via publicBaseURL(r)) but were originally
+	// mounted only inside /api/v1, so external Mirador / UV /
+	// OpenSeadragon requests fell through to the SPA 404. Dual-mount
+	// them at the root router with the same ResolveIdentity middleware
+	// the /api/v1 group runs so auth-gated assets still resolve their
+	// caller identity.
+	//
+	// Chi's route dispatch is deterministic on prefix: /iiif/{2,3}/*
+	// hits this group; /api/v1/iiif/... hits the group above. Both
+	// share the same handler instances.
+	//
+	// Alternative was an nginx rewrite (/iiif/3/ → /api/v1/iiif/3/)
+	// but the prod embed_web deployment shape (used by ui-pr CI + any
+	// operator running the docker image standalone) has no nginx —
+	// only Go dual-mount reaches both deployment topologies. See #188.
+	if iiifRootHandler != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(resolver.ResolveIdentity)
+			iiifRootHandler.Mount(r)
+			if impl != nil {
+				if impl.iiifPresHandler != nil {
+					impl.iiifPresHandler.Mount(r)
+				}
+				if impl.iiifContentSearchHandler != nil {
+					impl.iiifContentSearchHandler.Mount(r)
+				}
+				if impl.iiifRedirectHandler != nil {
+					impl.iiifRedirectHandler.Mount(r)
+				}
+			}
+		})
+	}
 
 	// Federation inbox (Phase 1.22.D-a) — mounted at ROOT, not under
 	// /api/v1. The federation delivery worker constructs URLs as
