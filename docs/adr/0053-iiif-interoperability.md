@@ -29,8 +29,8 @@ Both sub-phases shipped. IIIF arc complete.
 
 ### 1.54.B carry-forward follow-ups (filed as separate issues)
 
-- **1.54.C** — `/iiif/3` external URL alias (nginx rewrite or dual-mount; load-bearing for Mirador operator dogfood since `iiifH.Mount(r)` runs inside `r.Route("/api/v1", ...)` while `publicBaseURL(r) + "/iiif/3/..."` emits URLs without the `/api/v1` prefix; a pre-existing 1.54.A bug not caught until dogfood attempt)
-- **1.54.D** — Mirador dogfood proof (blocked on 1.54.C)
+- **1.54.C** (PR #194, 2026-07-03): SHIPPED. `/iiif/3` external URL alias via Go dual-mount at root — all four IIIF handlers register at both `/api/v1/iiif/...` and `/iiif/...`. Original brief called for nginx rewrite; reality forced dual-mount because `ui-pr.yml` CI uses the prod `embed_web` app image standalone (no nginx) — same shape as any operator running the docker image without a reverse proxy. Issue #188 closed.
+- **1.54.D** (PR TBD, 2026-07-03): SHIPPED. Automated Mirador dogfood via Playwright on self-hosted nightly (`ui-13-iiif-mirador-dogfood.spec.ts`). Structural DOM asserts on canvas thumbnails / metadata sidebar / Content Search 2.0 hits with retained screenshot artifacts (30d) for operator post-hoc review. Mirador loaded via unpkg.com CDN, nightly-only until 30-day flake data justifies PR-CI promotion. Vite dev config extended to proxy `/iiif` alongside `/api` (nightly hits Vite; 1.54.C's dual-mount is behind it). Manual operator dogfood step from #193 fully automated. Issue #193 closes on three consecutive green nights.
 - **1.54.E** — Per-page PDF tile routing (multi-page PDFs currently surface as a single canvas with a `Pages: N` metadata pair; per-page canvases wait on Image API `/iiif/3/{id}/pages/{n}/...` URL grammar)
 - **1.54.F** — Content Search asset-scope per-line text extraction (currently substring-scans metadata pairs; real granularity needs `asset_text` FTS table populated by the metadata pipeline)
 - **1.54.G** — Custom `provider` block sysconfig UI (currently uses derived defaults)
@@ -42,7 +42,7 @@ Both sub-phases shipped. IIIF arc complete.
 - **Federation resolver lives OUTSIDE `app/internal/federation/`** at `app/internal/iiif/federation/` per soak rule. Empty-string fallback keeps a broken peer directory from blocking manifest render (degraded remote canvas, not 500).
 - **No IIIF Auth API in v1** — anonymous-first per 1.54.A extended.
 - **No IIIF Annotation write-back** — read-only Content Search 2.0 only.
-- **Mirador + OpenSeadragon interop asserted structurally** (canvas count, thumbnail render, tile paint). No pixel snapshots — brittle across Mirador upgrades. Operator dogfood is the spec-compliance validator.
+- **Mirador + OpenSeadragon interop asserted structurally** (canvas count, thumbnail render, tile paint). No pixel snapshots — brittle across Mirador upgrades. Automated by 1.54.D: Mirador manifest-render + Content-Search-in-viewer + metadata-sidebar assertions run on the self-hosted nightly (`scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts`) with screenshot artifacts retained 30 days on `.pw-results/` for operator post-hoc review (~2 min per merge, down from ~30 min manual dogfood). Manual operator dogfood step from #193 fully automated 2026-07-03.
 
 ## Context
 
