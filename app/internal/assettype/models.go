@@ -204,6 +204,16 @@ type AssetTypeAcl struct {
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 }
 
+type AssetVisualEmbedding struct {
+	AssetID    pgtype.UUID        `json:"asset_id"`
+	Embedding  interface{}        `json:"embedding"`
+	Model      string             `json:"model"`
+	Checkpoint string             `json:"checkpoint"`
+	Provider   string             `json:"provider"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID        `json:"id"`
 	EventType      string             `json:"event_type"`

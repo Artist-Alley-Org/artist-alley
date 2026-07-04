@@ -204,6 +204,16 @@ type AssetTypeAcl struct {
 	ExpiresAt        pgtype.Timestamptz
 }
 
+type AssetVisualEmbedding struct {
+	AssetID    pgtype.UUID
+	Embedding  interface{}
+	Model      string
+	Checkpoint string
+	Provider   string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type AuditEvent struct {
 	ID             pgtype.UUID
 	EventType      string
