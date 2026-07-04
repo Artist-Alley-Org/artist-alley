@@ -244,6 +244,14 @@ type EntityRef struct {
 	UpdatedAt      time.Time
 	PageCount      *int
 	FileExtension  string
+	// Width / Height are the source-image dimensions. Populated by
+	// the loader when the metadata pipeline has an image_width /
+	// image_height field value; zero otherwise (builder falls back
+	// to defaultCanvasWidth × defaultCanvasHeight). Required by
+	// IIIF Presentation 3.0 §5.7 — Mirador's OpenSeadragon
+	// integration crashes without them.
+	Width  int
+	Height int
 	Latitude       *float64
 	Longitude      *float64
 	// EmbargoUntil is optional; when non-nil and in the future,
