@@ -198,11 +198,19 @@ current focus:
     `max` size grammar); federated canvas resolver (5-min in-process
     cache, outside `app/internal/federation/` per soak rule); IIIF
     subsystem card on `/admin/search/dashboard`; Playwright
-    structural smoke. **Closes issue #170; IIIF arc complete.**
-    Follow-ups filed: **1.54.C** (`/iiif/3` external URL alias —
-    load-bearing for Mirador operator dogfood; a pre-existing 1.54.A
-    bug the arc surfaced but didn't fix), **1.54.D** Mirador dogfood
-    proof (blocked on 1.54.C), **1.54.E** per-page PDF tile routing,
+    structural smoke. Closes issue #170.
+  - **1.54.C** (PR #194): External URL alias — Go dual-mount at
+    root (in addition to existing `/api/v1/iiif/*` mount). Fixes a
+    pre-existing 1.54.A URL emit/mount mismatch where handlers
+    emitted `/iiif/3/...` but were only reachable at
+    `/api/v1/iiif/3/...`. Nginx-rewrite path was tried first but
+    failed CI because `ui-pr.yml` runs embed_web app image
+    standalone with no nginx (belt-and-braces: works for both
+    standalone and nginx-fronted deployments). Closes issue #188.
+    **IIIF arc code-complete.** Only remaining follow-up is
+    **1.54.D** (#193 Mirador dogfood proof, operator step — high
+    priority; no more IIIF-arc code work until confirmed).
+    Additional follow-ups: **1.54.E** per-page PDF tile routing,
     **1.54.F** Content Search per-line text extraction (asset_text
     FTS table), **1.54.G** Custom Provider block sysconfig UI,
     **1.54.H** Content Search AnnotationCollection pagination.
