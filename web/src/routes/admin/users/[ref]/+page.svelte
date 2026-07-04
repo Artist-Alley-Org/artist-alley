@@ -50,6 +50,18 @@
   let statusSaving = $state(false);
   let statusMessage = $state<{ kind: 'ok' | 'noop'; text: string } | null>(null);
 
+  // Phase 1.19.D — persistent per-username lockout state. Read from
+  // the AdminUser row (which now carries lockout_until +
+  // failed_login_count). The badge renders when lockout_until > now;
+  // the unlock button renders when locked AND caller has
+  // `auth.unlock`. Both are effectively-derived per-render.
+  let lockoutUntil = $state<Date | null>(null);
+  let failedLoginCount = $state<number>(0);
+  let unlockBusy = $state(false);
+  let unlockMessage = $state<string | null>(null);
+  const isLocked = $derived(lockoutUntil !== null && lockoutUntil > new Date());
+  const canUnlock = $derived(auth.can('auth.unlock'));
+
   onMount(() => {
     void load();
   });
@@ -76,10 +88,39 @@
       if (adminRow.data) {
         const page = adminRow.data as unknown as { items: AdminUser[] };
         const me = page.items.find((u) => u.ref === ref);
-        if (me) status = me.status;
+        if (me) {
+          status = me.status;
+          lockoutUntil = me.lockout_until ? new Date(me.lockout_until) : null;
+          failedLoginCount = me.failed_login_count ?? 0;
+        }
       }
     } finally {
       loading = false;
+    }
+  }
+
+  // Phase 1.19.D — admin unlock.
+  async function unlockAccount() {
+    if (unlockBusy) return;
+    unlockBusy = true;
+    unlockMessage = null;
+    try {
+      const r = await api.POST('/admin/users/{ref}/unlock-account', {
+        params: { path: { ref } },
+      });
+      if (r.error || !r.data) {
+        unlockMessage =
+          (r.error as { error?: string } | undefined)?.error ?? t('admin.user_detail.lockout_unlock_failed');
+        return;
+      }
+      const result = r.data as unknown as { unlocked: boolean; prior_failed_count: number };
+      lockoutUntil = null;
+      failedLoginCount = 0;
+      unlockMessage = result.unlocked
+        ? t('admin.user_detail.lockout_unlock_result_ok', { count: result.prior_failed_count })
+        : t('admin.user_detail.lockout_unlock_result_noop');
+    } finally {
+      unlockBusy = false;
     }
   }
 
@@ -458,6 +499,53 @@
       <p class={statusMessage.kind === 'ok' ? 'text-sm text-success' : 'text-sm text-fg-muted'}>{statusMessage.text}</p>
     {/if}
   </section>
+
+  <!-- Phase 1.19.D — account lockout state + admin unlock. Rendered
+       whenever the user has a non-zero failed_login_count OR is
+       actively locked so admins get situational awareness even for
+       users who are just probing badly. Unlock button gates on the
+       `auth.unlock` capability (admin-only by seed). -->
+  {#if isLocked || failedLoginCount > 0}
+    <section
+      class="mt-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4"
+      data-testid="admin-user-lockout-section"
+    >
+      <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.lockout_section')}</h3>
+      {#if isLocked}
+        <p class="text-sm" data-testid="admin-user-lockout-badge">
+          <span class="inline-block rounded bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
+            {t('admin.user_detail.lockout_badge_locked')}
+          </span>
+          <span class="ml-2 text-fg-muted">
+            {t('admin.user_detail.lockout_auto_clears', {
+              when: lockoutUntil?.toLocaleString() ?? '?',
+              count: failedLoginCount,
+            })}
+          </span>
+        </p>
+      {:else}
+        <p class="text-sm text-fg-muted" data-testid="admin-user-lockout-counter">
+          {failedLoginCount === 1
+            ? t('admin.user_detail.lockout_counter_one', { count: failedLoginCount })
+            : t('admin.user_detail.lockout_counter_many', { count: failedLoginCount })}
+        </p>
+      {/if}
+      {#if canUnlock}
+        <button
+          type="button"
+          onclick={unlockAccount}
+          disabled={unlockBusy || (!isLocked && failedLoginCount === 0)}
+          data-testid="admin-user-unlock"
+          class="rounded border border-border bg-surface px-3 py-1 text-xs font-medium hover:border-accent disabled:opacity-50"
+        >
+          {unlockBusy ? t('admin.user_detail.lockout_unlocking') : t('admin.user_detail.lockout_unlock_button')}
+        </button>
+      {/if}
+      {#if unlockMessage}
+        <p class="text-xs text-fg-muted" data-testid="admin-user-unlock-message">{unlockMessage}</p>
+      {/if}
+    </section>
+  {/if}
 
   <section class="mt-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
     <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.reset_section')}</h3>

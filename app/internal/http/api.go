@@ -22,6 +22,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
+	"github.com/mscrnt/artist-alley/app/internal/auth/lockout"
 	"github.com/mscrnt/artist-alley/app/internal/brushpacks"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
@@ -1679,7 +1680,57 @@ func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logge
 func authHandlerWithPolicy(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, cacheReg *cache.Registry, sysCfg *sysconfig.Store) *auth.Handler {
 	h := auth.NewHandler(pool, logger, cfg.ScrambleKey, 0, sessions, limiter, auditRec, cacheReg)
 	h.SetPasswordPolicySource(passwordPolicyAdapter{store: sysCfg})
+	// Phase 1.19.D — wire the persistent per-username lockout manager.
+	// Cache lives on the shared cache.Registry so LISTEN/NOTIFY
+	// broadcasts across instances. Policy reads from sysconfig on
+	// every call so operator retunes take effect without restart.
+	// IP-subnet-hash salt piggybacks on the auth scramble key —
+	// same secret bucket, rotated together, and not surfaced to
+	// audit consumers (only the digest is written).
+	lockoutCache := lockout.NewCache(cacheReg)
+	lockoutMgr := lockout.NewManager(pool, logger)
+	lockoutMgr.Cache = lockoutCache
+	lockoutMgr.Policy = lockoutPolicyAdapter{store: sysCfg}.Get
+	lockoutMgr.Auditor = lockoutAuditAdapter{rec: auditRec}
+	h.SetLockoutManager(lockoutMgr, cfg.ScrambleKey)
 	return h
+}
+
+// lockoutPolicyAdapter bridges *sysconfig.Store → lockout.PolicyProvider.
+// Zero-valued knobs (unset by operator) fall back to lockout.DefaultConfig
+// via the manager's currentPolicy nil-check.
+type lockoutPolicyAdapter struct{ store *sysconfig.Store }
+
+func (a lockoutPolicyAdapter) Get(ctx context.Context) lockout.Config {
+	cfg, err := a.store.GetAuth(ctx)
+	if err != nil {
+		return lockout.DefaultConfig
+	}
+	return lockout.Config{
+		Threshold:       cfg.Lockout.Threshold,
+		DurationMinutes: cfg.Lockout.DurationMinutes,
+	}
+}
+
+// lockoutAuditAdapter bridges *audit.Recorder → lockout.AuditEmitter.
+// The Manager doesn't have an *http.Request in scope (it runs from
+// the query path); we pass nil, which the Recorder's ctxFromRequest
+// helper treats as a no-request event (ip / user_agent fields
+// omitted from the audit row).
+type lockoutAuditAdapter struct{ rec *audit.Recorder }
+
+func (a lockoutAuditAdapter) LockoutTriggered(ctx context.Context, userRef int64, failedCount, threshold, durationMinutes int32, ipSubnetHash string) {
+	if a.rec == nil {
+		return
+	}
+	a.rec.AuthLockoutTriggered(ctx, nil, userRef, failedCount, threshold, durationMinutes, ipSubnetHash)
+}
+
+func (a lockoutAuditAdapter) LockoutCleared(ctx context.Context, userRef int64, adminUserRef *int64, priorFailedCount int32, source string) {
+	if a.rec == nil {
+		return
+	}
+	a.rec.AuthLockoutCleared(ctx, nil, userRef, adminUserRef, priorFailedCount, source)
 }
 
 // passwordPolicyAdapter bridges *sysconfig.Store → the auth handler's
@@ -1769,6 +1820,9 @@ func (s *apiServer) AdminResetUserPassword(ctx context.Context, req openapi.Admi
 }
 func (s *apiServer) AdminImpersonateUser(ctx context.Context, req openapi.AdminImpersonateUserRequestObject) (openapi.AdminImpersonateUserResponseObject, error) {
 	return s.auth.AdminImpersonateUser(ctx, req)
+}
+func (s *apiServer) AdminUnlockAccount(ctx context.Context, req openapi.AdminUnlockAccountRequestObject) (openapi.AdminUnlockAccountResponseObject, error) {
+	return s.auth.AdminUnlockAccount(ctx, req)
 }
 func (s *apiServer) EndImpersonation(ctx context.Context, req openapi.EndImpersonationRequestObject) (openapi.EndImpersonationResponseObject, error) {
 	return s.auth.EndImpersonation(ctx, req)

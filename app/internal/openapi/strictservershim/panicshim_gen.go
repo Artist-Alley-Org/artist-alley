@@ -545,6 +545,11 @@ func (*PanicShim) SetAdminUserStatus(context.Context, openapi.SetAdminUserStatus
 	panic("PanicShim: SetAdminUserStatus called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// AdminUnlockAccount panics by default; test shims override.
+func (*PanicShim) AdminUnlockAccount(context.Context, openapi.AdminUnlockAccountRequestObject) (openapi.AdminUnlockAccountResponseObject, error) {
+	panic("PanicShim: AdminUnlockAccount called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetPublicAppearance panics by default; test shims override.
 func (*PanicShim) GetPublicAppearance(context.Context, openapi.GetPublicAppearanceRequestObject) (openapi.GetPublicAppearanceResponseObject, error) {
 	panic("PanicShim: GetPublicAppearance called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

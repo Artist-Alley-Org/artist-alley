@@ -68,6 +68,18 @@ const (
 	// Phase 1.19.C — self-service registration lifecycle.
 	EventUserRegistered     = "user.registered"
 	EventUserEmailVerified  = "user.email_verified"
+
+	// Phase 1.19.D — per-username account lockout. Emitted exactly
+	// once per lockout window (the failed attempt that CROSSES the
+	// threshold), not once per subsequent locked attempt. Payload
+	// carries an IP subnet hash (not the raw IP) so operators can
+	// group by threat class without a per-request IP audit log.
+	EventAuthLockoutTriggered = "auth.lockout.triggered"
+	// Phase 1.19.D — lockout cleared. Fires on both admin manual
+	// unlock (source=admin, actor=admin.user_ref) and on
+	// successful login after auto-clear (source=auto,
+	// actor=self via userRef; treated separately below).
+	EventAuthLockoutCleared = "auth.lockout.cleared"
 	EventCapabilityGranted = "user.capability_granted"
 	EventCapabilityRevoked = "user.capability_revoked"
 	EventCapabilityGrantRemoved = "user.capability_grant_removed"
@@ -329,6 +341,33 @@ func (r *Recorder) LoginRateLimited(ctx context.Context, req *http.Request, atte
 	r.write(ctx, EventLoginRateLimited, nil, nil, ctxFromRequest(req), map[string]any{
 		"attempted_username": attemptedUsername,
 		"key":                key,
+	})
+}
+
+// AuthLockoutTriggered records the failed attempt that crossed the
+// lockout threshold. Emitted exactly once per lockout window (not
+// once per subsequent locked attempt). ipSubnetHash is a SHA-256
+// digest of the request's IP subnet (ipnet(24) IPv4 / ipnet(56)
+// IPv6) salted per-instance — records threat class without a
+// per-request IP audit log. Phase 1.19.D.
+func (r *Recorder) AuthLockoutTriggered(ctx context.Context, req *http.Request, userRef int64, failedCount, threshold, durationMinutes int32, ipSubnetHash string) {
+	r.write(ctx, EventAuthLockoutTriggered, &userRef, nil, ctxFromRequest(req), map[string]any{
+		"failed_count":     failedCount,
+		"threshold":        threshold,
+		"duration_minutes": durationMinutes,
+		"ip_subnet_hash":   ipSubnetHash,
+	})
+}
+
+// AuthLockoutCleared records a lockout being cleared. `source` is
+// "admin" (manual admin.user_ref → target.user_ref) or "auto"
+// (self-cleared on next login after lockout_until expired). For
+// admin source: actorUserRef is the admin's ref. For auto source:
+// actorUserRef is nil. Phase 1.19.D.
+func (r *Recorder) AuthLockoutCleared(ctx context.Context, req *http.Request, userRef int64, actorUserRef *int64, priorFailedCount int32, source string) {
+	r.write(ctx, EventAuthLockoutCleared, &userRef, actorUserRef, ctxFromRequest(req), map[string]any{
+		"prior_failed_count": priorFailedCount,
+		"source":             source,
 	})
 }
 

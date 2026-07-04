@@ -2335,6 +2335,45 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/users/{ref}/unlock-account:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    post:
+      operationId: adminUnlockAccount
+      summary: Clear failed_login_count + lockout_until for a user (Phase 1.19.D)
+      description: |
+        Manually clears the per-username lockout state a user has
+        accumulated. Called by admins for legitimate users who got
+        stuck (typo cascades, retrying a forgotten password).
+
+        Gated on `auth.unlock` (admin-only by seed). Idempotent:
+        calling on an already-unlocked user returns 200 with
+        unlocked=false; no audit fires for the no-op case.
+
+        Audit emits auth.lockout.cleared with subject = target
+        user_ref, actor = admin.user_ref, metadata.source="admin"
+        + metadata.prior_failed_count.
+      tags: [admin, users]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unlock attempted (see body for effect).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUnlockAccountResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /auth/impersonation/end:
     post:
       operationId: endImpersonation
@@ -10327,6 +10366,27 @@ components:
           format: date-time
           nullable: true
           description: Hard expiry enforced at login; null = no expiry.
+        lockout_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Phase 1.19.D per-username lockout deadline. Null when the
+            account has never been locked OR the last lockout has
+            been cleared. Values in the past are semantically
+            "unlocked" (auto-clear happens at read time; the stale
+            timestamp stays until the next failed login OR admin
+            unlock). The frontend renders the "Locked (auto-clears
+            at HH:MM)" badge when this > now().
+        failed_login_count:
+          type: integer
+          format: int32
+          description: |
+            Phase 1.19.D — running count of consecutive failed
+            login attempts. Zero on a fresh row + after any
+            successful login. Threshold-crossing triggers lockout.
+            Surfaced here so admins can see who's under attack
+            without waiting for a full lockout.
         auth_origin:
           type: string
           nullable: true
@@ -10533,6 +10593,30 @@ components:
             When the impersonation session hard-expires (default
             30 min from start). The admin can end earlier via the
             "End impersonation" button.
+
+    AdminUnlockAccountResult:
+      type: object
+      required: [user_ref, unlocked, prior_failed_count]
+      description: |
+        Returned by POST /admin/users/{ref}/unlock-account. Reports
+        whether the call actually unlocked (unlocked=true) or found
+        the user already-unlocked (unlocked=false — idempotent no-op).
+      properties:
+        user_ref:
+          type: integer
+          format: int64
+        unlocked:
+          type: boolean
+          description: |
+            true when the call cleared existing lockout state
+            (audit fired); false when the user was already
+            unlocked (no state change; no audit).
+        prior_failed_count:
+          type: integer
+          format: int32
+          description: |
+            The failed_login_count value BEFORE the unlock cleared it.
+            Zero when unlocked=false.
 
     EndImpersonationResult:
       type: object

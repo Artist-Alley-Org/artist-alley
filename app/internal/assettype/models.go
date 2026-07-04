@@ -894,6 +894,8 @@ type User struct {
 	EncryptionPublicKey     []byte             `json:"encryption_public_key"`
 	EncryptionPrivateKeyEnc []byte             `json:"encryption_private_key_enc"`
 	EmailVerifiedAt         pgtype.Timestamptz `json:"email_verified_at"`
+	FailedLoginCount        int32              `json:"failed_login_count"`
+	LockoutUntil            pgtype.Timestamptz `json:"lockout_until"`
 }
 
 type UserBlock struct {

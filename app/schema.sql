@@ -2055,6 +2055,8 @@ CREATE TABLE public."user" (
     encryption_public_key bytea,
     encryption_private_key_enc bytea,
     email_verified_at timestamp with time zone,
+    failed_login_count integer DEFAULT 0 NOT NULL,
+    lockout_until timestamp with time zone,
     CONSTRAINT user_approved_check CHECK ((approved = ANY (ARRAY[(0)::bigint, (1)::bigint, (2)::bigint, (3)::bigint])))
 );
 

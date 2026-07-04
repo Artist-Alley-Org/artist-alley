@@ -78,7 +78,39 @@ type Handler struct {
 	// strict-server Register METHOD that handles POST /register.
 	RegisterDeps RegisterSurface
 
+	// LockoutMgr is the Phase 1.19.D persistent per-username lockout
+	// layer. Composes with (does not replace) the in-process
+	// LoginLimiter. Nil disables the layer entirely — the
+	// LoginLimiter alone survives.
+	LockoutMgr LockoutManager
+
+	// LockoutIPSalt salts the IP-subnet hash carried in
+	// auth.lockout.triggered audit rows. Read from sysconfig at boot;
+	// rotating breaks historical audit correlation but the trade
+	// is deliberate (a leaked salt shouldn't linger). Zero string
+	// disables the hash (audit still fires with empty ip_subnet_hash).
+	LockoutIPSalt string
+
 	tokenPrefix string // overridable in tests
+}
+
+// LockoutManager is the narrow surface auth.Handler consumes from the
+// lockout package. Declared as an interface so this file doesn't
+// import lockout directly (composition happens at boot).
+// IncrementFailedLogin returns only error — the Manager itself owns
+// the audit emit on the threshold-crossing attempt; the handler
+// doesn't need to inspect the counter.
+type LockoutManager interface {
+	IsLockedOut(ctx context.Context, userRef int64) (bool, error)
+	IncrementFailedLogin(ctx context.Context, userRef int64, ipSubnetHash string) error
+	ResetFailedLogin(ctx context.Context, userRef int64) error
+}
+
+// SetLockoutManager attaches the lockout manager post-construction.
+// Same pattern as SetPasswordPolicySource.
+func (h *Handler) SetLockoutManager(m LockoutManager, ipSalt string) {
+	h.LockoutMgr = m
+	h.LockoutIPSalt = ipSalt
 }
 
 // SetPasswordPolicySource attaches the policy lookup post-
@@ -115,6 +147,9 @@ type auditRecorder interface {
 	ImpersonationEnded(ctx context.Context, req *http.Request, targetUserRef, adminUserRef int64, sessionID string)
 	UserRegistered(ctx context.Context, req *http.Request, userRef int64, emailAddr string)
 	UserEmailVerified(ctx context.Context, req *http.Request, userRef int64)
+	// Phase 1.19.D — lockout audit surface.
+	AuthLockoutTriggered(ctx context.Context, req *http.Request, userRef int64, failedCount, threshold, durationMinutes int32, ipSubnetHash string)
+	AuthLockoutCleared(ctx context.Context, req *http.Request, userRef int64, actorUserRef *int64, priorFailedCount int32, source string)
 }
 
 // passwordPolicySource is the minimal interface the password
@@ -163,6 +198,9 @@ func (nopAudit) ImpersonationEnded(context.Context, *http.Request, int64, int64,
 }
 func (nopAudit) UserRegistered(context.Context, *http.Request, int64, string) {}
 func (nopAudit) UserEmailVerified(context.Context, *http.Request, int64)      {}
+func (nopAudit) AuthLockoutTriggered(context.Context, *http.Request, int64, int32, int32, int32, string) {
+}
+func (nopAudit) AuthLockoutCleared(context.Context, *http.Request, int64, *int64, int32, string) {}
 
 // NewHandler constructs the auth handler. If sessionDays is <= 0 the
 // default of 7 days (matching the legacy rs_setcookie default) is used. The
@@ -295,10 +333,60 @@ func (h *Handler) loginViaRegistry(
 		}, nil
 	}
 
+	// Phase 1.19.D — persistent per-username lockout gate. We look up
+	// the user_ref BEFORE credential verification so we can short-
+	// circuit locked accounts without ever consulting bcrypt. Timing
+	// is preserved because we still run a fixed-work bcrypt against a
+	// dummy hash on the locked path (see anti-enumeration test).
+	//
+	// Anonymous / unknown-username attempts don't hit this path —
+	// they fall through to the provider's Authenticate which returns
+	// ErrInvalidCredentials without exposing existence. The LoginLimiter's
+	// `user:` bucket handles enumeration protection for unknown names.
+	var lockedUserRef int64
+	if h.LockoutMgr != nil {
+		if ref, ok := h.lookupUserRefByUsername(ctx, username); ok {
+			lockedUserRef = ref
+			locked, lerr := h.LockoutMgr.IsLockedOut(ctx, ref)
+			if lerr != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.lockout.check_error",
+					slog.Int64("user_ref", ref), slog.String("err", lerr.Error()))
+				// Fail-open on lockout error: the LoginLimiter still
+				// protects; a DB blip shouldn't lock legitimate users
+				// out of their accounts.
+			} else if locked {
+				// Preserve bcrypt-timing: run the provider's auth to
+				// consume the same wall-clock work factor even though
+				// we'll discard the result. Prevents timing side-
+				// channel between locked-401 and wrong-password-401.
+				_, _ = p.Authenticate(ctx, username, "\x00lockout-dummy-\x00")
+				h.Audit.LoginFailed(ctx, httpReq, username, &ref, "account_locked")
+				return openapi.Login401JSONResponse{
+					UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
+				}, nil
+			}
+		}
+	}
+
 	result, err := p.Authenticate(ctx, username, password)
 	switch {
 	case errors.Is(err, ErrInvalidCredentials):
 		h.Audit.LoginFailed(ctx, httpReq, username, nil, "bad_credentials:"+providerName)
+		// Bump the persistent failed-attempt counter when we have a
+		// real user_ref (username resolved above). Unknown usernames
+		// don't accumulate — that's the LoginLimiter's job.
+		if h.LockoutMgr != nil && lockedUserRef != 0 {
+			ipHash := ipSubnetHash(httpReq, h.LockoutIPSalt)
+			if ierr := h.LockoutMgr.IncrementFailedLogin(ctx, lockedUserRef, ipHash); ierr != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.lockout.increment_error",
+					slog.Int64("user_ref", lockedUserRef), slog.String("err", ierr.Error()))
+			}
+			// The Manager already emitted auth.lockout.triggered
+			// exactly once on the crossing attempt; nothing else to
+			// do here beyond the standard bad_credentials audit
+			// above. Non-trigger increments produce no additional
+			// audit noise.
+		}
 		return openapi.Login401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "invalid credentials"},
 		}, nil
@@ -377,6 +465,16 @@ func (h *Handler) loginViaRegistry(
 	}
 	h.Limiter.Forget(ipKey)
 	h.Limiter.Forget(userKey)
+	// Phase 1.19.D — clear the persistent failed-attempt counter on
+	// successful auth. Runs AFTER Sessions.Issue so a session-mint
+	// failure doesn't strand the counter at zero. Best-effort: a
+	// reset failure logs but doesn't fail the login.
+	if h.LockoutMgr != nil {
+		if rerr := h.LockoutMgr.ResetFailedLogin(ctx, user.Ref); rerr != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.lockout.reset_error",
+				slog.Int64("user_ref", user.Ref), slog.String("err", rerr.Error()))
+		}
+	}
 	h.Audit.LoginSucceeded(ctx, httpReq, user.Ref, sessionInfo.ID.String())
 
 	current := identityToCurrentUser(&Identity{
@@ -483,6 +581,16 @@ func (h *Handler) loginInlinePassword(
 	}
 	h.Limiter.Forget(ipKey)
 	h.Limiter.Forget(userKey)
+	// Phase 1.19.D — clear the persistent failed-attempt counter on
+	// successful auth. Runs AFTER Sessions.Issue so a session-mint
+	// failure doesn't strand the counter at zero. Best-effort: a
+	// reset failure logs but doesn't fail the login.
+	if h.LockoutMgr != nil {
+		if rerr := h.LockoutMgr.ResetFailedLogin(ctx, user.Ref); rerr != nil {
+			h.Logger.LogAttrs(ctx, slog.LevelWarn, "auth.lockout.reset_error",
+				slog.Int64("user_ref", user.Ref), slog.String("err", rerr.Error()))
+		}
+	}
 	h.Audit.LoginSucceeded(ctx, httpReq, user.Ref, sessionInfo.ID.String())
 	current := identityToCurrentUser(&Identity{
 		UserRef:    user.Ref,
