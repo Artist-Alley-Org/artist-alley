@@ -110,15 +110,15 @@
       });
       if (r.error || !r.data) {
         unlockMessage =
-          (r.error as { error?: string } | undefined)?.error ?? 'Unlock failed.';
+          (r.error as { error?: string } | undefined)?.error ?? t('admin.user_detail.lockout_unlock_failed');
         return;
       }
       const result = r.data as unknown as { unlocked: boolean; prior_failed_count: number };
       lockoutUntil = null;
       failedLoginCount = 0;
       unlockMessage = result.unlocked
-        ? `Account unlocked (was locked after ${result.prior_failed_count} failed attempts).`
-        : 'Account was already unlocked.';
+        ? t('admin.user_detail.lockout_unlock_result_ok', { count: result.prior_failed_count })
+        : t('admin.user_detail.lockout_unlock_result_noop');
     } finally {
       unlockBusy = false;
     }
@@ -510,21 +510,24 @@
       class="mt-6 max-w-xl space-y-3 rounded-lg border border-border bg-surface-elevated p-4"
       data-testid="admin-user-lockout-section"
     >
-      <h3 class="text-sm font-medium text-fg">Account lockout</h3>
+      <h3 class="text-sm font-medium text-fg">{t('admin.user_detail.lockout_section')}</h3>
       {#if isLocked}
         <p class="text-sm" data-testid="admin-user-lockout-badge">
           <span class="inline-block rounded bg-danger/15 px-2 py-0.5 text-xs font-medium text-danger">
-            Locked
+            {t('admin.user_detail.lockout_badge_locked')}
           </span>
           <span class="ml-2 text-fg-muted">
-            Auto-clears at {lockoutUntil?.toLocaleString() ?? '?'}
-            ({failedLoginCount} failed attempts)
+            {t('admin.user_detail.lockout_auto_clears', {
+              when: lockoutUntil?.toLocaleString() ?? '?',
+              count: failedLoginCount,
+            })}
           </span>
         </p>
       {:else}
         <p class="text-sm text-fg-muted" data-testid="admin-user-lockout-counter">
-          {failedLoginCount} failed login attempt{failedLoginCount === 1 ? '' : 's'} on record.
-          Threshold is enforced by system config.
+          {failedLoginCount === 1
+            ? t('admin.user_detail.lockout_counter_one', { count: failedLoginCount })
+            : t('admin.user_detail.lockout_counter_many', { count: failedLoginCount })}
         </p>
       {/if}
       {#if canUnlock}
@@ -535,7 +538,7 @@
           data-testid="admin-user-unlock"
           class="rounded border border-border bg-surface px-3 py-1 text-xs font-medium hover:border-accent disabled:opacity-50"
         >
-          {unlockBusy ? 'Unlocking…' : 'Unlock account'}
+          {unlockBusy ? t('admin.user_detail.lockout_unlocking') : t('admin.user_detail.lockout_unlock_button')}
         </button>
       {/if}
       {#if unlockMessage}
