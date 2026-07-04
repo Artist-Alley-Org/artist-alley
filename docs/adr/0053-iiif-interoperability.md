@@ -22,27 +22,41 @@ excerpt: >-
 
 ## Status (2026-07-03)
 
-Both sub-phases shipped. IIIF arc complete.
+All three sub-phases shipped. IIIF arc code-complete. Only operator-facing follow-up remaining is 1.54.D (Mirador dogfood proof — the compliance validator).
 
 - **Phase 1.54.A** (PR #165, 2026-06-25): IIIF Image API 3.0 Level 0 over the existing variant pipeline. Manifest endpoints (`info.json`), region / size / rotation / format / quality parameters, content-hash-keyed tile cache, capability gate (`iiif.read`), `/admin/iiif/health` per the generic subsystem-health pattern.
 - **Phase 1.54.B** (PR #187, 2026-07-03): IIIF Presentation API 3.0 collection + asset manifests at `/iiif/3/{kind}/{id}/manifest.json` with navPlace geo-tag extension for GPS-tagged assets and embargo-stub manifests per ADR 0020; Content Search 2.0 at `/iiif/3/{kind}/{id}/search` (asset-scope substring-scans metadata pairs; collection-scope dispatches through the 1.16.B `search.Engine` filtered to pinned members); 2.0→3.0 URL redirect at `/iiif/2/...` (301, `full`→`max` size grammar); federated canvas resolver (read-only `federation_peers.instance_url` lookup with 5-min in-process cache, lives at `app/internal/iiif/federation/` NOT `app/internal/federation/` — soak diff empty); `iiif.ManifestCache` via `cache.Registry` + LISTEN/NOTIFY with cross-package invalidator hooks on asset + collection write paths; dashboard subsystem card on `/admin/search/dashboard`. Issue #170 closed.
+- **Phase 1.54.C** (PR #194, 2026-07-03): External URL alias for `/iiif/3/*` and `/iiif/2/*` via Go dual-mount at root (in addition to the existing `/api/v1/iiif/*` mount). The 1.54.A `iiif.Handler` construction is hoisted to outer scope in `app/internal/http/server.go` as `var iiifRootHandler *iiif.Handler`; a root-level `r.Group(...)` block after the `/api/v1` route re-mounts all four IIIF handlers (Image API + Presentation + Content Search + 2.0 redirect) with the same `resolver.ResolveIdentity` middleware. Emitted URLs (from `publicBaseURL(r) + "/iiif/3/..."`) now match actual mount points regardless of deployment shape. Issue #188 closed.
+- **Phase 1.54.D** (PR #195, 2026-07-03): Automated Mirador dogfood via Playwright on the self-hosted nightly runner (`scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts`). Three structural-DOM tests (canvas render, metadata + sidebar, Content Search 2.0 endpoint) run against a seeded mixed-format fixture collection (2 JPEGs + 1 PNG + 1 PDF, one JPEG carrying GPS EXIF for navPlace). Mirador loaded via unpkg.com CDN at nightly-only cadence. Screenshot artifacts retained 30 days on `.pw-results/{test-name}/` (existing `ui-nightly.yml` upload-artifact step already covers the path). Two real 1.54.B / 1.54.C bugs surfaced by the dogfood attempt + fixed as unblocking carve-outs: Canvas missing required `width`/`height` per Presentation 3.0 §5.7 (Mirador crashed on `null.getValue`; default 1200×900); Vite dev proxy didn't cover `/iiif` (with `changeOrigin: false` so `publicBaseURL(r)` sees the original Host). Issue #193 closes on three consecutive green nightly runs after merge.
 
-### 1.54.B carry-forward follow-ups (filed as separate issues)
+### 1.54.C mount-shape decision — dual-mount over nginx rewrite
 
-- **1.54.C** (PR #194, 2026-07-03): SHIPPED. `/iiif/3` external URL alias via Go dual-mount at root — all four IIIF handlers register at both `/api/v1/iiif/...` and `/iiif/...`. Original brief called for nginx rewrite; reality forced dual-mount because `ui-pr.yml` CI uses the prod `embed_web` app image standalone (no nginx) — same shape as any operator running the docker image without a reverse proxy. Issue #188 closed.
-- **1.54.D** (PR TBD, 2026-07-03): SHIPPED. Automated Mirador dogfood via Playwright on self-hosted nightly (`ui-13-iiif-mirador-dogfood.spec.ts`). Structural DOM asserts on canvas thumbnails / metadata sidebar / Content Search 2.0 hits with retained screenshot artifacts (30d) for operator post-hoc review. Mirador loaded via unpkg.com CDN, nightly-only until 30-day flake data justifies PR-CI promotion. Vite dev config extended to proxy `/iiif` alongside `/api` (nightly hits Vite; 1.54.C's dual-mount is behind it). Manual operator dogfood step from #193 fully automated. Issue #193 closes on three consecutive green nights.
-- **1.54.E** — Per-page PDF tile routing (multi-page PDFs currently surface as a single canvas with a `Pages: N` metadata pair; per-page canvases wait on Image API `/iiif/3/{id}/pages/{n}/...` URL grammar)
-- **1.54.F** — Content Search asset-scope per-line text extraction (currently substring-scans metadata pairs; real granularity needs `asset_text` FTS table populated by the metadata pipeline)
-- **1.54.G** — Custom `provider` block sysconfig UI (currently uses derived defaults)
-- **1.54.H** — Content Search `AnnotationCollection` pagination when hit count ≥ 50
+The 1.54.C brief prescribed nginx rewrite as Option A. The chosen implementation is Option B (Go dual-mount) because the pre-audit missed a topology detail worth documenting for future architectural decisions:
 
-### 1.54.B design decisions locked
+- **`.github/workflows/ui-pr.yml` runs the production embed_web app image standalone with no nginx.** Comment in `infra/docker/ci/docker-compose.ci.yml` explicitly: *"the `nginx` reverse proxy can be skipped too because Playwright talks straight to the app."*
+- The nginx-based fix passed dev-compose curl tests + `./scripts/test.sh` but failed PR CI because the rewrite never fired.
+- Any operator running the docker image standalone (a supported deployment shape per the Dockerfile intent) hits the same broken-URL bug an nginx rewrite would not reach.
+
+**Belt-and-braces is intentional.** Even if an operator adds an nginx rewrite in their own deployment, the Go dual-mount keeps working. Migrating 1.54.C's dual-mount to nginx-only would break the standalone deployment shape again.
+
+**Pre-audit lesson locked for future ADRs**: any URL-routing fix must include a check of `.github/workflows/*.yml` topology + which deployment shapes bypass any proposed reverse-proxy config before locking a nginx-shaped fix.
+
+### 1.54 carry-forward follow-ups (filed as separate issues)
+
+- ~~**1.54.D** (#193)~~: SHIPPED as PR #195 — automated via Playwright dogfood spec on the self-hosted nightly. Issue #193 closes on three consecutive green nightly runs.
+- **1.54.E** (#189) — Per-page PDF tile routing (multi-page PDFs currently surface as a single canvas with a `Pages: N` metadata pair; per-page canvases wait on Image API `/iiif/3/{id}/pages/{n}/...` URL grammar)
+- **1.54.F** (#190) — Content Search asset-scope per-line text extraction (currently substring-scans metadata pairs; real granularity needs `asset_text` FTS table populated by the metadata pipeline)
+- **1.54.G** (#191) — Custom `provider` block sysconfig UI (currently uses derived defaults)
+- **1.54.H** (#192) — Content Search `AnnotationCollection` pagination when hit count ≥ 50
+
+### 1.54 design decisions locked
 
 - **Anonymous callers gated at the IIIF layer** rather than modifying the shared `visibility.Filter` (which would have rippled through 1.16.B-1..B-4 test expectations). Consolidation of the two paths tracked at #185.
 - **Federation resolver lives OUTSIDE `app/internal/federation/`** at `app/internal/iiif/federation/` per soak rule. Empty-string fallback keeps a broken peer directory from blocking manifest render (degraded remote canvas, not 500).
 - **No IIIF Auth API in v1** — anonymous-first per 1.54.A extended.
 - **No IIIF Annotation write-back** — read-only Content Search 2.0 only.
-- **Mirador + OpenSeadragon interop asserted structurally** (canvas count, thumbnail render, tile paint). No pixel snapshots — brittle across Mirador upgrades. Automated by 1.54.D: Mirador manifest-render + Content-Search-in-viewer + metadata-sidebar assertions run on the self-hosted nightly (`scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts`) with screenshot artifacts retained 30 days on `.pw-results/` for operator post-hoc review (~2 min per merge, down from ~30 min manual dogfood). Manual operator dogfood step from #193 fully automated 2026-07-03.
+- **Mirador + OpenSeadragon interop asserted structurally** (canvas count, thumbnail render, tile paint). No pixel snapshots — brittle across Mirador upgrades. Automated by 1.54.D: Mirador manifest-render + Content-Search-endpoint + metadata-sidebar assertions run on the self-hosted nightly (`scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts`) with screenshot artifacts retained 30 days on `.pw-results/` for operator post-hoc review (~2 min per merge, down from ~30 min manual dogfood). Manual operator dogfood step from #193 fully automated 2026-07-03.
+- **External URLs served via Go dual-mount** at both `/iiif/*` (root) and `/api/v1/iiif/*` (inside API group). Neither position depends on nginx configuration; standalone deployment shape works identically to nginx-fronted shape.
 
 ## Context
 
