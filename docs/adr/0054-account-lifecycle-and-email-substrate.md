@@ -21,14 +21,15 @@ excerpt: >-
   Operators can run a public AA instance: SMTP email substrate + admin impersonation + self-service TOTP 2FA + self-registration with email verification — all built on the existing capability + audit + sessions infrastructure with no architectural regressions.
 ---
 
-## Status (2026-06-26)
+## Status (updated 2026-07-04)
 
-Phase 1.19 shipped across 4 PRs:
+**Phase 1.19 arc COMPLETE.** Shipped across 5 PRs:
 
 - **1.19.A-1 (PR #161)** — Email substrate: SMTP-at-rest, async send job, notification job integration, admin test-send surface
 - **1.19.A-2 (PR #162)** — Admin impersonation: session shape, HTTP endpoints, always-visible banner, audit emit recording both actor IDs
 - **1.19.B (PR #163)** — Self-service TOTP 2FA: enrollment, login gate, recovery codes
 - **1.19.C (PR #164)** — Self-registration + email verification: signup flow, verification token, admin approval queue
+- **1.19.D (PR #198, 2026-07-04)** — Per-username account lockout: migration 00025 adds `user.failed_login_count` + `user.lockout_until` + partial index + `auth.unlock` capability. Race-safe atomic UPDATE-with-CASE. Anti-enumeration invariant: locked path runs bcrypt against dummy password so response timing matches wrong-password 401. Composes with existing per-IP + per-username rate limits (429 for rate, 401 for lockout). Admin unlock via `POST /admin/users/{ref}/unlock-account` with `auth.unlock` capability. IP-subnet-hash audit (HMAC-SHA256 salted with ScrambleKey; /24 IPv4, /56 IPv6). Federation-safe: per-instance state. Closes issue #171.
 
 What this means operationally: AA can now accept a public user without admin handholding. Operator stands up the instance, configures SMTP, opens registration → users sign up, verify their email, optionally enrol 2FA, and use the instance. The RS-gap audit's S-tier blocker arc closes here.
 
@@ -125,7 +126,7 @@ All four subsystems expose `/admin/{subsystem}/health` per the generic shim from
 - **Not an SSO replacement.** SSO / SAML / OAuth config UI exists today as a stub; real enforcement is a separate arc per ADR 0041 (Identity provider registry + enterprise gates).
 - **Not bulk-admin-broadcast email.** Listed on the gap-audit A-tier; separate follow-up.
 - **Not email digest preferences** (immediate / hourly / daily / off). Listed on the gap-audit A-tier; the substrate makes it cheap when it lands.
-- **Not per-username account lockout.** Deferred from the original 1.19.B brief; tracked as a follow-up.
+- ~~**Not per-username account lockout.**~~ SHIPPED via 1.19.D (PR #198, 2026-07-04). Closes original 1.19.B deferral. See Status section above.
 - **Not SMS or email-OTP 2FA fallback.** TOTP only in v1.
 
 ## Consequences

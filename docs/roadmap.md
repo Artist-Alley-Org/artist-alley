@@ -166,18 +166,41 @@ current focus:
   embedded thumbs CR2/NEF/ARW/DNG + PDF page count + title/author),
   1.18.A-4 (video thumbnail at configurable timecode).
 
-- **Account lifecycle** (Phase 1.19 — shipped 2026-06-23 → 2026-06-25).
-  AA can now accept a public user without admin handholding. Four
-  PRs landed: email substrate with SMTP-at-rest + template library +
-  test-mode capture (1.19.A-1, PR #161); admin impersonation with
-  capability-intersected effective caps + always-visible banner +
-  audit recording both actor IDs (1.19.A-2, PR #162); self-service
-  TOTP 2FA with enrollment + login gate + recovery codes (1.19.B,
-  PR #163); self-registration + email verification + admin approval
-  queue with email-enumeration-safe responses (1.19.C, PR #164).
-  See ADR 0054. **Per-username account lockout** remains as a
-  follow-up (deferred from the original 1.19.B brief in favour of
-  2FA). No SMS / no email-OTP fallback in v1 — TOTP only.
+- **Account lifecycle** (Phase 1.19 — arc COMPLETE 2026-06-23 →
+  2026-07-04). AA can now accept a public user without admin
+  handholding, with auth hardening against username enumeration.
+  Five PRs landed:
+  - **1.19.A-1** (PR #161): email substrate with SMTP-at-rest +
+    template library + test-mode capture
+  - **1.19.A-2** (PR #162): admin impersonation with
+    capability-intersected effective caps + always-visible banner
+    + audit recording both actor IDs
+  - **1.19.B** (PR #163): self-service TOTP 2FA with enrollment +
+    login gate + recovery codes
+  - **1.19.C** (PR #164): self-registration + email verification +
+    admin approval queue with email-enumeration-safe responses
+  - **1.19.D** (PR #198): per-username account lockout — closes
+    the original 1.19.B deferral. Migration 00025 adds
+    `user.failed_login_count` + `user.lockout_until` + `auth.unlock`
+    capability. Race-safe atomic UPDATE-with-CASE (N=10-goroutine
+    test verifies exactly-threshold-many increments before
+    lockout). Anti-enumeration invariant proven: locked path runs
+    bcrypt against dummy password so response timing matches
+    wrong-password; 401 shape identical. Composes with existing
+    per-IP + per-username rate limits (429 for rate, 401 for
+    lockout — distinct failure modes protect against different
+    threats). Admin unlock via `POST /admin/users/{ref}/unlock-account`
+    with `auth.unlock` capability. IP-subnet-hash audit
+    (HMAC-SHA256 salted with ScrambleKey; /24 IPv4, /56 IPv6) —
+    threat class without per-request IP log. Federation-safe:
+    per-instance state, never federates. Closes issue #171.
+  See ADR 0054. No SMS / no email-OTP fallback in v1 — TOTP only.
+  Follow-ups explicitly declined per 1.19.D handoff: per-team
+  lockout policies (global sysconfig sufficient), password-change
+  auto-clear (threat-model gap), email notification on lockout
+  (anti-enumeration), bulk unlock UI (rare action), CAPTCHA
+  integration (separate arc), full per-request IP audit log
+  (subnet hash is intentional).
 
 - **IIIF interoperability** (Phase 1.54 — arc shipped 2026-06-25 →
   2026-07-03). See ADR 0053.
