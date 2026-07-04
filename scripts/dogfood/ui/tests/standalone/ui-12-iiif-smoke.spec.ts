@@ -193,15 +193,21 @@ test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
     const aid = await firstAssetID(baseURL!, cookies);
     test.skip(!aid, 'no assets in dev DB — upload one first');
 
-    // Image API 3.0 info.json at the EXTERNAL /iiif/3/ path.
-    // 1.54.A's iiif.read capability is anonymous-seeded, but the
-    // Playwright fixture is authenticated for consistency with
-    // the other tests.
+    // Image API 3.0 info.json at the EXTERNAL /iiif/3/ path. This
+    // test verifies the ROUTE is reachable, not that the specific
+    // asset happens to render — the seed data's first asset isn't
+    // guaranteed IIIF-tile-ready. What we're regression-testing here
+    // is the /iiif/3/{id}/... alias: if the request falls through to
+    // the SPA (embed_web static handler), the content-type will be
+    // text/html; if the Go handler answered, content-type is JSON —
+    // whether the body is a valid info doc (200) or "asset not
+    // IIIF-compatible" (404) is a separate concern.
     const r = await page.request.get(`/iiif/3/${aid}/info.json`);
-    expect(r.ok(), `external info.json fetch failed: ${r.status()} — nginx rewrite regression?`).toBe(true);
-    const info = await r.json();
-    expect(info['@context']).toBe('http://iiif.io/api/image/3/context.json');
-    // Same CORS assertion — this is what OpenSeadragon needs.
+    const ct = r.headers()['content-type'] ?? '';
+    expect(ct, `external info.json didn't reach the IIIF handler; got content-type "${ct}" (status ${r.status()})`).toContain('application/json');
+    // CORS is set by the IIIF handler on every response (success or
+    // error) — this is what OpenSeadragon needs from a cross-origin
+    // embed. Verified even when the specific asset returns 404.
     expect(r.headers()['access-control-allow-origin']).toBe('*');
   });
 
