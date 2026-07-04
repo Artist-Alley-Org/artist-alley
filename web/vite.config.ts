@@ -18,6 +18,22 @@ export default defineConfig({
         target: process.env.AA_API_PROXY_TARGET ?? 'http://nginx:80',
         changeOrigin: true,
       },
+      // Phase 1.54.C dual-mount also lives at /iiif/{2,3}/* on the
+      // Go app (matches the URL shape 1.54.A + 1.54.B emit via
+      // publicBaseURL(r)). Vite must proxy the alias too, otherwise
+      // third-party viewers loading from the dev origin fall through
+      // to the SPA. Same upstream as /api.
+      //
+      // changeOrigin is DELIBERATELY false here: the IIIF handlers
+      // derive URLs from the request's Host header. changeOrigin=true
+      // would rewrite that to "nginx:80" and Presentation manifests
+      // would then emit `http://nginx/...` URLs — unreachable from
+      // Mirador running in the browser. Preserving Host lets the app
+      // emit `http://localhost:5173/...` which the browser CAN reach.
+      '/iiif': {
+        target: process.env.AA_API_PROXY_TARGET ?? 'http://nginx:80',
+        changeOrigin: false,
+      },
     },
     // HMR through the dev container: bind to all interfaces so the
     // host browser can reach the websocket.
