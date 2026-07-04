@@ -156,4 +156,79 @@ test.describe('UI-12 IIIF Presentation + Content Search smoke', () => {
     await page.goto('/admin/search/dashboard');
     await expect(page.getByRole('heading', { name: /IIIF/i })).toBeVisible();
   });
+
+  // Phase 1.54.C — regressions for the /iiif/{2,3} external URL
+  // alias. Third-party viewers (Mirador, Universal Viewer,
+  // OpenSeadragon embeds) fetch the URLs the handler emits
+  // (publicBaseURL(r) + "/iiif/3/...") which do NOT include the
+  // /api/v1 prefix that the mount point imposes. The nginx
+  // rewrite in infra/nginx/default.conf bridges the gap; these
+  // tests hit the EXTERNAL URL directly to prevent this bug from
+  // silently regressing.
+  //
+  // The internal /api/v1/iiif/3/... tests above still exist as
+  // regression coverage for the internal path.
+
+  test('Presentation manifest reachable at external /iiif/3/ URL', async ({ page, context, baseURL }) => {
+    await loginAsAdminViaUI(page);
+    const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+    const cid = await firstCollectionID(baseURL!, cookies);
+    test.skip(!cid, 'no collections in dev DB — seed one first');
+
+    // Hit the EXTERNAL URL — no /api/v1 prefix. This is what
+    // Mirador embeds actually fetch.
+    const r = await page.request.get(`/iiif/3/collection/${cid}/manifest.json`);
+    expect(r.ok(), `external manifest fetch failed: ${r.status()} — nginx rewrite regression?`).toBe(true);
+    const manifest = await r.json();
+    const ctxField = manifest['@context'];
+    const contexts = Array.isArray(ctxField) ? ctxField : [ctxField];
+    expect(contexts).toContain('http://iiif.io/api/presentation/3/context.json');
+    // CORS is non-negotiable for cross-origin viewers.
+    expect(r.headers()['access-control-allow-origin']).toBe('*');
+  });
+
+  test('Image API info.json reachable at external /iiif/3/ URL', async ({ page, context, baseURL }) => {
+    await loginAsAdminViaUI(page);
+    const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+    const aid = await firstAssetID(baseURL!, cookies);
+    test.skip(!aid, 'no assets in dev DB — upload one first');
+
+    // Image API 3.0 info.json at the EXTERNAL /iiif/3/ path. This
+    // test verifies the ROUTE is reachable, not that the specific
+    // asset happens to render — the seed data's first asset isn't
+    // guaranteed IIIF-tile-ready. What we're regression-testing here
+    // is the /iiif/3/{id}/... alias: if the request falls through to
+    // the SPA (embed_web static handler), the content-type will be
+    // text/html; if the Go handler answered, content-type is JSON —
+    // whether the body is a valid info doc (200) or "asset not
+    // IIIF-compatible" (404) is a separate concern.
+    const r = await page.request.get(`/iiif/3/${aid}/info.json`);
+    const ct = r.headers()['content-type'] ?? '';
+    expect(ct, `external info.json didn't reach the IIIF handler; got content-type "${ct}" (status ${r.status()})`).toContain('application/json');
+    // CORS is set by the IIIF handler on every response (success or
+    // error) — this is what OpenSeadragon needs from a cross-origin
+    // embed. Verified even when the specific asset returns 404.
+    expect(r.headers()['access-control-allow-origin']).toBe('*');
+  });
+
+  test('Image API 2.0 URL redirects with external /iiif/3/ Location', async ({ page, context, baseURL }) => {
+    await loginAsAdminViaUI(page);
+    const cookies = (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+    const aid = await firstAssetID(baseURL!, cookies);
+    test.skip(!aid, 'no assets in dev DB — upload one first');
+
+    // Legacy 2.0 URL at the EXTERNAL /iiif/2/ path. Redirect target
+    // should be the EXTERNAL /iiif/3/... URL (relative Location OK
+    // — browsers resolve against the current origin, which is
+    // exactly right for third-party viewer compatibility).
+    const r = await page.request.get(`/iiif/2/${aid}/info.json`, {
+      maxRedirects: 0,
+    });
+    expect(r.status()).toBe(301);
+    const loc = r.headers()['location'];
+    expect(loc).toContain(`/iiif/3/${aid}/info.json`);
+    // The Location MUST NOT include /api/v1 — that would send the
+    // viewer to the internal-only path.
+    expect(loc).not.toContain('/api/v1/');
+  });
 });
