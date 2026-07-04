@@ -207,13 +207,32 @@ current focus:
     failed CI because `ui-pr.yml` runs embed_web app image
     standalone with no nginx (belt-and-braces: works for both
     standalone and nginx-fronted deployments). Closes issue #188.
-    **IIIF arc code-complete.** Only remaining follow-up is
-    **1.54.D** (#193 Mirador dogfood proof, operator step — high
-    priority; no more IIIF-arc code work until confirmed).
-    Additional follow-ups: **1.54.E** per-page PDF tile routing,
-    **1.54.F** Content Search per-line text extraction (asset_text
-    FTS table), **1.54.G** Custom Provider block sysconfig UI,
-    **1.54.H** Content Search AnnotationCollection pagination.
+  - **1.54.D** (PR #195): Automated Mirador dogfood via Playwright
+    on the self-hosted nightly runner —
+    `scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts`
+    with 3 structural-DOM assertions (Mirador manifest render,
+    metadata sidebar populated, Content Search 2.0 endpoint returns
+    hits) against a seeded mixed-format fixture collection (2 JPEGs
+    + 1 PNG + 1 PDF, one JPEG carrying GPS EXIF for navPlace).
+    Mirador via unpkg.com CDN at nightly-only cadence. Screenshot
+    artifacts retained 30 days for operator post-hoc review (~2 min
+    per merge, down from ~30 min manual dogfood). **Two real
+    1.54.B / 1.54.C bugs surfaced and fixed as unblocking
+    carve-outs**: Canvas missing required `width`/`height` per
+    Presentation 3.0 §5.7 (Mirador crashed on `null.getValue`;
+    default 1200×900 landscape placeholder), and Vite dev proxy
+    didn't cover `/iiif` alongside `/api` (with `changeOrigin: false`
+    so `publicBaseURL(r)` sees original Host). **IIIF arc
+    code-complete.** Issue #193 closes on three consecutive green
+    nightly runs after merge (first green banked from
+    workflow_dispatch on the feature branch; scheduled nightly at
+    07:00 UTC provides the remaining two). Follow-ups filed:
+    **1.54.E** per-page PDF tile routing, **1.54.F** Content Search
+    per-line text extraction (asset_text FTS table), **1.54.G**
+    Custom Provider block sysconfig UI, **1.54.H** Content Search
+    AnnotationCollection pagination, plus two 1.54.D carve-out
+    follow-ups: real image dimensions into `EntityRef.Width/Height`,
+    Vite `changeOrigin: false` regression guard.
 
 - **Edit-safety** (Phase 1.16 — partial; shipped 2026-06-26).
   Optimistic-concurrency edit-safety on `PATCH /assets/{id}` +
