@@ -77,6 +77,8 @@ import (
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/reindex"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualbackfill"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
@@ -197,6 +199,15 @@ type apiServer struct {
 	// path. Populated by newAPIServer's visual-provider bootstrap.
 	visualProvider       visualprovider.Provider
 	visualMaxUploadBytes int64
+	// Phase 1.16.B-3-followup-4 — admin visual-embedding backfill trigger
+	// (closes #200). Store + Handler are always constructed so the
+	// admin surface is discoverable; the trigger endpoint returns 503
+	// when visualProvider is nil (matching the by-image handler's
+	// stub-when-unregistered semantics). Job registration happens
+	// alongside reindex.Job below.
+	visualBackfillStore   *visualbackfill.Store
+	visualBackfillHandler *visualbackfill.Handler
+	visualBackfillCfg     visualBackfillJobConfig
 	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0.
 	// One HealthCounter is fanned out to all three sub-package
 	// Counter surfaces (presentation, content_search, redirect) and
@@ -340,6 +351,20 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		JobSvc: jobSvc,
 		Logger: logger,
 	}
+	// Phase 1.16.B-3-followup-4 — visual-embedding backfill store +
+	// admin handler; Job registered alongside reindex.Job below. The
+	// Provider pointer is populated by the visual-provider bootstrap
+	// block later in this function; the Handler's start endpoint reads
+	// it live so the 503-when-unregistered check reflects boot outcome.
+	s.visualBackfillStore = visualbackfill.NewStore(pool)
+	s.visualBackfillHandler = &visualbackfill.Handler{
+		Store:       s.visualBackfillStore,
+		JobSvc:      jobSvc,
+		Logger:      logger,
+		VisualStore: visualstore.New(pool),
+		// Provider assigned below after the bootstrap block resolves
+		// whether the sidecar is reachable.
+	}
 	// Phase 1.16.B-5 — disk-usage snapshot + admin handler.
 	s.diskUsageCache = searchdiskusage.NewCache(pool, logger)
 	s.diskUsageHandler = &searchdiskusage.Handler{
@@ -351,8 +376,9 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// and returns the four gauge fields the health Notes[]
 	// section renders.
 	s.searchService.Counter().SetGaugeStatsProvider(func() map[string]int64 {
-		snap, _ := s.diskUsageCache.Get(context.Background())
-		return map[string]int64{
+		ctx := context.Background()
+		snap, _ := s.diskUsageCache.Get(ctx)
+		out := map[string]int64{
 			"assets_pending_embedding":     snap.AssetsPendingEmbedding,
 			"asset_embedding_row_count":    snap.AssetEmbeddingRowCount,
 			"asset_embedding_index_bytes":  snap.EmbeddingIndexBytes,
@@ -360,6 +386,30 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			"saved_search_rows":            snap.SavedSearchRows,
 			"search_reindex_history_rows":  snap.SearchReindexHistoryRows,
 		}
+		// Phase 1.16.B-3-followup-4 — visual-embedding backfill
+		// gauges (closes #200). Best-effort: query failures show as
+		// the "-1 = unknown" sentinel so the admin dashboard doesn't
+		// hide the tile when the DB briefly misbehaves.
+		if s.visualBackfillHandler != nil && s.visualBackfillHandler.VisualStore != nil {
+			if n, err := s.visualBackfillHandler.VisualStore.CountVisualEmbeddingBacklog(ctx); err == nil {
+				out["visual_embedding_backlog"] = n
+			} else {
+				out["visual_embedding_backlog"] = -1
+			}
+			if n, err := s.visualBackfillHandler.VisualStore.CountAssetVisualEmbeddings(ctx); err == nil {
+				out["visual_embedding_total"] = n
+			} else {
+				out["visual_embedding_total"] = -1
+			}
+		}
+		if s.visualBackfillStore != nil {
+			if _, err := s.visualBackfillStore.ActiveRun(ctx); err == nil {
+				out["visual_backfill_active"] = 1
+			} else {
+				out["visual_backfill_active"] = 0
+			}
+		}
+		return out
 	})
 	// Phase 1.16.B-5 — admin saved-searches surface. Same Store
 	// + Pool as the user CRUD; distinct auth (system.admin) +
@@ -400,11 +450,23 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				slog.String("err", health.Error))
 		default:
 			s.visualProvider = provider
+			if s.visualBackfillHandler != nil {
+				s.visualBackfillHandler.Provider = provider
+			}
 			logger.LogAttrs(context.Background(), slog.LevelInfo,
 				"search.visual.provider.registered",
 				slog.String("url", searchCfg.Visual.SidecarURL),
 				slog.String("model", health.Model),
 				slog.Int("dim", health.Dim))
+		}
+		// Snapshot the backfill knobs so the Job registration site
+		// downstream has the operator-tuned values. Reading them here
+		// keeps the provider bootstrap block as the single point of
+		// truth for search.visual sysconfig consumption.
+		s.visualBackfillCfg = visualBackfillJobConfig{
+			BatchSize:           int32(searchCfg.Visual.BackfillBatchSize),
+			RateLimitPerSecond:  searchCfg.Visual.BackfillRateLimitPerSecond,
+			TransientRetryCount: int32(searchCfg.Visual.BackfillTransientRetryCount),
 		}
 	}
 
@@ -658,6 +720,26 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 					slog.String("err", err.Error()),
 				)
 			}
+		}
+		// Phase 1.16.B-3-followup-4 — visual-embedding backfill
+		// coordinator. Always registered so a resumed run finishes
+		// even after a boot that lost provider registration mid-flight
+		// (the Handle method fails fast when Provider is nil, marks
+		// the run "failed", and returns a TerminalError). Storage
+		// accessor adapts the storage.Service through the narrow
+		// interface the job needs.
+		if s.visualBackfillStore != nil {
+			jobSvc.Registry.Register(&visualbackfill.Job{
+				Pool:                pool,
+				Store:               s.visualBackfillStore,
+				VisualStore:         visualstore.New(pool),
+				Storage:             visualBackfillStorageAdapter{svc: storageSvc},
+				Provider:            s.visualProvider,
+				Logger:              logger,
+				BatchSize:           s.visualBackfillCfg.BatchSize,
+				RateLimitPerSecond:  s.visualBackfillCfg.RateLimitPerSecond,
+				TransientRetryCount: s.visualBackfillCfg.TransientRetryCount,
+			})
 		}
 	}
 	// Phase 1.18.A-2 follow-up B (commit 3) — admin failures-queue
@@ -1796,6 +1878,34 @@ func (a passwordPolicyAdapter) GetPasswordPolicy(ctx context.Context) (auth.Pass
 		DisallowCommon: cfg.PasswordPolicy.DisallowCommon,
 		MaxAgeDays:     cfg.PasswordPolicy.MaxAgeDays,
 	}, nil
+}
+
+// visualBackfillJobConfig carries the sysconfig-derived Job knobs from
+// the boot-time bootstrap block down to the Job registration site.
+// Kept as a struct on the apiServer so the two code sites read the
+// same shape (Job takes int32 batch size + float64 rps + int32 retry).
+type visualBackfillJobConfig struct {
+	BatchSize           int32
+	RateLimitPerSecond  float64
+	TransientRetryCount int32
+}
+
+// visualBackfillStorageAdapter bridges *storage.Service → the narrow
+// visualbackfill.StorageAccessor interface. Lives here so the job
+// package stays free of a storage import.
+type visualBackfillStorageAdapter struct{ svc *storage.Service }
+
+func (a visualBackfillStorageAdapter) Download(ctx context.Context, hash, variant string) (io.ReadCloser, visualbackfill.StorageObjectInfo, error) {
+	rc, info, err := a.svc.Download(ctx, hash, variant)
+	if err != nil {
+		return nil, visualbackfill.StorageObjectInfo{}, err
+	}
+	out := visualbackfill.StorageObjectInfo{}
+	if info != nil {
+		out.ContentType = info.ContentType
+		out.SizeBytes = info.Size
+	}
+	return rc, out, nil
 }
 
 // --- jobs ------------------------------------------------------------------

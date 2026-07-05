@@ -37,13 +37,25 @@ const KeySearch = "search"
 //     kick off a visual-embed job. Reserved for the follow-up that
 //     wires the async pipeline; the MVP path is admin-triggered
 //     backfill.
+//   - BackfillBatchSize is the rows-per-tick for the admin backfill
+//     coordinator (Phase 1.16.B-3-followup-4). 100 default balances
+//     progress-report granularity against per-tick overhead.
+//   - BackfillRateLimitPerSecond bounds the embed calls per second
+//     across a run so a single backfill doesn't saturate a CPU-only
+//     sidecar. 5 rps default. Set very high to disable.
+//   - BackfillTransientRetryCount is the per-asset retry budget for
+//     transient provider errors (sidecar unreachable). Persistent
+//     errors (decode failure, dim mismatch) don't retry. 1 default.
 type VisualSearchConfig struct {
-	Enabled                    bool   `json:"enabled"`
-	SidecarURL                 string `json:"sidecar_url"`
-	TimeoutMs                  int    `json:"timeout_ms"`
-	MaxUploadBytes             int    `json:"max_upload_bytes"`
-	RateLimitPerUserPerMinute  int    `json:"rate_limit_per_user_per_minute"`
-	AutoEmbedOnUpload          bool   `json:"auto_embed_on_upload"`
+	Enabled                     bool    `json:"enabled"`
+	SidecarURL                  string  `json:"sidecar_url"`
+	TimeoutMs                   int     `json:"timeout_ms"`
+	MaxUploadBytes              int     `json:"max_upload_bytes"`
+	RateLimitPerUserPerMinute   int     `json:"rate_limit_per_user_per_minute"`
+	AutoEmbedOnUpload           bool    `json:"auto_embed_on_upload"`
+	BackfillBatchSize           int     `json:"backfill_batch_size"`
+	BackfillRateLimitPerSecond  float64 `json:"backfill_rate_limit_per_second"`
+	BackfillTransientRetryCount int     `json:"backfill_transient_retry_count"`
 }
 
 // SearchConfig is the payload stored under KeySearch. Extensible;
@@ -56,10 +68,13 @@ type SearchConfig struct {
 // Sensible defaults for VisualSearchConfig. Chosen conservative for
 // public deploys; operators tune per their threat model + hardware.
 const (
-	DefaultVisualSidecarURL         = "http://aa-clip-visual-local:8402"
-	DefaultVisualTimeoutMs          = 5000
-	DefaultVisualMaxUploadBytes     = 10 * 1024 * 1024
-	DefaultVisualRateLimitPerMinute = 20
+	DefaultVisualSidecarURL                 = "http://aa-clip-visual-local:8402"
+	DefaultVisualTimeoutMs                  = 5000
+	DefaultVisualMaxUploadBytes             = 10 * 1024 * 1024
+	DefaultVisualRateLimitPerMinute         = 20
+	DefaultVisualBackfillBatchSize          = 100
+	DefaultVisualBackfillRateLimitPerSecond = 5.0
+	DefaultVisualBackfillTransientRetries   = 1
 )
 
 // GetSearch returns the search config or, if unset, a zero-value
@@ -83,6 +98,15 @@ func (s *Store) GetSearch(ctx context.Context) (SearchConfig, error) {
 	if out.Visual.RateLimitPerUserPerMinute <= 0 {
 		out.Visual.RateLimitPerUserPerMinute = DefaultVisualRateLimitPerMinute
 	}
+	if out.Visual.BackfillBatchSize <= 0 {
+		out.Visual.BackfillBatchSize = DefaultVisualBackfillBatchSize
+	}
+	if out.Visual.BackfillRateLimitPerSecond <= 0 {
+		out.Visual.BackfillRateLimitPerSecond = DefaultVisualBackfillRateLimitPerSecond
+	}
+	if out.Visual.BackfillTransientRetryCount < 0 {
+		out.Visual.BackfillTransientRetryCount = DefaultVisualBackfillTransientRetries
+	}
 	return out, nil
 }
 
@@ -97,6 +121,15 @@ func (s *Store) SetSearch(ctx context.Context, v SearchConfig) error {
 	}
 	if v.Visual.RateLimitPerUserPerMinute < 0 || v.Visual.RateLimitPerUserPerMinute > 10_000 {
 		return fmt.Errorf("sysconfig: visual.rate_limit_per_user_per_minute must be 0..10000, got %d", v.Visual.RateLimitPerUserPerMinute)
+	}
+	if v.Visual.BackfillBatchSize < 0 || v.Visual.BackfillBatchSize > 10_000 {
+		return fmt.Errorf("sysconfig: visual.backfill_batch_size must be 0..10000, got %d", v.Visual.BackfillBatchSize)
+	}
+	if v.Visual.BackfillRateLimitPerSecond < 0 || v.Visual.BackfillRateLimitPerSecond > 10_000 {
+		return fmt.Errorf("sysconfig: visual.backfill_rate_limit_per_second must be 0..10000, got %g", v.Visual.BackfillRateLimitPerSecond)
+	}
+	if v.Visual.BackfillTransientRetryCount < 0 || v.Visual.BackfillTransientRetryCount > 10 {
+		return fmt.Errorf("sysconfig: visual.backfill_transient_retry_count must be 0..10, got %d", v.Visual.BackfillTransientRetryCount)
 	}
 	return s.setKey(ctx, KeySearch, v)
 }

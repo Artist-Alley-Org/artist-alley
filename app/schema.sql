@@ -1916,6 +1916,25 @@ CREATE TABLE public.search_reindex_run (
 
 
 --
+-- Name: search_visual_backfill_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.search_visual_backfill_run (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    scope jsonb DEFAULT '{}'::jsonb NOT NULL,
+    total_estimated bigint,
+    processed bigint DEFAULT 0 NOT NULL,
+    succeeded bigint DEFAULT 0 NOT NULL,
+    failed bigint DEFAULT 0 NOT NULL,
+    started_by_user_ref bigint,
+    last_error text
+);
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2830,6 +2849,14 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.search_reindex_run
     ADD CONSTRAINT search_reindex_run_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: search_visual_backfill_run search_visual_backfill_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_visual_backfill_run
+    ADD CONSTRAINT search_visual_backfill_run_pkey PRIMARY KEY (id);
 
 
 --
@@ -4142,6 +4169,20 @@ CREATE UNIQUE INDEX search_reindex_run_active_uniq ON public.search_reindex_run 
 
 
 --
+-- Name: search_visual_backfill_run_active_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX search_visual_backfill_run_active_uniq ON public.search_visual_backfill_run USING btree ((true)) WHERE ((completed_at IS NULL) AND (cancelled_at IS NULL));
+
+
+--
+-- Name: search_visual_backfill_run_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_visual_backfill_run_started_idx ON public.search_visual_backfill_run USING btree (started_at DESC);
+
+
+--
 -- Name: search_reindex_run_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5028,6 +5069,14 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.search_reindex_run
     ADD CONSTRAINT search_reindex_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref);
+
+
+--
+-- Name: search_visual_backfill_run search_visual_backfill_run_started_by_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_visual_backfill_run
+    ADD CONSTRAINT search_visual_backfill_run_started_by_user_ref_fkey FOREIGN KEY (started_by_user_ref) REFERENCES public."user"(ref);
 
 
 --

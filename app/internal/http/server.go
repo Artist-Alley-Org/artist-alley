@@ -422,6 +422,14 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		if impl.reindexHandler != nil {
 			impl.reindexHandler.Mount(r)
 		}
+		// Phase 1.16.B-3-followup-4 — admin visual-embedding backfill
+		// trigger (closes #200). Same admin-gated Mount shape as
+		// reindex; trigger returns 503 when the visual provider isn't
+		// registered so operators diagnose the sysconfig/sidecar gap
+		// before enqueueing a run that would immediately fail.
+		if impl.visualBackfillHandler != nil {
+			impl.visualBackfillHandler.Mount(r)
+		}
 		if impl.diskUsageHandler != nil {
 			r.Method(http.MethodGet, "/admin/search/disk-usage", impl.diskUsageHandler)
 		}
