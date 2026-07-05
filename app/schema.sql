@@ -719,6 +719,17 @@ CREATE TABLE public.asset_embedding_d768 (
 );
 
 
+CREATE TABLE public.asset_visual_embedding (
+    asset_id uuid NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    model text NOT NULL,
+    checkpoint text NOT NULL,
+    provider text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
 --
 -- Name: asset_field_value; Type: TABLE; Schema: public; Owner: -
 --
