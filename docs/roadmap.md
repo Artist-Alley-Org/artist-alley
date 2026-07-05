@@ -282,8 +282,26 @@ current focus:
     (`pg_trgm`) + weighted-tsvector retrofit + `visibility` package
   - **1.16.B-3** (PR #178): vector search — `similar_to:<uuid>`
     compile + Engine hybrid ranking + `POST /search/by-image`
-    reserved 501 (unblocked when CLIP visual-encoder sidecar ships
-    per issue #183)
+    reserved 501 (unblocked by 1.16.B-3-followup below)
+  - **1.16.B-3-followup** (PR #199, 2026-07-05): CLIP visual
+    encoder sidecar + reverse image search activation.
+    `tools/aa-clip-visual-local/` — Python 3.12 + FastAPI +
+    OpenCLIP ViT-L/14 OpenAI checkpoint (768-dim, ~2 GB fat image
+    with baked checkpoint, Docker Compose profile `visual-search`).
+    Migration 00026 adds `asset_visual_embedding` table with
+    `vector(768)` + HNSW cosine index (m=16, ef_construction=64),
+    **deliberately separate from `asset_embedding_d768`** — two
+    embedding spaces (text via Ollama nomic-embed-text, visual via
+    CLIP ViT-L/14) with zero cross-comparison. `POST /search/by-image`
+    handler flips from 501 stub to 200 when the visual provider
+    is registered; nil-provider preserves 501 byte-for-byte. Sysconfig
+    `search.visual.{enabled,sidecar_url,timeout_ms,max_upload_bytes,rate_limit_per_user_per_minute,auto_embed_on_upload}`.
+    Provider bootstrap probes `/health` at boot; refuses registration
+    on dim mismatch (guards against wrong-model swaps corrupting
+    the vector column). Coarse MVP visibility floor (anon = public
+    only; auth = row-level downstream; consolidation with
+    `visibility.Filter` tracked at #185). Closes issue #183.
+    Follow-ups filed as separate issues (#200–#204 range).
   - **1.16.B-4** (PR #180): saved searches + delta detection +
     email-on-match via the 1.19.A-1 substrate + digest coordinator
   - **1.16.B-5** (PR #182): admin reindex tooling + disk-usage view
