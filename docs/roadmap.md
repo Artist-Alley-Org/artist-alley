@@ -302,6 +302,28 @@ current focus:
     only; auth = row-level downstream; consolidation with
     `visibility.Filter` tracked at #185). Closes issue #183.
     Follow-ups filed as separate issues (#200–#204 range).
+  - **1.16.B-3-followup-4** (PR #205, 2026-07-05): Admin visual-
+    embedding backfill trigger. Migration 00027 adds
+    `search_visual_backfill_run` table with partial UNIQUE INDEX
+    enforcing single-active-run at DB layer (23505 → HTTP 409).
+    New `app/internal/search/vector/visualbackfill/` package
+    (Store + Job + Handler) mirrors 1.16.B-5 reindex shape
+    verbatim minus the `target` column. Coordinator loop with
+    per-batch cancel probe, rate-limited via `golang.org/x/time/rate`,
+    typed transient-vs-permanent error classification (only
+    `ErrSidecarUnreachable` retries; decode/dim-mismatch/missing-
+    hash → failed without abort). Fail-fast 503 when provider
+    unregistered (prevents polluting history table). 3 new sysconfig
+    knobs (`BackfillBatchSize=100`, `BackfillRateLimitPerSecond=5.0`,
+    `BackfillTransientRetryCount=1`); 3 new health gauges
+    (`visual_backfill_active`, `visual_embedding_backlog`,
+    `visual_embedding_total`). Frontend
+    `/admin/search/visual-backfill/+page.svelte` (backlog/coverage/
+    total tiles + Start-503-aware + progress bar + Cancel + recent-
+    runs table) + `/admin/search/dashboard` live Visual search tile
+    replaces pre-followup "By-image (reserved)" placeholder.
+    Reverse-image search now feature-complete on dev.
+    Closes issue #200; partially subsumes #203.
   - **1.16.B-4** (PR #180): saved searches + delta detection +
     email-on-match via the 1.19.A-1 substrate + digest coordinator
   - **1.16.B-5** (PR #182): admin reindex tooling + disk-usage view
