@@ -119,6 +119,14 @@ type Handler struct {
 	// like "embedding subsystem not wired" when nil (only happens
 	// in tests that don't bother wiring it up).
 	similarReader SimilarReader
+
+	// visualEmbedDispatcher is the CLIP-visual-embed fanout seam for
+	// image uploads (Phase 1.16.B-3-followup-2). Same shape as
+	// similarReader: consumer-defined narrow interface + setter
+	// injection to keep the visualembed package out of this file's
+	// import graph. Nil = feature disabled or sidecar unregistered;
+	// silent skip in CreateAsset.
+	visualEmbedDispatcher VisualEmbedDispatcher
 }
 
 // SimilarReader is the narrow surface this package needs from the
@@ -142,6 +150,26 @@ type SimilarNeighbour struct {
 // SetSimilarReader injects the embeddings-side reader for the
 // /assets/{id}/similar endpoint. Boot wire is the only caller.
 func (h *Handler) SetSimilarReader(r SimilarReader) { h.similarReader = r }
+
+// VisualEmbedDispatcher is the narrow surface this package needs from
+// the visualembed package. *visualembed.Dispatcher satisfies it. The
+// interface lives here (consumer-defined) so the assets package
+// doesn't import the visualembed package.
+type VisualEmbedDispatcher interface {
+	Dispatch(ctx context.Context, in VisualEmbedInput)
+}
+
+// VisualEmbedInput mirrors visualembed.DispatchInput as a local type
+// so the interface surface doesn't drag visualembed's public types
+// into this file. The boot-time adapter converts between the two.
+type VisualEmbedInput struct {
+	AssetID       uuid.UUID
+	FileExtension string
+}
+
+// SetVisualEmbedDispatcher injects the visualembed dispatcher for the
+// CreateAsset fanout. Boot wire is the only caller.
+func (h *Handler) SetVisualEmbedDispatcher(d VisualEmbedDispatcher) { h.visualEmbedDispatcher = d }
 
 // NewHandler binds an entity handler to the DB pool and the storage
 // Service it shares with the storage byte handler.
@@ -441,6 +469,20 @@ func (h *Handler) CreateAsset(
 				slog.String("asset_id", newID.String()),
 				slog.String("err", err.Error()),
 			)
+		}
+
+		// Phase 1.16.B-3-followup-2 — fan out a search.visual_embed job
+		// alongside ai.embed so image uploads become searchable via
+		// reverse-image within seconds. Sibling to the backfill trigger
+		// (PR #205) which handles pre-existing assets. Silent skip
+		// when the dispatcher is nil (sidecar not registered) or
+		// when the asset isn't an image; guards live inside Dispatch
+		// so this call site stays uniform with ai.embed.
+		if h.visualEmbedDispatcher != nil {
+			h.visualEmbedDispatcher.Dispatch(ctx, VisualEmbedInput{
+				AssetID:       newID,
+				FileExtension: strDefault(in.FileExtension, ""),
+			})
 		}
 
 		// Phase 1.18.A-2 — fan out a metadata.extract job for

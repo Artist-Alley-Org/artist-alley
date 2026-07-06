@@ -46,6 +46,17 @@ const KeySearch = "search"
 //   - BackfillTransientRetryCount is the per-asset retry budget for
 //     transient provider errors (sidecar unreachable). Persistent
 //     errors (decode failure, dim mismatch) don't retry. 1 default.
+//   - AutoEmbedRateLimitPerSecond bounds the async upload-hook embed
+//     rate (Phase 1.16.B-3-followup-2). Distinct from the backfill
+//     limit because auto-embed is user-facing and higher-priority
+//     than the background sweep. 5.0 default (same starting point
+//     as backfill; operators typically raise this above backfill).
+//   - AutoEmbedRetryCount is the retry budget for the visualembed
+//     job. Passes through to jobs.EnqueueOpts.MaxAttempts as
+//     (1 + retryCount). Default 2 → MaxAttempts=3. Higher than
+//     backfill's default because upload-hook retries are isolated
+//     per-asset — one asset's transient failure shouldn't taint
+//     others.
 type VisualSearchConfig struct {
 	Enabled                     bool    `json:"enabled"`
 	SidecarURL                  string  `json:"sidecar_url"`
@@ -56,6 +67,8 @@ type VisualSearchConfig struct {
 	BackfillBatchSize           int     `json:"backfill_batch_size"`
 	BackfillRateLimitPerSecond  float64 `json:"backfill_rate_limit_per_second"`
 	BackfillTransientRetryCount int     `json:"backfill_transient_retry_count"`
+	AutoEmbedRateLimitPerSecond float64 `json:"auto_embed_rate_limit_per_second"`
+	AutoEmbedRetryCount         int     `json:"auto_embed_retry_count"`
 }
 
 // SearchConfig is the payload stored under KeySearch. Extensible;
@@ -75,6 +88,8 @@ const (
 	DefaultVisualBackfillBatchSize          = 100
 	DefaultVisualBackfillRateLimitPerSecond = 5.0
 	DefaultVisualBackfillTransientRetries   = 1
+	DefaultVisualAutoEmbedRateLimitPerSecond = 5.0
+	DefaultVisualAutoEmbedRetryCount         = 2
 )
 
 // GetSearch returns the search config or, if unset, a zero-value
@@ -107,6 +122,17 @@ func (s *Store) GetSearch(ctx context.Context) (SearchConfig, error) {
 	if out.Visual.BackfillTransientRetryCount < 0 {
 		out.Visual.BackfillTransientRetryCount = DefaultVisualBackfillTransientRetries
 	}
+	if out.Visual.AutoEmbedRateLimitPerSecond <= 0 {
+		out.Visual.AutoEmbedRateLimitPerSecond = DefaultVisualAutoEmbedRateLimitPerSecond
+	}
+	if out.Visual.AutoEmbedRetryCount <= 0 {
+		// <= 0 (not < 0) so fresh installs get the sensible default
+		// without the operator having to write to sysconfig. Operators
+		// who want zero retries are ~always better served by lowering
+		// the rate limit; explicit "fail on first transient" isn't a
+		// documented use case.
+		out.Visual.AutoEmbedRetryCount = DefaultVisualAutoEmbedRetryCount
+	}
 	return out, nil
 }
 
@@ -130,6 +156,19 @@ func (s *Store) SetSearch(ctx context.Context, v SearchConfig) error {
 	}
 	if v.Visual.BackfillTransientRetryCount < 0 || v.Visual.BackfillTransientRetryCount > 10 {
 		return fmt.Errorf("sysconfig: visual.backfill_transient_retry_count must be 0..10, got %d", v.Visual.BackfillTransientRetryCount)
+	}
+	// Auto-embed knobs (Phase 1.16.B-3-followup-2). Range for
+	// AutoEmbedRateLimitPerSecond matches the brief: 0.1..100.0. A
+	// value below 0.1 would starve the pool; above 100 makes the
+	// separate-limit-from-backfill choice moot.
+	if v.Visual.AutoEmbedRateLimitPerSecond < 0 || v.Visual.AutoEmbedRateLimitPerSecond > 100 {
+		return fmt.Errorf("sysconfig: visual.auto_embed_rate_limit_per_second must be 0..100, got %g", v.Visual.AutoEmbedRateLimitPerSecond)
+	}
+	if v.Visual.AutoEmbedRateLimitPerSecond > 0 && v.Visual.AutoEmbedRateLimitPerSecond < 0.1 {
+		return fmt.Errorf("sysconfig: visual.auto_embed_rate_limit_per_second must be 0 (=default) or >=0.1, got %g", v.Visual.AutoEmbedRateLimitPerSecond)
+	}
+	if v.Visual.AutoEmbedRetryCount < 0 || v.Visual.AutoEmbedRetryCount > 5 {
+		return fmt.Errorf("sysconfig: visual.auto_embed_retry_count must be 0..5, got %d", v.Visual.AutoEmbedRetryCount)
 	}
 	return s.setKey(ctx, KeySearch, v)
 }
