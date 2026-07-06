@@ -361,7 +361,7 @@ current focus:
     Migration 00028 adds `search_feedback` table with
     `UNIQUE (user_ref, hit_asset_id, query_hash)` enforcing
     vote-flipping via `ON CONFLICT DO UPDATE` + CHECK constraints
-    (direction ∈ {up,down}, hit_position ≥ 1) + 4 supporting
+    (direction ∈ 'up' or 'down', hit_position ≥ 1) + 4 supporting
     indexes. New `app/internal/search/feedback/` package: SHA-256
     query hash over trim + collapse-whitespace + lowercase
     canonical form (documented as NOT full AST canonicalization —
@@ -395,7 +395,7 @@ current focus:
     /56 IPv6) — 1.19.D lockout path delegates to the shared
     implementation; domain prefix prevents cross-subsystem hash
     collision on rotated salts. 5 new `search.Counter` Result
-    classes (`search_feedback_{up,down,undo,rate_limit,disabled}`)
+    classes (`search_feedback_up`, `_down`, `_undo`, `_rate_limit`, `_disabled`)
     + `AsFeedbackCounter` adapter mirroring the saved-search
     pattern. New `search_feedback_active_voters` gauge (DISTINCT
     user count in aggregation window) on `/admin/search/health`.
@@ -411,10 +411,30 @@ current focus:
     latency window — same reasoning as PR #206); split
     `search.Counter.RecordEvent` vs `RecordLatency` (#209).
     **Closes issue #184.**
-  Follow-ups filed: #185 list-handler `visibility.Filter`
-  retrofit; #186 shared `AdminJobBackfillPage` extraction; #209
-  split `search.Counter` latency window from per-result-class
+  Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
+  #209 split `search.Counter` latency window from per-result-class
   request counter.
+  - **1.16.B-followup** (PR #213, 2026-07-06): `visibility.Filter`
+    retrofit. Scope-trimmed after pre-audit. The follow-up brief
+    described four surfaces duplicating the shared check (list
+    handlers, IIIF gate, by-image floor, feedback PoolVisibility).
+    Pre-audit found ONE genuine duplicate (feedback) plus three
+    surfaces with distinct semantic shapes that would require
+    speculative API additions to unify: IIIF is field-level
+    metadata gating not row-level; by-image uses a `sensitivity`
+    column that `visibility.Filter(EntityAsset)` does not touch;
+    list handlers are sqlc-static queries with no dynamic
+    visibility fragments to consolidate. Shipped the honest scope:
+    new `visibility.CanSee` helper that composes the shared
+    Predicate into an EXISTS-shaped query byte-for-byte matching
+    the pre-retrofit inline SQL feedback used. `feedback.PoolVisibility`
+    swapped to call the helper. Enumeration-safe collapse of
+    `not-visible` and `not-exists` into 403 `hit_not_visible`
+    survives verbatim (all 11 snapshot-test error-body assertions
+    preserved). ADR 0056 §4 updated. Follow-ups filed for the three
+    deferred sub-scopes: sensitivity semantics for by-image; a
+    FieldVisibility API for IIIF; sqlc migration for list handlers.
+    **Closes issue #185.**
   **1.16.B search arc fully closed.**
 
 ## Review tool — the load-bearing UX arc
