@@ -427,9 +427,9 @@ current focus:
     are sqlc-static queries with no dynamic visibility fragments
     to consolidate). Shipped the honest scope: new
     `visibility.CanSee(ctx, pool, entityType, caller, id)` helper
-    that generates `SELECT EXISTS (SELECT 1 FROM <table> WHERE
-    id = $1 <predicate>)` — byte-for-byte match with the pre-
-    retrofit inline SQL feedback used. `feedback.PoolVisibility`
+    that generates a `SELECT EXISTS (SELECT 1 FROM ... WHERE id = $1 ...)`
+    query composing the shared `Predicate.ToSQL(alias)` fragment —
+    byte-for-byte match with the pre-retrofit inline SQL feedback used. `feedback.PoolVisibility`
     swapped to call the helper (all 11 snapshot-test error-body
     assertions preserved). Enumeration-safe collapse
     ("not-visible" + "not-exists" both return 403 `hit_not_visible`)
