@@ -322,8 +322,34 @@ current focus:
     total tiles + Start-503-aware + progress bar + Cancel + recent-
     runs table) + `/admin/search/dashboard` live Visual search tile
     replaces pre-followup "By-image (reserved)" placeholder.
-    Reverse-image search now feature-complete on dev.
     Closes issue #200; partially subsumes #203.
+  - **1.16.B-3-followup-2** (PR #206, 2026-07-06): Async
+    visualembed upload-hook job. New
+    `app/internal/search/vector/visualembed/` package with
+    atomic-based Counter (6 keys: success / transient_failed /
+    permanent_failed / rate_limited_wait / skipped / pending),
+    `JobTypeVisualEmbed` handler that delegates retry entirely to
+    the jobs framework (`*jobs.TerminalError` for permanent, plain
+    error for transient — mirrors 1.14.B `ai.embed` shape verbatim
+    rather than in-handler retry loop, per pre-audit Q3), and
+    `Dispatcher` with guard chain (provider registered → sysconfig
+    auto_embed enabled → asset extension is image → Jobs) called
+    immediately after the `ai.embed` enqueue in the CreateAsset
+    fanout. 2 new sysconfig knobs (`AutoEmbedRateLimitPerSecond=5.0`,
+    `AutoEmbedRetryCount=2`). Process-shared rate limiter with 5s
+    wait timeout — bulk uploads queue-and-smooth rather than
+    fail-then-retry; rate-limit-wait time metered as its own
+    counter key. Dedicated counter avoids ballooning search-query
+    p95/p99 (embed durations 100–500ms would swamp shared
+    percentile window). Deterministic idempotency key
+    (`search.visual_embed|<asset_id>`) prevents federation-replay
+    or upload-retry double-enqueue. Silent skip on guard failure
+    (non-image uploads are common in mixed corpora — skip counter
+    surfaces volume without log flood). Runtime-toggleable via
+    sysconfig (no restart). Deferred: dedicated duration histogram
+    (#207). **Reverse-image search coverage now complete —
+    existing corpus via backfill, new uploads via auto-embed.**
+    Closes issue #201; #183 arc fully wrapped.
   - **1.16.B-4** (PR #180): saved searches + delta detection +
     email-on-match via the 1.19.A-1 substrate + digest coordinator
   - **1.16.B-5** (PR #182): admin reindex tooling + disk-usage view
