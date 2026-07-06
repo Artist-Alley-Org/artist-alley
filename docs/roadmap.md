@@ -356,9 +356,66 @@ current focus:
     + saved-search admin + full `/admin/search/dashboard` +
     federation-inbox embed hook (out-of-tree). Issue #168 closed;
     ADR 0056 accepted.
-  Follow-ups filed: #183 CLIP visual-encoder sidecar; #184
-  search-result feedback loop; #185 list-handler `visibility.Filter`
-  retrofit; #186 shared `AdminJobBackfillPage` extraction.
+  - **1.16.B-5-followup** (PR #208, 2026-07-06): Search feedback
+    loop — thumbs up/down on results + admin aggregation.
+    Migration 00028 adds `search_feedback` table with
+    `UNIQUE (user_ref, hit_asset_id, query_hash)` enforcing
+    vote-flipping via `ON CONFLICT DO UPDATE` + CHECK constraints
+    (direction ∈ {up,down}, hit_position ≥ 1) + 4 supporting
+    indexes. New `app/internal/search/feedback/` package: SHA-256
+    query hash over trim + collapse-whitespace + lowercase
+    canonical form (documented as NOT full AST canonicalization —
+    `cat AND dog` still distinct from `dog AND cat`); hand-written
+    SQL store matching reindex/visualbackfill/visualembed pattern;
+    disabled → visibility → rate-limit → upsert gate chain;
+    `PoolVisibility` (exists + non-deleted; enumeration-safe
+    conflation with `hit_not_visible` — attacker can't probe UUIDs
+    via feedback). `POST /search/feedback` + `DELETE /search/feedback/{id}`
+    require authenticated user (401 anonymous); rate-limited via
+    `SELECT COUNT(*) WHERE user_ref = $1 AND feedback_at > NOW() -
+    INTERVAL '24 hours'` — undo (DELETE) refunds the token
+    naturally by lowering the count; no separate refund
+    bookkeeping; survives restarts. `GET /admin/search/feedback`
+    anonymized aggregation (top down-voted queries + under-ranked
+    hits; both use `latest_dsl` CTE for display-form DSL per
+    `query_hash`). `GET /admin/search/feedback/audit/{user_ref}`
+    per-user abuse-review log; access fires
+    `admin.search.feedback.audit_viewed` audit event recording
+    both actor + subject. Anonymized-by-default aggregation
+    (per-user log is behind a distinct URL that requires typing
+    ref explicitly AND fires audit). Frontend
+    `ThumbButtons.svelte` with optimistic UI (updates locally,
+    POSTs in background, reverts on error) + 300ms debounce +
+    5s undo-toast firing DELETE + a11y (`aria-pressed`, labels) +
+    hides entirely when unauthenticated. 3 sysconfig knobs
+    (`Enabled *bool` pointer semantic so fresh installs default
+    true, `MaxPerUserPerDay=60`, `AggregationWindowDays=7`),
+    range-validated. `auth.IPSubnetHash` exported with a `domain`
+    argument (HMAC-SHA256 salted with ScrambleKey; /24 IPv4,
+    /56 IPv6) — 1.19.D lockout path delegates to the shared
+    implementation; domain prefix prevents cross-subsystem hash
+    collision on rotated salts. 5 new `search.Counter` Result
+    classes (`search_feedback_{up,down,undo,rate_limit,disabled}`)
+    + `AsFeedbackCounter` adapter mirroring the saved-search
+    pattern. New `search_feedback_active_voters` gauge (DISTINCT
+    user count in aggregation window) on `/admin/search/health`.
+    New Feedback tile on `/admin/search/dashboard` groups the 5
+    Result classes + active_voters gauge; nav link. Query cache
+    NOT invalidated on feedback events (load-bearing decision —
+    feedback is out-of-band signal, results stay stable for the
+    60s cache TTL). Per-instance state — never federates. Runtime-
+    toggleable via sysconfig (no restart). Signal for future ADR
+    0055 pg_search revisit — structured data on 'which queries
+    surface bad results' instead of vibes. Deferred: dedicated
+    duration histogram (would pollute the shared search.Counter
+    latency window — same reasoning as PR #206); split
+    `search.Counter.RecordEvent` vs `RecordLatency` (#209).
+    **Closes issue #184.**
+  Follow-ups filed: #185 list-handler `visibility.Filter`
+  retrofit; #186 shared `AdminJobBackfillPage` extraction; #209
+  split `search.Counter` latency window from per-result-class
+  request counter.
+  **1.16.B search arc fully closed.**
 
 ## Review tool — the load-bearing UX arc
 

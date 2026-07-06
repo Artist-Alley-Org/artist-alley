@@ -24,9 +24,9 @@ excerpt: >-
   Locks the architecture of the 1.16.B search arc: unified /search endpoint over Postgres tsvector with field weighting, DSL parser with strict whitelist, cross-package visibility.Filter, pgvector hybrid ranking, LISTEN/NOTIFY cache invalidation, saved-searches with delta detection, and admin reindex + observability surface. Ships end-to-end via PRs #174 → #182.
 ---
 
-## Status (2026-07-02)
+## Status (updated 2026-07-06)
 
-**Accepted.** Search arc 1.16.B-1 through 1.16.B-5 shipped end-to-end via PRs #174, #176, #178, #180, #182 (dev head `b393eff2`). Issue #168 closed. This ADR captures the load-bearing architectural decisions the arc locked so future arcs (feedback loop, saved-search team-sharing, cross-instance search, ranking-engine swap per ADR 0055) build against a documented foundation instead of reverse-engineering the code.
+**Accepted.** Search arc 1.16.B-1 through 1.16.B-5 shipped end-to-end via PRs #174, #176, #178, #180, #182 (dev head `b393eff2`). Issue #168 closed. Followups then extended the arc: reverse-image search coverage (1.16.B-3-followup via PR #199 + 1.16.B-3-followup-4 via PR #205 + 1.16.B-3-followup-2 via PR #206) and the search feedback loop (1.16.B-5-followup via PR #208 on 2026-07-06, closing #184). **Arc fully closed — all 5 sub-phases plus 3 followups shipped.** This ADR captures the load-bearing architectural decisions the arc locked so future arcs (saved-search team-sharing, cross-instance search, ranking-engine swap per ADR 0055, learned-ranking layer consuming feedback signal) build against a documented foundation instead of reverse-engineering the code.
 
 ## Context
 
@@ -101,6 +101,19 @@ The 1.16.B search architecture is:
 - Postgres LISTEN/NOTIFY broadcast on channel `search_cache_invalidate` with payload `{scope: "all"|"query"|"facet"|"suggestion"|"vector"}` — coarse invalidation strategy; matches TTL cadence; federation-ready (peer writes broadcast to their own instance's cache only, not cross-peer).
 - Cache-key floors: `user_id` in every cache key (user A's cached result NEVER served to user B); `SimilarityHintID` in vector cache-key (avoids cross-query pollution).
 
+### 8.5. Search feedback loop — ranking-quality signal (B-5-followup, PR #208)
+
+- `search_feedback` table (migration 00028) records thumbs up/down on individual search-result cards: `(id, query_hash, dsl_query, hit_asset_id, hit_position, direction, user_ref, ip_hash, feedback_at)` with `UNIQUE (user_ref, hit_asset_id, query_hash)` enforcing vote-flipping via `ON CONFLICT DO UPDATE`.
+- Query hash: SHA-256 over trim + collapse-whitespace + lowercase canonical form. **NOT full AST canonicalization** — `cat AND dog` and `dog AND cat` produce distinct hashes. Sufficient for MVP grouping; upgrade path is a canonicalizing DSL formatter.
+- Rate limit: 60 votes / user / 24h via `SELECT COUNT(*) WHERE user_ref = $1 AND feedback_at > NOW() - INTERVAL '24 hours'`. Undo (DELETE) refunds the token naturally by lowering the count — no separate refund bookkeeping; survives restarts. Soft cap (not hard security); admin abuse-review page handles sophisticated cases.
+- **Enumeration-safe visibility floor.** `PoolVisibility` predicate (asset exists + non-deleted) checked before upsert. Both `not-visible` and `not-exists` collapse to 403 `hit_not_visible` — attacker can't probe UUID existence via feedback submits. Reuses the same shape the search engine's `EntityAsset` visibility uses (consolidation with `visibility.Filter` tracked at #185).
+- **Anonymized-by-default aggregation.** `GET /admin/search/feedback` shows top down-voted queries + under-ranked hits (both use `latest_dsl` CTE for display-form DSL per `query_hash`); never exposes user_ref. Per-user log at `GET /admin/search/feedback/audit/{user_ref}` requires typing a ref explicitly AND fires an `admin.search.feedback.audit_viewed` audit event.
+- **Query cache NOT invalidated on feedback events.** Deliberate: feedback is out-of-band ranking-quality signal, not a real-time input to ranking. Results stay stable for the 60s cache TTL regardless of vote activity.
+- Per-instance state — never federates. No `origin_server_id`, no outbox event. Cross-peer aggregation would require federation-safe user identity across peers + a cross-instance query surface, both out of scope.
+- Runtime-toggleable via sysconfig `search.feedback.enabled` (pointer-bool for fresh-install-defaults-true semantic); reads per-request; toggling takes effect on the next request.
+- Shared infrastructure additions: `auth.IPSubnetHash` exported with a `domain` argument (1.19.D lockout path delegates; domain prefix prevents cross-subsystem hash collision on rotated salts). Five new `search.Counter` Result classes (`search_feedback_{up,down,undo,rate_limit,disabled}`) + `AsFeedbackCounter` adapter mirroring the saved-search pattern. `search_feedback_active_voters` gauge (DISTINCT user count in aggregation window) on `/admin/search/health`. New Feedback tile on `/admin/search/dashboard`.
+- **Signal payoff.** With #208 shipped, the arc has structured data on ranking quality — 'which queries surface bad results,' 'which relevant hits are getting buried' — instead of vibes-based feedback. This is one of the named revisit triggers for ADR 0055 (pg_search research-record). Also positions AA to consume the signal via a future learned-ranking layer without touching the collection surface.
+
 ### 9. Admin observability + reindex tooling — arc close (B-5)
 
 - Reindex controls: scope picker (`all` / `asset_type:<t>` / `collection:<id>` / `field:<f>` / `embedding_model:<m>`) + target (`tsvector` / `embedding` / `both`); one active run at a time; cancellable between batches; history via `search_reindex_run` table (migration 00024).
@@ -171,4 +184,4 @@ The 1.16.B search architecture is:
 - Phase 1.14.B — CLIP embeddings + pgvector foundation
 - Phase 1.19.A-1 — Email substrate (saved-search notifications ride this)
 - RS-gap audit 2026-06-22 — original P0 findings for faceted search + saved searches
-- Follow-up issues: #183 (CLIP visual encoder), #184 (feedback loop), #185 (visibility retrofit), #186 (AdminJobBackfillPage)
+- Follow-up issues: #183 (CLIP visual encoder — SHIPPED PR #199), #184 (feedback loop — SHIPPED PR #208), #185 (visibility retrofit), #186 (AdminJobBackfillPage), #209 (split `search.Counter` latency window from per-result-class request counter — cheap refactor)
