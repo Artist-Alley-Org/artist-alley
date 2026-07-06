@@ -20,6 +20,13 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   plugins: [svelte()],
   resolve: {
+    // Svelte 5 ships separate server + browser exports; Testing
+    // Library needs the browser entry (mount / lifecycle hooks live
+    // there). Without this, `render()` throws
+    // "lifecycle_function_unavailable: mount(...) is not available
+    // on the server". Safe for pure-logic tests too — the browser
+    // entry re-exports the same helpers pure-logic imports use.
+    conditions: ['browser'],
     alias: {
       // Mirror svelte.config.js + svelte-kit's generated aliases so
       // imports like `$lib/...` in tests resolve the same way they do

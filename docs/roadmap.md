@@ -432,13 +432,47 @@ current focus:
     deferred sub-scopes: sensitivity semantics for by-image (#210);
     a FieldVisibility API for IIIF (#211); sqlc migration for list
     handlers (#212). **Closes issue #185.**
-  Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
-  #209 split `search.Counter` latency window from per-result-class
-  request counter; #210 sensitivity semantics for
-  `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API for
-  IIIF metadata gating; #212 sqlc migration path for list handlers;
-  #214 MDX braced-identifier CI gate on docs PRs.
-  **1.16.B search arc fully closed** — 5 sub-phases plus 4
+  Follow-ups filed: #209 split `search.Counter` latency window
+  from per-result-class request counter; #210 sensitivity semantics
+  for `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API
+  for IIIF metadata gating; #212 sqlc migration path for list
+  handlers; #214 MDX braced-identifier CI gate on docs PRs.
+  - **1.16.B-followup-2** (PR #215, 2026-07-06): shared
+    `AdminBackfillPanel.svelte` extraction — closes #186. Pure
+    frontend refactor consolidating three admin backfill surfaces
+    that shipped their UX shell independently across PRs #160
+    (metadata extraction), #182 (search reindex), and #205
+    (visual-embedding backfill). Component lives at
+    `web/src/lib/components/admin/AdminBackfillPanel.svelte`,
+    props-driven and API-agnostic — parents own fetch, component
+    consumes `onStart` / `onRefresh` / `onCancel` callbacks. Every
+    subsystem divergence expressed via Svelte 5 snippets or optional
+    props (no `if page === X` branches inside): `controls` snippet
+    for the per-subsystem form (metadata: asset-type + file-ext +
+    include-non-image; reindex: scope + target picker; visual: none);
+    `gauges` snippet for the backlog/embedded/coverage tiles
+    (visual only today); `extraColumnHeaders` + `extraRowCells`
+    snippets for extra columns before Processed (metadata: Scope;
+    reindex: Scope + Target); `extraColumnHeadersAfterFailed` +
+    `extraRowCellsAfterFailed` for extras after Failed (visual:
+    Progress); `startDisabledReason` prop generalises visual's
+    503-when-sidecar-not-registered gate; `disableStartWhenActive`
+    prop lets metadata queue runs while another is active (per its
+    existing behaviour). Vitest snapshot suite committed FIRST as
+    16-cell compliance baseline (subsystem × state matrix + 503
+    gate), running green on every subsequent commit. Vitest
+    semantic unit tests cover Start-disabled tooltip, Cancel
+    callback + confirm gate, empty-state colspan math across snippet
+    counts, status-badge classification for running/done/failed/
+    cancelled. Live Playwright smoke on all three admin pages
+    confirmed identical column headers + button labels + gauge
+    values pre/post-refactor. Vitest config extended with
+    `resolve.conditions: ['browser']` so Svelte 5 + Testing Library
+    components can render (previously only pure `.svelte.ts` helper
+    tests existed; this is the first component-render test path).
+    Zero backend / API / sysconfig / migration changes.
+    **Closes issue #186.**
+  **1.16.B search arc fully closed** — 5 sub-phases plus 5
   followups shipped end-to-end.
 
 ## Review tool — the load-bearing UX arc
