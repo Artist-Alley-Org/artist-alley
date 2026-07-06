@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/time/rate"
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
@@ -78,6 +79,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/reindex"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualbackfill"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
@@ -208,6 +210,16 @@ type apiServer struct {
 	visualBackfillStore   *visualbackfill.Store
 	visualBackfillHandler *visualbackfill.Handler
 	visualBackfillCfg     visualBackfillJobConfig
+	// Phase 1.16.B-3-followup-2 — async upload-hook visual-embed
+	// (closes #201). Sibling to the backfill trigger above:
+	// backfill handles pre-existing assets, this handles new
+	// uploads. Counter is process-shared so the /admin/search/health
+	// gauge accessor + the Job's Handle both write to the same
+	// atomic surface. Job registered alongside backfill.Job below.
+	visualEmbedCounter    *visualembed.Counter
+	visualEmbedDispatcher *visualembed.Dispatcher
+	visualEmbedJob        *visualembed.Job
+	visualEmbedCfg        visualEmbedJobConfig
 	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0.
 	// One HealthCounter is fanned out to all three sub-package
 	// Counter surfaces (presentation, content_search, redirect) and
@@ -365,6 +377,39 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// Provider assigned below after the bootstrap block resolves
 		// whether the sidecar is reachable.
 	}
+	// Phase 1.16.B-3-followup-2 — visualembed Counter + Dispatcher +
+	// Job constructed always (nil-safe on Provider) so the /admin/
+	// search/health gauge surface + upload-path seam are wired
+	// regardless of whether the sidecar registers at boot. Provider
+	// + RateLimiter + MaxAttempts fields are assigned inside the
+	// provider-bootstrap block below.
+	s.visualEmbedCounter = visualembed.NewCounter()
+	s.visualEmbedDispatcher = &visualembed.Dispatcher{
+		Jobs:    jobSvc,
+		Logger:  logger,
+		Counter: s.visualEmbedCounter,
+		EnabledGetter: func(ctx context.Context) (bool, error) {
+			cfg, err := sysCfg.GetSearch(ctx)
+			if err != nil {
+				return false, err
+			}
+			return cfg.Visual.Enabled && cfg.Visual.AutoEmbedOnUpload, nil
+		},
+	}
+	s.visualEmbedJob = &visualembed.Job{
+		Assets:      visualEmbedAssetAdapter{pool: pool},
+		VisualStore: visualstore.New(pool),
+		Storage:     visualEmbedStorageAdapter{svc: storageSvc},
+		Logger:      logger,
+		Counter:     s.visualEmbedCounter,
+	}
+	// Inject the dispatcher into the assets handler via the consumer-
+	// defined VisualEmbedDispatcher seam — keeps visualembed out of
+	// the assets package's import graph. Same setter pattern as
+	// SetSimilarReader above.
+	if s.assets != nil {
+		s.assets.SetVisualEmbedDispatcher(visualEmbedDispatcherAdapter{d: s.visualEmbedDispatcher})
+	}
 	// Phase 1.16.B-5 — disk-usage snapshot + admin handler.
 	s.diskUsageCache = searchdiskusage.NewCache(pool, logger)
 	s.diskUsageHandler = &searchdiskusage.Handler{
@@ -407,6 +452,16 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				out["visual_backfill_active"] = 1
 			} else {
 				out["visual_backfill_active"] = 0
+			}
+		}
+		// Phase 1.16.B-3-followup-2 — visualembed counter surface
+		// (closes #201). Six keys: 4 result counters + rate-limit-
+		// wait meter + in-flight gauge. Kept out of the shared
+		// search.Counter latency window so embed durations don't
+		// skew p50/p95/p99 for search queries.
+		if s.visualEmbedCounter != nil {
+			for k, v := range s.visualEmbedCounter.Snapshot() {
+				out[k] = v
 			}
 		}
 		return out
@@ -453,6 +508,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			if s.visualBackfillHandler != nil {
 				s.visualBackfillHandler.Provider = provider
 			}
+			if s.visualEmbedDispatcher != nil {
+				s.visualEmbedDispatcher.Provider = provider
+			}
+			if s.visualEmbedJob != nil {
+				s.visualEmbedJob.Provider = provider
+			}
 			logger.LogAttrs(context.Background(), slog.LevelInfo,
 				"search.visual.provider.registered",
 				slog.String("url", searchCfg.Visual.SidecarURL),
@@ -467,6 +528,21 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 			BatchSize:           int32(searchCfg.Visual.BackfillBatchSize),
 			RateLimitPerSecond:  searchCfg.Visual.BackfillRateLimitPerSecond,
 			TransientRetryCount: int32(searchCfg.Visual.BackfillTransientRetryCount),
+		}
+		// Phase 1.16.B-3-followup-2 — same snapshot pattern for the
+		// visualembed knobs. Rate limiter is process-shared across
+		// every job of this type (single Job struct instance ⇒
+		// single limiter). MaxAttempts passes through as
+		// (1 + retryCount) — jobs framework counts TOTAL attempts.
+		s.visualEmbedCfg = visualEmbedJobConfig{
+			RateLimitPerSecond: searchCfg.Visual.AutoEmbedRateLimitPerSecond,
+			MaxAttempts:        1 + searchCfg.Visual.AutoEmbedRetryCount,
+		}
+		if s.visualEmbedJob != nil {
+			s.visualEmbedJob.RateLimiter = rate.NewLimiter(rate.Limit(s.visualEmbedCfg.RateLimitPerSecond), 1)
+		}
+		if s.visualEmbedDispatcher != nil {
+			s.visualEmbedDispatcher.MaxAttempts = s.visualEmbedCfg.MaxAttempts
 		}
 	}
 
@@ -740,6 +816,15 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				RateLimitPerSecond:  s.visualBackfillCfg.RateLimitPerSecond,
 				TransientRetryCount: s.visualBackfillCfg.TransientRetryCount,
 			})
+		}
+		// Phase 1.16.B-3-followup-2 — async visualembed job. Same
+		// registration pattern as backfill; Job field values were
+		// populated in the provider-bootstrap block above (Provider
+		// + RateLimiter). Nil-safe: if the sidecar isn't registered
+		// the Handle method returns a transient error and the jobs
+		// framework retries until MaxAttempts.
+		if s.visualEmbedJob != nil {
+			jobSvc.Registry.Register(s.visualEmbedJob)
 		}
 	}
 	// Phase 1.18.A-2 follow-up B (commit 3) — admin failures-queue
@@ -1906,6 +1991,77 @@ func (a visualBackfillStorageAdapter) Download(ctx context.Context, hash, varian
 		out.SizeBytes = info.Size
 	}
 	return rc, out, nil
+}
+
+// visualEmbedJobConfig carries the sysconfig-derived visualembed Job
+// knobs from the boot-time bootstrap block down to the Job
+// registration site. Parallel shape to visualBackfillJobConfig above.
+type visualEmbedJobConfig struct {
+	RateLimitPerSecond float64
+	MaxAttempts        int
+}
+
+// visualEmbedStorageAdapter bridges *storage.Service → the narrow
+// visualembed.StorageAccessor interface. Same pattern as
+// visualBackfillStorageAdapter (kept separate so a future protocol
+// divergence between backfill + auto-embed doesn't cross-contaminate).
+type visualEmbedStorageAdapter struct{ svc *storage.Service }
+
+func (a visualEmbedStorageAdapter) Download(ctx context.Context, hash, variant string) (io.ReadCloser, visualembed.StorageObjectInfo, error) {
+	rc, info, err := a.svc.Download(ctx, hash, variant)
+	if err != nil {
+		return nil, visualembed.StorageObjectInfo{}, err
+	}
+	out := visualembed.StorageObjectInfo{}
+	if info != nil {
+		out.ContentType = info.ContentType
+		out.SizeBytes = info.Size
+	}
+	return rc, out, nil
+}
+
+// visualEmbedAssetAdapter bridges the pool → the narrow
+// visualembed.AssetLookup interface. Reads file_hash + has_image +
+// deleted_at with a single SELECT so the job's Handle path adds one
+// row-scan per execution.
+type visualEmbedAssetAdapter struct{ pool *pgxpool.Pool }
+
+func (a visualEmbedAssetAdapter) Get(ctx context.Context, id uuid.UUID) (visualembed.AssetRecord, error) {
+	var (
+		fileHash  *string
+		hasImage  bool
+		deletedAt *time.Time
+	)
+	err := a.pool.QueryRow(ctx, `
+		SELECT file_hash, has_image, deleted_at
+		  FROM assets
+		 WHERE id = $1
+	`, id).Scan(&fileHash, &hasImage, &deletedAt)
+	if err != nil {
+		return visualembed.AssetRecord{}, err
+	}
+	return visualembed.AssetRecord{
+		FileHash: fileHash,
+		HasImage: hasImage,
+		Deleted:  deletedAt != nil,
+	}, nil
+}
+
+// visualEmbedDispatcherAdapter bridges *visualembed.Dispatcher →
+// assets.VisualEmbedDispatcher. The interface + local input type
+// live in assets/handler.go (consumer-defined seam); this adapter
+// converts between the two so the assets package doesn't import
+// visualembed.
+type visualEmbedDispatcherAdapter struct{ d *visualembed.Dispatcher }
+
+func (a visualEmbedDispatcherAdapter) Dispatch(ctx context.Context, in assets.VisualEmbedInput) {
+	if a.d == nil {
+		return
+	}
+	a.d.Dispatch(ctx, visualembed.DispatchInput{
+		AssetID:       in.AssetID,
+		FileExtension: in.FileExtension,
+	})
 }
 
 // --- jobs ------------------------------------------------------------------
