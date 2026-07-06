@@ -411,9 +411,6 @@ current focus:
     latency window — same reasoning as PR #206); split
     `search.Counter.RecordEvent` vs `RecordLatency` (#209).
     **Closes issue #184.**
-  Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
-  #209 split `search.Counter` latency window from per-result-class
-  request counter.
   - **1.16.B-followup** (PR #213, 2026-07-06): `visibility.Filter`
     retrofit. Scope-trimmed after pre-audit. The follow-up brief
     described four surfaces duplicating the shared check (list
@@ -432,10 +429,17 @@ current focus:
     `not-visible` and `not-exists` into 403 `hit_not_visible`
     survives verbatim (all 11 snapshot-test error-body assertions
     preserved). ADR 0056 §4 updated. Follow-ups filed for the three
-    deferred sub-scopes: sensitivity semantics for by-image; a
-    FieldVisibility API for IIIF; sqlc migration for list handlers.
-    **Closes issue #185.**
-  **1.16.B search arc fully closed.**
+    deferred sub-scopes: sensitivity semantics for by-image (#210);
+    a FieldVisibility API for IIIF (#211); sqlc migration for list
+    handlers (#212). **Closes issue #185.**
+  Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
+  #209 split `search.Counter` latency window from per-result-class
+  request counter; #210 sensitivity semantics for
+  `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API for
+  IIIF metadata gating; #212 sqlc migration path for list handlers;
+  #214 MDX braced-identifier CI gate on docs PRs.
+  **1.16.B search arc fully closed** — 5 sub-phases plus 4
+  followups shipped end-to-end.
 
 ## Review tool — the load-bearing UX arc
 
