@@ -806,6 +806,20 @@ type SearchReindexRun struct {
 	LastError        *string
 }
 
+type SearchVisualBackfillRun struct {
+	ID               pgtype.UUID
+	StartedAt        pgtype.Timestamptz
+	CompletedAt      pgtype.Timestamptz
+	CancelledAt      pgtype.Timestamptz
+	Scope            []byte
+	TotalEstimated   *int64
+	Processed        int64
+	Succeeded        int64
+	Failed           int64
+	StartedByUserRef *int64
+	LastError        *string
+}
+
 type Session struct {
 	ID                    pgtype.UUID
 	UserRef               int64

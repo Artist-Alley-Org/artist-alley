@@ -110,6 +110,7 @@
         Live counters + latency + gauges. Polls every 15s.
         <a href="/admin/search/disk-usage" class="text-accent hover:underline">Disk usage →</a>
         <a href="/admin/search/reindex" class="ml-2 text-accent hover:underline">Reindex →</a>
+        <a href="/admin/search/visual-backfill" class="ml-2 text-accent hover:underline">Visual backfill →</a>
         <a href="/admin/saved-searches" class="ml-2 text-accent hover:underline">Saved searches →</a>
       </p>
     </div>
@@ -183,9 +184,9 @@
         </div>
       </section>
 
-      <!-- By-image reservation demand signal -->
+      <!-- Visual search — CLIP visual encoder sidecar + reverse-image -->
       <section class="rounded border border-border bg-surface p-4">
-        <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-fg-muted">By-image (reserved)</h2>
+        <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-fg-muted">Visual search</h2>
         <div class="space-y-1 text-sm">
           {#each Object.entries(grouped.by_image) as [k, v] (k)}
             <div class="flex justify-between text-xs"><span class="text-fg-muted">{k}</span><span class="tabular-nums">{v}</span></div>
@@ -194,9 +195,15 @@
             <div class="text-xs text-fg-muted">No reverse-image attempts yet.</div>
           {/if}
         </div>
-        <p class="mt-3 text-xs text-fg-muted">
-          Demand signal for the CLIP visual encoder sidecar (deferred).
-        </p>
+        <div class="mt-3 border-t border-border pt-2 text-xs text-fg-muted">
+          {#if notes.visual_embedding_total !== undefined}<div>Embedded: {notes.visual_embedding_total}</div>{/if}
+          {#if notes.visual_embedding_backlog !== undefined}<div>Backlog: {notes.visual_embedding_backlog}</div>{/if}
+          {#if notes.visual_backfill_active}<div class="text-info">Backfill running</div>{/if}
+        </div>
+        <a
+          href="/admin/search/visual-backfill"
+          class="mt-3 inline-block rounded border border-border bg-surface px-3 py-1 text-xs hover:border-border-strong"
+        >Open backfill →</a>
       </section>
 
       <!-- Reindex history -->
