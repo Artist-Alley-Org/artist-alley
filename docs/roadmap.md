@@ -414,7 +414,7 @@ current focus:
   Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
   #209 split `search.Counter` latency window from per-result-class
   request counter.
-  - **1.16.B-followup** (PR #TBD, 2026-07-06): `visibility.Filter`
+  - **1.16.B-followup** (PR #213, 2026-07-06): `visibility.Filter`
     retrofit — scope-trimmed after pre-audit. The follow-up brief
     described "four surfaces duplicating the shared check" (list
     handlers, IIIF gate, by-image floor, feedback PoolVisibility).
