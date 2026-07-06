@@ -113,6 +113,16 @@ const (
 	ResultSavedSearchRunError        Result = "saved_search_run_error"
 	ResultSavedSearchDeltaHit        Result = "saved_search_delta_hit"
 	ResultSavedSearchNotificationSent Result = "saved_search_notification_sent"
+	// Phase 1.16.B-5-followup — feedback loop result classes.
+	// Increment per successful Submit/Delete; the shared search
+	// Counter's requests[] map surfaces them alongside the query
+	// result classes so operators can spot feedback traffic mixed
+	// with search traffic on one health JSON.
+	ResultSearchFeedbackUp       Result = "search_feedback_up"
+	ResultSearchFeedbackDown     Result = "search_feedback_down"
+	ResultSearchFeedbackUndo     Result = "search_feedback_undo"
+	ResultSearchFeedbackRateLimit Result = "search_feedback_rate_limit"
+	ResultSearchFeedbackDisabled Result = "search_feedback_disabled"
 )
 
 // Record bumps the request counter for the given result class and

@@ -48,12 +48,14 @@
       vector: {},
       saved_search: {},
       by_image: {},
+      feedback: {},
       other: {},
     };
     for (const [k, v] of Object.entries(byResult)) {
       if (k.startsWith('vector_') || k === 'similar_to_not_embedded') groups.vector[k] = v;
       else if (k.startsWith('saved_search_')) groups.saved_search[k] = v;
       else if (k.startsWith('by_image_')) groups.by_image[k] = v;
+      else if (k.startsWith('search_feedback_')) groups.feedback[k] = v;
       else if (['hit', 'empty', 'error', 'cache_hit', 'cache_miss', 'rate_limited', 'bad_request', 'dsl_parse_error'].includes(k)) groups.engine[k] = v;
       else groups.other[k] = v;
     }
@@ -111,6 +113,7 @@
         <a href="/admin/search/disk-usage" class="text-accent hover:underline">Disk usage →</a>
         <a href="/admin/search/reindex" class="ml-2 text-accent hover:underline">Reindex →</a>
         <a href="/admin/search/visual-backfill" class="ml-2 text-accent hover:underline">Visual backfill →</a>
+        <a href="/admin/search/feedback" class="ml-2 text-accent hover:underline">Feedback →</a>
         <a href="/admin/saved-searches" class="ml-2 text-accent hover:underline">Saved searches →</a>
       </p>
     </div>
@@ -204,6 +207,26 @@
           href="/admin/search/visual-backfill"
           class="mt-3 inline-block rounded border border-border bg-surface px-3 py-1 text-xs hover:border-border-strong"
         >Open backfill →</a>
+      </section>
+
+      <!-- Feedback — thumbs up/down on search results (Phase 1.16.B-5-followup) -->
+      <section class="rounded border border-border bg-surface p-4">
+        <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-fg-muted">Feedback</h2>
+        <div class="space-y-1 text-sm">
+          {#each Object.entries(grouped.feedback) as [k, v] (k)}
+            <div class="flex justify-between text-xs"><span class="text-fg-muted">{k.replace('search_feedback_', '')}</span><span class="tabular-nums">{v}</span></div>
+          {/each}
+          {#if Object.keys(grouped.feedback).length === 0}
+            <div class="text-xs text-fg-muted">No feedback submitted yet.</div>
+          {/if}
+        </div>
+        <div class="mt-3 border-t border-border pt-2 text-xs text-fg-muted">
+          {#if notes.search_feedback_active_voters !== undefined}<div>Active voters (window): {notes.search_feedback_active_voters}</div>{/if}
+        </div>
+        <a
+          href="/admin/search/feedback"
+          class="mt-3 inline-block rounded border border-border bg-surface px-3 py-1 text-xs hover:border-border-strong"
+        >Open feedback →</a>
       </section>
 
       <!-- Reindex history -->

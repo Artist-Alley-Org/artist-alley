@@ -60,6 +60,26 @@ func (h *Handler) lookupUserRefByUsername(ctx context.Context, username string) 
 // can treat as "not configured"). Nil request returns empty. Never
 // panics on malformed IPs — returns empty.
 func ipSubnetHash(req *http.Request, salt string) string {
+	return IPSubnetHashWithDomain(req, salt, "lockout.v1:")
+}
+
+// IPSubnetHash is the shared helper for /24 IPv4 + /56 IPv6 HMAC-
+// SHA256 subnet hashing. Exported so other subsystems that record
+// threat-class-per-request audits (Phase 1.16.B-5-followup's search
+// feedback, and future audit surfaces) can reuse the exact same
+// masking + salt pattern that 1.19.D lockout uses. The `domain`
+// arg is prepended before the subnet bytes so different subsystems
+// produce collision-independent hashes on rotated salts — pass
+// something short-and-versioned like "search.feedback.v1:".
+func IPSubnetHash(req *http.Request, salt, domain string) string {
+	return IPSubnetHashWithDomain(req, salt, domain)
+}
+
+// IPSubnetHashWithDomain is the internal implementation that both
+// exported callers and the package-local ipSubnetHash delegate to.
+// Kept exported (via IPSubnetHash) + wrapped so the internal lockout
+// path can pin its own domain string as a source-of-truth constant.
+func IPSubnetHashWithDomain(req *http.Request, salt, domain string) string {
 	if req == nil || salt == "" {
 		return ""
 	}
@@ -80,13 +100,10 @@ func ipSubnetHash(req *http.Request, salt string) string {
 	}
 	subnet := ip.Mask(mask)
 	mac := hmac.New(sha256.New, []byte(salt))
-	// Prepend a fixed prefix so future changes to the domain (e.g.
-	// hashing a full IP for a per-request audit log) don't collide
-	// with 1.19.D's subnet hashes on rotated salts.
-	mac.Write([]byte("lockout.v1:"))
+	if domain != "" {
+		mac.Write([]byte(domain))
+	}
 	mac.Write(subnet)
-	// Truncate to 22 base64 chars (16 bytes = 128 bits) — cheap
-	// storage, plenty of collision resistance for audit correlation.
 	digest := mac.Sum(nil)[:16]
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(digest), "=")
 }

@@ -1935,6 +1935,25 @@ CREATE TABLE public.search_visual_backfill_run (
 
 
 --
+-- Name: search_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.search_feedback (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    query_hash text NOT NULL,
+    dsl_query text NOT NULL,
+    hit_asset_id uuid NOT NULL,
+    hit_position integer NOT NULL,
+    direction text NOT NULL,
+    user_ref bigint NOT NULL,
+    ip_hash text,
+    feedback_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT search_feedback_direction_check CHECK ((direction = ANY (ARRAY['up'::text, 'down'::text]))),
+    CONSTRAINT search_feedback_hit_position_check CHECK ((hit_position >= 1))
+);
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2841,6 +2860,22 @@ ALTER TABLE ONLY public.saved_search
 
 ALTER TABLE ONLY public.saved_search
     ADD CONSTRAINT saved_search_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: search_feedback search_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_feedback
+    ADD CONSTRAINT search_feedback_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: search_feedback search_feedback_user_ref_hit_asset_query_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_feedback
+    ADD CONSTRAINT search_feedback_user_ref_hit_asset_query_hash_key UNIQUE (user_ref, hit_asset_id, query_hash);
 
 
 --
@@ -4162,6 +4197,34 @@ CREATE INDEX saved_search_owner_idx ON public.saved_search USING btree (owner_us
 
 
 --
+-- Name: search_feedback_feedback_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_feedback_feedback_at_idx ON public.search_feedback USING btree (feedback_at DESC);
+
+
+--
+-- Name: search_feedback_hit_asset_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_feedback_hit_asset_idx ON public.search_feedback USING btree (hit_asset_id);
+
+
+--
+-- Name: search_feedback_query_hash_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_feedback_query_hash_idx ON public.search_feedback USING btree (query_hash);
+
+
+--
+-- Name: search_feedback_user_ref_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX search_feedback_user_ref_at_idx ON public.search_feedback USING btree (user_ref, feedback_at DESC);
+
+
+--
 -- Name: search_reindex_run_active_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5061,6 +5124,22 @@ ALTER TABLE ONLY public.roles
 
 ALTER TABLE ONLY public.saved_search
     ADD CONSTRAINT saved_search_owner_user_ref_fkey FOREIGN KEY (owner_user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
+-- Name: search_feedback search_feedback_hit_asset_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_feedback
+    ADD CONSTRAINT search_feedback_hit_asset_id_fkey FOREIGN KEY (hit_asset_id) REFERENCES public.assets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: search_feedback search_feedback_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.search_feedback
+    ADD CONSTRAINT search_feedback_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
 
 
 --

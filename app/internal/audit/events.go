@@ -105,6 +105,13 @@ const (
 	EventAdminAIConfigUpdated         = "admin.system.ai_config_updated"
 	EventAdminAppearanceConfigUpdated = "admin.system.appearance_config_updated"
 
+	// Phase 1.16.B-5-followup — search feedback abuse-review event.
+	// Fires whenever an admin opens the per-user feedback log page
+	// so we have an audit trail for who's browsing which user's
+	// vote history. Aggregation views (top down-voted queries +
+	// under-ranked hits) don't fire this — they're anonymized.
+	EventAdminSearchFeedbackAuditViewed = "admin.search.feedback.audit_viewed"
+
 	// Phase 1.17.D — user-profile change event. Distinct from
 	// the state-transition events (approve/disable/etc.) because
 	// this is a field-level edit — name / bio / avatar etc. —
@@ -410,6 +417,16 @@ func (r *Recorder) UserStatusChanged(ctx context.Context, req *http.Request, sub
 // without parsing metadata. previous/next carry the typed state
 // strings ("pending" / "active" / etc.) — easier to read in the
 // audit viewer than the raw int values.
+// AdminSearchFeedbackAuditViewed — Phase 1.16.B-5-followup. Admin
+// opened /admin/search/feedback/audit/{user_ref}, i.e. exposed
+// themselves to a specific user's vote log. Not gated on any
+// state-changing action (read-only page) but audit-logged anyway so
+// operators can see who's browsing whom. Anonymized aggregation
+// views do NOT fire this.
+func (r *Recorder) AdminSearchFeedbackAuditViewed(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64) {
+	r.write(ctx, EventAdminSearchFeedbackAuditViewed, &subjectUserRef, &actorUserRef, ctxFromRequest(req), nil)
+}
+
 func (r *Recorder) AdminUserApproved(ctx context.Context, req *http.Request, subjectUserRef, actorUserRef int64, previous, next, reason string) {
 	r.write(ctx, EventAdminUserApproved, &subjectUserRef, &actorUserRef, ctxFromRequest(req), map[string]any{
 		"previous": previous,
