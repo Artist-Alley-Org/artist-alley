@@ -791,6 +791,18 @@ type SavedSearch struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SearchFeedback struct {
+	ID          pgtype.UUID        `json:"id"`
+	QueryHash   string             `json:"query_hash"`
+	DslQuery    string             `json:"dsl_query"`
+	HitAssetID  pgtype.UUID        `json:"hit_asset_id"`
+	HitPosition int32              `json:"hit_position"`
+	Direction   string             `json:"direction"`
+	UserRef     int64              `json:"user_ref"`
+	IpHash      *string            `json:"ip_hash"`
+	FeedbackAt  pgtype.Timestamptz `json:"feedback_at"`
+}
+
 type SearchReindexRun struct {
 	ID               pgtype.UUID        `json:"id"`
 	StartedAt        pgtype.Timestamptz `json:"started_at"`

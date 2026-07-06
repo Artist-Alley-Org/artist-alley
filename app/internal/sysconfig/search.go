@@ -71,11 +71,47 @@ type VisualSearchConfig struct {
 	AutoEmbedRetryCount         int     `json:"auto_embed_retry_count"`
 }
 
+// FeedbackConfig captures the sysconfig-tunable feedback-loop knobs
+// (Phase 1.16.B-5-followup, closes #184).
+//
+// Design decisions:
+//
+//   - Enabled is the master switch, a POINTER so the "operator never
+//     set it" case defaults to on. Nil → default true (feature on).
+//     `false` → operator explicitly disabled (thumb buttons hide,
+//     POST /search/feedback returns 503, admin aggregation returns
+//     empty). `true` → explicit opt-in.
+//   - MaxPerUserPerDay is a soft cap on per-user submissions in a
+//     24-hour rolling window. Backed by a DB COUNT — no in-process
+//     limiter state to drift on restart. 60 default: enough for a
+//     power user to tag a whole browsing session, tight enough that
+//     casual gaming is inconvenient.
+//   - AggregationWindowDays bounds the admin aggregation queries
+//     (top down-voted queries + under-ranked hits). 7 default lines
+//     up with the saved-search digest cadence + is short enough
+//     that trending ranking issues surface quickly.
+type FeedbackConfig struct {
+	Enabled               *bool `json:"enabled,omitempty"`
+	MaxPerUserPerDay      int   `json:"max_per_user_per_day"`
+	AggregationWindowDays int   `json:"aggregation_window_days"`
+}
+
+// FeedbackEnabled returns the effective on/off state honouring the
+// nil-means-default-on semantic. Callers use this instead of reading
+// `.Enabled` directly.
+func (f FeedbackConfig) FeedbackEnabled() bool {
+	if f.Enabled == nil {
+		return DefaultFeedbackEnabled
+	}
+	return *f.Enabled
+}
+
 // SearchConfig is the payload stored under KeySearch. Extensible;
-// new search-arc knobs (feedback loop, cross-modal, etc.) grow this
-// struct in future PRs.
+// new search-arc knobs (cross-modal, etc.) grow this struct in
+// future PRs.
 type SearchConfig struct {
-	Visual VisualSearchConfig `json:"visual"`
+	Visual   VisualSearchConfig `json:"visual"`
+	Feedback FeedbackConfig     `json:"feedback"`
 }
 
 // Sensible defaults for VisualSearchConfig. Chosen conservative for
@@ -90,6 +126,9 @@ const (
 	DefaultVisualBackfillTransientRetries   = 1
 	DefaultVisualAutoEmbedRateLimitPerSecond = 5.0
 	DefaultVisualAutoEmbedRetryCount         = 2
+	DefaultFeedbackEnabled                   = true
+	DefaultFeedbackMaxPerUserPerDay          = 60
+	DefaultFeedbackAggregationWindowDays     = 7
 )
 
 // GetSearch returns the search config or, if unset, a zero-value
@@ -133,6 +172,15 @@ func (s *Store) GetSearch(ctx context.Context) (SearchConfig, error) {
 		// documented use case.
 		out.Visual.AutoEmbedRetryCount = DefaultVisualAutoEmbedRetryCount
 	}
+	// Feedback defaults (Phase 1.16.B-5-followup). Enabled uses a
+	// pointer so the "operator never set it" case defaults to on —
+	// the FeedbackEnabled helper resolves the nil case.
+	if out.Feedback.MaxPerUserPerDay <= 0 {
+		out.Feedback.MaxPerUserPerDay = DefaultFeedbackMaxPerUserPerDay
+	}
+	if out.Feedback.AggregationWindowDays <= 0 {
+		out.Feedback.AggregationWindowDays = DefaultFeedbackAggregationWindowDays
+	}
 	return out, nil
 }
 
@@ -169,6 +217,13 @@ func (s *Store) SetSearch(ctx context.Context, v SearchConfig) error {
 	}
 	if v.Visual.AutoEmbedRetryCount < 0 || v.Visual.AutoEmbedRetryCount > 5 {
 		return fmt.Errorf("sysconfig: visual.auto_embed_retry_count must be 0..5, got %d", v.Visual.AutoEmbedRetryCount)
+	}
+	// Feedback ranges (Phase 1.16.B-5-followup).
+	if v.Feedback.MaxPerUserPerDay < 0 || v.Feedback.MaxPerUserPerDay > 1_000 {
+		return fmt.Errorf("sysconfig: feedback.max_per_user_per_day must be 0..1000, got %d", v.Feedback.MaxPerUserPerDay)
+	}
+	if v.Feedback.AggregationWindowDays < 0 || v.Feedback.AggregationWindowDays > 365 {
+		return fmt.Errorf("sysconfig: feedback.aggregation_window_days must be 0..365, got %d", v.Feedback.AggregationWindowDays)
 	}
 	return s.setKey(ctx, KeySearch, v)
 }

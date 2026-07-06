@@ -791,6 +791,18 @@ type SavedSearch struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type SearchFeedback struct {
+	ID          pgtype.UUID
+	QueryHash   string
+	DslQuery    string
+	HitAssetID  pgtype.UUID
+	HitPosition int32
+	Direction   string
+	UserRef     int64
+	IpHash      *string
+	FeedbackAt  pgtype.Timestamptz
+}
+
 type SearchReindexRun struct {
 	ID               pgtype.UUID
 	StartedAt        pgtype.Timestamptz

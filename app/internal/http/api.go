@@ -77,6 +77,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
+	"github.com/mscrnt/artist-alley/app/internal/search/feedback"
 	"github.com/mscrnt/artist-alley/app/internal/search/reindex"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualbackfill"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
@@ -193,6 +194,15 @@ type apiServer struct {
 	diskUsageCache    *searchdiskusage.Cache
 	diskUsageHandler  *searchdiskusage.Handler
 	savedSearchAdmin  *saved.AdminHandler
+	// Phase 1.16.B-5-followup — search-result feedback loop
+	// (closes #184). Service + user handler + admin handler wired
+	// unconditionally at boot; runtime kill switch honoured via
+	// sysconfig.search.feedback.enabled (checked per-request inside
+	// the Service).
+	feedbackStore   *feedback.Store
+	feedbackService *feedback.Service
+	feedbackHandler *feedback.Handler
+	feedbackAdmin   *feedback.AdminHandler
 	// Phase 1.16.B-3-followup — CLIP visual encoder sidecar activation
 	// (closes #183). Zero-valued visualProvider means the feature is
 	// disabled (sysconfig.search.visual.enabled=false OR sidecar
@@ -363,6 +373,28 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		JobSvc: jobSvc,
 		Logger: logger,
 	}
+	// Phase 1.16.B-5-followup — search feedback loop. Service is
+	// wired against a sysconfig-derived Config each call so the
+	// runtime toggle (search.feedback.enabled) takes effect on the
+	// next request without a restart. Visibility floor uses the same
+	// pool-backed asset lookup the /search handler uses.
+	s.feedbackStore = feedback.NewStore(pool)
+	s.feedbackService = feedback.NewService(
+		s.feedbackStore,
+		feedbackConfigAdapter{store: sysCfg},
+		feedback.PoolVisibility{Pool: pool},
+		s.searchService.Counter().AsFeedbackCounter(),
+	)
+	s.feedbackHandler = &feedback.Handler{
+		Service:     s.feedbackService,
+		Logger:      logger,
+		ScrambleKey: cfg.ScrambleKey,
+	}
+	s.feedbackAdmin = &feedback.AdminHandler{
+		Service: s.feedbackService,
+		Auditor: auditRec,
+		Logger:  logger,
+	}
 	// Phase 1.16.B-3-followup-4 — visual-embedding backfill store +
 	// admin handler; Job registered alongside reindex.Job below. The
 	// Provider pointer is populated by the visual-provider bootstrap
@@ -462,6 +494,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		if s.visualEmbedCounter != nil {
 			for k, v := range s.visualEmbedCounter.Snapshot() {
 				out[k] = v
+			}
+		}
+		// Phase 1.16.B-5-followup — feedback active voter gauge
+		// (closes #184). Read from the feedback service so the
+		// aggregation window (sysconfig-tunable) drives the
+		// denominator. Best-effort: query failure surfaces -1.
+		if s.feedbackService != nil {
+			if n, err := s.feedbackService.ActiveVoters(ctx); err == nil {
+				out["search_feedback_active_voters"] = n
+			} else {
+				out["search_feedback_active_voters"] = -1
 			}
 		}
 		return out
@@ -2044,6 +2087,25 @@ func (a visualEmbedAssetAdapter) Get(ctx context.Context, id uuid.UUID) (visuale
 		FileHash: fileHash,
 		HasImage: hasImage,
 		Deleted:  deletedAt != nil,
+	}, nil
+}
+
+// feedbackConfigAdapter bridges *sysconfig.Store → the narrow
+// feedback.ConfigProvider interface. Reads the search key + hoists
+// the Feedback subsection out with defaults applied by GetSearch.
+// The pointer-Enabled semantic (nil = default on) is resolved via
+// sysconfig.FeedbackConfig.FeedbackEnabled().
+type feedbackConfigAdapter struct{ store *sysconfig.Store }
+
+func (a feedbackConfigAdapter) Get(ctx context.Context) (feedback.Config, error) {
+	cfg, err := a.store.GetSearch(ctx)
+	if err != nil {
+		return feedback.Config{}, err
+	}
+	return feedback.Config{
+		Enabled:               cfg.Feedback.FeedbackEnabled(),
+		MaxPerUserPerDay:      cfg.Feedback.MaxPerUserPerDay,
+		AggregationWindowDays: cfg.Feedback.AggregationWindowDays,
 	}, nil
 }
 

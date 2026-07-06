@@ -10,6 +10,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
+  import ThumbButtons from '$components/search/ThumbButtons.svelte';
 
   type Hit = {
     type: 'asset' | 'collection' | 'post';
@@ -341,7 +342,7 @@
     {/if}
 
     <ul class="space-y-3">
-      {#each hits as h (h.type + ':' + h.id)}
+      {#each hits as h, i (h.type + ':' + h.id)}
         <li class="rounded-md border border-border bg-surface p-3 hover:border-border-strong" data-testid="search-hit">
           <a href={detailHref(h)} class="block">
             <div class="mb-1 flex items-center gap-2">
@@ -356,6 +357,11 @@
               <p class="mt-1 text-sm text-fg-muted">{h.summary}</p>
             {/if}
           </a>
+          {#if h.type === 'asset'}
+            <div class="mt-2 flex justify-end">
+              <ThumbButtons dsl={q} hitAssetId={h.id} hitPosition={i + 1} />
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>

@@ -415,6 +415,13 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 			impl.savedSearchHandler.Mount(r)
 		}
 
+		// Phase 1.16.B-5-followup — search feedback loop (closes #184).
+		// User-facing endpoints inside /api/v1 (authenticated); admin
+		// aggregation + abuse-review mount alongside reindex below.
+		if impl.feedbackHandler != nil {
+			impl.feedbackHandler.Mount(r)
+		}
+
 		// Phase 1.16.B-5 — arc close: reindex + disk-usage +
 		// admin saved-searches surfaces. All admin-cap gated;
 		// mount via handler's Mount (chi routes) or direct route
@@ -429,6 +436,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		// before enqueueing a run that would immediately fail.
 		if impl.visualBackfillHandler != nil {
 			impl.visualBackfillHandler.Mount(r)
+		}
+		// Phase 1.16.B-5-followup — admin feedback surfaces
+		// (aggregation + per-user abuse review). Gated on
+		// "system.admin" inside the handler.
+		if impl.feedbackAdmin != nil {
+			impl.feedbackAdmin.Mount(r)
 		}
 		if impl.diskUsageHandler != nil {
 			r.Method(http.MethodGet, "/admin/search/disk-usage", impl.diskUsageHandler)
