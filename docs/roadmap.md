@@ -411,10 +411,35 @@ current focus:
     latency window — same reasoning as PR #206); split
     `search.Counter.RecordEvent` vs `RecordLatency` (#209).
     **Closes issue #184.**
-  Follow-ups filed: #185 list-handler `visibility.Filter`
-  retrofit; #186 shared `AdminJobBackfillPage` extraction; #209
-  split `search.Counter` latency window from per-result-class
+  Follow-ups filed: #186 shared `AdminJobBackfillPage` extraction;
+  #209 split `search.Counter` latency window from per-result-class
   request counter.
+  - **1.16.B-followup** (PR #TBD, 2026-07-06): `visibility.Filter`
+    retrofit — scope-trimmed after pre-audit. The follow-up brief
+    described "four surfaces duplicating the shared check" (list
+    handlers, IIIF gate, by-image floor, feedback PoolVisibility).
+    Pre-audit found ONE genuine duplicate (feedback) + three
+    surfaces with distinct semantic shapes that would require
+    speculative API additions to unify (IIIF's `isAnonymous` is
+    field-level metadata gating not row-level; by-image's coarse
+    floor uses `sensitivity='public'` — a column
+    `visibility.Filter(EntityAsset)` doesn't touch; list handlers
+    are sqlc-static queries with no dynamic visibility fragments
+    to consolidate). Shipped the honest scope: new
+    `visibility.CanSee(ctx, pool, entityType, caller, id)` helper
+    that generates `SELECT EXISTS (SELECT 1 FROM <table> WHERE
+    id = $1 <predicate>)` — byte-for-byte match with the pre-
+    retrofit inline SQL feedback used. `feedback.PoolVisibility`
+    swapped to call the helper (all 11 snapshot-test error-body
+    assertions preserved). Enumeration-safe collapse
+    ("not-visible" + "not-exists" both return 403 `hit_not_visible`)
+    survives verbatim. ADR 0056 §4 updated with the honest
+    accounting of what shipped + why the other three sub-scopes
+    were deferred rather than force-consolidated. Follow-ups filed
+    for the three deferred: sensitivity semantics in
+    `visibility.Filter(EntityAsset)` for by-image; `FieldVisibility`
+    API for IIIF metadata gating; sqlc migration for list handlers.
+    **Closes issue #185.**
   **1.16.B search arc fully closed.**
 
 ## Review tool — the load-bearing UX arc
