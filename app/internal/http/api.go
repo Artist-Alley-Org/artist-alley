@@ -83,6 +83,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
@@ -230,6 +231,11 @@ type apiServer struct {
 	visualEmbedDispatcher *visualembed.Dispatcher
 	visualEmbedJob        *visualembed.Job
 	visualEmbedCfg        visualEmbedJobConfig
+	// Phase 1.55.C-1 — soft-delete Service (Restore + HardDeletePast
+	// per entity). Exposed on apiServer so the assets/posts/collections
+	// handlers can call Restore directly rather than going through a
+	// second layer. The gc CoordinatorJob is registered against jobSvc.
+	softdeleteSvc *softdelete.Service
 	// Phase 1.54.B — IIIF Presentation API 3.0 + Content Search 2.0.
 	// One HealthCounter is fanned out to all three sub-package
 	// Counter surfaces (presentation, content_search, redirect) and
@@ -822,6 +828,30 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 					slog.String("err", err.Error()),
 				)
 			}
+		}
+
+		// Phase 1.55.C-1 — soft-delete gc coordinator. Nightly pass
+		// hard-deletes rows past sysconfig retention across assets /
+		// posts / collections + users in UserStateArchived. Reads
+		// sysconfig every tick so operator retention changes take
+		// effect on the next pass without a restart. Self-re-enqueues
+		// via EnqueueOpts.ScheduledFor; EnsureScheduled kicks the
+		// initial tick at boot (idempotent via next-tick timestamp key).
+		{
+			sdSvc := softdelete.NewService(pool, auditRec)
+			jobSvc.Registry.Register(&softdelete.CoordinatorJob{
+				Service:   sdSvc,
+				Sysconfig: sysCfg,
+				Jobs:      jobSvc,
+				Logger:    logger,
+			})
+			if err := softdelete.EnsureScheduled(context.Background(), jobSvc, sysCfg); err != nil {
+				logger.LogAttrs(context.Background(), slog.LevelWarn,
+					"softdelete.gc.initial_enqueue_error",
+					slog.String("err", err.Error()),
+				)
+			}
+			s.softdeleteSvc = sdSvc
 		}
 
 		// Phase 1.16.B-5 — reindex coordinator + one-shot boot
