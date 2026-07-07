@@ -432,12 +432,6 @@ current focus:
     deferred sub-scopes: sensitivity semantics for by-image (#210);
     a FieldVisibility API for IIIF (#211); sqlc migration for list
     handlers (#212). **Closes issue #185.**
-  Follow-ups filed: #209 split `search.Counter` latency window
-  from per-result-class request counter; #210 sensitivity semantics
-  for `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API
-  for IIIF metadata gating; #212 sqlc migration path for list
-  handlers; #214 MDX braced-identifier CI gate on docs PRs; #216
-  `.pnpm-store` gitignore + docs-build hygiene.
   - **1.16.B-followup-2** (PR #215, 2026-07-06): shared
     `AdminBackfillPanel.svelte` extraction — closes #186. Pure
     frontend refactor consolidating three admin backfill surfaces
@@ -473,7 +467,34 @@ current focus:
     tests existed; this is the first component-render test path).
     Zero backend / API / sysconfig / migration changes.
     **Closes issue #186.**
-  **1.16.B search arc fully closed** — 5 sub-phases plus 5
+  - **1.16.B-followup-3** (PR #217, 2026-07-07): `search.Counter`
+    split — closes #209. Cheap 30-min hygiene refactor identified
+    during PR #208. Split the shared `search.Counter.Record(class,
+    duration)` into `RecordLatency(class, duration)` (semantics
+    unchanged; real request timings) and `RecordEvent(class)`
+    (new; increments `requests[class]` only — never touches the
+    latency window). Twelve event-only callers migrated to
+    `RecordEvent` (five in `AsFeedbackCounter` adapter + seven in
+    `AsSavedSearchCounter` adapter); seven latency callers moved
+    to `RecordLatency` (main `/search` handler + six sites in
+    `by_image.go`). Prior conflation caused zero-value observations
+    from event-only paths to dilute p50/p95/p99 percentile
+    reporting. Clean break per no-backcompat-shims memory — no
+    `Record` shim; grep proof `.Record(Result` empty across
+    `app/internal/search/`. Zero observable change from
+    `/admin/search/health` (response shape unchanged; percentiles
+    now reflect real query timings). Three new unit tests protect
+    the invariant. Also fixed pre-existing v2.7.1 → v2.7.2
+    oapi-codegen version-comment drift on `dev` that had been
+    silently blocking the Codegen drift check on every PR.
+    **Closes issue #209.**
+  Follow-ups filed: #210 sensitivity semantics for
+  `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API for
+  IIIF metadata gating; #212 sqlc migration path for list handlers;
+  #214 MDX braced-identifier CI gate on docs PRs; #216
+  `.pnpm-store` gitignore + docs-build hygiene; #218 pin
+  oapi-codegen version explicitly in `scripts/generate.sh`.
+  **1.16.B search arc fully closed** — 5 sub-phases plus 6
   followups shipped end-to-end.
 
 ## Review tool — the load-bearing UX arc
