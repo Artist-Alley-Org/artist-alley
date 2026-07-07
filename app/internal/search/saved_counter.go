@@ -1,7 +1,5 @@
 package search
 
-import "time"
-
 // AsSavedSearchCounter returns an adapter that maps saved-search
 // events into the shared search Counter. Nil-safe on the receiver
 // so tests can construct a nil Counter and still pass through the
@@ -27,7 +25,7 @@ func (a savedSearchCounterAdapter) RecordCoordinatorTick(dueCount int) {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSavedSearchCoordinatorTick, 0)
+	a.c.RecordEvent(ResultSavedSearchCoordinatorTick)
 }
 
 func (a savedSearchCounterAdapter) RecordRunResult(result string) {
@@ -36,13 +34,13 @@ func (a savedSearchCounterAdapter) RecordRunResult(result string) {
 	}
 	switch result {
 	case "hit":
-		a.c.Record(ResultSavedSearchRunHit, 0)
+		a.c.RecordEvent(ResultSavedSearchRunHit)
 	case "empty":
-		a.c.Record(ResultSavedSearchRunEmpty, 0)
+		a.c.RecordEvent(ResultSavedSearchRunEmpty)
 	case "disabled":
-		a.c.Record(ResultSavedSearchRunDisabled, 0)
+		a.c.RecordEvent(ResultSavedSearchRunDisabled)
 	default:
-		a.c.Record(ResultSavedSearchRunError, 0)
+		a.c.RecordEvent(ResultSavedSearchRunError)
 	}
 }
 
@@ -50,16 +48,13 @@ func (a savedSearchCounterAdapter) RecordNotificationSent() {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSavedSearchNotificationSent, 0)
+	a.c.RecordEvent(ResultSavedSearchNotificationSent)
 }
 
 func (a savedSearchCounterAdapter) RecordDeltaHit() {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSavedSearchDeltaHit, 0)
+	a.c.RecordEvent(ResultSavedSearchDeltaHit)
 }
 
-// keep time imported for future latency histograms tracking
-// saved-search execution.
-var _ = time.Second

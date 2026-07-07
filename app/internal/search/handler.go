@@ -130,7 +130,7 @@ func (s *Service) Counter() *Counter { return s.counter }
 // record bumps a counter class if a counter is wired.
 func (s *Service) record(r Result, latency time.Duration) {
 	if s.counter != nil {
-		s.counter.Record(r, latency)
+		s.counter.RecordLatency(r, latency)
 	}
 }
 

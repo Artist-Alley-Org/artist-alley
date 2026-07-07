@@ -27,9 +27,9 @@ func (a feedbackCounterAdapter) RecordFeedback(direction string) {
 	}
 	switch direction {
 	case "up":
-		a.c.Record(ResultSearchFeedbackUp, 0)
+		a.c.RecordEvent(ResultSearchFeedbackUp)
 	case "down":
-		a.c.Record(ResultSearchFeedbackDown, 0)
+		a.c.RecordEvent(ResultSearchFeedbackDown)
 	}
 }
 
@@ -37,19 +37,19 @@ func (a feedbackCounterAdapter) RecordFeedbackUndo() {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSearchFeedbackUndo, 0)
+	a.c.RecordEvent(ResultSearchFeedbackUndo)
 }
 
 func (a feedbackCounterAdapter) RecordFeedbackRateLimited() {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSearchFeedbackRateLimit, 0)
+	a.c.RecordEvent(ResultSearchFeedbackRateLimit)
 }
 
 func (a feedbackCounterAdapter) RecordFeedbackDisabled() {
 	if a.c == nil {
 		return
 	}
-	a.c.Record(ResultSearchFeedbackDisabled, 0)
+	a.c.RecordEvent(ResultSearchFeedbackDisabled)
 }
