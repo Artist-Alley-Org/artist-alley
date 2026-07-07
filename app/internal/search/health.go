@@ -125,10 +125,16 @@ const (
 	ResultSearchFeedbackDisabled Result = "search_feedback_disabled"
 )
 
-// Record bumps the request counter for the given result class and
-// records the observed latency. Called per /search request from
-// the HTTP handler.
-func (c *Counter) Record(r Result, latency time.Duration) {
+// RecordLatency bumps the per-result-class request counter AND
+// observes the request duration into the rolling latency window.
+// Called per /search request from the HTTP handler — real request
+// timings feed the p50/p95/p99 percentiles on /admin/search/health.
+//
+// For event-only notifications (saved-search coordinator ticks,
+// feedback submissions, similar) that don't measure a real duration,
+// use RecordEvent instead — otherwise the zero-value observations
+// pollute the latency histogram.
+func (c *Counter) RecordLatency(r Result, latency time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.requests[string(r)]++
@@ -140,6 +146,21 @@ func (c *Counter) Record(r Result, latency time.Duration) {
 		c.latencies = append(c.latencies[:0], c.latencies[drop:]...)
 	}
 	c.latencies = append(c.latencies, latency)
+}
+
+// RecordEvent bumps the per-result-class request counter WITHOUT
+// touching the latency window. Callers that emit non-latency events
+// (saved-search coordinator ticks, feedback events, etc.) use this
+// so their zero-duration signal doesn't drag the p50/p95/p99
+// histogram downward.
+//
+// Both methods increment the same requests[class] map — dashboard
+// tiles that group by result class see both event + latency callers
+// contribute identically.
+func (c *Counter) RecordEvent(r Result) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests[string(r)]++
 }
 
 // counterSnapshot implements healthhandler.Counter — the interface

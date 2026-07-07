@@ -59,7 +59,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// keeps flowing.
 	if h.Provider == nil {
 		if h.Counter != nil {
-			h.Counter.Record(ResultByImageNotImplemented, time.Since(start))
+			h.Counter.RecordLatency(ResultByImageNotImplemented, time.Since(start))
 		}
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error":          "sidecar_not_installed",
@@ -114,7 +114,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, visualprovider.ErrSidecarUnreachable) {
 			if h.Counter != nil {
-				h.Counter.Record(ResultError, time.Since(start))
+				h.Counter.RecordLatency(ResultError, time.Since(start))
 			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"error":   "sidecar_unavailable",
@@ -127,7 +127,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.String("err", err.Error()))
 		}
 		if h.Counter != nil {
-			h.Counter.Record(ResultError, time.Since(start))
+			h.Counter.RecordLatency(ResultError, time.Since(start))
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "embed_failed",
@@ -160,7 +160,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.String("err", err.Error()))
 		}
 		if h.Counter != nil {
-			h.Counter.Record(ResultError, time.Since(start))
+			h.Counter.RecordLatency(ResultError, time.Since(start))
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query_failed"})
 		return
@@ -176,7 +176,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.String("err", err.Error()))
 		}
 		if h.Counter != nil {
-			h.Counter.Record(ResultError, time.Since(start))
+			h.Counter.RecordLatency(ResultError, time.Since(start))
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "visibility_failed"})
 		return
@@ -197,7 +197,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.Counter != nil {
-		h.Counter.Record(ResultHit, time.Since(start))
+		h.Counter.RecordLatency(ResultHit, time.Since(start))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hits":  out,
