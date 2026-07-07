@@ -436,7 +436,8 @@ current focus:
   from per-result-class request counter; #210 sensitivity semantics
   for `visibility.Filter(EntityAsset)`; #211 `FieldVisibility` API
   for IIIF metadata gating; #212 sqlc migration path for list
-  handlers; #214 MDX braced-identifier CI gate on docs PRs.
+  handlers; #214 MDX braced-identifier CI gate on docs PRs; #216
+  `.pnpm-store` gitignore + docs-build hygiene.
   - **1.16.B-followup-2** (PR #215, 2026-07-06): shared
     `AdminBackfillPanel.svelte` extraction — closes #186. Pure
     frontend refactor consolidating three admin backfill surfaces
