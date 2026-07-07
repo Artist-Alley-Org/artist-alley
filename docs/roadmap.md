@@ -125,6 +125,29 @@ The current release stream covers the foundations:
 These have foundations in place; the rest of the surface area is the
 current focus:
 
+- **v1.0.0 release readiness** (Phase 1.55). The meta-arc getting
+  from current-dev to the v1.0.0 tag. 1.55.A shipped 2026-07-07 via
+  PR #220 (squash `9d14fc30`, closes #219): `docs/v1_readiness.md`
+  is the master audit — 9,907 words / 1,692 lines / 9 sections
+  covering v1.0 exit criteria (7 ADR-anchored), arc-close velocity
+  (25 PRs 2026-06-22 → 2026-07-07), 22 open gaps with mandatory
+  substructure (Status / Roadmap phase / RS blueprint capture /
+  2024-2026 gold-standard research citations / Caching strategy /
+  Federation implications / Target sketch / Effort / Sequencing),
+  post-v1.0 deferrals, RS reference inventory with delete-safety
+  verdict YES on every row, sequencing proposal (base v1.0 scope
+  ~9 days; full menu ~17-22 days), 7-gate RS deletion readiness
+  checklist, post-v1.0 arc pointers. **Unblocks two follow-up arcs:**
+  (a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
+  `/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
+  (§6 confirms every pattern is captured internally); (b) the
+  AGPL + commercial relicense arc per ADR 0016 → 0017 direction,
+  gated on this audit + Phase 1.24. **Recommended next sub-phase**
+  per §7.1: **1.55.B hygiene bundle** (~1.5 days) — bundle #218
+  oapi-codegen version pin + #214 MDX braced-identifier CI gate +
+  §4.4 schema-mismatch boot detection + §4.21 baseline migration
+  squash verification into one PR. All sub-day, all pure release-
+  readiness hygiene.
 - **First tagged release** — `v0.1.0` against the channels above.
   Pre-1.0 means schemas can still break across minors.
 - **Image processing pipeline** (Phase 1.18.A — shipped). Variant
