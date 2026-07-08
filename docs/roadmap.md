@@ -148,6 +148,25 @@ current focus:
   §4.4 schema-mismatch boot detection + §4.21 baseline migration
   squash verification into one PR. All sub-day, all pure release-
   readiness hygiene.
+  **1.55.B shipped 2026-07-08** — release-readiness hygiene bundle
+  (§7.1 complete). Four sub-day items in one PR: oapi-codegen pinned
+  to v2.7.2 in scripts/generate.sh (no more silent @latest drift
+  breaking Codegen check); MDX braced-identifier hazard gate at
+  scripts/check-mdx-hazards.sh + a workflow that scans changed
+  synced-to-Astro docs on every PR (0 hazards on current dev tip;
+  no grandfather list needed); db.CheckSchemaFreshness wired
+  post-Migrate in app/cmd/aa/main.go — refuses to start on
+  SchemaUnappliedMigrations, warns on SchemaUnknownNewerSchema,
+  proceeds silently on SchemaOK; scripts/verify-baseline.sh runs
+  three checks (baseline present + ADR 0046 referenced; baseline
+  applies clean on a fresh pgvector/pgvector:pg16 scratch DB via
+  the real db.Migrate + goose.UpContext path; migration filename
+  sequence contiguous) and the current run reports "baseline
+  verified against 28 append migrations, head=00029, ready for
+  v1.0.0 tag." Deferred: unified /admin/system/health surface for
+  the schema-freshness warning — no such endpoint exists today
+  (only per-subsystem shims); boot WARN log is enough pre-v1.0
+  per pre-release-practices.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
