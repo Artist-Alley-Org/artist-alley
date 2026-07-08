@@ -55,10 +55,9 @@ site/.vercel
 .DS_Store
 Thumbs.db
 
-# RS upstream — we vendor reference code for diffs but never ship
-# any of it in the runtime image.
-ResourceSpace-*
-Reference_Plugins/
+# Legacy reference tree — never shipped in the runtime image.
+# Kept in .dockerignore as a safety net in case any operator has
+# stray copies from earlier snapshots on the build context path.
 plugins/
 languages/
 include/

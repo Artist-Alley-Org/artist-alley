@@ -1,7 +1,8 @@
 // Phase 1.17.A — typed user-state machine.
 //
-// The `user.approved` column is BIGINT (legacy from the ResourceSpace
-// fork) and pre-1.17.A had int magic 0/1/2 scattered through the code.
+// The `user.approved` column is BIGINT (a legacy column shape carried
+// into the baseline schema) and pre-1.17.A had int magic 0/1/2
+// scattered through the code.
 // 1.17.A keeps the column shape (no churn — pre-MVP volatility lets
 // us defer the TEXT-enum migration to a polish phase) but introduces
 // typed Go constants + a transition matrix + a single set of helpers
@@ -51,8 +52,8 @@ import (
 
 // UserState is the typed user lifecycle state. The underlying int
 // values are pinned by the schema CHECK constraint added in
-// migration 00003 and by the legacy ResourceSpace `approved` column
-// convention (1 = active by default).
+// migration 00003 and by the legacy `approved` column convention
+// (1 = active by default).
 type UserState int64
 
 const (

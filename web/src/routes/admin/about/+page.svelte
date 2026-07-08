@@ -29,12 +29,4 @@
 
   <dt class="text-fg-muted">{t('admin.about.license')}</dt>
   <dd class="text-fg">{LICENSE}</dd>
-
-  <dt class="text-fg-muted">{t('admin.about.upstream')}</dt>
-  <dd class="text-fg">
-    <a href="https://www.resourcespace.com/" target="_blank" rel="noopener" class="text-accent hover:underline">
-      ResourceSpace
-    </a>
-    <span class="text-fg-muted"> — BSD-3 clean-room reference</span>
-  </dd>
 </dl>
