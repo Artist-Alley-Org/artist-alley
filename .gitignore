@@ -9,12 +9,12 @@ review_references/
 *.zip
 *.mview
 
-# --- ResourceSpace upstream code (kept on disk as reference, not tracked) ---
-# We forked from RS r28830 (ADR 0001) and reverse-engineered a clean-room
-# Go rewrite (ADR 0006). The strangler-fig porting layer was abandoned
-# (ADR 0003 historical); RS is now blueprint / reference only. Local copies
-# stay so we can compare against upstream when designing replacements;
-# `./scripts/rs-diff.sh` syncs them to current RS HEAD. Never tracked again.
+# --- Legacy reference tree (never tracked; safety net for stray copies) ---
+# Any stray directory carrying these names in the repo root is a
+# leftover reference snapshot from an earlier phase (ADR 0040
+# clean-room methodology). Kept in .gitignore as a safety net so an
+# accidental `git add -A` in a fresh clone with an unpacked snapshot
+# doesn't commit them.
 /batch/
 /css/
 /dbstruct/

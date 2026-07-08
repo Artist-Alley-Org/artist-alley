@@ -4,10 +4,9 @@
 #   nginx --proxies all-paths--> app (Go)          [REST + embedded SPA]
 #                                postgres (pgvector)
 #
-# The legacy PHP-FPM service has been removed — the strangler-fig
-# migration is complete and ResourceSpace is now reference-only. The
-# Go binary serves both /api/v1/* and the embedded SvelteKit bundle
-# in prod; in dev, the `web` profile exposes Vite HMR on :5173.
+# The Go binary serves both /api/v1/* and the embedded SvelteKit
+# bundle in prod; in dev, the `web` profile exposes Vite HMR on
+# :5173.
 
 services:
   nginx:
@@ -51,9 +50,9 @@ services:
       AA_DB_SSLMODE: disable
       AA_LOG_LEVEL: ${AA_LOG_LEVEL:-info}
       AA_LOG_FORMAT: ${AA_LOG_FORMAT:-json}
-      # Required for compatibility with any password hashes that
-      # carried over from an old ResourceSpace install. Fresh installs
-      # can generate a random value via ./scripts/bootstrap.sh.
+      # Static per-install pepper mixed into bcrypt password hashes.
+      # Fresh installs can generate a random value via
+      # ./scripts/bootstrap.sh.
       AA_SCRAMBLE_KEY: ${AA_SCRAMBLE_KEY:?AA_SCRAMBLE_KEY is required; see scripts/bootstrap.sh}
       # Master key for at-rest encryption (AES-256-GCM). Used by
       # the federation instance identity (1.22.B-b) to wrap the

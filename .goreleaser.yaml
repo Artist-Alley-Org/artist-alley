@@ -91,8 +91,8 @@ nfpms:
     package_name: artist-alley
     homepage: https://github.com/mscrnt/artist-alley
     description: |-
-      Self-hosted art review and archival platform — a modern
-      reimagining of ResourceSpace. Single Go binary serves an
+      Self-hosted art review and archival platform for artists,
+      curators, and small studios. Single Go binary serves an
       embedded SvelteKit frontend; bring your own Postgres.
     maintainer: artist-alley contributors
     license: BSD-3-Clause

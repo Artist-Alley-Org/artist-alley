@@ -184,6 +184,23 @@ current focus:
   issues #228 + #229 filed to track the ADR 0046 + 0016/0017
   semantic decisions separately. Zero substance change; naming
   recalibration only. Closes #227.
+  **1.55.S shipped 2026-07-08** — RS sanitization + physical
+  reference-tree deletion (§1.2 exit criterion). Three obsolete
+  `scripts/rs-*` pullers deleted; RS mentions scrubbed from 9
+  code/config files (`userstate.go`, admin About page, Dockerfile,
+  `.goreleaser.yaml`, `docker-compose.yml`, `.env.example`,
+  `.dockerignore`, `.gitignore` header, `README.md` untouched — zero
+  refs there); ADR 0001 flipped to `superseded-by: 0040`; the
+  `docs/v0_1_readiness.md` §1.2 exit criterion flipped to ✅ shipped
+  + §6 preamble annotated "physically deleted 2026-07-08" + §8
+  checklist all seven gates cleared. ADR 0002 skipped for a
+  pending-review pointer (already `superseded_by: 0016` from prior
+  lifecycle; redundant). Local `/dbstruct/` `/include/` `/plugins/`
+  `/pages/` physically removed from disk; `.gitignore` entries
+  retained as safety net. `grep -rn -iE "resourcespace|resource[-_]space"`
+  in application code + config now returns empty; deliberate
+  historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
+  + this readiness doc's §6 inventory + memory files. Closes #231.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;

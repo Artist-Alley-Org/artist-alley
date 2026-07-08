@@ -119,23 +119,28 @@ an explicit "deferred to post-v0.1.0" entry in §5 with rationale that
 survives review. No shipping "we'll figure it out later" — the doc
 records the decision either way.
 
-### 1.2 Every RS reference resolved
+### 1.2 Every RS reference resolved ✅ SHIPPED (Phase 1.55.S)
 
 Every RS blueprint pattern is either (a) fully captured in §4's gap
 entry, (b) captured in a shipped ADR, or (c) explicitly abandoned as
 "we don't do it that way." The compliance signal is the §6 inventory
 table with zero rows in the `delete-safe? NO` column.
 
+**Shipped 2026-07-08 via Phase 1.55.S** — application code + config
+files scrubbed of RS mentions; three obsolete `scripts/rs-*` tooling
+files deleted; local reference tree (`/dbstruct/`, `/include/`,
+`/plugins/`, `/pages/`, etc.) physically removed from disk (safety-net
+`.gitignore` entries retained); ADR 0001 flipped to
+`superseded-by: 0040`.
+
 ### 1.3 Every ADR marked accepted or superseded
 
 Per [ADR 0035 conventions](./adr/0035-adr-conventions/), every ADR
 lifecycle status flag matches its actual state. In particular:
 
-- [ADR 0001](./adr/0001-hard-fork-from-resourcespace-trunk/) should
-  either remain `accepted` (historical record of the fork event) or move
-  to `superseded-by` [ADR 0040 clean-room](./adr/0040-clean-room-reverse-engineering-methodology/)
-  once the physical refs are deleted — the fork is now historical, not
-  ongoing.
+- [ADR 0001](./adr/0001-hard-fork-from-resourcespace-trunk/) — flipped
+  to `superseded-by: 0040` in Phase 1.55.S (2026-07-08). The physical
+  reference tree has been deleted; the fork is now historical.
 - [ADR 0003](./adr/0003-strangler-fig-internal/) — per the
   [strangler-fig-abandoned memory](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_strangler_fig_abandoned.md)
   the strangler-fig approach was formally abandoned; the ADR should be
@@ -1523,12 +1528,19 @@ v1.0** — they're deliberate scope decisions.
 
 ## 6. RS reference inventory + capture status
 
-The gitignored reference tree at
-`/dbstruct/` (165 files, 136 KB), `/include/` (82 files, 3.7 MB),
-`/plugins/` (61 items, 96 MB), `/pages/` (86 items, 3.1 MB) totals
-~8,944 files and ~102 MB. This section groups the ref tree by pattern
-and records whether that pattern is captured elsewhere. Every row must
-resolve to **delete-safe? YES** before the follow-up rm-rf PR opens.
+**Physically deleted 2026-07-08 via Phase 1.55.S.** The gitignored
+reference tree at `/dbstruct/` (165 files, 136 KB), `/include/`
+(82 files, 3.7 MB), `/plugins/` (61 items, 96 MB), `/pages/`
+(86 items, 3.1 MB) — ~8,944 files and ~102 MB total — has been
+removed from local disk; the three `scripts/rs-*` pullers that
+regenerated it are deleted; `.gitignore` retains the path entries as
+a safety net for stray copies but nothing tracked or scripted brings
+them back.
+
+This section groups the pattern archive by concern and records where
+the pattern is captured internally. Every row was audited as
+**delete-safe? YES** in Phase 1.55.A + the deletion executed in
+Phase 1.55.S.
 
 | Pattern | RS files | Captured in | Delete-safe? |
 |---|---|---|---|
@@ -1642,32 +1654,38 @@ through the base scope in a week and the full menu in three weeks.
 
 ---
 
-## 8. RS deletion readiness checklist
+## 8. RS deletion readiness checklist ✅ SHIPPED (Phase 1.55.S)
 
-The **follow-up PR that physically deletes the ref tree** must
-verify each of these before opening:
+All seven gates cleared 2026-07-08:
 
-- [ ] Every ADR that cited RS (0001, 0002, 0003) has been reviewed;
-  either kept as historical record or flipped to `superseded`.
-- [ ] Every code comment referencing `/dbstruct` / `/include` /
+- [x] Every ADR that cited RS (0001, 0002, 0003) has been reviewed.
+  ADR 0001 flipped to `superseded-by: 0040` in 1.55.S; ADR 0002 is
+  `superseded-by: 0016` (from prior lifecycle); ADR 0003 remains
+  `superseded` per the strangler-fig-abandoned memory.
+- [x] Every code comment referencing `/dbstruct` / `/include` /
   `/plugins` / `/pages` paths has been updated or removed. Grep proof:
-  `grep -rn "/dbstruct\\|/include/\\|/plugins/\\|/pages/" app/ web/src/ docs/`
-  returns only references inside this v0_1_readiness.md doc.
-- [ ] Every open gap in §4 has captured RS blueprint per the §4
-  substructure.
-- [ ] §6 inventory table has zero `NO` rows (or every `NO` row has
-  been added to §4 as a new gap).
-- [ ] `scripts/rs_refresh.sh` (or equivalent RS-pull tooling) can be
-  deleted; no remaining call sites.
-- [ ] `.gitignore` entries for `/dbstruct/`, `/include/`, `/plugins/`,
-  `/pages/`, `/languages/`, `/plugins-archive/`, `/documentation/`
-  can be cleaned up.
-- [ ] `README.md` doesn't reference "RS reference tree" as a resource
-  for contributors.
+  `grep -rn "/dbstruct\|/include/\|/plugins/\|/pages/" app/ web/src/ docs/`
+  returns only references inside this `v0_1_readiness.md` doc.
+- [x] Every open gap in §4 has captured RS blueprint per the §4
+  substructure (audited 1.55.A, no gaps discovered since).
+- [x] §6 inventory table has zero `NO` rows (all rows audited 1.55.A).
+- [x] `scripts/gen-rs-baseline.py` + `scripts/gen-rs-seeds.py` +
+  `scripts/rs-diff.sh` — deleted; no remaining call sites.
+- [x] `.gitignore` retains the `/dbstruct/` `/include/` `/plugins/`
+  `/pages/` etc. entries as a **safety net** for stray copies from
+  earlier snapshots; the RS-branded comment header replaced with a
+  generic "legacy reference tree" note.
+- [x] No `README.md` references to the reference tree as a
+  contributor resource (verified via `grep -in "resourcespace"
+  README.md`).
 
-When all seven check green, the physical `rm -rf` PR can open. That
-PR itself is one commit + one gitignore cleanup + one README pass —
-under an hour of work.
+**Shipped state.** Application code + config files carry no RS
+mentions (`grep -rn -iE "resourcespace|resource[-_]space" app/ web/
+scripts/ Dockerfile* .env.example .goreleaser.yaml docker-compose.yml
+.dockerignore .gitignore` returns empty). ADR bodies (0001, 0002,
+0016, 0046) and historical audit docs (`cleanup-audit-2026-06.md`) +
+this readiness doc itself + memory files retain deliberate historical
+references — those are the durable "why" record.
 
 ---
 

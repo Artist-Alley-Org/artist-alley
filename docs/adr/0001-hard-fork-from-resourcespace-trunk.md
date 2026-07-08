@@ -1,27 +1,32 @@
 ---
 id: "0001"
-title: Hard fork from ResourceSpace trunk @ r28830
-status: deprecated
+title: Hard fork from upstream trunk (historical)
+status: superseded
 date: 2026-05-23
 area: process
 phases: []
 supersedes: []
+superseded_by: "0040"
 related: 
   - "0003"
   - "0006"
+  - "0040"
 tags:
   - process
   - history
 excerpt: >-
-  Historical. artist-alley was originally bootstrapped as a hard fork of an upstream open-source DAM in May 2026 to reuse permissions, resource types, metadata fields, preview pipelines, and plugin architecture rather than build the substrate from scratch.
+  Historical. artist-alley was originally bootstrapped as a hard fork of an upstream open-source DAM in May 2026 to reuse permissions, resource types, metadata fields, preview pipelines, and plugin architecture rather than build the substrate from scratch. Superseded by ADR 0040 (clean-room reverse-engineering methodology) once the physical reference tree was deleted in Phase 1.55.S.
 ---
-> **Deprecated — historical record.** The fork-and-port strategy this
-> ADR established was abandoned in 2026-06. The runtime is now a
+> **Superseded — historical record.** The fork-and-port strategy this
+> ADR established was abandoned in 2026-06 and the physical reference
+> tree was deleted in Phase 1.55.S (2026-07-08). The runtime is a
 > clean-room Go binary with a Svelte 5 frontend; no upstream code
-> remains in the tree. See [ADR 0003](/adr/0003-strangler-fig-internal/)
-> for the abandonment, [ADR 0006](/adr/0006-go-as-target-backend/) for
-> the current architecture, and the project README for current state.
-> This ADR is retained as historical record only.
+> remains in the tree, on disk, or in tracked history going forward.
+> See [ADR 0040](/adr/0040-clean-room-reverse-engineering-methodology/)
+> for the successor methodology, [ADR 0003](/adr/0003-strangler-fig-internal/)
+> for the strangler-fig abandonment, [ADR 0006](/adr/0006-go-as-target-backend/)
+> for the current architecture, and the project README for current
+> state. This ADR is retained as historical record only.
 
 
 ## Context
