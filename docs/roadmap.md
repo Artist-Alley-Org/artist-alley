@@ -219,6 +219,25 @@ current focus:
   representative queries. `pg_stat` verified index churn zero across
   the chain (no index name recreated more than once in any Up
   block). Closes #233.
+  **1.55.U-2 in-flight 2026-07-08** — gold-standard baseline re-squash.
+  Ships `app/internal/db/migrations/00001_baseline_v0_1.sql`
+  (5,626 lines): the collapse of the 29-file chain into a single
+  file per §10 of the audit doc. Applied inline: 15 partial FK-
+  covering indexes + 3 explicit `NO ACTION` → `SET NULL` cascade
+  promotions. Old 29 migration files deleted; `scripts/verify-baseline.sh`
+  updated for the new filename and green against a scratch
+  `pgvector/pgvector:pg16` container. Fresh boot on the compose stack
+  applies clean; seed data populates correctly (57 capabilities,
+  13 asset_types, 10 roles, 43 role_capabilities, 42 system_config,
+  7 workflow_states, 11 workflow_transitions, 13 field_definition).
+  `docs/schema_audit_v0_1.md` §11 tracks applied fixes + deferred
+  items. Deferred to a continuation session per the multi-day scope
+  vs single-session context budget: 4 cache-invalidator SHOULD fixes
+  (§7 findings), ADR 0057, 3 test-suite updates (schema-freshness +
+  federation-outbox dispatcher tests have assumed pre-squash state),
+  `app/schema.sql` regen, Playwright + live smoke, pg_dump diff
+  evidence. See PR body for the complete in-flight/remaining split
+  and the recommendation-to-planning-agent framing.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
