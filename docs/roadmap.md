@@ -201,6 +201,24 @@ current focus:
   in application code + config now returns empty; deliberate
   historical mentions retained in ADR bodies + `cleanup-audit-2026-06.md`
   + this readiness doc's §6 inventory + memory files. Closes #231.
+  **1.55.U-1 shipped 2026-07-08** — schema + cache audit report for
+  the v0.1.0 baseline re-squash. Report-only; zero code changes.
+  Ships `docs/schema_audit_v0_1.md` — a 10-section inventory of the
+  29-file migration chain, 78 tables, 30 named cache domains + 4
+  dedicated Cache types, FK cascade behaviour, and CHECK-constraint
+  density. Findings: **0 MUST / 23 SHOULD / 11 NICE** (deduplicated).
+  The SHOULD tier is dominated by 15 unindexed FK columns (partial
+  indexes with `WHERE <col> IS NOT NULL` predicates) plus 3 explicit
+  `NO ACTION` → `SET NULL` cascade promotions plus 4 cache-invalidator
+  verification gaps (asset PATCH → IIIF, collection POST/PATCH →
+  owner profile, per-user cache-key exhaustive sweep, ActorOutbox
+  federation-key shape). §10 sketches the 1.55.U-2 re-squash plan:
+  collapse 29 files into `00001_baseline_v0_1.sql` with SHOULD fixes
+  inlined; zero append migrations at v0.1.0 tag time. Q6 nullability
+  + defaults sweep clean; Q7 EXPLAIN spot-checks healthy on the two
+  representative queries. `pg_stat` verified index churn zero across
+  the chain (no index name recreated more than once in any Up
+  block). Closes #233.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
