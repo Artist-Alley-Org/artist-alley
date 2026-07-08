@@ -41,7 +41,7 @@ RETURNING id, author_user_ref, title, description, visibility, cover_asset_id,
           origin_server_id, team_id, state_id, created_at, updated_at;
 
 -- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), updated_at = NOW()
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListPostsPage :many
@@ -57,9 +57,10 @@ WHERE id = $1 AND deleted_at IS NULL;
 --     an index-only scan per candidate row — no nested loop.
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at
+       origin_server_id, team_id, state_id, created_at, updated_at,
+       deleted_at, deleted_reason
 FROM posts
-WHERE deleted_at IS NULL
+WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('author_user_ref')::BIGINT IS NULL
        OR author_user_ref = sqlc.narg('author_user_ref')::BIGINT)
   AND (sqlc.narg('visibility')::TEXT IS NULL

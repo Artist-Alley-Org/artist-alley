@@ -70,14 +70,26 @@ func (s *Service) RestoreAsset(ctx context.Context, req *http.Request, assetID u
 	var priorReason *string
 	var priorDeletedAt time.Time
 
+	// CTE snapshots the pre-UPDATE deleted_at + deleted_reason so
+	// RETURNING can carry them into the audit event; RETURNING on
+	// the naked UPDATE reads the post-SET values (both NULL) which
+	// can't scan into time.Time. The `AND EXISTS (SELECT 1 FROM old)`
+	// guard drops the UPDATE to zero rows when the row isn't
+	// soft-deleted, so pgx.ErrNoRows still fires ErrNotDeleted /
+	// ErrNotFound via classifyRestoreError.
 	err := s.Pool.QueryRow(ctx, `
+		WITH old AS (
+		    SELECT deleted_reason, deleted_at
+		      FROM assets
+		     WHERE id = $1 AND deleted_at IS NOT NULL
+		)
 		UPDATE assets
 		   SET deleted_at = NULL,
 		       deleted_reason = NULL,
 		       updated_at = NOW()
 		 WHERE id = $1
-		   AND deleted_at IS NOT NULL
-		RETURNING deleted_reason, deleted_at
+		   AND EXISTS (SELECT 1 FROM old)
+		RETURNING (SELECT deleted_reason FROM old), (SELECT deleted_at FROM old)
 	`, assetID).Scan(&priorReason, &priorDeletedAt)
 
 	if err != nil {
@@ -101,13 +113,18 @@ func (s *Service) RestorePost(ctx context.Context, req *http.Request, postID uui
 	var priorDeletedAt time.Time
 
 	err := s.Pool.QueryRow(ctx, `
+		WITH old AS (
+		    SELECT deleted_reason, deleted_at
+		      FROM posts
+		     WHERE id = $1 AND deleted_at IS NOT NULL
+		)
 		UPDATE posts
 		   SET deleted_at = NULL,
 		       deleted_reason = NULL,
 		       updated_at = NOW()
 		 WHERE id = $1
-		   AND deleted_at IS NOT NULL
-		RETURNING deleted_reason, deleted_at
+		   AND EXISTS (SELECT 1 FROM old)
+		RETURNING (SELECT deleted_reason FROM old), (SELECT deleted_at FROM old)
 	`, postID).Scan(&priorReason, &priorDeletedAt)
 
 	if err != nil {
@@ -134,13 +151,18 @@ func (s *Service) RestoreCollection(ctx context.Context, req *http.Request, coll
 	var priorDeletedAt time.Time
 
 	err := s.Pool.QueryRow(ctx, `
+		WITH old AS (
+		    SELECT deleted_reason, deleted_at
+		      FROM collections
+		     WHERE id = $1 AND deleted_at IS NOT NULL
+		)
 		UPDATE collections
 		   SET deleted_at = NULL,
 		       deleted_reason = NULL,
 		       updated_at = NOW()
 		 WHERE id = $1
-		   AND deleted_at IS NOT NULL
-		RETURNING deleted_reason, deleted_at
+		   AND EXISTS (SELECT 1 FROM old)
+		RETURNING (SELECT deleted_reason FROM old), (SELECT deleted_at FROM old)
 	`, collectionID).Scan(&priorReason, &priorDeletedAt)
 
 	if err != nil {

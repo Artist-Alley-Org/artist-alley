@@ -3341,6 +3341,15 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: include_deleted
+          in: query
+          required: false
+          description: |
+            Admin-only. When `true`, soft-deleted assets appear in
+            the result set alongside live rows. Non-admin callers
+            are ignored (soft-deleted rows stay hidden). Default
+            `false`.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: A page of assets
@@ -3424,15 +3433,57 @@ paths:
         Marks the asset deleted (sets `deleted_at`). The storage pin
         is removed; the GC sweeper later collects bytes that are no
         longer pinned by anyone.
+
+        Phase 1.55.C-1b: accepts optional `{reason}` body captured
+        into `deleted_reason` for the admin recovery-window audit.
+      tags: [assets]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SoftDeleteRequest" }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/assets/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: restoreAsset
+      summary: Restore a soft-deleted asset
+      description: |
+        Admin-only. Clears `deleted_at` + `deleted_reason` on the
+        asset row and fires an `admin.asset.restored` audit event
+        carrying the prior reason + how long the asset had been
+        soft-deleted.
+
+        Returns 404 if the asset is already live (or doesn't
+        exist). Returns 401 for anonymous callers; 403 for
+        non-admins.
       tags: [assets]
       security:
         - cookieAuth: []
         - bearerAuth: []
       responses:
         "204":
-          description: Deleted
+          description: Restored
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -4835,6 +4886,14 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: include_deleted
+          in: query
+          required: false
+          description: |
+            Admin-only. When `true`, soft-deleted posts appear
+            alongside live rows. Non-admin callers ignored.
+            Phase 1.55.C-1b.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: A page of posts
@@ -4944,13 +5003,50 @@ paths:
         Removes the post from feed views. Member assets are not
         deleted (an asset may belong to multiple posts; storage pins
         are owned at the asset layer).
+
+        Phase 1.55.C-1b: accepts optional `{reason}` body captured
+        into `deleted_reason` for the admin recovery-window audit.
+      tags: [posts]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SoftDeleteRequest" }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/posts/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: restorePost
+      summary: Restore a soft-deleted post
+      description: |
+        Admin-only. Clears `deleted_at` + `deleted_reason` on the
+        post row and fires an `admin.post.restored` audit event.
+        Returns 404 if the post is already live (or doesn't exist).
       tags: [posts]
       security:
         - cookieAuth: []
         - bearerAuth: []
       responses:
         "204":
-          description: Deleted
+          description: Restored
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5568,6 +5664,14 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: include_deleted
+          in: query
+          required: false
+          description: |
+            Admin-only. When `true`, soft-deleted collections appear
+            alongside live rows. Non-admin callers ignored.
+            Phase 1.55.C-1b.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: A page of collections
@@ -5690,17 +5794,58 @@ paths:
               schema: { $ref: "#/components/schemas/EditConflict" }
     delete:
       operationId: deleteCollection
-      summary: Hard-delete a collection
+      summary: Soft-delete a collection
       description: |
-        Drops the collection row; cascades to `collection_resources`
-        via the FK. The underlying assets are untouched.
+        Phase 1.55.C-1b: soft-delete. Sets `deleted_at = NOW()` +
+        `deleted_reason` from the optional body; the row remains for
+        the operator recovery window (default 30 days per
+        `sysconfig.soft_delete.collection_retention_days`) before the
+        nightly gc coordinator hard-deletes it. Cascades to
+        `collection_resources` fire on the eventual hard delete.
+
+        Prior behaviour was HARD delete; the flip is unconditional
+        (no grace flag) per pre-release practices.
+      tags: [collections]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SoftDeleteRequest" }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/collections/{id}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: restoreCollection
+      summary: Restore a soft-deleted collection
+      description: |
+        Admin-only. Clears `deleted_at` + `deleted_reason` on the
+        collection row and fires an `admin.collection.restored`
+        audit event. Returns 404 if already live (or doesn't exist).
       tags: [collections]
       security:
         - cookieAuth: []
         - bearerAuth: []
       responses:
         "204":
-          description: Deleted
+          description: Restored
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9860,6 +10005,26 @@ components:
           type: string
           format: date-time
           description: The current `updated_at` on the row (server-authoritative).
+    SoftDeleteRequest:
+      type: object
+      description: |
+        Optional body on DELETE endpoints that soft-delete an entity.
+        The `reason` free-text string is captured verbatim into the
+        entity's `deleted_reason` column so admin recovery-window
+        audits carry operator context.
+
+        The body itself is optional — a bare DELETE with no body is
+        still valid + writes `deleted_reason` = NULL. When present,
+        an empty-string `reason` is treated the same as missing.
+
+        Phase 1.55.C-1b.
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Free-text explanation of why the entity was deleted.
+            Max 500 characters; validated at the handler.
     AssetList:
       type: object
       required: [items]

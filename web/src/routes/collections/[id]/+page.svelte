@@ -31,6 +31,8 @@
     owner_user_ref: number;
     created_at: string;
     updated_at: string;
+    deleted_at?: string | null;
+    deleted_reason?: string | null;
   }
 
   interface MemberRow {
@@ -104,6 +106,30 @@
     }
   }
 
+  // Phase 1.55.C-1b: admin restore of a soft-deleted collection.
+  // Only surfaced when the row IS soft-deleted AND the caller is
+  // system.admin. Delegates to POST /admin/collections/{id}/restore.
+  let restoreBusy = $state(false);
+  let restoreError = $state<string | null>(null);
+  async function restore() {
+    if (!collection || !collection.deleted_at) return;
+    restoreBusy = true;
+    restoreError = null;
+    try {
+      const { error: apiErr } = await api.POST('/admin/collections/{id}/restore', {
+        params: { path: { id } },
+      });
+      if (apiErr) {
+        restoreError = (apiErr as { error?: string }).error ?? 'restore failed';
+        return;
+      }
+      // Reload — the row is now live.
+      await load();
+    } finally {
+      restoreBusy = false;
+    }
+  }
+
   function handleSaved(updated: Collection) {
     collection = updated;
     invalidateCovers(updated.id);
@@ -172,7 +198,30 @@
         {t('collections.add_posts')}
       </button>
 
-      {#if isOwner}
+      {#if collection?.deleted_at && auth.can('system.admin')}
+        <div class="flex-1 rounded-md border border-warning/40 bg-warning-container/50 px-3 py-1.5 text-xs">
+          <div class="font-medium text-warning">
+            Deleted {new Date(collection.deleted_at).toLocaleDateString()}
+            {#if collection.deleted_reason}
+              — {collection.deleted_reason}
+            {/if}
+          </div>
+          {#if restoreError}
+            <div class="mt-1 text-danger">{restoreError}</div>
+          {/if}
+        </div>
+        <button
+          type="button"
+          disabled={restoreBusy}
+          onclick={() => void restore()}
+          data-testid="collection-detail-restore-button"
+          class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated disabled:opacity-50"
+        >
+          {restoreBusy ? 'Restoring…' : 'Restore'}
+        </button>
+      {/if}
+
+      {#if isOwner && !collection?.deleted_at}
         <button
           type="button"
           onclick={uploadHere}

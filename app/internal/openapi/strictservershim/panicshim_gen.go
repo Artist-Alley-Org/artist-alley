@@ -200,6 +200,11 @@ func (*PanicShim) GetAIUsage(context.Context, openapi.GetAIUsageRequestObject) (
 	panic("PanicShim: GetAIUsage called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// RestoreAsset panics by default; test shims override.
+func (*PanicShim) RestoreAsset(context.Context, openapi.RestoreAssetRequestObject) (openapi.RestoreAssetResponseObject, error) {
+	panic("PanicShim: RestoreAsset called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListAdminAuditEvents panics by default; test shims override.
 func (*PanicShim) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEventsRequestObject) (openapi.ListAdminAuditEventsResponseObject, error) {
 	panic("PanicShim: ListAdminAuditEvents called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -208,6 +213,11 @@ func (*PanicShim) ListAdminAuditEvents(context.Context, openapi.ListAdminAuditEv
 // ListAdminAuditEventTypes panics by default; test shims override.
 func (*PanicShim) ListAdminAuditEventTypes(context.Context, openapi.ListAdminAuditEventTypesRequestObject) (openapi.ListAdminAuditEventTypesResponseObject, error) {
 	panic("PanicShim: ListAdminAuditEventTypes called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RestoreCollection panics by default; test shims override.
+func (*PanicShim) RestoreCollection(context.Context, openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
+	panic("PanicShim: RestoreCollection called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListFederationDirectories panics by default; test shims override.
@@ -388,6 +398,11 @@ func (*PanicShim) ListMetadataExtractionFailures(context.Context, openapi.ListMe
 // DismissMetadataExtractionFailure panics by default; test shims override.
 func (*PanicShim) DismissMetadataExtractionFailure(context.Context, openapi.DismissMetadataExtractionFailureRequestObject) (openapi.DismissMetadataExtractionFailureResponseObject, error) {
 	panic("PanicShim: DismissMetadataExtractionFailure called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RestorePost panics by default; test shims override.
+func (*PanicShim) RestorePost(context.Context, openapi.RestorePostRequestObject) (openapi.RestorePostResponseObject, error) {
+	panic("PanicShim: RestorePost called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // ListAdminRequests panics by default; test shims override.

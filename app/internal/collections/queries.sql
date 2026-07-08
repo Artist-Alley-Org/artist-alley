@@ -9,12 +9,27 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, search_text, smart_query;
+          created_at, updated_at, deleted_at, deleted_reason,
+          search_text, smart_query;
 
 -- name: GetCollection :one
+-- Filters soft-deleted rows by default. Admin surfaces reading
+-- deleted rows use GetCollectionIncludingDeleted below.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, search_text, smart_query
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
+FROM collections
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetCollectionIncludingDeleted :one
+-- Same as GetCollection but returns soft-deleted rows too. Used by
+-- the Restore path (which needs to Get the row to fire the audit
+-- event even after deleted_at IS NOT NULL).
+SELECT id, owner_user_ref, name, description, visibility, membership,
+       expires_at, featured, purpose, origin_server_id,
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
 FROM collections
 WHERE id = $1;
 
@@ -32,7 +47,8 @@ UPDATE collections SET
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, search_text, smart_query;
+          created_at, updated_at, deleted_at, deleted_reason,
+          search_text, smart_query;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -40,10 +56,14 @@ RETURNING id, owner_user_ref, name, description, visibility, membership,
 UPDATE collections SET expires_at = NULL, updated_at = NOW() WHERE id = $1;
 
 -- name: DeleteCollection :exec
--- Hard delete; collection_resources cascade-delete via the FK.
--- The legacy/sweeper-style "soft delete then GC" pattern isn't worth
--- the query complexity at our scale.
-DELETE FROM collections WHERE id = $1;
+-- Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
+-- the row rather than hard-DELETE; the nightly softdelete.gc
+-- coordinator hard-deletes past sysconfig.CollectionRetentionDays,
+-- at which point collection_resources / collection_posts /
+-- collection_acls cascade via their existing FK ON DELETE CASCADE.
+UPDATE collections
+SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListCollectionsPage :many
 -- Cursor pagination on (created_at DESC, id DESC). Filters are
@@ -57,9 +77,11 @@ DELETE FROM collections WHERE id = $1;
 -- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, search_text, smart_query
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
 FROM collections c
-WHERE (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
+WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
+  AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('exclude_owner')::BIGINT   IS NULL OR owner_user_ref <> sqlc.narg('exclude_owner')::BIGINT)
   AND (sqlc.narg('visibility')::TEXT        IS NULL OR visibility     = sqlc.narg('visibility')::TEXT)
   AND (sqlc.narg('featured')::BOOLEAN       IS NULL OR featured       = sqlc.narg('featured')::BOOLEAN)

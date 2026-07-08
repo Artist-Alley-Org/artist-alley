@@ -159,10 +159,24 @@ current focus:
   `admin.users.archived` audit event rather than adding a competing
   `deleted_at` column (hybrid scope per pre-audit). GC coordinator
   reads sysconfig every tick so operator retention changes take effect
-  on the next nightly pass. **1.55.C-1b follow-up** wires the handler
-  layer: DELETE endpoints accept optional `reason` body; 3 new
-  Restore endpoints; `?include_deleted=true` param on admin list
-  handlers; admin UI Restore buttons + include-deleted toggle.
+  on the next nightly pass.
+  **1.55.C-1b shipped 2026-07-08** — soft-delete surface layer
+  (§4.6 complete). DELETE handlers on assets + posts + collections
+  accept an optional `SoftDeleteRequest` body carrying an operator
+  reason string (max 500 chars); collections DELETE flips from HARD
+  to SOFT delete on the same code path (clean break per pre-release
+  practices); 3 new admin restore endpoints at
+  `POST /admin/{entity}/{id}/restore` delegating to
+  `softdelete.Service` from the foundation with a CTE-based snapshot
+  of the pre-restore state so the audit event carries `prior_reason`
+  + age-at-restore; `?include_deleted=true` admin-only query param
+  on the 3 list handlers (non-admin toggles ignored); `GetCollection`
+  grows a fallback branch that surfaces soft-deleted rows to admins
+  so the Restore button on `/collections/[id]` has something to
+  render; admin UI ships the include-deleted toggle on `/collections`
+  list + Restore action on collection detail; posts/assets admin
+  detail-page Restore UI deferred (no admin detail page exists;
+  assets viewer-based). Live smoke green end-to-end.
 - **First tagged release** — `v0.1.0` against the channels above.
   Pre-1.0 means schemas can still break across minors.
 - **Image processing pipeline** (Phase 1.18.A — shipped). Variant

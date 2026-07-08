@@ -110,7 +110,8 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, search_text, smart_query
+          created_at, updated_at, deleted_at, deleted_reason,
+          search_text, smart_query
 `
 
 type CreateCollectionParams struct {
@@ -154,6 +155,8 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
 	)
@@ -161,25 +164,37 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 }
 
 const deleteCollection = `-- name: DeleteCollection :exec
-DELETE FROM collections WHERE id = $1
+UPDATE collections
+SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
 `
 
-// Hard delete; collection_resources cascade-delete via the FK.
-// The legacy/sweeper-style "soft delete then GC" pattern isn't worth
-// the query complexity at our scale.
-func (q *Queries) DeleteCollection(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteCollection, id)
+type DeleteCollectionParams struct {
+	ID            pgtype.UUID
+	DeletedReason *string
+}
+
+// Phase 1.55.C-1b: soft-delete. Sets deleted_at + deleted_reason on
+// the row rather than hard-DELETE; the nightly softdelete.gc
+// coordinator hard-deletes past sysconfig.CollectionRetentionDays,
+// at which point collection_resources / collection_posts /
+// collection_acls cascade via their existing FK ON DELETE CASCADE.
+func (q *Queries) DeleteCollection(ctx context.Context, arg DeleteCollectionParams) error {
+	_, err := q.db.Exec(ctx, deleteCollection, arg.ID, arg.DeletedReason)
 	return err
 }
 
 const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, search_text, smart_query
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
 FROM collections
-WHERE id = $1
+WHERE id = $1 AND deleted_at IS NULL
 `
 
+// Filters soft-deleted rows by default. Admin surfaces reading
+// deleted rows use GetCollectionIncludingDeleted below.
 func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection, error) {
 	row := q.db.QueryRow(ctx, getCollection, id)
 	var i Collection
@@ -196,6 +211,44 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.DeletedReason,
+		&i.SearchText,
+		&i.SmartQuery,
+	)
+	return i, err
+}
+
+const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :one
+SELECT id, owner_user_ref, name, description, visibility, membership,
+       expires_at, featured, purpose, origin_server_id,
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
+FROM collections
+WHERE id = $1
+`
+
+// Same as GetCollection but returns soft-deleted rows too. Used by
+// the Restore path (which needs to Get the row to fire the audit
+// event even after deleted_at IS NOT NULL).
+func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.UUID) (Collection, error) {
+	row := q.db.QueryRow(ctx, getCollectionIncludingDeleted, id)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserRef,
+		&i.Name,
+		&i.Description,
+		&i.Visibility,
+		&i.Membership,
+		&i.ExpiresAt,
+		&i.Featured,
+		&i.Purpose,
+		&i.OriginServerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
 	)
@@ -324,29 +377,32 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, search_text, smart_query
+       created_at, updated_at, deleted_at, deleted_reason,
+       search_text, smart_query
 FROM collections c
-WHERE ($1::BIGINT  IS NULL OR owner_user_ref = $1::BIGINT)
-  AND ($2::BIGINT   IS NULL OR owner_user_ref <> $2::BIGINT)
-  AND ($3::TEXT        IS NULL OR visibility     = $3::TEXT)
-  AND ($4::BOOLEAN       IS NULL OR featured       = $4::BOOLEAN)
-  AND ($5::TEXT            IS NULL OR name ILIKE '%' || $5::TEXT || '%')
-  AND ($6::BIGINT IS NULL OR EXISTS (
+WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
+  AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
+  AND ($3::BIGINT   IS NULL OR owner_user_ref <> $3::BIGINT)
+  AND ($4::TEXT        IS NULL OR visibility     = $4::TEXT)
+  AND ($5::BOOLEAN       IS NULL OR featured       = $5::BOOLEAN)
+  AND ($6::TEXT            IS NULL OR name ILIKE '%' || $6::TEXT || '%')
+  AND ($7::BIGINT IS NULL OR EXISTS (
          SELECT 1 FROM collection_acls a
           WHERE a.collection_id = c.id
             AND a.principal_type = 'user'
-            AND a.principal_id   = $6::BIGINT::TEXT
+            AND a.principal_id   = $7::BIGINT::TEXT
             AND (a.expires_at IS NULL OR a.expires_at > NOW())
        ))
-  AND ($7::TIMESTAMPTZ IS NULL
-       OR created_at < $7::TIMESTAMPTZ
-       OR (created_at = $7::TIMESTAMPTZ
-           AND id < $8::UUID))
+  AND ($8::TIMESTAMPTZ IS NULL
+       OR created_at < $8::TIMESTAMPTZ
+       OR (created_at = $8::TIMESTAMPTZ
+           AND id < $9::UUID))
 ORDER BY created_at DESC, id DESC
-LIMIT $9::INTEGER
+LIMIT $10::INTEGER
 `
 
 type ListCollectionsPageParams struct {
+	IncludeDeleted  *bool
 	OwnerUserRef    *int64
 	ExcludeOwner    *int64
 	Visibility      *string
@@ -369,6 +425,7 @@ type ListCollectionsPageParams struct {
 // the caller's user_ref into `exclude_owner` to drop owned rows.
 func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPageParams) ([]Collection, error) {
 	rows, err := q.db.Query(ctx, listCollectionsPage,
+		arg.IncludeDeleted,
 		arg.OwnerUserRef,
 		arg.ExcludeOwner,
 		arg.Visibility,
@@ -399,6 +456,8 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.DeletedReason,
 			&i.SearchText,
 			&i.SmartQuery,
 		); err != nil {
@@ -467,7 +526,8 @@ UPDATE collections SET
 WHERE id = $8
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, search_text, smart_query
+          created_at, updated_at, deleted_at, deleted_reason,
+          search_text, smart_query
 `
 
 type UpdateCollectionParams struct {
@@ -507,6 +567,8 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
 	)

@@ -852,6 +852,17 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				)
 			}
 			s.softdeleteSvc = sdSvc
+			// Wire audit + softdelete on the 3 entity handlers so
+			// their DELETE handler fires soft_deleted audit + their
+			// Restore endpoint can delegate to sdSvc. Handlers still
+			// tolerate nil (tests construct without wiring these);
+			// production always sets them together with sdSvc.
+			s.assets.Audit = auditRec
+			s.assets.SoftDelete = sdSvc
+			s.posts.Audit = auditRec
+			s.posts.SoftDelete = sdSvc
+			s.collections.Audit = auditRec
+			s.collections.SoftDelete = sdSvc
 		}
 
 		// Phase 1.16.B-5 — reindex coordinator + one-shot boot
@@ -2362,6 +2373,16 @@ func (s *apiServer) DeleteAsset(ctx context.Context, req openapi.DeleteAssetRequ
 	return resp, err
 }
 
+// RestoreAsset — Phase 1.55.C-1b. Delegates to the assets handler
+// which enforces admin capability + calls softdelete.Service.
+func (s *apiServer) RestoreAsset(ctx context.Context, req openapi.RestoreAssetRequestObject) (openapi.RestoreAssetResponseObject, error) {
+	resp, err := s.assets.RestoreAsset(ctx, req)
+	// Restore un-hides a row; the same search-cache invalidator
+	// applies (the row is once again live in query results).
+	s.invalidateSearchOnAssetWrite(ctx, err)
+	return resp, err
+}
+
 // invalidateSearchOnAssetWrite drops the query-result cache when a
 // successful asset write commits. Broadcasts to peers over the
 // existing cache_invalidate LISTEN/NOTIFY channel. Skipped on
@@ -2603,6 +2624,12 @@ func (s *apiServer) DeleteCollection(ctx context.Context, req openapi.DeleteColl
 	s.invalidateSearchOnCollectionWrite(ctx, err)
 	return resp, err
 }
+// RestoreCollection — Phase 1.55.C-1b.
+func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
+	resp, err := s.collections.RestoreCollection(ctx, req)
+	s.invalidateSearchOnCollectionWrite(ctx, err)
+	return resp, err
+}
 func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
 	return s.collections.ListCollectionResources(ctx, req)
 }
@@ -2681,6 +2708,12 @@ func (s *apiServer) UpdatePost(ctx context.Context, req openapi.UpdatePostReques
 }
 func (s *apiServer) DeletePost(ctx context.Context, req openapi.DeletePostRequestObject) (openapi.DeletePostResponseObject, error) {
 	resp, err := s.posts.DeletePost(ctx, req)
+	s.invalidateSearchOnPostWrite(ctx, err)
+	return resp, err
+}
+// RestorePost — Phase 1.55.C-1b.
+func (s *apiServer) RestorePost(ctx context.Context, req openapi.RestorePostRequestObject) (openapi.RestorePostResponseObject, error) {
+	resp, err := s.posts.RestorePost(ctx, req)
 	s.invalidateSearchOnPostWrite(ctx, err)
 	return resp, err
 }

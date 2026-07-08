@@ -62,7 +62,7 @@ WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
 
 -- name: SoftDeleteAsset :exec
 UPDATE assets
-SET deleted_at = NOW(), updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListAssetsPage :many
@@ -79,9 +79,9 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, deleted_at, deleted_reason
 FROM assets
-WHERE deleted_at IS NULL
+WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
   AND (sqlc.narg('asset_type')::BIGINT  IS NULL OR asset_type  = sqlc.narg('asset_type')::BIGINT)
   AND (sqlc.narg('status')::TEXT           IS NULL OR status          = sqlc.narg('status')::TEXT)

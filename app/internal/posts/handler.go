@@ -43,9 +43,11 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 )
 
@@ -111,6 +113,14 @@ type Handler struct {
 	// (direct domain writes; no activity record).
 	activities  *activities.Writer
 	baseURLFn   func(ctx context.Context) string
+
+	// Audit records admin lifecycle events (soft_deleted; restore
+	// fires from softdelete.Service directly). Nil-safe.
+	Audit *audit.Recorder
+
+	// SoftDelete handles restore (clear deleted_at + audit). Wired
+	// at boot in api.go alongside the gc coordinator.
+	SoftDelete *softdelete.Service
 }
 
 // followChecker is the slice of social.Handler this package needs:
@@ -538,6 +548,12 @@ func (h *Handler) DeletePost(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the post author"},
 		}, nil
 	}
+	reason := extractSoftDeleteReason(req.Body)
+	if len(reason) > softDeleteReasonMaxLen {
+		return openapi.DeletePost400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "reason exceeds 500 chars"},
+		}, nil
+	}
 	// Wrap SoftDeletePost + Delete activity in one tx per ADR 0044.
 	// Without this the federation outbox can't tell peers the post
 	// is gone (Tombstone per AP §6.4). 1.22.B-cleanup made
@@ -552,11 +568,17 @@ func (h *Handler) DeletePost(
 		err := h.activities.WithEmission(ctx, activities.EmissionInput{
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
-			return New(tx).SoftDeletePost(ctx, pgID)
+			return New(tx).SoftDeletePost(ctx, SoftDeletePostParams{
+				ID:            pgID,
+				DeletedReason: softDeleteReasonPtr(reason),
+			})
 		})
 		if err != nil {
 			return nil, fmt.Errorf("posts: delete: %w", err)
 		}
+	}
+	if h.Audit != nil {
+		h.Audit.AdminPostSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), caller.UserRef, reason)
 	}
 	h.cacheInvalidate(ctx, pgID)
 	// post_count just went down for the author — drop their cached
@@ -564,6 +586,62 @@ func (h *Handler) DeletePost(
 	users.InvalidateProfile(ctx, h.registry, cur.AuthorUserRef)
 	return openapi.DeletePost204Response{}, nil
 }
+
+// ---------------------------------------------------------------------------
+// RestorePost — Phase 1.55.C-1b
+// ---------------------------------------------------------------------------
+
+// RestorePost clears deleted_at + deleted_reason on a soft-deleted
+// post. Admin-only. See assets.Handler.RestoreAsset for the shape.
+func (h *Handler) RestorePost(
+	ctx context.Context,
+	req openapi.RestorePostRequestObject,
+) (openapi.RestorePostResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil || id.IsAnonymous() {
+		return openapi.RestorePost401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(auth.SuperAdminCapability) {
+		return openapi.RestorePost403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+		}, nil
+	}
+	if h.SoftDelete == nil {
+		return nil, fmt.Errorf("posts: RestorePost: SoftDelete service unwired")
+	}
+	if err := h.SoftDelete.RestorePost(ctx, nil, uuid.UUID(req.Id), id.UserRef); err != nil {
+		if errors.Is(err, softdelete.ErrNotDeleted) || errors.Is(err, softdelete.ErrNotFound) {
+			return openapi.RestorePost404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "post not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("posts: restore: %w", err)
+	}
+	return openapi.RestorePost204Response{}, nil
+}
+
+// extractSoftDeleteReason pulls the reason from an optional
+// SoftDeleteRequest body. Empty body / empty reason both map to "".
+func extractSoftDeleteReason(body *openapi.SoftDeleteRequest) string {
+	if body == nil || body.Reason == nil {
+		return ""
+	}
+	return strings.TrimSpace(*body.Reason)
+}
+
+// softDeleteReasonPtr returns nil for empty strings, else a pointer
+// to the value, matching the sqlc-generated *string param type.
+func softDeleteReasonPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// softDeleteReasonMaxLen bounds the operator-supplied reason string.
+const softDeleteReasonMaxLen = 500
 
 // ---------------------------------------------------------------------------
 // ListPosts (the feed)
@@ -654,8 +732,16 @@ func (h *Handler) ListPosts(
 		followerPtr = &ref
 	}
 
+	// Phase 1.55.C-1b: ?include_deleted=true is admin-only.
+	var includeDeletedArg *bool
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && caller.Can(auth.SuperAdminCapability) {
+		t := true
+		includeDeletedArg = &t
+	}
+
 	fetch := limit + 1
 	rows, err := New(h.Pool).ListPostsPage(ctx, ListPostsPageParams{
+		IncludeDeleted:  includeDeletedArg,
 		AuthorUserRef:   authorPtr,
 		Visibility:      visPtr,
 		Q:               qText,
