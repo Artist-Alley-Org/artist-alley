@@ -26,12 +26,18 @@ docker run --rm \
     generate
 
 step "oapi-codegen: regenerating OpenAPI types and server interface"
+# Version pinned per §7.1 of docs/v1_readiness.md — using `@latest`
+# silently drifted v2.7.1 → v2.7.2 on dev and broke Codegen check
+# for a week (PR #217). Bump the pin here + regen when upgrading;
+# never widen back to @latest.
+OAPI_CODEGEN_VERSION=v2.7.2
 docker run --rm \
     -v "${ROOT}/app:/src" \
     -w /src/api \
+    -e OAPI_CODEGEN_VERSION="${OAPI_CODEGEN_VERSION}" \
     golang:1.26 \
     sh -c '
-        go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest >/dev/null 2>&1
+        go install "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}" >/dev/null 2>&1
         /go/bin/oapi-codegen -config oapi-codegen.yaml openapi.yaml
     '
 

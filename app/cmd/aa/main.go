@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -75,6 +76,39 @@ func run() error {
 	}
 	defer pool.Close()
 	logger.Info("db connected")
+
+	// Phase 1.55.B §4.4 — schema-freshness boot check. Refuses to
+	// start on SchemaUnappliedMigrations (defensive against goose
+	// bugs or partial-apply states — Migrate above already ran).
+	// Logs WARN on SchemaUnknownNewerSchema (old binary against a
+	// newer DB — usually a bad rollback) but continues booting so
+	// the operator can surface the warning via /admin/system/health.
+	freshness, err := db.CheckSchemaFreshness(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("schema freshness check: %w", err)
+	}
+	switch freshness.Status {
+	case db.SchemaOK:
+		logger.LogAttrs(ctx, slog.LevelInfo, "schema freshness ok",
+			slog.Int64("db_max", freshness.DBMaxVer),
+			slog.Int64("embedded_max", freshness.EmbeddedMaxVer),
+		)
+	case db.SchemaUnappliedMigrations:
+		logger.LogAttrs(ctx, slog.LevelError, "schema freshness refuse to start",
+			slog.String("status", freshness.Status.String()),
+			slog.Int64("db_max", freshness.DBMaxVer),
+			slog.Int64("embedded_max", freshness.EmbeddedMaxVer),
+			slog.String("warning", freshness.Warning),
+		)
+		return fmt.Errorf("schema freshness: %s", freshness.Warning)
+	case db.SchemaUnknownNewerSchema:
+		logger.LogAttrs(ctx, slog.LevelWarn, "schema freshness warning",
+			slog.String("status", freshness.Status.String()),
+			slog.Int64("db_max", freshness.DBMaxVer),
+			slog.Int64("embedded_max", freshness.EmbeddedMaxVer),
+			slog.String("warning", freshness.Warning),
+		)
+	}
 
 	// First-boot bootstrap: create the default admin when none
 	// exists. Idempotent — no-op on subsequent boots. Runs
