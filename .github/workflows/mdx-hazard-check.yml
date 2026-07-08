@@ -1,0 +1,74 @@
+# MDX braced-identifier hazard gate.
+#
+# Prose in synced-to-Astro docs paths (docs/adr/**, docs/install/**,
+# docs/roadmap.md) that contains bare `{[a-zA-Z_]` or `<[a-zA-Z]`
+# outside inline code / fenced blocks / autolinks gets parsed as JSX
+# by MDX and blows up the docs site build. Two dev-side outages
+# hit us:
+#
+#   - PR #208 introduced `{up,down,undo,rate_limit,disabled}` in
+#     feedback-loop docs and broke Cloudflare Pages for ~12h until
+#     PR #213 landed the fix
+#   - the same class of hazard flagged again mid-review of PR #213
+#
+# This gate runs `scripts/check-mdx-hazards.sh` against the changed
+# markdown files on every PR that touches `docs/**/*.md`. Faster
+# than spinning up the full Astro build (which docs.yml already
+# does when site/** changes) and catches the common case cheaply.
+#
+# See §4.20 of docs/v1_readiness.md.
+
+name: MDX hazard check
+
+on:
+  pull_request:
+    paths:
+      - "docs/**/*.md"
+      - "scripts/check-mdx-hazards.sh"
+      - ".github/workflows/mdx-hazard-check.yml"
+
+concurrency:
+  group: mdx-hazard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan changed docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the PR base ref locally to diff changed files.
+          fetch-depth: 0
+
+      - name: Enumerate changed markdown paths
+        id: changed
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          # Diff-only-changed .md files under docs/. The scanner
+          # itself filters to synced-to-Astro paths, so passing
+          # every changed .md is fine — non-synced files are
+          # silently skipped.
+          mapfile -t files < <(git diff --name-only --diff-filter=AM "$base...$head" -- 'docs/*.md' 'docs/**/*.md')
+          printf '%s\n' "${files[@]}"
+          {
+            echo 'files<<EOF'
+            printf '%s\n' "${files[@]}"
+            echo 'EOF'
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Run hazard scanner
+        if: steps.changed.outputs.files != ''
+        run: |
+          # shellcheck disable=SC2046
+          bash scripts/check-mdx-hazards.sh $(printf '%s\n' "${{ steps.changed.outputs.files }}" | tr '\n' ' ')
+
+      - name: Nothing to scan
+        if: steps.changed.outputs.files == ''
+        run: echo 'No docs/*.md changes touched — nothing to scan.'
