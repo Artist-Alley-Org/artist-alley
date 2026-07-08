@@ -138,7 +138,7 @@ files deleted; local reference tree (`/dbstruct/`, `/include/`,
 Per [ADR 0035 conventions](./adr/0035-adr-conventions/), every ADR
 lifecycle status flag matches its actual state. In particular:
 
-- [ADR 0001](./adr/0001-hard-fork-from-resourcespace-trunk/) — flipped
+- [ADR 0001](./adr/0001-hard-fork-from-upstream-trunk/) — flipped
   to `superseded-by: 0040` in Phase 1.55.S (2026-07-08). The physical
   reference tree has been deleted; the fork is now historical.
 - [ADR 0003](./adr/0003-strangler-fig-internal/) — per the
