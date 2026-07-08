@@ -239,17 +239,32 @@ func TestCollectionResources(t *testing.T) {
 		t.Errorf("after remove: %d want 1", len(page3.Items))
 	}
 
-	// Delete collection cascades to memberships
+	// Phase 1.55.C-1b: DELETE is now soft-delete on collections.
+	// The row survives (with deleted_at set); collection_resources
+	// stays intact for the recovery window. The nightly softdelete.gc
+	// hard-deletes past retention, at which point the FK cascade
+	// fires — but that's a coordinator responsibility, not a
+	// HTTP-handler assertion.
 	if dr := deleteReq(t, router, "/collections/"+col); dr.Code != http.StatusNoContent {
 		t.Fatalf("delete collection: %d", dr.Code)
 	}
-	var leftover int
+	var deletedAt *time.Time
 	if err := pool.QueryRow(context.Background(),
-		`SELECT COUNT(*) FROM collection_resources WHERE collection_id = $1`, col).Scan(&leftover); err != nil {
+		`SELECT deleted_at FROM collections WHERE id = $1`, col).Scan(&deletedAt); err != nil {
+		t.Fatalf("post-delete row: %v", err)
+	}
+	if deletedAt == nil {
+		t.Errorf("expected deleted_at to be set on soft-deleted collection; got NULL")
+	}
+	// Memberships are intentionally preserved for the recovery
+	// window — the gc coordinator handles hard-delete + cascade.
+	var stillPresent int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM collection_resources WHERE collection_id = $1`, col).Scan(&stillPresent); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if leftover != 0 {
-		t.Errorf("collection_resources still has %d rows after cascade", leftover)
+	if stillPresent == 0 {
+		t.Errorf("expected collection_resources to survive soft-delete; got 0 rows")
 	}
 }
 

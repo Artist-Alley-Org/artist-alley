@@ -29,9 +29,11 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/activities/emit"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 )
 
 // maxListLimit caps the per-page row count regardless of what the
@@ -68,6 +70,13 @@ type Handler struct {
 	// as if no required collection fields are configured (preserves
 	// pre-1.9.B behaviour for tests that don't wire metadata).
 	metadataGate MetadataGate
+
+	// Audit records admin lifecycle events (soft_deleted; restore
+	// fires from softdelete.Service directly). Nil-safe.
+	Audit *audit.Recorder
+
+	// SoftDelete handles restore. Wired at boot in api.go.
+	SoftDelete *softdelete.Service
 }
 
 // MetadataGate is the minimal interface collections.Create needs to
@@ -321,14 +330,26 @@ func (h *Handler) GetCollection(
 	ctx context.Context,
 	req openapi.GetCollectionRequestObject,
 ) (openapi.GetCollectionResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
 		return openapi.GetCollection401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	row, err := h.getByIDCached(ctx, pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true})
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	row, err := h.getByIDCached(ctx, pgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Phase 1.55.C-1b: admin callers still see soft-deleted
+			// rows (so the Restore button on /collections/{id} has
+			// something to render). Non-admin callers stay on the
+			// 404 path — soft-deleted collections are invisible
+			// to them.
+			if id.Can(auth.SuperAdminCapability) {
+				if adminRow, adminErr := New(h.Pool).GetCollectionIncludingDeleted(ctx, pgID); adminErr == nil {
+					return openapi.GetCollection200JSONResponse(rowToAPI(adminRow)), nil
+				}
+			}
 			return openapi.GetCollection404JSONResponse{
 				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
 			}, nil
@@ -495,21 +516,97 @@ func (h *Handler) DeleteCollection(
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "not the owner of this collection"},
 		}, nil
 	}
-	// Gold-standard path: DeleteCollection + Delete activity in
-	// one tx per AP §6.4 Tombstone semantics. 1.22.B-cleanup made
-	// activities required.
+	reason := extractSoftDeleteReason(req.Body)
+	if len(reason) > softDeleteReasonMaxLen {
+		return openapi.DeleteCollection400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "reason exceeds 500 chars"},
+		}, nil
+	}
+	// Phase 1.55.C-1b: DeleteCollection is now soft-delete. Row
+	// remains for the operator recovery window (default 30 days
+	// via sysconfig.CollectionRetentionDays); the gc coordinator
+	// hard-deletes past retention, at which point
+	// collection_resources / collection_posts / collection_acls
+	// cascade via existing FK ON DELETE CASCADE. Activity emit
+	// still fires immediately per AP §6.4 Tombstone semantics —
+	// peers see the delete right away; the local row stays
+	// recoverable for the operator.
 	em := emit.DeleteCollection(h.actorContext(ctx, caller), uuid.UUID(pgID.Bytes).String(), cur.Name)
 	err = h.activities.WithEmission(ctx, activities.EmissionInput{
 		Activity: em.Activity,
 	}, func(tx pgx.Tx) error {
-		return New(tx).DeleteCollection(ctx, pgID)
+		return New(tx).DeleteCollection(ctx, DeleteCollectionParams{
+			ID:            pgID,
+			DeletedReason: softDeleteReasonPtr(reason),
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("collections: delete: %w", err)
 	}
+	if h.Audit != nil {
+		h.Audit.AdminCollectionSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), caller.UserRef, reason)
+	}
 	h.cacheInvalidate(ctx, pgID)
 	return openapi.DeleteCollection204Response{}, nil
 }
+
+// ---------------------------------------------------------------------------
+// RestoreCollection — Phase 1.55.C-1b
+// ---------------------------------------------------------------------------
+
+// RestoreCollection clears deleted_at + deleted_reason on a soft-
+// deleted collection. Admin-only.
+func (h *Handler) RestoreCollection(
+	ctx context.Context,
+	req openapi.RestoreCollectionRequestObject,
+) (openapi.RestoreCollectionResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil || id.IsAnonymous() {
+		return openapi.RestoreCollection401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(auth.SuperAdminCapability) {
+		return openapi.RestoreCollection403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+		}, nil
+	}
+	if h.SoftDelete == nil {
+		return nil, fmt.Errorf("collections: RestoreCollection: SoftDelete service unwired")
+	}
+	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
+	if err := h.SoftDelete.RestoreCollection(ctx, nil, uuid.UUID(req.Id), id.UserRef); err != nil {
+		if errors.Is(err, softdelete.ErrNotDeleted) || errors.Is(err, softdelete.ErrNotFound) {
+			return openapi.RestoreCollection404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("collections: restore: %w", err)
+	}
+	h.cacheInvalidate(ctx, pgID)
+	return openapi.RestoreCollection204Response{}, nil
+}
+
+// extractSoftDeleteReason pulls the reason from an optional
+// SoftDeleteRequest body. Empty body / empty reason both map to "".
+func extractSoftDeleteReason(body *openapi.SoftDeleteRequest) string {
+	if body == nil || body.Reason == nil {
+		return ""
+	}
+	return strings.TrimSpace(*body.Reason)
+}
+
+// softDeleteReasonPtr returns nil for empty strings, else a pointer
+// to the value.
+func softDeleteReasonPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// softDeleteReasonMaxLen bounds the operator-supplied reason string.
+const softDeleteReasonMaxLen = 500
 
 // ---------------------------------------------------------------------------
 // ListCollections
@@ -519,10 +616,18 @@ func (h *Handler) ListCollections(
 	ctx context.Context,
 	req openapi.ListCollectionsRequestObject,
 ) (openapi.ListCollectionsResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil {
 		return openapi.ListCollections401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
+	}
+
+	// Phase 1.55.C-1b: ?include_deleted=true is admin-only.
+	// Non-admins silently see the default filtered list.
+	includeDeleted := false
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && id.Can(auth.SuperAdminCapability) {
+		includeDeleted = true
 	}
 
 	limit := int32(50)
@@ -611,7 +716,13 @@ func (h *Handler) ListCollections(
 	// Fetch limit+1 to know whether there's a next page without a
 	// separate COUNT.
 	fetch := limit + 1
+	var includeDeletedArg *bool
+	if includeDeleted {
+		t := true
+		includeDeletedArg = &t
+	}
 	rows, err := New(h.Pool).ListCollectionsPage(ctx, ListCollectionsPageParams{
+		IncludeDeleted:  includeDeletedArg,
 		OwnerUserRef:    ownerPtr,
 		ExcludeOwner:    excludeOwnerPtr,
 		Visibility:      visPtr,

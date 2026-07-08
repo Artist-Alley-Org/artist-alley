@@ -44,6 +44,10 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let newOpen = $state(false);
+  // Phase 1.55.C-1b: admin toggle to include soft-deleted collections
+  // in the list. Non-admin sessions never see the toggle; the backend
+  // ignores the query param even if it were sent.
+  let includeDeleted = $state(false);
 
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -73,6 +77,7 @@
             tab,
             q: q.trim() || undefined,
             limit: 200,
+            include_deleted: includeDeleted || undefined,
           },
         },
       });
@@ -159,18 +164,31 @@
         {/each}
       </div>
 
-      <div class="relative w-full max-w-xs">
-        <input
-          type="search"
-          bind:value={q}
-          oninput={onSearchInput}
-          placeholder={t('collections.search_placeholder')}
-          class="w-full rounded-md border border-border bg-surface py-1.5 pl-9 pr-3 text-sm focus-visible:border-border-strong focus:outline-none"
-        />
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted">
-          <circle cx="11" cy="11" r="8" />
-          <path d="m21 21-4.3-4.3" />
-        </svg>
+      <div class="flex items-center gap-3">
+        {#if auth.can('system.admin')}
+          <label class="inline-flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted">
+            <input
+              type="checkbox"
+              bind:checked={includeDeleted}
+              onchange={() => void load()}
+              class="h-3.5 w-3.5 rounded border-border"
+            />
+            Include deleted
+          </label>
+        {/if}
+        <div class="relative w-full max-w-xs">
+          <input
+            type="search"
+            bind:value={q}
+            oninput={onSearchInput}
+            placeholder={t('collections.search_placeholder')}
+            class="w-full rounded-md border border-border bg-surface py-1.5 pl-9 pr-3 text-sm focus-visible:border-border-strong focus:outline-none"
+          />
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+        </div>
       </div>
     </div>
   </header>

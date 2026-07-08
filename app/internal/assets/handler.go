@@ -39,13 +39,41 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
+
+// softDeleteReasonMaxLen bounds the operator-supplied reason string
+// so operators can't accidentally paste MB of prose into an audit
+// row. The DB column is TEXT with no length constraint; the cap
+// lives at the handler for a clean 400 rather than a silent bloat.
+const softDeleteReasonMaxLen = 500
+
+// extractSoftDeleteReason pulls the reason from an optional
+// SoftDeleteRequest body. Empty body / empty reason both map to "".
+func extractSoftDeleteReason(body *openapi.SoftDeleteRequest) string {
+	if body == nil || body.Reason == nil {
+		return ""
+	}
+	return strings.TrimSpace(*body.Reason)
+}
+
+// softDeleteReasonPtr returns nil for empty strings, else a pointer
+// to the value. Matches the sqlc-generated *string param type on
+// soft-delete UPDATE queries so an empty reason writes NULL rather
+// than "".
+func softDeleteReasonPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // PinSubjectTypeAsset is the storage-pin subject_type assets use to
 // claim their underlying bytes. Replaces the `user:` pin set by the
@@ -95,6 +123,15 @@ type Handler struct {
 	// construct without; absent config falls back to documented
 	// defaults.
 	SysConfig *sysconfig.Store
+
+	// Audit records admin lifecycle events (soft_deleted currently;
+	// restored fires from the softdelete.Service directly). Nil-safe.
+	Audit *audit.Recorder
+
+	// SoftDelete handles restore (clear deleted_at + audit) via the
+	// shared softdelete.Service. Nil at construction time in tests;
+	// wired at boot in api.go alongside the gc coordinator.
+	SoftDelete *softdelete.Service
 
 	// companions caches the per-asset list of sidecar files (the
 	// model viewer fetches this on every 3D mount; cache hit rate is
@@ -989,8 +1026,22 @@ func (h *Handler) DeleteAsset(
 		}
 		return nil, err
 	}
-	if err := q.SoftDeleteAsset(ctx, pgID); err != nil {
+	reason := extractSoftDeleteReason(req.Body)
+	if len(reason) > softDeleteReasonMaxLen {
+		return openapi.DeleteAsset400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "reason exceeds 500 chars"},
+		}, nil
+	}
+	if err := q.SoftDeleteAsset(ctx, SoftDeleteAssetParams{
+		ID:            pgID,
+		DeletedReason: softDeleteReasonPtr(reason),
+	}); err != nil {
 		return nil, fmt.Errorf("assets: soft-delete: %w", err)
+	}
+	if h.Audit != nil {
+		if id := auth.IdentityFromContext(ctx); id != nil {
+			h.Audit.AdminAssetSoftDeleted(ctx, nil, uuid.UUID(pgID.Bytes).String(), id.UserRef, reason)
+		}
 	}
 	if row.FileHash != nil {
 		if err := h.Storage.RemovePin(ctx, storage.PinRef{
@@ -1008,6 +1059,48 @@ func (h *Handler) DeleteAsset(
 }
 
 // ---------------------------------------------------------------------------
+// RestoreAsset — Phase 1.55.C-1b
+// ---------------------------------------------------------------------------
+
+// RestoreAsset clears deleted_at + deleted_reason on a soft-deleted
+// asset. Admin-only. 404 if the asset is already live (or doesn't
+// exist); 403 for non-admin authenticated callers; 401 for anon.
+//
+// The audit event fires from softdelete.Service.RestoreAsset itself
+// so the write + audit stay together.
+func (h *Handler) RestoreAsset(
+	ctx context.Context,
+	req openapi.RestoreAssetRequestObject,
+) (openapi.RestoreAssetResponseObject, error) {
+	id := auth.IdentityFromContext(ctx)
+	if id == nil || id.IsAnonymous() {
+		return openapi.RestoreAsset401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if !id.Can(auth.SuperAdminCapability) {
+		return openapi.RestoreAsset403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "admin capability required"},
+		}, nil
+	}
+	if h.SoftDelete == nil {
+		return nil, fmt.Errorf("assets: RestoreAsset: SoftDelete service unwired")
+	}
+	// Audit's ctxFromRequest accepts nil (empty reqContext); we
+	// don't have the *http.Request on the strict-server code path,
+	// but the audit row still fires with actor + subject + reason.
+	if err := h.SoftDelete.RestoreAsset(ctx, nil, uuid.UUID(req.Id), id.UserRef); err != nil {
+		if errors.Is(err, softdelete.ErrNotDeleted) || errors.Is(err, softdelete.ErrNotFound) {
+			return openapi.RestoreAsset404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not soft-deleted"},
+			}, nil
+		}
+		return nil, fmt.Errorf("assets: restore: %w", err)
+	}
+	return openapi.RestoreAsset204Response{}, nil
+}
+
+// ---------------------------------------------------------------------------
 // ListAssets
 // ---------------------------------------------------------------------------
 
@@ -1015,10 +1108,19 @@ func (h *Handler) ListAssets(
 	ctx context.Context,
 	req openapi.ListAssetsRequestObject,
 ) (openapi.ListAssetsResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	callerID := auth.IdentityFromContext(ctx)
+	if callerID == nil {
 		return openapi.ListAssets401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
+	}
+
+	// Phase 1.55.C-1b: ?include_deleted=true is admin-only. Non-
+	// admins silently see the default filtered list.
+	var includeDeletedArg *bool
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && callerID.Can(auth.SuperAdminCapability) {
+		t := true
+		includeDeletedArg = &t
 	}
 
 	limit := int32(50)
@@ -1109,8 +1211,9 @@ func (h *Handler) ListAssets(
 		rowCount = len(rows)
 	} else {
 		rows, err := q.ListAssetsPage(ctx, ListAssetsPageParams{
+			IncludeDeleted:  includeDeletedArg,
 			OwnerUserRef:    ownerRef,
-			AssetType:    resType,
+			AssetType:       resType,
 			Status:          statusPtr,
 			Q:               qText,
 			CursorCreatedAt: cursorTs,

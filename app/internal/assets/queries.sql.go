@@ -909,23 +909,24 @@ const listAssetsPage = `-- name: ListAssetsPage :many
 SELECT id, title, description, asset_type, owner_user_ref, status,
        file_hash, file_extension, file_size_bytes, metadata,
        origin_server_id, state_id, processing_status, thumbhash,
-       created_at, updated_at
+       created_at, updated_at, deleted_at, deleted_reason
 FROM assets
-WHERE deleted_at IS NULL
-  AND ($1::BIGINT IS NULL OR owner_user_ref = $1::BIGINT)
-  AND ($2::BIGINT  IS NULL OR asset_type  = $2::BIGINT)
-  AND ($3::TEXT           IS NULL OR status          = $3::TEXT)
-  AND ($4::TEXT                IS NULL
-       OR search_text @@ plainto_tsquery('english', $4::TEXT))
-  AND ($5::TIMESTAMPTZ IS NULL
-       OR created_at < $5::TIMESTAMPTZ
-       OR (created_at = $5::TIMESTAMPTZ
-           AND id < $6::UUID))
+WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
+  AND ($2::BIGINT IS NULL OR owner_user_ref = $2::BIGINT)
+  AND ($3::BIGINT  IS NULL OR asset_type  = $3::BIGINT)
+  AND ($4::TEXT           IS NULL OR status          = $4::TEXT)
+  AND ($5::TEXT                IS NULL
+       OR search_text @@ plainto_tsquery('english', $5::TEXT))
+  AND ($6::TIMESTAMPTZ IS NULL
+       OR created_at < $6::TIMESTAMPTZ
+       OR (created_at = $6::TIMESTAMPTZ
+           AND id < $7::UUID))
 ORDER BY created_at DESC, id DESC
-LIMIT $7::INTEGER
+LIMIT $8::INTEGER
 `
 
 type ListAssetsPageParams struct {
+	IncludeDeleted  *bool
 	OwnerUserRef    *int64
 	AssetType       *int64
 	Status          *string
@@ -952,6 +953,8 @@ type ListAssetsPageRow struct {
 	Thumbhash        []byte
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+	DeletedReason    *string
 }
 
 // Cursor pagination: rows newer than the cursor timestamp, plus tie-
@@ -966,6 +969,7 @@ type ListAssetsPageRow struct {
 // a plain tsquery match is enough.
 func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) ([]ListAssetsPageRow, error) {
 	rows, err := q.db.Query(ctx, listAssetsPage,
+		arg.IncludeDeleted,
 		arg.OwnerUserRef,
 		arg.AssetType,
 		arg.Status,
@@ -998,6 +1002,8 @@ func (q *Queries) ListAssetsPage(ctx context.Context, arg ListAssetsPageParams) 
 			&i.Thumbhash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.DeletedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1189,12 +1195,17 @@ func (q *Queries) SetAssetThumbhashIfMissing(ctx context.Context, arg SetAssetTh
 
 const softDeleteAsset = `-- name: SoftDeleteAsset :exec
 UPDATE assets
-SET deleted_at = NOW(), updated_at = NOW()
+SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) SoftDeleteAsset(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteAsset, id)
+type SoftDeleteAssetParams struct {
+	ID            pgtype.UUID
+	DeletedReason *string
+}
+
+func (q *Queries) SoftDeleteAsset(ctx context.Context, arg SoftDeleteAssetParams) error {
+	_, err := q.db.Exec(ctx, softDeleteAsset, arg.ID, arg.DeletedReason)
 	return err
 }
 

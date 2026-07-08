@@ -84,6 +84,7 @@ type Asset struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
+	DeletedReason        *string            `json:"deleted_reason"`
 	SearchText           interface{}        `json:"search_text"`
 	StateID              pgtype.UUID        `json:"state_id"`
 	TeamID               pgtype.UUID        `json:"team_id"`
@@ -270,6 +271,8 @@ type Collection struct {
 	OriginServerID pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	DeletedReason  *string            `json:"deleted_reason"`
 	SearchText     interface{}        `json:"search_text"`
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
 	SmartQuery *string `json:"smart_query"`
@@ -714,6 +717,7 @@ type Post struct {
 	SearchText            interface{}        `json:"search_text"`
 	OriginServerID        pgtype.UUID        `json:"origin_server_id"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	DeletedReason         *string            `json:"deleted_reason"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	StateID               pgtype.UUID        `json:"state_id"`

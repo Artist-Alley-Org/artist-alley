@@ -84,6 +84,7 @@ type Asset struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	DeletedAt            pgtype.Timestamptz
+	DeletedReason        *string
 	SearchText           interface{}
 	StateID              pgtype.UUID
 	TeamID               pgtype.UUID
@@ -270,6 +271,8 @@ type Collection struct {
 	OriginServerID pgtype.UUID
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
+	DeletedReason  *string
 	SearchText     interface{}
 	// DSL query string that was executed to populate this collection. Phase 1.16.B-2 writes; Phase 1.16.B-4 re-runs.
 	SmartQuery *string
@@ -714,6 +717,7 @@ type Post struct {
 	SearchText            interface{}
 	OriginServerID        pgtype.UUID
 	DeletedAt             pgtype.Timestamptz
+	DeletedReason         *string
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
 	StateID               pgtype.UUID

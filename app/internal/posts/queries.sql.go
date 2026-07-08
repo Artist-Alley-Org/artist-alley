@@ -483,32 +483,34 @@ func (q *Queries) ListPostTags(ctx context.Context, postID pgtype.UUID) ([]strin
 const listPostsPage = `-- name: ListPostsPage :many
 SELECT id, author_user_ref, title, description, visibility, cover_asset_id,
        cover_thumbnail_asset_id, posted_at, like_count, comment_count,
-       origin_server_id, team_id, state_id, created_at, updated_at
+       origin_server_id, team_id, state_id, created_at, updated_at,
+       deleted_at, deleted_reason
 FROM posts
-WHERE deleted_at IS NULL
-  AND ($1::BIGINT IS NULL
-       OR author_user_ref = $1::BIGINT)
-  AND ($2::TEXT IS NULL
-       OR visibility = $2::TEXT)
+WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
+  AND ($2::BIGINT IS NULL
+       OR author_user_ref = $2::BIGINT)
   AND ($3::TEXT IS NULL
-       OR search_text @@ plainto_tsquery('english', $3::TEXT))
+       OR visibility = $3::TEXT)
   AND ($4::TEXT IS NULL
+       OR search_text @@ plainto_tsquery('english', $4::TEXT))
+  AND ($5::TEXT IS NULL
        OR EXISTS (SELECT 1 FROM post_tags pt
                     WHERE pt.post_id = posts.id
-                      AND pt.tag = $4::TEXT))
-  AND ($5::BIGINT IS NULL
+                      AND pt.tag = $5::TEXT))
+  AND ($6::BIGINT IS NULL
        OR EXISTS (SELECT 1 FROM user_follows f
-                    WHERE f.follower_user_ref = $5::BIGINT
+                    WHERE f.follower_user_ref = $6::BIGINT
                       AND f.followee_user_ref = posts.author_user_ref))
-  AND ($6::TIMESTAMPTZ IS NULL
-       OR posted_at < $6::TIMESTAMPTZ
-       OR (posted_at = $6::TIMESTAMPTZ
-           AND id < $7::UUID))
+  AND ($7::TIMESTAMPTZ IS NULL
+       OR posted_at < $7::TIMESTAMPTZ
+       OR (posted_at = $7::TIMESTAMPTZ
+           AND id < $8::UUID))
 ORDER BY posted_at DESC, id DESC
-LIMIT $8::INTEGER
+LIMIT $9::INTEGER
 `
 
 type ListPostsPageParams struct {
+	IncludeDeleted  *bool
 	AuthorUserRef   *int64
 	Visibility      *string
 	Q               *string
@@ -535,6 +537,8 @@ type ListPostsPageRow struct {
 	StateID               pgtype.UUID
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	DeletedAt             pgtype.Timestamptz
+	DeletedReason         *string
 }
 
 // Cursor pagination on (posted_at DESC, id DESC). Filters:
@@ -549,6 +553,7 @@ type ListPostsPageRow struct {
 //     an index-only scan per candidate row — no nested loop.
 func (q *Queries) ListPostsPage(ctx context.Context, arg ListPostsPageParams) ([]ListPostsPageRow, error) {
 	rows, err := q.db.Query(ctx, listPostsPage,
+		arg.IncludeDeleted,
 		arg.AuthorUserRef,
 		arg.Visibility,
 		arg.Q,
@@ -581,6 +586,8 @@ func (q *Queries) ListPostsPage(ctx context.Context, arg ListPostsPageParams) ([
 			&i.StateID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.DeletedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -684,12 +691,17 @@ func (q *Queries) ReplacePostTags(ctx context.Context, arg ReplacePostTagsParams
 }
 
 const softDeletePost = `-- name: SoftDeletePost :exec
-UPDATE posts SET deleted_at = NOW(), updated_at = NOW()
+UPDATE posts SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) SoftDeletePost(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, softDeletePost, id)
+type SoftDeletePostParams struct {
+	ID            pgtype.UUID
+	DeletedReason *string
+}
+
+func (q *Queries) SoftDeletePost(ctx context.Context, arg SoftDeletePostParams) error {
+	_, err := q.db.Exec(ctx, softDeletePost, arg.ID, arg.DeletedReason)
 	return err
 }
 
