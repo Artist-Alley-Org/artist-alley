@@ -1,6 +1,6 @@
-# v1.0.0 readiness audit + ResourceSpace blueprint capture
+# v0.1.0 readiness audit + ResourceSpace blueprint capture
 
-**Status:** SNAPSHOT — this doc is the authoritative pre-v1.0 gap inventory
+**Status:** SNAPSHOT — this doc is the authoritative pre-v0.1.0 gap inventory
 as of the phase 1.55.A audit (2026-07-07). It supersedes
 [cleanup-audit-2026-06.md](./cleanup-audit-2026-06.md) as the go-to
 "what's left" reference and captures the ResourceSpace (RS) blueprint
@@ -8,21 +8,31 @@ patterns still cited by the codebase so the gitignored `/dbstruct/`,
 `/include/`, `/plugins/`, `/pages/` reference tree can be safely deleted
 in a follow-up PR without losing design context.
 
+**Doc history:** originally shipped as `v1_readiness.md` (2026-07-07,
+PR #220). Renamed to `v0_1_readiness.md` on 2026-07-08 (PR #<pending>,
+phase 1.55.R) after the user clarified two release milestones — see §0
+below. The substance is unchanged; the milestone naming shifted.
+
 **Purpose:** unblock two follow-up arcs simultaneously —
 1. the physical deletion of the RS reference tree (per
    [feedback_rs_is_a_blueprint](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/feedback_rs_is_a_blueprint.md)
    we treat RS as a blueprint reference; once every load-bearing pattern
    is captured here, the physical refs are dead weight);
-2. the v1.0.0 release tag (per
-   [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/) which
-   flips schema migrations to append-only forever at v1.0.0; per
+2. the v0.1.0 release tag (the first-ever tag — see §0 for milestone
+   semantics). Per [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/)
+   the trigger for append-only-forever migrations is under review
+   (v0.1.0 vs v1.0.0 — see issue #228); per
    [project_license_direction](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_license_direction.md)
-   which gates the AGPL + commercial relicense on Phase 1.24, itself
-   gated on this arc).
+   the AGPL + commercial relicense gates on Phase 1.24 and — per issue
+   #229 — the v0.1.0 tag alignment is a soft decision.
 
 **How to read this doc:**
 
-- §1 defines the exit criteria — what must be true to tag v1.0.0.
+- §0 defines the two release milestones (v0.1.0 = first tag; v1.0.0 =
+  out of beta) — read this first; every subsequent milestone reference
+  anchors here.
+- §1 defines the v0.1.0 exit criteria — what must be true to ship
+  the first tag.
 - §2 summarises the arc-close velocity of the last three weeks so the
   reader has an anchor for "how much is left" vs "how much just shipped."
 - §3 lists shipped gaps (from the RS-gap audit and subsequent work) so
@@ -30,12 +40,12 @@ in a follow-up PR without losing design context.
 - **§4 is the meat** — one entry per open gap, each with a mandatory
   substructure: status, RS blueprint, modern research, caching sketch,
   federation implications, implementation sketch, effort, sequencing.
-- §5 lists items explicitly deferred to post-v1.0 with rationale.
+- §5 lists items explicitly deferred to post-v0.1.0 with rationale.
 - §6 is the RS reference inventory as a compliance table — every row
   must resolve to "delete-safe" before the physical rm-rf PR opens.
 - §7 proposes a sequencing order for the open gaps.
 - §8 is the RS-deletion readiness checklist.
-- §9 points at the arcs that unblock after v1.0.0.
+- §9 points at the arcs that unblock after v0.1.0 vs after v1.0.0.
 
 **Research depth disclosure per §4 entry.** Each gap flags its research
 depth as `deep` (2-4 real citations with URLs, sourced during this
@@ -49,16 +59,63 @@ during audit.
 
 ---
 
-## 1. v1.0.0 exit criteria
+## 0. Milestone model — v0.1.0 vs v1.0.0
 
-The v1.0.0 tag is a **stability contract** — everything on `dev` up to
-that point is provisional; everything after treats schema, API surface,
+Two release milestones, explicit definitions. Every subsequent milestone
+reference in this doc anchors here.
+
+### v0.1.0 — first tagged release
+
+**Marker:** ResourceSpace reference tree (`/dbstruct/`, `/include/`,
+`/plugins/`, `/pages/`) deleted; base feature set complete per §4
+sequencing.
+
+**Enables:**
+
+- The relicense arc (per [ADR 0016](./adr/0016-license-direction/) →
+  [ADR 0017](./adr/0017-monetization-and-licensing/)) — v0.1.0 alignment
+  is under review (see issue #229).
+- The monetization arc (Phase 1.24) — first paying customers.
+- First real installs against the tagged codebase.
+
+**SemVer semantics:** the 0.x range still permits minor-version schema
+breaks. Feature-add is the norm; breaking changes remain possible but
+should be documented in release notes.
+
+### v1.0.0 — out of beta
+
+**Marker:** real production usage, a soak period, release-worthy
+quality. Not a next-week event — v1.0.0 sits somewhere past v0.1.0 plus
+real-user validation.
+
+**Enables:** SemVer compatibility promises. Per [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/)
+this MAY be the correct trigger for migrations-append-only-forever —
+under review (see issue #228). The alternative is that append-only
+kicks in at v0.1.0 (stricter reading; SemVer 0.x in this codebase
+promises schema stability).
+
+### What this recalibration changed
+
+This doc originally shipped (2026-07-07, PR #220) framing everything as
+"v1.0.0 readiness." The user clarified on 2026-07-08 that "the release
+we're building toward right now" is v0.1.0, not v1.0.0. Every mention
+in this doc of "the release" or "the first tag" refers to v0.1.0. The
+handful of genuinely-later "out of beta / SemVer promises" mentions
+stay v1.0.0 (see §9). The two ADR-level semantic questions above are
+tracked as follow-ups (#228, #229) rather than decided here.
+
+---
+
+## 1. v0.1.0 exit criteria
+
+The v0.1.0 tag is a **first-release contract** — everything on `dev` up
+to that point is provisional; everything after treats schema, API surface,
 and installer contracts as promises. The specific criteria:
 
 ### 1.1 All in-scope gaps closed or explicitly deferred
 
-Every open gap in §4 either ships in a labelled pre-v1.0 phase OR gets
-an explicit "deferred to post-v1.0.0" entry in §5 with rationale that
+Every open gap in §4 either ships in a labelled pre-v0.1.0 phase OR gets
+an explicit "deferred to post-v0.1.0" entry in §5 with rationale that
 survives review. No shipping "we'll figure it out later" — the doc
 records the decision either way.
 
@@ -82,33 +139,34 @@ lifecycle status flag matches its actual state. In particular:
 - [ADR 0003](./adr/0003-strangler-fig-internal/) — per the
   [strangler-fig-abandoned memory](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_strangler_fig_abandoned.md)
   the strangler-fig approach was formally abandoned; the ADR should be
-  marked `superseded` before v1.0.
+  marked `superseded` before v0.1.0.
 - [ADR 0015](./adr/0015-php-as-legacy-backend/) — same. PHP is now
   reference-only, not a legacy backend to strangle.
 - [ADR 0016](./adr/0016-license-direction/) — status must flip from
-  `proposed` to `accepted` (or superseded by 0017) before v1.0 so the
-  license direction is committed at the tag.
+  `proposed` to `accepted` (or superseded by 0017) before v0.1.0 so the
+  license direction is committed at the tag. Timing alignment tracked
+  in issue #229.
 
 ### 1.4 Migration baseline validated
 
 Per [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/), the
 baseline squash to `00001_baseline_v1.sql` is a **prerequisite** for
-v1.0. That work is complete — verify one more time that the current
-head of migrations forms a coherent linear graph from
-`00001_baseline_v1.sql` forward and that `goose up` on a fresh Postgres
-16 produces a schema identical to `app/schema.sql`.
+v0.1.0. That work is complete + verified by `scripts/verify-baseline.sh`
+which reports `baseline verified against 28 append migrations, head=00029,
+ready for tag.` The append-only-forever trigger (v0.1.0 vs v1.0.0) is
+tracked separately in issue #228.
 
 ### 1.5 License direction finalised
 
 Per ADR 0016 (proposed) → 0017 (proposed), the AGPL + commercial
-relicense is planned but not accepted. Before v1.0, one of these must
+relicense is planned but not accepted. Before v0.1.0, one of these must
 be true:
 
 - The relicense is executed (0016/0017 → `accepted`; `LICENSE` file
   updated; `NOTICES.md` updated); OR
-- The relicense is explicitly deferred to a labelled post-v1.0 phase
-  (e.g., 1.24) with a decision doc explaining why v1.0 ships under the
-  current BSD-3-Clause.
+- The relicense is explicitly deferred to a labelled post-v0.1.0 phase
+  (e.g., 1.24) with a decision doc explaining why v0.1.0 ships under
+  the current BSD-3-Clause. Timing tracked in issue #229.
 
 ### 1.6 CI + release pipeline health check
 
@@ -120,22 +178,24 @@ Per [project_release_pipeline](../home/kenneth/.claude/projects/-mnt-d-Projects-
 - The `Edge image` + `Verify production image build` workflows run on
   every `dev` push without drift (no oapi-codegen version churn like
   the pre-existing v2.7.1 → v2.7.2 drift caught by PR #217).
-- The signed-release tooling has been dry-run against a `v0.99.0-rc`
+- The signed-release tooling has been dry-run against a `v0.0.99-rc`
   tag to verify GHCR + Docker Hub publish, the SBOM emitter runs, and
   the release-notes generator produces sensible output.
 
 ### 1.7 Documentation surface validated
 
-- `README.md` reflects a v1.0 install path (Docker compose one-liner)
+- `README.md` reflects a v0.1.0 install path (Docker compose one-liner)
   rather than the current developer-mode instructions.
 - The operator install guide walks a fresh operator from `git clone`
   → running-instance in under 30 minutes without any "this is a WIP"
   disclaimers.
 - The API reference at `/site/src/content/docs/reference/` regenerates
   cleanly from the current `openapi.yaml`.
-- The upgrade-path doc explains how a v1.0.0 operator will move to v1.1.
-  (Answer today: they wait for a real migration path; ADR 0046
-  documents the schema promise.)
+- The upgrade-path doc explains how a v0.1.0 operator will move to
+  v0.2 (or, per issue #228 outcome, whether 0.x still allows schema
+  breaks). Note SemVer 0.x semantics: minor-version breaks are
+  permitted by the spec even if this project chooses to promise
+  otherwise.
 - ADR index page (`/site/src/content/docs/adr/`) auto-regenerated and
   renders every ADR without a warning.
 
@@ -230,7 +290,7 @@ the open remainder.
 
 ---
 
-## 4. Open gaps within scope of v1.0.0 — the meat
+## 4. Open gaps within scope of v0.1.0 — the meat
 
 Each entry has: **Status**, **Roadmap phase**, **ResourceSpace
 blueprint**, **Modern gold-standard research**, **Caching strategy**,
@@ -1025,7 +1085,7 @@ audience will ask for this for external distribution).
 templates + testing.
 
 **Sequencing recommendation.** Independent; medium priority. Consider
-deferring to post-v1.0 if the sprint runway is tight.
+deferring to post-v0.1.0 if the sprint runway is tight.
 
 ---
 
@@ -1244,9 +1304,9 @@ unless operator-scale demand exists. Consider deferring.
 **Effort estimate.** 2 day arc.
 
 **Sequencing recommendation.** Independent; low priority for v1.0
-core. **Recommend deferring to post-v1.0** (§5) — brand workspace is
+core. **Recommend deferring to post-v0.1.0** (§5) — brand workspace is
 ADR 0025 which is a labelled Phase 1.25 and shouldn't be squeezed
-into pre-v1.0.
+into pre-v0.1.0.
 
 ---
 
@@ -1291,7 +1351,7 @@ into pre-v1.0.
 **Effort estimate.** 1 day.
 
 **Sequencing recommendation.** Independent; last operator-visible gap
-in the reverse-image feature. Ship this before v1.0.
+in the reverse-image feature. Ship this before v0.1.0.
 
 ---
 
@@ -1308,7 +1368,7 @@ browse permission surprises. If shipped, follows the same snapshot-
 compliance discipline as PR #213.
 
 **Sequencing recommendation.** Independent; deferrable to
-post-v1.0 unless operator reports.
+post-v0.1.0 unless operator reports.
 
 ---
 
@@ -1322,7 +1382,7 @@ Captured for sequencing context. Requires new API design (field-level
 vs row-level visibility semantic), snapshot-test discipline, and
 cache-key preservation on `presentation/cache.go`. Not a small PR.
 
-**Sequencing recommendation.** Deferrable to post-v1.0 unless IIIF
+**Sequencing recommendation.** Deferrable to post-v0.1.0 unless IIIF
 metadata visibility becomes an operator ask.
 
 ---
@@ -1335,9 +1395,9 @@ Research depth: `light`.
 Captured for context. This is a large refactor requiring per-handler
 snapshot suite + migration off sqlc-static queries to hand-written
 dynamic SQL. Multi-PR effort. Prime candidate for a labelled Phase
-1.17.P arc post-v1.0.
+1.17.P arc post-v0.1.0.
 
-**Sequencing recommendation.** Explicitly defer to post-v1.0.
+**Sequencing recommendation.** Explicitly defer to post-v0.1.0.
 
 ---
 
@@ -1367,7 +1427,7 @@ Gate the docs site build on any `docs/**/*.md` PR change, blocking merge on fail
 **Effort estimate.** Half day for the workflow file; 1 day if we ship
 both approaches (fast pre-parser + full build).
 
-**Sequencing recommendation.** Cheap. Ship pre-v1.0 as a
+**Sequencing recommendation.** Cheap. Ship pre-v0.1.0 as a
 sub-day hygiene commit — the class of regression it prevents is
 disproportionately annoying (silently broken dev-side docs).
 
@@ -1382,7 +1442,7 @@ still due). Research depth: `light`.
 **Blueprint** — per
 [ADR 0046](./adr/0046-migration-baseline-and-squash-policy/), the
 current state is that all migrations are collapsed into
-`00001_baseline_v1.sql` plus incremental additions. Before v1.0.0, one
+`00001_baseline_v1.sql` plus incremental additions. Before v0.1.0, one
 verification pass:
 
 - On a fresh Postgres 16, run `goose up` from `00001_baseline_v1.sql`
@@ -1394,7 +1454,7 @@ verification pass:
 
 **Effort estimate.** Half day.
 
-**Sequencing recommendation.** Ship right before the v1.0 tag as
+**Sequencing recommendation.** Ship right before the v0.1.0 tag as
 final release-readiness.
 
 ---
@@ -1423,7 +1483,7 @@ final release-readiness.
 
 ---
 
-## 5. Deferred to post-v1.0.0
+## 5. Deferred to post-v0.1.0
 
 Items intentionally deferred, with rationale. **These do NOT block
 v1.0** — they're deliberate scope decisions.
@@ -1432,18 +1492,18 @@ v1.0** — they're deliberate scope decisions.
   ADR 0025's Phase 1.25 brand workspace arc; not core to v1.0's
   operator/user story.
 - **§4.17 #210 sensitivity semantics.** Semantic decision gated on
-  operator signal. Ship post-v1.0 if operators report anonymous-browse
+  operator signal. Ship post-v0.1.0 if operators report anonymous-browse
   surprises.
 - **§4.18 #211 FieldVisibility for IIIF.** Requires new API design +
-  snapshot suite; not small. Defer to post-v1.0.
+  snapshot suite; not small. Defer to post-v0.1.0.
 - **§4.19 #212 sqlc migration for list handlers.** Multi-PR effort;
   low observable-behaviour payoff. Ship as a labelled Phase 1.17.P
-  post-v1.0.
+  post-v0.1.0.
 - **§4.14 Query profiling / slow-log.** Nice-to-have; operators can
-  use `psql \pset expanded` today. Ship post-v1.0 if operator scale
+  use `psql \pset expanded` today. Ship post-v0.1.0 if operator scale
   demands.
 - **§4.7 Comment moderation queue** + **§4.8 comment edit history
-  diff trail.** Ship post-v1.0 unless operator-scale comment volume
+  diff trail.** Ship post-v0.1.0 unless operator-scale comment volume
   demands it. AA's current audience is small enough that in-person
   moderation via delete-and-message works.
 - **Batch multi-asset metadata edit.** From RS-gap audit A-tier;
@@ -1553,7 +1613,7 @@ Total ~7 days.
 
 ### 7.3 Operator power tools (medium priority)
 
-Ship if runway permits; otherwise defer to post-v1.0:
+Ship if runway permits; otherwise defer to post-v0.1.0:
 
 5. §4.1 job DLQ + §4.2 job cancellation (paired, 2 days).
 6. §4.3 sysconfig admin UI with typed widgets (2-3 days).
@@ -1569,7 +1629,7 @@ Total ~8-10 days. Consider deferring §4.13 first if squeezed.
 
 Best implemented as a single "1.17.L reporting arc" PR pair since
 they share the same SQL registry pattern. Consider deferring to
-post-v1.0 unless operator scale demands it.
+post-v0.1.0 unless operator scale demands it.
 
 ### 7.5 Total v1.0 remaining effort estimate
 
@@ -1592,7 +1652,7 @@ verify each of these before opening:
 - [ ] Every code comment referencing `/dbstruct` / `/include` /
   `/plugins` / `/pages` paths has been updated or removed. Grep proof:
   `grep -rn "/dbstruct\\|/include/\\|/plugins/\\|/pages/" app/ web/src/ docs/`
-  returns only references inside this v1_readiness.md doc.
+  returns only references inside this v0_1_readiness.md doc.
 - [ ] Every open gap in §4 has captured RS blueprint per the §4
   substructure.
 - [ ] §6 inventory table has zero `NO` rows (or every `NO` row has
@@ -1611,28 +1671,44 @@ under an hour of work.
 
 ---
 
-## 9. Post-v1.0.0 arc pointers
+## 9. Post-milestone arc pointers
 
-Arcs unblocked by shipping this audit + the sequenced work in §7:
+Arcs unblocked by shipping this audit + the sequenced work in §7. Split
+per the §0 milestone model — the shorter list (v0.1.0) is what unlocks
+right after the first tag; the longer list (v1.0.0) is what starts
+mattering once the codebase reaches out-of-beta quality.
+
+### After v0.1.0 (first tag ships)
 
 - **Relicense arc** per ADR 0016 → ADR 0017 → Phase 1.24. Ship the
-  AGPL + commercial dual-license after v1.0 tags, once RS refs are
-  physically deleted and the residual audit is clean.
-- **Migration append-only enforcement** per ADR 0046. From v1.0.0
-  tag forward, schema changes are additive only; the enforcement
-  hooks (CI check that no PR modifies existing migration files)
-  need to activate at tag time.
-- **Monetization arc** per Phase 1.24. Gated on the relicense; not
-  discussed further here.
-- **Federation Phase 1.30+ / remote workers.** Per
-  [memory project_federated_remote_workers](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_federated_remote_workers.md).
-  Design work already exists; implementation post-v1.0.
+  AGPL + commercial dual-license after v0.1.0 tags, once RS refs are
+  physically deleted and the residual audit is clean. Timing tracked
+  in issue #229.
+- **Monetization arc** per Phase 1.24. Gated on the relicense; first
+  paying customers arrive here.
 - **ADR 0055 pg_search revisit.** The search-arc ADR filed this for
   future revisit if operators complain about ranking quality. PR #208
   shipped the feedback-signal collection surface; when structured
   complaint data exists, revisit.
 - **Full IIIF Presentation 3.0 feature completeness** — pages 189–192
-  filed follow-ups. Ship post-v1.0.
+  filed follow-ups. Ship post-v0.1.0.
+
+### After v1.0.0 (out of beta)
+
+- **Migration append-only enforcement** per ADR 0046. From v1.0.0 tag
+  forward, schema changes are additive only; the enforcement hooks
+  (CI check that no PR modifies existing migration files) need to
+  activate at tag time. **Note:** whether the trigger is actually
+  v0.1.0 vs v1.0.0 is under review — see issue #228.
+- **SemVer compatibility promises.** Per §0, the 0.x range still
+  permits minor-version schema breaks; once v1.0.0 tags, API + DB
+  contracts stabilise per the SemVer spec. Release notes format,
+  deprecation policy, and back-compat surface all pin to this
+  milestone.
+- **Federation Phase 1.30+ / remote workers.** Per
+  [memory project_federated_remote_workers](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_federated_remote_workers.md).
+  Design work already exists; implementation trails the out-of-beta
+  soak.
 
 ---
 
@@ -1654,7 +1730,7 @@ Arcs unblocked by shipping this audit + the sequenced work in §7:
 
 **Q3 — ADRs citing RS:**
 - 0001 (Hard fork) — foundational; recommend flip to
-  `superseded-by: 0040` at v1.0 tag or keep as historical.
+  `superseded-by: 0040` at v0.1.0 tag or keep as historical.
 - 0002 (BSD-3 license) — cites RS license inheritance; keep for
   relicense arc.
 - 0003 (Strangler fig) — abandoned per

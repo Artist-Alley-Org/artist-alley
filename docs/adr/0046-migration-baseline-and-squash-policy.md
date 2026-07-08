@@ -23,6 +23,19 @@ excerpt: >-
   migration history becomes append-only forever.
 ---
 
+## ⚠️ Semantic review pending (2026-07-08)
+
+The user has clarified two release milestones:
+
+- **v0.1.0** — first tagged release (marker: ResourceSpace refs deleted + base feature set complete).
+- **v1.0.0** — out of beta (marker: real production usage + soak + stable quality).
+
+This ADR currently frames the append-only-forever trigger as "after `v1.0.0`" / "after v1.0 launch." Whether the trigger should actually be v0.1.0 (strict; schemas stabilise with the first tag) or v1.0.0 (SemVer-standard; 0.x remains workshop) is an **open decision tracked at issue #228**.
+
+Read this ADR's `v1.0.0` mentions as **pending-review** until #228 resolves. Every "after v1.0.0" clause below applies to whichever milestone #228 lands on; the ADR text will be updated once the decision is made.
+
+Full milestone-model context: [`docs/v0_1_readiness.md` §0](../v0_1_readiness.md).
+
 ## Implementation status (2026-06-15)
 
 The pre-MVP baseline squash is **in progress**:

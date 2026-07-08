@@ -1,6 +1,6 @@
 -- Phase 1.55.C-1 — Soft-delete recovery window (GDPR-shaped).
 --
--- Ships §4.6 of docs/v1_readiness.md. Adds an operator-visible
+-- Ships §4.6 of docs/v0_1_readiness.md. Adds an operator-visible
 -- delete reason + brings collections onto the soft-delete pattern
 -- assets + posts already use.
 --

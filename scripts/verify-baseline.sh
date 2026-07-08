@@ -21,7 +21,7 @@
 # usually causes it. Success prints "baseline verified against N
 # append migrations — ready for v1.0.0 tag."
 #
-# See §4.21 of docs/v1_readiness.md + ADR 0046.
+# See §4.21 of docs/v0_1_readiness.md + ADR 0046.
 
 set -euo pipefail
 

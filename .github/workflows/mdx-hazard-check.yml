@@ -16,7 +16,7 @@
 # than spinning up the full Astro build (which docs.yml already
 # does when site/** changes) and catches the common case cheaply.
 #
-# See §4.20 of docs/v1_readiness.md.
+# See §4.20 of docs/v0_1_readiness.md.
 
 name: MDX hazard check
 

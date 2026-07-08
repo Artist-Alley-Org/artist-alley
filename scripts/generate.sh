@@ -26,7 +26,7 @@ docker run --rm \
     generate
 
 step "oapi-codegen: regenerating OpenAPI types and server interface"
-# Version pinned per §7.1 of docs/v1_readiness.md — using `@latest`
+# Version pinned per §7.1 of docs/v0_1_readiness.md — using `@latest`
 # silently drifted v2.7.1 → v2.7.2 on dev and broke Codegen check
 # for a week (PR #217). Bump the pin here + regen when upgrading;
 # never widen back to @latest.

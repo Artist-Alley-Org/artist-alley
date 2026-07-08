@@ -16,11 +16,12 @@ foundational arc in flight; the remaining sub-phases (1.17.B
 through 1.17.F) are mechanical execution of decisions captured in
 [ADR 0010](/adr/0010-permissions-teams-workflow/) (now `accepted`).
 
-The transition marker is the **v1.0.0 release tag**, expected after
-the federation v1.0-rc1 soak completes on 2026-06-22 and the 1.17
-arc closes. Post-tag work is feature development on a stable
-foundation; per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
-schema migrations become append-only forever at the same moment.
+The transition marker is the **v0.1.0 release tag** — the first-ever
+tag; the second milestone (v1.0.0 = out of beta) sits further out.
+Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/) the
+append-only-forever migration trigger is under review (v0.1.0 vs
+v1.0.0 — see issue #228; details in
+[docs/v0_1_readiness.md §0](./v0_1_readiness.md)).
 
 ## Shipped
 
@@ -125,19 +126,22 @@ The current release stream covers the foundations:
 These have foundations in place; the rest of the surface area is the
 current focus:
 
-- **v1.0.0 release readiness** (Phase 1.55). The meta-arc getting
-  from current-dev to the v1.0.0 tag. 1.55.A shipped 2026-07-07 via
-  PR #220 (squash `9d14fc30`, closes #219): `docs/v1_readiness.md`
-  is the master audit — 9,907 words / 1,692 lines / 9 sections
-  covering v1.0 exit criteria (7 ADR-anchored), arc-close velocity
-  (25 PRs 2026-06-22 → 2026-07-07), 22 open gaps with mandatory
-  substructure (Status / Roadmap phase / RS blueprint capture /
-  2024-2026 gold-standard research citations / Caching strategy /
-  Federation implications / Target sketch / Effort / Sequencing),
-  post-v1.0 deferrals, RS reference inventory with delete-safety
-  verdict YES on every row, sequencing proposal (base v1.0 scope
-  ~9 days; full menu ~17-22 days), 7-gate RS deletion readiness
-  checklist, post-v1.0 arc pointers. **Unblocks two follow-up arcs:**
+- **v0.1.0 release readiness** (Phase 1.55). The meta-arc getting
+  from current-dev to the v0.1.0 tag — the first-ever tagged release
+  (see [docs/v0_1_readiness.md §0](./v0_1_readiness.md) for the
+  milestone model that separates v0.1.0 = first tag from v1.0.0 =
+  out of beta). 1.55.A shipped 2026-07-07 via PR #220 (squash
+  `9d14fc30`, closes #219): `docs/v0_1_readiness.md` is the master
+  audit — 9,907 words / 1,692 lines / 9 sections covering v0.1.0
+  exit criteria (7 ADR-anchored), arc-close velocity (25 PRs
+  2026-06-22 → 2026-07-07), 22 open gaps with mandatory substructure
+  (Status / Roadmap phase / RS blueprint capture / 2024-2026
+  gold-standard research citations / Caching strategy / Federation
+  implications / Target sketch / Effort / Sequencing), post-v0.1.0
+  deferrals, RS reference inventory with delete-safety verdict YES
+  on every row, sequencing proposal (base v0.1.0 scope ~9 days;
+  full menu ~17-22 days), 7-gate RS deletion readiness checklist,
+  post-milestone arc pointers (split v0.1.0 vs v1.0.0). **Unblocks two follow-up arcs:**
   (a) physical deletion of the ~102 MB gitignored `/dbstruct/` +
   `/include/` + `/plugins/` + `/pages/` ResourceSpace reference tree
   (§6 confirms every pattern is captured internally); (b) the
@@ -163,10 +167,23 @@ current focus:
   the real db.Migrate + goose.UpContext path; migration filename
   sequence contiguous) and the current run reports "baseline
   verified against 28 append migrations, head=00029, ready for
-  v1.0.0 tag." Deferred: unified /admin/system/health surface for
+  tag." Deferred: unified /admin/system/health surface for
   the schema-freshness warning — no such endpoint exists today
-  (only per-subsystem shims); boot WARN log is enough pre-v1.0
+  (only per-subsystem shims); boot WARN log is enough pre-v0.1.0
   per pre-release-practices.
+  **1.55.R shipped 2026-07-08** — v0.1.0 milestone rename pass. Pure
+  docs recalibration after the user clarified two milestones:
+  v0.1.0 = first tagged release (RS deleted + base feature set);
+  v1.0.0 = out of beta (real usage + soak + stable production).
+  `docs/v1_readiness.md` renamed to `docs/v0_1_readiness.md` via
+  `git mv`; new §0 Milestone model section added at top of doc;
+  every "v1.0.0" that meant "the release we're building toward"
+  retagged to "v0.1.0"; §9 split into post-v0.1.0 + post-v1.0.0
+  subsections; ADR 0046 grows a pending-review note pointing at
+  issue #228 (whether append-only kicks in at v0.1.0 vs v1.0.0);
+  issues #228 + #229 filed to track the ADR 0046 + 0016/0017
+  semantic decisions separately. Zero substance change; naming
+  recalibration only. Closes #227.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
@@ -958,9 +975,10 @@ roughly in order of practical value to operators.
 The phases queued behind the current focus, in build order:
 
 - **Pre-MVP cleanup** (Phase 1.49). Foundational debt-clearing for
-  the v1.0 release. Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
+  the v0.1.0 release. Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
   pre-MVP migrations MAY be squashed once into a single baseline;
-  after v1.0.0 tag, migrations become append-only forever.
+  the append-only-forever trigger (v0.1.0 vs v1.0.0) is under
+  review — see issue #228.
   Sub-phases:
   - ✅ 1.49.A — PanicShim consolidation (shipped)
   - ✅ 1.49.B — Legacy fallback drop (shipped)
@@ -974,7 +992,7 @@ The phases queued behind the current focus, in build order:
   - ⏭ 1.49.D — Scrub product references from source (clean-room
     on the stable baseline; independent of soak)
 
-  Gates the v1.0.0 release tag. Soak-compatible — the audit + the
+  Gates the v0.1.0 release tag. Soak-compatible — the audit + the
   squash + the scrub all touch DB schema / docs / source-text only;
   the federation runtime is not affected.
 

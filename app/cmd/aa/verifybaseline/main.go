@@ -5,7 +5,7 @@
 // an embed-FS bug or a goose-dialect edge case surfaces here identically
 // to how it would in production boot).
 //
-// See §4.21 of docs/v1_readiness.md.
+// See §4.21 of docs/v0_1_readiness.md.
 package main
 
 import (

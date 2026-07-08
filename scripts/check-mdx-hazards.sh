@@ -26,7 +26,7 @@
 #     (broke Cloudflare Pages for ~12h until PR #213 fixed it)
 #   - the {up,down} sequence flagged again mid-PR #213 review
 #
-# See §4.20 of docs/v1_readiness.md.
+# See §4.20 of docs/v0_1_readiness.md.
 
 set -euo pipefail
 
