@@ -148,6 +148,21 @@ current focus:
   §4.4 schema-mismatch boot detection + §4.21 baseline migration
   squash verification into one PR. All sub-day, all pure release-
   readiness hygiene.
+  **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
+  (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
+  posts + collections and adds `deleted_at` to collections;
+  `app/internal/softdelete/` package ships the Restore + HardDeletePast
+  primitives per entity plus the nightly gc CoordinatorJob wired at
+  boot; `sysconfig.SoftDeleteConfig` exposes 4 retention knobs +
+  gc-hour-utc (range-validated); 10 new audit event constants +
+  Recorder methods; user hard-delete-by-gc anchors off the existing
+  `admin.users.archived` audit event rather than adding a competing
+  `deleted_at` column (hybrid scope per pre-audit). GC coordinator
+  reads sysconfig every tick so operator retention changes take effect
+  on the next nightly pass. **1.55.C-1b follow-up** wires the handler
+  layer: DELETE endpoints accept optional `reason` body; 3 new
+  Restore endpoints; `?include_deleted=true` param on admin list
+  handlers; admin UI Restore buttons + include-deleted toggle.
 - **First tagged release** — `v0.1.0` against the channels above.
   Pre-1.0 means schemas can still break across minors.
 - **Image processing pipeline** (Phase 1.18.A — shipped). Variant

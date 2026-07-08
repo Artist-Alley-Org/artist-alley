@@ -278,6 +278,31 @@ const (
 	EventAdminSeedTimestampsBackfilled = "admin.seed.timestamps_backfilled"
 	EventAdminSeedCommentCreated       = "admin.seed.comment_created"
 	EventAdminSeedUserCreated          = "admin.seed.user_created"
+
+	// Phase 1.55.C-1 — soft-delete lifecycle events.
+	//
+	// Three per soft-deletable entity (assets / posts / collections):
+	// soft_deleted (operator flipped deleted_at, carries reason),
+	// restored (operator un-flipped deleted_at inside the recovery
+	// window), hard_deleted_by_gc (nightly gc coordinator past the
+	// retention window, carries reason from the original delete +
+	// how many days over the window we were).
+	//
+	// Users are covered by the pre-existing
+	// EventAdminUserArchived / EventAdminUserRestored pair — that
+	// state machine IS the user soft-delete concept (see
+	// [[project_locked_decisions]] + pre-audit for 1.55.C-1). Only
+	// the hard-delete-by-gc event is new for user.
+	EventAdminAssetSoftDeleted        = "admin.asset.soft_deleted"
+	EventAdminAssetRestored           = "admin.asset.restored"
+	EventAdminAssetHardDeletedByGC    = "admin.asset.hard_deleted_by_gc"
+	EventAdminPostSoftDeleted         = "admin.post.soft_deleted"
+	EventAdminPostRestored            = "admin.post.restored"
+	EventAdminPostHardDeletedByGC     = "admin.post.hard_deleted_by_gc"
+	EventAdminCollectionSoftDeleted   = "admin.collection.soft_deleted"
+	EventAdminCollectionRestored      = "admin.collection.restored"
+	EventAdminCollectionHardDeletedByGC = "admin.collection.hard_deleted_by_gc"
+	EventAdminUserHardDeletedByGC     = "admin.user.hard_deleted_by_gc"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -1234,4 +1259,113 @@ func (r *Recorder) FederationInboxEncryptionRequiredRejected(
 		"object_kind":   objectKind,
 	}
 	r.write(ctx, EventFederationInboxEncryptionRequiredRejected, subjectUserRef, nil, reqContext{}, meta)
+}
+
+// Phase 1.55.C-1 — soft-delete lifecycle recorders.
+//
+// Each entity gets a triplet (soft_deleted / restored / hard_deleted_by_gc)
+// with a uniform metadata shape:
+//
+//   - soft_deleted: metadata carries the operator-supplied reason
+//     (empty string if none). Actor = admin who initiated. Fires from
+//     the entity's DELETE handler after the UPDATE ... SET deleted_at
+//     commit.
+//   - restored: metadata carries the previously-recorded deleted_reason
+//     (so the audit feed shows what was undone) + the age of the
+//     soft-delete at restore time. Actor = admin who initiated.
+//   - hard_deleted_by_gc: metadata carries the deleted_reason from the
+//     original delete + retention_days + days_over_window. Actor = nil
+//     (system). Fires from the softdelete.CoordinatorJob one row at a
+//     time.
+//
+// All are pool-bound (NOT tx-bound): the DB write is the source of
+// truth, the audit row is observability. An audit-write failure never
+// rolls back the delete/restore/gc pass.
+
+func (r *Recorder) AdminAssetSoftDeleted(ctx context.Context, req *http.Request, assetID string, actorUserRef int64, reason string) {
+	r.write(ctx, EventAdminAssetSoftDeleted, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"asset_id": assetID,
+		"reason":   reason,
+	})
+}
+
+func (r *Recorder) AdminAssetRestored(ctx context.Context, req *http.Request, assetID string, actorUserRef int64, priorReason string, ageSeconds int64) {
+	r.write(ctx, EventAdminAssetRestored, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"asset_id":     assetID,
+		"prior_reason": priorReason,
+		"age_seconds":  ageSeconds,
+	})
+}
+
+func (r *Recorder) AdminAssetHardDeletedByGC(ctx context.Context, assetID string, priorReason string, retentionDays, daysOverWindow int) {
+	r.write(ctx, EventAdminAssetHardDeletedByGC, nil, nil, reqContext{}, map[string]any{
+		"asset_id":         assetID,
+		"prior_reason":     priorReason,
+		"retention_days":   retentionDays,
+		"days_over_window": daysOverWindow,
+	})
+}
+
+func (r *Recorder) AdminPostSoftDeleted(ctx context.Context, req *http.Request, postID string, actorUserRef int64, reason string) {
+	r.write(ctx, EventAdminPostSoftDeleted, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"post_id": postID,
+		"reason":  reason,
+	})
+}
+
+func (r *Recorder) AdminPostRestored(ctx context.Context, req *http.Request, postID string, actorUserRef int64, priorReason string, ageSeconds int64) {
+	r.write(ctx, EventAdminPostRestored, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"post_id":      postID,
+		"prior_reason": priorReason,
+		"age_seconds":  ageSeconds,
+	})
+}
+
+func (r *Recorder) AdminPostHardDeletedByGC(ctx context.Context, postID string, priorReason string, retentionDays, daysOverWindow int) {
+	r.write(ctx, EventAdminPostHardDeletedByGC, nil, nil, reqContext{}, map[string]any{
+		"post_id":          postID,
+		"prior_reason":     priorReason,
+		"retention_days":   retentionDays,
+		"days_over_window": daysOverWindow,
+	})
+}
+
+func (r *Recorder) AdminCollectionSoftDeleted(ctx context.Context, req *http.Request, collectionID string, actorUserRef int64, reason string) {
+	r.write(ctx, EventAdminCollectionSoftDeleted, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"collection_id": collectionID,
+		"reason":        reason,
+	})
+}
+
+func (r *Recorder) AdminCollectionRestored(ctx context.Context, req *http.Request, collectionID string, actorUserRef int64, priorReason string, ageSeconds int64) {
+	r.write(ctx, EventAdminCollectionRestored, nil, &actorUserRef, ctxFromRequest(req), map[string]any{
+		"collection_id": collectionID,
+		"prior_reason":  priorReason,
+		"age_seconds":   ageSeconds,
+	})
+}
+
+func (r *Recorder) AdminCollectionHardDeletedByGC(ctx context.Context, collectionID string, priorReason string, retentionDays, daysOverWindow int) {
+	r.write(ctx, EventAdminCollectionHardDeletedByGC, nil, nil, reqContext{}, map[string]any{
+		"collection_id":    collectionID,
+		"prior_reason":     priorReason,
+		"retention_days":   retentionDays,
+		"days_over_window": daysOverWindow,
+	})
+}
+
+// AdminUserHardDeletedByGC fires when the gc coordinator hard-deletes
+// a user row that's been in UserStateArchived past
+// SoftDeleteConfig.UserRetentionDays. Metadata carries the archived-
+// at anchor (the timestamp on the last user.status_changed event that
+// transitioned INTO archived, resolved by the coordinator before the
+// DELETE fires) so the audit feed reconstructs the timeline without
+// joining against pre-delete state.
+func (r *Recorder) AdminUserHardDeletedByGC(ctx context.Context, userRef int64, priorReason string, retentionDays, daysOverWindow int) {
+	r.write(ctx, EventAdminUserHardDeletedByGC, &userRef, nil, reqContext{}, map[string]any{
+		"user_ref":         userRef,
+		"prior_reason":     priorReason,
+		"retention_days":   retentionDays,
+		"days_over_window": daysOverWindow,
+	})
 }
