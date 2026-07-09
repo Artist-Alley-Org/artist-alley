@@ -6,15 +6,17 @@ Self-hosted art review and archival, distributed as:
 |---------------|-------------------------------------|----------------|
 | Docker image  | Most users — fastest path           | `docker pull ghcr.io/mscrnt/artist-alley:latest` |
 | Docker Hub    | Same image, alternate registry      | `docker pull mscrnt/artist-alley:latest` |
-| `.deb`        | Debian / Ubuntu (22.04, 24.04, ...) | `sudo apt install ./artist-alley_*.deb` |
-| `.rpm`        | Fedora / RHEL / openSUSE            | `sudo dnf install ./artist-alley_*.rpm` |
-| Static binary | Other Linux + macOS + Windows       | tarball / zip on the Releases page |
-| Homebrew      | macOS dev installs                  | `brew install mscrnt/tap/artist-alley` |
 | Source        | Building from scratch               | clone repo, see [BUILDING.md](../BUILDING.md) |
 
-All artefacts come from the same commit on every release tag. Docker
-images are signed via Sigstore (`cosign verify`). Binaries and packages
-ship with a `SHA256SUMS` file.
+Docker is the sole v0.1.0 distribution channel. All images are
+multi-arch (`linux/amd64` + `linux/arm64`) and signed via Sigstore
+(`cosign verify`).
+
+> **Binary / package distribution (.tar.gz, .deb, .rpm, Homebrew) is
+> deferred post-v0.1.0.** The Go binary needs a cgo build against
+> `libwebp` for the variant encoder, which is straightforward inside
+> the Docker image build but not for cross-arch tarball distribution
+> on the release runner. Docker gets us there without the plumbing.
 
 ---
 
@@ -63,65 +65,6 @@ A Compose example with Postgres bundled lives under
 
 ---
 
-## Debian / Ubuntu
-
-```bash
-# Replace X.Y.Z with the version from the Releases page.
-curl -LO https://github.com/mscrnt/artist-alley/releases/download/vX.Y.Z/artist-alley_X.Y.Z_linux_amd64.deb
-sudo apt install ./artist-alley_X.Y.Z_linux_amd64.deb
-
-# Edit settings:
-sudo $EDITOR /etc/artist-alley/aa.env
-
-# Start it:
-sudo systemctl enable --now artist-alley
-sudo systemctl status artist-alley
-```
-
-The package ships with a hardened systemd unit
-(`/lib/systemd/system/artist-alley.service`) and a config template at
-`/etc/artist-alley/aa.env`.
-
-## Fedora / RHEL / openSUSE
-
-```bash
-curl -LO https://github.com/mscrnt/artist-alley/releases/download/vX.Y.Z/artist-alley_X.Y.Z_linux_amd64.rpm
-sudo dnf install ./artist-alley_X.Y.Z_linux_amd64.rpm
-sudo $EDITOR /etc/artist-alley/aa.env
-sudo systemctl enable --now artist-alley
-```
-
----
-
-## Static binary (any Linux/macOS/Windows)
-
-```bash
-curl -LO https://github.com/mscrnt/artist-alley/releases/download/vX.Y.Z/artist-alley_vX.Y.Z_linux_amd64.tar.gz
-tar xzf artist-alley_vX.Y.Z_linux_amd64.tar.gz
-sudo install -m 0755 artist-alley_vX.Y.Z_linux_amd64/aa /usr/local/bin/aa
-
-# Copy the bundled systemd unit + config template:
-sudo install -m 0644 artist-alley_vX.Y.Z_linux_amd64/contrib/systemd/artist-alley.service /etc/systemd/system/
-sudo install -m 0640 -D artist-alley_vX.Y.Z_linux_amd64/contrib/aa.env.example /etc/artist-alley/aa.env
-
-# Create the system user + storage dir:
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin artist-alley
-sudo install -d -o artist-alley -g artist-alley -m 0750 /var/lib/artist-alley
-
-sudo $EDITOR /etc/artist-alley/aa.env
-sudo systemctl daemon-reload
-sudo systemctl enable --now artist-alley
-```
-
-## Homebrew (macOS)
-
-```bash
-brew install mscrnt/tap/artist-alley
-aa --version
-```
-
----
-
 ## Verifying signatures (Docker)
 
 ```bash
@@ -130,8 +73,8 @@ cosign verify ghcr.io/mscrnt/artist-alley:vX.Y.Z \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
-Binary SHA256 checksums live alongside each release as
-`artist-alley_X.Y.Z_SHA256SUMS`.
+Every image ships with an SBOM and provenance attestation, both
+attached to the image manifest by `docker/build-push-action`.
 
 ---
 
