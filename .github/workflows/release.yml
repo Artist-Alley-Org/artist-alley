@@ -1,14 +1,16 @@
-# Release workflow — fires on `v*` tags pushed to main. Produces the
-# full matrix:
+# Release workflow — fires on `v*` tags pushed to main. Produces:
 #
-#   1. SvelteKit bundle (npm run build) → embedded into static_assets/
-#   2. GoReleaser → static binaries, .tar.gz/.zip archives, .deb +
-#      .rpm packages, Homebrew formula, SHA256SUMS, SBOM,
-#      GitHub Release with auto-changelog
-#   3. Docker buildx → multi-arch images for linux/amd64,linux/arm64,
+#   1. GitHub Release page with auto-generated notes (via `gh release
+#      create --generate-notes`, categorized by .github/release.yml)
+#   2. Docker buildx → multi-arch images for linux/amd64,linux/arm64,
 #      pushed to BOTH ghcr.io and Docker Hub with the tag fan-out
-#      :vX.Y.Z, :vX.Y, :vX, :latest
-#   4. Sigstore/cosign keyless signing of every published image
+#      :vX.Y.Z, :vX.Y, :vX, :latest — with provenance + SBOM
+#   3. Sigstore/cosign keyless signing of every published image
+#
+# Docker is the sole distribution channel for v0.1.0. See #238 for
+# the goreleaser CGO_ENABLED=0 vs mscrnt/webp conflict that motivated
+# the Docker-only trim; binary / .deb / .rpm / Homebrew paths are
+# deferred post-v0.1.0.
 #
 # All steps run on the self-hosted runner. The release-from-tag flow
 # is gated on the tag pattern, so accidental pushes can't trigger it.
@@ -38,10 +40,10 @@ env:
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/artist-alley
 
 jobs:
-  goreleaser:
-    name: GoReleaser — binaries, deb, rpm, brew
+  release-notes:
+    name: GitHub Release + auto-generated notes
     runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 60
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.tag.outputs.value }}
 
@@ -60,79 +62,36 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: app/go.mod
-          cache: true
-          cache-dependency-path: app/go.sum
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build SvelteKit bundle
+      - name: Create GitHub Release with auto-generated notes
         env:
-          AA_OPENAPI_SPEC: ${{ github.workspace }}/app/api/openapi.yaml
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.value }}
         run: |
-          cd web
-          # `npm ci` sporadically fails to install platform-specific
-          # optional native bindings (rolldown, esbuild) on CI runners
-          # — see npm/cli#4828. Fall back to a clean `npm install` on
-          # failure, which forces optional-dep re-resolution.
-          if ! npm ci --no-audit --no-fund; then
-            echo "npm ci failed; retrying with clean install (npm/cli#4828 workaround)"
-            rm -rf node_modules package-lock.json
-            npm install --no-audit --no-fund
+          # Prerelease if the tag has a `-` suffix (e.g. -rc, -beta).
+          extra_flags=""
+          case "$TAG" in
+            *-*) extra_flags="--prerelease" ;;
+          esac
+          # If a prior tag exists, seed --notes-start-tag; otherwise
+          # GitHub uses the repo genesis (first-release case).
+          if prev=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null); then
+            extra_flags="$extra_flags --notes-start-tag $prev"
           fi
-          npm run build
-
-      - name: Stage bundle into Go embed dir
-        run: |
-          # Drop stale build output BUT preserve tracked files
-          # (.gitignore, .embed-placeholder) so goreleaser's dirty-
-          # state check is happy. The nested .gitignore already
-          # excludes the copied SvelteKit output.
-          find app/internal/http/static_assets -mindepth 1 \
-            ! -name .gitignore ! -name .embed-placeholder \
-            -exec rm -rf {} +
-          cp -r web/build/. app/internal/http/static_assets/
-
-      - name: Reset spurious lockfile churn (npm-ci quirk)
-        run: |
-          # `npm ci` occasionally rewrites package-lock.json even
-          # when the install succeeds (v1/v2 lockfile drift). Reset
-          # it so goreleaser's dirty-state check passes.
-          git checkout -- web/package-lock.json 2>/dev/null || true
-          echo "Git status before goreleaser:"
-          git status --short
-
-      - name: Install Syft (SBOM)
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || '' }}
+          gh release create "$TAG" \
+            --title "artist-alley $TAG" \
+            --generate-notes \
+            $extra_flags
 
   docker:
     name: Docker — multi-arch image (GHCR + Docker Hub)
-    needs: goreleaser
+    needs: release-notes
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.goreleaser.outputs.tag }}
+          ref: ${{ needs.release-notes.outputs.tag }}
           fetch-depth: 0
 
       - name: Resolve Docker Hub repo
@@ -177,11 +136,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ !contains(needs.goreleaser.outputs.tag, '-') }}
+            type=raw,value=latest,enable=${{ !contains(needs.release-notes.outputs.tag, '-') }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.goreleaser.outputs.tag }}
+            org.opencontainers.image.version=${{ needs.release-notes.outputs.tag }}
 
       - name: Build + push multi-arch image
         id: build
@@ -194,7 +153,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_VERSION=${{ needs.goreleaser.outputs.tag }}
+            BUILD_VERSION=${{ needs.release-notes.outputs.tag }}
           cache-from: type=gha,scope=release
           cache-to: type=gha,scope=release,mode=max
           provenance: true
@@ -216,17 +175,23 @@ jobs:
           done
 
       - name: Summary
+        env:
+          TAG: ${{ needs.release-notes.outputs.tag }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          REPO: ${{ github.repository }}
         run: |
           {
-            echo "### Release ${{ needs.goreleaser.outputs.tag }} published"
+            echo "### Release ${TAG} published"
             echo ""
             echo "**Docker images** (multi-arch: linux/amd64,linux/arm64):"
             echo ""
-            for tag in ${{ steps.meta.outputs.tags }}; do
-              echo "- \`${tag}\`"
-            done
+            # $TAGS is newline-separated; read line-by-line to survive
+            # the multi-registry fan-out.
+            while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "- \`${tag}\`"
+            done <<< "$TAGS"
             echo ""
-            echo "Signed via cosign (Sigstore keyless / OIDC)."
+            echo "Signed via cosign (Sigstore keyless / OIDC). Provenance + SBOM attached."
             echo ""
-            echo "**Binaries, .deb, .rpm, Homebrew**: see the [Release notes](https://github.com/${{ github.repository }}/releases/tag/${{ needs.goreleaser.outputs.tag }})."
+            echo "See the [Release notes](https://github.com/${REPO}/releases/tag/${TAG})."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -276,6 +276,48 @@ current focus:
   all three runs). §1.6 of `docs/v0_1_readiness.md` flipped to 🟡 —
   pipeline audit complete + fixes 1+2 landed, but #238 gates a green
   rc4 dry-run. Closes #237.
+  **1.55.T-2 shipped 2026-07-09** — Docker-only distribution + all-green
+  rc9 dry-run + §1.6 close. Resolves #238 via **Option A** (planner
+  decision: drop binary/deb/rpm/brew from the v0.1.0 release matrix
+  since Docker is the documented channel and the Dockerfile already
+  handles cgo correctly per-arch). Six more `v0.0.99-rc*` tags fired
+  (rc4→rc9) — every RC surfaced a real defect the pipeline would have
+  hit at v0.1.0:
+  (4) **rc4**: goreleaser's metadata pipe unconditionally invokes `go`
+  (not skippable) → added `Set up Go` + `workdir=app` back to the
+  release-notes job;
+  (5) **rc5**: goreleaser synthesizes a default `builds:` when config
+  omits one → added `--skip=build,archive` — which then exposed that…
+  (6) **rc6**: `--skip=build` isn't a valid goreleaser v2 pipe (only
+  22 specific pipes are skippable; `build` is not among them) →
+  deleted `.goreleaser.yaml` entirely, replaced with `gh release
+  create --generate-notes` (fully automated on tag push, one fewer
+  dep, cleaner fit for Docker-only). Filed **#242** to track full
+  binary + package + Homebrew restoration as a **hard v1.0.0
+  prerequisite** so the debt is visible;
+  (7) **rc7**: docker job broke at Go build inside the Dockerfile —
+  `--platform=$BUILDPLATFORM` pins the go-build stage to amd64 for
+  speed, but only host `gcc` was installed; when TARGETARCH=arm64,
+  cgo shelled to host gcc which couldn't assemble arm64 mnemonics
+  from `mscrnt/webp`'s .S files → added `dpkg --add-architecture
+  arm64` + `gcc-aarch64-linux-gnu` + `libwebp-dev:arm64` +
+  per-TARGETARCH CC/PKG_CONFIG_PATH selection to the Dockerfile;
+  (8) **rc8**: build + push + Sigstore cosign sign all green
+  end-to-end; only the cosmetic Summary step failed on bash
+  interpolation of multi-line `${{ steps.meta.outputs.tags }}` into
+  a for-loop → switched to env-var passthrough + `while IFS= read -r`
+  line iteration; **cosign verify green** against
+  `mscrnt/artist-alley:0.0.99-rc8` (Sigstore transparency-log entry
+  confirmed offline);
+  (9) **rc9**: all 15 workflow steps green — release-notes ✓, docker
+  buildx multi-arch (amd64 + arm64) ✓, cosign sign ✓, Summary ✓.
+  Duration ~15 min. Verified cosign green against
+  `mscrnt/artist-alley:0.0.99-rc9`; Docker Hub manifest confirms
+  both arches + SBOM + provenance attestations.
+  All 6 rc tags + GH Releases deleted; GHCR + Docker Hub images from
+  rc8/rc9 stay published (cleanup requires `delete:packages` scope
+  not on the coding-agent's local token; noted as user-cleanup task).
+  §1.6 of `docs/v0_1_readiness.md` flipped ✅. Closes #238 + #241.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;

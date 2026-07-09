@@ -62,10 +62,18 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=dev
 
-# Build-time C toolchain + libwebp headers for chai2010/webp.
-# pkg-config is what the wrapper uses to find the lib at link time.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Build-time C toolchain + libwebp headers for chai2010/webp. The
+# go-build stage is pinned to $BUILDPLATFORM (host amd64) for speed
+# — Go itself cross-compiles fine — but cgo shells out to `cc`,
+# which must match TARGETARCH. So we add-architecture the target
+# and install the cross-gcc + arch-scoped libwebp-dev.
+#
+# pkg-config is what chai2010/webp uses to resolve the lib at link
+# time. `PKG_CONFIG_PATH` picks the right per-arch lib pkgconfig dir.
+RUN dpkg --add-architecture arm64 \
+ && apt-get update && apt-get install -y --no-install-recommends \
         gcc libc6-dev pkg-config libwebp-dev \
+        gcc-aarch64-linux-gnu libc6-dev-arm64-cross libwebp-dev:arm64 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/app
@@ -82,9 +90,18 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 COPY app/ ./
 COPY --from=web-build /web/build/ ./internal/http/static_assets/
 
+# Per-arch cc + pkg-config selection. amd64 uses host gcc; arm64
+# uses the aarch64-linux-gnu cross-gcc so cgo can assemble the
+# arm64 .S emitted by mscrnt/webp.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    case "${TARGETARCH}" in \
+      amd64) CC=gcc                    PKG_CFG=/usr/lib/x86_64-linux-gnu/pkgconfig ;; \
+      arm64) CC=aarch64-linux-gnu-gcc  PKG_CFG=/usr/lib/aarch64-linux-gnu/pkgconfig ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && CGO_ENABLED=1 CC=$CC PKG_CONFIG_PATH=$PKG_CFG \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -trimpath \
       -tags embed_web \
       -ldflags "-s -w -X main.Version=${BUILD_VERSION}" \
