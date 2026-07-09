@@ -1,149 +1,25 @@
-# GoReleaser config — produces every non-Docker artefact for a
-# version tag (vX.Y.Z) in one run. Docker images are built separately
-# by .github/workflows/release.yml (we want full control over the
-# multi-stage build that includes the SvelteKit bundle, which
-# GoReleaser's docker integration doesn't model cleanly).
+# GoReleaser config — release-notes only.
 #
-# What this config produces on `git tag vX.Y.Z && git push --tags`:
-#   * Static Go binaries for linux/{amd64,arm64}, darwin/{amd64,arm64},
-#     windows/amd64 — with the SvelteKit bundle embedded via the
-#     `embed_web` build tag
-#   * .tar.gz (linux/darwin) and .zip (windows) archives, each
-#     bundling LICENSE + README + the binary
-#   * .deb + .rpm packages for amd64 + arm64 with a systemd unit and
-#     /etc/artist-alley/aa.env config template
-#   * Homebrew formula pushed to mscrnt/homebrew-tap (optional; only
-#     runs when the HOMEBREW_TAP_TOKEN secret is set)
-#   * SHA256 checksums + an SBOM
-#   * GitHub Release with auto-generated changelog
+# Docker is the sole v0.1.0 distribution channel. The actual multi-arch
+# image build lives entirely in `.github/workflows/release.yml`'s docker
+# job (docker/build-push-action + buildx + QEMU for arm64, Sigstore
+# cosign signing, SBOM + provenance). This file exists solely to produce
+# a curated GitHub Release page from the tag's commit history — the
+# grouped auto-changelog (feat / fix / perf / refactor / docs) is nicer
+# than GitHub's native categorization.
 #
-# The workflow runs `npm run build` before invoking GoReleaser so the
-# SvelteKit bundle is in `app/internal/http/static_assets/` when the
-# `-tags embed_web` builds pick it up.
+# Binary + package distribution (.tar.gz, .deb, .rpm, Homebrew) is
+# deferred post-v0.1.0. See #238 for the CGO_ENABLED=0 vs mscrnt/webp
+# conflict that gated the trim and the 4 candidate resolutions.
 #
-# Reference: https://goreleaser.com/customization/
+# Reference: https://goreleaser.com/customization/release/
 
 version: 2
 
 project_name: artist-alley
 
-# Run `go mod tidy` in the app/ module before building so the release
-# doesn't drift from what's checked in.
-before:
-  hooks:
-    - sh -c "cd app && go mod tidy"
-
-builds:
-  - id: aa
-    main: ./cmd/aa
-    dir: app
-    binary: aa
-    flags:
-      - -trimpath
-      - -tags=embed_web
-    ldflags:
-      - -s -w
-      - -X main.Version={{ .Version }}
-      - -X main.Commit={{ .Commit }}
-      - -X main.Date={{ .Date }}
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
-
-archives:
-  - id: default
-    builds: [aa]
-    name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
-    files:
-      - LICENSE*
-      - README*
-      - CHANGELOG*
-      - src: docs/install/systemd/artist-alley.service
-        dst: contrib/systemd/artist-alley.service
-      - src: docs/install/config/aa.env.example
-        dst: contrib/aa.env.example
-
-checksum:
-  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
-
 snapshot:
   version_template: "{{ .Tag }}-next"
-
-# ── nfpm: build .deb + .rpm packages with the systemd unit
-# already wired up. Postinst creates a system user; postrm leaves
-# the data dir behind so re-installs don't lose state.
-nfpms:
-  - id: pkg
-    package_name: artist-alley
-    homepage: https://github.com/mscrnt/artist-alley
-    description: |-
-      Self-hosted art review and archival platform for artists,
-      curators, and small studios. Single Go binary serves an
-      embedded SvelteKit frontend; bring your own Postgres.
-    maintainer: artist-alley contributors
-    license: BSD-3-Clause
-    vendor: mscrnt
-    section: net
-    formats:
-      - deb
-      - rpm
-    bindir: /usr/bin
-    contents:
-      - src: docs/install/systemd/artist-alley.service
-        dst: /lib/systemd/system/artist-alley.service
-        type: config
-      - src: docs/install/config/aa.env.example
-        dst: /etc/artist-alley/aa.env
-        type: config|noreplace
-      - dst: /var/lib/artist-alley
-        type: dir
-        file_info:
-          mode: 0750
-    scripts:
-      preinstall:  docs/install/scripts/preinstall.sh
-      postinstall: docs/install/scripts/postinstall.sh
-      preremove:   docs/install/scripts/preremove.sh
-      postremove:  docs/install/scripts/postremove.sh
-    overrides:
-      deb:
-        dependencies:
-          - ca-certificates
-      rpm:
-        dependencies:
-          - ca-certificates
-
-# Homebrew tap — only fires when the HOMEBREW_TAP_TOKEN secret is
-# present (the env var is set by the release workflow).
-brews:
-  - name: artist-alley
-    repository:
-      owner: mscrnt
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    skip_upload: "{{ if eq .Env.HOMEBREW_TAP_TOKEN \"\" }}true{{ else }}false{{ end }}"
-    directory: Formula
-    homepage: https://github.com/mscrnt/artist-alley
-    description: Self-hosted art review and archival platform.
-    license: BSD-3-Clause
-    install: |
-      bin.install "aa"
-    test: |
-      system "#{bin}/aa", "--version"
 
 # Changelog: keep curated. Group commits by conventional-commit type
 # so the release notes read top-down (feat → fix → docs → chore).
@@ -173,7 +49,7 @@ changelog:
     - title: Other
       order: 99
 
-# GitHub Release — auto-publish with the changelog + binaries.
+# GitHub Release — auto-publish with the grouped changelog.
 release:
   github:
     owner: mscrnt
@@ -186,7 +62,7 @@ release:
 
     Self-hosted art review and archival platform. See the
     [install guide](https://github.com/mscrnt/artist-alley/blob/main/docs/install/README.md)
-    for Docker, Debian/Ubuntu, RPM-based, binary, and Homebrew flows.
+    for the Docker install flow.
   footer: |
     ---
     **Full changelog**: https://github.com/mscrnt/artist-alley/compare/{{ .PreviousTag }}...{{ .Tag }}
