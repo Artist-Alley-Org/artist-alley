@@ -1,12 +1,11 @@
 # Release workflow — fires on `v*` tags pushed to main. Produces:
 #
-#   1. Docker buildx → multi-arch images for linux/amd64,linux/arm64,
+#   1. GitHub Release page with auto-generated notes (via `gh release
+#      create --generate-notes`, categorized by .github/release.yml)
+#   2. Docker buildx → multi-arch images for linux/amd64,linux/arm64,
 #      pushed to BOTH ghcr.io and Docker Hub with the tag fan-out
 #      :vX.Y.Z, :vX.Y, :vX, :latest — with provenance + SBOM
-#   2. Sigstore/cosign keyless signing of every published image
-#   3. GoReleaser (release-notes-only) → GitHub Release page with
-#      an auto-generated grouped changelog (feat / fix / perf /
-#      refactor / docs)
+#   3. Sigstore/cosign keyless signing of every published image
 #
 # Docker is the sole distribution channel for v0.1.0. See #238 for
 # the goreleaser CGO_ENABLED=0 vs mscrnt/webp conflict that motivated
@@ -42,9 +41,9 @@ env:
 
 jobs:
   release-notes:
-    name: GoReleaser — GitHub Release + changelog
+    name: GitHub Release + auto-generated notes
     runs-on: [self-hosted, artist-alley]
-    timeout-minutes: 15
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.tag.outputs.value }}
 
@@ -63,31 +62,25 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      # goreleaser's metadata pipe unconditionally invokes `go` to
-      # detect the module path (even in release-notes-only mode, no
-      # `builds:`). setup-go is cheap on the self-hosted runner.
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: app/go.mod
-          cache: true
-          cache-dependency-path: app/go.sum
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          # run from app/ so `go list -m` finds the module (go.mod
-          # lives under app/, not at the repo root); read the config
-          # from the repo root via absolute path. --skip=build,archive
-          # keeps the release-notes-only shape (no builds: means
-          # goreleaser would otherwise synth a default build that
-          # can't find main.go).
-          workdir: app
-          args: release --clean -f ${{ github.workspace }}/.goreleaser.yaml --skip=build,archive
+      - name: Create GitHub Release with auto-generated notes
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          # Prerelease if the tag has a `-` suffix (e.g. -rc, -beta).
+          extra_flags=""
+          case "$TAG" in
+            *-*) extra_flags="--prerelease" ;;
+          esac
+          # If a prior tag exists, seed --notes-start-tag; otherwise
+          # GitHub uses the repo genesis (first-release case).
+          if prev=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null); then
+            extra_flags="$extra_flags --notes-start-tag $prev"
+          fi
+          gh release create "$TAG" \
+            --title "artist-alley $TAG" \
+            --generate-notes \
+            $extra_flags
 
   docker:
     name: Docker — multi-arch image (GHCR + Docker Hub)
