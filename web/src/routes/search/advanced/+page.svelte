@@ -9,19 +9,20 @@
   // backend parser with a 400 + valid-field list.
 
   import { goto } from '$app/navigation';
+  import { t } from '$stores/lang.svelte';
 
   const FIELDS = [
-    { value: 'title',       label: 'Title' },
-    { value: 'description', label: 'Description / body' },
-    { value: 'tag',         label: 'Tag' },
-    { value: 'owner',       label: 'Owner (username or ref)' },
-    { value: 'type',        label: 'Asset type' },
-    { value: 'sensitivity', label: 'Sensitivity' },
-    { value: 'extension',   label: 'File extension' },
+    { value: 'title',       labelKey: 'search.advanced.field.title' },
+    { value: 'description', labelKey: 'search.advanced.field.description' },
+    { value: 'tag',         labelKey: 'search.advanced.field.tag' },
+    { value: 'owner',       labelKey: 'search.advanced.field.owner' },
+    { value: 'type',        labelKey: 'search.advanced.field.type' },
+    { value: 'sensitivity', labelKey: 'search.advanced.field.sensitivity' },
+    { value: 'extension',   labelKey: 'search.advanced.field.extension' },
     // Phase 1.16.B-3 — vector similarity anchor. Value is a
     // UUID; the backend resolves it to the anchor's stored
     // embedding.
-    { value: 'similar_to',  label: 'Similar to asset (UUID)' },
+    { value: 'similar_to',  labelKey: 'search.advanced.field.similar_to' },
   ];
 
   type Row = { field: string; value: string; not: boolean };
@@ -63,24 +64,22 @@
   }
 </script>
 
-<svelte:head><title>Advanced search — artist-alley</title></svelte:head>
+<svelte:head><title>{t('search.advanced.title')} — artist-alley</title></svelte:head>
 
 <div class="mx-auto w-full max-w-3xl px-6 py-8">
-  <h1 class="font-display mb-4 text-3xl font-semibold">Advanced search</h1>
+  <h1 class="font-display mb-4 text-3xl font-semibold">{t('search.advanced.heading')}</h1>
 
   <p class="mb-4 text-sm text-fg-muted">
-    Build a query with typed fields. Each row is combined with AND;
-    the preview below shows exactly what will be submitted to the
-    server-side DSL parser.
+    {t('search.advanced.body')}
   </p>
 
   <form onsubmit={submit} class="space-y-3">
     <label class="block">
-      <span class="mb-1 block text-xs font-medium text-fg-muted">Free-text query (optional)</span>
+      <span class="mb-1 block text-xs font-medium text-fg-muted">{t('search.advanced.freetext_label')}</span>
       <input
         bind:value={freeText}
         type="text"
-        placeholder="cat OR dog"
+        placeholder={t('search.advanced.freetext_placeholder')}
         class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
       />
     </label>
@@ -89,20 +88,20 @@
       {#each rows as row, i (i)}
         <div class="flex items-center gap-2">
           <label class="flex items-center gap-1 text-xs text-fg-muted">
-            <input type="checkbox" bind:checked={row.not} class="h-3.5 w-3.5" /> NOT
+            <input type="checkbox" bind:checked={row.not} class="h-3.5 w-3.5" /> {t('search.advanced.not')}
           </label>
           <select
             bind:value={row.field}
             class="rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
           >
             {#each FIELDS as f (f.value)}
-              <option value={f.value}>{f.label}</option>
+              <option value={f.value}>{t(f.labelKey)}</option>
             {/each}
           </select>
           <input
             bind:value={row.value}
             type="text"
-            placeholder="value"
+            placeholder={t('search.advanced.value_placeholder')}
             class="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
             data-testid="advanced-row-value"
           />
@@ -110,7 +109,7 @@
             type="button"
             onclick={() => removeRow(i)}
             class="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg-muted hover:bg-surface-elevated"
-            aria-label="Remove row"
+            aria-label={t('search.advanced.remove_row')}
           >×</button>
         </div>
       {/each}
@@ -120,11 +119,11 @@
       type="button"
       onclick={addRow}
       class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-    >+ Add row</button>
+    >{t('search.advanced.add_row')}</button>
 
     <div class="mt-6 rounded-md border border-border bg-surface p-3">
-      <div class="mb-1 text-xs font-medium text-fg-muted">Compiled DSL</div>
-      <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || '(empty)'}</code>
+      <div class="mb-1 text-xs font-medium text-fg-muted">{t('search.advanced.compiled_dsl')}</div>
+      <code class="block font-mono text-sm text-fg" data-testid="advanced-compiled">{compiled || t('search.advanced.compiled_empty')}</code>
     </div>
 
     <div class="flex justify-end">
@@ -132,7 +131,7 @@
         type="submit"
         disabled={!compiled}
         class="rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-50"
-      >Search</button>
+      >{t('common.search')}</button>
     </div>
   </form>
 </div>
