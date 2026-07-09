@@ -5620,6 +5620,11 @@ INSERT INTO public.workflow_transitions (id, from_state_id, to_state_id, require
 INSERT INTO public.workflow_transitions (id, from_state_id, to_state_id, required_capability, requires_team_scope) VALUES ('8b398b4a-4a35-49f8-922a-370910176ef3', '3c318b8b-572c-4ed8-a87f-6f531ce42028', '48a7ec39-9ab8-463e-984a-9f0c3037fee1', 'posts.publish', false);
 INSERT INTO public.workflow_transitions (id, from_state_id, to_state_id, required_capability, requires_team_scope) VALUES ('23306b7c-c570-4d50-9c22-875f778111b2', '48a7ec39-9ab8-463e-984a-9f0c3037fee1', '3c318b8b-572c-4ed8-a87f-6f531ce42028', 'posts.publish', false);
 
+-- Federation dispatch cursor singleton (id=1 enforced by CHECK).
+-- The outbox dispatcher consults + updates this row on every tick;
+-- without it, RunOnce short-circuits before processing any activity.
+INSERT INTO public.federation_dispatch_state (id, last_dispatched_activity_id, last_dispatched_at) VALUES (1, NULL, NULL);
+
 -- +goose StatementEnd
 
 -- +goose Down
