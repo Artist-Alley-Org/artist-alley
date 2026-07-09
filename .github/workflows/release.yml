@@ -63,12 +63,26 @@ jobs:
             echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
+      # goreleaser's metadata pipe unconditionally invokes `go` to
+      # detect the module path (even in release-notes-only mode, no
+      # `builds:`). setup-go is cheap on the self-hosted runner.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache: true
+          cache-dependency-path: app/go.sum
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # run from app/ so `go list -m` finds the module (go.mod
+          # lives under app/, not at the repo root); read the config
+          # from the repo root via absolute path.
+          workdir: app
+          args: release --clean -f ${{ github.workspace }}/.goreleaser.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
