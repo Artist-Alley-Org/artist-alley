@@ -20,6 +20,7 @@
 // stalling slow connections behind faster ones.
 
 import { api } from '$api/client';
+import { t } from '$stores/lang.svelte';
 import type { components } from '$api/schema';
 
 type AssetCreate = components['schemas']['AssetCreate'];
@@ -347,12 +348,12 @@ class UploadState {
   async submit(): Promise<boolean> {
     if (this.composeBusy) return false;
     if (this.anyInFlight) {
-      this.composeError = 'Wait for all uploads to finish.';
+      this.composeError = t('upload.err_wait_finish');
       return false;
     }
     const ready = this.readyRows;
     if (ready.length === 0) {
-      this.composeError = 'No files uploaded.';
+      this.composeError = t('upload.err_no_files');
       return false;
     }
 
@@ -376,7 +377,7 @@ class UploadState {
       this.reset();
       return true;
     } catch (e) {
-      this.composeError = e instanceof Error ? e.message : 'Failed to create post.';
+      this.composeError = e instanceof Error ? e.message : t('upload.err_create_post');
       return false;
     } finally {
       this.composeBusy = false;
@@ -478,7 +479,7 @@ class UploadState {
       };
       const { data, error } = await api.POST('/assets', { body });
       if (error || !data) {
-        throw new Error(extractError(error) ?? 'Failed to create asset.');
+        throw new Error(extractError(error) ?? t('upload.err_create_asset'));
       }
       row.assetId = data.id;
       // Companions get uploaded immediately so the asset is ready
@@ -496,7 +497,7 @@ class UploadState {
       // We flush field values at submit time instead of here.
       row.state = 'ready';
     } catch (e) {
-      row.error = e instanceof Error ? e.message : 'Upload failed.';
+      row.error = e instanceof Error ? e.message : t('upload.err_upload_failed');
       row.state = 'errored';
     } finally {
       this.kick();
@@ -564,8 +565,8 @@ class UploadState {
           reject(new Error(err));
         }
       });
-      xhr.addEventListener('error', () => reject(new Error('Network error.')));
-      xhr.addEventListener('abort', () => reject(new Error('Upload aborted.')));
+      xhr.addEventListener('error', () => reject(new Error(t('upload.err_network'))));
+      xhr.addEventListener('abort', () => reject(new Error(t('upload.err_aborted'))));
 
       xhr.send(row.file);
     });
@@ -604,7 +605,7 @@ class UploadState {
         }
         c.state = 'done';
       } catch (e) {
-        c.error = e instanceof Error ? e.message : 'Companion upload failed.';
+        c.error = e instanceof Error ? e.message : t('upload.err_companion_failed');
         c.state = 'errored';
       }
     }
@@ -667,7 +668,7 @@ class UploadState {
     };
     const { data, error } = await api.POST('/posts', { body });
     if (error || !data) {
-      throw new Error(extractError(error) ?? 'Failed to create post.');
+      throw new Error(extractError(error) ?? t('upload.err_create_post'));
     }
   }
 }
@@ -740,7 +741,7 @@ export function fieldsForAssetType(resourceType: number): Promise<FieldDef[]> {
       params: { query: { status: 'active', asset_type: resourceType } },
     });
     if (error || !data) {
-      throw new Error(extractError(error) ?? 'Failed to load fields.');
+      throw new Error(extractError(error) ?? t('upload.err_load_fields'));
     }
     return data as FieldDef[];
   })();
