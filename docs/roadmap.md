@@ -248,6 +248,34 @@ current focus:
   regen produces byte-identical Go output. pg_dump `--schema-only`
   diff pre-vs-post shows only the 18 intended changes (15 indexes +
   3 cascade promotions) — zero unintended drift. Closes #235.
+  **1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
+  Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
+  end-to-end to verify the signed-release matrix (goreleaser → binaries
+  / .deb / .rpm / Homebrew; docker buildx → GHCR + Docker Hub multi-arch;
+  Sigstore keyless cosign signing) BEFORE cutting v0.1.0. Three real
+  defects caught:
+  (1) **rc1**: `npm ci` on the runner tripped npm/cli#4828 — rolldown
+  native binding missing → **fixed** in workflow with `npm ci` → clean
+  `npm install` fallback;
+  (2) **rc2**: goreleaser dirty-check tripped because `Stage bundle into
+  Go embed dir` step `rm -rf`'d the tracked nested `.gitignore` +
+  `npm ci` sporadically rewrites `package-lock.json` → **fixed** by
+  preserving tracked embed-dir files (`find … ! -name .gitignore
+  ! -name .embed-placeholder -exec rm -rf`) + resetting lockfile churn
+  via `git checkout` post-build + printing `git status --short` as a
+  diagnostic;
+  (3) **rc3**: `.goreleaser.yaml` sets `CGO_ENABLED=0` but the `aa`
+  binary now depends on `mscrnt/webp` (cgo binding around `libwebp`) —
+  arm64 tarball cross-compile impossible without cgo cross-toolchain →
+  **NOT fixed**, escalated as **#238** (release-blocker) with 4 candidate
+  resolutions (Docker-only distribution / docker-in-goreleaser /
+  cgo cross-toolchain on runner / pure-Go webp fallback). Runner
+  parallel-fork-exec limits also surfaced as followup **#239**.
+  All three `v0.0.99-rc*` tags deleted; zero GitHub Releases/GHCR/
+  Docker Hub artifacts published (goreleaser failed before push on
+  all three runs). §1.6 of `docs/v0_1_readiness.md` flipped to 🟡 —
+  pipeline audit complete + fixes 1+2 landed, but #238 gates a green
+  rc4 dry-run. Closes #237.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
