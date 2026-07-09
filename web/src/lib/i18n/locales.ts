@@ -8,9 +8,14 @@
 //   2. Add the row below.
 //   3. Add the matching row on the server.
 //
-// `completionPct` is computed dynamically at build time later; today
-// it's a static estimate the picker renders as "(5%)" beside the
-// locale name so users know it's a stub.
+// `completionPct` is computed at module load from the bundled
+// catalogues — the share of `en` leaf keys that the locale also
+// defines. The picker renders it as "(N%)" beside the locale name so
+// users know how complete each translation is.
+
+import enDict from './en.json';
+import esDict from './es.json';
+import frDict from './fr.json';
 
 export interface Locale {
   /** IETF BCP47 code (e.g. "en", "es-AR"). */
@@ -21,15 +26,34 @@ export interface Locale {
   readonly nativeName: string;
   /** Optional regional sub-tag ("AR"). */
   readonly region?: string;
-  /** 0..100, share of `en` keys translated. */
+  /** 0..100, share of `en` keys translated. Computed at load. */
   readonly completionPct: number;
+}
+
+function leafCount(src: Record<string, unknown>): number {
+  let n = 0;
+  for (const v of Object.values(src)) {
+    n += v != null && typeof v === 'object' && !Array.isArray(v) ? leafCount(v as Record<string, unknown>) : 1;
+  }
+  return n;
+}
+
+const EN_LEAVES = leafCount(enDict as Record<string, unknown>);
+
+// Share of en keys a locale covers. This over-counts slightly (a
+// locale key absent from en still counts toward its own leaf total),
+// but the parity guard asserts zero orphan keys, so in practice a
+// locale's leaves are a subset of en's — the ratio is exact.
+function pct(dict: Record<string, unknown>): number {
+  if (EN_LEAVES === 0) return 0;
+  return Math.round((leafCount(dict) / EN_LEAVES) * 100);
 }
 
 export const SUPPORTED_LOCALES: readonly Locale[] = [
   { code: 'en', name: 'English', nativeName: 'English', completionPct: 100 },
-  { code: 'es', name: 'Spanish', nativeName: 'Español', completionPct: 5 },
-  { code: 'fr', name: 'French', nativeName: 'Français', completionPct: 5 },
-] as const;
+  { code: 'es', name: 'Spanish', nativeName: 'Español', completionPct: pct(esDict as Record<string, unknown>) },
+  { code: 'fr', name: 'French', nativeName: 'Français', completionPct: pct(frDict as Record<string, unknown>) },
+];
 
 export const DEFAULT_LOCALE = 'en' as const;
 

@@ -12,16 +12,36 @@
 // most of it predates the i18n plumbing and the diff would be too
 // loud to be actionable. As each surface gets retrofitted, add it
 // to TRACKED_FILES and ratchet the bar.
+//
+// 1.55.V-2 extended this guard per the audit (docs/i18n_audit_v0_1.md
+// §10):
+//   - TRACKED_FILES grew from 24 → all MUST-tier files that are now
+//     clean. Files with deferred SHOULD/NICE strings (AssetPlaylist's
+//     viewer hotkey rail) stay OUT of the blocking list until their
+//     follow-up arc lands.
+//   - Attribute coverage added `label=` and `aria-description=`.
+//   - HTML comments + <code> content are stripped before scanning
+//     (they carried technical text — a `<section> not <main>` comment
+//     and a `textures/wood.png` example path — that produced false
+//     positives).
+//   - A warn-only locale-parity check surfaces en keys missing from
+//     es/fr WITHOUT failing CI (es/fr are deliberately incomplete
+//     pre-#247).
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import enDict from './en.json';
+import esDict from './es.json';
+import frDict from './fr.json';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../..'); // .../web
 
 const TRACKED_FILES = [
+  // — pre-1.55.V-2 surfaces —
   'src/lib/components/viewers/ArchiveView.svelte',
   'src/lib/components/viewers/tools/ArchiveTool/Body.svelte',
   'src/routes/admin/users/+page.svelte',
@@ -46,6 +66,30 @@ const TRACKED_FILES = [
   'src/lib/components/CollectionFieldsSection.svelte',
   'src/routes/admin/federation/peers/+page.svelte',
   'src/routes/admin/federation/directories/+page.svelte',
+  // — 1.55.V-2 MUST-tier surfaces (now clean) —
+  'src/routes/+page.svelte',
+  'src/routes/posts/[id]/+page.svelte',
+  'src/routes/setup/+page.svelte',
+  'src/routes/search/+page.svelte',
+  'src/routes/search/advanced/+page.svelte',
+  'src/routes/collections/+page.svelte',
+  'src/routes/collections/[id]/+page.svelte',
+  'src/lib/components/CollectionModal.svelte',
+  'src/lib/components/SearchBar.svelte',
+  'src/lib/components/NavUploadButton.svelte',
+  'src/lib/components/UserMenu.svelte',
+  'src/lib/components/MessagesButton.svelte',
+  'src/lib/components/CommentsThread.svelte',
+  'src/lib/components/PostHost.svelte',
+  'src/lib/components/federation/RestrictedShareBanner.svelte',
+  'src/lib/components/upload/UploadModal.svelte',
+  'src/lib/components/upload/PostComposeForm.svelte',
+  'src/lib/components/upload/UploadDropZone.svelte',
+  'src/lib/components/upload/UploadFileRow.svelte',
+  'src/lib/components/upload/ThumbnailPicker.svelte',
+  // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
+  // hardcoded strings — do NOT add until their arc lands):
+  //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)
 ];
 
 // Heuristics for "user-visible English string in a Svelte template":
@@ -69,8 +113,10 @@ const ALLOW = new Set<string>([
 ]);
 
 const TEXT_BETWEEN_TAGS = />([^<>{}\n]+?)</g;
-const QUOTED_ATTR = /(?:placeholder|title|aria-label|alt)=(?:"([^"]+)"|'([^']+)'|\{`([^`]+)`\}|\{'([^']+)'\}|\{"([^"]+)"\})/g;
-const PURE_T_CALL_ATTR = /(?:placeholder|title|aria-label|alt)=\{t\(/;
+// aria-labelledby is intentionally NOT scanned — it references an
+// element id, not visible text, so scanning it would false-positive.
+const QUOTED_ATTR = /(?:placeholder|title|aria-label|aria-description|alt|label)=(?:"([^"]+)"|'([^']+)'|\{`([^`]+)`\}|\{'([^']+)'\}|\{"([^"]+)"\})/g;
+const PURE_T_CALL_ATTR = /(?:placeholder|title|aria-label|aria-description|alt|label)=\{t\(/;
 
 function isLikelyEnglish(s: string): boolean {
   const trimmed = s.trim();
@@ -98,7 +144,16 @@ function collectOffenders(source: string): string[] {
   // `<` from the next). The test only inspects the TEMPLATE surface;
   // script-literal coverage is accepted as a known false negative
   // per the file's header comment.
-  const templateOnly = source.replace(/<script[\s\S]*?<\/script>/g, '');
+  //
+  // Also strip <style> blocks, HTML comments, and <code> content:
+  // each carries non-translatable text (a `<section> not <main>`
+  // rationale comment, a `textures/wood.png` example path) that would
+  // otherwise register as raw English.
+  const templateOnly = source
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<style[\s\S]*?<\/style>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<code\b[^>]*>[\s\S]*?<\/code>/g, '');
 
   // Tag-text matches.
   for (const m of templateOnly.matchAll(TEXT_BETWEEN_TAGS)) {
@@ -160,4 +215,47 @@ describe('i18n surface coverage', () => {
       expect(collectOffenders(synthetic)).toEqual([]);
     },
   );
+});
+
+// Locale-parity — WARN-ONLY. es/fr are deliberately incomplete
+// pre-#247; this surfaces the coverage gap without blocking CI. The
+// numbers here are the baseline the #247 translation arc burns down.
+describe('i18n locale parity (warn-only)', () => {
+  function flatten(src: Record<string, unknown>, prefix = '', out: Record<string, string> = {}): Record<string, string> {
+    for (const [k, v] of Object.entries(src)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+        flatten(v as Record<string, unknown>, key, out);
+      } else {
+        out[key] = String(v);
+      }
+    }
+    return out;
+  }
+
+  const en = flatten(enDict as Record<string, unknown>);
+  const enKeys = Object.keys(en);
+
+  for (const [code, dict] of [
+    ['es', esDict],
+    ['fr', frDict],
+  ] as const) {
+    it(`reports en keys missing from ${code} (informational)`, () => {
+      const loc = flatten(dict as Record<string, unknown>);
+      const missing = enKeys.filter((k) => !(k in loc));
+      const pct = Math.round(((enKeys.length - missing.length) / enKeys.length) * 100);
+      if (missing.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[i18n parity] ${code}: ${enKeys.length - missing.length}/${enKeys.length} keys (${pct}%) — ${missing.length} missing. ` +
+            `Deliberately incomplete pre-#247; en fallback covers them.`,
+        );
+      }
+      // Warn-only: never fails. Also assert no ORPHAN keys (present in
+      // the locale but absent from en) — those ARE a real bug (schema
+      // drift) and this half of the check is blocking.
+      const orphans = Object.keys(loc).filter((k) => !(k in en));
+      expect(orphans, `${code}.json has keys not present in en.json (schema drift): ${orphans.join(', ')}`).toEqual([]);
+    });
+  }
 });
