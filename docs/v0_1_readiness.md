@@ -173,7 +173,7 @@ be true:
   (e.g., 1.24) with a decision doc explaining why v0.1.0 ships under
   the current BSD-3-Clause. Timing tracked in issue #229.
 
-### 1.6 CI + release pipeline health check
+### 1.6 CI + release pipeline health check 🟡
 
 Per [project_release_pipeline](../home/kenneth/.claude/projects/-mnt-d-Projects-artist-alley/memory/project_release_pipeline.md):
 
@@ -183,9 +183,31 @@ Per [project_release_pipeline](../home/kenneth/.claude/projects/-mnt-d-Projects-
 - The `Edge image` + `Verify production image build` workflows run on
   every `dev` push without drift (no oapi-codegen version churn like
   the pre-existing v2.7.1 → v2.7.2 drift caught by PR #217).
-- The signed-release tooling has been dry-run against a `v0.0.99-rc`
-  tag to verify GHCR + Docker Hub publish, the SBOM emitter runs, and
+- The signed-release tooling has been dry-run against `v0.0.99-rc*`
+  tags to verify GHCR + Docker Hub publish, the SBOM emitter runs, and
   the release-notes generator produces sensible output.
+
+**Dry-run status (Phase 1.55.T, 2026-07-09).** Three tags fired
+(rc/rc2/rc3) against `.github/workflows/release.yml`. Three real
+defects surfaced:
+
+1. `npm ci` tripped npm/cli#4828 (rolldown native binding missing).
+   **Fixed** — workflow falls back to `npm install` on `npm ci`
+   failure.
+2. goreleaser's git-dirty check tripped because the embed-dir stage
+   step nuked the tracked `.gitignore`, and `npm ci` sometimes rewrites
+   `package-lock.json`. **Fixed** — stage step preserves tracked files;
+   lockfile churn is reset via `git checkout` post-build.
+3. `.goreleaser.yaml` sets `CGO_ENABLED=0` but the `aa` binary now
+   depends on `mscrnt/webp` (cgo binding around `libwebp`). goreleaser
+   fails to compile the linux/arm64 tarball. **Not fixed** —
+   escalated as #238 (release-blocker) with 4 candidate resolutions
+   (Docker-only distribution, docker-in-goreleaser, cgo cross-toolchain
+   on runner, pure-Go fallback for webp).
+
+Fixes 1+2 are on `feat/1.55.T-release-pipeline-dry-run`. §1.6 stays 🟡
+until #238 is resolved and a fourth dry-run (e.g. `v0.0.99-rc4`) fires
+green end-to-end.
 
 ### 1.7 Documentation surface validated
 

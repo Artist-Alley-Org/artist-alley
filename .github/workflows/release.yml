@@ -79,15 +79,36 @@ jobs:
           AA_OPENAPI_SPEC: ${{ github.workspace }}/app/api/openapi.yaml
         run: |
           cd web
-          npm ci --no-audit --no-fund
+          # `npm ci` sporadically fails to install platform-specific
+          # optional native bindings (rolldown, esbuild) on CI runners
+          # — see npm/cli#4828. Fall back to a clean `npm install` on
+          # failure, which forces optional-dep re-resolution.
+          if ! npm ci --no-audit --no-fund; then
+            echo "npm ci failed; retrying with clean install (npm/cli#4828 workaround)"
+            rm -rf node_modules package-lock.json
+            npm install --no-audit --no-fund
+          fi
           npm run build
 
       - name: Stage bundle into Go embed dir
         run: |
-          rm -rf app/internal/http/static_assets
-          mkdir -p app/internal/http/static_assets
+          # Drop stale build output BUT preserve tracked files
+          # (.gitignore, .embed-placeholder) so goreleaser's dirty-
+          # state check is happy. The nested .gitignore already
+          # excludes the copied SvelteKit output.
+          find app/internal/http/static_assets -mindepth 1 \
+            ! -name .gitignore ! -name .embed-placeholder \
+            -exec rm -rf {} +
           cp -r web/build/. app/internal/http/static_assets/
-          touch app/internal/http/static_assets/.embed-placeholder
+
+      - name: Reset spurious lockfile churn (npm-ci quirk)
+        run: |
+          # `npm ci` occasionally rewrites package-lock.json even
+          # when the install succeeds (v1/v2 lockfile drift). Reset
+          # it so goreleaser's dirty-state check passes.
+          git checkout -- web/package-lock.json 2>/dev/null || true
+          echo "Git status before goreleaser:"
+          git status --short
 
       - name: Install Syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
