@@ -190,6 +190,15 @@ type OutboxEntry struct {
 	PublishedAt time.Time
 }
 
+// cacheDomainActorOutbox is the LISTEN/NOTIFY domain for the
+// per-actor outbox cache. Scoped to LOCAL users only — remote-actor
+// outboxes are served through the federation dispatcher's inbound
+// path and never populate this cache. That's why the key
+// (actorOutboxKey below) uses a plain `user.ref` bigint rather
+// than an actor URI or a composite `(origin_server_id, ref)` shape:
+// two different peers can each have a `user.ref = 42`, but only
+// this instance's `ref = 42` ever hits this cache. Federation-safe
+// by construction. Phase 1.55.U-2 §7.4 audit-verified 2026-07-08.
 const cacheDomainActorOutbox = "activities.actor_outbox"
 
 // NewWriter wires the writer. registry can be nil (no caching;

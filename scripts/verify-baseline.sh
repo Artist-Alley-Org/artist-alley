@@ -4,7 +4,7 @@
 # Verifies ADR 0046's baseline squash story before the v1.0.0 tag
 # flips migrations to append-only forever. Runs three checks:
 #
-#   1. baseline_present   — 00001_baseline_v1.sql exists + is
+#   1. baseline_present   — 00001_baseline_v0_1.sql exists + is
 #                            non-empty + carries the ADR-referenced
 #                            header docstring.
 #   2. baseline_applies   — goose can apply the baseline (+ every
@@ -29,7 +29,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 MIG_DIR="app/internal/db/migrations"
-BASELINE="${MIG_DIR}/00001_baseline_v1.sql"
+BASELINE="${MIG_DIR}/00001_baseline_v0_1.sql"
 
 step()   { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 ok()     { printf '\033[1;32mOK\033[0m  %s\n' "$*"; }

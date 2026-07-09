@@ -108,6 +108,14 @@ import (
 // (struct embedding) collides because both feature packages export a
 // `Handler` type, and we prefer explicit dispatch over magic anyway.
 type apiServer struct {
+	// pool + cacheReg captured on the server so the cross-domain
+	// invalidator helpers (Phase 1.55.U-2 §7.2 owner-profile
+	// invalidation on collection writes) can reach the DB + the
+	// cache.Registry without threading them through every method
+	// signature.
+	pool     *pgxpool.Pool
+	cacheReg *cache.Registry
+
 	auth         *auth.Handler
 	resourceType *assettype.Handler
 	storage      *storage.Handler
@@ -252,6 +260,8 @@ type apiServer struct {
 
 func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, storageSvc *storage.Service, sessions *auth.SessionManager, limiter *auth.LoginLimiter, auditRec *audit.Recorder, sysCfg *sysconfig.Store, cacheReg *cache.Registry, jobSvc *jobs.Service, licState *licensing.State, storageBackend string) *apiServer {
 	s := &apiServer{
+		pool:         pool,
+		cacheReg:     cacheReg,
 		auth:         authHandlerWithPolicy(pool, logger, cfg, sessions, limiter, auditRec, cacheReg, sysCfg),
 		resourceType: assettype.NewHandler(pool, logger),
 		storage:      storage.NewHandler(storageSvc, logger),
@@ -2331,7 +2341,9 @@ func (s *apiServer) DownloadStorageObjectVariant(ctx context.Context, req openap
 
 func (s *apiServer) CreateAsset(ctx context.Context, req openapi.CreateAssetRequestObject) (openapi.CreateAssetResponseObject, error) {
 	resp, err := s.assets.CreateAsset(ctx, req)
-	s.invalidateSearchOnAssetWrite(ctx, err)
+	// New asset: no IIIF manifest existed to invalidate. Search
+	// cache still needs the drop for the new-row-appears case.
+	s.invalidateSearchOnAssetWrite(ctx, uuid.Nil, err)
 	return resp, err
 }
 
@@ -2363,13 +2375,13 @@ func (s *apiServer) GetAsset(ctx context.Context, req openapi.GetAssetRequestObj
 
 func (s *apiServer) UpdateAsset(ctx context.Context, req openapi.UpdateAssetRequestObject) (openapi.UpdateAssetResponseObject, error) {
 	resp, err := s.assets.UpdateAsset(ctx, req)
-	s.invalidateSearchOnAssetWrite(ctx, err)
+	s.invalidateSearchOnAssetWrite(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 
 func (s *apiServer) DeleteAsset(ctx context.Context, req openapi.DeleteAssetRequestObject) (openapi.DeleteAssetResponseObject, error) {
 	resp, err := s.assets.DeleteAsset(ctx, req)
-	s.invalidateSearchOnAssetWrite(ctx, err)
+	s.invalidateSearchOnAssetWrite(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 
@@ -2379,7 +2391,7 @@ func (s *apiServer) RestoreAsset(ctx context.Context, req openapi.RestoreAssetRe
 	resp, err := s.assets.RestoreAsset(ctx, req)
 	// Restore un-hides a row; the same search-cache invalidator
 	// applies (the row is once again live in query results).
-	s.invalidateSearchOnAssetWrite(ctx, err)
+	s.invalidateSearchOnAssetWrite(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 
@@ -2395,33 +2407,48 @@ func (s *apiServer) RestoreAsset(ctx context.Context, req openapi.RestoreAssetRe
 // LISTEN/NOTIFY channel — peers receive the invalidation over the
 // same cache_invalidate broadcast, targeted at the iiif.presentation
 // domain rather than the search-cache domain.
-func (s *apiServer) invalidateSearchOnAssetWrite(ctx context.Context, err error) {
+//
+// Phase 1.55.U-2 §7.1: targeted per-asset IIIF invalidation. When
+// assetID is non-Nil, only that asset's IIIF manifest entries drop
+// (both anonymous + authenticated variants). Nil signals "no
+// specific asset" (CreateAsset) — no IIIF manifest can exist yet
+// so InvalidateAsset would be a no-op; skip the IIIF call. Prior
+// implementation blindly bulk-purged the entire IIIF ManifestCache
+// on every asset write, which wiped every other asset's + every
+// collection's manifest for no functional reason.
+func (s *apiServer) invalidateSearchOnAssetWrite(ctx context.Context, assetID uuid.UUID, err error) {
 	if err != nil {
 		return
 	}
 	if s.searchService != nil && s.searchService.Cache() != nil {
-		s.searchService.Cache().InvalidateOnAssetWrite(ctx, uuid.Nil)
+		s.searchService.Cache().InvalidateOnAssetWrite(ctx, assetID)
 	}
-	if s.iiifManifestCache != nil {
-		_ = s.iiifManifestCache.InvalidateAll(ctx)
+	if s.iiifManifestCache != nil && assetID != uuid.Nil {
+		_ = s.iiifManifestCache.InvalidateAsset(ctx, assetID)
 	}
 }
 
 // invalidateSearchOnCollectionWrite — same as above for collections.
-// The IIIF ManifestCache is purged in bulk on collection writes
-// because a member add/remove affects every collection manifest
-// that lists the changed collection; a targeted invalidation would
-// need a reverse-lookup (asset → containing collections) we don't
-// currently have. Bulk purge is cheap on the LRU (~4k entries).
-func (s *apiServer) invalidateSearchOnCollectionWrite(ctx context.Context, err error) {
+//
+// Phase 1.55.U-2 §7.2: targeted per-collection IIIF invalidation.
+// Prior implementation bulk-purged the ManifestCache on every
+// collection write, wiping every asset's manifest along with the
+// collections. Because collection manifests may include member
+// asset manifests via IIIF Collection embedding, targeted
+// invalidation drops the specific collection's entries only; the
+// member assets keep their independent cache slots. When
+// collectionID is Nil (create-with-no-known-id path), the IIIF call
+// is skipped — no manifest can exist for a not-yet-created
+// collection.
+func (s *apiServer) invalidateSearchOnCollectionWrite(ctx context.Context, collectionID uuid.UUID, err error) {
 	if err != nil {
 		return
 	}
 	if s.searchService != nil && s.searchService.Cache() != nil {
-		s.searchService.Cache().InvalidateOnCollectionWrite(ctx, uuid.Nil)
+		s.searchService.Cache().InvalidateOnCollectionWrite(ctx, collectionID)
 	}
-	if s.iiifManifestCache != nil {
-		_ = s.iiifManifestCache.InvalidateAll(ctx)
+	if s.iiifManifestCache != nil && collectionID != uuid.Nil {
+		_ = s.iiifManifestCache.InvalidateCollection(ctx, collectionID)
 	}
 }
 
@@ -2432,6 +2459,53 @@ func (s *apiServer) invalidateSearchOnPostWrite(ctx context.Context, err error) 
 		return
 	}
 	s.searchService.Cache().InvalidateOnPostWrite(ctx, uuid.Nil)
+}
+
+// invalidateOwnerProfileOnCollectionWrite drops the create-time
+// owner's profile cache so their "N collections owned" tile
+// refreshes. Phase 1.55.U-2 §7.2: mirrors the posts.InvalidateProfile
+// call posts/handler.go already fires on post creation. The
+// req.Body carries the owner_user_ref for the new collection.
+//
+// Nil-safe: if the create failed OR the body doesn't identify an
+// owner (Body-nil in odd request shapes), silently skip. The
+// profile cache TTL is short enough that a missed invalidator
+// isn't a functional bug — the page eventually reflects reality.
+func (s *apiServer) invalidateOwnerProfileOnCollectionWrite(ctx context.Context, body *openapi.CollectionCreate, err error) {
+	if err != nil || body == nil || s.cacheReg == nil {
+		return
+	}
+	// CollectionCreate has no explicit owner_user_ref (the handler
+	// stamps the caller). Read the identity out of the request
+	// context.
+	id := auth.IdentityFromContext(ctx)
+	if id == nil || id.IsAnonymous() {
+		return
+	}
+	users.InvalidateProfile(ctx, s.cacheReg, id.UserRef)
+}
+
+// invalidateOwnerProfileOnCollectionDelete looks up the collection's
+// owner_user_ref BEFORE the row disappears (soft-delete keeps the
+// row; the query still succeeds against the current schema which
+// admits soft-deleted rows via the admin-fallback path). Fires the
+// same InvalidateProfile helper as the create path so profile
+// counts stay in sync. Phase 1.55.U-2 §7.2.
+//
+// Best-effort: DB lookup failures skip the invalidator without
+// error propagation. Callers are already past the write; the
+// invalidator is optimistic UX + cache freshness, not correctness.
+func (s *apiServer) invalidateOwnerProfileOnCollectionDelete(ctx context.Context, collectionID uuid.UUID, err error) {
+	if err != nil || collectionID == uuid.Nil || s.cacheReg == nil || s.pool == nil {
+		return
+	}
+	var ownerRef int64
+	if lookupErr := s.pool.QueryRow(ctx,
+		`SELECT owner_user_ref FROM collections WHERE id = $1`, collectionID,
+	).Scan(&ownerRef); lookupErr != nil {
+		return
+	}
+	users.InvalidateProfile(ctx, s.cacheReg, ownerRef)
 }
 
 func (s *apiServer) DownloadAssetFile(ctx context.Context, req openapi.DownloadAssetFileRequestObject) (openapi.DownloadAssetFileResponseObject, error) {
@@ -2608,7 +2682,11 @@ func (s *apiServer) ListCollections(ctx context.Context, req openapi.ListCollect
 }
 func (s *apiServer) CreateCollection(ctx context.Context, req openapi.CreateCollectionRequestObject) (openapi.CreateCollectionResponseObject, error) {
 	resp, err := s.collections.CreateCollection(ctx, req)
-	s.invalidateSearchOnCollectionWrite(ctx, err)
+	// New collection: no IIIF manifest to invalidate; owner-profile
+	// cache does need dropping so the profile page's "N collections"
+	// count refreshes (Phase 1.55.U-2 §7.2).
+	s.invalidateSearchOnCollectionWrite(ctx, uuid.Nil, err)
+	s.invalidateOwnerProfileOnCollectionWrite(ctx, req.Body, err)
 	return resp, err
 }
 func (s *apiServer) GetCollection(ctx context.Context, req openapi.GetCollectionRequestObject) (openapi.GetCollectionResponseObject, error) {
@@ -2616,18 +2694,25 @@ func (s *apiServer) GetCollection(ctx context.Context, req openapi.GetCollection
 }
 func (s *apiServer) UpdateCollection(ctx context.Context, req openapi.UpdateCollectionRequestObject) (openapi.UpdateCollectionResponseObject, error) {
 	resp, err := s.collections.UpdateCollection(ctx, req)
-	s.invalidateSearchOnCollectionWrite(ctx, err)
+	s.invalidateSearchOnCollectionWrite(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 func (s *apiServer) DeleteCollection(ctx context.Context, req openapi.DeleteCollectionRequestObject) (openapi.DeleteCollectionResponseObject, error) {
 	resp, err := s.collections.DeleteCollection(ctx, req)
-	s.invalidateSearchOnCollectionWrite(ctx, err)
+	s.invalidateSearchOnCollectionWrite(ctx, uuid.UUID(req.Id), err)
+	// Owner's collection count drops on delete; profile cache
+	// must invalidate too so the profile page reflects the change
+	// (Phase 1.55.U-2 §7.2).
+	s.invalidateOwnerProfileOnCollectionDelete(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 // RestoreCollection — Phase 1.55.C-1b.
 func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
 	resp, err := s.collections.RestoreCollection(ctx, req)
-	s.invalidateSearchOnCollectionWrite(ctx, err)
+	s.invalidateSearchOnCollectionWrite(ctx, uuid.UUID(req.Id), err)
+	// Restore un-hides the collection — owner-profile count needs
+	// to reflect its return (Phase 1.55.U-2 §7.2).
+	s.invalidateOwnerProfileOnCollectionDelete(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
 func (s *apiServer) ListCollectionResources(ctx context.Context, req openapi.ListCollectionResourcesRequestObject) (openapi.ListCollectionResourcesResponseObject, error) {
