@@ -1,23 +1,83 @@
 {
-  "nav": {
-    "upload": "Upload",
-    "search_placeholder": "Search assets…",
-    "messages": "Messages",
-    "notifications": "Notifications",
-    "notifications_coming_soon": "Notifications — coming soon",
-    "open_user_menu": "Open user menu",
-    "open_admin_menu": "Open admin menu",
-    "explore": "Explore",
-    "gallery": "Gallery",
-    "blogs": "Blogs",
-    "collections": "Collections",
-    "review": "Review",
-    "advanced_search": "Advanced search"
-  },
-  "search": {
-    "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
-    "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search."
-  },
+    "nav": {
+      "upload": "Upload",
+      "search_placeholder": "Search assets…",
+      "messages": "Messages",
+      "notifications": "Notifications",
+      "notifications_coming_soon": "Notifications — coming soon",
+      "open_user_menu": "Open user menu",
+      "open_admin_menu": "Open admin menu",
+      "explore": "Explore",
+      "gallery": "Gallery",
+      "blogs": "Blogs",
+      "collections": "Collections",
+      "review": "Review",
+      "advanced_search": "Advanced search",
+      "upload_button_title": "Upload (or drop files anywhere)"
+    },
+    "search": {
+      "intro": "Build a precise query — filter by tag, asset type, field value, date range, and more.",
+      "coming_soon": "Advanced search lands with phase 1.12. For now, the navbar input runs a full-text search.",
+      "facets_heading": "Facets",
+      "advanced_builder": "Advanced builder",
+      "save_search_button": "Save search",
+      "save_as_collection": "Save as collection",
+      "query_placeholder": "Type a query…",
+      "counter": "Showing {n} of {total} results",
+      "searching": "Searching…",
+      "no_matches": "No matches. Try a different query.",
+      "federated_badge": "Federated",
+      "err_generic": "Search failed: {status}",
+      "clear": "Clear search",
+      "suggestions_heading": "Suggestions",
+      "recent_heading": "Recent searches",
+      "clear_history": "Clear",
+      "save_collection": {
+        "dialog_label": "Save search as collection",
+        "heading": "Save these results as a collection",
+        "name_label": "Collection name",
+        "submit": "Save collection",
+        "save_failed": "Save failed: {status} {err}",
+        "saved": "Saved {n} results.",
+        "saved_truncated": "Saved {n} results (truncated to first 100)."
+      },
+      "save_search": {
+        "dialog_label": "Save search",
+        "heading": "Save this search for updates",
+        "body": "We'll re-run this query on your interval and email you when new matches appear.",
+        "name_label": "Name",
+        "interval_label": "Notify every (minutes)",
+        "channel_label": "Notification channel",
+        "channel_email": "Email digest",
+        "channel_none": "Track only (no email)",
+        "submit": "Save search",
+        "save_failed": "Save failed: {status} {err}",
+        "saved": "Saved. Runs every {minutes} minutes."
+      },
+      "advanced": {
+        "title": "Advanced search",
+        "heading": "Advanced search",
+        "body": "Build a query with typed fields. Each row is combined with AND; the preview below shows exactly what will be submitted to the server-side DSL parser.",
+        "freetext_label": "Free-text query (optional)",
+        "freetext_placeholder": "cat OR dog",
+        "not": "NOT",
+        "value_placeholder": "value",
+        "remove_row": "Remove row",
+        "add_row": "+ Add row",
+        "compiled_dsl": "Compiled DSL",
+        "compiled_empty": "(empty)",
+        "field": {
+          "title": "Title",
+          "description": "Description / body",
+          "tag": "Tag",
+          "owner": "Owner (username or ref)",
+          "type": "Asset type",
+          "sensitivity": "Sensitivity",
+          "extension": "File extension",
+          "similar_to": "Similar to asset (UUID)"
+        }
+      }
+    },
   "blogs": {
     "intro": "Long-form writing from artists and curators.",
     "coming_soon": "The blogs surface lands in a follow-up phase. The route is here now so navbar links don't 404."
@@ -26,54 +86,64 @@
     "intro": "Critique requests, approval queues, and per-asset annotations.",
     "coming_soon": "The review surface lands in a follow-up phase."
   },
-  "browse": {
-    "footer": {
-      "label": "Browse controls",
-      "toggle": "Change view",
-      "dec_size": "Smaller cards",
-      "inc_size": "Larger cards",
-      "back_to_top": "Back to top"
+    "browse": {
+      "footer": {
+        "label": "Browse controls",
+        "toggle": "Change view",
+        "dec_size": "Smaller cards",
+        "inc_size": "Larger cards",
+        "back_to_top": "Back to top"
+      },
+      "view": {
+        "grid": "Grid",
+        "masonry": "Masonry",
+        "thumbnail": "Thumbnail",
+        "list": "List"
+      },
+      "filter": {
+        "label": "Feed filter",
+        "team": "Team",
+        "trending": "Trending",
+        "latest": "Latest",
+        "following": "Following"
+      },
+      "sort": {
+        "toggle": "Toggle sort direction",
+        "newest_first": "Newest first",
+        "oldest_first": "Oldest first",
+        "newest": "Newest",
+        "oldest": "Oldest"
+      },
+      "columns": "Columns",
+      "reset_columns": "Reset to default columns",
+      "list": {
+        "post_singular": "post",
+        "post_plural": "posts",
+        "untitled": "Untitled"
+      },
+      "col": {
+        "thumbnail": "",
+        "title": "Title",
+        "author": "Author",
+        "visibility": "Visibility",
+        "tags": "Tags",
+        "members": "Assets",
+        "likes": "Likes",
+        "comments": "Comments",
+        "posted_at": "Posted",
+        "description": "Description"
+      },
+      "title": "Browse",
+      "title_search": "{query}",
+      "results_for": "Results for {query}",
+      "empty": {
+        "no_matches": "No matches",
+        "no_posts_yet": "No posts yet",
+        "try_different": "Try a different search term.",
+        "uploaded_appear_here": "Once posts are uploaded they'll appear here, newest first."
+      },
+      "end_of_feed": "— end of feed —"
     },
-    "view": {
-      "grid": "Grid",
-      "masonry": "Masonry",
-      "thumbnail": "Thumbnail",
-      "list": "List"
-    },
-    "filter": {
-      "label": "Feed filter",
-      "team": "Team",
-      "trending": "Trending",
-      "latest": "Latest",
-      "following": "Following"
-    },
-    "sort": {
-      "toggle": "Toggle sort direction",
-      "newest_first": "Newest first",
-      "oldest_first": "Oldest first",
-      "newest": "Newest",
-      "oldest": "Oldest"
-    },
-    "columns": "Columns",
-    "reset_columns": "Reset to default columns",
-    "list": {
-      "post_singular": "post",
-      "post_plural": "posts",
-      "untitled": "Untitled"
-    },
-    "col": {
-      "thumbnail": "",
-      "title": "Title",
-      "author": "Author",
-      "visibility": "Visibility",
-      "tags": "Tags",
-      "members": "Assets",
-      "likes": "Likes",
-      "comments": "Comments",
-      "posted_at": "Posted",
-      "description": "Description"
-    }
-  },
   "user_menu": {
     "signed_in_as": "Signed in as @{username}",
     "profile": "Profile",
@@ -1396,22 +1466,23 @@
     "follow_failed": "Couldn't follow this user.",
     "unfollow_failed": "Couldn't unfollow this user."
   },
-  "messages": {
-    "title": "Messages",
-    "empty": "No conversations yet.",
-    "empty_full": "You haven't exchanged any direct messages yet.",
-    "all_caught_up": "You're all caught up.",
-    "unread_count": "{count} unread",
-    "from_me_prefix": "You: ",
-    "see_all": "See all messages",
-    "thread": "Conversation",
-    "thread_empty": "No messages yet — say hi.",
-    "back_to_inbox": "Back to inbox",
-    "compose_placeholder": "Write a message…",
-    "send": "Send",
-    "load_error": "Couldn't load messages.",
-    "send_error": "Couldn't send."
-  },
+    "messages": {
+      "title": "Messages",
+      "empty": "No conversations yet.",
+      "empty_full": "You haven't exchanged any direct messages yet.",
+      "all_caught_up": "You're all caught up.",
+      "unread_count": "{count} unread",
+      "from_me_prefix": "You: ",
+      "see_all": "See all messages",
+      "thread": "Conversation",
+      "thread_empty": "No messages yet — say hi.",
+      "back_to_inbox": "Back to inbox",
+      "compose_placeholder": "Write a message…",
+      "send": "Send",
+      "load_error": "Couldn't load messages.",
+      "send_error": "Couldn't send.",
+      "you_prefix": "You: "
+    },
   "notifications": {
     "title": "Notifications",
     "empty": "No notifications yet.",
@@ -1483,7 +1554,31 @@
     "coming_soon": "Coming soon",
     "error_generic": "Something went wrong.",
     "no_permission": "You don't have permission to view this page.",
-    "just_now": "just now"
+    "just_now": "just now",
+    "close": "Close",
+    "search": "Search",
+    "submit": "Submit",
+    "next": "Next",
+    "previous": "Previous",
+    "yes": "Yes",
+    "no": "No",
+    "clear": "Clear",
+    "clear_all": "Clear all",
+    "go": "Go",
+    "load_more": "Load more",
+    "download_original": "Download original",
+    "untitled": "Untitled",
+    "saving": "Saving…",
+    "posting": "Posting…",
+    "confirm": "Confirm",
+    "pause": "Pause",
+    "resume": "Resume",
+    "optional_note_placeholder": "Optional note…",
+    "failed_to_load": "Failed to load",
+    "dur_minutes": "{n}m",
+    "dur_hours": "{n}h",
+    "dur_days": "{n}d",
+    "dur_months": "{n}mo"
   },
   "login": {
     "title": "Sign in",
@@ -1536,75 +1631,81 @@
     "resend_button": "Send a new link",
     "resend_sent": "Sent — check your inbox."
   },
-  "collections": {
-    "title": "Collections",
-    "tagline": "Group posts and assets together — share, organise, or stage for review.",
-    "new": "New collection",
-    "new_first": "Create your first collection",
-    "new_title": "New collection",
-    "edit_title": "Edit collection",
-    "share_title": "Share collection",
-    "name": "Name",
-    "description": "Description",
-    "visibility": "Visibility",
-    "vis_private": "Private",
-    "vis_org_only": "Org-only",
-    "vis_followers": "Followers",
-    "vis_explicit_share": "Explicit share",
-    "vis_shared": "Shared",
-    "vis_public": "Public",
-    "featured": "Featured",
-    "featured_flag": "Feature this collection on the hub",
-    "untitled": "Untitled collection",
-    "create": "Create",
-    "creating": "Creating…",
-    "saving": "Saving…",
-    "search_placeholder": "Search collections…",
-    "tab_mine": "Mine",
-    "tab_featured": "Featured",
-    "tab_public": "Public",
-    "tab_shared": "Shared with me",
-    "tab_all": "All",
-    "empty_mine": "You haven't created any collections yet.",
-    "empty_featured": "No featured collections yet.",
-    "empty_public": "No public collections yet.",
-    "empty_shared": "No collections have been shared with you yet.",
-    "empty_all": "No collections match your filter.",
-    "detail_empty": "No assets in this collection yet.",
-    "upload_here": "Upload here",
-    "upload_first": "Upload first asset",
-    "add_posts": "Add posts",
-    "add_posts_soon": "Post-level membership lands in a follow-up commit.",
-    "share": "Share",
-    "more": "More actions",
-    "edit": "Edit details",
-    "manage_members": "Manage members",
-    "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
-    "set_cover": "Set cover",
-    "set_cover_soon": "Custom cover picker coming soon.",
-    "delete": "Delete collection",
-    "delete_soon": "Delete confirmation flow coming soon.",
-    "share_add_heading": "Grant access",
-    "share_existing_heading": "Current grants",
-    "share_empty": "No one else has access yet.",
-    "principal_user": "User",
-    "principal_role": "Role",
-    "principal_team": "Team",
-    "principal_id_placeholder": "id or username",
-    "perm_read": "Read",
-    "perm_write": "Write",
-    "perm_admin": "Admin",
-    "error_load": "Couldn't load collections.",
-    "error_create": "Couldn't create the collection.",
-    "error_save": "Couldn't save the collection.",
-    "error_not_found": "Collection not found.",
-    "conflict_heading": "Someone else edited this collection",
-    "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
-    "conflict_overwrite": "Overwrite their changes with mine",
-    "error_load_share": "Couldn't load sharing settings.",
-    "error_add_share": "Couldn't add the grant.",
-    "error_remove_share": "Couldn't revoke the grant."
-  },
+    "collections": {
+      "title": "Collections",
+      "tagline": "Group posts and assets together — share, organise, or stage for review.",
+      "new": "New collection",
+      "new_first": "Create your first collection",
+      "new_title": "New collection",
+      "edit_title": "Edit collection",
+      "share_title": "Share collection",
+      "name": "Name",
+      "description": "Description",
+      "visibility": "Visibility",
+      "vis_private": "Private",
+      "vis_org_only": "Org-only",
+      "vis_followers": "Followers",
+      "vis_explicit_share": "Explicit share",
+      "vis_shared": "Shared",
+      "vis_public": "Public",
+      "featured": "Featured",
+      "featured_flag": "Feature this collection on the hub",
+      "untitled": "Untitled collection",
+      "create": "Create",
+      "creating": "Creating…",
+      "saving": "Saving…",
+      "search_placeholder": "Search collections…",
+      "tab_mine": "Mine",
+      "tab_featured": "Featured",
+      "tab_public": "Public",
+      "tab_shared": "Shared with me",
+      "tab_all": "All",
+      "empty_mine": "You haven't created any collections yet.",
+      "empty_featured": "No featured collections yet.",
+      "empty_public": "No public collections yet.",
+      "empty_shared": "No collections have been shared with you yet.",
+      "empty_all": "No collections match your filter.",
+      "detail_empty": "No assets in this collection yet.",
+      "upload_here": "Upload here",
+      "upload_first": "Upload first asset",
+      "add_posts": "Add posts",
+      "add_posts_soon": "Post-level membership lands in a follow-up commit.",
+      "share": "Share",
+      "more": "More actions",
+      "edit": "Edit details",
+      "manage_members": "Manage members",
+      "manage_members_soon": "Drag-reorder + bulk remove coming soon.",
+      "set_cover": "Set cover",
+      "set_cover_soon": "Custom cover picker coming soon.",
+      "delete": "Delete collection",
+      "delete_soon": "Delete confirmation flow coming soon.",
+      "share_add_heading": "Grant access",
+      "share_existing_heading": "Current grants",
+      "share_empty": "No one else has access yet.",
+      "principal_user": "User",
+      "principal_role": "Role",
+      "principal_team": "Team",
+      "principal_id_placeholder": "id or username",
+      "perm_read": "Read",
+      "perm_write": "Write",
+      "perm_admin": "Admin",
+      "error_load": "Couldn't load collections.",
+      "error_create": "Couldn't create the collection.",
+      "error_save": "Couldn't save the collection.",
+      "error_not_found": "Collection not found.",
+      "conflict_heading": "Someone else edited this collection",
+      "conflict_body": "Your form values are still here. Click below to overwrite the other edit, or Cancel to discard yours and reload.",
+      "conflict_overwrite": "Overwrite their changes with mine",
+      "error_load_share": "Couldn't load sharing settings.",
+      "error_add_share": "Couldn't add the grant.",
+      "error_remove_share": "Couldn't revoke the grant.",
+      "include_deleted": "Include deleted",
+      "restore_failed": "restore failed",
+      "deleted_at_banner": "Deleted {date}",
+      "deleted_reason": "— {reason}",
+      "restoring": "Restoring…",
+      "restore": "Restore"
+    },
   "errors": {
     "save_failed": "Couldn't save changes."
   },
@@ -1666,10 +1767,11 @@
     "bulk_tag": "Tag all",
     "share_playlist": "Share playlist"
   },
-  "post_menu": {
-    "edit_post": "Edit post…",
-    "delete_post": "Delete post…"
-  },
+    "post_menu": {
+      "edit_post": "Edit post…",
+      "delete_post": "Delete post…",
+      "actions_button": "Post actions"
+    },
   "viewer_hotkeys": {
     "title": "Shortcuts",
     "title_tips": "Tips",
@@ -1729,5 +1831,194 @@
     "extract_all_blurb": "Streams a fresh ZIP of every entry — convenient for sources the OS can't open natively (.7z / .rar / .tar.xz). The original archive is still available via the asset's Download button.",
     "by_extension": "By extension",
     "filter_to_ext": "Filter the tree to .{ext} entries"
-  }
+  },
+    "post": {
+      "detail": {
+        "title": "Post"
+      }
+    },
+    "comments": {
+      "err_load": "Failed to load comments",
+      "err_post": "Failed to post",
+      "err_delete": "Failed to delete",
+      "compose_placeholder": "Add a comment…",
+      "submit_label": "Comment",
+      "empty": "No comments yet — be the first.",
+      "edited_at_title": "Edited {when}",
+      "edited_marker": "(edited)",
+      "reply": "Reply",
+      "reply_placeholder": "Reply…",
+      "user_ref_fallback": "user {ref}"
+    },
+    "federation": {
+      "banner_aria_label": "Encrypted federation status",
+      "not_supported_headline": "Encrypted federation is not yet supported.",
+      "page_body": "Activities that target restricted or embargo sensitivity objects will not federate to peers until Phase 1.22.I lands encrypted delivery. The share records you grant today are persisted, so when encrypted federation ships those backlogged activities will federate automatically — but until then, expect zero outbound federation for sensitive objects.",
+      "grant_headline": "This object is marked {sensitivity} — encrypted federation is not yet supported.",
+      "grant_body": "Sharing now will create the share record but no activities will federate until Phase 1.22.I ships encrypted delivery. You can:",
+      "opt_share_anyway": "Share anyway, knowing activity federation is paused for this object until 1.22.I; or",
+      "opt_cancel": "Cancel and downgrade the object’s sensitivity to a non-restricted tier first."
+    },
+    "post_host": {
+      "asset_details_heading": "Asset Details",
+      "whiteboards_heading": "Whiteboards",
+      "whiteboards_empty": "No whiteboards yet — click Tools → Whiteboard to sketch.",
+      "metadata_heading": "Metadata",
+      "like_button": "Like",
+      "unlike_button": "Unlike"
+    },
+    "whiteboard": {
+      "preview_dialog_label": "Whiteboard preview",
+      "untitled_sketch": "Untitled sketch",
+      "close_esc_title": "Close (Esc)",
+      "close_preview": "Close preview",
+      "title_slot_label": "Whiteboard",
+      "preview_button_title": "Preview whiteboard",
+      "delete_button": "Delete whiteboard"
+    },
+    "post_badges": {
+      "team": "team"
+    },
+    "user_meta": {
+      "post_count": "{n} posts"
+    },
+    "viewer_playlist": {
+      "prev_asset": "Previous asset",
+      "next_asset": "Next asset",
+      "resize_strip": "Resize playlist strip",
+      "show_strip": "Show asset strip",
+      "hide_strip": "Hide asset strip",
+      "show_asset_n": "Show asset {n}",
+      "empty": "No assets in this playlist."
+    },
+    "setup": {
+      "title": "First-run setup",
+      "heading": "First-run setup",
+      "body": "Create the first administrator and configure your site. You can change any of this later.",
+      "section": {
+        "administrator": "Administrator",
+        "site": "Site"
+      },
+      "admin": {
+        "username": "Username",
+        "email": "Email",
+        "fullname": "Full name",
+        "password": "Password",
+        "password_confirm": "Confirm password",
+        "password_hint": "At least 8 characters."
+      },
+      "site": {
+        "name": "Site name",
+        "base_url": "Base URL",
+        "base_url_placeholder": "https://art.example.com",
+        "base_url_helper": "Used in outgoing links (e.g. password reset). May be left blank now."
+      },
+      "smtp": {
+        "configure_now": "Configure now",
+        "host": "Host",
+        "port": "Port",
+        "encryption": "Encryption",
+        "encryption_none": "None",
+        "from_address": "From address",
+        "from_placeholder": "Site <noreply@example.com>",
+        "username": "Username",
+        "password": "Password",
+        "body": "Email features (password reset, notifications) stay disabled until SMTP is configured. You can fill this in later from the admin settings."
+      },
+      "err": {
+        "password_mismatch": "Passwords do not match.",
+        "password_too_short": "Password must be at least 8 characters.",
+        "failed": "Setup failed"
+      },
+      "submit": "Create admin & finish setup"
+    },
+    "playlist": {
+      "err_load_post": "Failed to load post"
+    },
+    "upload": {
+      "err_wait_finish": "Wait for all uploads to finish.",
+      "err_no_files": "No files uploaded.",
+      "err_create_post": "Failed to create post.",
+      "err_create_asset": "Failed to create asset.",
+      "err_upload_failed": "Upload failed.",
+      "err_network": "Network error.",
+      "err_aborted": "Upload aborted.",
+      "err_companion_failed": "Companion upload failed.",
+      "err_load_fields": "Failed to load fields.",
+      "modal": {
+        "submit_save_one": "Save 1 asset",
+        "submit_save_many": "Save {n} assets",
+        "submit_create_posts_one": "Create 1 post",
+        "submit_create_posts_many": "Create {n} posts",
+        "submit_create_post": "Create post",
+        "dropzone_prompt": "Drop files anywhere, or click to choose",
+        "empty_state": "No files yet — drop them on the page or click above.",
+        "status_uploading": "{ready} of {total} ready · still uploading…",
+        "status_ready": "{ready} of {total} ready"
+      },
+      "compose": {
+        "toggle": "Create a post from these assets",
+        "title_placeholder": "Post title (optional)",
+        "title_aria": "Post title",
+        "description_placeholder": "Describe your post (optional)",
+        "description_aria": "Post description",
+        "visibility_label": "Visibility",
+        "visibility_public": "Public",
+        "visibility_followers": "Followers",
+        "visibility_private": "Private",
+        "post_mode_label": "Post mode",
+        "mode_one_post": "One post with all files",
+        "mode_one_per_file": "One post per file",
+        "workflow_state_label": "Workflow state",
+        "workflow_state_default": "Default",
+        "tags_label": "Tags",
+        "remove_tag_aria": "Remove tag {tag}",
+        "tag_placeholder": "press Enter to add",
+        "collection_prefill_note": "Will be added to the current collection."
+      },
+      "dropzone": {
+        "title": "Drop to upload",
+        "subtitle": "Anywhere on the page works."
+      },
+      "file_row": {
+        "fields_load_error": "Failed to load fields.",
+        "state_queued": "Queued",
+        "state_uploading": "Uploading {pct}%",
+        "state_finalizing": "Finalizing",
+        "state_deduped": "Already uploaded",
+        "state_ready": "Ready",
+        "state_failed": "Failed",
+        "title_aria": "Asset title",
+        "remove_title": "Remove from queue",
+        "deduped_note": "Dedup'd from existing bytes",
+        "tag_placeholder": "Add tag…",
+        "remove_tag_aria": "Remove tag {tag}",
+        "metadata_summary": "Metadata",
+        "loading_fields": "Loading fields…",
+        "no_fields": "No fields configured for this resource type.",
+        "field_type_not_editable": "{type} fields aren't editable here yet — edit after upload.",
+        "companions_summary": "Companions",
+        "companions_help": "Drop MTL, texture (.png / .jpg), glTF .bin, or any sibling files the model references by relative path. Edit each row's path to match what the model file expects (e.g. ",
+        "remove_companion_aria": "Remove companion",
+        "add_companion": "+ Add companion files…"
+      },
+      "thumbnail": {
+        "create_cover_error": "Failed to create cover asset.",
+        "upload_error": "Upload failed.",
+        "network_error": "Network error.",
+        "heading": "Post cover thumbnail",
+        "mode_member": "Use a post asset",
+        "mode_crop": "Crop a post asset (soon)",
+        "mode_upload": "Upload a custom cover",
+        "awaiting": "Waiting for uploads to finish — then you can pick which one is the cover.",
+        "default_note": "Defaults to the first asset when nothing is picked.",
+        "hint": "Click \"Upload a custom cover\" above to pick an image.",
+        "uploading": "Uploading {name}… {pct}%",
+        "ready": "Cover ready: {name}",
+        "error_prefix": "Failed: {error}"
+      }
+    },
+    "auth": {
+      "err_invalid_credentials": "Invalid credentials"
+    }
 }
