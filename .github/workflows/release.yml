@@ -175,17 +175,23 @@ jobs:
           done
 
       - name: Summary
+        env:
+          TAG: ${{ needs.release-notes.outputs.tag }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          REPO: ${{ github.repository }}
         run: |
           {
-            echo "### Release ${{ needs.release-notes.outputs.tag }} published"
+            echo "### Release ${TAG} published"
             echo ""
             echo "**Docker images** (multi-arch: linux/amd64,linux/arm64):"
             echo ""
-            for tag in ${{ steps.meta.outputs.tags }}; do
-              echo "- \`${tag}\`"
-            done
+            # $TAGS is newline-separated; read line-by-line to survive
+            # the multi-registry fan-out.
+            while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "- \`${tag}\`"
+            done <<< "$TAGS"
             echo ""
             echo "Signed via cosign (Sigstore keyless / OIDC). Provenance + SBOM attached."
             echo ""
-            echo "See the [Release notes](https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-notes.outputs.tag }})."
+            echo "See the [Release notes](https://github.com/${REPO}/releases/tag/${TAG})."
           } >> "$GITHUB_STEP_SUMMARY"
