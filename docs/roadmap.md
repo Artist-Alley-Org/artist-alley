@@ -318,6 +318,31 @@ current focus:
   rc8/rc9 stay published (cleanup requires `delete:packages` scope
   not on the coding-agent's local token; noted as user-cleanup task).
   §1.6 of `docs/v0_1_readiness.md` flipped ✅. Closes #238 + #241.
+  **1.55.V-1 shipped 2026-07-09** — i18n coverage audit for v0.1.0.
+  Report-only arc. Produces `docs/i18n_audit_v0_1.md` (10 sections):
+  system architecture + coverage-guard analysis + dictionary coverage
+  matrix (en 1608 keys / es 52 keys / fr 37 keys — **3.2% and 2.3%
+  coverage** vs the `completionPct: 5` claim in `locales.ts`) +
+  ~275 route findings (~87 MUST / ~37 SHOULD / ~150 NICE) +
+  ~340 shared-component findings (79 MUST / 141 SHOULD / 120 NICE) +
+  Playwright locale-switch coverage assessment (**zero specs switch
+  locale + assert translations**; MUST-tier gap for 1.55.V-2) +
+  backend user-facing-string audit (**214 unique English error
+  strings** across 699 hits in `app/internal/**` returned raw as
+  `openapi.*JSONResponse{Error: "..."}`; frontend `apiErr.error ??
+  t('…')` idiom short-circuits translation — flagged as **v1.0.0
+  prerequisite** parallel to #242 since the shape is a backend refactor
+  + frontend mapper, not a straight-line V-2 fix) + fallback-behavior
+  documentation (3-tier: active locale → en → raw key; silent English
+  fallback masks the ~3% catalogue coverage with no runtime
+  observability) + coverage-guard extension plan (~10 actionable
+  items for 1.55.V-2 to execute against, including expanding
+  `TRACKED_FILES` from 24 → all MUST+SHOULD files, adding
+  attribute coverage for `label=` / `aria-labelledby` / template
+  literals, a locale-parity check with warn-only budget, dev-mode
+  observability instrumentation). Zero code changes; audit doc is the
+  durable artifact + 1.55.V-2 executes against §9 fix recommendations
+  and §10 guard extensions. Closes #244.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
