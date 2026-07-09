@@ -16,6 +16,7 @@
 
   import type { UploadRow, PendingFieldValue } from '$stores/upload.svelte';
   import { upload, fieldsForAssetType } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
   import { is3DExt } from '../viewers/controller';
 
   // True when the row's file is a 3D model — drives the companion
@@ -79,7 +80,7 @@
       try {
         metaFields = await fieldsForAssetType(1); // Photo for MVP
       } catch (e) {
-        metaError = e instanceof Error ? e.message : 'Failed to load fields.';
+        metaError = e instanceof Error ? e.message : t('upload.file_row.fields_load_error');
       } finally {
         metaLoading = false;
       }
@@ -138,11 +139,11 @@
   const pct = $derived(Math.round(row.progress * 100));
 
   const stateLabel = $derived(
-    row.state === 'queued' ? 'Queued'
-    : row.state === 'uploading' ? `Uploading ${pct}%`
-    : row.state === 'asset-creating' ? 'Finalizing'
-    : row.state === 'ready' ? (row.deduped ? 'Already uploaded' : 'Ready')
-    : row.state === 'errored' ? 'Failed'
+    row.state === 'queued' ? t('upload.file_row.state_queued')
+    : row.state === 'uploading' ? t('upload.file_row.state_uploading', { pct })
+    : row.state === 'asset-creating' ? t('upload.file_row.state_finalizing')
+    : row.state === 'ready' ? (row.deduped ? t('upload.file_row.state_deduped') : t('upload.file_row.state_ready'))
+    : row.state === 'errored' ? t('upload.file_row.state_failed')
     : row.state,
   );
 
@@ -218,7 +219,7 @@
         bind:value={row.title}
         placeholder={row.file.name}
         class="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 text-sm focus-visible:border-border-strong focus:outline-none"
-        aria-label="Asset title"
+        aria-label={t('upload.file_row.title_aria')}
       />
       <span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium {stateClass}">
         {stateLabel}
@@ -227,8 +228,8 @@
         type="button"
         onclick={() => upload.removeRow(row.id)}
         class="shrink-0 rounded p-1 text-fg-muted hover:bg-surface-elevated hover:text-fg"
-        title="Remove from queue"
-        aria-label="Remove"
+        title={t('upload.file_row.remove_title')}
+        aria-label={t('common.remove')}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 6 6 18M6 6l12 12" />
@@ -249,7 +250,7 @@
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
       <span>{humanSize(row.file.size)}</span>
       {#if row.deduped}
-        <span class="text-success">· Dedup'd from existing bytes</span>
+        <span class="text-success">· {t('upload.file_row.deduped_note')}</span>
       {/if}
       {#if row.error}
         <span class="text-danger">· {row.error}</span>
@@ -258,7 +259,7 @@
           onclick={() => upload.retryRow(row.id)}
           class="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-elevated"
         >
-          Retry
+          {t('common.retry')}
         </button>
       {/if}
     </div>
@@ -273,7 +274,7 @@
             type="button"
             onclick={() => removeTag(tag)}
             class="text-fg-muted hover:text-fg"
-            aria-label="Remove tag {tag}"
+            aria-label={t('upload.file_row.remove_tag_aria', { tag })}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 6 6 18M6 6l12 12" />
@@ -286,7 +287,7 @@
         bind:value={tagDraft}
         onkeydown={handleTagKeydown}
         onblur={commitTag}
-        placeholder={row.tags.length === 0 ? 'Add tag…' : '+'}
+        placeholder={row.tags.length === 0 ? t('upload.file_row.tag_placeholder') : '+'}
         class="min-w-[6rem] flex-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-fg placeholder:text-fg-muted/60 focus:border-border focus:bg-surface-elevated focus:outline-none"
       />
     </div>
@@ -301,17 +302,17 @@
         onclick={(e) => { e.preventDefault(); void toggleMeta(); }}
         class="cursor-pointer select-none px-1 text-xs text-fg-muted hover:text-fg"
       >
-        Metadata{fieldCount > 0 ? ` (${fieldCount})` : ''}
+        {t('upload.file_row.metadata_summary')}{fieldCount > 0 ? ` (${fieldCount})` : ''}
       </summary>
 
       {#if metaOpen}
         <div class="mt-2 space-y-3 px-1">
           {#if metaLoading}
-            <p class="text-xs text-fg-muted">Loading fields…</p>
+            <p class="text-xs text-fg-muted">{t('upload.file_row.loading_fields')}</p>
           {:else if metaError}
             <p class="text-xs text-danger">{metaError}</p>
           {:else if metaFields && metaFields.length === 0}
-            <p class="text-xs text-fg-muted">No fields configured for this resource type.</p>
+            <p class="text-xs text-fg-muted">{t('upload.file_row.no_fields')}</p>
           {:else}
             {#each groupedFields as g (g.group)}
               <fieldset class="space-y-1.5">
@@ -352,7 +353,7 @@
                           onchange={(e) => commitField(f, { valueText: (e.currentTarget as HTMLInputElement).checked ? 'true' : 'false' })}
                           class="h-4 w-4 accent-accent"
                         />
-                        <span class="text-fg-muted">{pending?.valueText === 'true' ? 'Yes' : 'No'}</span>
+                        <span class="text-fg-muted">{pending?.valueText === 'true' ? t('common.yes') : t('common.no')}</span>
                       </label>
                     {:else if f.type === 'date'}
                       <input
@@ -410,7 +411,7 @@
                       </div>
                     {:else}
                       <p class="mt-0.5 rounded bg-surface-elevated px-2 py-1 text-xs text-fg-muted">
-                        {f.type} fields aren't editable here yet — edit after upload.
+                        {t('upload.file_row.field_type_not_editable', { type: f.type })}
                       </p>
                     {/if}
                   </label>
@@ -432,7 +433,7 @@
       <details class="-mx-1 border-t border-border pt-2" open={row.companions.length > 0}>
         <!-- svelte-ignore a11y_no_redundant_roles -->
         <summary class="cursor-pointer select-none px-1 text-xs text-fg-muted hover:text-fg">
-          Companions{row.companions.length > 0 ? ` (${row.companions.length})` : ''}
+          {t('upload.file_row.companions_summary')}{row.companions.length > 0 ? ` (${row.companions.length})` : ''}
         </summary>
 
         <div
@@ -449,10 +450,7 @@
           />
 
           <p class="text-[11px] leading-snug text-fg-muted">
-            Drop MTL, texture (.png / .jpg), glTF .bin, or any
-            sibling files the model references by relative path.
-            Edit each row's path to match what the model file
-            expects (e.g. <code class="font-mono">textures/wood.png</code>).
+            {t('upload.file_row.companions_help')}<code class="font-mono">textures/wood.png</code>).
           </p>
 
           {#each row.companions as c (c.id)}
@@ -477,7 +475,7 @@
                 onclick={() => upload.removeCompanion(row.id, c.id)}
                 disabled={c.state === 'uploading'}
                 class="text-fg-muted hover:text-danger disabled:opacity-40"
-                aria-label="Remove companion"
+                aria-label={t('upload.file_row.remove_companion_aria')}
               >×</button>
             </div>
           {/each}
@@ -486,7 +484,7 @@
             type="button"
             onclick={openCompanionPicker}
             class="text-xs text-accent hover:underline"
-          >+ Add companion files…</button>
+          >{t('upload.file_row.add_companion')}</button>
         </div>
       </details>
     {/if}

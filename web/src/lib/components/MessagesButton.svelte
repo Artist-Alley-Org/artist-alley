@@ -121,35 +121,35 @@
       <p class="px-3 py-6 text-center text-xs text-fg-muted">{t('messages.empty')}</p>
     {:else}
       <ul class="max-h-[24rem] overflow-y-auto">
-        {#each threads as t (t.peer_user_ref)}
-          {@const fromMe = auth.user && t.last_sender_user_ref === auth.user.ref}
+        {#each threads as thread (thread.peer_user_ref)}
+          {@const fromMe = auth.user && thread.last_sender_user_ref === auth.user.ref}
           <li>
             <button
               type="button"
               class="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-state-hover"
-              class:bg-accent-container={t.unread_count > 0}
-              onclick={() => openThread(t)}
+              class:bg-accent-container={thread.unread_count > 0}
+              onclick={() => openThread(thread)}
             >
               <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent/20 text-xs font-semibold text-accent">
-                {#if t.peer_avatar_url}
-                  <img src={t.peer_avatar_url} alt="" class="h-full w-full rounded-full object-cover" />
+                {#if thread.peer_avatar_url}
+                  <img src={thread.peer_avatar_url} alt="" class="h-full w-full rounded-full object-cover" />
                 {:else}
-                  {initials(t.peer_display_name ?? t.peer_username)}
+                  {initials(thread.peer_display_name ?? thread.peer_username)}
                 {/if}
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-baseline justify-between gap-2">
                   <span class="truncate text-xs font-medium">
-                    {t.peer_display_name ?? '@' + t.peer_username}
+                    {thread.peer_display_name ?? '@' + thread.peer_username}
                   </span>
-                  <span class="shrink-0 text-[10px] text-fg-muted">{timeAgo(t.last_sent_at)}</span>
+                  <span class="shrink-0 text-[10px] text-fg-muted">{timeAgo(thread.last_sent_at)}</span>
                 </div>
                 <div class="truncate text-xs text-fg-muted">
-                  {fromMe ? 'You: ' : ''}{t.last_body}
+                  {fromMe ? t('messages.you_prefix') : ''}{thread.last_body}
                 </div>
               </div>
-              {#if t.unread_count > 0}
-                <span class="ml-1 shrink-0 rounded-full bg-accent px-1.5 text-[10px] font-medium text-on-accent">{t.unread_count}</span>
+              {#if thread.unread_count > 0}
+                <span class="ml-1 shrink-0 rounded-full bg-accent px-1.5 text-[10px] font-medium text-on-accent">{thread.unread_count}</span>
               {/if}
             </button>
           </li>

@@ -25,6 +25,8 @@
 -->
 
 <script lang="ts">
+  import { t } from '$stores/lang.svelte';
+
   type Props = {
     mode?: 'page' | 'grant';
     /** restricted | embargo trigger the grant-mode banner; others render nothing */
@@ -43,33 +45,26 @@
   <div
     class="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg"
     role="note"
-    aria-label="Encrypted federation status"
+    aria-label={t('federation.banner_aria_label')}
   >
     <div class="flex items-start gap-2">
       <span class="mt-0.5 text-warning" aria-hidden="true">⚠</span>
       <div class="flex-1 space-y-1">
         {#if mode === 'page'}
-          <p class="font-medium">Encrypted federation is not yet supported.</p>
+          <p class="font-medium">{t('federation.not_supported_headline')}</p>
           <p class="text-fg-muted">
-            Activities that target <strong>restricted</strong> or <strong>embargo</strong>
-            sensitivity objects will not federate to peers until Phase 1.22.I lands
-            encrypted delivery. The share records you grant today are persisted, so
-            when encrypted federation ships those backlogged activities will federate
-            automatically &mdash; but until then, expect zero outbound federation for
-            sensitive objects.
+            {t('federation.page_body')}
           </p>
         {:else}
           <p class="font-medium">
-            This object is marked <strong>{sensitivity}</strong> &mdash;
-            encrypted federation is not yet supported.
+            {t('federation.grant_headline', { sensitivity })}
           </p>
           <p class="text-fg-muted">
-            Sharing now will create the share record but no activities will
-            federate until Phase 1.22.I ships encrypted delivery. You can:
+            {t('federation.grant_body')}
           </p>
           <ul class="ml-5 list-disc text-fg-muted">
-            <li>Share anyway, knowing activity federation is paused for this object until 1.22.I; or</li>
-            <li>Cancel and downgrade the object&rsquo;s sensitivity to a non-restricted tier first.</li>
+            <li>{t('federation.opt_share_anyway')}</li>
+            <li>{t('federation.opt_cancel')}</li>
           </ul>
         {/if}
       </div>

@@ -10,6 +10,7 @@
   // the workflow-states fetch.
 
   import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
   import { api } from '$api/client';
 
   // Workflow states for the post domain. Loaded once when the form
@@ -87,7 +88,7 @@
       bind:checked={upload.compose.enabled}
       class="h-4 w-4 rounded border-border accent-accent"
     />
-    <span class="font-medium text-fg">Create a post from these assets</span>
+    <span class="font-medium text-fg">{t('upload.compose.toggle')}</span>
   </label>
 
   {#if upload.compose.enabled}
@@ -96,53 +97,53 @@
       <input
         type="text"
         bind:value={upload.compose.title}
-        placeholder="Post title (optional)"
+        placeholder={t('upload.compose.title_placeholder')}
         maxlength="500"
         class="w-full rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
-        aria-label="Post title"
+        aria-label={t('upload.compose.title_aria')}
       />
       <textarea
         bind:value={upload.compose.description}
-        placeholder="Describe your post (optional)"
+        placeholder={t('upload.compose.description_placeholder')}
         rows="2"
         class="w-full resize-y rounded border border-border bg-surface px-3 py-2 text-sm focus-visible:border-border-strong focus:outline-none"
-        aria-label="Post description"
+        aria-label={t('upload.compose.description_aria')}
       ></textarea>
     </div>
 
     <!-- Visibility + post mode + workflow state — three pickers in a row. -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
       <label class="block text-xs">
-        <span class="mb-1 block text-fg-muted">Visibility</span>
+        <span class="mb-1 block text-fg-muted">{t('upload.compose.visibility_label')}</span>
         <select
           bind:value={upload.compose.visibility}
           class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         >
-          <option value="public">Public</option>
-          <option value="followers">Followers</option>
-          <option value="private">Private</option>
+          <option value="public">{t('upload.compose.visibility_public')}</option>
+          <option value="followers">{t('upload.compose.visibility_followers')}</option>
+          <option value="private">{t('upload.compose.visibility_private')}</option>
         </select>
       </label>
 
       <label class="block text-xs">
-        <span class="mb-1 block text-fg-muted">Post mode</span>
+        <span class="mb-1 block text-fg-muted">{t('upload.compose.post_mode_label')}</span>
         <select
           bind:value={upload.compose.mode}
           class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
         >
-          <option value="one-post">One post with all files</option>
-          <option value="one-per-file">One post per file</option>
+          <option value="one-post">{t('upload.compose.mode_one_post')}</option>
+          <option value="one-per-file">{t('upload.compose.mode_one_per_file')}</option>
         </select>
       </label>
 
       {#if showStates}
         <label class="block text-xs">
-          <span class="mb-1 block text-fg-muted">Workflow state</span>
+          <span class="mb-1 block text-fg-muted">{t('upload.compose.workflow_state_label')}</span>
           <select
             bind:value={upload.compose.stateId}
             class="w-full rounded border border-border bg-surface-elevated px-2 py-1.5 text-sm focus-visible:border-border-strong focus:outline-none"
           >
-            <option value={null}>Default</option>
+            <option value={null}>{t('upload.compose.workflow_state_default')}</option>
             {#each states as s (s.id)}
               <option value={s.id}>{s.label}</option>
             {/each}
@@ -153,7 +154,7 @@
 
     <!-- Tags -->
     <div>
-      <p class="mb-1 text-xs text-fg-muted">Tags</p>
+      <p class="mb-1 text-xs text-fg-muted">{t('upload.compose.tags_label')}</p>
       <div class="flex flex-wrap items-center gap-1.5 rounded border border-border bg-surface-elevated px-2 py-1.5">
         {#each upload.compose.tags as tag (tag)}
           <span class="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-xs text-fg">
@@ -162,7 +163,7 @@
               type="button"
               onclick={() => removeTag(tag)}
               class="text-fg-muted hover:text-fg"
-              aria-label="Remove tag {tag}"
+              aria-label={t('upload.compose.remove_tag_aria', { tag })}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 6 6 18M6 6l12 12" />
@@ -175,7 +176,7 @@
           bind:value={tagDraft}
           onkeydown={handleTagKeydown}
           onblur={commitTag}
-          placeholder={upload.compose.tags.length === 0 ? 'press Enter to add' : '+'}
+          placeholder={upload.compose.tags.length === 0 ? t('upload.compose.tag_placeholder') : '+'}
           class="min-w-[8rem] flex-1 bg-transparent px-1 py-0.5 text-sm placeholder:text-fg-muted/60 focus:outline-none"
         />
       </div>
@@ -183,7 +184,7 @@
 
     {#if upload.compose.collectionId}
       <p class="rounded bg-accent/10 px-3 py-2 text-xs text-accent">
-        Will be added to the current collection.
+        {t('upload.compose.collection_prefill_note')}
       </p>
     {/if}
   {/if}

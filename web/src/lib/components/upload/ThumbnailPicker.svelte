@@ -12,6 +12,7 @@
   //       post.
 
   import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
 
   const memberRows = $derived(upload.readyRows);
 
@@ -59,14 +60,14 @@
         }),
       );
       if (error || !data) {
-        throw new Error('Failed to create cover asset.');
+        throw new Error(t('upload.thumbnail.create_cover_error'));
       }
       upload.compose.thumbSeparateAssetId = data.id;
       upload.compose.thumbMode = 'separate';
       coverState = 'ready';
     } catch (e) {
       coverState = 'errored';
-      coverError = e instanceof Error ? e.message : 'Upload failed.';
+      coverError = e instanceof Error ? e.message : t('upload.thumbnail.upload_error');
     } finally {
       // Reset the input so picking the same file again triggers change.
       input.value = '';
@@ -93,7 +94,7 @@
           reject(new Error(err));
         }
       });
-      xhr.addEventListener('error', () => reject(new Error('Network error.')));
+      xhr.addEventListener('error', () => reject(new Error(t('upload.thumbnail.network_error'))));
       xhr.send(f);
     });
   }
@@ -105,7 +106,7 @@
 </script>
 
 <div class="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
-  <p class="text-sm font-medium text-fg">Post cover thumbnail</p>
+  <p class="text-sm font-medium text-fg">{t('upload.thumbnail.heading')}</p>
 
   <!-- Mode selector -->
   <div class="flex flex-wrap gap-2">
@@ -118,15 +119,15 @@
           : 'border-border bg-surface-elevated text-fg-muted hover:text-fg'
       }`}
     >
-      Use a post asset
+      {t('upload.thumbnail.mode_member')}
     </button>
     <button
       type="button"
       disabled
       class="cursor-not-allowed rounded-md border border-border bg-surface-elevated px-3 py-1.5 text-xs text-fg-muted/60"
-      title="Coming soon"
+      title={t('common.coming_soon')}
     >
-      Crop a post asset (soon)
+      {t('upload.thumbnail.mode_crop')}
     </button>
     <button
       type="button"
@@ -137,7 +138,7 @@
           : 'border-border bg-surface-elevated text-fg-muted hover:text-fg'
       }`}
     >
-      Upload a custom cover
+      {t('upload.thumbnail.mode_upload')}
     </button>
     <input
       bind:this={coverInputEl}
@@ -152,7 +153,7 @@
   {#if upload.compose.thumbMode === 'member'}
     {#if memberRows.length === 0}
       <p class="rounded bg-surface-elevated px-3 py-2 text-xs text-fg-muted">
-        Waiting for uploads to finish — then you can pick which one is the cover.
+        {t('upload.thumbnail.awaiting')}
       </p>
     {:else}
       <div class="grid grid-cols-4 gap-2 sm:grid-cols-6">
@@ -173,7 +174,7 @@
         {/each}
       </div>
       <p class="text-xs text-fg-muted">
-        Defaults to the first asset when nothing is picked.
+        {t('upload.thumbnail.default_note')}
       </p>
     {/if}
   {/if}
@@ -182,18 +183,18 @@
   {#if upload.compose.thumbMode === 'separate'}
     <div class="rounded border border-border bg-surface-elevated p-3 text-xs">
       {#if coverState === 'idle' && !coverFileName}
-        <p class="text-fg-muted">Click "Upload a custom cover" above to pick an image.</p>
+        <p class="text-fg-muted">{t('upload.thumbnail.hint')}</p>
       {:else if coverState === 'uploading'}
-        <p class="text-fg">Uploading {coverFileName}… {Math.round(coverProgress * 100)}%</p>
+        <p class="text-fg">{t('upload.thumbnail.uploading', { name: coverFileName ?? '', pct: Math.round(coverProgress * 100) })}</p>
         <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface">
           <div class="h-full bg-accent" style="width: {Math.round(coverProgress * 100)}%"></div>
         </div>
       {:else if coverState === 'ready'}
         <p class="text-success">
-          Cover ready: {coverFileName}
+          {t('upload.thumbnail.ready', { name: coverFileName ?? '' })}
         </p>
       {:else if coverState === 'errored'}
-        <p class="text-danger">Failed: {coverError}</p>
+        <p class="text-danger">{t('upload.thumbnail.error_prefix', { error: coverError ?? '' })}</p>
       {/if}
     </div>
   {/if}

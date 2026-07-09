@@ -534,7 +534,7 @@
             onclick={() => goTo(source.cursor - 1)}
             disabled={source.cursor === 0}
             class="absolute left-3 top-1/2 z-20 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/75 disabled:opacity-30 disabled:hover:bg-black/50"
-            aria-label="Previous asset"
+            aria-label={t('viewer_playlist.prev_asset')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="m15 18-6-6 6-6" />
@@ -547,7 +547,7 @@
             class="absolute top-1/2 z-20 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-[right] duration-200 hover:bg-black/75 disabled:opacity-30 disabled:hover:bg-black/50"
             class:right-3={paneCollapsed}
             class:right-[25rem]={!paneCollapsed}
-            aria-label="Next asset"
+            aria-label={t('viewer_playlist.next_asset')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="m9 18 6-6-6-6" />
@@ -582,7 +582,7 @@
             <div
               role="separator"
               aria-orientation="horizontal"
-              aria-label="Resize playlist strip"
+              aria-label={t('viewer_playlist.resize_strip')}
               aria-valuenow={stripHeight}
               aria-valuemin={STRIP_MIN}
               onmousedown={startStripResize}
@@ -596,7 +596,7 @@
             onclick={toggleStrip}
             class="flex w-full shrink-0 items-center justify-center gap-1 py-1 text-xs text-fg-muted hover:bg-surface"
             aria-expanded={!stripCollapsed}
-            aria-label={stripCollapsed ? 'Show asset strip' : 'Hide asset strip'}
+            aria-label={stripCollapsed ? t('viewer_playlist.show_strip') : t('viewer_playlist.hide_strip')}
           >
             {#if stripCollapsed}
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
@@ -621,7 +621,7 @@
                   class:border-transparent={i !== source.cursor}
                   class:opacity-50={i !== source.cursor}
                   class:hover:opacity-100={i !== source.cursor}
-                  aria-label="Show asset {i + 1}"
+                  aria-label={t('viewer_playlist.show_asset_n', { n: i + 1 })}
                   aria-current={i === source.cursor ? 'true' : undefined}
                 >
                   {#if item.asset.file_hash}
@@ -654,7 +654,7 @@
     {:else}
       <!-- Loaded but no items: friendly empty state. -->
       <div class="flex flex-1 items-center justify-center p-8 text-fg-muted">
-        <p>No assets in this playlist.</p>
+        <p>{t('viewer_playlist.empty')}</p>
       </div>
     {/if}
   </div>

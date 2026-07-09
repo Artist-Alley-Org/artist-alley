@@ -13,6 +13,8 @@
   // History persistence lives on-device only in B-1; server-side
   // history is an optional B-4 add.
 
+  import { t } from '$stores/lang.svelte';
+
   interface Props {
     value: string;
     onsearch?: (q: string) => void;
@@ -23,7 +25,7 @@
   let {
     value = $bindable(''),
     onsearch,
-    placeholder = 'Search',
+    placeholder = t('nav.search_placeholder'),
     debounceMs = 250,
   }: Props = $props();
 
@@ -220,7 +222,7 @@
     onkeydown={onKey}
     onfocus={onFocus}
     onblur={onBlur}
-    aria-label="Search"
+    aria-label={t('common.search')}
     aria-autocomplete="list"
     aria-controls="search-history"
     aria-expanded={dropdownOpen}
@@ -233,7 +235,7 @@
     <button
       type="button"
       onclick={clear}
-      aria-label="Clear search"
+      aria-label={t('search.clear')}
       class="absolute right-3 rounded-full p-0.5 text-fg-muted hover:text-fg hover:bg-surface"
     >
       <svg
@@ -262,7 +264,7 @@
     >
       {#if value !== '' && suggestions.length > 0}
         <div class="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
-          Suggestions
+          {t('search.suggestions_heading')}
         </div>
         {#each suggestions as sug (sug.kind + ':' + sug.value)}
           <button
@@ -280,12 +282,12 @@
       {/if}
       {#if history.length > 0}
       <div class="flex items-center justify-between border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-muted">
-        <span>Recent searches</span>
+        <span>{t('search.recent_heading')}</span>
         <button
           type="button"
           onclick={clearHistory}
           class="rounded px-1 text-fg-muted hover:text-fg hover:bg-surface-elevated"
-        >Clear</button>
+        >{t('search.clear_history')}</button>
       </div>
       {#each history as h, i (h)}
         <button
