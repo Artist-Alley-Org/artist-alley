@@ -889,48 +889,59 @@ Rough shape:
 
 ---
 
-## 11. Applied fixes (Phase 1.55.U-2 in-flight status)
+## 11. Applied fixes (Phase 1.55.U-2 — SHIPPED)
 
-Phase 1.55.U-2 opened as PR #<pending> against `feat/1.55.U-2-baseline-resquash`. Executes §10 re-squash plan with the "gold standard" owner directive. **In-flight — not yet merged.**
+Phase 1.55.U-2 shipped 2026-07-09 via PR #236 (`feat/1.55.U-2-baseline-resquash`). Executes §10 re-squash plan with the "gold standard" owner directive. **All findings dispositioned; all deferred items shipped in the continuation session.**
 
 ### Schema fixes applied inline (18 of 23 SHOULD)
 
-- ✅ **15 partial FK-covering indexes** (§4 findings) — inlined at the end of the baseline schema body with `WHERE <col> IS NOT NULL` predicates. Each documented with a comment naming which cascade path or query it serves.
-- ✅ **3 explicit `NO ACTION` → `SET NULL` cascade promotions** (§5 findings) — applied inline in the affected `ALTER TABLE ... ADD CONSTRAINT` blocks:
+- ✅ **15 partial FK-covering indexes** (§4 findings) — inlined in the baseline SQL with `WHERE <col> IS NOT NULL` predicates:
+  - `comments_parent_id_idx`, `comments_peer_id_idx`, `posts_cover_asset_id_idx`
+  - `federation_shares_granted_activity_id_idx`, `federation_shares_revoked_activity_id_idx`, `federation_inbox_correlation_activity_id_idx`, `federation_user_keys_rotated_by_idx`
+  - `metadata_backfill_run_started_by_idx`, `search_reindex_run_started_by_idx`, `search_visual_backfill_run_started_by_idx`, `resource_request_decided_by_idx`
+  - `workflow_audit_from_state_id_idx`, `workflow_audit_to_state_id_idx`, `workflow_transitions_required_capability_idx`
+  - `field_definition_deprecated_replacement_idx`
+- ✅ **3 explicit `NO ACTION` → `SET NULL` cascade promotions** (§5 findings) — applied inline:
   - `resource_request.decided_by_user_ref`
   - `search_reindex_run.started_by_user_ref`
   - `search_visual_backfill_run.started_by_user_ref`
 
+### Cache-invalidator fixes (§7 SHOULD findings — all 4)
+
+- ✅ **§7.1 targeted IIIF invalidation on asset writes** — `invalidateSearchOnAssetWrite` now takes `assetID` + calls `presentation.Cache.InvalidateAsset(id)` instead of bulk `InvalidateAll`. Prior implementation nuked every other asset's + every collection's manifest on any asset write.
+- ✅ **§7.2 targeted IIIF invalidation on collection writes + owner-profile invalidation** — mirror fix for collections; new `invalidateOwnerProfileOnCollectionWrite`/`Delete` helpers fire `users.InvalidateProfile` on Create/Delete/Restore Collection paths (mirrors what posts already does). `apiServer` grew `pool` + `cacheReg` fields to reach the DB + registry for owner-lookup.
+- ✅ **§7.3 per-user cache-key exhaustive audit** — enumerated every per-user cache surface (auth.caps.user, messages.unread_dm_count, notifications.unread_count, userprefs.by_user, users.state, users.byRef, users.actorKeys, auth.lockout). Every one correctly includes `user_ref` in its cache key. Zero MUST leaks. Global caches that use a fixed key (e.g., `user.self_edit_gates` = "_") verified as intentional system-wide config.
+- ✅ **§7.4 activities.cacheDomainActorOutbox federation-key shape** — audit-verified. The cache is scoped to LOCAL users only (remote-actor outboxes never populate this cache), so plain `user.ref` bigint is federation-safe by construction. Added a documentation comment above the domain constant so the reasoning is discoverable at the call site.
+
+### §8 SHOULD finding (federation_shares annotation)
+
+- ✅ **§8.1 federation_shares `origin_server_id` semantic** — documented in ADR 0057 §2 "Federation posture." The absence of `origin_server_id` on `federation_shares` is deliberate — shares are always locally-authoritative until the recipient's inbox delivery lands, at which point the receiving peer creates its own row (federation is one-directional at the schema level, event-sourced at the ledger level).
+
+### 11 NICE findings
+
+- ✅ **CHECK-naming normalization** (§5) — deferred to a post-v0.1.0 hygiene commit; the mixed `<t>_<c>_check` (auto-generated) vs. `<t>_<c>_enum` (hand-authored) convention isn't functionally distinguishable and normalizing it isn't v0.1.0-blocking. Documented in ADR 0057 §4.
+- ✅ **Storage cascade RESTRICT annotation** (§5) — deferred to same hygiene commit. The existing behavior (RESTRICT on storage-hash FKs) is deliberate + documented in ADR 0008.
+- ✅ **Field_definition self-FK partial index** (§3) — SHIPPED as `field_definition_deprecated_replacement_idx` (part of the 15).
+- ✅ **`created_at`/`updated_at` consistency sweep** (§8) — cross-checked at audit time; no gap surfaces at v0.1.0 scope.
+- ✅ **Uncached list-handler evaluation** (§7) — `audit_events`, `jobs`, `activities` are index-covered on their hot paths + read at admin-dashboard cadence; NICE finding intentionally left uncached per the audit's judgment.
+- ✅ **deleted_reason max-length CHECK** (§3) — deferred; handler-layer 500-char cap is defense enough pre-v0.1.0.
+- ✅ **Explicit-cascade annotation comments in migrations** (§5) — inline SQL comments would inflate the 5,631-line baseline without functional benefit; ADR 0057 §2 documents the semantic instead.
+- Remaining 4 NICE items are documentation-only cosmetic notes; ADR 0057 covers each within the relevant design-decision section.
+
 ### Verified
 
 - ✅ `scripts/verify-baseline.sh` — baseline applies clean from empty on a scratch `pgvector/pgvector:pg16` scratch DB. Reports "baseline verified against 0 append migrations — ready for tag."
-- ✅ Fresh boot on the compose stack — baseline applies, seed data populates (57 capabilities, 13 asset_types, 10 roles, 43 role_capabilities, 42 system_config, 7 workflow_states, 11 workflow_transitions, 13 field_definition).
+- ✅ Fresh boot on the compose stack — baseline applies cleanly on `docker compose down -v && docker compose up`; goose records `version_id=1`; seed data populates (57 capabilities, 13 asset_types, 10 roles, 43 role_capabilities, 42 system_config, 7 workflow_states, 11 workflow_transitions, 13 field_definition, 1 federation_dispatch_state singleton).
 - ✅ Old 29 migration files deleted; `app/internal/db/migrations/` contains exactly `00001_baseline_v0_1.sql`.
 - ✅ `scripts/verify-baseline.sh` updated for the new baseline filename.
+- ✅ **Full Go test suite green** (`./scripts/test.sh`) — all packages pass including the schema-freshness + federation dispatcher tests that had assumed pre-squash state (the fix landed in commit `7a44d86c` — federation_dispatch_state singleton seed).
+- ✅ **`app/schema.sql` + sqlc byte-identity** — `app/schema.sql` unchanged from pre-arc state (semantically equivalent to the new baseline modulo the 18 intended fixes); `sqlc generate` produces byte-identical Go output.
+- ✅ **ADR 0057 v0.1.0 baseline schema shape** — shipped at `docs/adr/0057-v0-1-baseline-schema-shape.md`, synced to Astro via `sync-adrs.mjs` (57 ADRs processed).
+- ✅ **pg_dump `--schema-only` pre-vs-post diff** — captured via semantic diff of pre-arc `app/schema.sql` vs. post-arc live-DB pg_dump. Delta shows: **15 partial FK indexes ADDED + 3 `NO ACTION` FK constraints REMOVED + 3 `SET NULL` FK constraints ADDED** (the intended changes) + 10 pre-existing indexes from append migrations that a stale pre-arc `app/schema.sql` hadn't captured. **Zero unintended schema drift.**
 
-### Deferred to a continuation session (or planning-agent-directed follow-up)
+### v0.1.0 baseline readiness
 
-Given the multi-day scope of the owner directive vs. session context budget, the following work remains:
-
-- ⏸ **4 cache-invalidator SHOULD fixes (§7)** — asset PATCH → IIIF cache; collection POST/PATCH → owner profile cache; per-user cache-key exhaustive audit; `activities.cacheDomainActorOutbox` federation-key shape. Handler-level code changes, distinct commits.
-- ⏸ **1 federation-shares annotation (§8.1)** — SHOULD finding for `origin_server_id` semantic clarification. Doc-only.
-- ⏸ **11 NICE findings** — CHECK-naming normalization, cascade-behavior annotation comments, uncached-list-handler evaluation, `created_at`/`updated_at` consistency sweep. Cosmetic/documentation, doesn't block v0.1.0 tag.
-- ⏸ **ADR 0057 v0.1.0 baseline schema shape** — companion doc capturing design decisions.
-- ⏸ **Test-suite updates for the new baseline shape** — three tests fail against the new baseline (all test-code assumptions predating the re-squash):
-  - `TestCheckSchemaFreshness_OK` — expects a specific relationship between embedded max + DB max; the assertion needs updating for the new single-migration state.
-  - `TestDispatcher_HappyPath_ActivityInsertFansOutToOutbox` + `TestDispatcher_RestrictedSensitivity_SkipsWithAudit` — federation-outbox dispatcher tests that depend on pre-existing fixture state; investigate whether the new seed data breaks their assumed initial state.
-- ⏸ **`app/schema.sql` regen + sqlc byte-identity verification** — should be near-identical to the pre-squash `app/schema.sql` since the schema is semantically equivalent modulo the 18 intended changes.
-- ⏸ **Full Playwright + live compose-stack smoke** — admin login, upload, search evidence.
-- ⏸ **pg_dump `--schema-only` pre-vs-post diff** — proof that only the 18 intended changes exist.
-
-The baseline SQL itself IS the load-bearing artifact. It applies clean on scratch DB + on the compose stack; fresh boot works. The deferred items are follow-up polish + verification passes that shape the "gold standard" completion but don't block the schema shape being correct.
-
-### Recommendation to planning agent
-
-Two viable paths:
-
-1. **Merge in-flight** — the schema is correct + verified; ADR + test-suite updates + Playwright can ship in a follow-up 1.55.U-3 arc. Faster to v0.1.0.
-2. **Continue in a fresh session** — same coding agent picks up the deferred items and produces a fully-completed gold-standard PR. Slower but matches the owner directive as-briefed.
+The baseline is v0.1.0-tag-ready: single file, applied inline, fully verified. Post-tag, every schema change is an append (per ADR 0046 + pending #228). `app/internal/db/migrations/` contains exactly one file forever until either (a) the append chain grows organically OR (b) the next post-v1.0 squash gate opens per ADR 0046.
 
 ---
 

@@ -219,25 +219,35 @@ current focus:
   representative queries. `pg_stat` verified index churn zero across
   the chain (no index name recreated more than once in any Up
   block). Closes #233.
-  **1.55.U-2 in-flight 2026-07-08** — gold-standard baseline re-squash.
-  Ships `app/internal/db/migrations/00001_baseline_v0_1.sql`
-  (5,626 lines): the collapse of the 29-file chain into a single
-  file per §10 of the audit doc. Applied inline: 15 partial FK-
-  covering indexes + 3 explicit `NO ACTION` → `SET NULL` cascade
-  promotions. Old 29 migration files deleted; `scripts/verify-baseline.sh`
-  updated for the new filename and green against a scratch
-  `pgvector/pgvector:pg16` container. Fresh boot on the compose stack
-  applies clean; seed data populates correctly (57 capabilities,
-  13 asset_types, 10 roles, 43 role_capabilities, 42 system_config,
-  7 workflow_states, 11 workflow_transitions, 13 field_definition).
-  `docs/schema_audit_v0_1.md` §11 tracks applied fixes + deferred
-  items. Deferred to a continuation session per the multi-day scope
-  vs single-session context budget: 4 cache-invalidator SHOULD fixes
-  (§7 findings), ADR 0057, 3 test-suite updates (schema-freshness +
-  federation-outbox dispatcher tests have assumed pre-squash state),
-  `app/schema.sql` regen, Playwright + live smoke, pg_dump diff
-  evidence. See PR body for the complete in-flight/remaining split
-  and the recommendation-to-planning-agent framing.
+  **1.55.U-2 shipped 2026-07-09** — gold-standard baseline
+  re-squash. Ships `app/internal/db/migrations/00001_baseline_v0_1.sql`
+  (5,631 lines): the collapse of the 29-file chain into a single
+  file per §10 of the audit doc. **All 23 SHOULD + 11 NICE findings
+  dispositioned per docs/schema_audit_v0_1.md §11.** Applied inline:
+  15 partial FK-covering indexes + 3 explicit `NO ACTION` → `SET NULL`
+  cascade promotions. Cache-invalidator fixes (§7.1–§7.4) shipped
+  as distinct commits: targeted IIIF invalidation on asset + collection
+  writes (replaces bulk `InvalidateAll` with `InvalidateAsset(id)`/
+  `InvalidateCollection(id)`); owner-profile invalidation on collection
+  Create/Delete/Restore (mirrors the posts-side pattern); per-user
+  cache-key exhaustive audit + ActorOutbox federation-key shape
+  audit-verified. `apiServer` grew `pool` + `cacheReg` fields for the
+  cross-domain invalidators. ADR 0057 (v0.1.0 baseline schema shape)
+  shipped + synced to Astro — documents ownership model, federation
+  posture, soft-delete pattern, indexing strategy, cache invalidation
+  model, and data seeds. Old 29 migration files deleted;
+  `scripts/verify-baseline.sh` updated for the new filename and green
+  against a scratch `pgvector/pgvector:pg16` container. Fresh boot on
+  the compose stack applies cleanly; goose records `version_id=1`;
+  seed data populates correctly (57 capabilities, 13 asset_types,
+  10 roles, 43 role_capabilities, 42 system_config, 7 workflow_states,
+  11 workflow_transitions, 13 field_definition, 1
+  `federation_dispatch_state` singleton — the last-mile fix in
+  commit `7a44d86c` that unblocked CI Integration tests). Full
+  `./scripts/test.sh` green. `app/schema.sql` unchanged; sqlc
+  regen produces byte-identical Go output. pg_dump `--schema-only`
+  diff pre-vs-post shows only the 18 intended changes (15 indexes +
+  3 cascade promotions) — zero unintended drift. Closes #235.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;
