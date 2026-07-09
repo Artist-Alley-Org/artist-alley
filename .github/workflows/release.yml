@@ -79,7 +79,15 @@ jobs:
           AA_OPENAPI_SPEC: ${{ github.workspace }}/app/api/openapi.yaml
         run: |
           cd web
-          npm ci --no-audit --no-fund
+          # `npm ci` sporadically fails to install platform-specific
+          # optional native bindings (rolldown, esbuild) on CI runners
+          # — see npm/cli#4828. Fall back to a clean `npm install` on
+          # failure, which forces optional-dep re-resolution.
+          if ! npm ci --no-audit --no-fund; then
+            echo "npm ci failed; retrying with clean install (npm/cli#4828 workaround)"
+            rm -rf node_modules package-lock.json
+            npm install --no-audit --no-fund
+          fi
           npm run build
 
       - name: Stage bundle into Go embed dir
