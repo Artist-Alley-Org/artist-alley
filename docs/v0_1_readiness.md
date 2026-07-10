@@ -1342,10 +1342,32 @@ into pre-v0.1.0.
 
 ---
 
-### 4.16 Frontend reverse-image dropzone at `/search/advanced`
+### 4.16 Frontend reverse-image dropzone at `/search/advanced` ✅
 
-**Status:** partial (backend feature-complete since PR #199 + #205 + #206). Research depth: `light`.
-**Roadmap phase:** unclaimed. Suggested: 1.16.B-followup-4.
+**Status:** ✅ shipped (Phase 1.55.W). The reverse-image feature is now
+end-to-end complete — backend across 4 PRs (#199 CLIP sidecar + #205
+backfill + #206 async auto-embed + the by-image handler) plus this
+frontend. Research depth: `light`.
+**Roadmap phase:** 1.55.W (shipped 2026-07-09).
+
+**Shipped shape (deltas from the sketch below).**
+
+- `ReverseImageDropzone.svelte` mounts above the DSL builder as
+  designed.
+- Results render **inline** on `/search/advanced` (not a tab): the page
+  was a builder that only redirected to `/search`, so the dropzone adds
+  the first inline results surface — a hydrated `AssetCard` thumbnail
+  grid with cosine-similarity badges (the Milvus/Weaviate pattern).
+- The by-image response is a thin `{asset_id, similarity}` list, so the
+  component hydrates the top-30 via `GET /assets/{id}` to feed
+  `AssetCard`.
+- Disabled/not-configured state is **attempt-and-handle** (there's no
+  client-readable `search.visual.enabled` flag): a 501
+  `sidecar_not_installed` flips the UI to an explanatory state. 413 /
+  429 / 503 / generic errors each surface a user-facing message.
+- All strings i18n-keyed under `search.by_image.*` (en-only per #247);
+  added to the coverage-guard tracked list. Zero backend / openapi /
+  migration changes.
 
 **ResourceSpace blueprint.**
 
