@@ -300,6 +300,33 @@ current focus:
   and handler-level end-to-end (comment mention lands a notification row
   with target=post + actor threaded; plain comment fires nothing;
   self-mention doesn't notify self). Closes #253.
+  **1.55.Y shipped 2026-07-10** — email digest preferences + one-click
+  unsubscribe (closes §4.9). Per-topic email cadence (immediate /
+  hourly / daily / weekly / off) in a new
+  `user_preferences.email_cadence` JSONB column (additive; unset =
+  immediate so no existing user is surprised). The `notifications.Writer`
+  forks at its email-enqueue point: immediate → enqueue now; digest
+  cadences → insert a `digest_queue` row; off = "email" absent from
+  channels. **In-app notifications always fire independently** of email
+  cadence. One hour-ticking `digest.Coordinator` (cadence-gated by the
+  clock, mirroring the softdelete gc — cleaner than three job types)
+  batches each user's due rows into one `notification_digest` email,
+  marks them sent, self-re-enqueues. **RFC 8058 one-click unsubscribe**:
+  every notification email (immediate + digest) carries
+  `List-Unsubscribe` + `List-Unsubscribe-Post: One-Click` with a
+  stateless HMAC-signed token (scramble key); `GET/POST
+  /api/v1/unsubscribe` verifies + drops the email channel (per-topic, or
+  `__all__` for the digest token) — no login, the token is the auth.
+  Three range-clamped sysconfig timing knobs (`digest` section). Prefs
+  (incl. cadence) ride the existing 5-min `userprefs.by_user` cache.
+  Frontend: per-topic cadence `<select>` on the preferences page +
+  i18n keys. **First post-baseline migration** (`00002_digest_queue.sql`)
+  — folds back into `00001_baseline_v0_1.sql` at the pre-tag re-squash
+  so **v0.1.0 ships zero append migrations** (per the owner directive +
+  ADR 0046). ~30 tests (signer round-trip/expiry/tamper, DueCadences,
+  coordinator batch/empty/idempotent, Writer fork immediate/digest/off,
+  UnsubscribeEmail per-topic + all, cadence validation) all green. Zero
+  changes to in-app delivery or the bell. Closes #255.
   **1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
   Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
   end-to-end to verify the signed-release matrix (goreleaser → binaries
