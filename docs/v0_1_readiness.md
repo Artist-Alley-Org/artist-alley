@@ -1011,9 +1011,22 @@ hygiene under sender-reputation rules.
 
 ### 4.10 Password-protected share links
 
-**Status:** blueprinted-not-shipped. Research depth: `medium`.
-**Roadmap phase:** unclaimed. Suggested: 1.18.C-1 (or fold into
-existing shares work).
+**Status:** BLOCKED — depends on the unbuilt anonymous share-link
+substrate. Research depth: `medium`.
+**Roadmap phase:** Phase 1.26 (ADR 0018 "Share links"), post-v0.1.0.
+
+> ⚠️ **Premise correction (2026-07-10).** This entry originally read
+> "blueprinted-not-shipped, 1-2 days, migration adds
+> `share_link.password_hash` column." Verification found **no
+> `share_link` table, no `app/internal/shares/` package, and no
+> `GET /share/{token}` route** — the anonymous public share-link
+> substrate does not exist. The only share-shaped table is
+> `federation_shares` (peer-to-peer ActivityPub grants, unrelated).
+> Password-protection is gated on the entire Phase 1.26 share-link
+> substrate shipping first (tokenized URLs + scopes + expiry +
+> per-fetch audit + presigned downloads per ADR 0018). **Deferred to
+> Phase 1.26; NOT a v0.1.0 gap.** The §6 inventory row claiming
+> "shipped `app/internal/shares/`" is also corrected below.
 
 **ResourceSpace blueprint.**
 
@@ -1621,7 +1634,7 @@ Phase 1.55.S.
 | Permissions + teams + workflow | `/include/permissions_functions.php`, `/include/workflow_functions.php` | ADR 0010 + shipped `app/internal/teams/` + `app/internal/workflow/` | YES |
 | Asset entity model | `/include/resource_functions.php`, `/dbstruct/table.resource.txt` | ADR 0011 + shipped `app/internal/assets/` | YES |
 | Caching strategy | `/include/general.php` (cache helpers) | ADR 0013 + shipped `app/internal/cache/` (Registry pattern) | YES |
-| Share-link substrate | `/include/collections_functions.php` (share) + `/dbstruct/table.external_access_keys.txt` | ADR 0018 + shipped `app/internal/shares/`; password-protected captured in §4.10 | YES |
+| Share-link substrate | `/include/collections_functions.php` (share) + `/dbstruct/table.external_access_keys.txt` | ADR 0018 (Phase 1.26, **NOT yet built** — no `app/internal/shares/` package or `share_link` table exists; only `federation_shares` for peer grants). Blueprint captured in ADR 0018 for the future arc. | YES (blueprint captured; substrate itself is post-v0.1.0 Phase 1.26) |
 | Bulk operations UX | `/pages/actions/actions_asset_edit.php` etc. | ADR 0019 + shipped `app/internal/bulk/` | YES |
 | Asset gating / NDA | `/pages/user/user_nda.php`, `/include/nda_functions.php` | ADR 0020 + shipped `app/internal/sensitivity/` | YES |
 | Audit log + change tracking | `/include/log_functions.php`, `/dbstruct/table.log.txt` | ADR 0032 + shipped `app/internal/audit/` | YES |
@@ -1693,7 +1706,10 @@ Ship if runway permits; otherwise defer to post-v0.1.0:
 
 5. §4.1 job DLQ + §4.2 job cancellation (paired, 2 days).
 6. §4.3 sysconfig admin UI with typed widgets (2-3 days).
-7. §4.10 password-protected share links (1-2 days).
+7. ~~§4.10 password-protected share links~~ — **removed from v0.1.0
+   scope 2026-07-10.** Depends on the unbuilt Phase 1.26 share-link
+   substrate (ADR 0018); password-protection ships with that phase
+   post-v0.1.0. See §4.10 premise correction.
 8. §4.13 tree-node bulk CSV + merge (2-3 days).
 
 Total ~8-10 days. Consider deferring §4.13 first if squeezed.
