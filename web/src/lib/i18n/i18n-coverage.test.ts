@@ -87,6 +87,8 @@ const TRACKED_FILES = [
   'src/lib/components/upload/UploadDropZone.svelte',
   'src/lib/components/upload/UploadFileRow.svelte',
   'src/lib/components/upload/ThumbnailPicker.svelte',
+  // — 1.55.W reverse-image dropzone —
+  'src/lib/components/search/ReverseImageDropzone.svelte',
   // Deferred to the SHOULD/NICE follow-up (still carry non-MUST
   // hardcoded strings — do NOT add until their arc lands):
   //   src/lib/components/AssetPlaylist.svelte  (viewer hotkey rail)

@@ -248,6 +248,30 @@ current focus:
   regen produces byte-identical Go output. pg_dump `--schema-only`
   diff pre-vs-post shows only the 18 intended changes (15 indexes +
   3 cascade promotions) — zero unintended drift. Closes #235.
+  **1.55.W shipped 2026-07-09** — reverse-image dropzone at
+  `/search/advanced` (closes §4.16). Frontend for the visual-search
+  backend that's been feature-complete since #199 + #205 + #206 with no
+  UI to drive it. New `ReverseImageDropzone.svelte` mounts above the DSL
+  builder: drag+drop / file-picker + preview + submit + states. POSTs
+  multipart (`file` field) to the existing `POST /search/by-image` via
+  raw `fetch` (the endpoint isn't in openapi). The thin
+  `{asset_id, similarity}` response is hydrated top-30 via
+  `GET /assets/{id}` and rendered as an `AssetCard` thumbnail grid with
+  cosine-similarity badges (Milvus/Weaviate pattern). Results render
+  **inline** — the advanced page previously only redirected to `/search`,
+  so this is its first inline results surface. Disabled/not-configured
+  is attempt-and-handle (no client-readable `search.visual.enabled`
+  flag): a 501 `sidecar_not_installed` flips to an explanatory state;
+  413 / 429 / 503 / generic each surface a user-facing message. All
+  strings i18n-keyed under `search.by_image.*` (en-only per #247) +
+  added to the coverage-guard tracked list. **Zero backend / openapi /
+  migration changes.** Browser-verified end-to-end (render → select →
+  preview → submit → handled response); Playwright spec `ui-31` covers
+  render + interaction + handled-state (the standalone CI stack lacks
+  the CLIP sidecar, so by-image returns 501/404 → the spec asserts the
+  handled path per the audit's Q10). svelte-check 0 errors; i18n guard
+  green (49 tests). The reverse-image feature is now end-to-end complete
+  (backend 4 PRs + this frontend). Closes #251.
   **1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
   Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
   end-to-end to verify the signed-release matrix (goreleaser → binaries

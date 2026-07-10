@@ -76,6 +76,25 @@
           "extension": "File extension",
           "similar_to": "Similar to asset (UUID)"
         }
+      },
+      "by_image": {
+        "heading": "Search by image",
+        "hint": "Find assets that look like your image — drop one below.",
+        "drop_prompt": "Drop an image here, or click to choose",
+        "drag_active": "Drop to search",
+        "preview_alt": "Selected image preview",
+        "submit": "Search by image",
+        "searching": "Searching by image…",
+        "results_heading": "Visually-similar results",
+        "results_count": "{n} visually-similar results",
+        "no_results": "No visually-similar assets found.",
+        "similarity_badge": "{pct}% match",
+        "err_too_large": "Image exceeds the maximum size ({mb} MB).",
+        "err_not_image": "That file isn't a supported image.",
+        "err_rate_limited": "Too many searches — try again shortly.",
+        "err_not_configured": "Visual search isn't configured on this instance.",
+        "err_unavailable": "The visual-search service is temporarily unavailable. Try again shortly.",
+        "err_generic": "Reverse-image search failed. Try again."
       }
     },
   "blogs": {

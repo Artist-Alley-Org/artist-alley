@@ -10,6 +10,7 @@
 
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
+  import ReverseImageDropzone from '$components/search/ReverseImageDropzone.svelte';
 
   const FIELDS = [
     { value: 'title',       labelKey: 'search.advanced.field.title' },
@@ -72,6 +73,10 @@
   <p class="mb-4 text-sm text-fg-muted">
     {t('search.advanced.body')}
   </p>
+
+  <!-- Reverse-image search sits above the DSL builder — a parallel
+       search mode on the same page (Phase 1.55.W). -->
+  <ReverseImageDropzone />
 
   <form onsubmit={submit} class="space-y-3">
     <label class="block">
