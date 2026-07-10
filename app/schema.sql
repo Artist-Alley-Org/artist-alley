@@ -2195,7 +2195,24 @@ CREATE TABLE public.user_preferences (
     default_views jsonb DEFAULT '{}'::jsonb NOT NULL,
     origin_server_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    email_cadence jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- Name: digest_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.digest_queue (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_ref bigint NOT NULL,
+    topic text NOT NULL,
+    cadence text NOT NULL,
+    notification_id uuid NOT NULL,
+    queued_at timestamp with time zone DEFAULT now() NOT NULL,
+    sent_at timestamp with time zone,
+    CONSTRAINT digest_queue_cadence_check CHECK ((cadence = ANY (ARRAY['hourly'::text, 'daily'::text, 'weekly'::text])))
 );
 
 
@@ -3040,6 +3057,37 @@ ALTER TABLE ONLY public."user"
 
 ALTER TABLE ONLY public.user_preferences
     ADD CONSTRAINT user_preferences_pkey PRIMARY KEY (user_ref);
+
+
+--
+-- Name: digest_queue digest_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: digest_queue digest_queue_user_ref_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_user_ref_fkey FOREIGN KEY (user_ref) REFERENCES public."user"(ref) ON DELETE CASCADE;
+
+
+--
+-- Name: digest_queue digest_queue_notification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.digest_queue
+    ADD CONSTRAINT digest_queue_notification_id_fkey FOREIGN KEY (notification_id) REFERENCES public.notifications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: digest_queue_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX digest_queue_pending_idx ON public.digest_queue USING btree (cadence, user_ref) WHERE (sent_at IS NULL);
 
 
 --

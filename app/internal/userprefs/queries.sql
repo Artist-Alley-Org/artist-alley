@@ -7,6 +7,7 @@
 SELECT user_ref,
        notification_channels,
        default_views,
+       email_cadence,
        origin_server_id,
        created_at,
        updated_at
@@ -23,10 +24,12 @@ LIMIT 1;
 INSERT INTO user_preferences (
     user_ref,
     notification_channels,
-    default_views
+    default_views,
+    email_cadence
 )
-VALUES ($1, $2, $3)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
+    email_cadence         = EXCLUDED.email_cadence,
     updated_at            = NOW();

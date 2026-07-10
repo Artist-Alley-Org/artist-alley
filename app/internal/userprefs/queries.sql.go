@@ -7,12 +7,15 @@ package userprefs
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getUserPreferences = `-- name: GetUserPreferences :one
 SELECT user_ref,
        notification_channels,
        default_views,
+       email_cadence,
        origin_server_id,
        created_at,
        updated_at
@@ -21,18 +24,29 @@ WHERE user_ref = $1
 LIMIT 1
 `
 
+type GetUserPreferencesRow struct {
+	UserRef              int64
+	NotificationChannels []byte
+	DefaultViews         []byte
+	EmailCadence         []byte
+	OriginServerID       pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 // Returns the per-user preferences row for the given user ref. The
 // handler treats pgx.ErrNoRows as "user has never saved prefs" and
 // responds with the zero-value Preferences struct (system defaults
 // everywhere) rather than 404 — every authenticated caller has
 // "preferences," even if the row hasn't materialized yet.
-func (q *Queries) GetUserPreferences(ctx context.Context, userRef int64) (UserPreference, error) {
+func (q *Queries) GetUserPreferences(ctx context.Context, userRef int64) (GetUserPreferencesRow, error) {
 	row := q.db.QueryRow(ctx, getUserPreferences, userRef)
-	var i UserPreference
+	var i GetUserPreferencesRow
 	err := row.Scan(
 		&i.UserRef,
 		&i.NotificationChannels,
 		&i.DefaultViews,
+		&i.EmailCadence,
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -44,12 +58,14 @@ const upsertUserPreferences = `-- name: UpsertUserPreferences :exec
 INSERT INTO user_preferences (
     user_ref,
     notification_channels,
-    default_views
+    default_views,
+    email_cadence
 )
-VALUES ($1, $2, $3)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (user_ref) DO UPDATE
 SET notification_channels = EXCLUDED.notification_channels,
     default_views         = EXCLUDED.default_views,
+    email_cadence         = EXCLUDED.email_cadence,
     updated_at            = NOW()
 `
 
@@ -57,6 +73,7 @@ type UpsertUserPreferencesParams struct {
 	UserRef              int64
 	NotificationChannels []byte
 	DefaultViews         []byte
+	EmailCadence         []byte
 }
 
 // Idempotent persistence — first save creates the row, subsequent
@@ -65,6 +82,11 @@ type UpsertUserPreferencesParams struct {
 // service-side via merge before this call), so the JSONB blobs here
 // are authoritative replacements.
 func (q *Queries) UpsertUserPreferences(ctx context.Context, arg UpsertUserPreferencesParams) error {
-	_, err := q.db.Exec(ctx, upsertUserPreferences, arg.UserRef, arg.NotificationChannels, arg.DefaultViews)
+	_, err := q.db.Exec(ctx, upsertUserPreferences,
+		arg.UserRef,
+		arg.NotificationChannels,
+		arg.DefaultViews,
+		arg.EmailCadence,
+	)
 	return err
 }

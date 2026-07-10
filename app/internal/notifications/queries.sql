@@ -80,3 +80,48 @@ UPDATE notifications
 SET read_at = NOW()
 WHERE recipient_user_ref = $1
   AND read_at IS NULL;
+
+-- name: InsertDigestQueue :exec
+-- Phase 1.55.Y — queue a non-immediate notification email for the
+-- digest coordinator to batch. topic is the notification verb; cadence
+-- is hourly|daily|weekly (immediate never queues). notification_id FKs
+-- the row the digest renders from.
+INSERT INTO digest_queue (user_ref, topic, cadence, notification_id)
+VALUES ($1, $2, $3, $4);
+
+-- name: ListPendingDigest :many
+-- Phase 1.55.Y — the coordinator's per-tick read: every unsent digest
+-- row whose cadence is due this tick, joined to its notification for
+-- rendering. Ordered by user so the coordinator can group in one pass.
+SELECT dq.id,
+       dq.user_ref,
+       dq.topic,
+       dq.cadence,
+       dq.notification_id,
+       dq.queued_at,
+       n.verb,
+       n.actor_user_ref,
+       n.target_kind,
+       n.target_id,
+       n.payload,
+       n.created_at
+FROM digest_queue dq
+JOIN notifications n ON n.id = dq.notification_id
+WHERE dq.sent_at IS NULL
+  AND dq.cadence = ANY(@cadences::text[])
+ORDER BY dq.user_ref, dq.queued_at;
+
+-- name: MarkDigestSent :exec
+-- Phase 1.55.Y — mark consumed rows sent after a digest email goes out.
+-- Idempotent: a re-run over already-sent ids is a no-op (WHERE guards).
+UPDATE digest_queue
+SET sent_at = NOW()
+WHERE id = ANY(@ids::uuid[])
+  AND sent_at IS NULL;
+
+-- name: DigestRecipientEmail :one
+-- Phase 1.55.Y — email + display name for a digest recipient. Mirrors
+-- the notification.email job's lookup (fullname → username → NULL).
+SELECT email, fullname, username
+FROM "user"
+WHERE ref = $1;
