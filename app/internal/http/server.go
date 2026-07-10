@@ -17,23 +17,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/atrest"
-	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/audiobook"
+	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/config"
 	"github.com/mscrnt/artist-alley/app/internal/email"
-	"github.com/mscrnt/artist-alley/app/internal/iiif"
-	"github.com/mscrnt/artist-alley/app/internal/search"
+	"github.com/mscrnt/artist-alley/app/internal/email/digest"
 	"github.com/mscrnt/artist-alley/app/internal/http/handlers"
 	"github.com/mscrnt/artist-alley/app/internal/http/middleware"
-	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/iiif"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/ldapauth"
 	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/observability/healthhandler"
+	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/preview"
 	"github.com/mscrnt/artist-alley/app/internal/samlauth"
+	"github.com/mscrnt/artist-alley/app/internal/search"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	storagefs "github.com/mscrnt/artist-alley/app/internal/storage/fs"
 	storages3 "github.com/mscrnt/artist-alley/app/internal/storage/s3"
@@ -240,7 +241,50 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		}
 		return email.SiteContext{Name: s.Name, URL: s.BaseURL}, nil
 	}
-	jobRegistry.Register(email.NewNotificationJobHandler(pool, emailSender, emailSite, logger))
+	jobRegistry.Register(email.NewNotificationJobHandler(pool, emailSender, emailSite, cfg.ScrambleKey, logger))
+
+	// Digest coordinator (Phase 1.55.Y). One hour-ticking job batches
+	// non-immediate notification emails per user. Timing knobs read
+	// from sysconfig per tick (default 08:00 UTC daily + Monday 08:00
+	// UTC weekly). Registered here; the initial enqueue that kicks the
+	// self-perpetuating loop fires alongside the other coordinators.
+	jobRegistry.Register(&digest.Coordinator{
+		Pool:        pool,
+		Sender:      emailSender,
+		Jobs:        jobSvc,
+		Logger:      logger,
+		ScrambleKey: cfg.ScrambleKey,
+		SiteFn: func(c context.Context) digest.SiteContext {
+			if s, err := emailSite(c); err == nil {
+				return digest.SiteContext{Name: s.Name, URL: s.URL}
+			}
+			return digest.SiteContext{}
+		},
+		CfgFn: func(c context.Context) digest.Config {
+			d, err := sysCfg.GetDigest(c)
+			if err != nil {
+				return digest.Config{DailyHourUTC: 8, WeeklyDay: time.Monday, WeeklyHourUTC: 8}
+			}
+			return digest.Config{
+				DailyHourUTC:  d.DailyHourUTC,
+				WeeklyDay:     time.Weekday(d.WeeklyDay),
+				WeeklyHourUTC: d.WeeklyHourUTC,
+			}
+		},
+	})
+	// Kick the digest loop: enqueue the first coordinator run at the
+	// top of the next hour. Idempotency-keyed so a restart doesn't
+	// stack duplicate coordinators.
+	{
+		next := time.Now().UTC().Truncate(time.Hour).Add(time.Hour)
+		if _, err := jobSvc.Enqueue(serverCtx, digest.JobTypeCoordinator, struct{}{}, jobs.EnqueueOpts{
+			ScheduledFor:   &next,
+			IdempotencyKey: "email.digest.coordinator." + next.Format(time.RFC3339),
+		}); err != nil {
+			logger.LogAttrs(serverCtx, slog.LevelWarn, "digest.coordinator.initial_enqueue_error",
+				slog.String("err", err.Error()))
+		}
+	}
 
 	// Bind the email seam onto the sysconfig.Handler so its
 	// /admin/system/smtp/test surface can render+send via the
@@ -406,6 +450,18 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 				Pool:           pool,
 				MaxUploadBytes: impl.visualMaxUploadBytes,
 			})
+		}
+
+		// Phase 1.55.Y — RFC 8058 one-click unsubscribe. Public: the
+		// signed token in ?token= is the authorization, no session
+		// required. GET serves an HTML confirmation for humans clicking
+		// the email link; POST is the mail-client one-click target that
+		// the List-Unsubscribe header points at. Registered under
+		// /api/v1 so that header URL resolves here.
+		{
+			unsub := &unsubscribeHandler{scrambleKey: cfg.ScrambleKey, prefs: impl.userprefs, logger: logger}
+			r.Method(http.MethodGet, "/unsubscribe", unsub)
+			r.Method(http.MethodPost, "/unsubscribe", unsub)
 		}
 
 		// Phase 1.16.B-4 — saved searches. CRUD mounts via the

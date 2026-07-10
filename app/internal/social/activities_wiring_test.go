@@ -171,6 +171,10 @@ func (a prefsAdapter) ChannelsFor(ctx context.Context, ref int64, verb string) (
 	return a.h.ChannelsFor(ctx, ref, verb)
 }
 
+func (a prefsAdapter) CadenceFor(ctx context.Context, ref int64, verb string) (string, error) {
+	return a.h.CadenceFor(ctx, ref, verb)
+}
+
 type notifyAdapter struct{ w *notifications.Writer }
 
 func (a notifyAdapter) Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error {

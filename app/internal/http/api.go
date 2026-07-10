@@ -1952,6 +1952,10 @@ func (a userprefsPrefsAdapter) ChannelsFor(ctx context.Context, ref int64, verb 
 	return a.h.ChannelsFor(ctx, ref, verb)
 }
 
+func (a userprefsPrefsAdapter) CadenceFor(ctx context.Context, ref int64, verb string) (string, error) {
+	return a.h.CadenceFor(ctx, ref, verb)
+}
+
 // socialNotifyAdapter satisfies the social package's Notifier
 // interface by wrapping the notifications.Writer's typed Input.
 type socialNotifyAdapter struct{ w *notifications.Writer }
