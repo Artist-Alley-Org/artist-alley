@@ -272,6 +272,34 @@ current focus:
   handled path per the audit's Q10). svelte-check 0 errors; i18n guard
   green (49 tests). The reverse-image feature is now end-to-end complete
   (backend 4 PRs + this frontend). Closes #251.
+  **1.55.X shipped 2026-07-09** — @-mention notifications wired to
+  notify (closes §4.5). New `app/internal/social/mention/` package:
+  `ParseMentions` extracts `@username` from post title+description +
+  comment bodies (charset `[a-zA-Z0-9_-]{1,32}` matching the
+  registration pattern — hyphens are valid usernames) excluding code
+  fences / inline code / links (Slack behaviour); `Resolver.ResolveLocal`
+  maps usernames → local refs via a 5-min cache (null-cached to shrug
+  off `@here`/`@channel`; usernames are API-immutable so no invalidator).
+  Both `posts.CreatePost` + `social.CreatePostComment` fire the hook
+  **after** the insert commits (best-effort — a notify failure never
+  rolls back the content), targeting the containing post so the bell
+  deep-links to `/posts/{id}`. Reuses the **pre-existing** `mention_of_me`
+  verb (already in `KnownEventTypes`) + `notifications.Writer`, which
+  already gates self-mentions (actor==recipient), blocks, and per-verb
+  prefs — **so self-mentions are de-duped by the substrate, no resolver
+  filter**. Parser returns `Mention{Username, InstanceHost}` — the
+  federation seam (`InstanceHost` always empty in v0.1.0; post-Phase-1.30
+  `@user@peer.com` is a resolver-side addition via WebFinger, not a
+  rewrite). Unknown usernames drop silently; no un-mention audit
+  (deliberate). **Frontend needed zero changes** — the bell already
+  renders `notifications.verb_mention_of_me` + deep-links post targets,
+  so this arc was backend-only. **Zero migrations** (verb + prefs
+  pre-existed). 18 tests: parse (code-fence/link/email exclusion,
+  hyphenated + case-insensitive usernames, length cap, federation-seam),
+  DB-backed resolve (known/unknown/federated/cache-hit), service fire,
+  and handler-level end-to-end (comment mention lands a notification row
+  with target=post + actor threaded; plain comment fires nothing;
+  self-mention doesn't notify self). Closes #253.
   **1.55.T shipped 2026-07-09** — v0.1.0 release-pipeline dry-run.
   Fired three `v0.0.99-rc*` tags against `.github/workflows/release.yml`
   end-to-end to verify the signed-release matrix (goreleaser → binaries

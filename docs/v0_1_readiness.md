@@ -656,10 +656,25 @@ another PR opportunistically.
 
 ---
 
-### 4.5 @-mention notifications wired to notify
+### 4.5 @-mention notifications wired to notify ✅
 
-**Status:** partial. Research depth: `light`.
-**Roadmap phase:** unclaimed. Suggested: 1.17.G-3.
+**Status:** ✅ shipped (Phase 1.55.X).
+**Roadmap phase:** 1.55.X (shipped 2026-07-09).
+
+**Shipped shape.** New `app/internal/social/mention/` package parses
+`@username` from post title+description and comment bodies — excluding
+code fences, inline code, and links (Slack behaviour) — resolves to
+local user refs via a 5-minute cache (null-cached; usernames are
+API-immutable so no invalidator), and fires the pre-existing
+`mention_of_me` verb through `notifications.Writer` (which already gates
+self-mentions, blocks, and per-verb prefs). The parser returns
+`Mention{Username, InstanceHost}` with `InstanceHost` always empty — the
+federation seam, so post-Phase-1.30 `@user@peer.com` is a resolver-side
+addition, not a rewrite. The mention regex matches the registration
+charset `[a-zA-Z0-9_-]{1,32}` (hyphens are valid in usernames). Unknown
+usernames drop silently; no un-mention audit (deliberate). Frontend was
+already wired (`notifications.verb_mention_of_me` + post deep-link), so
+this arc was backend-only. Zero migrations (verb + prefs pre-existed).
 
 **ResourceSpace blueprint.**
 
