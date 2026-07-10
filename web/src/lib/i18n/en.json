@@ -250,38 +250,107 @@
       "coming_soon": "This surface lands in a follow-up phase. The menu entry is here now so deep links work as features ship."
     },
     "groups": {
-      "identity":      { "title": "Identity" },
-      "communication": { "title": "Communication" },
-      "workspace":     { "title": "Workspace" },
-      "activity":      { "title": "Activity & insights" },
-      "help":          { "title": "Help" }
+      "identity": {
+        "title": "Identity"
+      },
+      "communication": {
+        "title": "Communication"
+      },
+      "workspace": {
+        "title": "Workspace"
+      },
+      "activity": {
+        "title": "Activity & insights"
+      },
+      "help": {
+        "title": "Help"
+      }
     },
     "items": {
-      "profile":        { "title": "Profile",         "blurb": "Display name, bio, avatar, links." },
-      "preferences":    { "title": "Preferences",     "blurb": "Theme and language." },
-      "ai":             { "title": "AI preferences", "blurb": "Per-user AI provider override." },
-      "password":       { "title": "Password",       "blurb": "Change your password." },
-      "twofa":          { "title": "Two-factor auth", "blurb": "Add an authenticator app to your sign-in flow." },
-      "sessions":       { "title": "Sessions",       "blurb": "Your active sessions across devices; revoke at will." },
-      "blocked":        { "title": "Blocked users",  "blurb": "People you've blocked. Private to you." },
-      "connected":      { "title": "Connected accounts", "blurb": "OAuth providers linked to this account." },
-
-      "messages":       { "title": "Messages",      "blurb": "Direct messages and inbox." },
-      "notifications":  { "title": "Notifications", "blurb": "What you get pinged about and where." },
-      "subscriptions":  { "title": "Subscriptions", "blurb": "Tags, users, and collections you follow." },
-
-      "tokens":         { "title": "API tokens",    "blurb": "Personal access tokens for scripts and integrations." },
-      "saved-searches": { "title": "Saved searches","blurb": "Queries you've pinned for quick recall." },
-      "bookmarks":      { "title": "Bookmarks",     "blurb": "Posts, assets, and collections you've starred." },
-      "drafts":         { "title": "Drafts",        "blurb": "Unpublished posts in progress." },
-      "trash":          { "title": "Trash",         "blurb": "Your soft-deleted items, recoverable for a while." },
-
-      "activity":  { "title": "Activity log", "blurb": "Recent actions you've taken on this install." },
-      "stats":     { "title": "Stats",        "blurb": "Upload count, reach, and other vanity metrics." },
-      "following": { "title": "Following",    "blurb": "People and tags you follow + your followers." },
-
-      "help":      { "title": "Help & support",  "blurb": "Documentation and how to reach us." },
-      "shortcuts": { "title": "Keyboard shortcuts", "blurb": "Cheatsheet for every keyboard shortcut." }
+      "profile": {
+        "title": "Profile",
+        "blurb": "Display name, bio, avatar, links."
+      },
+      "preferences": {
+        "title": "Preferences",
+        "blurb": "Theme and language."
+      },
+      "ai": {
+        "title": "AI preferences",
+        "blurb": "Per-user AI provider override."
+      },
+      "password": {
+        "title": "Password",
+        "blurb": "Change your password."
+      },
+      "twofa": {
+        "title": "Two-factor auth",
+        "blurb": "Add an authenticator app to your sign-in flow."
+      },
+      "sessions": {
+        "title": "Sessions",
+        "blurb": "Your active sessions across devices; revoke at will."
+      },
+      "blocked": {
+        "title": "Blocked users",
+        "blurb": "People you've blocked. Private to you."
+      },
+      "connected": {
+        "title": "Connected accounts",
+        "blurb": "OAuth providers linked to this account."
+      },
+      "messages": {
+        "title": "Messages",
+        "blurb": "Direct messages and inbox."
+      },
+      "notifications": {
+        "title": "Notifications",
+        "blurb": "What you get pinged about and where."
+      },
+      "subscriptions": {
+        "title": "Subscriptions",
+        "blurb": "Tags, users, and collections you follow."
+      },
+      "tokens": {
+        "title": "API tokens",
+        "blurb": "Personal access tokens for scripts and integrations."
+      },
+      "saved-searches": {
+        "title": "Saved searches",
+        "blurb": "Queries you've pinned for quick recall."
+      },
+      "bookmarks": {
+        "title": "Bookmarks",
+        "blurb": "Posts, assets, and collections you've starred."
+      },
+      "drafts": {
+        "title": "Drafts",
+        "blurb": "Unpublished posts in progress."
+      },
+      "trash": {
+        "title": "Trash",
+        "blurb": "Your soft-deleted items, recoverable for a while."
+      },
+      "activity": {
+        "title": "Activity log",
+        "blurb": "Recent actions you've taken on this install."
+      },
+      "stats": {
+        "title": "Stats",
+        "blurb": "Upload count, reach, and other vanity metrics."
+      },
+      "following": {
+        "title": "Following",
+        "blurb": "People and tags you follow + your followers."
+      },
+      "help": {
+        "title": "Help & support",
+        "blurb": "Documentation and how to reach us."
+      },
+      "shortcuts": {
+        "title": "Keyboard shortcuts",
+        "blurb": "Cheatsheet for every keyboard shortcut."
+      }
     },
     "profile": {
       "title": "Profile",
@@ -341,7 +410,7 @@
       "notif_event_license_expiring_soon": "License expiring soon",
       "notif_event_license_expired": "License expired",
       "views_title": "Default views",
-      "views_intro": "Where the app lands you by default. Leaves the per-route default in place when set to \u201cuse default.\u201d",
+      "views_intro": "Where the app lands you by default. Leaves the per-route default in place when set to “use default.”",
       "views_use_default": "Use default",
       "views_home_tab": "Home tab",
       "views_home_tab_latest": "Latest",
@@ -357,7 +426,13 @@
       "views_browse_sort_newest": "Newest",
       "views_browse_sort_oldest": "Oldest",
       "views_browse_sort_popular": "Popular",
-      "views_browse_sort_trending": "Trending"
+      "views_browse_sort_trending": "Trending",
+      "cadence_off": "Off",
+      "cadence_immediate": "Immediate",
+      "cadence_hourly": "Hourly digest",
+      "cadence_daily": "Daily digest",
+      "cadence_weekly": "Weekly digest",
+      "cadence_aria": "Email cadence for {event}"
     },
     "ai": {
       "title": "AI preferences",
@@ -373,7 +448,7 @@
       "confirm_label": "Confirm new password",
       "revoke_others_label": "Sign out of every other device",
       "submit": "Change password",
-      "submitting": "Changing\u2026",
+      "submitting": "Changing…",
       "success": "Password changed.",
       "success_with_revokes": "Password changed. {count} other sessions ended.",
       "mismatch": "New password and confirmation don't match.",
@@ -397,7 +472,7 @@
     "sessions": {
       "title": "Sessions",
       "intro": "Every device you've signed in from. Sign out of a session here to revoke its cookie immediately — your other sessions are unaffected.",
-      "loading": "Loading sessions\u2026",
+      "loading": "Loading sessions…",
       "none": "No active sessions besides this one.",
       "current_badge": "This device",
       "ip_label": "IP",
@@ -407,7 +482,7 @@
       "expires": "Expires",
       "never_expires": "No hard expiry",
       "revoke": "Sign out",
-      "revoking": "Signing out\u2026",
+      "revoking": "Signing out…",
       "revoked": "Session revoked."
     }
   },
