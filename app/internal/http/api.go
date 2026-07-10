@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
-	"log/slog"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -20,7 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
 
+	"github.com/google/uuid"
+	"github.com/mscrnt/artist-alley/app/internal/activities"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
+	"github.com/mscrnt/artist-alley/app/internal/assettype"
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/auth/lockout"
@@ -28,23 +31,40 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/collections"
 	"github.com/mscrnt/artist-alley/app/internal/config"
+	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
+	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
 	"github.com/mscrnt/artist-alley/app/internal/i18n"
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/licensing"
 	"github.com/mscrnt/artist-alley/app/internal/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/posts"
-	"github.com/mscrnt/artist-alley/app/internal/assettype"
 	"github.com/mscrnt/artist-alley/app/internal/setup"
 	"github.com/mscrnt/artist-alley/app/internal/social"
-	"github.com/mscrnt/artist-alley/app/internal/jobs"
-	"github.com/mscrnt/artist-alley/app/internal/licensing"
+	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 	"github.com/mscrnt/artist-alley/app/internal/teams"
-	"github.com/mscrnt/artist-alley/app/internal/activities"
-	"github.com/mscrnt/artist-alley/app/internal/federation/directory"
-	"github.com/mscrnt/artist-alley/app/internal/federation/identity"
-	"github.com/google/uuid"
 
+	"github.com/mscrnt/artist-alley/app/internal/ai"
+	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
+	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
+	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
+	mcpadmin "github.com/mscrnt/artist-alley/app/internal/ai/mcp_admin"
+	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
+	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
+	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
+	mcpserver "github.com/mscrnt/artist-alley/app/internal/ai/providers/mcp_server"
+	aiwhisperlocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/whisper_local"
+	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
+	"github.com/mscrnt/artist-alley/app/internal/aiedit"
+	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
+	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
+	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
+	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
+	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
+	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
+	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
@@ -53,48 +73,29 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/remote"
 	"github.com/mscrnt/artist-alley/app/internal/federation/shares"
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
-	"github.com/mscrnt/artist-alley/app/internal/seed"
-	"github.com/mscrnt/artist-alley/app/internal/requests"
-	"github.com/mscrnt/artist-alley/app/internal/subtitles"
-	"github.com/mscrnt/artist-alley/app/internal/ai"
-	aiembeddings "github.com/mscrnt/artist-alley/app/internal/ai/embeddings"
-	aijobs "github.com/mscrnt/artist-alley/app/internal/ai/jobs"
-	aicliplocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/cliplocal"
-	mcpserver "github.com/mscrnt/artist-alley/app/internal/ai/providers/mcp_server"
-	aiwhisperlocal "github.com/mscrnt/artist-alley/app/internal/ai/providers/whisper_local"
-	mcpadmin "github.com/mscrnt/artist-alley/app/internal/ai/mcp_admin"
-	mcpdispatch "github.com/mscrnt/artist-alley/app/internal/ai/mcp_dispatch"
-	mcpregistry "github.com/mscrnt/artist-alley/app/internal/ai/mcp_registry"
-	aitranscribe "github.com/mscrnt/artist-alley/app/internal/ai/transcribe"
-	"github.com/mscrnt/artist-alley/app/internal/aiedit"
-	"github.com/mscrnt/artist-alley/app/internal/aiedit/providers/comfyuimcp"
-	assetmetadata "github.com/mscrnt/artist-alley/app/internal/asset/metadata"
 	"github.com/mscrnt/artist-alley/app/internal/iiif"
 	contentsearch "github.com/mscrnt/artist-alley/app/internal/iiif/content_search"
 	iiiffederation "github.com/mscrnt/artist-alley/app/internal/iiif/federation"
 	"github.com/mscrnt/artist-alley/app/internal/iiif/presentation"
 	iiifredirect "github.com/mscrnt/artist-alley/app/internal/iiif/redirect"
+	"github.com/mscrnt/artist-alley/app/internal/messages"
+	"github.com/mscrnt/artist-alley/app/internal/notifications"
+	"github.com/mscrnt/artist-alley/app/internal/requests"
 	"github.com/mscrnt/artist-alley/app/internal/search"
 	searchdiskusage "github.com/mscrnt/artist-alley/app/internal/search/disk_usage"
 	"github.com/mscrnt/artist-alley/app/internal/search/facet"
 	"github.com/mscrnt/artist-alley/app/internal/search/feedback"
 	"github.com/mscrnt/artist-alley/app/internal/search/reindex"
-	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualbackfill"
-	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
-	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
 	"github.com/mscrnt/artist-alley/app/internal/search/saved"
-	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/search/suggest"
 	searchvector "github.com/mscrnt/artist-alley/app/internal/search/vector"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualbackfill"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualembed"
 	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualprovider"
-	exifext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/exif"
-	iptcext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/iptc"
-	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
-	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
-	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
-	aiadmin "github.com/mscrnt/artist-alley/app/internal/ai/admin"
-	"github.com/mscrnt/artist-alley/app/internal/messages"
-	"github.com/mscrnt/artist-alley/app/internal/notifications"
+	"github.com/mscrnt/artist-alley/app/internal/search/vector/visualstore"
+	"github.com/mscrnt/artist-alley/app/internal/seed"
+	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/subtitles"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 	"github.com/mscrnt/artist-alley/app/internal/workflow"
@@ -116,68 +117,68 @@ type apiServer struct {
 	pool     *pgxpool.Pool
 	cacheReg *cache.Registry
 
-	auth         *auth.Handler
-	resourceType *assettype.Handler
-	storage      *storage.Handler
-	assets       *assets.Handler
-	metadata     *metadata.Handler
-	collections  *collections.Handler
-	posts        *posts.Handler
-	teams        *teams.Handler
-	users        *users.Handler
-	social       *social.Handler
-	setup        *setup.Handler
-	workflow     *workflow.Handler
-	sysconfigH   *sysconfig.Handler
-	i18n         *i18n.Handler
-	jobs         *jobs.HTTPHandler
-	brushpacks   *brushpacks.Handler
-	audit         *audit.HTTPHandler
-	licensing     *licensing.Handler
-	userprefs     *userprefs.Handler
-	aiAdmin       *aiadmin.Handler   // Phase 1.14.A inference subsystem admin surface
-	aiBridge      ai.Bridge          // Phase 1.14.A-bridge — read/write seam for AI handlers
-	aiRouter      *ai.Router         // Phase 1.14.B — typed inference dispatch w/ registered providers
-	mcpRegistry   *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
-	mcpDispatch   *mcpdispatch.Dispatcher
-	mcpHealth     *mcpdispatch.HealthChecker
-	mcpProviders  *mcpProviderTable
-	mcpAdmin      *mcpadmin.Handler
-	notifications   *notifications.Handler
-	messages        *messages.Handler
-	activities      *activities.Writer
-	activitiesAdmin *activities.AdminHandler
-	peers           *peer.Registry
-	peersAdmin      *peer.AdminHandler
-	peersHandshake  *peer.AdminHandshakeHandler
-	peersPublic     *peer.PublicHandler
-	fedIdentity     *identity.Manager
-	fedEngine       *peer.Engine
-	directories      *directory.Registry
-	directoriesAdmin *directory.AdminHandler
-	directoryPoller  *directory.Poller
-	p2pRegistry      *p2p.Registry
-	p2pAdmin         *p2p.AdminHandler
-	sharesRegistry   *shares.Registry
-	sharesAdmin      *shares.AdminHandler
-	sharesSweeper    *shares.Sweeper
-	inboxHandler     *inbox.Handler
-	inboxDispatcher  *inbox.Dispatcher
-	outboxDispatcher *outbox.Dispatcher
-	outboxDelivery   *outbox.Worker
-	outboxAdmin      *outbox.AdminHandler
-	userKeysSweeper    *userkeys.Sweeper
-	userKeysAdmin      *userkeys.AdminHandler
-	capabilitySweeper  *auth.CapabilitySweeper
-	requests           *requests.Handler
-	requestsHTTP       *requests.HTTPHandler
-	subtitles        *subtitles.Handler
-	subtitlesHTTP    *subtitles.HTTPHandler
-	aieditHTTP       *aiedit.HTTPHandler
-	metaCounter      *assetmetadata.Counter
-	metaAdmin        *assetmetadata.AdminHandler
-	jobsSvc          *jobs.Service
-	seedAdmin        *seed.AdminHandler
+	auth              *auth.Handler
+	resourceType      *assettype.Handler
+	storage           *storage.Handler
+	assets            *assets.Handler
+	metadata          *metadata.Handler
+	collections       *collections.Handler
+	posts             *posts.Handler
+	teams             *teams.Handler
+	users             *users.Handler
+	social            *social.Handler
+	setup             *setup.Handler
+	workflow          *workflow.Handler
+	sysconfigH        *sysconfig.Handler
+	i18n              *i18n.Handler
+	jobs              *jobs.HTTPHandler
+	brushpacks        *brushpacks.Handler
+	audit             *audit.HTTPHandler
+	licensing         *licensing.Handler
+	userprefs         *userprefs.Handler
+	aiAdmin           *aiadmin.Handler      // Phase 1.14.A inference subsystem admin surface
+	aiBridge          ai.Bridge             // Phase 1.14.A-bridge — read/write seam for AI handlers
+	aiRouter          *ai.Router            // Phase 1.14.B — typed inference dispatch w/ registered providers
+	mcpRegistry       *mcpregistry.Registry // Phase 1.53.A — MCP server registration CRUD + cache
+	mcpDispatch       *mcpdispatch.Dispatcher
+	mcpHealth         *mcpdispatch.HealthChecker
+	mcpProviders      *mcpProviderTable
+	mcpAdmin          *mcpadmin.Handler
+	notifications     *notifications.Handler
+	messages          *messages.Handler
+	activities        *activities.Writer
+	activitiesAdmin   *activities.AdminHandler
+	peers             *peer.Registry
+	peersAdmin        *peer.AdminHandler
+	peersHandshake    *peer.AdminHandshakeHandler
+	peersPublic       *peer.PublicHandler
+	fedIdentity       *identity.Manager
+	fedEngine         *peer.Engine
+	directories       *directory.Registry
+	directoriesAdmin  *directory.AdminHandler
+	directoryPoller   *directory.Poller
+	p2pRegistry       *p2p.Registry
+	p2pAdmin          *p2p.AdminHandler
+	sharesRegistry    *shares.Registry
+	sharesAdmin       *shares.AdminHandler
+	sharesSweeper     *shares.Sweeper
+	inboxHandler      *inbox.Handler
+	inboxDispatcher   *inbox.Dispatcher
+	outboxDispatcher  *outbox.Dispatcher
+	outboxDelivery    *outbox.Worker
+	outboxAdmin       *outbox.AdminHandler
+	userKeysSweeper   *userkeys.Sweeper
+	userKeysAdmin     *userkeys.AdminHandler
+	capabilitySweeper *auth.CapabilitySweeper
+	requests          *requests.Handler
+	requestsHTTP      *requests.HTTPHandler
+	subtitles         *subtitles.Handler
+	subtitlesHTTP     *subtitles.HTTPHandler
+	aieditHTTP        *aiedit.HTTPHandler
+	metaCounter       *assetmetadata.Counter
+	metaAdmin         *assetmetadata.AdminHandler
+	jobsSvc           *jobs.Service
+	seedAdmin         *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
 	// minimal server without the search subsystem).
@@ -198,11 +199,11 @@ type apiServer struct {
 	// Phase 1.16.B-5 — reindex + disk-usage + admin saved-
 	// searches. All three surface admin routes; reindex also
 	// registers a job type.
-	reindexStore      *reindex.Store
-	reindexHandler    *reindex.Handler
-	diskUsageCache    *searchdiskusage.Cache
-	diskUsageHandler  *searchdiskusage.Handler
-	savedSearchAdmin  *saved.AdminHandler
+	reindexStore     *reindex.Store
+	reindexHandler   *reindex.Handler
+	diskUsageCache   *searchdiskusage.Cache
+	diskUsageHandler *searchdiskusage.Handler
+	savedSearchAdmin *saved.AdminHandler
 	// Phase 1.16.B-5-followup — search-result feedback loop
 	// (closes #184). Service + user handler + admin handler wired
 	// unconditionally at boot; runtime kill switch honoured via
@@ -472,12 +473,12 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		ctx := context.Background()
 		snap, _ := s.diskUsageCache.Get(ctx)
 		out := map[string]int64{
-			"assets_pending_embedding":     snap.AssetsPendingEmbedding,
-			"asset_embedding_row_count":    snap.AssetEmbeddingRowCount,
-			"asset_embedding_index_bytes":  snap.EmbeddingIndexBytes,
-			"saved_search_active":          snap.SavedSearchActive,
-			"saved_search_rows":            snap.SavedSearchRows,
-			"search_reindex_history_rows":  snap.SearchReindexHistoryRows,
+			"assets_pending_embedding":    snap.AssetsPendingEmbedding,
+			"asset_embedding_row_count":   snap.AssetEmbeddingRowCount,
+			"asset_embedding_index_bytes": snap.EmbeddingIndexBytes,
+			"saved_search_active":         snap.SavedSearchActive,
+			"saved_search_rows":           snap.SavedSearchRows,
+			"search_reindex_history_rows": snap.SearchReindexHistoryRows,
 		}
 		// Phase 1.16.B-3-followup-4 — visual-embedding backfill
 		// gauges (closes #200). Best-effort: query failures show as
@@ -729,7 +730,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	if jobSvc != nil {
 		jobSvc.Registry.Register(aijobs.NewEmbedHandler(
 			s.aiRouter,
-			s.assets,         // ai.AssetLookup (bridge)
+			s.assets, // ai.AssetLookup (bridge)
 			s.aiBridge.EmbeddingWriter,
 			aiPrivacyCfg.Privacy,
 			defaultEmbedModel,
@@ -742,13 +743,13 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		// chunker config (system_config seeds from 00012) flows in
 		// via the Config struct.
 		transcribeOrch := aitranscribe.NewHandler(
-			transcribeStorage,    // same storage adapter as the Writer
+			transcribeStorage, // same storage adapter as the Writer
 			s.subtitles,
 			s.aiRouter,
 			s.assets,
 			aiPrivacyCfg.Privacy,
 			logger,
-			"", // tempDir — defaults to os.TempDir()
+			"",                    // tempDir — defaults to os.TempDir()
 			aitranscribe.Config{}, // empty → handler picks 25/5 defaults
 		)
 		jobSvc.Registry.Register(aijobs.NewTranscribeHandler(
@@ -948,6 +949,19 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// converts the social-package primitive-args contract into the
 	// notifications.Input struct.
 	s.social.SetNotifier(socialNotifyAdapter{w: notifWriter})
+
+	// @-mention notifications (Phase 1.55.X). One shared service —
+	// parse+resolve+notify — injected into both the posts and comments
+	// write paths. Reuses the same notify adapter so mentions flow
+	// through the existing block + channel-pref gating, and the
+	// resolver's username→ref cache registers on the shared registry.
+	mentionSvc := mention.NewService(
+		mention.NewResolver(pool, cacheReg),
+		socialNotifyAdapter{w: notifWriter},
+		logger,
+	)
+	s.social.SetMentions(mentionSvc)
+	s.posts.SetMentions(mentionSvc)
 
 	// Messages handler (Phase 1.17.I-a). Same wiring pattern as
 	// notifications + social: nil-constructed for cache, deps
@@ -2706,6 +2720,7 @@ func (s *apiServer) DeleteCollection(ctx context.Context, req openapi.DeleteColl
 	s.invalidateOwnerProfileOnCollectionDelete(ctx, uuid.UUID(req.Id), err)
 	return resp, err
 }
+
 // RestoreCollection — Phase 1.55.C-1b.
 func (s *apiServer) RestoreCollection(ctx context.Context, req openapi.RestoreCollectionRequestObject) (openapi.RestoreCollectionResponseObject, error) {
 	resp, err := s.collections.RestoreCollection(ctx, req)
@@ -2796,6 +2811,7 @@ func (s *apiServer) DeletePost(ctx context.Context, req openapi.DeletePostReques
 	s.invalidateSearchOnPostWrite(ctx, err)
 	return resp, err
 }
+
 // RestorePost — Phase 1.55.C-1b.
 func (s *apiServer) RestorePost(ctx context.Context, req openapi.RestorePostRequestObject) (openapi.RestorePostResponseObject, error) {
 	resp, err := s.posts.RestorePost(ctx, req)
@@ -3268,8 +3284,8 @@ func (s *apiServer) CancelFederationPeerPending(ctx context.Context, req openapi
 		return nil, err
 	}
 	return openapi.CancelFederationPeerPending200JSONResponse{
-		PeerId:          openapi_types.UUID(req.Id),
-		CancelledCount:  count,
+		PeerId:         openapi_types.UUID(req.Id),
+		CancelledCount: count,
 	}, nil
 }
 

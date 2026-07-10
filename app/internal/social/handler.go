@@ -4,12 +4,12 @@
 //
 // Endpoints (rooted under /api/v1):
 //
-//   GET    /posts/{id}/like              — whether the caller has liked
-//   POST   /posts/{id}/like              — idempotent like
-//   DELETE /posts/{id}/like              — unlike (404 if no like)
-//   GET    /posts/{id}/comments          — list thread, cursor-paginated
-//   POST   /posts/{id}/comments          — create (optionally a reply)
-//   DELETE /comments/{id}                — soft-delete (own or moderator)
+//	GET    /posts/{id}/like              — whether the caller has liked
+//	POST   /posts/{id}/like              — idempotent like
+//	DELETE /posts/{id}/like              — unlike (404 if no like)
+//	GET    /posts/{id}/comments          — list thread, cursor-paginated
+//	POST   /posts/{id}/comments          — create (optionally a reply)
+//	DELETE /comments/{id}                — soft-delete (own or moderator)
 //
 // Capability gates (seeded in 00020):
 //   - posts.like           — Base default
@@ -44,14 +44,15 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 )
 
 const (
-	CapPostsLike          = "posts.like"
-	CapPostsComment       = "posts.comment"
-	CapCommentsDeleteOwn  = "comments.delete.own"
-	CapCommentsDeleteAny  = "comments.delete.any"
-	CapSystemAdmin        = "system.admin"
+	CapPostsLike         = "posts.like"
+	CapPostsComment      = "posts.comment"
+	CapCommentsDeleteOwn = "comments.delete.own"
+	CapCommentsDeleteAny = "comments.delete.any"
+	CapSystemAdmin       = "system.admin"
 )
 
 const maxListLimit = 200
@@ -87,11 +88,11 @@ type Handler struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 
-	registry        *cache.Registry
-	followEdge      *cache.Cache[bool]
-	blockEdge       *cache.Cache[bool]
-	followerCount   *cache.Cache[int64]
-	followingCount  *cache.Cache[int64]
+	registry       *cache.Registry
+	followEdge     *cache.Cache[bool]
+	blockEdge      *cache.Cache[bool]
+	followerCount  *cache.Cache[int64]
+	followingCount *cache.Cache[int64]
 
 	// notifier is the Phase 1.17.I2 cross-package seam — when a
 	// comment / like / follow lands, the relevant emit method here
@@ -122,8 +123,14 @@ type Handler struct {
 	// When NOT wired (tests), social handlers fall back to direct
 	// pool.Exec + the separate fireNotification path — pre-ADR-0044
 	// behaviour.
-	activities  *activities.Writer
-	baseURLFn   func(ctx context.Context) string
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
+
+	// mentions fires @-mention notifications after a comment insert
+	// commits (Phase 1.55.X). A comment-body mention deep-links to the
+	// containing post. nil-safe: unwired means no mention
+	// notifications; the comment still lands.
+	mentions *mention.Service
 }
 
 // Notifier is the cross-package contract the notifications package
@@ -132,6 +139,10 @@ type Handler struct {
 type Notifier interface {
 	Notify(ctx context.Context, recipient int64, actor *int64, verb, targetKind, targetID string, payload map[string]any) error
 }
+
+// SetMentions installs the @-mention notification service (Phase
+// 1.55.X). Post-construction setter, same shape as SetNotifier.
+func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
 
 // SetNotifier installs the cross-package notifications writer.
 // Post-construction setter mirrors SetFollowChecker on posts.Handler.
@@ -144,7 +155,6 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.activities = w
 	h.baseURLFn = baseURLFn
 }
-
 
 // actorContext builds an emit.ActorContext from the authenticated
 // caller + the configured baseURL. Returns the zero value when
@@ -221,7 +231,7 @@ func (h *Handler) GetPostLike(
 	liked, err := New(h.Pool).HasUserLikedTarget(ctx, HasUserLikedTargetParams{
 		TargetKind: "post",
 		TargetID:   pgID,
-		UserRef:   &caller.UserRef,
+		UserRef:    &caller.UserRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: has liked: %w", err)
@@ -274,7 +284,7 @@ func (h *Handler) LikePost(
 		return New(tx).LikeTarget(ctx, LikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			UserRef:   &caller.UserRef,
+			UserRef:    &caller.UserRef,
 		})
 	}); err != nil {
 		return nil, fmt.Errorf("social: like: %w", err)
@@ -355,7 +365,7 @@ func (h *Handler) UnlikePost(
 		rows, err := New(tx).UnlikeTarget(ctx, UnlikeTargetParams{
 			TargetKind: "post",
 			TargetID:   pgID,
-			UserRef:   &caller.UserRef,
+			UserRef:    &caller.UserRef,
 		})
 		if err != nil {
 			return activities.EmissionInput{}, fmt.Errorf("social: unlike: %w", err)
@@ -439,10 +449,10 @@ func (h *Handler) ListPostComments(
 	// thread_limit is the number of root threads to return; we ask for
 	// one extra to know whether there's a next page.
 	rows, err := New(h.Pool).ListThreadForTarget(ctx, ListThreadForTargetParams{
-		TargetKind:           "post",
-		TargetID:             pgID,
-		CursorRootCreatedAt:  cursorCreatedAt,
-		ThreadLimit:          limit + 1,
+		TargetKind:          "post",
+		TargetID:            pgID,
+		CursorRootCreatedAt: cursorCreatedAt,
+		ThreadLimit:         limit + 1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("social: list thread: %w", err)
@@ -607,6 +617,18 @@ func (h *Handler) CreatePostComment(
 	if err != nil {
 		return nil, err
 	}
+
+	// Fire @-mention notifications after the comment commits (Phase
+	// 1.55.X). Best-effort; a notify failure must not fail the saved
+	// comment. The mention deep-links to the containing post (comments
+	// have no dedicated route), so the bell routes to /posts/{id}.
+	if h.mentions != nil {
+		postID := uuid.UUID(pgPostID.Bytes).String()
+		h.mentions.ProcessForPost(ctx, caller.UserRef, body, postID, map[string]any{
+			"post_title": commentRef.PostTitle,
+		})
+	}
+
 	return openapi.CreatePostComment201JSONResponse(commentRowToAPI(savedRow)), nil
 }
 

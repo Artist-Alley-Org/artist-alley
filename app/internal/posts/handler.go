@@ -46,7 +46,9 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/audit"
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/cache"
+	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 )
@@ -111,8 +113,8 @@ type Handler struct {
 	// in the same tx as its domain write. nil-safe: tests that
 	// don't wire the writer fall back to the pre-ADR-0044 behaviour
 	// (direct domain writes; no activity record).
-	activities  *activities.Writer
-	baseURLFn   func(ctx context.Context) string
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
 
 	// Audit records admin lifecycle events (soft_deleted; restore
 	// fires from softdelete.Service directly). Nil-safe.
@@ -121,6 +123,14 @@ type Handler struct {
 	// SoftDelete handles restore (clear deleted_at + audit). Wired
 	// at boot in api.go alongside the gc coordinator.
 	SoftDelete *softdelete.Service
+
+	// mentions fires @-mention notifications after a post insert
+	// commits (Phase 1.55.X). Local interface rather than a direct
+	// *mention.Service field would be over-engineering — the mention
+	// package doesn't import posts, so there's no cycle. nil-safe:
+	// unwired (tests) means no mention notifications, and the post
+	// still saves normally.
+	mentions *mention.Service
 }
 
 // followChecker is the slice of social.Handler this package needs:
@@ -143,6 +153,10 @@ func (h *Handler) SetActivitiesWriter(w *activities.Writer, baseURLFn func(ctx c
 	h.activities = w
 	h.baseURLFn = baseURLFn
 }
+
+// SetMentions installs the @-mention notification service (Phase
+// 1.55.X). Post-construction setter, same shape as the others.
+func (h *Handler) SetMentions(m *mention.Service) { h.mentions = m }
 
 func NewHandler(pool *pgxpool.Pool, logger *slog.Logger, registry *cache.Registry) *Handler {
 	h := &Handler{Pool: pool, Logger: logger, registry: registry}
@@ -334,6 +348,18 @@ func (h *Handler) CreatePost(
 	// users.InvalidateProfile helper keeps the domain string in
 	// one place.
 	users.InvalidateProfile(ctx, h.registry, id.UserRef)
+
+	// Fire @-mention notifications after the commit (Phase 1.55.X).
+	// Best-effort: a notify failure must not fail the already-saved
+	// post. Both title + description carry mentionable text. The bell
+	// deep-links to the post.
+	if h.mentions != nil {
+		postID := uuid.UUID(row.ID.Bytes).String()
+		text := strOr(in.Title, "") + "\n" + strOr(in.Description, "")
+		h.mentions.ProcessForPost(ctx, id.UserRef, text, postID, map[string]any{
+			notifications.PayloadKeyPostTitle: row.Title,
+		})
+	}
 
 	// Re-read with full member + tag join. The trigger has fired by
 	// now so search_text reflects the new state.
@@ -964,12 +990,12 @@ func (h *Handler) AddPostAcl(
 		expires = pgtype.Timestamptz{Time: *req.Body.ExpiresAt, Valid: true}
 	}
 	if err := q.AddPostAcl(ctx, AddPostAclParams{
-		PostID:              pgID,
-		PrincipalType:       string(req.Body.PrincipalType),
-		PrincipalID:         req.Body.PrincipalId,
-		Permission:          string(req.Body.Permission),
-		GrantedByUserRef:   &caller.UserRef,
-		ExpiresAt:           expires,
+		PostID:           pgID,
+		PrincipalType:    string(req.Body.PrincipalType),
+		PrincipalID:      req.Body.PrincipalId,
+		Permission:       string(req.Body.Permission),
+		GrantedByUserRef: &caller.UserRef,
+		ExpiresAt:        expires,
 	}); err != nil {
 		return nil, fmt.Errorf("posts: add acl: %w", err)
 	}
@@ -1154,18 +1180,18 @@ func validVisibility(s string) bool {
 
 func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) openapi.Post {
 	out := openapi.Post{
-		Id:             openapi_types.UUID(p.ID.Bytes),
-		AuthorUserRef:  p.AuthorUserRef,
-		Title:          p.Title,
-		Description:    p.Description,
-		Visibility:     openapi.PostVisibility(p.Visibility),
-		PostedAt:       p.PostedAt.Time,
-		LikeCount:      p.LikeCount,
-		CommentCount:   p.CommentCount,
-		Tags:           append([]string{}, tags...),
-		CreatedAt:      p.CreatedAt.Time,
-		UpdatedAt:      p.UpdatedAt.Time,
-		Members:        make([]openapi.PostMember, 0, len(members)),
+		Id:            openapi_types.UUID(p.ID.Bytes),
+		AuthorUserRef: p.AuthorUserRef,
+		Title:         p.Title,
+		Description:   p.Description,
+		Visibility:    openapi.PostVisibility(p.Visibility),
+		PostedAt:      p.PostedAt.Time,
+		LikeCount:     p.LikeCount,
+		CommentCount:  p.CommentCount,
+		Tags:          append([]string{}, tags...),
+		CreatedAt:     p.CreatedAt.Time,
+		UpdatedAt:     p.UpdatedAt.Time,
+		Members:       make([]openapi.PostMember, 0, len(members)),
 	}
 	if p.CoverAssetID.Valid {
 		v := openapi_types.UUID(p.CoverAssetID.Bytes)
@@ -1202,7 +1228,7 @@ func memberToAsset(m ListPostAssetsRow) openapi.Asset {
 		Id:            openapi_types.UUID(m.AssetID.Bytes),
 		Title:         m.Title,
 		Description:   &m.Description,
-		AssetType:  m.AssetType,
+		AssetType:     m.AssetType,
 		Status:        openapi.AssetStatus(m.Status),
 		FileHash:      m.FileHash,
 		FileExtension: m.FileExtension,
@@ -1296,7 +1322,6 @@ func isFKError(err error, constraint string) bool {
 // ---------------------------------------------------------------------------
 // Compile-time assertion: catches openapi-codegen signature drift.
 // ---------------------------------------------------------------------------
-
 
 var _ interface {
 	ListPosts(context.Context, openapi.ListPostsRequestObject) (openapi.ListPostsResponseObject, error)
