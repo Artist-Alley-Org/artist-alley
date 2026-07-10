@@ -120,7 +120,7 @@
         params: { path: { id } },
       });
       if (apiErr) {
-        restoreError = (apiErr as { error?: string }).error ?? 'restore failed';
+        restoreError = (apiErr as { error?: string }).error ?? t('collections.restore_failed');
         return;
       }
       // Reload — the row is now live.
@@ -201,9 +201,9 @@
       {#if collection?.deleted_at && auth.can('system.admin')}
         <div class="flex-1 rounded-md border border-warning/40 bg-warning-container/50 px-3 py-1.5 text-xs">
           <div class="font-medium text-warning">
-            Deleted {new Date(collection.deleted_at).toLocaleDateString()}
+            {t('collections.deleted_at_banner', { date: new Date(collection.deleted_at).toLocaleDateString() })}
             {#if collection.deleted_reason}
-              — {collection.deleted_reason}
+              {t('collections.deleted_reason', { reason: collection.deleted_reason })}
             {/if}
           </div>
           {#if restoreError}
@@ -217,7 +217,7 @@
           data-testid="collection-detail-restore-button"
           class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:bg-surface-elevated disabled:opacity-50"
         >
-          {restoreBusy ? 'Restoring…' : 'Restore'}
+          {restoreBusy ? t('collections.restoring') : t('collections.restore')}
         </button>
       {/if}
 

@@ -173,7 +173,7 @@
               onchange={() => void load()}
               class="h-3.5 w-3.5 rounded border-border"
             />
-            Include deleted
+            {t('collections.include_deleted')}
           </label>
         {/if}
         <div class="relative w-full max-w-xs">

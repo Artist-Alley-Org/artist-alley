@@ -5,6 +5,7 @@
   // thumbnail picker, and the bottom action bar.
 
   import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
   import UploadFileRow from './UploadFileRow.svelte';
   import PostComposeForm from './PostComposeForm.svelte';
   import ThumbnailPicker from './ThumbnailPicker.svelte';
@@ -54,11 +55,13 @@
   const submitLabel = $derived(
     !upload.compose.enabled
       ? upload.readyRows.length === 1
-        ? 'Save 1 asset'
-        : `Save ${upload.readyRows.length} assets`
+        ? t('upload.modal.submit_save_one')
+        : t('upload.modal.submit_save_many', { n: upload.readyRows.length })
       : upload.compose.mode === 'one-per-file'
-        ? `Create ${upload.readyRows.length} post${upload.readyRows.length === 1 ? '' : 's'}`
-        : 'Create post',
+        ? upload.readyRows.length === 1
+          ? t('upload.modal.submit_create_posts_one')
+          : t('upload.modal.submit_create_posts_many', { n: upload.readyRows.length })
+        : t('upload.modal.submit_create_post'),
   );
 
   const submitDisabled = $derived(
@@ -81,12 +84,12 @@
   >
     <!-- Header -->
     <header class="flex items-center justify-between border-b border-border px-5 py-3">
-      <h1 id="upload-modal-title" class="text-lg font-semibold">Upload</h1>
+      <h1 id="upload-modal-title" class="text-lg font-semibold">{t('nav.upload')}</h1>
       <button
         type="button"
         onclick={() => upload.close()}
         class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-surface-elevated text-fg-muted hover:text-fg"
-        aria-label="Close"
+        aria-label={t('common.close')}
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 6 6 18M6 6l12 12" />
@@ -112,7 +115,7 @@
             <polyline points="17 8 12 3 7 8" />
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
-          <span class="text-sm font-medium">Drop files anywhere, or click to choose</span>
+          <span class="text-sm font-medium">{t('upload.modal.dropzone_prompt')}</span>
         </button>
         <input
           bind:this={pickerEl}
@@ -130,7 +133,7 @@
           </div>
         {:else}
           <p class="rounded-md bg-surface-elevated/50 px-3 py-2 text-center text-xs text-fg-muted">
-            No files yet — drop them on the page or click above.
+            {t('upload.modal.empty_state')}
           </p>
         {/if}
       </div>
@@ -156,9 +159,9 @@
     <footer class="flex items-center justify-between gap-3 border-t border-border bg-surface-elevated px-5 py-3">
       <p class="text-xs text-fg-muted">
         {#if upload.anyInFlight}
-          {upload.readyRows.length} of {upload.rows.length} ready · still uploading…
+          {t('upload.modal.status_uploading', { ready: upload.readyRows.length, total: upload.rows.length })}
         {:else}
-          {upload.readyRows.length} of {upload.rows.length} ready
+          {t('upload.modal.status_ready', { ready: upload.readyRows.length, total: upload.rows.length })}
         {/if}
       </p>
       <div class="flex items-center gap-2">
@@ -167,7 +170,7 @@
           onclick={() => upload.reset()}
           class="rounded-md border border-border px-3 py-1.5 text-sm text-fg-muted hover:bg-surface hover:text-fg"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           type="button"
@@ -175,7 +178,7 @@
           disabled={submitDisabled}
           class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white shadow transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:bg-accent/40"
         >
-          {upload.composeBusy ? 'Saving…' : submitLabel}
+          {upload.composeBusy ? t('common.saving') : submitLabel}
         </button>
       </div>
     </footer>

@@ -343,6 +343,34 @@ current focus:
   observability instrumentation). Zero code changes; audit doc is the
   durable artifact + 1.55.V-2 executes against §9 fix recommendations
   and §10 guard extensions. Closes #244.
+  **1.55.V-2 shipped 2026-07-09** — i18n MUST-tier fix + locale-switch
+  test + guard extension. Executes the MUST scope from
+  `docs/i18n_audit_v0_1.md` §9. Extends `common.*` from 16 → 40 shared
+  keys (close/search/clear/load_more/download_original/untitled/saving/
+  relative-time dur_*/etc.) and adds **211 scoped keys** across
+  browse/setup/search/upload/comments/post_host/whiteboard/collections/
+  federation/viewer_playlist/auth/playlist — en.json 1608 → 1843 leaf
+  keys, **zero existing values changed**. 23 source files wrapped (20
+  `.svelte` + 3 `.svelte.ts` state files); **es.json/fr.json untouched**
+  — new keys are en-only and es/fr fall through to English per the owner
+  decision (#247 tracks actual translation). New Playwright spec
+  `ui-30-i18n-locale-switch` closes the audit's zero-test MUST gap:
+  asserts the navbar search placeholder flips en→es on switching to
+  Español + persists across reload via the `aa_lang` cookie (asserts on
+  the existing-Spanish `nav.search_placeholder` — proves the mechanism,
+  not es/fr coverage). Coverage guard extended per §10: `TRACKED_FILES`
+  24 → 44 (all now-clean MUST files; `AssetPlaylist` held back for its
+  deferred viewer-hotkey SHOULD strings), added `label=`/
+  `aria-description=` attribute coverage, strips HTML comments + `<code>`
+  + `<style>` before scanning (kills 2 false positives), and a
+  **warn-only locale-parity check** reporting es 3% / fr 2% without
+  failing CI (orphan-key half stays blocking as a schema-drift guard).
+  `locales.ts` `completionPct` now **computed** from the bundled
+  catalogues (was a stale hardcoded 5). svelte-check 0 errors; 283
+  vitest tests green. SHOULD (~178) + NICE (~270) tiers deferred to
+  **#249**; backend error strings remain **#246** (v1.0.0 prereq); es/fr
+  translation remains **#247**. Audit §11 tracks every MUST finding to
+  disposition. Closes #248.
   **1.55.C-1a shipped 2026-07-07** — soft-delete recovery foundation
   (§4.6 partial). Migration 00029 adds `deleted_reason` to assets +
   posts + collections and adds `deleted_at` to collections;

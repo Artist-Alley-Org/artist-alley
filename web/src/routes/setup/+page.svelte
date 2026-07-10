@@ -5,6 +5,7 @@
   import Button from '$components/Button.svelte';
   import TextField from '$components/TextField.svelte';
   import Alert from '$components/Alert.svelte';
+  import { t } from '$stores/lang.svelte';
   import { onMount } from 'svelte';
 
   // Prefilled defaults come from AA_SETUP_DEFAULT_* env vars on the
@@ -72,11 +73,11 @@
     error = null;
 
     if (adminPassword !== adminPasswordConfirm) {
-      error = 'Passwords do not match.';
+      error = t('setup.err.password_mismatch');
       return;
     }
     if (adminPassword.length < 8) {
-      error = 'Password must be at least 8 characters.';
+      error = t('setup.err.password_too_short');
       return;
     }
 
@@ -111,7 +112,7 @@
       });
       if (apiErr || !data) {
         const msg =
-          (apiErr as { error?: string } | undefined)?.error ?? 'Setup failed';
+          (apiErr as { error?: string } | undefined)?.error ?? t('setup.err.failed');
         throw new Error(msg);
       }
       // /setup/complete logs the new admin in as a side effect, so
@@ -120,7 +121,7 @@
       await auth.refresh();
       await goto('/');
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Setup failed';
+      error = err instanceof Error ? err.message : t('setup.err.failed');
     } finally {
       submitting = false;
     }
@@ -128,16 +129,16 @@
 </script>
 
 <svelte:head>
-  <title>First-run setup — artist-alley</title>
+  <title>{t('setup.title')} — artist-alley</title>
 </svelte:head>
 
 <div class="flex-1 flex items-center justify-center px-6 py-10">
   <div class="w-full max-w-2xl space-y-8">
     <div class="text-center space-y-2">
       <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
-      <h1 class="text-2xl font-semibold tracking-tight">First-run setup</h1>
+      <h1 class="text-2xl font-semibold tracking-tight">{t('setup.heading')}</h1>
       <p class="text-sm text-fg-muted">
-        Create the first administrator and configure your site. You can change any of this later.
+        {t('setup.body')}
       </p>
     </div>
 
@@ -150,12 +151,12 @@
       <section class="space-y-4">
         <header>
           <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">
-            Administrator
+            {t('setup.section.administrator')}
           </h2>
         </header>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TextField
-            label="Username"
+            label={t('setup.admin.username')}
             name="admin_username"
             autocomplete="username"
             required
@@ -163,7 +164,7 @@
             disabled={submitting}
           />
           <TextField
-            label="Email"
+            label={t('setup.admin.email')}
             name="admin_email"
             type="email"
             autocomplete="email"
@@ -172,7 +173,7 @@
             disabled={submitting}
           />
           <TextField
-            label="Full name"
+            label={t('setup.admin.fullname')}
             name="admin_fullname"
             autocomplete="name"
             bind:value={adminFullname}
@@ -180,18 +181,18 @@
           />
           <div class="hidden sm:block"></div>
           <TextField
-            label="Password"
+            label={t('setup.admin.password')}
             name="admin_password"
             type="password"
             autocomplete="new-password"
             required
             minlength={8}
-            helper="At least 8 characters."
+            helper={t('setup.admin.password_hint')}
             bind:value={adminPassword}
             disabled={submitting}
           />
           <TextField
-            label="Confirm password"
+            label={t('setup.admin.password_confirm')}
             name="admin_password_confirm"
             type="password"
             autocomplete="new-password"
@@ -206,22 +207,22 @@
       <!-- Site -->
       <section class="space-y-4">
         <header>
-          <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">Site</h2>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">{t('setup.section.site')}</h2>
         </header>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <TextField
-            label="Site name"
+            label={t('setup.site.name')}
             name="site_name"
             required
             bind:value={siteName}
             disabled={submitting}
           />
           <TextField
-            label="Base URL"
+            label={t('setup.site.base_url')}
             name="site_base_url"
             type="url"
-            placeholder="https://art.example.com"
-            helper="Used in outgoing links (e.g. password reset). May be left blank now."
+            placeholder={t('setup.site.base_url_placeholder')}
+            helper={t('setup.site.base_url_helper')}
             bind:value={siteBaseUrl}
             disabled={submitting}
           />
@@ -239,53 +240,53 @@
               disabled={submitting}
               class="rounded border-border bg-surface-elevated"
             />
-            Configure now
+            {t('setup.smtp.configure_now')}
           </label>
         </header>
         {#if configureSMTP}
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TextField
-              label="Host"
+              label={t('setup.smtp.host')}
               name="smtp_host"
               required
               bind:value={smtpHost}
               disabled={submitting}
             />
             <TextField
-              label="Port"
+              label={t('setup.smtp.port')}
               name="smtp_port"
               required
               bind:value={smtpPort}
               disabled={submitting}
             />
             <label class="space-y-1.5">
-              <span class="block text-sm font-medium text-fg">Encryption</span>
+              <span class="block text-sm font-medium text-fg">{t('setup.smtp.encryption')}</span>
               <select
                 bind:value={smtpEncryption}
                 disabled={submitting}
                 class="block w-full rounded-md border border-border bg-surface-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="none">None</option>
+                <option value="none">{t('setup.smtp.encryption_none')}</option>
                 <option value="starttls">STARTTLS</option>
                 <option value="tls">TLS</option>
               </select>
             </label>
             <TextField
-              label="From address"
+              label={t('setup.smtp.from_address')}
               name="smtp_from"
               required
-              placeholder="Site <noreply@example.com>"
+              placeholder={t('setup.smtp.from_placeholder')}
               bind:value={smtpFromAddress}
               disabled={submitting}
             />
             <TextField
-              label="Username"
+              label={t('setup.smtp.username')}
               name="smtp_user"
               bind:value={smtpUsername}
               disabled={submitting}
             />
             <TextField
-              label="Password"
+              label={t('setup.smtp.password')}
               name="smtp_pass"
               type="password"
               bind:value={smtpPassword}
@@ -294,14 +295,14 @@
           </div>
         {:else}
           <p class="text-xs text-fg-muted">
-            Email features (password reset, notifications) stay disabled until SMTP is configured. You can fill this in later from the admin settings.
+            {t('setup.smtp.body')}
           </p>
         {/if}
       </section>
 
       <div class="flex justify-end pt-2">
         <Button type="submit" variant="primary" loading={submitting}>
-          Create admin & finish setup
+          {t('setup.submit')}
         </Button>
       </div>
     </form>

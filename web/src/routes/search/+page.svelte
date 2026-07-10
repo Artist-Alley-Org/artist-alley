@@ -99,7 +99,7 @@
           : fetch(`/api/v1/search/facets?q=${encodeURIComponent(query)}`, { credentials: 'include' }),
       ]);
       if (!searchResp.ok) {
-        error = `search: ${searchResp.status}`;
+        error = t('search.err_generic', { status: searchResp.status });
         return;
       }
       const data = (await searchResp.json()) as SearchResponse;
@@ -184,11 +184,13 @@
       });
       if (!resp.ok) {
         const err = await resp.text();
-        saveResult = `Save failed: ${resp.status} ${err}`;
+        saveResult = t('search.save_collection.save_failed', { status: resp.status, err });
         return;
       }
       const data = await resp.json();
-      saveResult = `Saved ${data.saved_count} results${data.truncated ? ' (truncated to first 100)' : ''}.`;
+      saveResult = data.truncated
+        ? t('search.save_collection.saved_truncated', { n: data.saved_count })
+        : t('search.save_collection.saved', { n: data.saved_count });
       setTimeout(() => {
         void goto(`/collections/${data.collection_id}`);
       }, 800);
@@ -222,11 +224,11 @@
       });
       if (!resp.ok) {
         const err = await resp.text();
-        saveSearchResult = `Save failed: ${resp.status} ${err}`;
+        saveSearchResult = t('search.save_search.save_failed', { status: resp.status, err });
         return;
       }
       const data = await resp.json();
-      saveSearchResult = `Saved. Runs every ${data.notify_interval_minutes} minutes.`;
+      saveSearchResult = t('search.save_search.saved', { minutes: data.notify_interval_minutes });
       setTimeout(() => {
         void goto('/account/saved-searches');
       }, 1000);
@@ -245,13 +247,13 @@
   <aside class="w-64 shrink-0" data-testid="facet-sidebar">
     <div class="sticky top-4 space-y-4">
       <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">Facets</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-muted">{t('search.facets_heading')}</h2>
         {#if Object.values(selectedFacets).some((s) => s.size > 0)}
           <button
             type="button"
             onclick={clearFacets}
             class="rounded px-2 py-0.5 text-xs text-accent hover:bg-surface-elevated"
-          >Clear all</button>
+          >{t('common.clear_all')}</button>
         {/if}
       </div>
       {#each Object.entries(facets) as [type, res] (type)}
@@ -290,20 +292,20 @@
         <a
           href="/search/advanced"
           class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-        >Advanced builder</a>
+        >{t('search.advanced_builder')}</a>
         {#if hits.length > 0}
           <button
             type="button"
             onclick={() => { saveSearchOpen = true; saveSearchName = q; }}
             class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
             data-testid="save-search"
-          >Save search</button>
+          >{t('search.save_search_button')}</button>
           <button
             type="button"
             onclick={() => { saveOpen = true; saveName = q; }}
             class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
             data-testid="save-as-collection"
-          >Save as collection</button>
+          >{t('search.save_as_collection')}</button>
         {/if}
       </div>
     </div>
@@ -312,7 +314,7 @@
       <input
         bind:value={q}
         type="search"
-        placeholder="Type a query…"
+        placeholder={t('search.query_placeholder')}
         data-testid="search-input"
         class="flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-fg
                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -320,7 +322,7 @@
       <button
         type="submit"
         class="rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent hover:bg-accent/90"
-      >Search</button>
+      >{t('common.search')}</button>
     </form>
 
     {#if error}
@@ -331,14 +333,14 @@
 
     {#if !loading && hits.length > 0}
       <p class="mb-3 text-sm text-fg-muted" data-testid="search-total-count">
-        Showing <strong>{hits.length}</strong> of <strong>{activeCount}</strong> results
+        {t('search.counter', { n: hits.length, total: activeCount })}
       </p>
     {/if}
 
     {#if loading}
-      <p class="text-sm text-fg-muted">Searching…</p>
+      <p class="text-sm text-fg-muted">{t('search.searching')}</p>
     {:else if hits.length === 0 && q}
-      <p class="text-sm text-fg-muted">No matches. Try a different query.</p>
+      <p class="text-sm text-fg-muted">{t('search.no_matches')}</p>
     {/if}
 
     <ul class="space-y-3">
@@ -348,11 +350,11 @@
             <div class="mb-1 flex items-center gap-2">
               <span class="rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {typeBadge(h.type)}">{h.type}</span>
               {#if h.origin_server_id}
-                <span class="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-muted">Federated</span>
+                <span class="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-muted">{t('search.federated_badge')}</span>
               {/if}
               <span class="ml-auto text-xs text-fg-muted">score {h.score.toFixed(3)}</span>
             </div>
-            <h2 class="text-base font-semibold text-fg">{h.title || 'Untitled'}</h2>
+            <h2 class="text-base font-semibold text-fg">{h.title || t('common.untitled')}</h2>
             {#if h.summary}
               <p class="mt-1 text-sm text-fg-muted">{h.summary}</p>
             {/if}
@@ -373,7 +375,7 @@
           onclick={() => runSearch(q, { append: true })}
           disabled={loadingMore}
           class="rounded-md border border-border bg-surface px-4 py-1.5 text-sm hover:border-border-strong disabled:opacity-50"
-        >{loadingMore ? 'Loading…' : 'Load more'}</button>
+        >{loadingMore ? t('common.loading') : t('common.load_more')}</button>
       </div>
     {/if}
   </section>
@@ -384,14 +386,14 @@
   <div
     role="dialog"
     aria-modal="true"
-    aria-label="Save search as collection"
+    aria-label={t('search.save_collection.dialog_label')}
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
     onclick={(e) => { if (e.target === e.currentTarget) saveOpen = false; }}
   >
     <div class="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
-      <h3 class="mb-3 text-lg font-semibold">Save these results as a collection</h3>
+      <h3 class="mb-3 text-lg font-semibold">{t('search.save_collection.heading')}</h3>
       <label class="mb-3 block text-sm">
-        <span class="mb-1 block text-fg-muted">Collection name</span>
+        <span class="mb-1 block text-fg-muted">{t('search.save_collection.name_label')}</span>
         <input
           bind:value={saveName}
           type="text"
@@ -406,13 +408,13 @@
           type="button"
           onclick={() => (saveOpen = false)}
           class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-        >Cancel</button>
+        >{t('common.cancel')}</button>
         <button
           type="button"
           onclick={submitSave}
           disabled={saving || !saveName.trim()}
           class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
-        >{saving ? 'Saving…' : 'Save collection'}</button>
+        >{saving ? t('common.saving') : t('search.save_collection.submit')}</button>
       </div>
     </div>
   </div>
@@ -425,17 +427,17 @@
   <div
     role="dialog"
     aria-modal="true"
-    aria-label="Save search"
+    aria-label={t('search.save_search.dialog_label')}
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
     onclick={(e) => { if (e.target === e.currentTarget) saveSearchOpen = false; }}
   >
     <div class="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
-      <h3 class="mb-3 text-lg font-semibold">Save this search for updates</h3>
+      <h3 class="mb-3 text-lg font-semibold">{t('search.save_search.heading')}</h3>
       <p class="mb-3 text-sm text-fg-muted">
-        We'll re-run this query on your interval and email you when new matches appear.
+        {t('search.save_search.body')}
       </p>
       <label class="mb-3 block text-sm">
-        <span class="mb-1 block text-fg-muted">Name</span>
+        <span class="mb-1 block text-fg-muted">{t('search.save_search.name_label')}</span>
         <input
           bind:value={saveSearchName}
           type="text"
@@ -443,7 +445,7 @@
         />
       </label>
       <label class="mb-3 block text-sm">
-        <span class="mb-1 block text-fg-muted">Notify every (minutes)</span>
+        <span class="mb-1 block text-fg-muted">{t('search.save_search.interval_label')}</span>
         <input
           bind:value={saveSearchInterval}
           type="number"
@@ -453,13 +455,13 @@
         />
       </label>
       <label class="mb-3 block text-sm">
-        <span class="mb-1 block text-fg-muted">Notification channel</span>
+        <span class="mb-1 block text-fg-muted">{t('search.save_search.channel_label')}</span>
         <select
           bind:value={saveSearchChannel}
           class="w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm"
         >
-          <option value="email">Email digest</option>
-          <option value="none">Track only (no email)</option>
+          <option value="email">{t('search.save_search.channel_email')}</option>
+          <option value="none">{t('search.save_search.channel_none')}</option>
         </select>
       </label>
       {#if saveSearchResult}
@@ -470,13 +472,13 @@
           type="button"
           onclick={() => (saveSearchOpen = false)}
           class="rounded-md border border-border bg-surface px-3 py-1.5 text-sm hover:border-border-strong"
-        >Cancel</button>
+        >{t('common.cancel')}</button>
         <button
           type="button"
           onclick={submitSaveSearch}
           disabled={savingSearch || !saveSearchName.trim()}
           class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
-        >{savingSearch ? 'Saving…' : 'Save search'}</button>
+        >{savingSearch ? t('common.saving') : t('search.save_search.submit')}</button>
       </div>
     </div>
   </div>

@@ -17,6 +17,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import PostHost from '$components/PostHost.svelte';
+  import { t } from '$stores/lang.svelte';
 
   const postId = $derived(page.params.id ?? '');
 
@@ -33,7 +34,7 @@
 </script>
 
 <svelte:head>
-  <title>Post — artist-alley</title>
+  <title>{t('post.detail.title')} — artist-alley</title>
 </svelte:head>
 
 <PostHost {postId} onClose={handleClose} standalone />

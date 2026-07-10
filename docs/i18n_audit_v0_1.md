@@ -1240,3 +1240,115 @@ this plan; the audit only sketches.
 6. **Cookie set is not surfaced on server responses.** `writeCookie`
    runs entirely client-side. An SSR pass (should SvelteKit adopt
    one) would ignore the cookie because nothing reads it server-side.
+
+## §11 MUST-tier disposition (Phase 1.55.V-2)
+
+Phase 1.55.V-2 (PR against #248) executed the MUST tier from §9. This
+section tracks every MUST finding to disposition. es/fr were NOT
+translated — per owner decision (#247), new keys are en-only and es/fr
+fall through to English via the existing fallback (§8). That is the
+deliberate pre-#247 state.
+
+### Summary
+
+- **`common.*` extraction**: expanded from 16 → 40 keys (added close,
+  search, submit, next, previous, yes, no, clear, clear_all, go,
+  load_more, download_original, untitled, saving, posting, confirm,
+  pause, resume, optional_note_placeholder, failed_to_load, and the
+  relative-time `dur_minutes/hours/days/months`). Shared labels across
+  the MUST findings now point at one key each.
+- **Scoped keys added**: 211 new leaf keys across `browse.*`,
+  `post.detail.*`, `setup.*`, `search.*` (incl `search.advanced.*`,
+  `search.save_collection.*`, `search.save_search.*`), `upload.*`
+  (modal/compose/dropzone/file_row/thumbnail + err_*), `comments.*`,
+  `post_host.*`, `whiteboard.*`, `post_menu.*`, `post_badges.*`,
+  `user_meta.*`, `viewer_playlist.*`, `federation.*`, `collections.*`,
+  `messages.*`, `nav.*`, `playlist.*`, `auth.*`. en.json grew from
+  1 608 → 1 843 leaf keys (+235 = 24 common + 211 scoped).
+- **Collapse ratio**: the ~166 raw MUST strings the audit enumerated
+  (plus extras the fix caught in the same files) resolved to 235 total
+  new keys of which 24 are shared `common.*` reused across many sites
+  — so the effective unique-label surface is well below the raw hit
+  count wherever a label repeats (Save/Cancel/Close/Loading/etc.).
+- **Files touched**: 23 source files (20 `.svelte` routes+components +
+  3 `.svelte.ts` state files). es.json / fr.json untouched.
+
+### Route findings (§4) — disposition
+
+| Surface | MUST findings | Disposition |
+|---|---|---|
+| `routes/+page.svelte` (home) | 7 | FIXED — `browse.*` + `common.failed_to_load` |
+| `routes/posts/[id]/+page.svelte` | 1 | FIXED — `post.detail.title` |
+| `routes/setup/+page.svelte` | ~30 | FIXED — full `setup.*` namespace (27 strings) |
+| `routes/search/+page.svelte` | ~30 | FIXED — `search.*` + modals + `common.*` |
+| `routes/search/advanced/+page.svelte` | ~15 | FIXED — `search.advanced.*` |
+| `routes/collections/+page.svelte` | 1 | FIXED — `collections.include_deleted` |
+| `routes/collections/[id]/+page.svelte` | 3 | FIXED — `collections.*` |
+
+### Component findings (§5) — disposition
+
+| Surface | MUST findings | Disposition |
+|---|---|---|
+| `CollectionModal.svelte` | 1 | FIXED — `common.close` |
+| `SearchBar.svelte` | 6 | FIXED — `search.*` + `common.search` + `nav.search_placeholder` |
+| `NavUploadButton.svelte` | 2 | FIXED — `nav.upload` + `nav.upload_button_title` |
+| `UserMenu.svelte` | 1 | FIXED — `nav.open_user_menu` |
+| `MessagesButton.svelte` | 1 | FIXED — `messages.you_prefix` |
+| `CommentsThread.svelte` | ~15 | FIXED — `comments.*` + `common.dur_*` |
+| `PostHost.svelte` | ~15 | FIXED (MUST lines) — `post_host.*` / `whiteboard.*` / `post_menu.*` / `post_badges.*` / `user_meta.*`. SHOULD/NICE strings in this file remain (deferred). |
+| `AssetPlaylist.svelte` | 6 | FIXED (MUST lines) — `viewer_playlist.*`. File still carries SHOULD viewer-hotkey strings → NOT added to the blocking guard list. |
+| `federation/RestrictedShareBanner.svelte` | 7 | FIXED — `federation.*` |
+| `upload/UploadModal.svelte` | ~10 | FIXED — `upload.modal.*` + `common.*` |
+| `upload/PostComposeForm.svelte` | ~18 | FIXED — `upload.compose.*` |
+| `upload/UploadDropZone.svelte` | 2 | FIXED — `upload.dropzone.*` |
+| `upload/UploadFileRow.svelte` | ~20 | FIXED — `upload.file_row.*` + `common.*` |
+| `upload/ThumbnailPicker.svelte` | ~13 | FIXED — `upload.thumbnail.*` |
+| state: `playlist/postSource.svelte.ts` | 3 | FIXED — `playlist.err_load_post` + `common.*` |
+| state: `stores/upload.svelte.ts` | 10 | FIXED — `upload.err_*` (10 sites → 9 keys) |
+| state: `stores/auth.svelte.ts` | 1 | FIXED — `auth.err_invalid_credentials` |
+
+### Test coverage (§6) — disposition
+
+FIXED. New spec `scripts/dogfood/ui/tests/standalone/ui-30-i18n-locale-switch.spec.ts`
+proves the locale-switch mechanism end-to-end: navbar search placeholder
+flips en ("Search assets…") → es ("Buscar recursos…") on switching to
+Español via `/account/preferences`, and persists across reload via the
+`aa_lang` cookie. Asserts on an existing-Spanish key
+(`nav.search_placeholder`) because most new V-2 keys are en-only — the
+spec proves the switch, not es/fr coverage.
+
+### Guard extension (§10) — disposition
+
+FIXED (subset executed this arc):
+
+- `TRACKED_FILES` 24 → 44 (all now-clean MUST files; `AssetPlaylist`
+  held back for its deferred viewer-hotkey SHOULD strings).
+- Attribute coverage: added `label=` + `aria-description=`.
+  (`aria-labelledby` intentionally excluded — it's an id ref.)
+- Strip `<!-- comments -->` + `<code>…</code>` + `<style>` before
+  scanning (removes two false positives: a `<section> not <main>`
+  rationale comment, a `textures/wood.png` example path).
+- Warn-only locale-parity check reporting es 3% / fr 2% coverage
+  without failing CI; the orphan-key half (locale keys absent from en)
+  stays blocking as a schema-drift guard.
+- `locales.ts` `completionPct` now computed from the bundled
+  catalogues (was a stale hardcoded `5`).
+
+Deferred guard items (to a follow-up): template-literal-with-`${}`
+attribute coverage, `.svelte.ts` state-file scanning, dev-mode
+missing-key observability instrumentation, wiring the guard into a
+distinct CI job.
+
+### Backend strings (§7) — NOT this arc
+
+The 214 unique English error strings returned raw as
+`openapi.*JSONResponse{Error: "..."}` are a backend refactor + frontend
+mapper — out of scope. Tracked as #246 (v1.0.0 prerequisite).
+
+### Deferred to follow-up
+
+SHOULD (~178) + NICE (~270) tier strings — viewer views + tool bodies +
+whiteboard tool panel + account sub-pages + admin operational pages.
+Filed as a follow-up issue at handoff. The extended guard is scoped so
+these do NOT fail CI (the deferred files are not on the blocking
+`TRACKED_FILES` list).

@@ -13,6 +13,7 @@
 //     so the chrome reflects the logged-out state immediately.
 
 import { api } from '$api/client';
+import { t } from '$stores/lang.svelte';
 
 export interface AuthUser {
   ref: number;
@@ -102,7 +103,7 @@ class AuthState {
     if (totpCode) body.totp_code = totpCode;
     const { data, error } = await api.POST('/auth/login', { body });
     if (error || !data) {
-      const code = extractError(error) ?? 'Invalid credentials';
+      const code = extractError(error) ?? t('auth.err_invalid_credentials');
       if (code === '2fa_required') throw new LoginNeedsTOTPError();
       if (code === 'invalid_2fa_code') throw new LoginNeedsTOTPError('invalid_2fa_code');
       throw new Error(code);

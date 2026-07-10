@@ -8,6 +8,7 @@
   import BrowseFooter from '$components/BrowseFooter.svelte';
   import PostListTable from '$components/PostListTable.svelte';
   import { browseView } from '$stores/browseView.svelte';
+  import { t } from '$stores/lang.svelte';
 
   onMount(() => { browseView.init(); });
 
@@ -93,7 +94,7 @@
 
       if (apiErr || !data) {
         throw new Error(
-          (apiErr as { error?: string } | undefined)?.error ?? 'Failed to load',
+          (apiErr as { error?: string } | undefined)?.error ?? t('common.failed_to_load'),
         );
       }
 
@@ -101,7 +102,7 @@
       items = reset ? pageItems : [...items, ...pageItems];
       nextCursor = (data.next_cursor as string | null) ?? null;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
       if (gen === generation) {
         loading = false;
@@ -201,13 +202,13 @@
 </script>
 
 <svelte:head>
-  <title>{query ? `${query} — artist-alley` : 'Browse — artist-alley'}</title>
+  <title>{query ? `${t('browse.title_search', { query })} — artist-alley` : `${t('browse.title')} — artist-alley`}</title>
 </svelte:head>
 
 <div class="w-full px-4 py-4 space-y-4 sm:px-6">
   {#if query}
     <p class="text-sm text-fg-muted">
-      Results for <span class="font-medium text-fg">"{query}"</span>
+      {t('browse.results_for', { query })}
     </p>
   {/if}
 
@@ -219,11 +220,11 @@
 
   {#if showEmpty}
     <div class="rounded-xl border border-dashed border-border p-12 text-center text-fg-muted">
-      <p class="font-medium text-fg">{query ? 'No matches' : 'No posts yet'}</p>
+      <p class="font-medium text-fg">{query ? t('browse.empty.no_matches') : t('browse.empty.no_posts_yet')}</p>
       <p class="mt-1 text-sm">
         {query
-          ? 'Try a different search term.'
-          : 'Once posts are uploaded they\'ll appear here, newest first.'}
+          ? t('browse.empty.try_different')
+          : t('browse.empty.uploaded_appear_here')}
       </p>
     </div>
   {:else}
@@ -275,7 +276,7 @@
     {/if}
 
     {#if !hasMore && items.length > 0}
-      <p class="text-center text-xs text-fg-muted py-4">— end of feed —</p>
+      <p class="text-center text-xs text-fg-muted py-4">{t('browse.end_of_feed')}</p>
     {/if}
   {/if}
 </div>

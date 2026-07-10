@@ -16,6 +16,7 @@
   import { onMount } from 'svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
+  import { t } from '$stores/lang.svelte';
 
   interface Comment {
     id: string;
@@ -76,13 +77,13 @@
       });
       if (apiErr || !data) {
         throw new Error(
-          (apiErr as { error?: string } | undefined)?.error ?? 'Failed to load comments',
+          (apiErr as { error?: string } | undefined)?.error ?? t('comments.err_load'),
         );
       }
       items = (data.items ?? []) as Comment[];
       void resolveAuthors(items);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load comments';
+      error = e instanceof Error ? e.message : t('comments.err_load');
     } finally {
       loading = false;
     }
@@ -152,7 +153,7 @@
       });
       if (apiErr || !data) {
         throw new Error(
-          (apiErr as { error?: string } | undefined)?.error ?? 'Failed to post',
+          (apiErr as { error?: string } | undefined)?.error ?? t('comments.err_post'),
         );
       }
       const created = data as Comment;
@@ -162,7 +163,7 @@
       items = [...items, created];
       return created;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to post';
+      error = e instanceof Error ? e.message : t('comments.err_post');
       return null;
     } finally {
       posting = false;
@@ -207,12 +208,12 @@
       });
       if (apiErr) {
         throw new Error(
-          (apiErr as { error?: string } | undefined)?.error ?? 'Failed to delete',
+          (apiErr as { error?: string } | undefined)?.error ?? t('comments.err_delete'),
         );
       }
       items = items.filter((c) => c.id !== id);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to delete';
+      error = e instanceof Error ? e.message : t('comments.err_delete');
     }
   }
 
@@ -222,14 +223,14 @@
     const d = new Date(iso).getTime();
     const now = Date.now();
     const sec = Math.round((now - d) / 1000);
-    if (sec < 60) return 'just now';
+    if (sec < 60) return t('common.just_now');
     const min = Math.round(sec / 60);
-    if (min < 60) return `${min}m`;
+    if (min < 60) return t('common.dur_minutes', { n: min });
     const hr = Math.round(min / 60);
-    if (hr < 24) return `${hr}h`;
+    if (hr < 24) return t('common.dur_hours', { n: hr });
     const day = Math.round(hr / 24);
-    if (day < 30) return `${day}d`;
-    return `${Math.round(day / 30)}mo`;
+    if (day < 30) return t('common.dur_days', { n: day });
+    return t('common.dur_months', { n: Math.round(day / 30) });
   }
 
   function initials(name: string): string {
@@ -239,7 +240,7 @@
 
   function displayName(ref: number): string {
     const u = authors.get(ref);
-    return u?.display_name ?? `user ${ref}`;
+    return u?.display_name ?? t('comments.user_ref_fallback', { ref });
   }
 </script>
 
@@ -251,7 +252,7 @@
   >
     <textarea
       bind:value={newBody}
-      placeholder="Add a comment…"
+      placeholder={t('comments.compose_placeholder')}
       rows="2"
       maxlength="10000"
       disabled={posting}
@@ -263,7 +264,7 @@
         disabled={posting || !newBody.trim()}
         class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {posting ? 'Posting…' : 'Comment'}
+        {posting ? t('common.posting') : t('comments.submit_label')}
       </button>
     </div>
   </form>
@@ -288,7 +289,7 @@
     </div>
   {:else if grouped.length === 0}
     <p class="py-4 text-center text-xs text-fg-muted">
-      No comments yet — be the first.
+      {t('comments.empty')}
     </p>
   {:else}
     {#each grouped as group (group.root.id)}
@@ -312,7 +313,7 @@
                 · {relativeTime(root.created_at)}
               </span>
               {#if root.edited_at}
-                <span class="text-fg-muted" title="Edited {new Date(root.edited_at).toLocaleString()}">(edited)</span>
+                <span class="text-fg-muted" title={t('comments.edited_at_title', { when: new Date(root.edited_at).toLocaleString() })}>{t('comments.edited_marker')}</span>
               {/if}
             </div>
             <p class="mt-0.5 whitespace-pre-wrap text-fg">{root.body}</p>
@@ -322,7 +323,7 @@
                 class="hover:text-fg"
                 onclick={() => openReply(group.root.id, root.id)}
               >
-                Reply
+                {t('comments.reply')}
               </button>
               {#if auth.user?.ref === root.author_user_ref}
                 <button
@@ -330,7 +331,7 @@
                   class="hover:text-danger"
                   onclick={() => deleteComment(root.id)}
                 >
-                  Delete
+                  {t('common.delete')}
                 </button>
               {/if}
             </div>
@@ -357,7 +358,7 @@
                   · {relativeTime(reply.created_at)}
                 </span>
                 {#if reply.edited_at}
-                  <span class="text-fg-muted">(edited)</span>
+                  <span class="text-fg-muted">{t('comments.edited_marker')}</span>
                 {/if}
               </div>
               <p class="mt-0.5 whitespace-pre-wrap text-fg">{reply.body}</p>
@@ -367,7 +368,7 @@
                   class="hover:text-fg"
                   onclick={() => openReply(group.root.id, reply.id)}
                 >
-                  Reply
+                  {t('comments.reply')}
                 </button>
                 {#if auth.user?.ref === reply.author_user_ref}
                   <button
@@ -375,7 +376,7 @@
                     class="hover:text-danger"
                     onclick={() => deleteComment(reply.id)}
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 {/if}
               </div>
@@ -394,7 +395,7 @@
                 replyDrafts.set(group.root.id, v);
                 replyDrafts = new Map(replyDrafts);
               }}
-              placeholder="Reply…"
+              placeholder={t('comments.reply_placeholder')}
               rows="2"
               maxlength="10000"
               disabled={posting}
@@ -407,14 +408,14 @@
                 disabled={posting}
                 class="rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted hover:border-fg-muted/60 hover:text-fg disabled:opacity-50"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 disabled={posting || !(replyDrafts.get(group.root.id)?.trim())}
                 class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {posting ? 'Posting…' : 'Reply'}
+                {posting ? t('common.posting') : t('comments.reply')}
               </button>
             </div>
           </form>

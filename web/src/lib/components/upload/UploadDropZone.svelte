@@ -5,6 +5,7 @@
   // drives dragDepth.
 
   import { upload } from '$stores/upload.svelte';
+  import { t } from '$stores/lang.svelte';
 
   const visible = $derived(upload.dragDepth > 0);
 </script>
@@ -25,8 +26,8 @@
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
       </div>
-      <p class="text-lg font-medium">Drop to upload</p>
-      <p class="mt-1 text-sm text-white/70">Anywhere on the page works.</p>
+      <p class="text-lg font-medium">{t('upload.dropzone.title')}</p>
+      <p class="mt-1 text-sm text-white/70">{t('upload.dropzone.subtitle')}</p>
     </div>
   </div>
 {/if}

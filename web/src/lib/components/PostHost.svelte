@@ -603,17 +603,17 @@
     class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
     onclick={(e) => { if (e.target === e.currentTarget) previewedWhiteboard = null; }}
     role="dialog"
-    aria-label="Whiteboard preview"
+    aria-label={t('whiteboard.preview_dialog_label')}
   >
     <div class="relative max-h-[90vh] max-w-[90vw] rounded-lg border border-border bg-surface shadow-2xl">
       <header class="flex items-center justify-between border-b border-border px-3 py-2 text-xs">
-        <span class="truncate text-fg">{previewedWhiteboard.body || 'Untitled sketch'}</span>
+        <span class="truncate text-fg">{previewedWhiteboard.body || t('whiteboard.untitled_sketch')}</span>
         <button
           type="button"
           onclick={() => (previewedWhiteboard = null)}
           class="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-danger hover:text-white"
-          title="Close (Esc)"
-          aria-label="Close preview"
+          title={t('whiteboard.close_esc_title')}
+          aria-label={t('whiteboard.close_preview')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -653,7 +653,7 @@
            and the user knows the right pane is the canvas tool, not
            an asset viewer. -->
       <span class="mx-1.5 text-white/30">/</span>
-      <span class="truncate text-xs text-white/70">Whiteboard</span>
+      <span class="truncate text-xs text-white/70">{t('whiteboard.title_slot_label')}</span>
     {:else if showAssetSubtitle}
       <!-- Current asset's title — changes as the cursor moves between
            assets within the post (↑ / ↓). Slash separator instead of
@@ -710,7 +710,7 @@
           {author?.display_name ?? `user ${post.author_user_ref}`}
         </a>
         <p class="truncate text-xs text-fg-muted">
-          {#if author}@{author.username} · {author.post_count} post{author.post_count === 1 ? '' : 's'}{/if}
+          {#if author}@{author.username} · {t('user_meta.post_count', { n: author.post_count })}{/if}
         </p>
         {#if post.author_user_ref}
           <!-- FollowButton self-hides when the viewer IS the author,
@@ -726,8 +726,8 @@
           <span
             class="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-muted hover:bg-surface-elevated hover:text-fg"
             class:bg-surface-elevated={open}
-            aria-label="Post actions"
-            title="Post actions"
+            aria-label={t('post_menu.actions_button')}
+            title={t('post_menu.actions_button')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="5" r="1.5" />
@@ -774,7 +774,7 @@
         </span>
         {#if post.team_id}
           <span class="inline-flex items-center rounded-full bg-accent/20 px-2 py-0.5 text-xs text-accent">
-            team
+            {t('post_badges.team')}
           </span>
         {/if}
       </div>
@@ -790,7 +790,7 @@
              specific asset they're focused on (versus the post as a
              whole, which the header + chips above represent). -->
         <section class="mb-4 border-t border-border pt-3">
-          <h3 class="mb-1 text-xs font-medium uppercase tracking-wide text-fg-muted">Asset Details</h3>
+          <h3 class="mb-1 text-xs font-medium uppercase tracking-wide text-fg-muted">{t('post_host.asset_details_heading')}</h3>
           <p class="text-sm text-fg" title={currentAssetTitle}>
             {#if pl.source.items.length > 1}
               <span class="font-mono text-xs text-fg-muted/70">{pl.source.cursor + 1}/{pl.source.items.length}</span>
@@ -813,7 +813,7 @@
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              Whiteboards
+              {t('post_host.whiteboards_heading')}
               <span class="text-fg-muted/60">({whiteboards.length})</span>
             </span>
           </summary>
@@ -824,7 +824,7 @@
                   type="button"
                   onclick={() => (previewedWhiteboard = previewedWhiteboard?.id === wb.id ? null : wb)}
                   class="flex flex-1 items-center gap-2 text-left"
-                  title="Preview whiteboard"
+                  title={t('whiteboard.preview_button_title')}
                 >
                   <div class="flex h-10 w-14 shrink-0 items-center justify-center rounded border border-border bg-surface text-fg-muted">
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -835,7 +835,7 @@
                   </div>
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-xs font-medium text-fg">
-                      {wb.body || 'Untitled sketch'}
+                      {wb.body || t('whiteboard.untitled_sketch')}
                     </div>
                     <div class="text-[10px] text-fg-muted">
                       {relativeTime(wb.created_at)}
@@ -847,8 +847,8 @@
                     type="button"
                     onclick={() => deleteWhiteboard(wb.id)}
                     class="opacity-0 group-hover:opacity-100 hover:text-danger"
-                    title="Delete whiteboard"
-                    aria-label="Delete whiteboard"
+                    title={t('whiteboard.delete_button')}
+                    aria-label={t('whiteboard.delete_button')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <polyline points="3 6 5 6 21 6" />
@@ -860,7 +860,7 @@
             {/each}
             {#if whiteboards.length === 0 && !whiteboardLoading}
               <li class="px-1 py-1 text-[11px] italic text-fg-muted">
-                No whiteboards yet — click Tools → Whiteboard to sketch.
+                {t('post_host.whiteboards_empty')}
               </li>
             {/if}
           </ul>
@@ -880,7 +880,7 @@
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="aa-chevron transition-transform">
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              Metadata
+              {t('post_host.metadata_heading')}
               <span class="text-fg-muted/60">({currentFields.filter((f) => formatFieldValue(f) !== '').length})</span>
             </span>
           </summary>
@@ -925,7 +925,7 @@
           class:border-danger={liked}
           class:bg-danger-container={liked}
           aria-pressed={liked}
-          title={liked ? 'Unlike' : 'Like'}
+          title={liked ? t('post_host.unlike_button') : t('post_host.like_button')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />

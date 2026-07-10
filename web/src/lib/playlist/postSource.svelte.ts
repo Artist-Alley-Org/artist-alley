@@ -13,6 +13,7 @@
 // persistence, filmstrip render) lives in AssetPlaylist.svelte.
 
 import { api } from '$api/client';
+import { t } from '$stores/lang.svelte';
 import type { PlaylistSource, PlaylistItem } from './types';
 
 // Subset of the API's Post shape we actually use here. Keeping it
@@ -112,7 +113,7 @@ export function createPostPlaylistSource(postId: string) {
       if (gen !== generation) return; // stale — newer fetch in flight
       if (apiErr || !data) {
         throw new Error(
-          (apiErr as { error?: string } | undefined)?.error ?? 'Failed to load post',
+          (apiErr as { error?: string } | undefined)?.error ?? t('playlist.err_load_post'),
         );
       }
       const post = data as PostForPlaylist;
@@ -120,7 +121,7 @@ export function createPostPlaylistSource(postId: string) {
       // a half-loaded post.
       aux.post = post;
       state.id = post.id;
-      state.title = post.title || 'Untitled';
+      state.title = post.title || t('common.untitled');
       state.items = (post.members ?? []).map(
         (m): PlaylistItem => ({
           id: m.asset_id,
@@ -143,7 +144,7 @@ export function createPostPlaylistSource(postId: string) {
       }
     } catch (e) {
       if (gen !== generation) return;
-      state.error = e instanceof Error ? e.message : 'Failed to load';
+      state.error = e instanceof Error ? e.message : t('common.failed_to_load');
     } finally {
       if (gen === generation) state.loading = false;
     }

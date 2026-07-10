@@ -7,6 +7,7 @@
   // second feature surface needs the exact same shape.
 
   import { onDestroy, onMount } from 'svelte';
+  import { t } from '$stores/lang.svelte';
 
   interface Props {
     title: string;
@@ -72,7 +73,7 @@
           type="button"
           onclick={onclose}
           class="rounded p-1 text-fg-muted hover:bg-surface hover:text-fg"
-          aria-label="Close"
+          aria-label={t('common.close')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />

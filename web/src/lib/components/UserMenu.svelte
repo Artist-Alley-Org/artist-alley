@@ -40,7 +40,7 @@
     {#snippet trigger({ open })}
       <span
         class="inline-flex items-center gap-2 rounded-full p-1 pr-3 hover:bg-surface-elevated"
-        title="User menu"
+        title={t('nav.open_user_menu')}
       >
         <Avatar name={u.fullname || u.username} sizeClass="h-8 w-8" />
         <span class="hidden text-sm text-fg md:inline">
