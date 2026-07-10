@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"strconv"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mscrnt/artist-alley/app/internal/cache"
@@ -38,10 +39,14 @@ type blockChecker interface {
 }
 
 // prefsResolver is the slice of the userprefs handler we need.
-// Returns the channel list ("in_app", "email", ...) the recipient
-// wants the given verb delivered through. Empty list means "mute."
+// ChannelsFor returns the channel list ("in_app", "email", ...) the
+// recipient wants the verb delivered through (empty = mute).
+// CadenceFor returns the email cadence for the verb ("immediate" |
+// "hourly" | "daily" | "weekly"); Phase 1.55.Y. Both ride the same
+// cached prefs load.
 type prefsResolver interface {
 	ChannelsFor(ctx context.Context, ref int64, verb string) ([]string, error)
+	CadenceFor(ctx context.Context, ref int64, verb string) (string, error)
 }
 
 // jobsEnqueuer is the email-channel hook — when the recipient's
@@ -101,7 +106,7 @@ func NewWriter(pool *pgxpool.Pool, logger *slog.Logger, blocks blockChecker, pre
 // so the boot wiring in http/server.go can hand-off the social +
 // userprefs handlers AFTER all three are constructed — same
 // pattern posts.Handler uses for follows.
-func (w *Writer) SetBlockChecker(b blockChecker)  { w.blocks = b }
+func (w *Writer) SetBlockChecker(b blockChecker)   { w.blocks = b }
 func (w *Writer) SetPrefsResolver(p prefsResolver) { w.prefs = p }
 
 // Notify is the single write entry point. Returns nil on either a
@@ -155,18 +160,24 @@ func (w *Writer) Notify(ctx context.Context, n Input) error {
 		payloadJSON = b
 	}
 
+	// The written notification's id — needed to anchor a digest_queue
+	// row (Phase 1.55.Y). Invalid (zero) when the in-app row wasn't
+	// written (in-app muted for this verb).
+	var notifID pgtype.UUID
 	if wantInApp {
 		q := New(w.pool)
-		if _, err := q.InsertNotification(ctx, InsertNotificationParams{
+		row, err := q.InsertNotification(ctx, InsertNotificationParams{
 			RecipientUserRef: n.RecipientUserRef,
 			ActorUserRef:     n.ActorUserRef,
 			Verb:             n.Verb,
 			TargetKind:       stringPtrOrNil(n.TargetKind),
 			TargetID:         stringPtrOrNil(n.TargetID),
 			Payload:          payloadJSON,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
+		notifID = row.ID
 		// Invalidate the recipient's unread count — federated peers
 		// drop their copy via the NOTIFY broadcast in the same beat.
 		w.invalidateUnread(ctx, n.RecipientUserRef)
@@ -178,10 +189,33 @@ func (w *Writer) Notify(ctx context.Context, n Input) error {
 		}
 	}
 
-	// Email channel: queue a job. Phase I2-b adds the job handler;
-	// for now the enqueue is a no-op fallback when jobs is nil so
-	// the rest of the pipeline can ship.
+	// Email channel (Phase 1.55.Y cadence fork). "email" being in the
+	// channel list is the on/off gate; cadence refines *when* it fires:
+	//   - immediate (default)  → enqueue notification.email now
+	//   - hourly/daily/weekly  → insert a digest_queue row for the
+	//                            coordinator to batch
+	//   - (off = "email" simply not in the channel list; handled above)
+	// A digest needs a notification row to reference; when in-app was
+	// muted (no row) we fall back to immediate so the email isn't lost.
 	if wantEmail && w.jobs != nil {
+		cadence := w.resolveCadence(ctx, n.RecipientUserRef, n.Verb)
+		if cadence != "immediate" && notifID.Valid {
+			if err := New(w.pool).InsertDigestQueue(ctx, InsertDigestQueueParams{
+				UserRef:        n.RecipientUserRef,
+				Topic:          n.Verb,
+				Cadence:        cadence,
+				NotificationID: notifID,
+			}); err != nil && w.logger != nil {
+				w.logger.Warn("digest queue insert failed",
+					slog.Int64("recipient", n.RecipientUserRef),
+					slog.String("verb", n.Verb),
+					slog.String("cadence", cadence),
+					slog.String("err", err.Error()),
+				)
+			}
+			return nil
+		}
+
 		jobPayload, err := json.Marshal(emailJobPayload{
 			RecipientUserRef: n.RecipientUserRef,
 			Verb:             n.Verb,
@@ -203,6 +237,20 @@ func (w *Writer) Notify(ctx context.Context, n Input) error {
 		}
 	}
 	return nil
+}
+
+// resolveCadence returns the recipient's email cadence for the verb,
+// defaulting to immediate when no resolver is wired (tests) or on a
+// lookup error (fail-open to send-now rather than silently dropping).
+func (w *Writer) resolveCadence(ctx context.Context, ref int64, verb string) string {
+	if w.prefs == nil {
+		return "immediate"
+	}
+	c, err := w.prefs.CadenceFor(ctx, ref, verb)
+	if err != nil || c == "" {
+		return "immediate"
+	}
+	return c
 }
 
 // resolveChannels asks the prefs resolver for the channel list,
@@ -239,20 +287,20 @@ type Input struct {
 	RecipientUserRef int64
 	ActorUserRef     *int64
 	Verb             string
-	TargetKind       string                 // empty → NULL
-	TargetID         string                 // empty → NULL
-	Payload          map[string]any         // nil → {}
+	TargetKind       string         // empty → NULL
+	TargetID         string         // empty → NULL
+	Payload          map[string]any // nil → {}
 }
 
 // emailJobPayload is what the Phase I2-b email worker picks off
 // the queue. Frozen now so the job-handler PR doesn't churn this
 // shape.
 type emailJobPayload struct {
-	RecipientUserRef int64                  `json:"recipient_user_ref"`
-	Verb             string                 `json:"verb"`
-	TargetKind       string                 `json:"target_kind,omitempty"`
-	TargetID         string                 `json:"target_id,omitempty"`
-	Payload          map[string]any         `json:"payload,omitempty"`
+	RecipientUserRef int64          `json:"recipient_user_ref"`
+	Verb             string         `json:"verb"`
+	TargetKind       string         `json:"target_kind,omitempty"`
+	TargetID         string         `json:"target_id,omitempty"`
+	Payload          map[string]any `json:"payload,omitempty"`
 }
 
 func stringPtrOrNil(s string) *string {
