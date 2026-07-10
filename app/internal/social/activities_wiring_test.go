@@ -49,6 +49,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/notifications"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/social"
+	"github.com/mscrnt/artist-alley/app/internal/social/mention"
 	"github.com/mscrnt/artist-alley/app/internal/userprefs"
 	"github.com/mscrnt/artist-alley/app/internal/users"
 )
@@ -89,6 +90,11 @@ func setupActivitiesFixture(t *testing.T) *activitiesFixture {
 	notifWriter.SetBlockChecker(blockAdapter{h: socialH})
 	notifWriter.SetPrefsResolver(prefsAdapter{h: prefsH})
 	socialH.SetNotifier(notifyAdapter{w: notifWriter})
+	socialH.SetMentions(mention.NewService(
+		mention.NewResolver(pool, registry),
+		notifyAdapter{w: notifWriter},
+		logger,
+	))
 
 	activitiesW := activities.NewWriter(pool, logger, registry)
 	activitiesW.SetNotifier(notifyAdapter{w: notifWriter})
