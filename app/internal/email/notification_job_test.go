@@ -107,7 +107,7 @@ func TestNotificationJob_SendsViaCapture(t *testing.T) {
 	ref := seedUser(t, pool, "recipient@example.com")
 
 	cap := &email.Capture{}
-	h := email.NewNotificationJobHandler(pool, cap, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, cap, staticSite(), "", nil)
 
 	payload, _ := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: ref,
@@ -148,7 +148,7 @@ func TestNotificationJob_SkipsRecipientWithNoEmail(t *testing.T) {
 	ref := seedUser(t, pool, "") // no email on file
 
 	cap := &email.Capture{}
-	h := email.NewNotificationJobHandler(pool, cap, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, cap, staticSite(), "", nil)
 
 	payload, _ := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: ref, Verb: "new_follower",
@@ -168,7 +168,7 @@ func TestNotificationJob_SkipsRecipientWithNoEmail(t *testing.T) {
 func TestNotificationJob_UnknownRecipientIsTerminal(t *testing.T) {
 	pool := openTestPool(t)
 	cap := &email.Capture{}
-	h := email.NewNotificationJobHandler(pool, cap, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, cap, staticSite(), "", nil)
 
 	payload, _ := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: 99999999, Verb: "comment_on_my_post",
@@ -184,7 +184,7 @@ func TestNotificationJob_UnknownRecipientIsTerminal(t *testing.T) {
 
 func TestNotificationJob_BadPayloadIsTerminal(t *testing.T) {
 	pool := openTestPool(t)
-	h := email.NewNotificationJobHandler(pool, &email.Capture{}, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, &email.Capture{}, staticSite(), "", nil)
 	_, err := h.Handle(context.Background(), &jobs.Claim{Payload: []byte("not json")})
 	if err == nil || !jobs.IsTerminal(err) {
 		t.Errorf("bad payload should be terminal, got %v", err)
@@ -193,7 +193,7 @@ func TestNotificationJob_BadPayloadIsTerminal(t *testing.T) {
 
 func TestNotificationJob_NilSenderIsTerminal(t *testing.T) {
 	pool := openTestPool(t)
-	h := email.NewNotificationJobHandler(pool, nil, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, nil, staticSite(), "", nil)
 	payload, _ := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: 1, Verb: "x",
 	})
@@ -208,7 +208,7 @@ func TestNotificationJob_TransientSenderErrorIsRetryable(t *testing.T) {
 	ref := seedUser(t, pool, "r@example.com")
 
 	flaky := &flakySender{err: errors.New("connection refused")}
-	h := email.NewNotificationJobHandler(pool, flaky, staticSite(), nil)
+	h := email.NewNotificationJobHandler(pool, flaky, staticSite(), "", nil)
 	payload, _ := json.Marshal(email.NotificationJobPayload{
 		RecipientUserRef: ref, Verb: "x",
 	})

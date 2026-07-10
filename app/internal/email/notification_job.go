@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,10 +49,11 @@ type SiteContext struct {
 // NotificationJobHandler implements [jobs.Handler] for
 // notification.email. Stateless; one per process.
 type NotificationJobHandler struct {
-	pool   *pgxpool.Pool
-	sender Sender
-	site   SiteContextProvider
-	logger *slog.Logger
+	pool        *pgxpool.Pool
+	sender      Sender
+	site        SiteContextProvider
+	scrambleKey string
+	logger      *slog.Logger
 }
 
 // NewNotificationJobHandler wires the handler. Any nil dep
@@ -61,12 +63,13 @@ type NotificationJobHandler struct {
 //   - nil site → empty site context (templates render with empty
 //     placeholders rather than failing — operators see misconfigured
 //     emails go out and fix them)
-func NewNotificationJobHandler(pool *pgxpool.Pool, sender Sender, site SiteContextProvider, logger *slog.Logger) *NotificationJobHandler {
+func NewNotificationJobHandler(pool *pgxpool.Pool, sender Sender, site SiteContextProvider, scrambleKey string, logger *slog.Logger) *NotificationJobHandler {
 	return &NotificationJobHandler{
-		pool:   pool,
-		sender: sender,
-		site:   site,
-		logger: logger,
+		pool:        pool,
+		sender:      sender,
+		site:        site,
+		scrambleKey: scrambleKey,
+		logger:      logger,
 	}
 }
 
@@ -131,6 +134,14 @@ func (h *NotificationJobHandler) Handle(ctx context.Context, job *jobs.Claim) (j
 	msg, err := Render(templateForVerb(p.Verb), []string{recipient.Email}, data)
 	if err != nil {
 		return nil, &jobs.TerminalError{Err: fmt.Errorf("notification.email: render: %w", err)}
+	}
+	// RFC 8058 one-click unsubscribe (Phase 1.55.Y). Token targets this
+	// verb's topic; site URL comes from the already-resolved context.
+	if h.scrambleKey != "" {
+		if siteURL, _ := data["site_url"].(string); siteURL != "" {
+			token := SignUnsubscribe(h.scrambleKey, p.RecipientUserRef, p.Verb, time.Now())
+			msg.Headers = UnsubscribeHeaders(siteURL, token)
+		}
 	}
 
 	if err := h.sender.Send(ctx, msg); err != nil {

@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<body style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1a1a1a; line-height: 1.5;">
+  <p>Hi {{.recipient_name}},</p>
+  <p>Here's your {{.cadence_label}} activity digest — <strong>{{.count}}</strong> update{{if ne .count 1}}s{{end}}:</p>
+  <ul style="padding-left: 1.2em;">
+    {{range .items}}
+    <li style="margin-bottom: 0.6em;">
+      <a href="{{.url}}" style="color: #2563eb; text-decoration: none; font-weight: 600;">{{.headline}}</a>
+      {{if .when}}<span style="color: #6b7280; font-size: 0.9em;"> ({{.when}})</span>{{end}}
+      {{if .summary}}<div style="color: #4b5563; font-size: 0.95em;">{{.summary}}</div>{{end}}
+    </li>
+    {{end}}
+  </ul>
+  <p><a href="{{.site_url}}" style="color: #2563eb;">See everything on {{.site_name}}</a></p>
+  <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 1.5em 0;" />
+  <p style="color: #6b7280; font-size: 0.85em;">
+    You're receiving this because you set one or more topics to a {{.cadence_label}} email digest.
+    Change cadence or turn digests off in your
+    <a href="{{.site_url}}/account/preferences" style="color: #6b7280;">notification preferences</a>.
+    To stop these emails in one click, use your mail client's unsubscribe link or
+    <a href="{{.unsubscribe_url}}" style="color: #6b7280;">unsubscribe here</a>.
+  </p>
+</body>
+</html>

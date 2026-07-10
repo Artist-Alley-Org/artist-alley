@@ -1,0 +1,18 @@
+Hi {{.recipient_name}},
+
+Here's your {{.cadence_label}} activity digest — {{.count}} update{{if ne .count 1}}s{{end}}:
+{{range .items}}
+  - {{.headline}}{{if .when}} ({{.when}}){{end}}
+    {{.url}}{{if .summary}}
+    {{.summary}}{{end}}
+{{end}}
+See everything on {{.site_name}}: {{.site_url}}
+
+--
+{{.site_name}}
+
+You're receiving this because you set one or more topics to a
+{{.cadence_label}} email digest. Change cadence or turn digests off at
+{{.site_url}}/account/preferences.
+To stop these digest emails in one click, use the unsubscribe link in
+your mail client (List-Unsubscribe) or visit {{.unsubscribe_url}}.

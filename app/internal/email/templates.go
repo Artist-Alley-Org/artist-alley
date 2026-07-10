@@ -55,6 +55,13 @@ const (
 	// site_url, recipient_name, search_name, removed_count,
 	// results_url.
 	TemplateSavedSearchRemovedDigest = "notification_saved_search_removed_digest"
+
+	// TemplateNotificationDigest is the batched general-activity digest
+	// (Phase 1.55.Y) sent by the digest coordinator when a user has one
+	// or more topics on a non-immediate cadence. Variables: site_name,
+	// site_url, recipient_name, cadence_label, count, unsubscribe_url,
+	// items ([]{headline, url, when, summary}).
+	TemplateNotificationDigest = "notification_digest"
 )
 
 // Render produces a [Message] from a registered template + the
@@ -108,6 +115,7 @@ func init() {
 		TemplateRegisterVerify,
 		TemplateSavedSearchDigest,
 		TemplateSavedSearchRemovedDigest,
+		TemplateNotificationDigest,
 	} {
 		must(loadInto(registry, name))
 	}
