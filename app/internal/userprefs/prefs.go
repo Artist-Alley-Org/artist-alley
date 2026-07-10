@@ -27,6 +27,42 @@ import (
 type Preferences struct {
 	NotificationChannels NotificationChannels `json:"notification_channels"`
 	DefaultViews         DefaultViews         `json:"default_views"`
+	// EmailCadence maps each EventType to the email delivery cadence
+	// (Phase 1.55.Y). Absent key = CadenceImmediate (send-now — the
+	// pre-1.55.Y behaviour, so existing users are never surprised).
+	// "off" is NOT a cadence value: muting email means dropping "email"
+	// from NotificationChannels for that topic; cadence only refines
+	// *when* email fires when it IS enabled.
+	EmailCadence EmailCadences `json:"email_cadence"`
+}
+
+// EmailCadences maps an EventType → cadence ("immediate" | "hourly" |
+// "daily" | "weekly"). Absent = immediate.
+type EmailCadences map[string]string
+
+// Email-cadence values. immediate = enqueue the email now (default);
+// hourly/daily/weekly = queue into digest_queue for the coordinator to
+// batch. There is deliberately no "off" — off is the absence of the
+// "email" channel in NotificationChannels for that topic.
+const (
+	CadenceImmediate = "immediate"
+	CadenceHourly    = "hourly"
+	CadenceDaily     = "daily"
+	CadenceWeekly    = "weekly"
+)
+
+// KnownCadences is the validation set. Used by ValidatePreferences to
+// reject unknown values.
+var KnownCadences = []string{CadenceImmediate, CadenceHourly, CadenceDaily, CadenceWeekly}
+
+// CadenceFor returns the email cadence for a verb, defaulting to
+// immediate when unset — preserving send-now for every topic a user
+// hasn't explicitly moved onto a digest.
+func (p Preferences) CadenceFor(verb string) string {
+	if c, ok := p.EmailCadence[verb]; ok && c != "" {
+		return c
+	}
+	return CadenceImmediate
 }
 
 // NotificationChannels maps each EventType to the list of channels
@@ -49,9 +85,9 @@ type NotificationChannels map[string][]string
 // list will grow (e.g. new browse layouts in 1.18) and the DB
 // shouldn't have to migrate every time the UI ships a new option.
 type DefaultViews struct {
-	HomeTab       string `json:"home_tab,omitempty"`       // "" | "following" | "latest" | "trending" | "for_you"
-	BrowseLayout  string `json:"browse_layout,omitempty"`  // "" | "grid" | "masonry" | "thumbnail" | "list"
-	BrowseSort    string `json:"browse_sort,omitempty"`    // "" | "newest" | "oldest" | "popular" | "trending"
+	HomeTab      string `json:"home_tab,omitempty"`      // "" | "following" | "latest" | "trending" | "for_you"
+	BrowseLayout string `json:"browse_layout,omitempty"` // "" | "grid" | "masonry" | "thumbnail" | "list"
+	BrowseSort   string `json:"browse_sort,omitempty"`   // "" | "newest" | "oldest" | "popular" | "trending"
 }
 
 // EventType enumerates the notification trigger events the UI lets
@@ -192,6 +228,18 @@ func ValidatePreferences(p Preferences) error {
 			seen[ch] = true
 		}
 	}
+	knownCad := make(map[string]bool, len(KnownCadences))
+	for _, c := range KnownCadences {
+		knownCad[c] = true
+	}
+	for event, cad := range p.EmailCadence {
+		if !known[event] {
+			return fmt.Errorf("unknown event type %q in email_cadence", event)
+		}
+		if !knownCad[cad] {
+			return fmt.Errorf("unknown email cadence %q for event %q", cad, event)
+		}
+	}
 	return nil
 }
 
@@ -211,11 +259,19 @@ func MarshalDefaultViews(v DefaultViews) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// UnmarshalPreferencesRow parses a DB row's two JSONB columns back
-// into the typed struct. Either column being malformed (which would
-// only happen if the DB was tampered with directly) surfaces as a
-// loud error rather than a silently-zeroed value.
-func UnmarshalPreferencesRow(channelsJSON, viewsJSON []byte) (Preferences, error) {
+// MarshalEmailCadence produces the email_cadence JSONB payload.
+func MarshalEmailCadence(c EmailCadences) ([]byte, error) {
+	if c == nil {
+		c = EmailCadences{}
+	}
+	return json.Marshal(c)
+}
+
+// UnmarshalPreferencesRow parses a DB row's three JSONB columns back
+// into the typed struct. A malformed column (only possible via direct
+// DB tampering) surfaces as a loud error rather than a silently-zeroed
+// value.
+func UnmarshalPreferencesRow(channelsJSON, viewsJSON, cadenceJSON []byte) (Preferences, error) {
 	var p Preferences
 	if len(channelsJSON) > 0 {
 		if err := json.Unmarshal(channelsJSON, &p.NotificationChannels); err != nil {
@@ -229,6 +285,14 @@ func UnmarshalPreferencesRow(channelsJSON, viewsJSON []byte) (Preferences, error
 		if err := json.Unmarshal(viewsJSON, &p.DefaultViews); err != nil {
 			return Preferences{}, fmt.Errorf("default_views: %w", err)
 		}
+	}
+	if len(cadenceJSON) > 0 {
+		if err := json.Unmarshal(cadenceJSON, &p.EmailCadence); err != nil {
+			return Preferences{}, fmt.Errorf("email_cadence: %w", err)
+		}
+	}
+	if p.EmailCadence == nil {
+		p.EmailCadence = EmailCadences{}
 	}
 	return p, nil
 }

@@ -133,7 +133,7 @@ func TestChannelsFor_NilReceiverSafe(t *testing.T) {
 // must produce a zero-value struct (not an error) because that's
 // what the first-visit-no-row case looks like upstream.
 func TestUnmarshalPreferencesRow_EmptyBytesProduceZero(t *testing.T) {
-	p, err := UnmarshalPreferencesRow(nil, nil)
+	p, err := UnmarshalPreferencesRow(nil, nil, nil)
 	if err != nil {
 		t.Fatalf("empty bytes should not error, got %v", err)
 	}
@@ -154,7 +154,7 @@ func TestUnmarshalPreferencesRow_RoundTrip(t *testing.T) {
 	}
 	channelsJSON, _ := MarshalNotificationChannels(want.NotificationChannels)
 	viewsJSON, _ := MarshalDefaultViews(want.DefaultViews)
-	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON)
+	got, err := UnmarshalPreferencesRow(channelsJSON, viewsJSON, nil)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -186,5 +186,26 @@ func TestMarshalDefaultViews_OmitsEmpty(t *testing.T) {
 	}
 	if len(got) != 1 || got["home_tab"] != "following" {
 		t.Errorf("expected only home_tab, got %v", got)
+	}
+}
+
+func TestCadenceFor_DefaultsImmediate(t *testing.T) {
+	p := Preferences{EmailCadence: EmailCadences{EventMentionOfMe: CadenceDaily}}
+	if got := p.CadenceFor(EventMentionOfMe); got != CadenceDaily {
+		t.Fatalf("explicit cadence: got %q want daily", got)
+	}
+	if got := p.CadenceFor(EventCommentOnMyPost); got != CadenceImmediate {
+		t.Fatalf("unset cadence must default immediate, got %q", got)
+	}
+}
+
+func TestValidatePreferences_RejectsBadCadence(t *testing.T) {
+	p := Preferences{EmailCadence: EmailCadences{EventMentionOfMe: "fortnightly"}}
+	if err := ValidatePreferences(p); err == nil {
+		t.Fatal("expected unknown cadence to be rejected")
+	}
+	p2 := Preferences{EmailCadence: EmailCadences{"not_a_real_event": CadenceDaily}}
+	if err := ValidatePreferences(p2); err == nil {
+		t.Fatal("expected unknown event type in email_cadence to be rejected")
 	}
 }
