@@ -62,10 +62,14 @@ test.describe('UI-30 i18n locale switch', () => {
       ES_SEARCH_PLACEHOLDER,
     );
 
-    // Reset to system default so the shared admin session doesn't
-    // leak a Spanish preference into sibling specs.
+    // Reset to English so the shared admin session (lang.set PATCHes
+    // the profile) doesn't leak a Spanish preference into sibling
+    // specs. Click the "English" language button specifically — its
+    // endonym never translates, and unlike "System"/"Sistema" it is
+    // unique to the language picker (the theme picker has no such
+    // button), so the selector can't collide with the theme row.
     await page.goto('/account/preferences');
-    await page.getByRole('button', { name: /System|Sistema/ }).first().click();
+    await page.getByRole('button', { name: 'English' }).click();
     await expect(page.locator(tid('nav-search'))).toHaveAttribute(
       'placeholder',
       EN_SEARCH_PLACEHOLDER,
