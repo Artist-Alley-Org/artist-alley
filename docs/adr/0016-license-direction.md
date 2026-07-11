@@ -20,6 +20,14 @@ tags:
 excerpt: >-
   ADR 0002 placed the project under BSD-3-Clause on the explicit premise that "we have no monetization intent for artist-alley itself." That premise no longer holds.
 ---
+
+> **Executed 2026-07-11 (Phase 1.55.AA):** the relicense is live. The
+> root `LICENSE` is now the full AGPL-3.0 text (SPDX `AGPL-3.0-only`),
+> the dual model is documented in [`LICENSING.md`](../../LICENSING.md),
+> and every non-generated source file carries an SPDX header. Shipped
+> before the v0.1.0 first-public-release so the first public commit is
+> AGPL from the start.
+
 ## Context
 
 ADR 0002 placed the project under BSD-3-Clause on the explicit premise that

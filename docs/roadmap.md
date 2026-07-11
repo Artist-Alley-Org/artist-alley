@@ -300,6 +300,35 @@ current focus:
   and handler-level end-to-end (comment mention lands a notification row
   with target=post + actor threaded; plain comment fires nothing;
   self-mention doesn't notify self). Closes #253.
+  **1.55.AA shipped 2026-07-11** — execute the AGPL + commercial
+  relicense (closes #229). Flips the OSS repo from BSD-3 to
+  **AGPL-3.0-only** (dual-licensed with a separate commercial license)
+  per ADR 0016/0017 — before the v0.1.0 first-public-release, so the
+  first public commit ships under the intended long-term license. Root
+  `LICENSE` replaced with the verbatim canonical AGPL-3.0 text (diff vs
+  gnu.org = only the two "How to Apply" template lines: program name +
+  `Copyright (C) 2026 Kenneth Blossom`). New `LICENSING.md` documents the
+  dual model — AGPL-3.0-only for open-source use (§13 network copyleft),
+  or a paid commercial license for embedding/SaaS without the copyleft,
+  contact `licensing@artist-alley.org` (placeholder until the Cloudflare
+  portal lands). **SPDX one-liner headers** (`SPDX-License-Identifier:
+  AGPL-3.0-only` + `Copyright (C) 2026 Kenneth Blossom`) scripted onto
+  **876 non-generated source files** (638 `.go` + 170 `.svelte` + 67
+  `.ts` + the goose migration), correct comment syntax per language
+  (HTML comment for svelte). **Generated files deliberately NOT stamped**
+  — sqlc `*.gen.go`/`models.go`/`db.go`/`queries.sql`, `openapi.gen.go`,
+  `panicshim_gen.go`, `schema.d.ts`, and pg_dump `schema.sql` are
+  excluded so regen doesn't strip headers → zero codegen drift (verified;
+  a first pass wrongly stamped the sqlc-input `queries.sql` and leaked
+  the header into generated `.go` — caught + reverted). `web/package.json`
+  `license` → `AGPL-3.0-only`; README badge + license section updated to
+  the dual model; ADR 0016 gets an "executed" note. Attribution audit
+  was already clean (1.55.S: no RS-derived shipped code, single
+  copyright holder). `go build` + `svelte-check` + i18n guard green;
+  full Go suite green except the pre-existing env freshness test; zero
+  behavior change (headers are comments). SPDX identifier + copyright
+  line + commercial contact were user-confirmed before commit.
+  Closes #261.
   **1.55.Z shipped 2026-07-11** — remove `site/` from the OSS repo +
   rewire OSS CI (site-split OSS-side cleanup). The public docs +
   marketing site now lives + serves from the private repo
