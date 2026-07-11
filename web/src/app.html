@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" %sveltekit.theme%>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    <meta name="description" content="artist-alley — a self-hosted art review and archival tool." />
+    <meta name="theme-color" content="#0a0a0a" />
+
+    <!--
+      Theme is set as early as possible to prevent flash-of-wrong-theme.
+      Reads the aa_theme cookie (light/dark/system) and applies a class
+      to <html> before any stylesheet loads. Order: explicit cookie ->
+      system preference -> dark default (the app's identity).
+    -->
+    <script>
+      (function () {
+        try {
+          var cookie = document.cookie.split('; ').find(function (c) {
+            return c.indexOf('aa_theme=') === 0;
+          });
+          var pref = cookie ? cookie.split('=')[1] : 'system';
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved = pref === 'system' ? (prefersDark ? 'dark' : 'light') : pref;
+          document.documentElement.classList.add(resolved);
+          document.documentElement.setAttribute('data-theme', resolved);
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover" class="bg-surface text-fg antialiased">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

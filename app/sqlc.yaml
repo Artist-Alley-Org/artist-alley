@@ -1,0 +1,486 @@
+version: "2"
+# Each feature package has its own (queries, schema, gen) entry. As we
+# port more domains over, append entries here. The shared `schema.sql`
+# at app root grows alongside.
+sql:
+  - engine: postgresql
+    queries: internal/assettype/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: assettype
+        out: internal/assettype
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/auth/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: auth
+        out: internal/auth
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/auth/lockout/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: lockout
+        out: internal/auth/lockout
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/search/vector/visualstore/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: visualstore
+        out: internal/search/vector/visualstore
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/storage/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: storage
+        out: internal/storage
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/audit/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: audit
+        out: internal/audit
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/sysconfig/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: sysconfig
+        out: internal/sysconfig
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/assets/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: assets
+        out: internal/assets
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/ai/embeddings/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: embeddings
+        out: internal/ai/embeddings
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/ai/mcp_registry/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: mcpregistry
+        out: internal/ai/mcp_registry
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/aiedit/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: aiedit
+        out: internal/aiedit
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/asset/metadata/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: metadata
+        out: internal/asset/metadata
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/metadata/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: metadata
+        out: internal/metadata
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/collections/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: collections
+        out: internal/collections
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/posts/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: posts
+        out: internal/posts
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/workflow/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: workflow
+        out: internal/workflow
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/teams/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: teams
+        out: internal/teams
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/social/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: social
+        out: internal/social
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/users/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: users
+        out: internal/users
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/jobs/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: jobs
+        out: internal/jobs
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/brushpacks/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: brushpacks
+        out: internal/brushpacks
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/userprefs/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: userprefs
+        out: internal/userprefs
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/notifications/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: notifications
+        out: internal/notifications
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/messages/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: messages
+        out: internal/messages
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/activities/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: activities
+        out: internal/activities
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/peer/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: peer
+        out: internal/federation/peer
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/directory/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: directory
+        out: internal/federation/directory
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/p2p/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: p2p
+        out: internal/federation/p2p
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/shares/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: shares
+        out: internal/federation/shares
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/inbox/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: inbox
+        out: internal/federation/inbox
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/remote/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: remote
+        out: internal/federation/remote
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/outbox/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: outbox
+        out: internal/federation/outbox
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/federation/userkeys/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: userkeys
+        out: internal/federation/userkeys
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/seed/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: seed
+        out: internal/seed
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/subtitles/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: subtitles
+        out: internal/subtitles
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/requests/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: requests
+        out: internal/requests
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
+    queries: internal/search/saved/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: saved
+        out: internal/search/saved
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false

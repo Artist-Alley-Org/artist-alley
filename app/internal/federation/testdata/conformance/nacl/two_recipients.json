@@ -1,0 +1,22 @@
+{
+  "description": "Two-recipient NaCl-box envelope with fixed ephemeral keypair + fixed per-recipient nonces. Keys + nonces synthesized for test purposes (deterministic 0x01...0x20 / 0x21...0x40 / etc. byte patterns). X25519 public keys derived from the matching private scalar via curve25519.X25519(priv, basepoint).",
+  "plaintext_hex": "48656c6c6f2c20706565722e",
+  "ephemeral_priv_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+  "ephemeral_pub_hex": "a4e09292b651c278b9772c569f5fa9bb13d906b46ab68c9df9dc2b4409f8a209",
+  "recipient_pub_hex": [
+    "ce8d3ad1ccb633ec7b70c17814a5c76ecd029685050d344745ba05870e587d59",
+    "5dfedd3b6bd47f6fa28ee15d969d5bb0ea53774d488bdaf9df1c6e0124b3ef22"
+  ],
+  "recipient_priv_hex": [
+    "0202020202020202020202020202020202020202020202020202020202020202",
+    "0303030303030303030303030303030303030303030303030303030303030303"
+  ],
+  "nonce_hex": [
+    "040404040404040404040404040404040404040404040404",
+    "050505050505050505050505050505050505050505050505"
+  ],
+  "ciphertext_hex": [
+    "32e816d72990bfb6218bc8f87637260f6d3a970c7e7bb899ec511407",
+    "3d8f00c19adaccdd818cfb19544603fa4cfcb03bc8bbb199acc820d8"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "description": "type `aa:NotAType` is not in the closed activity-type catalogue — REJECTED as ErrInvalidType.",
+  "envelope": {
+    "@context": "https://artist-alley.org/protocol/v1",
+    "type": "aa:NotAType",
+    "id": "https://test.example/activities/x",
+    "actor": "https://test.example/users/alice",
+    "published": "2026-06-04T10:00:00Z"
+  },
+  "expected_error": "ErrInvalidType"
+}

@@ -1,0 +1,392 @@
+# PR + branch validation. Runs on every push to a long-lived branch
+# (main, dev) and on every PR targeting main or dev. PRs use
+# `ubuntu-latest` so fork PRs can't run code on the self-hosted
+# runner. Branch pushes are routed to the self-hosted runner for
+# speed + Docker layer cache reuse.
+#
+# This is the merge-gate. Edge/release workflows assume CI was green.
+#
+# # No feat/** push trigger — by design
+#
+# Push to feat/** previously triggered CI here AND the PR pulse below
+# (via pull_request:synchronize) once the PR was open, producing two
+# parallel runs per commit. The runs ended up in different
+# concurrency groups (push: refs/heads/feat/X; PR: refs/pull/N/merge),
+# so cancel-in-progress couldn't collapse them; one ran to success,
+# the duplicate cancelled, GitHub showed the PR as "UNSTABLE" even
+# though every real check passed.
+#
+# Dropping the feat/** push trigger means:
+#   - First push to a brand-new feat/** branch with NO PR: no CI runs.
+#     Open a draft PR for CI feedback before merging — that's the
+#     standard pattern and matches our branch hygiene.
+#   - Push to feat/** with an open PR: pull_request:synchronize runs
+#     CI exactly once. No duplicates, no UNSTABLE flag.
+#   - Workflow_dispatch remains available for manual runs.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+    # Skip CI on docs-only changes — no Go / TS / wire-format edit
+    # means nothing CI cares about. Branch protection on dev/main
+    # does NOT list any path-filtered check as required (single-
+    # maintainer + agent-collaborator model per ADR 0046 ops note);
+    # skipped workflows surface as "Skipped" not "Pending", so a
+    # docs-only PR can merge without burning ~12 min of runner time.
+    #
+    # Be aware: **.md excludes ALL markdown including in-tree
+    # README files (e.g. app/internal/foo/README.md). Today none
+    # of those carry code or CI-relevant content; revisit this
+    # filter if a README ever needs to gate CI.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main, dev]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'CHANGELOG.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so a force-push doesn't burn
+# minutes on the previous commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Frontend type-check + production build. Pure Node work; uses
+  # the self-hosted [artist-alley] runner to keep GitHub-hosted
+  # minutes under the monthly quota (rebalance landed when the org
+  # hit 90% of 3000-min during the encryption + 1.17 arcs).
+  # Sidesteps the bind-mount / docker-from-docker EACCES + SIGKILL
+  # issues we hit trying to run svelte-check inside the dev image —
+  # this job spawns its own node toolchain, no compose stack.
+  frontend-check:
+    name: Frontend type-check + build
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 10
+    # All node work runs inside `docker run node:22-alpine` rather
+    # than via the workflow's `container:` directive. Why:
+    #
+    # `container:` makes GitHub Actions inject a node24_alpine
+    # binary at /__e/node24_alpine for JS actions like
+    # actions/checkout — github-hosted runners ship that binary;
+    # our self-hosted runner doesn't, so the inject fails with
+    # "stat /__e/node24_alpine/bin/node: no such file or directory"
+    # before any user step runs.
+    #
+    # Doing the alpine work as per-step `docker run` keeps the
+    # runner itself off alpine — actions/checkout uses the runner's
+    # bare node like every other job — and the build tools (npm,
+    # vite, rolldown) execute against musl inside the container,
+    # matching the lockfile and dodging the gnu rolldown parser
+    # regression.
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pre-pull once so subsequent steps don't each pay the
+      # cold-start cost.
+      - name: Pull alpine node image
+        run: docker pull node:22-alpine
+
+      - name: Install web deps (npm ci against committed lockfile)
+        # npm 10 (alpine default) tolerates the lockfile not listing
+        # every cross-platform optional binding; the lock was
+        # generated on alpine so its musl-binding entry matches.
+        # Sidesteps both the upstream gnu-rolldown parser bug AND
+        # the npm 11 strictness mismatch we hit chasing this.
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            node:22-alpine \
+            sh -c 'npm ci --no-audit'
+
+      - name: Generate API schema (TypeScript types from openapi.yaml)
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e AA_OPENAPI_SPEC=../app/api/openapi.yaml \
+            node:22-alpine \
+            npm run generate:api
+
+      - name: svelte-check
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm run check
+
+      - name: vitest (frontend unit tests)
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm test
+
+      - name: vite build (catches errors svelte-check can't)
+        run: |
+          docker run --rm \
+            -v "${PWD}":/work -w /work/web \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            node:22-alpine \
+            npm run build
+
+  # ── Detect stale generated code. Re-runs sqlc + oapi-codegen +
+  # openapi-typescript against the in-tree specs and `git diff`s the
+  # result. Catches the common footgun of editing openapi.yaml or a
+  # queries.sql file without committing the regenerated output.
+  codegen-drift:
+    name: Codegen drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: app/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install codegen tools
+        run: |
+          docker pull sqlc/sqlc:latest
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+      - name: Regenerate Go specs (sqlc + oapi-codegen)
+        run: |
+          docker run --rm -v "${PWD}/app":/src -w /src sqlc/sqlc:latest generate
+          (cd app/api && "$HOME/go/bin/oapi-codegen" -config oapi-codegen.yaml openapi.yaml)
+
+      - name: Regenerate frontend TypeScript schema
+        # Use npx -y to fetch openapi-typescript on demand instead
+        # of running npm install — the drift check only needs the
+        # TS-from-yaml generator, not the full vite/rolldown
+        # toolchain. Avoids the per-platform rolldown binding issue
+        # that previously forced us to nuke the lockfile here.
+        working-directory: web
+        env:
+          AA_OPENAPI_SPEC: ../app/api/openapi.yaml
+        run: |
+          npx -y openapi-typescript "$AA_OPENAPI_SPEC" -o src/lib/api/schema.d.ts
+
+      - name: Fail if Go-generated files drifted
+        # 1.22.I-f hardening: the prior check globbed
+        # `app/internal/**/queries.sql.go|models.go|db.go` directly
+        # as pathspecs, but `git diff -- '**'` does NOT recurse the
+        # way shells do (each `**` matches one path segment without
+        # the `:(glob)` magic prefix). PR #114's cross-package
+        # models.go regen drift slipped through because the
+        # double-star never reached `social/models.go`,
+        # `users/models.go`, etc. — adding `was_encrypted` to
+        # federation_outbox forces regen on every package's
+        # models.go because sqlc emits a shared pgtype import
+        # ordering signal there.
+        #
+        # Pivot to `git status --porcelain` instead. Codegen
+        # outputs ALL land under app/internal/ (sqlc) or
+        # app/internal/openapi/ (oapi-codegen); the frontend
+        # schema.d.ts is gitignored + node_modules is gitignored.
+        # Anything else dirty after the regen step is a drift.
+        # `web/package-lock.json` is intentionally regenerated by
+        # the lockfile-nuke above + filtered explicitly.
+        run: |
+          dirty=$(git status --porcelain \
+                  -- 'app/internal/openapi/openapi.gen.go' \
+                     'app/internal/' 'app/api/' \
+                | grep -v -E '^\?\? .*\.(generated|gen)\.ts$' \
+                | grep -v -E '\.cache/' \
+                || true)
+          if [ -n "$dirty" ]; then
+            echo "::error::Generated Go code is stale. Run ./scripts/generate.sh and commit the result."
+            echo "drifted files:"
+            echo "$dirty"
+            git diff -- 'app/internal/' 'app/api/' | head -200
+            exit 1
+          fi
+
+  test:
+    name: Integration tests (full compose stack)
+    # Self-hosted unconditionally — the runner-rebalance landing
+    # collapsed the prior pick-runner / fromJSON branching into
+    # a single label. Same rationale as frontend-check: keep
+    # GitHub-hosted minutes under the monthly quota.
+    #
+    # Fork-PR caveat: fork PRs won't run this on the self-hosted
+    # runner; GitHub gates that via the "Approve first-time
+    # contributors" setting. The codegen-drift job stays on
+    # ubuntu-latest so a fork PR still gets at least the
+    # portability + drift smoke gate.
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 30
+    # ui-nightly + ui-pr also queue under this group on the
+    # self-hosted runner — required to avoid the compose-stack
+    # race that took out an all-fail nightly post-#123-merge.
+    concurrency:
+      group: artist-alley-compose-stack
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Compose stack mirrors local dev so CI and
+      # `./scripts/test.sh` exercise the same artifact (our app
+      # binary, our postgres init, our nginx config). Drift between
+      # CI and local is the cause of half the "works on my machine"
+      # bugs we'd otherwise hit.
+      - name: Materialise .env for the stack
+        # The self-hosted runner already runs the user's own services
+        # on the default ports (postgres 5432, nginx 8080, vite 5173),
+        # so the CI stack uses high ports for every host binding.
+        #
+        # AA_MASTER_KEY is required by docker-compose (the app needs
+        # it to wrap the at-rest federation identity per ADR 0020).
+        # We pin a deterministic test-only base64 32-byte key — the
+        # CI DB is wiped at the end of every run, so it never
+        # encrypts anything that needs to roll forward to prod.
+        run: |
+          cp .env.example .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
+          {
+            echo "POSTGRES_HOST_PORT=15452"
+            echo "NGINX_HTTP_PORT=18188"
+            echo "VITE_HOST_PORT=15173"
+            echo "MINIO_API_PORT=19100"
+            echo "MINIO_CONSOLE_PORT=19101"
+            echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          } >> .env
+
+      - name: Sweep any leaked CI containers from previous runs
+        # Self-hosted runners can leak containers if a previous job
+        # was cancelled or timed out. Clear them so the new run boots
+        # from a clean slate AND frees up the 15452 port if a stale
+        # container is sitting on it.
+        #
+        # `compose down` only knows containers tied to the current
+        # project's docker-compose.yml; an orphan container left over
+        # from a previous workspace (with the same name but a stale
+        # network ref) survives that and breaks the next `compose up`.
+        # The `docker rm -f` pass catches those by name prefix.
+        run: |
+          docker compose down -v --remove-orphans || true
+          stale=$(docker ps -aq --filter "name=^artist-alley-")
+          if [ -n "$stale" ]; then
+            docker rm -f $stale || true
+          fi
+          docker network prune -f || true
+
+      - name: Build and start the stack
+        # --scale web=0 because the Vite dev container fails with
+        # EACCES on `/app/.svelte-kit` in CI — the bind-mount UID
+        # doesn't match the container's app user. Backend tests
+        # don't need the frontend; the prod build step (a separate
+        # job) catches frontend regressions on its own.
+        run: docker compose up -d --build --scale web=0
+
+      - name: Wait for postgres to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U artist_alley -d artist_alley >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres never became ready" >&2
+          docker compose logs postgres
+          exit 1
+
+      - name: Wait for app to finish migrations
+        # Tests connect directly to the compose postgres but DO NOT
+        # run migrations themselves — the app does that at boot.
+        # Without this gate, a fast CI runner races the app and
+        # tests see an empty schema (relation "user" does not exist).
+        # Polling `goose_db_version` is the ground-truth signal that
+        # goose.UpContext finished — cheaper + more direct than
+        # waiting on an HTTP healthcheck.
+        run: |
+          target_version=$(ls app/internal/db/migrations/*.sql \
+              | sed -E 's@.*/0*([0-9]+)_.*@\1@' | sort -n | tail -1)
+          echo "target migration version: ${target_version}"
+          for i in $(seq 1 60); do
+            current=$(docker compose exec -T postgres \
+                psql -U artist_alley -d artist_alley -tAc \
+                "SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version" \
+                2>/dev/null || echo 0)
+            if [ "${current}" = "${target_version}" ]; then
+              echo "migrations at version ${current} after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "migrations never reached target ${target_version} (last seen: ${current})" >&2
+          echo "--- postgres log ---"
+          docker compose logs postgres --tail=40 || true
+          echo "--- app log ---"
+          docker compose logs app --tail=40 || true
+          exit 1
+
+      - name: Run artist-alley integration tests
+        run: ./scripts/test.sh
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v --remove-orphans || true
+
+  # ── Build the production image to confirm the multi-stage Dockerfile
+  # still produces a clean amd64 artifact. Doesn't push anything —
+  # publishing lives in edge.yml + release.yml. Self-hosted-only
+  # because Docker buildx wants the daemon and the cache mounts.
+  docker-build:
+    name: Verify production image build
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: artist-alley:ci-${{ github.sha }}
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the binary
+        run: |
+          docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} --version || \
+          docker run --rm --entrypoint /app/aa artist-alley:ci-${{ github.sha }} -h || true

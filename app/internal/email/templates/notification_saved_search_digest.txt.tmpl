@@ -1,0 +1,16 @@
+Hi {{.recipient_name}},
+
+Your saved search "{{.search_name}}" matched {{.added_count}} new asset{{if ne .added_count 1}}s{{end}}:
+{{range .hits}}
+  - {{.title}}
+    {{.url}}{{if .summary}}
+    {{.summary}}{{end}}
+{{end}}
+See all matches: {{.results_url}}
+
+--
+{{.site_name}}
+
+You are receiving this because you enabled email notifications on
+this saved search. Manage saved searches at
+{{.site_url}}/account/saved-searches.

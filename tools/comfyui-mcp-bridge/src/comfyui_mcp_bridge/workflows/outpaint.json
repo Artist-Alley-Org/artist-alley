@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "description": "Placeholder outpaint workflow. AA-side 1.14.E-1 does NOT yet call outpaint; drop a real JSON at CMB_EXTRA_WORKFLOWS_DIR/outpaint.json to enable.",
+    "version": 1,
+    "status": "stub",
+    "placeholders": ["<<PROMPT>>", "<<SOURCE_IMAGE_NAME>>", "<<EXTEND_TOP>>", "<<EXTEND_RIGHT>>", "<<EXTEND_BOTTOM>>", "<<EXTEND_LEFT>>", "<<STEPS>>", "<<SEED>>"]
+  },
+  "1": {
+    "inputs": {"text": "outpaint workflow not configured"},
+    "class_type": "ShowText"
+  }
+}

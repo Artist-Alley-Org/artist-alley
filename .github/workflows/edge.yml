@@ -1,0 +1,142 @@
+# Edge image build — runs on every push to `dev` after CI passes.
+# Publishes a multi-arch image (linux/amd64,linux/arm64) tagged
+# `:edge` (rolling) and `:edge-{short-sha}` (pinnable). The :edge tag
+# is the "what's currently on dev" channel — never a stable release.
+# `:latest` and `:vX.Y.Z` only come from version tags (see
+# release.yml).
+#
+# Push targets BOTH registries when DOCKERHUB_TOKEN is set:
+#   * ghcr.io/{owner}/artist-alley:edge
+#   * docker.io/{DOCKERHUB_USERNAME}/artist-alley:edge
+#
+# Runs on the self-hosted runner so the user's hardware drives the
+# multi-arch build (arm64 cross-compile via Go's pure cross or
+# buildx qemu, whichever's faster on their host).
+
+name: Edge image
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/artist-alley
+
+jobs:
+  build:
+    name: Build + push edge image
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Compute the full Docker Hub repo name (or empty string when
+      # secret is unset → the publish step skips Docker Hub silently).
+      - name: Resolve Docker Hub repo
+        id: dh
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            echo "image=docker.io/${DOCKERHUB_USERNAME}/artist-alley" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU (cross-arch emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.dh.outputs.image != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compose tag list
+        id: tags
+        run: |
+          {
+            echo "tags<<EOF"
+            echo "${GHCR_IMAGE}:edge"
+            echo "${GHCR_IMAGE}:edge-${{ steps.sha.outputs.short }}"
+            if [ -n "${{ steps.dh.outputs.image }}" ]; then
+              echo "${{ steps.dh.outputs.image }}:edge"
+              echo "${{ steps.dh.outputs.image }}:edge-${{ steps.sha.outputs.short }}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build + push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          # arm64 temporarily disabled. The chai2010/webp cgo
+          # binding fails to cross-compile from amd64 host gcc to
+          # arm64 (binutils can't emit aarch64 asm:
+          # `gcc_arm64.S: Error: no such instruction stp x29,x30`),
+          # AND QEMU emulation segfaults Go's mod-download path
+          # under emulation (exit 139 on `go mod download`).
+          # Proper fix is a matrix build with native arm64 runners
+          # — GitHub offers ubuntu-24.04-arm for public repos; the
+          # job would build each arch on its native runner and
+          # combine via `docker buildx imagetools create`. Tracked
+          # in roadmap as a follow-up; edge is amd64-only until then.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BUILD_VERSION=edge-${{ steps.sha.outputs.short }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=edge-${{ steps.sha.outputs.short }}
+          cache-from: type=gha,scope=edge
+          cache-to: type=gha,scope=edge,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Edge image published"
+            echo ""
+            echo "**GHCR**"
+            echo "- \`${GHCR_IMAGE}:edge\`"
+            echo "- \`${GHCR_IMAGE}:edge-${{ steps.sha.outputs.short }}\`"
+            if [ -n "${{ steps.dh.outputs.image }}" ]; then
+              echo ""
+              echo "**Docker Hub**"
+              echo "- \`${{ steps.dh.outputs.image }}:edge\`"
+              echo "- \`${{ steps.dh.outputs.image }}:edge-${{ steps.sha.outputs.short }}\`"
+            fi
+            echo ""
+            echo "Pull: \`docker pull ${GHCR_IMAGE}:edge\`"
+          } >> "$GITHUB_STEP_SUMMARY"
