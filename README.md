@@ -90,10 +90,10 @@ artist-alley/
 │   └── schema.sql   # Postgres schema (mirrors goose migrations)
 ├── web/             # SvelteKit frontend
 ├── infra/           # Dockerfiles, nginx config, postgres init
-├── docs/
+├── docs/            # doc source (ADRs, roadmap, install) — the public
+│   │                #   site at artist-alley.org renders these at build
 │   ├── adr/         # Architecture Decision Records (source of truth)
 │   └── research/    # Investigation notes, not yet decisions
-├── site/            # Astro Starlight docs site → artist-alley.org
 ├── scripts/         # bootstrap, test, seed
 ├── docker-compose.yml
 ├── Dockerfile
@@ -106,7 +106,7 @@ artist-alley/
 
 ## Roadmap
 
-The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`site/src/content/roadmap/roadmap.json`](site/src/content/roadmap/roadmap.json). Highlights:
+The full roadmap lives at [artist-alley.org/roadmap](https://artist-alley.org/roadmap/) and in [`docs/roadmap.md`](docs/roadmap.md). Highlights:
 
 - **Foundations (shipped):** single-binary deploy, Postgres + pluggable storage, identity & auth (full admin surface — paginated user list, lifecycle states, multi-device session management, password change/reset/history, teams admin UI, per-user capability grants/revokes, per-asset-type ACLs, audit-log viewer), upload pipeline, posts + collections, browse feed, post-detail modal, admin shell, theming, i18n, universal asset viewer with format coverage across image / video / audio / PDF / fonts / 3D / ebooks / comics / audiobooks / archives / docs / sprite sheets, whiteboard / brush surface, **license verifier + admin upload UI + capability-level enterprise-feature gating + identity-provider registry** (Phase 1.17.O/P — see [ADR 0017 § Status](docs/adr/0017-monetization-and-licensing.md)).
 - **In flight:** first tagged release (`v0.1.0`), image + video processing pipelines, AI auto-tagging, the load-bearing review tool arc (Phase 1.18.B) — video player → polish → captions → image sequences → presentation rooms → annotation system → timeline assembly → A/B compare → DCC integrations → native 3D viewer. Real LDAP / SAML impls plug into the existing provider registry slots.

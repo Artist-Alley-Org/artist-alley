@@ -300,6 +300,28 @@ current focus:
   and handler-level end-to-end (comment mention lands a notification row
   with target=post + actor threaded; plain comment fires nothing;
   self-mention doesn't notify self). Closes #253.
+  **1.55.Z shipped 2026-07-11** — remove `site/` from the OSS repo +
+  rewire OSS CI (site-split OSS-side cleanup). The public docs +
+  marketing site now lives + serves from the private repo
+  `mscrnt/artist-alley-site` (www.artist-alley.org), pulling this repo's
+  docs from `dev` at build — so the OSS `site/` tree (48 files) + its
+  build/deploy workflows were dead weight. `git rm -r site/`; deleted
+  `docs.yml` (Astro build verification) + `site-github-snapshot.yml`
+  (GitHub-stats refresher that wrote into `site/`). **Kept
+  `mdx-hazard-check.yml`** — it guards the OSS doc SOURCE (braced-
+  identifier scan over `docs/adr/**` / `docs/install/**` /
+  `docs/roadmap.md`) that the private site still renders, so an OSS ADR
+  can't break the site build. Stripped the now-dead `site/**`
+  `paths-ignore` entries from `ci.yml` + `ui-pr.yml` (app CI untouched).
+  Added `site-rebuild-trigger.yml`: on push to `dev` touching
+  `docs/adr/**` / `docs/roadmap.md` / `docs/install/**` /
+  `app/api/openapi.yaml` / `app/schema.sql`, POSTs the Cloudflare Pages
+  deploy hook (`SITE_DEPLOY_HOOK` secret) so the private site rebuilds +
+  pulls the latest docs — secret-gated (no-op + logged if unset, never
+  fails CI), self-hosted runner (zero hosted minutes). Updated README's
+  project-structure tree + roadmap link (no more `site/` paths). `docs/`
+  source untouched — this removes the renderer, not the source. Clean
+  break, no shims. Closes #259.
   **1.55.U-3 shipped 2026-07-10** — fold `00002_digest_queue` into the
   v0.1.0 baseline (squash point #1 per ADR 0046). Inlined the single
   post-baseline append (1.55.Y's `digest_queue` table + partial index +
