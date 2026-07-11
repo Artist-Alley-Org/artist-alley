@@ -10645,6 +10645,15 @@ components:
             array MEANS "deliver nothing for this event" and
             overrides the system default; an absent key means
             "use system default."
+        email_cadence:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Map from event-type key to email delivery cadence
+            (`immediate` | `hourly` | `daily` | `weekly`). Absent key =
+            immediate (send-now). "off" is not a cadence value — mute
+            email by dropping `email` from `notification_channels`.
+            Unknown event types or cadence values trigger a 400.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
 
@@ -10669,6 +10678,12 @@ components:
           additionalProperties:
             type: array
             items: { type: string }
+        email_cadence:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Per-event-type email cadence (Phase 1.55.Y). Absent key =
+            immediate. Values: immediate | hourly | daily | weekly.
         default_views:
           $ref: "#/components/schemas/UserPreferencesViews"
         known_event_types:

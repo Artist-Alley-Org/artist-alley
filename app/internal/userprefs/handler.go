@@ -134,7 +134,7 @@ func (h *Handler) loadPreferences(ctx context.Context, ref int64) (Preferences, 
 	case err != nil:
 		return Preferences{}, err
 	default:
-		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews)
+		prefs, err = UnmarshalPreferencesRow(row.NotificationChannels, row.DefaultViews, row.EmailCadence)
 		if err != nil {
 			return Preferences{}, err
 		}
@@ -186,12 +186,17 @@ func (h *Handler) PatchAccountPreferences(
 	if err != nil {
 		return nil, err
 	}
+	cadenceJSON, err := MarshalEmailCadence(prefs.EmailCadence)
+	if err != nil {
+		return nil, err
+	}
 
 	q := New(h.pool)
 	if err := q.UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
-		UserRef:             id.UserRef,
+		UserRef:              id.UserRef,
 		NotificationChannels: channelsJSON,
 		DefaultViews:         viewsJSON,
+		EmailCadence:         cadenceJSON,
 	}); err != nil {
 		return nil, err
 	}
@@ -249,8 +254,14 @@ func buildResponse(p Preferences) openapi.UserPreferencesResponse {
 		channels[k] = append([]string(nil), v...)
 	}
 
+	cadence := make(map[string]string, len(p.EmailCadence))
+	for k, v := range p.EmailCadence {
+		cadence[k] = v
+	}
+
 	return openapi.UserPreferencesResponse{
 		NotificationChannels:   channels,
+		EmailCadence:           &cadence,
 		DefaultViews:           views,
 		KnownEventTypes:        append([]string(nil), KnownEventTypes...),
 		KnownChannels:          append([]string(nil), KnownChannels...),
@@ -279,10 +290,99 @@ func preferencesFromRequest(body openapi.UserPreferencesRequest) Preferences {
 			views.BrowseSort = *body.DefaultViews.BrowseSort
 		}
 	}
+	cadence := EmailCadences{}
+	if body.EmailCadence != nil {
+		for k, v := range *body.EmailCadence {
+			cadence[k] = v
+		}
+	}
 	return Preferences{
 		NotificationChannels: channels,
 		DefaultViews:         views,
+		EmailCadence:         cadence,
 	}
+}
+
+// CadenceFor returns the caller's email cadence for a verb via the
+// cache-aware prefs load. Defaults to immediate. The notifications
+// Writer calls this on every email-eligible notification, so it rides
+// the same 5-min userprefs.by_user LRU as ChannelsFor.
+func (h *Handler) CadenceFor(ctx context.Context, ref int64, verb string) (string, error) {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return CadenceImmediate, err
+	}
+	return prefs.CadenceFor(verb), nil
+}
+
+// UnsubscribeEmail turns off the email channel for a topic (Phase
+// 1.55.Y one-click unsubscribe). topic == "__all__" turns email off
+// for every known event type. Sets an explicit override that keeps
+// in_app on but drops email, so it survives the "absent key = system
+// default" fallback. Persists + invalidates the prefs cache. Called by
+// the unauthenticated /unsubscribe endpoint after token verification —
+// the signed token IS the authorization.
+func (h *Handler) UnsubscribeEmail(ctx context.Context, ref int64, topic string) error {
+	prefs, err := h.loadPreferences(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if prefs.NotificationChannels == nil {
+		prefs.NotificationChannels = NotificationChannels{}
+	}
+	dropEmail := func(t string) {
+		cur := prefs.NotificationChannels[t]
+		if cur == nil {
+			// No override yet — start from the system default so we
+			// preserve whatever non-email channels it carried.
+			cur = SystemDefaultChannels(t)
+		}
+		next := make([]string, 0, len(cur))
+		for _, ch := range cur {
+			if ch != ChannelEmail {
+				next = append(next, ch)
+			}
+		}
+		prefs.NotificationChannels[t] = next
+	}
+	if topic == "__all__" {
+		for _, t := range KnownEventTypes {
+			dropEmail(t)
+		}
+	} else {
+		dropEmail(topic)
+	}
+	return h.savePreferences(ctx, ref, prefs)
+}
+
+// savePreferences persists a full Preferences object + invalidates the
+// cache. Extracted so UnsubscribeEmail reuses the same write path as
+// PatchAccountPreferences.
+func (h *Handler) savePreferences(ctx context.Context, ref int64, prefs Preferences) error {
+	channelsJSON, err := MarshalNotificationChannels(prefs.NotificationChannels)
+	if err != nil {
+		return err
+	}
+	viewsJSON, err := MarshalDefaultViews(prefs.DefaultViews)
+	if err != nil {
+		return err
+	}
+	cadenceJSON, err := MarshalEmailCadence(prefs.EmailCadence)
+	if err != nil {
+		return err
+	}
+	if err := New(h.pool).UpsertUserPreferences(ctx, UpsertUserPreferencesParams{
+		UserRef:              ref,
+		NotificationChannels: channelsJSON,
+		DefaultViews:         viewsJSON,
+		EmailCadence:         cadenceJSON,
+	}); err != nil {
+		return err
+	}
+	if h.byUser != nil {
+		_ = h.byUser.Invalidate(ctx, userKey(ref))
+	}
+	return nil
 }
 
 // touch keeps the time import live for the (currently unused)

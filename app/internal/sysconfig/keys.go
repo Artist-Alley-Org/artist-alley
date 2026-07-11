@@ -22,14 +22,25 @@ import (
 // Keys recognised by the system. Stable strings; downstream tooling
 // (admin UI, ops dashboards) keys off them.
 const (
-	KeySite = "site"
-	KeySMTP = "smtp"
+	KeySite   = "site"
+	KeySMTP   = "smtp"
+	KeyDigest = "digest"
 )
+
+// Digest holds the email-digest coordinator timing knobs (Phase
+// 1.55.Y). Hourly digests always run at :00 (no knob). Daily runs at
+// DailyHourUTC; weekly on WeeklyDay at WeeklyHourUTC. WeeklyDay is a
+// time.Weekday int (0=Sunday..6=Saturday).
+type Digest struct {
+	DailyHourUTC  int `json:"daily_hour_utc"`  // 0..23, default 8
+	WeeklyDay     int `json:"weekly_day"`      // 0..6, default 1 (Monday)
+	WeeklyHourUTC int `json:"weekly_hour_utc"` // 0..23, default 8
+}
 
 // Site holds the front-of-house identity for the install.
 type Site struct {
-	Name    string `json:"name"`              // "Acme Art Reviews"
-	BaseURL string `json:"base_url"`          // "https://art.example.com"
+	Name    string `json:"name"`     // "Acme Art Reviews"
+	BaseURL string `json:"base_url"` // "https://art.example.com"
 }
 
 // SMTPEncryption is one of: "none", "starttls", "tls". Anything else
@@ -116,6 +127,45 @@ func (s *Store) GetSite(ctx context.Context) (Site, error) {
 // SetSite writes the Site config.
 func (s *Store) SetSite(ctx context.Context, v Site) error {
 	return s.setKey(ctx, KeySite, v)
+}
+
+// GetDigest returns the digest timing config, applying defaults for
+// any unset/out-of-range knob (08:00 UTC daily; Monday 08:00 UTC
+// weekly). Range-clamped so a bad stored row can't push a digest to an
+// hour that never ticks.
+func (s *Store) GetDigest(ctx context.Context) (Digest, error) {
+	var out Digest
+	if err := s.getKey(ctx, KeyDigest, &out); err != nil {
+		return Digest{}, err
+	}
+	return normalizeDigest(out), nil
+}
+
+// SetDigest writes the digest timing config after normalizing it.
+func (s *Store) SetDigest(ctx context.Context, v Digest) error {
+	return s.setKey(ctx, KeyDigest, normalizeDigest(v))
+}
+
+// normalizeDigest applies defaults + clamps every knob to its valid
+// range. A zero-value struct (unset row) becomes the 8/Mon/8 default.
+func normalizeDigest(d Digest) Digest {
+	// hour: valid 0..23; treat the zero-value struct's 0 as "unset →
+	// default 8" only when the whole struct is zero — but 0 (midnight)
+	// is a legitimate hour, so we distinguish "unset row" (all zero)
+	// from an explicit midnight by defaulting only the all-zero case.
+	if d == (Digest{}) {
+		return Digest{DailyHourUTC: 8, WeeklyDay: int(1), WeeklyHourUTC: 8}
+	}
+	if d.DailyHourUTC < 0 || d.DailyHourUTC > 23 {
+		d.DailyHourUTC = 8
+	}
+	if d.WeeklyHourUTC < 0 || d.WeeklyHourUTC > 23 {
+		d.WeeklyHourUTC = 8
+	}
+	if d.WeeklyDay < 0 || d.WeeklyDay > 6 {
+		d.WeeklyDay = 1
+	}
+	return d
 }
 
 // GetSMTP returns the SMTP config or, if unset, an empty SMTP.

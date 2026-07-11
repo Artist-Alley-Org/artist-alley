@@ -28,6 +28,53 @@ func (q *Queries) CountMyUnreadNotifications(ctx context.Context, recipientUserR
 	return count, err
 }
 
+const digestRecipientEmail = `-- name: DigestRecipientEmail :one
+SELECT email, fullname, username
+FROM "user"
+WHERE ref = $1
+`
+
+type DigestRecipientEmailRow struct {
+	Email    *string
+	Fullname *string
+	Username *string
+}
+
+// Phase 1.55.Y — email + display name for a digest recipient. Mirrors
+// the notification.email job's lookup (fullname → username → NULL).
+func (q *Queries) DigestRecipientEmail(ctx context.Context, ref int64) (DigestRecipientEmailRow, error) {
+	row := q.db.QueryRow(ctx, digestRecipientEmail, ref)
+	var i DigestRecipientEmailRow
+	err := row.Scan(&i.Email, &i.Fullname, &i.Username)
+	return i, err
+}
+
+const insertDigestQueue = `-- name: InsertDigestQueue :exec
+INSERT INTO digest_queue (user_ref, topic, cadence, notification_id)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertDigestQueueParams struct {
+	UserRef        int64
+	Topic          string
+	Cadence        string
+	NotificationID pgtype.UUID
+}
+
+// Phase 1.55.Y — queue a non-immediate notification email for the
+// digest coordinator to batch. topic is the notification verb; cadence
+// is hourly|daily|weekly (immediate never queues). notification_id FKs
+// the row the digest renders from.
+func (q *Queries) InsertDigestQueue(ctx context.Context, arg InsertDigestQueueParams) error {
+	_, err := q.db.Exec(ctx, insertDigestQueue,
+		arg.UserRef,
+		arg.Topic,
+		arg.Cadence,
+		arg.NotificationID,
+	)
+	return err
+}
+
 const insertNotification = `-- name: InsertNotification :one
 INSERT INTO notifications (
     recipient_user_ref,
@@ -167,6 +214,77 @@ func (q *Queries) ListMyNotifications(ctx context.Context, arg ListMyNotificatio
 	return items, nil
 }
 
+const listPendingDigest = `-- name: ListPendingDigest :many
+SELECT dq.id,
+       dq.user_ref,
+       dq.topic,
+       dq.cadence,
+       dq.notification_id,
+       dq.queued_at,
+       n.verb,
+       n.actor_user_ref,
+       n.target_kind,
+       n.target_id,
+       n.payload,
+       n.created_at
+FROM digest_queue dq
+JOIN notifications n ON n.id = dq.notification_id
+WHERE dq.sent_at IS NULL
+  AND dq.cadence = ANY($1::text[])
+ORDER BY dq.user_ref, dq.queued_at
+`
+
+type ListPendingDigestRow struct {
+	ID             pgtype.UUID
+	UserRef        int64
+	Topic          string
+	Cadence        string
+	NotificationID pgtype.UUID
+	QueuedAt       pgtype.Timestamptz
+	Verb           string
+	ActorUserRef   *int64
+	TargetKind     *string
+	TargetID       *string
+	Payload        []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+// Phase 1.55.Y — the coordinator's per-tick read: every unsent digest
+// row whose cadence is due this tick, joined to its notification for
+// rendering. Ordered by user so the coordinator can group in one pass.
+func (q *Queries) ListPendingDigest(ctx context.Context, cadences []string) ([]ListPendingDigestRow, error) {
+	rows, err := q.db.Query(ctx, listPendingDigest, cadences)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingDigestRow
+	for rows.Next() {
+		var i ListPendingDigestRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserRef,
+			&i.Topic,
+			&i.Cadence,
+			&i.NotificationID,
+			&i.QueuedAt,
+			&i.Verb,
+			&i.ActorUserRef,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAllMyNotificationsRead = `-- name: MarkAllMyNotificationsRead :execrows
 UPDATE notifications
 SET read_at = NOW()
@@ -182,6 +300,20 @@ func (q *Queries) MarkAllMyNotificationsRead(ctx context.Context, recipientUserR
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markDigestSent = `-- name: MarkDigestSent :exec
+UPDATE digest_queue
+SET sent_at = NOW()
+WHERE id = ANY($1::uuid[])
+  AND sent_at IS NULL
+`
+
+// Phase 1.55.Y — mark consumed rows sent after a digest email goes out.
+// Idempotent: a re-run over already-sent ids is a no-op (WHERE guards).
+func (q *Queries) MarkDigestSent(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markDigestSent, ids)
+	return err
 }
 
 const markNotificationRead = `-- name: MarkNotificationRead :execrows

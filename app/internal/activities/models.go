@@ -360,6 +360,16 @@ type CreativeLineage struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
+type DigestQueue struct {
+	ID             pgtype.UUID
+	UserRef        int64
+	Topic          string
+	Cadence        string
+	NotificationID pgtype.UUID
+	QueuedAt       pgtype.Timestamptz
+	SentAt         pgtype.Timestamptz
+}
+
 type DirectMessage struct {
 	ID               pgtype.UUID
 	SenderUserRef    int64
@@ -989,6 +999,7 @@ type UserPreference struct {
 	OriginServerID       pgtype.UUID
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+	EmailCadence         []byte
 }
 
 type UserProfile struct {

@@ -15,11 +15,16 @@
   }
   interface PrefsResponse {
     notification_channels: Record<string, string[]>;
+    email_cadence?: Record<string, string>;
     default_views: ViewSelections;
     known_event_types: string[];
     known_channels: string[];
     default_channels_by_event: Record<string, string[]>;
   }
+
+  // Email cadence options (Phase 1.55.Y). "off" is a UI value that
+  // drops the email channel; the other four are real cadence values.
+  const CADENCE_OPTIONS = ['off', 'immediate', 'hourly', 'daily', 'weekly'] as const;
 
   // The select-options for the three view knobs. The valid value sets
   // are pinned here client-side; the server also accepts arbitrary
@@ -81,6 +86,35 @@
     await savePrefs({ notification_channels: patch });
   }
 
+  // The current email-cadence selection for an event's dropdown.
+  // "off" when the email channel isn't enabled; otherwise the stored
+  // cadence, defaulting to immediate (Phase 1.55.Y).
+  function cadenceFor(event: string): string {
+    if (!resolvedChannelsFor(event).includes('email')) return 'off';
+    return prefs?.email_cadence?.[event] ?? 'immediate';
+  }
+
+  // Cadence dropdown handler. "off" drops the email channel for the
+  // topic; any real cadence ensures email is on + records the cadence.
+  async function setCadence(event: string, value: string): Promise<void> {
+    if (!prefs) return;
+    const existing = prefs.notification_channels[event] ?? resolvedChannelsFor(event);
+    const withoutEmail = existing.filter((c) => c !== 'email');
+    const cadencePatch = { ...(prefs.email_cadence ?? {}) };
+    let channels: string[];
+    if (value === 'off') {
+      channels = withoutEmail;
+      delete cadencePatch[event];
+    } else {
+      channels = [...withoutEmail, 'email'];
+      cadencePatch[event] = value;
+    }
+    await savePrefs({
+      notification_channels: { ...prefs.notification_channels, [event]: channels },
+      email_cadence: cadencePatch,
+    });
+  }
+
   // View-knob change handler — sends just the views section. Empty
   // string means "fall back to default" — we send it explicitly so
   // the server can clear any previously-set value.
@@ -97,6 +131,7 @@
     try {
       const body = {
         notification_channels: patch.notification_channels ?? prefs.notification_channels,
+        email_cadence: patch.email_cadence ?? prefs.email_cadence ?? {},
         default_views: patch.default_views ?? prefs.default_views,
       };
       const r = await api.PATCH('/account/preferences', { body });
@@ -234,14 +269,28 @@
                 </td>
                 {#each prefs.known_channels as ch (ch)}
                   <td class="whitespace-nowrap px-6 py-2.5 text-center">
-                    <input
-                      type="checkbox"
-                      class="h-4 w-4"
-                      checked={channels.includes(ch)}
-                      onchange={() => toggleChannel(event, ch)}
-                      disabled={savingPrefs}
-                      aria-label={t(`account.preferences.notif_aria_${ch}`, { event: t(`account.preferences.notif_event_${event}`) })}
-                    />
+                    {#if ch === 'email'}
+                      <select
+                        class="rounded border border-border bg-bg px-2 py-1 text-sm"
+                        value={cadenceFor(event)}
+                        onchange={(e) => setCadence(event, (e.target as HTMLSelectElement).value)}
+                        disabled={savingPrefs}
+                        aria-label={t('account.preferences.cadence_aria', { event: t(`account.preferences.notif_event_${event}`) })}
+                      >
+                        {#each CADENCE_OPTIONS as opt (opt)}
+                          <option value={opt}>{t(`account.preferences.cadence_${opt}`)}</option>
+                        {/each}
+                      </select>
+                    {:else}
+                      <input
+                        type="checkbox"
+                        class="h-4 w-4"
+                        checked={channels.includes(ch)}
+                        onchange={() => toggleChannel(event, ch)}
+                        disabled={savingPrefs}
+                        aria-label={t(`account.preferences.notif_aria_${ch}`, { event: t(`account.preferences.notif_event_${event}`) })}
+                      />
+                    {/if}
                   </td>
                 {/each}
               </tr>

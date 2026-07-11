@@ -947,10 +947,32 @@ Low priority.
 
 ---
 
-### 4.9 Email digest preferences (immediate/hourly/daily/off)
+### 4.9 Email digest preferences (immediate/hourly/daily/off) ✅
 
-**Status:** partial. Research depth: `light`.
-**Roadmap phase:** unclaimed. Suggested: 1.17.G-5.
+**Status:** ✅ shipped (Phase 1.55.Y).
+**Roadmap phase:** 1.55.Y (shipped 2026-07-10).
+
+**Shipped shape.** Per-topic email cadence (immediate / hourly / daily
+/ weekly / off) stored in a new `user_preferences.email_cadence` JSONB
+column — additive to `notification_channels`; unset = immediate, so no
+existing user's behaviour changes. The `notifications.Writer` forks at
+its email-enqueue point: immediate → enqueue `notification.email` now
+(unchanged); hourly/daily/weekly → insert a `digest_queue` row; off =
+the "email" channel simply absent. The in-app notification always fires
+independently. One hour-ticking `digest.Coordinator` (cadence-gated by
+the clock — mirrors the softdelete gc) batches each user's due rows
+into one `notification_digest` email, marks them sent, and
+self-re-enqueues. Every notification email (immediate + digest) carries
+an RFC 8058 `List-Unsubscribe` + `List-Unsubscribe-Post: One-Click`
+header with a stateless HMAC-signed token; `GET/POST /api/v1/unsubscribe`
+verifies the token (no login — the token is the auth) and drops the
+email channel for that topic (or all topics for the digest `__all__`
+token). Three sysconfig timing knobs (`digest` section), range-clamped.
+Frontend: a per-topic cadence `<select>` on the preferences page.
+Prefs (incl. cadence) ride the existing 5-min `userprefs.by_user`
+cache. **First post-baseline migration (`00002_digest_queue.sql`)** —
+folds back into the baseline at the pre-tag re-squash (v0.1.0 ships zero
+append migrations).
 
 **ResourceSpace blueprint.**
 
