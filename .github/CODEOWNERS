@@ -1,0 +1,14 @@
+# Code owners — automatic reviewer assignment on PRs.
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Pre-1.0 the maintainer is single-owner across everything. As the
+# project grows, swap per-directory owners in.
+
+* @mscrnt
+
+# Release machinery — extra-careful with these paths since changes
+# touch what users actually consume.
+/.github/workflows/      @mscrnt
+/.goreleaser.yaml        @mscrnt
+/Dockerfile              @mscrnt
+/docs/install/           @mscrnt

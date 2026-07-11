@@ -1,0 +1,72 @@
+{
+  "nav": {
+    "upload": "Subir",
+    "search_placeholder": "Buscar recursos…"
+  },
+  "user_menu": {
+    "signed_in_as": "Conectado como @{username}",
+    "profile": "Perfil",
+    "account_settings": "Ajustes de cuenta",
+    "theme": "Tema",
+    "theme_light": "Claro",
+    "theme_dark": "Oscuro",
+    "theme_system": "Sistema",
+    "language": "Idioma",
+    "api_tokens": "Tokens de API",
+    "sign_out": "Cerrar sesión"
+  },
+  "admin_menu": {
+    "title": "Administración",
+    "users": "Usuarios",
+    "roles": "Roles y permisos",
+    "workflow": "Estados de flujo",
+    "fields": "Campos y metadatos",
+    "asset_types": "Tipos de asset",
+    "system": "Configuración del sistema",
+    "system_log": "Registro del sistema"
+  },
+  "account": {
+    "title": "Cuenta",
+    "sections": {
+      "profile": "Perfil",
+      "preferences": "Preferencias",
+      "ai": "IA",
+      "password": "Contraseña",
+      "tokens": "Tokens de API",
+      "messages": "Mensajes"
+    }
+  },
+  "admin": {
+    "title": "Administración",
+    "fields": {
+      "group": "Grupo",
+      "subject_kind": "Sujeto",
+      "subject_asset": "Asset",
+      "subject_collection": "Colección",
+      "subject_filter_label": "Tipo de sujeto",
+      "subject_filter_all": "Ambos",
+      "subject_filter_asset": "Campos de asset",
+      "subject_filter_collection": "Campos de colección",
+      "create_button": "Nuevo campo",
+      "create_title": "Crear campo",
+      "create_help_subject": "Elige dónde aparece este campo. Un campo de asset se asocia a assets individuales; un campo de colección se asocia a colecciones completas.",
+      "create_help_required": "Los campos de colección requeridos deben proporcionarse al crear la colección.",
+      "create_submit": "Crear",
+      "create_error": "No se pudo crear el campo.",
+      "code_placeholder": "codigo_snake_case"
+    },
+    "collection_fields": {
+      "section_title": "Campos personalizados",
+      "no_fields": "No hay campos de colección definidos. Los administradores pueden añadirlos en Campos y metadatos.",
+      "save": "Guardar campos",
+      "saved": "Campos personalizados guardados.",
+      "save_error": "No se pudieron guardar uno o más campos.",
+      "locked_hint": "No tienes permiso para editar este campo.",
+      "required_marker": "obligatorio"
+    }
+  },
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar"
+  }
+}

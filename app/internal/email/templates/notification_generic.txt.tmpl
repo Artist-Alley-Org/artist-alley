@@ -1,0 +1,14 @@
+Hi {{.recipient_name}},
+
+There's new activity on {{.site_name}}:
+
+  {{.verb}}{{if .target_kind}} ({{.target_kind}}){{end}}
+
+Open {{.site_url}} to see it.
+
+--
+{{.site_name}}
+
+You are receiving this because you have email notifications enabled
+for {{.verb}}. Manage your notification preferences at
+{{.site_url}}/account/notifications.

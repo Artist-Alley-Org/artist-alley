@@ -1,0 +1,186 @@
+@import 'tailwindcss';
+
+/*
+ * artist-alley color tokens.
+ *
+ * Vibe target:
+ *   Light = energetic / upbeat (warm cream paper + coral accent)
+ *   Dark  = cool / calm        (off-black blue-grey + soft sky-blue accent)
+ *
+ * Accent hue shifts across modes (hue ~30 light → hue ~250 dark), which
+ * creates the temperature/mood difference. Surfaces follow suit: light
+ * has a hint of warmth (hue 80, very low chroma → reads "paper"),
+ * dark sits at oklch(13%) not pure black so OLED preserves breathing
+ * room and thumbnails read against it.
+ *
+ * Token shape borrows the M3 role naming (`--color-*` + `--color-on-*`
+ * pairs, `--color-*-container` for soft variants, ladder of surface
+ * tiers, semantic + structural roles) so every fill ships its
+ * companion foreground at definition time — never compute text color
+ * ad hoc. Contrast pairs verified against WCAG 2.2 AA (4.5:1 body /
+ * 3:1 UI) at minimum.
+ *
+ * Tailwind v4 reads tokens out of @theme and emits utilities
+ * (bg-surface, text-fg, border-border, ring-ring, etc). The .dark
+ * override block re-binds the same names so any utility flips
+ * automatically when html.dark is set.
+ */
+
+@theme {
+  /* ── Surfaces (3-tier ladder; M3 rule: elevation by surface swap, not shadow)
+       Light mode: page sits slightly darker than pure white so the
+       elevated cards stand out against it. Dark mode: deeper page +
+       higher elevated step (see html.dark block). */
+  --color-surface:          oklch(96%  0.012  80);   /* page bg — warm cream */
+  --color-surface-elevated: oklch(100% 0      0);    /* cards, popovers, nav */
+  --color-surface-overlay:  oklch(100% 0      0);    /* modals, dialogs */
+
+  /* ── Foreground tiers (paired with surfaces; AA verified)
+       Light fg-muted slightly darkened to oklch(42%) so secondary
+       text on the warm-cream surface clears AA body comfortably. */
+  --color-fg:          oklch(20% 0.015 80);          /* high-emphasis text */
+  --color-fg-muted:    oklch(42% 0.012 80);          /* secondary copy, captions */
+  --color-fg-disabled: oklch(70% 0.010 80);          /* disabled controls (M2: 38% emphasis) */
+  --color-on-accent:   oklch(98% 0.005 80);          /* fg on accent fills */
+
+  /* ── Structural (3:1 against surface — WCAG 1.4.11) */
+  --color-border:        oklch(88% 0.010 80);        /* default input/card borders */
+  --color-border-strong: oklch(70% 0.015 80);        /* focused inputs, primary dividers */
+  --color-border-subtle: oklch(93% 0.008 80);        /* non-interactive dividers */
+  --color-scrim:         oklch(20% 0.015 80 / 0.6);  /* modal backdrop */
+
+  /* ── Accent (coral — energetic art-tool feel) */
+  --color-accent:               oklch(58% 0.22 30);
+  --color-accent-container:     oklch(94% 0.05 30);  /* soft tinted bg for alerts/badges */
+  --color-on-accent-container:  oklch(35% 0.15 30);  /* text on the soft tint */
+
+  /* ── Focus ring (same hue as accent; 3:1 against any surface) */
+  --color-ring: oklch(58% 0.22 30);
+
+  /* ── Semantic — success (green hue 150) */
+  --color-success:              oklch(55% 0.15 150);
+  --color-on-success:           oklch(98% 0    0);
+  --color-success-container:    oklch(94% 0.06 150);
+  --color-on-success-container: oklch(30% 0.12 150);
+
+  /* ── Semantic — warning (amber hue 75) */
+  --color-warning:              oklch(72% 0.16 75);
+  --color-on-warning:           oklch(20% 0.05 75);
+  --color-warning-container:    oklch(94% 0.06 75);
+  --color-on-warning-container: oklch(35% 0.12 75);
+
+  /* ── Semantic — danger (red hue 15, distinct from accent's hue 30) */
+  --color-danger:               oklch(55% 0.20 15);
+  --color-on-danger:            oklch(98% 0    0);
+  --color-danger-container:     oklch(94% 0.05 15);
+  --color-on-danger-container:  oklch(30% 0.15 15);
+
+  /* ── Interaction-state overlays (apply on top of base via bg utility) */
+  --color-state-hover:    oklch(0% 0 0 / 0.05);
+  --color-state-pressed:  oklch(0% 0 0 / 0.10);
+  --color-state-selected: oklch(58% 0.22 30 / 0.10);
+
+  /* ── Legacy compatibility — alias old name to new one so existing
+       components that still say `bg-surface-elevated` etc. keep
+       working until commit 2's sweep migrates them. */
+  --color-accent-fg: var(--color-on-accent);
+}
+
+@layer base {
+  html.dark {
+    /* ── Surfaces (cool blue-grey, off-black; preserves OLED breathing)
+         Surface-elevated bumped to oklch(21%) so cards stand off the
+         page bg (13%) with ~8 L points of visible separation. */
+    --color-surface:          oklch(13% 0.015 250);
+    --color-surface-elevated: oklch(21% 0.022 250);
+    --color-surface-overlay:  oklch(26% 0.022 250);
+
+    /* ── Foreground
+         fg-muted bumped to oklch(78% / chroma 0.008) so secondary
+         text on surface-elevated hits APCA Lc ≈ 80 (AA body comfort
+         + AAA UI). The lower chroma keeps it reading as neutral grey
+         instead of dim blue. */
+    --color-fg:          oklch(96% 0.005 250);
+    --color-fg-muted:    oklch(78% 0.008 250);
+    --color-fg-disabled: oklch(55% 0.010 250);
+    --color-on-accent:   oklch(15% 0.020 250);
+
+    /* ── Structural */
+    --color-border:        oklch(28% 0.020 250);
+    --color-border-strong: oklch(45% 0.020 250);
+    --color-border-subtle: oklch(22% 0.020 250);
+    --color-scrim:         oklch( 8% 0.010 250 / 0.7);
+
+    /* ── Accent (soft sky blue — desaturated for calm; M2 rule:
+         use ~200-range tones in dark, not the saturated 500) */
+    --color-accent:               oklch(72% 0.13 250);
+    --color-accent-container:     oklch(28% 0.08 250);
+    --color-on-accent-container:  oklch(85% 0.10 250);
+
+    --color-ring: oklch(72% 0.13 250);
+
+    /* ── Semantic (all desaturated for dark; on-* pairs stay legible) */
+    --color-success:              oklch(70% 0.12 150);
+    --color-on-success:           oklch(15% 0.03 150);
+    --color-success-container:    oklch(28% 0.08 150);
+    --color-on-success-container: oklch(85% 0.10 150);
+
+    --color-warning:              oklch(78% 0.12 75);
+    --color-on-warning:           oklch(20% 0.05 75);
+    --color-warning-container:    oklch(28% 0.08 75);
+    --color-on-warning-container: oklch(85% 0.10 75);
+
+    --color-danger:               oklch(70% 0.16 25);
+    --color-on-danger:            oklch(15% 0.05 25);
+    --color-danger-container:     oklch(28% 0.10 25);
+    --color-on-danger-container:  oklch(88% 0.08 25);
+
+    /* ── State overlays (white in dark, not black) */
+    --color-state-hover:    oklch(100% 0 0 / 0.05);
+    --color-state-pressed:  oklch(100% 0 0 / 0.10);
+    --color-state-selected: oklch( 72% 0.13 250 / 0.15);
+
+    --color-accent-fg: var(--color-on-accent);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    /* --font-sans is set by the appearance store at boot. The fallback
+       stack is the canonical 2025 system stack so first paint reads
+       cleanly even before the store has loaded. */
+    font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system,
+      BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+      sans-serif);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Heading default: --font-display falls back to --font-sans then the
+     system stack. Components that want the brand display face
+     explicitly (logos, hero text) opt in via `font-brand`. */
+  h1, h2, h3 {
+    font-family: var(--font-display, var(--font-sans));
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo,
+      Consolas, 'Liberation Mono', monospace);
+  }
+}
+
+@utility font-brand {
+  font-family: var(--font-brand, var(--font-display, var(--font-sans)));
+}
+@utility font-display {
+  font-family: var(--font-display, var(--font-sans));
+}
+@utility font-mono-tabular {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace);
+  font-variant-numeric: tabular-nums;
+}

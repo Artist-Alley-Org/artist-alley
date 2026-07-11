@@ -1,0 +1,14 @@
+Hi {{.recipient_name}},
+
+Your saved search "{{.search_name}}" no longer matches anything.
+{{if .removed_count}}The {{.removed_count}} previously-matching asset{{if ne .removed_count 1}}s are{{else}} is{{end}} no longer visible to you (deleted, restricted, or moved).{{end}}
+
+If you expected new matches, review the query at:
+{{.results_url}}
+
+--
+{{.site_name}}
+
+You are receiving this because you enabled email notifications on
+this saved search. Manage saved searches at
+{{.site_url}}/account/saved-searches.

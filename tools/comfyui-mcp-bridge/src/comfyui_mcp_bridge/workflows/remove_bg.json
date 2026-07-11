@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "description": "Placeholder background-removal workflow. AA-side 1.14.E-1 does NOT yet call remove_bg; drop a real JSON at CMB_EXTRA_WORKFLOWS_DIR/remove_bg.json to enable (RemBG / BRIA RMBG nodes work well here).",
+    "version": 1,
+    "status": "stub",
+    "placeholders": ["<<SOURCE_IMAGE_NAME>>"]
+  },
+  "1": {
+    "inputs": {"text": "remove_bg workflow not configured"},
+    "class_type": "ShowText"
+  }
+}

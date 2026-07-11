@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "description": "Flux Kontext img2img — operator-ready workflow that overrides the bundled SDXL default. Drop this at $CMB_EXTRA_WORKFLOWS_DIR/img2img.json and the bridge will use it instead of the bundled SDXL one. Tested 2026-06-22 against ComfyUI 0.17.2 on RTX 5090 + 32 GB VRAM: 14 s wall-clock on a 1024-edge source. Based on ComfyUI's official flux_kontext_dev_basic template (flattened single-image variant).",
+    "version": "flux-kontext-dev-v1",
+    "model_assumption": "flux1-dev-kontext_fp8_scaled.safetensors (FP8 scaled)",
+    "required_models": {
+      "diffusion_models": ["flux1-dev-kontext_fp8_scaled.safetensors"],
+      "vae": ["ae.safetensors"],
+      "text_encoders": ["clip_l.safetensors", "t5xxl_fp8_e4m3fn_scaled.safetensors"]
+    },
+    "download_urls": {
+      "diffusion_model": "https://huggingface.co/Comfy-Org/flux1-kontext-dev_ComfyUI/resolve/main/split_files/diffusion_models/flux1-dev-kontext_fp8_scaled.safetensors",
+      "vae": "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/vae/ae.safetensors",
+      "clip_l": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+      "t5xxl_fp8": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors"
+    },
+    "tuning_notes": "CFG=1 + denoise=1 are Kontext-correct — Kontext blends the reference image via ReferenceLatent conditioning, NOT via partial-noise injection like SDXL img2img. Don't change these without understanding the Kontext sampling model. FluxGuidance=2.5 is the Kontext-recommended distillation guidance value."
+  },
+  "37": {
+    "inputs": {
+      "unet_name": "flux1-dev-kontext_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "38": {
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "flux",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader"
+  },
+  "39": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "10": {
+    "inputs": {
+      "image": "<<SOURCE_IMAGE_NAME>>",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "42": {
+    "inputs": {
+      "image": ["10", 0]
+    },
+    "class_type": "FluxKontextImageScale"
+  },
+  "124": {
+    "inputs": {
+      "pixels": ["42", 0],
+      "vae": ["39", 0]
+    },
+    "class_type": "VAEEncode"
+  },
+  "6": {
+    "inputs": {
+      "text": "<<PROMPT>>",
+      "clip": ["38", 0]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "177": {
+    "inputs": {
+      "conditioning": ["6", 0],
+      "latent": ["124", 0]
+    },
+    "class_type": "ReferenceLatent"
+  },
+  "35": {
+    "inputs": {
+      "conditioning": ["177", 0],
+      "guidance": 2.5
+    },
+    "class_type": "FluxGuidance"
+  },
+  "135": {
+    "inputs": {
+      "conditioning": ["6", 0]
+    },
+    "class_type": "ConditioningZeroOut"
+  },
+  "31": {
+    "inputs": {
+      "model": ["37", 0],
+      "positive": ["35", 0],
+      "negative": ["135", 0],
+      "latent_image": ["124", 0],
+      "seed": "<<SEED>>",
+      "steps": "<<STEPS>>",
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    },
+    "class_type": "KSampler"
+  },
+  "8": {
+    "inputs": {
+      "samples": ["31", 0],
+      "vae": ["39", 0]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI_AAedit_kontext",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  }
+}

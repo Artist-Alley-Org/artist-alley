@@ -1,0 +1,66 @@
+# Example docker-compose snippet for running the bridge next to
+# ComfyUI on the same host. Copy this into your ComfyUI compose
+# file (or stand it up on its own with a network-mode pointing at
+# wherever ComfyUI listens).
+#
+# Two scenarios documented:
+#   1. ComfyUI on the host, bridge in container — uses
+#      host.docker.internal so the bridge reaches ComfyUI's
+#      127.0.0.1:8188.
+#   2. Both ComfyUI + bridge in containers on the same network —
+#      bridge talks to ComfyUI by service name.
+
+services:
+  # ----- Scenario 1: ComfyUI on host, bridge in container -----
+  bridge-host-comfy:
+    image: comfyui-mcp-bridge:latest
+    # Build from this directory if you haven't pushed the image
+    # to a registry yet:
+    # build: .
+    ports:
+      - "9201:9201"
+    environment:
+      CMB_COMFY_URL: "http://host.docker.internal:8188"
+      CMB_HTTP_HOST: "0.0.0.0"
+      CMB_HTTP_PORT: "9201"
+      CMB_AUTH_KIND: "bearer"
+      # Generate with: openssl rand -hex 32
+      # Mirror this exact value into artist-alley's
+      # /admin/ai/mcp-clients → auth_secret_ref.
+      CMB_AUTH_TOKEN: "REPLACE_ME_WITH_A_32_BYTE_HEX_STRING"
+      CMB_LOG_LEVEL: "INFO"
+      # Operator workflow drop-ins live on the host filesystem +
+      # get bind-mounted into the container so adding a new
+      # workflow is a file copy + bridge restart, not a rebuild.
+      CMB_EXTRA_WORKFLOWS_DIR: "/home/bridge/workflows"
+    volumes:
+      - ./operator-workflows:/home/bridge/workflows:ro
+    extra_hosts:
+      # Linux-only — Docker Desktop on Mac/Windows resolves
+      # host.docker.internal natively.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ----- Scenario 2: ComfyUI + bridge both in containers -----
+  # Uncomment + drop the scenario-1 service if you'd rather have
+  # both processes on a shared docker network.
+  #
+  # comfyui:
+  #   image: ghcr.io/your/comfyui:latest
+  #   ports:
+  #     - "8188:8188"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - capabilities: [gpu]
+  #
+  # bridge-network-comfy:
+  #   image: comfyui-mcp-bridge:latest
+  #   depends_on: [comfyui]
+  #   ports:
+  #     - "9201:9201"
+  #   environment:
+  #     CMB_COMFY_URL: "http://comfyui:8188"
+  #     CMB_AUTH_KIND: "bearer"
+  #     CMB_AUTH_TOKEN: "REPLACE_ME_WITH_A_32_BYTE_HEX_STRING"

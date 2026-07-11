@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#111; max-width:640px; margin:0 auto; padding:20px;">
+  <p>Hi {{.recipient_name}},</p>
+
+  <p>Your saved search <strong>"{{.search_name}}"</strong> matched
+  <strong>{{.added_count}}</strong> new asset{{if ne .added_count 1}}s{{end}}:</p>
+
+  <ul style="padding-left:20px;">
+    {{range .hits}}
+      <li style="margin-bottom:12px;">
+        <a href="{{.url}}" style="color:#c22; font-weight:600; text-decoration:none;">{{.title}}</a>
+        {{if .summary}}<div style="color:#555; font-size:0.9em; margin-top:2px;">{{.summary}}</div>{{end}}
+      </li>
+    {{end}}
+  </ul>
+
+  <p><a href="{{.results_url}}" style="display:inline-block; background:#c22; color:#fff; padding:8px 16px; border-radius:6px; text-decoration:none;">See all matches</a></p>
+
+  <hr style="border:none; border-top:1px solid #eee; margin-top:32px;">
+  <p style="color:#888; font-size:0.85em;">
+    You are receiving this because you enabled email notifications on this saved search.
+    <a href="{{.site_url}}/account/saved-searches" style="color:#888;">Manage saved searches</a>.
+  </p>
+</body>
+</html>

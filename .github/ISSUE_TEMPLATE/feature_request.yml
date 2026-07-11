@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest a concrete feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended ideas, prefer [Discussions](https://github.com/mscrnt/artist-alley/discussions). Use this template when you have a concrete, scoped proposal.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the artist / reviewer / admin pain point. Avoid jumping straight to a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who benefits?
+      multiple: true
+      options:
+        - Artists (uploading and sharing work)
+        - Reviewers (giving feedback)
+        - Studio admins (deploying and operating)
+        - Plugin authors
+        - All users
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Links, screenshots, prior art, related ADRs.
+    validations:
+      required: false

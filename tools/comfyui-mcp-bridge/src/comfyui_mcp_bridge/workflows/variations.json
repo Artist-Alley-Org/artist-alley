@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "description": "Placeholder variations workflow. AA-side 1.14.E-1 does NOT yet call variations; drop a real JSON at CMB_EXTRA_WORKFLOWS_DIR/variations.json to enable.",
+    "version": 1,
+    "status": "stub",
+    "placeholders": ["<<SOURCE_IMAGE_NAME>>", "<<COUNT>>", "<<SEED>>"]
+  },
+  "1": {
+    "inputs": {"text": "variations workflow not configured"},
+    "class_type": "ShowText"
+  }
+}
