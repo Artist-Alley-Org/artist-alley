@@ -23,18 +23,23 @@ excerpt: >-
   migration history becomes append-only forever.
 ---
 
-## ⚠️ Semantic review pending (2026-07-08)
+## Decision — two squash points (2026-07-11, resolves #228)
 
-The user has clarified two release milestones:
+The append-only-forever trigger is **v1.0.0**, per SemVer's convention that the 0.x range is beta and may break. There are **two deliberate squash points**:
 
-- **v0.1.0** — first tagged release (marker: ResourceSpace refs deleted + base feature set complete).
-- **v1.0.0** — out of beta (marker: real production usage + soak + stable quality).
+1. **v0.1.0 fold** — before the first tagged release, all migrations to date are folded into a single fresh baseline (`00001_baseline_v0_1.sql`). v0.1.0 ships with **exactly one migration file** — no append migrations. This is a clean-first-release goal, not the append-only lock.
+2. **v1.0.0 fold** — before the out-of-beta tag, all beta-era append migrations (0.1 → 0.9) are folded once more into a fresh v1.0.0 baseline. **At the v1.0.0 tag, append-only-forever activates** — no further squashes, ever.
 
-This ADR currently frames the append-only-forever trigger as "after `v1.0.0`" / "after v1.0 launch." Whether the trigger should actually be v0.1.0 (strict; schemas stabilise with the first tag) or v1.0.0 (SemVer-standard; 0.x remains workshop) is an **open decision tracked at issue #228**.
+**Between v0.1.0 and v1.0.0 (the beta window): append freely.** New features add normal `00002`, `00003`, … append migrations on top of the v0.1.0 baseline. They accumulate through beta and get folded once at the v1.0.0 squash point.
 
-Read this ADR's `v1.0.0` mentions as **pending-review** until #228 resolves. Every "after v1.0.0" clause below applies to whichever milestone #228 lands on; the ADR text will be updated once the decision is made.
+Rationale: 0.x is explicitly beta ("workshop") per the milestone model; locking append-only at the *first* tag would be stricter than SemVer requires and would remove the ability to clean up schema as real usage exposes problems during beta. The clean-baseline-per-release goal (one file at each `vX.Y.0` milestone tag) is satisfied by the two fold points without forbidding mid-beta iteration.
 
-Full milestone-model context: [`docs/v0_1_readiness.md` §0](../v0_1_readiness.md).
+**Milestones** (per [`docs/v0_1_readiness.md` §0](../v0_1_readiness.md)):
+
+- **v0.1.0** — first tagged release (marker: ResourceSpace refs deleted + base feature set complete). Single-baseline fold #1.
+- **v1.0.0** — out of beta (marker: real production usage + soak + stable quality). Single-baseline fold #2 + append-only-forever locks.
+
+Issue #228 is closed by this decision.
 
 ## Implementation status (2026-06-15)
 
