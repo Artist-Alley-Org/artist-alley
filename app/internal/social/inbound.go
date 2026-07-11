@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Inbound-federation domain writes — InsertRemoteLike +
 // InsertRemoteComment. Phase 1.22.D-a-4-dispatch.
 //

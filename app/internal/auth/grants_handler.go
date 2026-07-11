@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Capability grant / revoke override endpoints (Phase 1.17.F).
 //
 // Five operations on the admin user-detail page:

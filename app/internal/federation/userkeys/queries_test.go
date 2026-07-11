@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for federation/userkeys SQL — exercises the
 // sqlc-generated queries against a live Postgres so the migration's
 // schema invariants (partial unique on is_current, current-XOR-

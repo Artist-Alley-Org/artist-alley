@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Audiobook duration formatters. Pure, used to render the player
 // chrome and the chapter list — a regression flips the chapter
 // timestamps to gibberish or shows the wrong clock at playback.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Unit tests for the pure helpers exported by session.svelte.ts.
 // The store factory itself relies on $state runes which need a
 // Svelte-compiled .svelte.ts file at runtime — covered by component

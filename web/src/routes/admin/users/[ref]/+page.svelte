@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Per-user admin detail — profile + role assignment + lifecycle
   // status (Phase 1.17.B).

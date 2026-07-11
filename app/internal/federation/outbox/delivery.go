@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Delivery worker per the 1.22.D design proposal §3.3-§3.4.
 // Phase 1.22.D-b-4.
 //

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Admin: saved-search failures queue (Phase 1.16.B-5).
   //

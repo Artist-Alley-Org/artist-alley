@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Document glyph — a page with horizontal lines.
   import type { ToolContext } from '../contract';

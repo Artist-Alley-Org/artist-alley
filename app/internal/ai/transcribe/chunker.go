@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package transcribe orchestrates audio transcription end-to-end —
 // planning chunk time-ranges for long-form audio, calling the
 // transcription router per chunk, stitching the per-chunk transcripts

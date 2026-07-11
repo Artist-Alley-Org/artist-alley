@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Activity envelope — the wire-format unit of federation. Every
 // activity is one envelope; the envelope wraps the type-specific
 // fields, embeds a signed proof of authorship, and may carry an

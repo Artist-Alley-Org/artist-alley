@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package cache is artist-alley's two-tier caching plumbing
 // per ADR 0013: in-process LRU + Postgres LISTEN/NOTIFY for
 // cross-instance invalidation, no Redis pre-MVP.

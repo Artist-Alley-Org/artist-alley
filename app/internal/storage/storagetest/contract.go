@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package storagetest is the shared contract harness every
 // storage.Backend implementation runs through. Each backend's *_test.go
 // calls RunBackendContract with a factory; the harness drives every

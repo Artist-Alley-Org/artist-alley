@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // WhiteboardTool — available when ctx.whiteboardSession is set
 // AND the host wired the required hooks (save / close / compact).
 // Order 20 — sits below Sprite, above any host-injected tools.

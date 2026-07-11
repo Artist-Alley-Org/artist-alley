@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package jobs implements the ai.tag + ai.caption job handlers for
 // the Phase 1.14.A inference fan-out. The handlers register with
 // the jobs.Service.Registry at boot; assets.Handler enqueues one

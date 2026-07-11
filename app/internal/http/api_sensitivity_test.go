@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-i — boot-wiring helper test for the receiver-side
 // encryption policy gate's SensitivityLookup callback. Verifies
 // the lookup correctly maps "asset" objectKinds to their

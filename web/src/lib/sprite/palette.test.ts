@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite Phase 9 palette helpers. The remapping itself (applyPaletteRemap)
 // runs against an OffscreenCanvas; covered via integration. These pure
 // helpers parse + format hex colors and are the bit that frequently

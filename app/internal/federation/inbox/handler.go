@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // HTTP inbox endpoint per the 1.22.D design proposal §2.
 // Phase 1.22.D-a-3.
 //

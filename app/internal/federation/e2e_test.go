@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // End-to-end paired-peer test — the latency-contract test for
 // the gold-standard sub-1s federation guarantee per spec
 // §3.5. Phase 1.22.D-b-6.

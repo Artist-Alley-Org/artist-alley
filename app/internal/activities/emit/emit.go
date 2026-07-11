@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package emit holds the typed per-activity-type helpers that
 // build [activities.Input] for the writer's `WithEmission` /
 // `WithEmissionFn` dispatch helpers.

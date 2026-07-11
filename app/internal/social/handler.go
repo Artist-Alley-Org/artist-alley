@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package social implements the likes + comments HTTP surface on top
 // of the polymorphic data plane from Phase 1.13.D-4. The schema and
 // triggers are in migration 00020; this file is the handler layer.

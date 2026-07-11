@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // SpriteToolPanel — the right-pane half of the sprite viewer.
   // Reads + writes the shared session; AssetViewer renders this

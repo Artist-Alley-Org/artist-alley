@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package archive parses container files (zip / tar / 7z / rar /
 // etc) into a uniform Manifest shape the preview pipeline can
 // cache in metadata.archive and the frontend ArchiveView can browse.

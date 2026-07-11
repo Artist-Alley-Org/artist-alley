@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // HTTP admin surface for the federation peers registry —
 // /admin/federation/peers CRUD. Phase 1.22.B-a.
 //

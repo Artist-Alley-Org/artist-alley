@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Catalogue membership tests. Per ADR 0042 every typed catalogue
 // has a closed set + a .Valid() method; this file asserts both
 // the membership map and the validity predicate stay in lockstep.

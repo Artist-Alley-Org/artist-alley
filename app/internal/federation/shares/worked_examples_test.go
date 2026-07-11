@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // End-to-end tests for the five worked examples from the
 // 1.22.C design proposal §9. Phase 1.22.C-f.
 //

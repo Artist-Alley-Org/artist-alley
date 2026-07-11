@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package peer implements the federation peer registry per
 // ADR 0043 §"Trust model" — the per-instance list of who we
 // federate with. Pairing alone shares no content;

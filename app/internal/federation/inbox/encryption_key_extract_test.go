@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Unit tests for the inbound-envelope encryption-key parser
 // (Phase 1.22.I-c). Exercises every path through extractEncryptionKey
 // + the matching upsertActorBestEffort wiring.

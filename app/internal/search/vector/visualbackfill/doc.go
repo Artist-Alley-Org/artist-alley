@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package visualbackfill implements the operator-triggered visual-
 // embedding backfill for CLIP visual search (Phase 1.16.B-3-followup-4,
 // closes #200).

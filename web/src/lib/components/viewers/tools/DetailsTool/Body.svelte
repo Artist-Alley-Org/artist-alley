@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // DetailsTool body — the generic "what is this asset" surface.
   // Always available; this is the default body the standalone

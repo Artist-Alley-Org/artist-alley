@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 Kenneth Blossom
+
 -- 00001_baseline_v0_1.sql
 --
 -- v0.1.0 baseline schema — the SECOND squash commit.

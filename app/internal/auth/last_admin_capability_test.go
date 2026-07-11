@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.C — lock-in tests for the already-wired last-admin
 // invariant on capability operations + sweeper-time guard.
 //

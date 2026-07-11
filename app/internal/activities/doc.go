@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package activities is the CQRS-lite activities ledger — the
 // canonical record of every federated social action on this
 // instance.

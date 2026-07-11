@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // FontView — live specimen page rendered IN the uploaded typeface
   // via the browser FontFace API. Sections, top-to-bottom:

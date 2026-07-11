@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — typed SubjectKind tests.
 //
 // Pure-Go, no DB; verifies the closed-enum semantics so a future

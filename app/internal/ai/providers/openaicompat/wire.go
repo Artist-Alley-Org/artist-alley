@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package openaicompat is the shared marshaling + HTTP plumbing for
 // providers that speak the OpenAI Chat Completions wire format:
 // OpenAI direct, Azure OpenAI, Ollama, and vLLM all use the same

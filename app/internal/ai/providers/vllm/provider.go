@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package vllm implements the vLLM provider. vLLM exposes the same
 // OpenAI-compatible /v1/chat/completions endpoint that openai +
 // ollama use; this package is a thin operator-config wrapper over

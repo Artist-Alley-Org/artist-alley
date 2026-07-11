@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package xmp parses Adobe XMP (Extensible Metadata Platform)
 // packets out of JPEG and PNG image files. Pure-Go, no external
 // deps — XMP is RDF/XML over a few well-known namespaces, and

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Local type shim for `gifenc` — the upstream package ships
 // ESM only with no .d.ts. Only the surface we actually call is
 // declared; full coverage isn't needed.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package reindex implements Phase 1.16.B-5 — operator-triggered
 // admin reindex of the search subsystem's tsvector + embedding
 // columns.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Kind-routing tests for the viewer controller. Every component
 // that mounts an AssetViewer reads kindForExtension / kindForAsset
 // to pick the right view body — a regression here renders the

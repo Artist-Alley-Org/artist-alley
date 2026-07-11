@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package email is the outgoing-mail substrate for transactional
 // notifications (password reset, comment alerts, license expiry,
 // admin test-sends, etc.). Three pieces:

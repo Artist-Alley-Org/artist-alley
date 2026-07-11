@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <!--
   Sender-side banner per the 1.22.D §5.5 addition 3 lock-in.
 

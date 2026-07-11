@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Envelope unit tests. The conformance tests in conformance_test.go
 // exercise the fixture-driven contract; these tests cover the
 // shape-and-edge-case surface that doesn't need to be a wire

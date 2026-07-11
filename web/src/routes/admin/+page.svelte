@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // /admin home — top-level tile grid mirroring the admin menu
   // structure. Each tile is a section landing page.

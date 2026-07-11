@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.E — per-admin pending-request count cache.
 //
 // The approver-facing badge / count surfaces ("you have N pending

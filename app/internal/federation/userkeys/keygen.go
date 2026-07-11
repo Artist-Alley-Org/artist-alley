@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package userkeys holds the per-user X25519 keypair surface for
 // Phase 1.22.I encrypted federation. The database schema lives in
 // migration 00007_federation_user_keys.sql; sqlc-generated query

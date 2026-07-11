@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin HTTP surface for federation_shares — Phase 1.22.C-c.
 // Three endpoints: list (with mutually-exclusive filters),
 // grant (POST), revoke (DELETE). Gated on system.admin; per-

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Last-admin invariant helper. Guards the admin user-mutation
 // endpoints (deactivate / demote / explicit-revoke / add-
 // explicit-revoke) so an operator can never accidentally lock

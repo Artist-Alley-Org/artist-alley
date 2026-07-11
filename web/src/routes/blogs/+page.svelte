@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // /blogs — long-form writing surface. Stub for phase 1.16; the real
   // implementation (author UI + reader feed + per-post comments) lands

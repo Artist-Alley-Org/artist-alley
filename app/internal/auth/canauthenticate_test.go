@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.A — assertCanAuthenticate single-gate unit tests.
 //
 // Pure-Go (no Postgres). The integration coverage (login through

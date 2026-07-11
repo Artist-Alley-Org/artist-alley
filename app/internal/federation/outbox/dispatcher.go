@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Outbox dispatcher per the 1.22.D design proposal §3.1 (Option
 // B locked-in). Phase 1.22.D-b-3.
 //

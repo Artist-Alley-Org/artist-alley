@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package audit is the typed entry point for writing audit_events.
 //
 // Every event_type recognised by the system has a corresponding method

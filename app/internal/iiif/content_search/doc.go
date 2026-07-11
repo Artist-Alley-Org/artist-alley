@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package content_search serves IIIF Content Search 2.0 responses
 // against the local corpus. Phase 1.54.B.
 //

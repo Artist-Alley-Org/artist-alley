@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Publish-side flow — Phase 1.22.B-c-bis. The mirror of the
 // subscriber: the operator wants THIS instance to appear in the
 // directory's /v1/listing for other instances to discover.

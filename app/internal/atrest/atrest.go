@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package atrest is the symmetric at-rest encryption primitive
 // for sensitive blobs that live in the database — federation actor
 // private keys (Phase 1.22.A, the first real consumer), license

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Stub per-verb handlers for the verbs that DON'T get a real
 // implementation in 1.22.D-a-4 per the §5.5 Q1 lock-in.
 //

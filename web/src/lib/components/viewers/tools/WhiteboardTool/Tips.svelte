@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Whiteboard Tips — lifted from PostHost's whiteboardHotkeys
   // snippet (which is going away in the cutover commit). Splits

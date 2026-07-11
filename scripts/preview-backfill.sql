@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 Kenneth Blossom
+
 -- scripts/preview-backfill.sql
 --
 -- One-shot backfill: enqueue preview.raster jobs for every existing

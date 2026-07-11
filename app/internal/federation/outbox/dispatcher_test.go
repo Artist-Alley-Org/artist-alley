@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Outbox dispatcher integration tests per the gold-standard
 // "integration: real Postgres" layer of the test-layering
 // requirement. Phase 1.22.D-b-3.

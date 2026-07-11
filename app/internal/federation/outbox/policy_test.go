@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-g — pure-function tests for the sender-refusal
 // policy. No DB, no fixtures: every test exercises the decision
 // matrix from docs/protocol/archivepub.md §3.6 against a

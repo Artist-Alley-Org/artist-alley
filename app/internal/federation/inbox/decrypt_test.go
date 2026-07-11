@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for the Phase 1.22.I-f retained-key fallback
 // walk in [DecryptForUser]. Real Postgres (skips without
 // AA_DB_PASSWORD); the userkeys.ListUserKeysForDecrypt query

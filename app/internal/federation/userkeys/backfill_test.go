@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the Phase 1.22.I-b boot-time keypair backfill safety
 // net. Real Postgres + atrest (skips without AA_DB_PASSWORD).
 //

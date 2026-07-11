@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Admin asset-types index (Phase 1.17.F-bis). Lists every type the
   // caller can see (system.admin sees all; non-admins see what

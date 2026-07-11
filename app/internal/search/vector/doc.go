@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package vector is the vector-search layer added in Phase 1.16.B-3.
 // Consumed by the search Engine's hybrid path + the DSL's similar_to
 // compilation + the reserved /search/by-image endpoint.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for peer-of-peer discovery — Phase 1.22.B-d.
 // Coverage:
 //   - VisibleSnapshot returns only opted-in peers (share_in_visible_list)

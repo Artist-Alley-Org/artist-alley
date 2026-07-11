@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-g — sender-refusal policy.
 //
 // Pure decision function. Given a share's sensitivity tier + the

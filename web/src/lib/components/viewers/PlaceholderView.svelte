@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Placeholder body for asset kinds whose dedicated viewer hasn't
   // landed yet (PDF, audio, 3D, fonts, unknown). Shows a kind-

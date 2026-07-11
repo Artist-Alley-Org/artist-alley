@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package presentation implements IIIF Presentation API 3.0 for
 // artist-alley. Phase 1.54.B.
 //

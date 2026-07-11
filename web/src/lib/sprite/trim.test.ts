@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite Phase 11 — trimSourceRect tests. Pure ImageData → BoundingBox;
 // happy-dom doesn't ship a canvas so we synthesise ImageData ourselves.
 

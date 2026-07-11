@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package licensing implements the artist-alley-side verifier for
 // licenses issued by the artist-alley-license-server. Offline-first:
 // every verification step (signature, expiry, chain walk) runs

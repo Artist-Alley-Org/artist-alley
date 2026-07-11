@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // ArchiveSession — shared reactive state between ArchiveView (the
 // canvas-area file-tree + entry preview) and ArchiveTool (the
 // side-panel toolbox). Mirrors the Ebook / Doc / Audiobook session

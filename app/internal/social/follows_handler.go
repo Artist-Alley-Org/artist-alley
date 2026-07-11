@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Follow / block HTTP handlers (Phase 1.17.G2, feat/user-surfaces).
 //
 // Endpoints implemented here:

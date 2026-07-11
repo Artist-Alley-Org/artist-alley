@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package directory implements the subscriber side of the
 // federation directory protocol per
 // docs/spec/federation-directory/v1.md. The reference SERVER

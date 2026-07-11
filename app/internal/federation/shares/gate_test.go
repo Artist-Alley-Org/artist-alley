@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the inbox-filter gate per the 1.22.C design proposal
 // §5. Phase 1.22.C-b.
 //

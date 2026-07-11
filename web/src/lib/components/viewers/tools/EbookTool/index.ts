@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // EbookTool — available whenever the host wired an EbookSession
 // via hostHooks.ebook (AssetViewer does this for kind='ebook'
 // assets). Sits at order 10 — same slot Sprite occupies for

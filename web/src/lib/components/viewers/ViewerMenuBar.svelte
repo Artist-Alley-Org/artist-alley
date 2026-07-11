@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Top-of-viewer menubar — Photoshop / OS-style. Renders File / Edit /
   // About dropdowns, an asset info strip, a Review-mode toggle, and the

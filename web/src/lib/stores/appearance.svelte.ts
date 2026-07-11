@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Appearance store — keeps the install-wide font choices in sync with
 // the DOM. Reads /appearance at boot (a public endpoint), caches the
 // payload to localStorage so the next page load can apply fonts

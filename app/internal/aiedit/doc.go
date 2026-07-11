@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package aiedit is artist-alley's AI image-edit subsystem — the
 // home for derived-asset operations like img2img, inpaint, outpaint,
 // variations, and background removal.

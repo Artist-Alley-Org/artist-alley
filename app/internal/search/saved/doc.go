@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package saved implements Phase 1.16.B-4 — saved searches +
 // email-on-match. Layered over the B-1/B-2/B-3 search subsystem
 // plus the Phase 1.19.A email substrate.

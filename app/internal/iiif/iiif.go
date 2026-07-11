@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package iiif implements the IIIF Image API 3.0 Level 0 surface
 // on top of the existing variant pipeline. Two endpoints:
 //

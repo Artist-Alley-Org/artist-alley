@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package brushpacks — service layer that imports brush packs
 // (Photoshop .abr files, our own native format in the future) and
 // serves the resulting stamps back to the frontend renderer.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Writer + typed input shapes for the activities ledger.
 //
 // See doc.go for the package invariant + the docs/spec/federation/

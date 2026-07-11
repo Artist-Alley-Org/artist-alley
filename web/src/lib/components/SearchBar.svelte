@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Debounced search input. Two-way bound via $bindable so the parent
   // owns the canonical query string. Emits an `onsearch` callback when

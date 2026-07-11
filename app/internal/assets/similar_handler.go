@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.14.B — /assets/{id}/similar HTTP handler.
 //
 // Reads the anchor asset's embedding row (per the configured default

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin HTTP surface for peer-of-peer discovery — Phase 1.22.B-d.
 
 package p2p

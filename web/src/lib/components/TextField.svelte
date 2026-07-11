@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Labelled text input with optional helper / error text. Two-way
   // bound via $bindable so callers can do <TextField bind:value=... />.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Upload store — runed singleton, owns the upload modal's state.
 //
 // Design goals (locked in the Phase 1.13.D-2b plan):

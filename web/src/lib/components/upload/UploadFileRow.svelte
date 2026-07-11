@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // One row per pending upload. Thumb + filename + progress bar +
   // state badge + remove. Per-file title is editable inline (the

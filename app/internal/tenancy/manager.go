@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package tenancy is the multi-tenant manager surface, enterprise-
 // gated on license feature "multi_tenant".
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Serves the canonical OpenAPI spec to the in-app Scalar reference at
 // /admin/integrations/api.
 //

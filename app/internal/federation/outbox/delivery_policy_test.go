@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-g integration tests for the outbox delivery
 // Worker's sender-refusal policy. Real Postgres + httptest +
 // real audit.Recorder against the DB so the

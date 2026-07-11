@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.18.B-3 handler integration tests. Real Postgres;
 // skips without AA_DB_PASSWORD.
 //

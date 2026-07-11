@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Workflow handler — HTTP surface for the workflow state machine.
 //
 // Right now this is just the read side: list states for a given

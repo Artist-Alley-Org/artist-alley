@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite-sheet auto-detection — find non-background pixel regions
 // in a sprite sheet, return a list of bounding boxes the playback
 // engine can use as frames. Inspired by Spriters Resource's Sprite

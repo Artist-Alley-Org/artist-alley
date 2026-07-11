@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-e integration tests for the outbox delivery
 // worker's encryption branch. Real Postgres + httptest server,
 // using the existing newDeliveryFixture from delivery_test.go.

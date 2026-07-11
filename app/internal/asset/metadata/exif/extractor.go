@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package exif is the EXIF + ICC + dimension extractor for the
 // upload-time metadata pipeline. Pure Go — no CGo dependencies —
 // using dsoprea/go-exif/v3 for the EXIF blob parse.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin-side user surface (Phase 1.17.A).
 //
 // The handler in handler.go is profile-shaped (public read + owner

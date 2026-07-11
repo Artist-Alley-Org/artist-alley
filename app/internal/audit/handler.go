@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin audit-log viewer (Phase 1.17.K).
 //
 // This file implements the read side of the audit subsystem — the

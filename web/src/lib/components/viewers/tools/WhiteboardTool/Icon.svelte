@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Presentation board — same glyph used in the menubar Tools menu.
   import type { ToolContext } from '../contract';

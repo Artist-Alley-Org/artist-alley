@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Upload modal shell. Mounted once in +layout.svelte; opens when
   // upload.open flips true (via the navbar button OR a global drag-

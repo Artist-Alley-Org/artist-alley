@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — federation pass-through guard.
 //
 // Collections are local-instance only at MVP per ADR 0043, so a

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package acls hosts the per-resource ACL slice of the API (ADR 0010
 // Layer 6). For now this package contains only the trigger tests that
 // lock in the sweep semantics from migration 00017 — the OpenAPI surface

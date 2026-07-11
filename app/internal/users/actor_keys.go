@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.A — federation actor keypair plumbing.
 //
 // Per docs/spec/federation/v1.md §5 + §6 + §13, every federated

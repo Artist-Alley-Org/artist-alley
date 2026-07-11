@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Paired-peer end-to-end test per the §5.5 Q1 lock-in.
 // Phase 1.22.D-a-5.
 //

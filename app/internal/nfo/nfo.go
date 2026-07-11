@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package nfo parses Kodi / Jellyfin-style album.nfo XML files —
 // the canonical metadata sidecars that ship next to ripped CD
 // audiobooks (e.g. each Dark Tower book folder is N MP3s + one

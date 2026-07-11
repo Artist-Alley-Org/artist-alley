@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package gemini implements the Google Gemini provider. Gemini's
 // generateContent API has its own request/response shape (different
 // from both OpenAI and Anthropic); this package has a thin shim per

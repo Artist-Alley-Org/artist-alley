@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Browse-feed view state: which layout the user picked and how many
 // columns wide. Persists to localStorage so reloads + tab-restores
 // honour the choice.

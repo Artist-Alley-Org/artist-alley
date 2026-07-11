@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — collections.Create required-collection-field gate.
 //
 // These tests inject a fake MetadataGate so collections can verify

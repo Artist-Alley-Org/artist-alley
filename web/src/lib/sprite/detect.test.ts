@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite auto-detection — pure-algorithm tests against synthetic
 // ImageData. We don't render a real sheet; we paint the pixels by
 // hand and verify the BFS + merge + sort pipeline catches the

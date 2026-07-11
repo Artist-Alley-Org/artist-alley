@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Admin: CLIP visual-embedding backfill (Phase 1.16.B-3-followup-4,
   // closes #200).

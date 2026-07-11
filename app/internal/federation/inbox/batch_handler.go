@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Batched inbox endpoint per spec §10.4 + the 1.22.D design
 // proposal §3.10. Phase 1.22.D-b-5.
 //

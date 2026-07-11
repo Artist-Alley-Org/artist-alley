@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package s3 is the S3-API implementation of storage.Backend.
 //
 // Works against AWS S3, MinIO, Backblaze B2's S3 endpoint, Cloudflare

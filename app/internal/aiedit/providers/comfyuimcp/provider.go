@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package comfyuimcp is the ComfyUI-via-MCP implementation of
 // [aiedit.ImageEditProvider]. It does NOT speak to ComfyUI directly
 // — the operator runs a thin Python bridge (see

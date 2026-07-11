@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Standalone post page. Renders the same PostHost component that
   // the browse-feed overlay uses; the difference is the close

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Hand-rolled button primitive. Three variants cover the surfaces
   // we need in 1.13.C: primary actions (sign in, complete setup),

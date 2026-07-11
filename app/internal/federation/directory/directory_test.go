@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for the subscriber side — Phase 1.22.B-c.
 // Coverage:
 //   - URL normalization (https only, no path, trailing-slash strip)

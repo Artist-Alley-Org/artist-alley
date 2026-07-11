@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // aa-abr-extract — read a Photoshop .abr brush pack and emit a
 // directory of PNG stamps + a manifest JSON.
 //

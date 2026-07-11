@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Binary verifybaseline runs db.Migrate against a scratch Postgres
 // pointed at by AA_DB_* env, then prints the applied head version_id.
 // Only invoked by scripts/verify-baseline.sh — it exists to exercise

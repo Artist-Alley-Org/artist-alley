@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Dropdown that lets the user toggle which list-view columns are
   // visible. Sits in the table toolbar. Each checkbox flips a column

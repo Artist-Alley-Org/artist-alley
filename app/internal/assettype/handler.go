@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package assettype implements the artist-alley asset-type
 // catalog endpoints (replacing the prior generation of hand-rolled
 // PHP at `pages/team/team_asset_types.php` and the relevant slices

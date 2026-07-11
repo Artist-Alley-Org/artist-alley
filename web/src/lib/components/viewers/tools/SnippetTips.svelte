@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Mirror of SnippetBody but for the optional Tips slot.
   import type { ToolContext, SnippetToolHooks } from './contract';

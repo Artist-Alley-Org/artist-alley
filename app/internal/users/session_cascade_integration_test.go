@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.B — lock-it-in cascade contract test.
 //
 // The recordingRevoker test in session_cascade_test.go pins the

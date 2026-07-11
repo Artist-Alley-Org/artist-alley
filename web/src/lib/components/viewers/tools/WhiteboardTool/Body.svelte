@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // WhiteboardTool body — adapts the existing WhiteboardToolPanel
   // into the registry-driven shell. The host (PostHost today) wires

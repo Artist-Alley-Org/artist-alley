@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin handlers for the demo-seed loader endpoints. NOT for
 // general operator use — gated on system.admin; not surfaced
 // in the admin UI. The apply-side script (see

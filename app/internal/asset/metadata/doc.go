@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package metadata is artist-alley's upload-time file-metadata
 // extraction subsystem (Phase 1.18.A-2). Lives as a sibling of
 // [github.com/mscrnt/artist-alley/app/internal/metadata] —

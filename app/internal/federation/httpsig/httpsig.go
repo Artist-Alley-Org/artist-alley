@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package httpsig is the hand-rolled HTTP-Signatures
 // implementation (Cavage-style hs2019 + Ed25519 only) per
 // docs/spec/federation/v1.md §10 + the 1.22.D design proposal

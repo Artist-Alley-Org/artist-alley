@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Helper for hosts that want to register a tool whose body / tips
 // live as snippets in the host's own scope (PostHost's
 // postSocialPane reads PostHost-local state — `post`, `author`,

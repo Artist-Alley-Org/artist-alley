@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Navbar "Upload" button. Icon + label on desktop, icon-only at
   // narrow widths. Opens the upload modal in empty state (the user

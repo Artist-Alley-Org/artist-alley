@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Per-user account section structure.
 //
 // Mirrors web/src/lib/admin/sections.ts but for /account/*. The

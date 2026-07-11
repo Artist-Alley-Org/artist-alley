@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Capability vocabulary for Phase 1.22.I-d peer-handshake
 // capability negotiation. The bilateral intersection of both
 // peers' advertised sets is stored in federation_peers.capabilities

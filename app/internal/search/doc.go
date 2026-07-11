@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package search implements the unified GET /search endpoint that
 // spans assets, collections, and posts.
 //

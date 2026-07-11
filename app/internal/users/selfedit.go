@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.F — per-field self-edit gates for /account/profile.
 //
 // Operators occasionally need to lock specific profile fields

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // WhiteboardMinimap — Figma-style bird's-eye view of the
   // whole whiteboard. Lives in the top-right corner of the canvas

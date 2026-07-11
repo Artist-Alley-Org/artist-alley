@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Shared layout for /account/* stub pages: title, intro, and a
   // "coming in Phase X" placeholder card. The dynamic catch-all route

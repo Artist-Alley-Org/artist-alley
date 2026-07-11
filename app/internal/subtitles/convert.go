@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.18.B-3 — subtitle format conversion to WebVTT.
 //
 // The conversion job (jobs.TypeSubtitleConvert) reads an uploaded

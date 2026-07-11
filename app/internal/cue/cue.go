@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package cue parses CUE sheets — the text-based chapter / track
 // marker format Audible bundles next to its .aax / .m4b exports.
 //

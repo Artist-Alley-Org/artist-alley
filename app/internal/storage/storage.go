@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package storage is the artist-alley content-addressed storage layer.
 //
 // The full design is in docs/adr/0008-storage-architecture.md. In

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.14.C — WebVTT marshaller.
 //
 // The subtitles package stores tracks as VTT bytes in storage_objects;

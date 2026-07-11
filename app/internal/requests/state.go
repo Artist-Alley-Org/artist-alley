@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.E — typed request-state machine.
 //
 // resource_request.state is TEXT in Postgres with a CHECK

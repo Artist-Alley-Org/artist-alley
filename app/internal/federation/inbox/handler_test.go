@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // End-to-end inbox-handler tests. Covers every pipeline stage's
 // reject path + the happy 202 path. Phase 1.22.D-a-5.
 //

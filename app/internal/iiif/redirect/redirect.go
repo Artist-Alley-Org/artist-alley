@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package redirect handles IIIF 2.0 → 3.0 URL rewrites so viewers
 // still pointing at legacy 2.0 grammar (Mirador 2.x + old
 // UniversalViewer builds) get a 301 to the 3.0 canonical URL rather

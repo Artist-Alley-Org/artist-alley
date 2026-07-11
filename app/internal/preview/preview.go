@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package preview implements the artist-alley preview-generation
 // handlers — the per-format workers that produce sized variants for
 // each uploaded asset.

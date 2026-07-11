@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Last-admin invariant tests. Real Postgres; skips without
 // AA_DB_PASSWORD. Covers the four mutation paths the
 // invariant guards (deactivate / demote / revoke-grant /

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Adapter Body for host-injected snippet tools. Looks up the
   // host-provided snippet under the conventional hostHook key

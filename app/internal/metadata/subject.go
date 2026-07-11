@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — typed SubjectKind discriminator for field_definition.
 //
 // One field_definition row describes EITHER an asset-side field OR

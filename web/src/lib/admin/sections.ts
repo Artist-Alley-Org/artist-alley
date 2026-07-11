@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Top-level admin section structure.
 //
 // This is the canonical menu shape — every admin page belongs to one

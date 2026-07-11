@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // New-collection composer. Wraps POST /collections. Re-used by
   // both the hub header and the "New" entry inside any user menu.

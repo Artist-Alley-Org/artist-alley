@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package facet implements the parallel facet aggregators for the
 // unified /search/facets endpoint. Phase 1.16.B-2.
 //

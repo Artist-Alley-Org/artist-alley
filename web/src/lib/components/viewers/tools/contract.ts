@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tool contract — the single shape every entry in the side-panel
 // registry implements. The shell (ToolPanelShell.svelte) consumes
 // this; the registry (registry.ts) is just `ToolDef[]`. Adding a

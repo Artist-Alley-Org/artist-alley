@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // i18n-coverage guard.
 //
 // Walks .svelte files in user-facing component surfaces, extracts

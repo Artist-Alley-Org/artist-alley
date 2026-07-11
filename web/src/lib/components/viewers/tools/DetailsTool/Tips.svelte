@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Tips for the Details tool. Details is the always-on default
   // tool, so its tips list the gestures the AssetViewer shell

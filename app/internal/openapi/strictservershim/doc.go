@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package strictservershim provides PanicShim, a generated stub
 // implementation of openapi.StrictServerInterface where every
 // method panics. Tests embed *PanicShim and override only the

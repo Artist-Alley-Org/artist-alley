@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Dispatch helpers — the "gold-standard" handler shape that
 // can't forget anything.
 //

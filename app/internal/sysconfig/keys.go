@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package sysconfig is the typed access layer over the system_config
 // table — the per-install settings an admin tunes through the UI
 // (site name, base URL, SMTP credentials, etc.).

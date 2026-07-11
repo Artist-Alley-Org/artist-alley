@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Provider unit tests. No live DB / network — the dispatcher seam
 // stubs out the wire round-trip, so these are pure decode + error-
 // path coverage.

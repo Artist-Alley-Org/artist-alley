@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Small circular avatar — image when available, falls back to a
   // colored disc with the user's initials. Single source of truth so

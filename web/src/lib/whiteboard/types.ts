@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Whiteboard / annotation data model — vector source of truth.
 //
 // Mirrors the WhiteboardContent / WhiteboardCreate schemas in

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // HTTP handler for the per-user preferences surface
 // (Phase 1.17.G, feat/user-surfaces).
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 //go:build !embed_web
 
 // Package http — dev-mode static-serving stub.

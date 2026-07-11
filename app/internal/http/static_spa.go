@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package http — SPA static-asset handler.
 //
 // This file is intentionally NOT gated by a build tag. The dev build

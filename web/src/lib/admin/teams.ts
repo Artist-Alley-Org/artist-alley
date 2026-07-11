@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Pure helpers for the /admin/teams surface (Phase 1.17.E).
 // Sit-side from the page so vitest can pin them without booting
 // svelte-kit. Same pattern as $lib/admin/users.

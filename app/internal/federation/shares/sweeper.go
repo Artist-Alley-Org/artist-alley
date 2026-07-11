@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Expiry sweeper job — Phase 1.22.C-d, locked in per reviewer's
 // answer §12.5 #4 (NOT optional). Periodic background goroutine
 // that finds active shares whose expires_at has passed + emits

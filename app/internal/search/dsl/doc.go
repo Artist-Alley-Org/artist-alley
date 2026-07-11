@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package dsl implements the artist-alley advanced-search query
 // language. Phase 1.16.B-2.
 //

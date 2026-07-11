@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package assets implements the asset-entity slice of the
 // artist-alley HTTP API. An asset is the user-facing record on top
 // of the byte-plane managed by the storage package.

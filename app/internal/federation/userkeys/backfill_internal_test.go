@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Internal-package tests for the [isRaceLoserError] predicate.
 // Kept in the same package as backfill.go (rather than
 // userkeys_test) so the predicate can be exercised directly

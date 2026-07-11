@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Whiteboard brush-pack registry tests. Focused on the pub/sub
 // pattern + the API → internal shape converter — the tinted-stamp
 // cache + the URL preloader use HTMLImageElement / canvas and need

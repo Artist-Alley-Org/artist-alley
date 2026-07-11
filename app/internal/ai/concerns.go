@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package ai provides the universal AI provider abstraction described
 // in Phase 1.14.A. Five typed concern interfaces (CompletionProvider,
 // EmbeddingProvider, TranscriptionProvider, TagProvider,

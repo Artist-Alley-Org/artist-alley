@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Thin wrapper around openapi-fetch that pins the artist-alley base
 // URL and forwards the session cookie. Component code imports `api`
 // from here and gets fully typed paths + methods.

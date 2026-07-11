@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package mcpserver wraps one registered MCP server as an
 // ai.Provider — so the existing router + audit + cost + privacy gate
 // machinery from Phase 1.14.A applies uniformly without a parallel

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package iptc parses IPTC IIM (Information Interchange Model)
 // datasets out of JPEG and TIFF image files. Pure-Go, no
 // external deps — IIM is a fixed-shape binary format and the

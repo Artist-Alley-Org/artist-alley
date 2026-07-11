@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the instance identity package — Phase 1.22.B-b.
 // Coverage:
 //   - First-boot path: generate + persist + reload returns the

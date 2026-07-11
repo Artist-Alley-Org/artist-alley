@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package mcpregistry owns the MCP server registration data — CRUD
 // over mcp_server_registration + mcp_server_tool_grant, plus a cache
 // layer that the dispatcher reads on every invoke.

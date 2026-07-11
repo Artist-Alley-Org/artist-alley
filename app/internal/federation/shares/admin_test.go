@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the admin grant/revoke flow + the write-ahead-audit
 // invariant per the 1.22.C design proposal §7.2. Phase 1.22.C-c.
 //

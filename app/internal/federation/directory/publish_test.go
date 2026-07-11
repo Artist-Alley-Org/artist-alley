@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the publish-from-our-side flow — Phase 1.22.B-c-bis.
 // Coverage:
 //   - State transitions: not_published → pending_dns →

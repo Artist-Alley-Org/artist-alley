@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package teams hosts the team-DAG slice of the API (ADR 0010, Layer 4).
 //
 // This file covers the closure-maintenance and cycle-rejection triggers

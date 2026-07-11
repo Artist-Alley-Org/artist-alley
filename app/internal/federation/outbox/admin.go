@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin handlers for the outbox + inbox queue views per
 // 1.22.D-c. Owned by the outbox package since they read from
 // both federation_outbox + federation_inbox + emit the

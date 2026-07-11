@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package mcpadmin is the HTTP surface for MCP-client registration
 // (Phase 1.53.A):
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package softdelete implements the recovery-window + hard-delete-
 // by-gc pattern for entities whose DELETE handler is a soft-delete
 // (assets, posts, collections) plus the archived-user hard-delete

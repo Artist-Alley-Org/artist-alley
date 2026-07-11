@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Language / i18n store — singleton, runes-backed. Mirrors the
 // shape of theme.svelte.ts so the patterns rhyme.
 //

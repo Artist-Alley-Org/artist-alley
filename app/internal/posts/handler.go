@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package posts implements the post slice of the artist-alley HTTP
 // API — the feed entity that wraps 1+ assets per the post-model
 // decision (see Phase 1.13.D-2).

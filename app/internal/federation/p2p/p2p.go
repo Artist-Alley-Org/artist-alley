@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package p2p implements peer-of-peer discovery per ADR 0043's
 // trust-laundered social-graph suggestions. Each connected peer
 // opted to share its visible-peer list with us; we periodically

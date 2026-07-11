@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Small count-badge pill used by the messages icon and (eventually)
   // admin menu pending-approval counter. Hides itself when count <= 0

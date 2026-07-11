@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Single-source icon set for the admin section grid. Lucide-style
   // line icons rendered inline — no extra bundle weight, restyle via

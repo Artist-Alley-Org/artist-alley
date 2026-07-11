@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // aa:Share + aa:Unshare emit helpers per the 1.22.C design
 // proposal §2.3 + §4. Phase 1.22.C-c.
 //

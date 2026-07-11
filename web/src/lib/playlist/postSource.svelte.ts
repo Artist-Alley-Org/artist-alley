@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Post → AssetPlaylist source adapter.
 //
 // A Post is, structurally, an AssetPlaylist with social skin:

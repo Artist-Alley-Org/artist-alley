@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests proving the activity emission wiring from
 // Phase 1.22.A-bis-4 (ADR 0044) for the collections handler.
 //

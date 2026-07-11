@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package workflow implements the state-machine slice of the API
 // (ADR 0010 Layer 7). Every state change goes through Service.Transition
 // — direct UPDATE of state_id is reserved for resource creation (set

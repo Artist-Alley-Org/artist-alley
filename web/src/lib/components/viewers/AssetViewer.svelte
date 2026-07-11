@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Universal asset viewer — one shell for image / video / PDF /
   // audio / 3D / sequence. The shell owns chrome (HUD, scrubber,

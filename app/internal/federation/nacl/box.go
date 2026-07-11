@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package nacl wraps the NaCl-box multi-recipient encryption
 // envelope per the artist-alley federation v1 spec.
 //

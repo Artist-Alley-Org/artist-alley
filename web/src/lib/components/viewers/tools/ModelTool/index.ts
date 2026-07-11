@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // ModelTool — available whenever the host wired a ModelSession
 // via AssetViewer's kind='3d' path. Sits at order 10 — same slot
 // Sprite + Ebook occupy for their kinds — so the kind's primary

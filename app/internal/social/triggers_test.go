@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package social hosts likes + comments queries; the HTTP surface
 // lands in Phase 1.13.F-3. These tests verify the counter triggers
 // from migration 00020 — they're the load-bearing piece of the data

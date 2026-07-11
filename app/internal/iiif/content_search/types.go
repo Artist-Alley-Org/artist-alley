@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 package content_search
 
 // Context is the JSON-LD context URI for Content Search 2.0. Emitted

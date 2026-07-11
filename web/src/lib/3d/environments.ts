@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Procedural environments for the 3D model viewer.
 //
 // Rather than ship a megabyte of HDRI files we generate equi-

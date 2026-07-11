@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for the Phase 1.22.I-f stage-4 decrypt
 // branch in Dispatcher.dispatchOne. Drives RunOnce against a real
 // Postgres + seeds federation_inbox rows directly so we can

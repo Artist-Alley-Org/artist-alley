@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Reference directory server HTTP tests. Cover the full
 // challenge → register → list lifecycle plus signature
 // verification on /v1/listing.

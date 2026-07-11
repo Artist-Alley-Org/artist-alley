@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package handlers contains route handlers for the Go server.
 //
 // Each handler is a method on a struct that owns its dependencies

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package orientation applies EXIF-orientation rotation to a
 // decoded image. Used by the variant pipeline (see
 // preview/preview.go) so phone uploads don't render sideways.

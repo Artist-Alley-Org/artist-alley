@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Full-page drop-zone overlay. Visible only while the user is
   // actively dragging files over the window. Mounted once in

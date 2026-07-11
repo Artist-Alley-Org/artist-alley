@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-h key rotation primitive.
 //
 // Mints a new X25519 keypair for one user + atomically flips the

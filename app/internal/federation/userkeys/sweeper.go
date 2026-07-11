@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-h retained-key sweeper.
 //
 // Reaps federation_user_keys rows whose retained_until grace

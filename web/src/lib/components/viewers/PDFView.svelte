@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // PDFView — inline PDF rendering via pdfjs-dist. Each page renders
   // to its own <canvas>; the parent <div> scrolls vertically so the

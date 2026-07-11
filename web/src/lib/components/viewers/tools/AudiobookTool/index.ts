@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // AudiobookTool — available whenever the host wired an Audiobook-
 // Session (kind === 'audiobook'). Order 10 alongside the other
 // per-kind tools.

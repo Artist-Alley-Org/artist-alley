@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Admin team detail (Phase 1.17.E) — edit name/description, manage
   // parents (DAG edges, cycle-rejected by the trigger), manage

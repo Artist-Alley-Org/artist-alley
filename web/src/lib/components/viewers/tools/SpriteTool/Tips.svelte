@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Sprite-tool Tips — extracted verbatim from the SpriteToolPanel
   // footer that's now retired. Renders <dt>/<dd> pairs as direct

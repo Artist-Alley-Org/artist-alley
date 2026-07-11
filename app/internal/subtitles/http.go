@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.18.B-3 HTTP surface.
 //
 // Three endpoints under /assets/{id}/subtitle-tracks:

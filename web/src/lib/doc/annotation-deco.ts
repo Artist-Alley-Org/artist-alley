@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // CodeMirror 6 decoration extension that paints the doc-viewer's
 // text-range annotations. Single source of truth: the StateField
 // reads the externally-provided annotation list (via the

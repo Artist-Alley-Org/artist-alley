@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // ArchiveTool — available whenever the host wired an ArchiveSession
 // (kind === 'archive'). Order 10 alongside the other per-kind tools.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package bootstrap runs at server startup, AFTER migrations
 // + the at-rest crypto init but BEFORE the HTTP server. Its
 // only job: ensure exactly one local admin exists on a fresh

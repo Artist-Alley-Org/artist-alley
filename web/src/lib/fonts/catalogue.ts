@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Font catalogue — the curated set of fonts an admin can pick from
 // per slot at /admin/system/themes.
 //

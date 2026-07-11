@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.17.E — CapabilitySweeper request-cascade tests.
 //
 // Pins the lock-in contract:

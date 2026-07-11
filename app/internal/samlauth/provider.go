@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package samlauth is the SAML 2.0 SP-initiated SSO surface.
 // Enterprise-gated on license feature "sso_saml".
 //

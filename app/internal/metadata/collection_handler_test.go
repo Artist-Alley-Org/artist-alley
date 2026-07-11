@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — collection field-value integration tests.
 //
 // These ride the same router scaffolding handler_test.go uses for

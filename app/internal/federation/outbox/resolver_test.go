@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Resolver unit tests — visibility × sensitivity coverage
 // matrix per the gold-standard test layering requirement.
 // Phase 1.22.D-b-2.

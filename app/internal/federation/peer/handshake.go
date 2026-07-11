@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Handshake protocol — Phase 1.22.B-b. The peer-to-peer dance
 // that lets two operators pair instances by URL alone, without
 // copy-pasting public keys.

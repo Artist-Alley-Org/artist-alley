@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.53.A admin handler tests. Integration tests against the
 // live postgres compose stack — same cadence as mcp_registry tests
 // (and the rest of the AI subsystem). The handler itself is thin

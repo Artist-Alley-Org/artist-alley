@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package config loads runtime configuration from environment variables.
 //
 // All artist-alley configuration is exposed via env vars (12-factor style).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // .lic text envelope parser.
 //
 // The envelope is the user-facing transport — what customers paste

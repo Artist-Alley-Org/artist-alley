@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.9.B — collection-side field value HTTP surface.
 //
 // Mirrors the asset-side endpoints (GetAssetFields,

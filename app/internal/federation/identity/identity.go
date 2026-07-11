@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package identity holds the per-instance Ed25519 keypair the
 // federation transport layer uses to sign + verify peer-to-peer
 // messages. Distinct from per-actor keys (those live on the

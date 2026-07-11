@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-c — remote-actor encryption-key cache + helpers.
 //
 // The federation_remote_actors table grew three nullable columns

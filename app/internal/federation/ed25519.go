@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Thin wrappers around crypto/ed25519 (stdlib) for the
 // federation envelope's signature scheme + PEM serialization
 // for actor public-key publication.

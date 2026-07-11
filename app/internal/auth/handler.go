@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package auth implements the artist-alley authentication layer:
 // login, logout, /me, and personal access tokens.
 //

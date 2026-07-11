@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package shares implements the federation_shares table CRUD +
 // the inbox-filter helper per the 1.22.C design proposal.
 //

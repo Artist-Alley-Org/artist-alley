@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Hub tile for a single collection. Composes a 2×2 mosaic cover
   // from the collection's first 4 assets, with graceful fallbacks

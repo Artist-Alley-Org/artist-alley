@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // SpriteSession — shared reactive state between SpriteCanvas (the
 // view body that owns the canvas) and SpriteToolPanel (the right
 // pane that owns the controls). AssetViewer instantiates one per

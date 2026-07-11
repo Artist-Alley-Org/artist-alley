@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Unit tests for the Phase 1.22.I-h receiver-side encryption
 // policy gate. Pure logic; no Postgres dependency.
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Friendly wrapper around the generated Kaitai parser (abr.go).
 //
 // The generated code mirrors the binary layout verbatim — useful for

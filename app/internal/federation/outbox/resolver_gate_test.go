@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-d resolver-gate tests. Drives applyCapabilityGate
 // directly via mocked hooks — no DB dependency, no skip on
 // AA_DB_PASSWORD. The wiring is exercised end-to-end via scenario

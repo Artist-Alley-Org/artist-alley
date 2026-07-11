@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package openai implements the OpenAI cloud provider (and, by
 // configuration, Azure OpenAI — same wire format, different
 // baseURL + auth header). Builds on the openaicompat shared base

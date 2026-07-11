@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Client-side sprite exporters — GIF / packed sheet / individual
 // PNGs in a zip. All run in the browser, no backend round-trip,
 // which keeps the federation story trivial: every node can

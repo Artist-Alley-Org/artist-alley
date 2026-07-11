@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Archive preview worker — extracts a Manifest of every entry in
 // a zip / tar / tar.gz file and persists it as
 // metadata.archive on the asset row. The ArchiveView reads this

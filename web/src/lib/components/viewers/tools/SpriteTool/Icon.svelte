@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Grid-of-cells — reads as "sprite sheet / sliced frames".
   import type { ToolContext } from '../contract';

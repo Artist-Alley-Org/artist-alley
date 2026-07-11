@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for federation/remote's encryption-key
 // surface (Phase 1.22.I-c). Exercises:
 //

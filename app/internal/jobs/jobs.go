@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package jobs implements the artist-alley background-job queue.
 //
 // The queue is generic — any feature package can register a Handler

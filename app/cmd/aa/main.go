@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Binary aa is the artist-alley server entry point.
 //
 // It boots config, logging, the Postgres pool, and the HTTP server in

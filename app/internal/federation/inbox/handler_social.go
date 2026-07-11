@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // REAL per-verb handlers for Like + Create(Note as comment) per
 // the §5.5 Q1 lock-in. Other verbs ship stubs (handler_stub.go).
 // Phase 1.22.D-a-4-dispatch.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package lockout is the Phase 1.19.D per-username account-lockout
 // layer. Composes with (does not replace) the in-process LoginLimiter
 // at app/internal/auth/ratelimit.go:

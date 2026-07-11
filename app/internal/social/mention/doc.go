@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package mention parses @username mentions out of user-authored body
 // text (post titles/descriptions, comment bodies) and resolves them to
 // local user refs so the write handlers can fire mention_of_me

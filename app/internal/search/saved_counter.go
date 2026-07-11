@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 package search
 
 // AsSavedSearchCounter returns an adapter that maps saved-search

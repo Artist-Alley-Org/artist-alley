@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // HTTP-Signatures tests — round-trip + each error path mapped
 // to the §12.1 reject reason taxonomy. Phase 1.22.D-a-2.
 

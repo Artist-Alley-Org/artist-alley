@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tool registry — the source of truth for what shows up in the
 // menubar Tools picker. Order here doesn't matter (the shell sorts
 // by ToolDef.order); presence here does. Adding a new tool:

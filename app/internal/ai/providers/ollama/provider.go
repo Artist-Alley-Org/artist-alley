@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package ollama implements the Ollama local-LLM provider. Ollama
 // exposes an OpenAI-compatible /v1/chat/completions endpoint, so
 // this is essentially a thin wrapper over openaicompat with no API

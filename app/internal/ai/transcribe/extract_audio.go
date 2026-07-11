@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.14.C — audio extraction via ffmpeg.
 //
 // The transcribe handler reads asset bytes from storage to a temp

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package claude implements the Anthropic Claude provider. The
 // Anthropic API shape differs enough from OpenAI's chat-completions
 // that openaicompat doesn't apply; this package has its own thin

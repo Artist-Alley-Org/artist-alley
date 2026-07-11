@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Admin audit surface for the activities ledger — Phase
 // 1.22.A-bis-3b. Gated on system.admin per ADR 0044.
 //

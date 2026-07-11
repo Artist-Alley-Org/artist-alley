@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // HTTP handler for /account/notifications (Phase 1.17.I2).
 //
 // Read-side counterpart to Writer. The Writer + Handler share the

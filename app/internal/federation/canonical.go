@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // RFC 8785 (JSON Canonicalization Scheme) canonicalization wrapper.
 //
 // Why a wrapper instead of calling gowebpki/jcs directly: keeps the

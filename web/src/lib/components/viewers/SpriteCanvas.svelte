@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // SpriteCanvas — the view-body half of the sprite viewer. Owns
   // the <canvas>, the RAF playback loop, and the grid/frame-box

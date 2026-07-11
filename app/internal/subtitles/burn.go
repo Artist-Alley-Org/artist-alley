@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.18.B-3 burned-subtitle export job — STUB.
 //
 // Burning a subtitle track into a video file means re-encoding the

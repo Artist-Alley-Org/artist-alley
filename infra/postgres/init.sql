@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 Kenneth Blossom
+
 -- artist-alley adjunct database initialization.
 -- Runs once on first container start, before the app connects.
 

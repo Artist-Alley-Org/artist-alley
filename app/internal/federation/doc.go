@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package federation implements the artist-alley walled-garden
 // federation protocol — ActivityPub-shaped, artist-alley-to-
 // artist-alley only at v1.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Expiry sweeper tests — Phase 1.22.C-d.
 // Coverage:
 //   - Happy path: expired-active share revoked + aa:Unshare

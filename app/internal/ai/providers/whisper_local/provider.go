@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package whisperlocal implements the `whisper_local` transcription
 // provider — the seed default for ai.routing.transcribe (see migration
 // 00009 + 00012).

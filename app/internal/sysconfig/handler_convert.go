@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 package sysconfig
 
 // Type conversions between sysconfig Go types and the openapi-codegen

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package digest batches non-immediate notification emails (Phase
 // 1.55.Y). The Writer routes hourly/daily/weekly notifications into
 // digest_queue; this coordinator ticks hourly, aggregates each user's

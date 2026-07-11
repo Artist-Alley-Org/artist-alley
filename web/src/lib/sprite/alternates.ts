@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite Phase 9 — alt-file client helpers.
 //
 // Thin wrappers around /api/v1/assets/{id}/alternates so the palette

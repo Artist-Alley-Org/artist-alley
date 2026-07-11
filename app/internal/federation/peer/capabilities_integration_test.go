@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.22.I-d integration tests for the registry-side
 // capability surface + the handshake-side wiring. Real Postgres
 // (skips without AA_DB_PASSWORD). Lives alongside

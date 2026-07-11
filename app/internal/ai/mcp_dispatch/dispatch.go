@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package mcpdispatch is the guard chain for MCP-tool invocation —
 // the single entry point any caller (admin endpoint, future job
 // handlers, future asset-action shortcuts) uses to reach an

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Google Fonts lazy loader.
 //
 // Picking a font from the typography selector loads its CSS once

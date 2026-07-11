@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package visibility is the shared per-entity visibility gate.
 // Extracted in Phase 1.16.B-2 to close a load-bearing divergence
 // carried forward from 1.16.B-1: search + facets + suggestions

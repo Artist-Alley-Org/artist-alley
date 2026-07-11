@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package audiobook holds the async-job handlers for audiobook-
 // specific post-upload work that's too slow to run inline with the
 // HTTP request:

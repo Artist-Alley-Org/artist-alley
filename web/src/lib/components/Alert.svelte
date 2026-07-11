@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Inline alert / status message — used for form-level errors and
   // success notices. role="alert" announces it to screen readers.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // totalItemCount is the cap-check the whiteboard uses to gate
 // inserts past ITEM_SOFT_CAP / ITEM_HARD_CAP. A miscount silently
 // disables the cap or trips it at the wrong size.

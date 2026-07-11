@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // Audiobookshelf-style side panel for the audiobook reader.
   // Binds the same AudiobookSession the canvas-area AudiobookView

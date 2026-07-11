@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Shared contract between AssetViewer (the shell that owns chrome
 // like the HUD, scrubber, transport bar, fullscreen, hotkeys,
 // pan+zoom, and — later — annotations + presentation room) and the

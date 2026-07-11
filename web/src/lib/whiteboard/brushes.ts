@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Brush-pack registry — keyed by pack id. Phase 1.21b ships one
 // built-in pack with a single procedurally-generated soft-round
 // tip stamp, just enough to prove the stamp renderer works without

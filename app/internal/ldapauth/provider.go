@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package ldapauth is the LDAP / Active Directory identity-provider
 // surface. Enterprise-gated on license feature "sso_ldap".
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Typed catalogues for the federation protocol per ADR 0042:
 // activity types, object types, collection types, trust tiers,
 // encryption policies, share scopes, inbox / outbox status codes.

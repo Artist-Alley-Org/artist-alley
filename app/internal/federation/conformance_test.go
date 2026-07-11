@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Conformance harness for the federation v1 wire format.
 //
 // Validates every fixture under testdata/conformance/. A change to

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Shared CodeMirror grammar loader. Both DocView (text-asset reader)
 // and ArchiveView (in-archive entry preview) need the same extension
 // → language mapping + dynamic-imported grammar pack — extracted so

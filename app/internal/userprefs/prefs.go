@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package userprefs holds per-user application-behavior preferences
 // (Phase 1.17.G, feat/user-surfaces).
 //

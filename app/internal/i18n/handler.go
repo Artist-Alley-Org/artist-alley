@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package i18n is the server-side hook for the frontend's locale
 // system. The translations themselves live on the frontend (bundled
 // JSON catalogues); this package only:

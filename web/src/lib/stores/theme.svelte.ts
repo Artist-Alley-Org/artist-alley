@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Theme preference: 'light' | 'dark' | 'system'.
 //
 // The early-script in app.html resolves the initial theme before

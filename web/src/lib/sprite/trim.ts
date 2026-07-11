@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Sprite Phase 11 — trim transparent margins.
 //
 // Given a frame's source rect on the sheet, walk its pixels and

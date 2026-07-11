@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package totp implements RFC 6238 Time-Based One-Time Passwords +
 // the surrounding self-service primitives the artist-alley auth
 // surface needs:

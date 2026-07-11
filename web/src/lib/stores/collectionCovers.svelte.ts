@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Client-side cover cache for collection cards.
 //
 // The hub renders dozens of CollectionCards at once. Each wants the

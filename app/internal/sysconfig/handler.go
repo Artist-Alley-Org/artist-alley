@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package sysconfig HTTP surface — read/write the per-install
 // settings (site, SMTP, auth, AI) via the admin API.
 //

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package format3d is an in-process Go importer for legacy 3D mesh
 // formats that Blender's built-in importers can't read — the long
 // tail of game-engine assets users upload (Quake / Half-Life model

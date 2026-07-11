@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package disk_usage implements Phase 1.16.B-5's GET
 // /admin/search/disk-usage endpoint + the pg_stat-backed gauges
 // the health snapshot surfaces.

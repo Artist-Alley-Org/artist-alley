@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package feedback implements the operator-facing search-result
 // feedback loop (Phase 1.16.B-5-followup, closes #184).
 //

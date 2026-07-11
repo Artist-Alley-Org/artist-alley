@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // TipsSection — the global standard footer for any AssetViewer
   // tool. Pinned at the bottom of the side-panel scroll area; opens

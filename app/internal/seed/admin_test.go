@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for the demo-seed loader endpoints. Real
 // Postgres (skips without AA_DB_PASSWORD); validates the
 // load-bearing properties the apply-side script needs:

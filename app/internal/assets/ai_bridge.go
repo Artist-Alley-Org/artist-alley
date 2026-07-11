@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Phase 1.14.A-bridge — assets.Handler implements the AI bridge
 // interfaces declared in app/internal/ai/bridge.go.
 //

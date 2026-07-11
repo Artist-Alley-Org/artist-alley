@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package healthhandler is the generic shared shim behind every
 // /admin/{subsystem}/health endpoint. Per the Phase 1.18.A-2
 // follow-up B brief (decision 17): factor the JSON-rendering +

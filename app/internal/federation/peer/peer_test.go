@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the federation peers registry — Phase 1.22.B-a.
 // Coverage:
 //   - URL normalisation (https-only, trailing-slash strip,

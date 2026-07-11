@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tiny wrapper around the `thumbhash` npm decoder.
 //
 // The backend (assets.handler.go) stores a base64 thumbhash on every

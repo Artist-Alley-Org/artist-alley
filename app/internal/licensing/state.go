@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // In-memory cached license state + file loader.
 //
 // State is the concrete implementation of the Source interface.

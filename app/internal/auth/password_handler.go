@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Password change + admin reset endpoints (Phase 1.17.D).
 //
 // Two operations:

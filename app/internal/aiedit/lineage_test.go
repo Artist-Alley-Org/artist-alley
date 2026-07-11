@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Integration tests for the aiedit lineage store. Same live-DB
 // cadence as the other AI-subsystem tests (skips without
 // AA_DB_PASSWORD). Each test creates throwaway assets via direct

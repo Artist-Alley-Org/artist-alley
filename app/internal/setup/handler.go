@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package setup implements the first-run installer endpoints:
 // /setup/status and /setup/complete. It only does anything while the
 // system has zero system.admin users; once the first admin is

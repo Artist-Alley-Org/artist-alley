@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package pdf implements the metadata.Extractor for PDF documents.
 //
 // Pure-Go: uses github.com/pdfcpu/pdfcpu to walk the xref + read the

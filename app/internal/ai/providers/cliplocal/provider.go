@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Package cliplocal implements the `clip_local` embedding provider —
 // the default backend for ai.routing.embed (see migration 00009).
 //

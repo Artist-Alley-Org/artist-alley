@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Adapter that bridges federation/remote's Queries + the
 // I-c Handler to the inbox dispatcher's RemoteActorUpserter
 // contract.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kenneth Blossom
+
 // Tests for the admin audit endpoint added in 1.22.A-bis-3b.
 // Coverage:
 //   - cap-gate: non-admin gets 403

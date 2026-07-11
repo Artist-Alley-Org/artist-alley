@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   // WhiteboardToolPanel — the full toolbox, rendered into the
   // viewer's right pane (via PostHost's metadataSlot snippet swap).
