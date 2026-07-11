@@ -360,6 +360,16 @@ type CreativeLineage struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
+type DigestQueue struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserRef        int64              `json:"user_ref"`
+	Topic          string             `json:"topic"`
+	Cadence        string             `json:"cadence"`
+	NotificationID pgtype.UUID        `json:"notification_id"`
+	QueuedAt       pgtype.Timestamptz `json:"queued_at"`
+	SentAt         pgtype.Timestamptz `json:"sent_at"`
+}
+
 type DirectMessage struct {
 	ID               pgtype.UUID        `json:"id"`
 	SenderUserRef    int64              `json:"sender_user_ref"`
@@ -989,6 +999,7 @@ type UserPreference struct {
 	OriginServerID       pgtype.UUID        `json:"origin_server_id"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	EmailCadence         []byte             `json:"email_cadence"`
 }
 
 type UserProfile struct {
