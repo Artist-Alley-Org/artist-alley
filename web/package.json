@@ -2,6 +2,7 @@
   "name": "artist-alley-web",
   "version": "0.0.1",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "artist-alley frontend (SvelteKit + Tailwind, embedded into the Go binary at build time).",
   "scripts": {

@@ -2,7 +2,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/mscrnt/artist-alley)](https://goreportcard.com/report/github.com/mscrnt/artist-alley)
 [![Go version](https://img.shields.io/github/go-mod/go-version/mscrnt/artist-alley?filename=app/go.mod)](app/go.mod)
-[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/mscrnt/artist-alley?include_prereleases&sort=semver)](https://github.com/mscrnt/artist-alley/releases)
 [![Docs](https://img.shields.io/badge/docs-artist--alley.org-7c3aed)](https://artist-alley.org)
 
@@ -53,7 +53,7 @@ ADRs in [`docs/adr/`](docs/adr/) are the source of truth for architectural decis
 | Storage | filesystem (default), S3-compatible (optional) |
 | Search | Postgres `tsvector` (text), pgvector (semantic) |
 | AI add-ons | CLIP / Whisper / Tesseract (local), OpenAI / Anthropic / Stability (cloud bridge) — all opt-in |
-| License | BSD-3-Clause (relicense to AGPL + commercial planned, Phase 1.24) |
+| License | AGPL-3.0-only (dual-licensed — commercial license available, see [LICENSING.md](LICENSING.md)) |
 
 ---
 
@@ -124,4 +124,4 @@ Architectural changes need an ADR per the convention in [ADR 0035](docs/adr/0035
 
 ## License
 
-artist-alley is currently licensed under **BSD-3-Clause** — see [LICENSE](LICENSE). A relicense to **AGPL + commercial** is planned at Phase 1.24 per [ADR 0016](docs/adr/0016-license-direction.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).
+artist-alley is **dual-licensed**: **AGPL-3.0-only** for open-source use (see [LICENSE](LICENSE)) **or** a separate **commercial license** for use without the AGPL copyleft obligations — see [LICENSING.md](LICENSING.md). This is the license direction set in [ADR 0016](docs/adr/0016-license-direction.md); the monetization model is [ADR 0017](docs/adr/0017-monetization-and-licensing.md); premium add-ons under a separate EULA per [ADR 0038](docs/adr/0038-premium-add-on-layer.md).
