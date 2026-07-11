@@ -300,6 +300,20 @@ current focus:
   and handler-level end-to-end (comment mention lands a notification row
   with target=post + actor threaded; plain comment fires nothing;
   self-mention doesn't notify self). Closes #253.
+  **1.55.U-3 shipped 2026-07-10** — fold `00002_digest_queue` into the
+  v0.1.0 baseline (squash point #1 per ADR 0046). Inlined the single
+  post-baseline append (1.55.Y's `digest_queue` table + partial index +
+  FKs + `user_preferences.email_cadence` column) into
+  `00001_baseline_v0_1.sql` and deleted `00002` — the migrations dir is
+  single-file again, so **v0.1.0 ships with exactly one migration**.
+  DDL copied verbatim from `app/schema.sql` (the pg_dump parity target,
+  untouched). **pg_dump `--schema-only` parity: folded baseline ≡ (old
+  baseline + 00002) — schema-identical, zero drift.** `verify-baseline.sh`
+  green (`head=00001`, contiguous, 0 append migrations); sqlc regen
+  byte-identical (schema.sql unchanged); digest tests green against the
+  folded schema. After this the dir stays single-file until the next
+  feature appends `00002`, `00003`… through beta; the v1.0.0 fold is
+  squash point #2 (future repeat). Closes #257.
   **1.55.Y shipped 2026-07-10** — email digest preferences + one-click
   unsubscribe (closes §4.9). Per-topic email cadence (immediate /
   hourly / daily / weekly / off) in a new
