@@ -1,0 +1,48 @@
+[Unit]
+Description=artist-alley — self-hosted art review and archival
+Documentation=https://github.com/mscrnt/artist-alley
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=artist-alley
+Group=artist-alley
+
+# Settings are sourced from /etc/artist-alley/aa.env. Edit that file
+# (see /etc/artist-alley/aa.env.example or the docs at
+# https://github.com/mscrnt/artist-alley/blob/main/docs/install/README.md)
+# to point at your Postgres + storage backend.
+EnvironmentFile=/etc/artist-alley/aa.env
+
+ExecStart=/usr/bin/aa
+Restart=on-failure
+RestartSec=5s
+
+# Sandbox the service so a compromise of the Go process can't easily
+# reach the rest of the host. Loosen as needed for your deploy.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+# Storage volume — writable by the service user.
+StateDirectory=artist-alley
+ReadWritePaths=/var/lib/artist-alley
+
+# Standard tightening.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

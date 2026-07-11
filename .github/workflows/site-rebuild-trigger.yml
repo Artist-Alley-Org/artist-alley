@@ -1,0 +1,51 @@
+# Site rebuild trigger.
+#
+# The public docs + marketing site now lives in the private repo
+# mscrnt/artist-alley-site (serves www.artist-alley.org). It pulls this
+# repo's docs from `dev` at build time — so when an OSS doc source that
+# the site renders changes, the private site needs to rebuild.
+#
+# This workflow fires a Cloudflare Pages Deploy Hook (stored as the
+# SITE_DEPLOY_HOOK secret) on pushes to `dev` that touch the source the
+# site consumes: ADRs, the roadmap, install docs, the OpenAPI spec, and
+# the DB schema. Secret-gated: if SITE_DEPLOY_HOOK is unset the step
+# logs + no-ops rather than failing, so the trigger is safe to land
+# before the secret exists.
+#
+# Runs on the self-hosted OSS runner — zero hosted CI minutes.
+#
+# Phase 1.55.Z — OSS-side cleanup of the site split.
+
+name: Site rebuild trigger
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'docs/adr/**'
+      - 'docs/roadmap.md'
+      - 'docs/install/**'
+      - 'app/api/openapi.yaml'
+      - 'app/schema.sql'
+
+concurrency:
+  group: site-rebuild-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trigger:
+    name: Fire Cloudflare Pages deploy hook
+    runs-on: [self-hosted, artist-alley]
+    timeout-minutes: 5
+    steps:
+      - name: POST the deploy hook (secret-gated)
+        env:
+          SITE_DEPLOY_HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${SITE_DEPLOY_HOOK}" ]; then
+            echo "SITE_DEPLOY_HOOK is not set — skipping site rebuild (no-op)."
+            exit 0
+          fi
+          echo "Firing Cloudflare Pages deploy hook for the private site…"
+          curl -fsS -X POST "${SITE_DEPLOY_HOOK}" >/dev/null
+          echo "Deploy hook fired — the private site will rebuild + pull the latest docs."

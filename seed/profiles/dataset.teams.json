@@ -1,0 +1,46 @@
+[
+  {
+    "id": "c0e2652d-65b1-cb0f-8c25-3260a5b8834d",
+    "name": "Animation"
+  },
+  {
+    "id": "e8262992-ccd6-cbf5-78ba-7e28929eca9a",
+    "name": "Audio"
+  },
+  {
+    "id": "2b9bae27-fbb7-157d-b2f6-ed5b2cc631fa",
+    "name": "Characters"
+  },
+  {
+    "id": "42244929-933a-687d-b388-907992ad4eac",
+    "name": "Environment"
+  },
+  {
+    "id": "b421ead9-0725-9a57-0041-c0aafbd670e4",
+    "name": "Marketing Art"
+  },
+  {
+    "id": "41d334e4-9e6e-2bb9-a3fa-790fd694e549",
+    "name": "Props"
+  },
+  {
+    "id": "c8b54286-972e-0f3c-0b78-2c4e4d5a816a",
+    "name": "Reference"
+  },
+  {
+    "id": "e19152ca-2d0e-2b01-30b5-79716627de71",
+    "name": "Tech Art"
+  },
+  {
+    "id": "e3bad9b0-b6d2-d07f-8fb4-1720487db8e6",
+    "name": "Textures"
+  },
+  {
+    "id": "3b6770c6-b35a-90d1-88c7-e35d00136825",
+    "name": "UI"
+  },
+  {
+    "id": "988ed4d0-4b3e-66a9-5606-c056c32bee04",
+    "name": "VFX"
+  }
+]

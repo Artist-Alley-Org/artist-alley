@@ -1,0 +1,35 @@
+{
+  "_doc": "Files imported from torrent downloads on the Synology. The bytes are already on site_a/site_b at the indicated file_path (synology-to-synology copy). sanitize_and_assemble.py reads this manifest and emits AssetRecord entries with source_root='torrent_import'. populate_archive.py treats those as already-in-place and verifies size rather than re-copying.",
+  "assets": [
+    {
+      "name": "Sintel — full film (512kb stereo, ~13 min)",
+      "file_path": "videos/torrent/sintel-full-film-512kb.mp4",
+      "file_size_bytes": 77410288,
+      "asset_type": "video",
+      "license": "CC-BY 3.0",
+      "attribution": "(c) Blender Foundation | durian.blender.org",
+      "source": "Blender Foundation",
+      "notes": "Full Sintel feature film — animated short by Blender Foundation. CC-BY 3.0."
+    },
+    {
+      "name": "Sintel — making-of documentary",
+      "file_path": "videos/torrent/sintel-documentary.avi",
+      "file_size_bytes": 961242162,
+      "asset_type": "video",
+      "license": "CC-BY 3.0",
+      "attribution": "(c) Ali Boubred / Blender Foundation",
+      "source": "Blender Foundation",
+      "notes": "Behind-the-scenes documentary for Sintel — production reference for the studio archive."
+    },
+    {
+      "name": "Big Buck Bunny — 720p surround (AVI)",
+      "file_path": "videos/torrent/big-buck-bunny-720p-surround.avi",
+      "file_size_bytes": 332243668,
+      "asset_type": "video",
+      "license": "CC-BY 3.0",
+      "attribution": "(c) Blender Foundation | peach.blender.org",
+      "source": "Blender Foundation",
+      "notes": "BBB full film at 720p with 5.1 surround — higher-quality alternate to the MP4."
+    }
+  ]
+}

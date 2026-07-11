@@ -1,0 +1,250 @@
+[
+  {
+    "id": "dcb849d7-e981-a2c0-d9d7-19b02679bae9",
+    "username": "ahmed.khalil",
+    "full_name": "Ahmed Khalil",
+    "email": "ahmed.khalil@studio.local",
+    "role": "artist",
+    "primary_team": "Audio"
+  },
+  {
+    "id": "0e4d9e3c-c646-eb73-a4a7-9dd12fa821dd",
+    "username": "akira.tanaka",
+    "full_name": "Akira Tanaka",
+    "email": "akira.tanaka@studio.local",
+    "role": "reviewer",
+    "primary_team": "UI"
+  },
+  {
+    "id": "50ee1922-1b5e-f529-ccf3-48753d1090bd",
+    "username": "anya.volkov",
+    "full_name": "Anya Volkov",
+    "email": "anya.volkov@studio.local",
+    "role": "reviewer",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "5996acc0-3543-775b-74ec-226a228ef1ff",
+    "username": "bea.marquez",
+    "full_name": "Bea Marquez",
+    "email": "bea.marquez@studio.local",
+    "role": "artist",
+    "primary_team": "UI"
+  },
+  {
+    "id": "c47ff44f-38a0-0aef-d779-7f17556f2184",
+    "username": "chen.wei",
+    "full_name": "Chen Wei",
+    "email": "chen.wei@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "14bf1bf7-d861-caa8-f622-09c112d82e77",
+    "username": "devon.reeves",
+    "full_name": "Devon Reeves",
+    "email": "devon.reeves@studio.local",
+    "role": "artist",
+    "primary_team": "VFX"
+  },
+  {
+    "id": "8e2ae52a-7149-a5fd-8769-679b412e5e0e",
+    "username": "diego.vasquez",
+    "full_name": "Diego Vasquez",
+    "email": "diego.vasquez@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "9fd83924-19d9-690a-a93e-1441bb0f0a28",
+    "username": "emma.andersen",
+    "full_name": "Emma Andersen",
+    "email": "emma.andersen@studio.local",
+    "role": "artist",
+    "primary_team": "UI"
+  },
+  {
+    "id": "231a3b19-ed83-880e-03af-a73a9d5d536d",
+    "username": "esther.adeyemi",
+    "full_name": "Esther Adeyemi",
+    "email": "esther.adeyemi@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "8b390270-9183-5d14-355e-e15a268d8e9d",
+    "username": "felipe.costa",
+    "full_name": "Felipe Costa",
+    "email": "felipe.costa@studio.local",
+    "role": "reviewer",
+    "primary_team": "UI"
+  },
+  {
+    "id": "a17d2280-c830-342c-42d8-3566e62cf24b",
+    "username": "hana.kim",
+    "full_name": "Hana Kim",
+    "email": "hana.kim@studio.local",
+    "role": "artist",
+    "primary_team": "Characters"
+  },
+  {
+    "id": "29f6ed17-69cd-8696-45bd-280b06939a4c",
+    "username": "imani.williams",
+    "full_name": "Imani Williams",
+    "email": "imani.williams@studio.local",
+    "role": "artist",
+    "primary_team": "Characters"
+  },
+  {
+    "id": "b00f61a9-59c9-3081-a88f-3cc42533e53b",
+    "username": "jin.liu",
+    "full_name": "Jin Liu",
+    "email": "jin.liu@studio.local",
+    "role": "artist",
+    "primary_team": "Marketing Art"
+  },
+  {
+    "id": "2b0ef86e-4da9-935a-5093-bbe5800c23ef",
+    "username": "kai.nakamura",
+    "full_name": "Kai Nakamura",
+    "email": "kai.nakamura@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "a407071d-d676-8267-44b5-30dadd12b106",
+    "username": "layla.hassan",
+    "full_name": "Layla Hassan",
+    "email": "layla.hassan@studio.local",
+    "role": "artist",
+    "primary_team": "Characters"
+  },
+  {
+    "id": "dc21666b-ab71-3e81-c691-11bf99a9821e",
+    "username": "lucas.lefebvre",
+    "full_name": "Lucas Lefebvre",
+    "email": "lucas.lefebvre@studio.local",
+    "role": "artist",
+    "primary_team": "Audio"
+  },
+  {
+    "id": "08888044-5896-4c68-43aa-d8e1271df82f",
+    "username": "maja.novak",
+    "full_name": "Maja Novak",
+    "email": "maja.novak@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "3428b354-fc83-5133-403a-84660ec7cbf9",
+    "username": "marcus.johnson",
+    "full_name": "Marcus Johnson",
+    "email": "marcus.johnson@studio.local",
+    "role": "reviewer",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "5e68a6b0-0f73-6a65-5908-6bfea8c1db8f",
+    "username": "maya.okonkwo",
+    "full_name": "Maya Okonkwo",
+    "email": "maya.okonkwo@studio.local",
+    "role": "artist",
+    "primary_team": "Characters"
+  },
+  {
+    "id": "a083c7c0-9c6f-3344-933a-43705b8ccddc",
+    "username": "mira.patel",
+    "full_name": "Mira Patel",
+    "email": "mira.patel@studio.local",
+    "role": "artist",
+    "primary_team": "UI"
+  },
+  {
+    "id": "73c820a6-0cdc-9d77-5205-fbc65c78ea8a",
+    "username": "nikolai.petrov",
+    "full_name": "Nikolai Petrov",
+    "email": "nikolai.petrov@studio.local",
+    "role": "reviewer",
+    "primary_team": "Characters"
+  },
+  {
+    "id": "5d704629-cc75-ed84-ad4b-57b9ea4de75e",
+    "username": "olaf.lindgren",
+    "full_name": "Olaf Lindgren",
+    "email": "olaf.lindgren@studio.local",
+    "role": "reviewer",
+    "primary_team": "UI"
+  },
+  {
+    "id": "5e7d4a50-1750-1e10-a1cc-d0637e90d996",
+    "username": "priya.sharma",
+    "full_name": "Priya Sharma",
+    "email": "priya.sharma@studio.local",
+    "role": "artist",
+    "primary_team": "UI"
+  },
+  {
+    "id": "7417178b-c4de-7435-a114-541866b5b326",
+    "username": "quinn.schmidt",
+    "full_name": "Quinn Schmidt",
+    "email": "quinn.schmidt@studio.local",
+    "role": "artist",
+    "primary_team": "Marketing Art"
+  },
+  {
+    "id": "65b13a60-1d57-8a95-7b6a-68ba91b4cfe5",
+    "username": "ravi.patel",
+    "full_name": "Ravi Patel",
+    "email": "ravi.patel@studio.local",
+    "role": "reviewer",
+    "primary_team": "Audio"
+  },
+  {
+    "id": "f013c0f4-32a5-b83e-21e3-603dede485f8",
+    "username": "sam.obrien",
+    "full_name": "Sam Obrien",
+    "email": "sam.obrien@studio.local",
+    "role": "artist",
+    "primary_team": "Audio"
+  },
+  {
+    "id": "065faa33-e9b3-3433-f4a6-999f2887c155",
+    "username": "seed.bot",
+    "full_name": "Seed Bot",
+    "email": "seed.bot@studio.local",
+    "role": "artist",
+    "primary_team": "Reference"
+  },
+  {
+    "id": "36c890e0-89f4-3c4f-0a6b-3970e1c240ba",
+    "username": "sofia.hernandez",
+    "full_name": "Sofia Hernandez",
+    "email": "sofia.hernandez@studio.local",
+    "role": "artist",
+    "primary_team": "Marketing Art"
+  },
+  {
+    "id": "ebd64d3d-04b2-6f2d-23bb-6ba195e21ed6",
+    "username": "tatiana.ivanova",
+    "full_name": "Tatiana Ivanova",
+    "email": "tatiana.ivanova@studio.local",
+    "role": "artist",
+    "primary_team": "Marketing Art"
+  },
+  {
+    "id": "164e0381-b986-8e16-0e07-a4363caf2b9c",
+    "username": "wren.carter",
+    "full_name": "Wren Carter",
+    "email": "wren.carter@studio.local",
+    "role": "artist",
+    "primary_team": "Environment"
+  },
+  {
+    "id": "401c9f3f-dd85-5fb2-0fce-0b0e0779888c",
+    "username": "yuki.sato",
+    "full_name": "Yuki Sato",
+    "email": "yuki.sato@studio.local",
+    "role": "artist",
+    "primary_team": "UI"
+  }
+]

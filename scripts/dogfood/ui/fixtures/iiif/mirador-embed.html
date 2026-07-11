@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mirador Dogfood</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+    #mirador { width: 100vw; height: 100vh; }
+    #boot-error { display: none; padding: 12px 16px; color: #b91c1c; background: #fef2f2; border-bottom: 1px solid #fecaca; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="boot-error"></div>
+  <div id="mirador"></div>
+  <!-- Phase 1.54.D — Mirador 3.x CDN embed for the automated dogfood
+       spec at scripts/dogfood/ui/tests/standalone/ui-13-iiif-mirador-dogfood.spec.ts.
+       Playwright loads this file via page.goto('file://...?manifest=<url-encoded-manifest>')
+       and asserts on Mirador's rendered DOM. The IIIF handlers on the
+       AA app emit Access-Control-Allow-Origin: * so the cross-origin
+       fetch from the file:// origin succeeds. -->
+  <script src="https://unpkg.com/mirador@3/dist/mirador.min.js"></script>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var manifest = params.get('manifest');
+      var err = document.getElementById('boot-error');
+      if (!manifest) {
+        err.style.display = 'block';
+        err.textContent = 'Missing ?manifest=<url> query param';
+        return;
+      }
+      if (typeof Mirador === 'undefined' || !Mirador.viewer) {
+        err.style.display = 'block';
+        err.textContent = 'Mirador failed to load from CDN';
+        return;
+      }
+      Mirador.viewer({
+        id: 'mirador',
+        windows: [{ manifestId: manifest }],
+      });
+    })();
+  </script>
+</body>
+</html>

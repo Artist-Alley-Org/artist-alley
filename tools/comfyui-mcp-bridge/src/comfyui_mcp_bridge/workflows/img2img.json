@@ -1,0 +1,78 @@
+{
+  "_meta": {
+    "description": "Default img2img workflow — SDXL base with a fixed VAE + sampler chain. Operator overrides by dropping their own img2img.json into CMB_EXTRA_WORKFLOWS_DIR. Placeholder tokens (<<PROMPT>>, <<SOURCE_IMAGE_NAME>>, <<DENOISE>>, <<STEPS>>, <<SEED>>) are substituted at queue time by the bridge handler.",
+    "version": 1,
+    "model_assumption": "SDXL base. Operators on SD 1.5 / Flux / Pony / SD3 should drop a workflow JSON exported from their ComfyUI graph with the right model node.",
+    "outputs": "Single image emitted by node 9 (SaveImage). The bridge reads it from history.outputs.9.images."
+  },
+  "3": {
+    "inputs": {
+      "seed": "<<SEED>>",
+      "steps": "<<STEPS>>",
+      "cfg": 8,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": "<<DENOISE>>",
+      "model":      ["4", 0],
+      "positive":   ["6", 0],
+      "negative":   ["7", 0],
+      "latent_image": ["11", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "4": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "6": {
+    "inputs": {
+      "text": "<<PROMPT>>",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "7": {
+    "inputs": {
+      "text": "blurry, distorted, low quality",
+      "clip": ["4", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae":     ["4", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI_AAedit",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "10": {
+    "inputs": {
+      "image": "<<SOURCE_IMAGE_NAME>>",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "11": {
+    "inputs": {
+      "pixels": ["10", 0],
+      "vae":    ["4", 2]
+    },
+    "class_type": "VAEEncode"
+  },
+  "12": {
+    "inputs": {
+      "samples": ["11", 0]
+    },
+    "class_type": "LatentFromBatch",
+    "_aa_passthrough_note": "Pass-through wrapper so the KSampler's latent_image reference is stable across VAEEncode + (future) noise-add nodes; current workflow could plug KSampler.latent_image directly into [11, 0], but the wrapper makes it cheap to add a noise-injection step without re-wiring every reference."
+  }
+}

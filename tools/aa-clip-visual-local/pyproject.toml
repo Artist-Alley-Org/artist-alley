@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aa-clip-visual-local"
+version = "1.0.0"
+description = "CLIP visual encoder sidecar for artist-alley reverse-image search"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "artist-alley" }]
+dependencies = [
+    # Torch pin — bump deliberately + regenerate the sidecar image.
+    # CPU wheels for smaller image; operators building GPU images
+    # override the extra-index-url in the Dockerfile.
+    "torch==2.4.1",
+    "torchvision==0.19.1",
+    # open_clip_torch loads the model + does the image → tensor
+    # preprocessing + the forward pass. Handles cache management
+    # under ~/.cache/clip.
+    "open_clip_torch==2.26.1",
+    # FastAPI + uvicorn for the HTTP surface; multipart for the
+    # /embed/image upload path.
+    "fastapi==0.115.4",
+    "uvicorn[standard]==0.32.0",
+    "python-multipart==0.0.12",
+    # Pillow for image decoding — open_clip's preprocess pipeline
+    # calls into PIL.Image.open under the hood.
+    "Pillow==11.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "httpx==0.27.2",
+]
+
+[project.scripts]
+aa-clip-visual-local = "aa_clip_visual_local.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aa_clip_visual_local"]

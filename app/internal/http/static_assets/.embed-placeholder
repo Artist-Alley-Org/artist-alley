@@ -1,0 +1,7 @@
+This file exists so `go build -tags embed_web` can find at least one
+file under `static_assets/` and satisfy //go:embed.
+
+Real SvelteKit build output (`web/build/*`) is copied here by the
+Docker build, overwriting / coexisting with this placeholder. Local
+embed builds without first running `npm run build` will boot but
+serve only this file at /static_assets/.embed-placeholder.

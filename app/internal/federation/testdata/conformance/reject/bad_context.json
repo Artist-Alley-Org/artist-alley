@@ -1,0 +1,11 @@
+{
+  "description": "@context does not equal the artist-alley v1 string — REJECTED as ErrInvalidContext.",
+  "envelope": {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "type": "aa:Share",
+    "id": "https://test.example/activities/x",
+    "actor": "https://test.example/users/alice",
+    "published": "2026-06-04T10:00:00Z"
+  },
+  "expected_error": "ErrInvalidContext"
+}

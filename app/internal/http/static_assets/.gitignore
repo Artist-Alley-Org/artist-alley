@@ -1,0 +1,6 @@
+# Real SvelteKit build output is dropped here by the Docker build.
+# Only the placeholder (which makes //go:embed happy when the
+# frontend hasn't been built yet) is tracked.
+*
+!.gitignore
+!.embed-placeholder
