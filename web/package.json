@@ -5,6 +5,10 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "artist-alley frontend (SvelteKit + Tailwind, embedded into the Go binary at build time).",
+  "overrides": {
+    "js-yaml": "^4.2.0",
+    "cookie": "^0.7.0"
+  },
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 5173",
     "build": "vite build",
@@ -62,7 +66,7 @@
     "@scalar/api-reference": "^1.57.5",
     "@types/dompurify": "^3.0.5",
     "codemirror": "^6.0.2",
-    "dompurify": "^3.4.7",
+    "dompurify": "^3.4.12",
     "fflate": "^0.8.3",
     "gifenc": "^1.0.3",
     "hls.js": "^1.6.16",
