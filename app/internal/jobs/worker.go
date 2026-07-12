@@ -87,10 +87,20 @@ func (w *Worker) Run(ctx context.Context) {
 		// Per-type concurrency cap: ask the gate which of our types
 		// still have capacity. If none, back off without hitting
 		// the DB — saves a query when every type is saturated.
+		//
+		// Only gate a *type-restricted* worker. An unrestricted
+		// worker (Types == nil) drains every registered type, and
+		// tryReserve(nil) returns nil — feeding that empty scope
+		// through the guard would back the worker off on every poll
+		// so it never claims. Pass the nil scope straight to
+		// ClaimNext, whose SQL treats NULL/empty scope_types as
+		// "any type". (Per-type caps for the unrestricted pool are
+		// tracked separately — TypeConcurrency is never loaded yet.)
 		claimTypes := w.Types
-		if w.Gate != nil {
+		if w.Gate != nil && len(w.Types) > 0 {
 			claimTypes = w.Gate.tryReserve(w.Types)
 			if len(claimTypes) == 0 {
+				// Every one of this worker's types is saturated.
 				select {
 				case <-ctx.Done():
 					return
@@ -359,11 +369,12 @@ func (p *Pool) Start(ctx context.Context, instanceID string) {
 			Logger:  p.Logger,
 			ID:      fmt.Sprintf("aa://%s/w%d", instanceID, i),
 			Types:   p.Types,
-			// Per-type concurrency cap (Phase 1.14.A). When the
-			// Pool has TypeConcurrency configured, workers consult
-			// it through the typeCapGate interface before each
-			// claim; otherwise the gate is nil and the worker
-			// claims any of its types unconditionally.
+			// Per-type concurrency cap (Phase 1.14.A). The gate is
+			// always the Pool; a *type-restricted* worker consults
+			// it (through the typeCapGate interface) before each
+			// claim, while an unrestricted worker (Types == nil)
+			// bypasses the gate and claims any registered type —
+			// see Worker.Run.
 			Gate: p,
 		}
 		p.wg.Add(1)
