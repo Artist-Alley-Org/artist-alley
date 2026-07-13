@@ -11,28 +11,38 @@ requires-python = ">=3.11"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "artist-alley" }]
 dependencies = [
-    # Torch pin — bump deliberately + regenerate the sidecar image.
+    # Torch — bump deliberately + regenerate the sidecar image.
     # CPU wheels for smaller image; operators building GPU images
-    # override the extra-index-url in the Dockerfile.
-    "torch==2.4.1",
-    "torchvision==0.19.1",
+    # override the extra-index-url in the Dockerfile. Compatible-release
+    # floors (not hard ==) so a patch release doesn't immediately
+    # re-alert; upper bounds keep the resolved set inside a known-good
+    # major line. torchvision declares an exact-torch runtime dep, so
+    # the resolver pairs them automatically (torch 2.13 ↔ tv 0.28).
+    # Floor is >=2.13 (not 2.10): one unpatched advisory has range
+    # `torch <= 2.12.0`, so >=2.10 would still permit a vulnerable
+    # 2.10–2.12 and Dependabot (evaluating the declared range, no
+    # lockfile) keeps the alert open. >=2.13 excludes it entirely.
+    "torch>=2.13,<3",
+    "torchvision>=0.25,<1",
     # open_clip_torch loads the model + does the image → tensor
     # preprocessing + the forward pass. Handles cache management
-    # under ~/.cache/clip.
-    "open_clip_torch==2.26.1",
+    # under ~/.cache/clip. Only the stable core API is used
+    # (create_model_and_transforms / encode_image / preprocess), which
+    # is unchanged across 2.x and 3.x — hence the wide floor.
+    "open_clip_torch>=2.30,<4",
     # FastAPI + uvicorn for the HTTP surface; multipart for the
     # /embed/image upload path.
     "fastapi==0.115.4",
     "uvicorn[standard]==0.32.0",
-    "python-multipart==0.0.12",
+    "python-multipart>=0.0.31,<0.1",
     # Pillow for image decoding — open_clip's preprocess pipeline
     # calls into PIL.Image.open under the hood.
-    "Pillow==11.0.0",
+    "Pillow>=12.2,<13",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.3.3",
+    "pytest>=9.0.3,<10",
     "httpx==0.27.2",
 ]
 
