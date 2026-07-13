@@ -18,7 +18,11 @@ dependencies = [
     # re-alert; upper bounds keep the resolved set inside a known-good
     # major line. torchvision declares an exact-torch runtime dep, so
     # the resolver pairs them automatically (torch 2.13 ↔ tv 0.28).
-    "torch>=2.10,<3",
+    # Floor is >=2.13 (not 2.10): one unpatched advisory has range
+    # `torch <= 2.12.0`, so >=2.10 would still permit a vulnerable
+    # 2.10–2.12 and Dependabot (evaluating the declared range, no
+    # lockfile) keeps the alert open. >=2.13 excludes it entirely.
+    "torch>=2.13,<3",
     "torchvision>=0.25,<1",
     # open_clip_torch loads the model + does the image → tensor
     # preprocessing + the forward pass. Handles cache management
