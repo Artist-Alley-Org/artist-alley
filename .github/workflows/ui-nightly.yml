@@ -356,7 +356,7 @@ jobs:
         # even on green — we want the operator to be able to glance
         # at flakes / slow tests trending.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pw-report-federation-${{ github.run_id }}
           path: |
@@ -368,7 +368,7 @@ jobs:
 
       - name: Upload shell-scenario reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shell-scenario-reports-${{ github.run_id }}
           path: scripts/dogfood/.dogfood-runs/
