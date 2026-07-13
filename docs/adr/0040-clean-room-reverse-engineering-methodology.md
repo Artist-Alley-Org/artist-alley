@@ -5,7 +5,8 @@ status: accepted
 date: 2026-05-31
 area: process
 phases: []
-supersedes: []
+supersedes:
+  - "0001"
 related:
   - "0016"
   - "0034"

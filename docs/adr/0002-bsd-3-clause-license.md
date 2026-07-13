@@ -12,7 +12,7 @@ tags:
   - licensing
   - history
 excerpt: >-
-  Historical. The project's initial license choice. Superseded by ADR 0016 (relicense to AGPL + commercial, gated on Phase 1.24).
+  Historical. The project's initial license choice. Superseded by ADR 0016 (relicense to AGPL + commercial, executed 2026-07-11 (1.55.AA) — see ADR 0016).
 ---
 > **Superseded — historical record.** The initial license choice
 > documented here is replaced by the AGPL + commercial direction in

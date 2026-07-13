@@ -26,6 +26,14 @@ excerpt: >-
   after a TTL, and federates with no other instance. Visitors get the
   real product experience without any cross-visitor moderation surface.
 ---
+
+> **Status note (2026-07-13):** the canonical GitHub org is now
+> **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11), and
+> artist-alley.org moved to the private `artist-alley-site` repo at
+> the 1.55.Z site split. The `mscrnt/aa-demo-provisioner` repo
+> referenced below has not moved — satellite-repo homes are still
+> undecided.
+
 ## Context
 
 A self-hosted product needs a way for prospective operators to try

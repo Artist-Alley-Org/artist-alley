@@ -23,6 +23,12 @@ excerpt: >-
   migration history becomes append-only forever.
 ---
 
+> **Status note (2026-07-13):** squash point #1 executed at the
+> v0.1.0 tag (2026-07-11) — every pre-fold migration referenced
+> below is folded into the single baseline
+> `app/internal/db/migrations/00001_baseline_v0_1.sql` (see
+> [ADR 0057](/adr/0057-v0-1-baseline-schema-shape/)).
+
 ## Decision — two squash points (2026-07-11, resolves #228)
 
 The append-only-forever trigger is **v1.0.0**, per SemVer's convention that the 0.x range is beta and may break. There are **two deliberate squash points**:
