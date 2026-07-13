@@ -8,13 +8,12 @@ map. Subject to change as we learn what teams actually need.
 **Pre-v1.0 foundation is essentially complete.** Fifty-eight accepted
 ADRs cover the load-bearing concerns: storage, caching, frontend
 stack, federation protocol (walled-garden + encrypted, ArchivePub
-v1.0-rc1), capability add-ons, audit log, observability, packaging,
+v1.0 final), capability add-ons, audit log, observability, packaging,
 migration baseline policy. The encryption arc (Phase 1.22.I) closed
 the federation foundation. The pre-MVP cleanup (Phase 1.49) closed
-the technical debt. The Phase 1.17 identity arc is the last
-foundational arc in flight; the remaining sub-phases (1.17.B
-through 1.17.F) are mechanical execution of decisions captured in
-[ADR 0010](/adr/0010-permissions-teams-workflow/) (now `accepted`).
+the technical debt. The Phase 1.17 identity arc closed 2026-06-19
+(tracker #20), completing the foundational arcs; its design record
+is [ADR 0010](/adr/0010-permissions-teams-workflow/) (`accepted`).
 
 The transition marker — the **v0.1.0 release tag**, the first-ever
 tag — shipped 2026-07-11, followed by the v0.1.1 patch on 2026-07-13;
@@ -130,10 +129,10 @@ The current release stream covers the foundations:
   #130). Plus eight follow-up PRs (#117–#125) closing real
   production-class bugs surfaced by the dogfood loop — every
   gap caught by the loop, none by unit tests alone.
-  **ArchivePub spec at v1.0-rc1** with Appendix A conformance
-  test vectors locked; the 7-day soak window closed 2026-06-22
-  clean; the spec remains v1.0-rc1 with the v1.0-final stamp
-  pending.
+  **ArchivePub spec at v1.0 (final)** — Appendix A conformance
+  test vectors locked at rc1; the 7-day soak window closed
+  2026-06-22 clean and v1.0-final was stamped 2026-07-13 as a
+  spec-only change.
 - **v0.1.0 release readiness** (Phase 1.55). The meta-arc getting
   from current-dev to the v0.1.0 tag — the first-ever tagged release
   (see [docs/v0_1_readiness.md §0](./v0_1_readiness.md) for the
@@ -1278,17 +1277,12 @@ roughly in order of practical value to operators.
 - **Users** — list with role assignment.
 - **Roles & capabilities** — read-only list.
 
-### Identity / access — to flesh out
-- **Users 2.0** (Phase 1.17). Bulk role assignment, deactivate /
-  reactivate, force-password-reset, invite flow, last-active /
-  session list, capability override.
-- **Roles editor** (Phase 1.17). Create / update / delete roles,
-  set capability sets, team-scoped roles, role hierarchy.
-- **Teams** (Phase 1.17). Team tree, membership management, team
-  hierarchy, team-scoped capabilities.
-- **API token admin** (Phase 1.17). All tokens across the install,
-  revoke any, token-kind = `worker` for external farm + federated
-  workers (scoped to specific job types).
+### Identity / access
+- **Shipped in Phase 1.17** (tracker #20, closed 2026-06-19): the
+  admin Users / Roles / Teams surfaces and account token management
+  are live (`/admin/users`, `/admin/roles`, `/admin/teams`,
+  `/account/tokens`). Residual identity polish rides in the normal
+  backlog rather than a phase arc.
 - **Audit-log filters** (Phase 1.20). Per-actor, per-action,
   per-target views; export.
 
