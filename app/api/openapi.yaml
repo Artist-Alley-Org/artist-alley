@@ -13634,6 +13634,8 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+          example:
+            error: "authentication required: sign in and retry with a valid session or API token"
     NotFound:
       description: Resource not found
       content:
