@@ -24,6 +24,14 @@ tags:
 excerpt: >-
   ADR 0016 establishes the legal license direction (AGPL + commercial dual-license). This ADR specifies the runtime monetization model: the tier shape, the .lic file format, the enforcement architecture, and what we explicitly are not doing.
 ---
+
+> **Status note (2026-07-13):** the canonical GitHub org is now
+> **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11) — repo links in
+> this ADR have been host-swapped. The pre-fold migration links in
+> the References section now resolve to the folded v0.1.0 baseline
+> (`app/internal/db/migrations/00001_baseline_v0_1.sql`, per
+> [ADR 0057](/adr/0057-v0-1-baseline-schema-shape/)).
+
 ## Context
 
 ADR 0016 establishes the legal license direction (AGPL + commercial
@@ -227,10 +235,10 @@ concurrency, etc.) — still queued as Phase 1.24.B.
 
 Public references for the as-built shape:
 
-- [`app/internal/licensing/`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/licensing) — verifier + state + admin handler.
-- [`app/internal/auth/identity_provider.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/identity_provider.go) — provider registry + license-gated `Register` / `Replace`.
-- [`app/internal/auth/license_bridge.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/license_bridge.go) — install-level capability gate consumed by `Identity.Can()`.
-- [`app/internal/db/migrations/00042_capabilities_license_feature.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/db/migrations/00042_capabilities_license_feature.sql) + [`00043_enterprise_capability_seeds.sql`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/db/migrations/00043_enterprise_capability_seeds.sql) — the feature-flag column + seed rows.
+- [`app/internal/licensing/`](https://github.com/Artist-Alley-Org/artist-alley/tree/main/app/internal/licensing) — verifier + state + admin handler.
+- [`app/internal/auth/identity_provider.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/auth/identity_provider.go) — provider registry + license-gated `Register` / `Replace`.
+- [`app/internal/auth/license_bridge.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/auth/license_bridge.go) — install-level capability gate consumed by `Identity.Can()`.
+- [`app/internal/db/migrations/00001_baseline_v0_1.sql`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/db/migrations/00001_baseline_v0_1.sql) — the feature-flag column + Enterprise capability seed rows, folded into the v0.1.0 baseline per [ADR 0057](/adr/0057-v0-1-baseline-schema-shape/).
 
 ## Consequences
 

@@ -17,6 +17,13 @@ excerpt: >-
   header (status badge, supersedes trail, related ADRs, related phases)
   by the docs site pipeline.
 ---
+
+> **Status note (2026-07-13):** the `site/` paths referenced below
+> moved to the private `artist-alley-site` repo at the 1.55.Z site
+> split (v0.1.0, 2026-07-11). The ADR source of truth (`docs/adr/`)
+> stays in this repo; the render pipeline (`sync-adrs.mjs`, Astro
+> components) now lives in the site repo.
+
 ## Context
 
 The first 34 ADRs accreted organically. Each carried date + status as

@@ -26,6 +26,11 @@ excerpt: >-
   license check in isolation produces nothing, because the registration
   block never ran for unlicensed features.
 ---
+
+> **Status note (2026-07-13):** the canonical GitHub org is now
+> **Artist-Alley-Org** (v0.1.0 org move, 2026-07-11) — repo links in
+> this ADR have been host-swapped.
+
 ## Context
 
 ADR 0017 establishes the runtime monetization model (tiered `.lic`
@@ -239,24 +244,24 @@ that's a vendor-scaling tool with clear commercial value.
 
 Phase 1.17.P-foundation shipped:
 
-- [`app/internal/auth/identity_provider.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/identity_provider.go)
+- [`app/internal/auth/identity_provider.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/auth/identity_provider.go)
   — interface, `Registry`, `Register` / `Replace` / `Get` / `Has` /
   `List`, sentinel errors (`ErrInvalidCredentials`,
   `ErrProviderUnimplemented`, `ErrProviderUnsupportedMethod`).
-- [`app/internal/auth/provider_password.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/auth/provider_password.go)
+- [`app/internal/auth/provider_password.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/auth/provider_password.go)
   — built-in unconditionally-registered provider wrapping the
   existing HMAC-then-bcrypt verify.
-- [`app/internal/ldapauth/`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/ldapauth)
-  + [`samlauth/`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/samlauth)
+- [`app/internal/ldapauth/`](https://github.com/Artist-Alley-Org/artist-alley/tree/main/app/internal/ldapauth)
+  + [`samlauth/`](https://github.com/Artist-Alley-Org/artist-alley/tree/main/app/internal/samlauth)
   — license-gated stub packages. Real impls land in 1.18 against
   these blueprints + ADR 0040's clean-room methodology.
-- [`app/internal/tenancy/`](https://github.com/mscrnt/artist-alley/tree/main/app/internal/tenancy)
+- [`app/internal/tenancy/`](https://github.com/Artist-Alley-Org/artist-alley/tree/main/app/internal/tenancy)
   — `Manager` is `nil` without `multi_tenant`; consumers check via
   `m.Enabled()`. Tenant CRUD + middleware land in 1.18.
-- [`app/internal/licensing/state.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/licensing/state.go)
+- [`app/internal/licensing/state.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/licensing/state.go)
   — `OnReload(fn)` callback hook; `swap()` snapshots + releases the
   lock before firing so callbacks can call back into State methods.
-- [`app/internal/http/server.go`](https://github.com/mscrnt/artist-alley/blob/main/app/internal/http/server.go)
+- [`app/internal/http/server.go`](https://github.com/Artist-Alley-Org/artist-alley/blob/main/app/internal/http/server.go)
   `buildProviders` + `samlRouter` — boot constructs once and the
   `OnReload` callback rebuilds on every Status swap.
 
