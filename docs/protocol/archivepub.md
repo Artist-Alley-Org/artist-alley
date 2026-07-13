@@ -1,11 +1,11 @@
 # ArchivePub
 
-**Federated digital asset management protocol — v1.0-rc1**
+**Federated digital asset management protocol — v1.0**
 
 | | |
 |---|---|
 | **Title** | ArchivePub — Federated Digital Asset Management Protocol |
-| **Status** | Release candidate (v1.0-rc1 — soak window closed 2026-06-22 clean; v1.0-final stamp pending) |
+| **Status** | Final (v1.0 — stamped 2026-07-13; soak window closed 2026-06-22 clean) |
 | **Latest version** | This document |
 | **Canonical home** | [`docs/protocol/archivepub.md`](.) (will move to a dedicated domain when v1.0 is finalised) |
 | **Reference implementation** | [Artist Alley](https://github.com/Artist-Alley-Org/artist-alley) — see [`app/internal/federation/`](../../app/internal/federation/) |
@@ -38,8 +38,9 @@ the Artist Alley roadmap). The document version `v0.x` will become
 `v1.0` when the federation arc completes its dogfood validation week
 (see [ADR 0049](../adr/0049-encrypted-federation-and-dogfood.md)).
 
-The document is at **v1.0-rc1** (Appendix A conformance test
-vectors locked; 7-day soak window through 2026-06-22). The
+The document is at **v1.0** (final — stamped 2026-07-13 as a
+spec-only change after the 7-day soak window closed 2026-06-22
+clean; Appendix A conformance test vectors locked at rc1). The
 following items shipped during the v0.x window and are now
 stable:
 
@@ -52,11 +53,10 @@ stable:
   1.22.I-d; the `supported_capabilities` field is part of every
   v0.4+ offer / confirm envelope.
 
-Implementers writing against v1.0-rc1 SHOULD still pin to a
-specific commit of this document and the reference
-implementation during the soak window; v1.0 final ships as a
-no-code spec-only commit if the soak is clean (otherwise
-v1.0-rc2 first).
+Implementers SHOULD pin to a specific commit of this document
+and the reference implementation. v1.0 final shipped exactly as
+the rc1 plan specified: a no-code, spec-only stamp after the
+soak window closed clean.
 
 When v1.0 is published, this document will move to a dedicated
 home (provisional: `archivepub.org`) and a versioned change log

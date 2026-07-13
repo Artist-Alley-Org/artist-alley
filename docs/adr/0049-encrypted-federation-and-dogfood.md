@@ -31,9 +31,10 @@ excerpt: >-
 ---
 
 > **Status note (2026-07-13):** the ArchivePub soak window closed
-> 2026-06-22 clean; the spec remains **v1.0-rc1** with the
-> v1.0-final stamp pending. The canonical GitHub org is now
-> Artist-Alley-Org (links herein host-swapped).
+> 2026-06-22 clean and the spec was stamped **v1.0 (final)** on
+> 2026-07-13 — a spec-only change, exactly per the rc1 plan below.
+> The canonical GitHub org is now Artist-Alley-Org (links herein
+> host-swapped).
 
 ## Implementation status (2026-06-15)
 
