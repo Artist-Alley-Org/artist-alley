@@ -5,7 +5,7 @@ map. Subject to change as we learn what teams actually need.
 
 ## Foundation status
 
-**Pre-v1.0 foundation is essentially complete.** Forty-nine accepted
+**Pre-v1.0 foundation is essentially complete.** Fifty-eight accepted
 ADRs cover the load-bearing concerns: storage, caching, frontend
 stack, federation protocol (walled-garden + encrypted, ArchivePub
 v1.0-rc1), capability add-ons, audit log, observability, packaging,
@@ -16,22 +16,35 @@ foundational arc in flight; the remaining sub-phases (1.17.B
 through 1.17.F) are mechanical execution of decisions captured in
 [ADR 0010](/adr/0010-permissions-teams-workflow/) (now `accepted`).
 
-The transition marker is the **v0.1.0 release tag** — the first-ever
-tag; the second milestone (v1.0.0 = out of beta) sits further out.
-Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/) the
-append-only-forever migration trigger is under review (v0.1.0 vs
-v1.0.0 — see issue #228; details in
-[docs/v0_1_readiness.md §0](./v0_1_readiness.md)).
+The transition marker — the **v0.1.0 release tag**, the first-ever
+tag — shipped 2026-07-11, followed by the v0.1.1 patch on 2026-07-13;
+the second milestone (v1.0.0 = out of beta) sits further out.
+Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/)
+squash point #1 executed at the tag (single baseline migration, ADR
+0057); the append-only-forever trigger (v0.1.0 vs v1.0.0) remains
+under review — see issue #228; details in
+[docs/v0_1_readiness.md §0](./v0_1_readiness.md).
 
 ## Shipped
 
 The current release stream covers the foundations:
 
+- **v0.1.0 — first public tag (2026-07-11).** The first-ever tagged
+  release: AGPL-3.0-only + dual commercial licensing executed
+  (1.55.AA), org move to Artist-Alley-Org, site split (docs site
+  moved to the private artist-alley-site repo), migration fold to a
+  single baseline migration (ADR 0057), Docker-only distribution
+  (GHCR + Docker Hub, Sigstore-signed). Pre-1.0 still means schemas
+  can break across minors.
+- **v0.1.1 — first patch release (2026-07-13).** Worker-pool claim
+  fix (#279) restoring media processing, GHCR owner-casing fix
+  (#280), dependency cleanup (#281 / #283 / #284) clearing all open
+  Dependabot alerts.
 - **Single binary deploy.** Go server with the SvelteKit SPA
   embedded via `go:embed`. Multi-arch Docker images (amd64 + arm64),
-  `.deb` + `.rpm` packages with systemd unit, static binaries for
-  linux / macOS / Windows, Homebrew formula. Every image
-  Sigstore-signed.
+  every image Sigstore-signed. Docker is the sole distribution
+  channel until v1.0.0 — native packages (`.deb` / `.rpm`, static
+  binaries, Homebrew) are a v1.0.0 target.
 - **Postgres + storage.** Goose migrations run on boot. Storage
   backend is filesystem by default, or any S3-compatible bucket
   (AWS, R2, B2, MinIO).
@@ -118,14 +131,9 @@ The current release stream covers the foundations:
   production-class bugs surfaced by the dogfood loop — every
   gap caught by the loop, none by unit tests alone.
   **ArchivePub spec at v1.0-rc1** with Appendix A conformance
-  test vectors locked; 7-day soak window open through 2026-06-22;
-  v1.0 final ships as a no-code spec commit if soak is clean.
-
-## In flight
-
-These have foundations in place; the rest of the surface area is the
-current focus:
-
+  test vectors locked; the 7-day soak window closed 2026-06-22
+  clean; the spec remains v1.0-rc1 with the v1.0-final stamp
+  pending.
 - **v0.1.0 release readiness** (Phase 1.55). The meta-arc getting
   from current-dev to the v0.1.0 tag — the first-ever tagged release
   (see [docs/v0_1_readiness.md §0](./v0_1_readiness.md) for the
@@ -544,8 +552,12 @@ current focus:
   list + Restore action on collection detail; posts/assets admin
   detail-page Restore UI deferred (no admin detail page exists;
   assets viewer-based). Live smoke green end-to-end.
-- **First tagged release** — `v0.1.0` against the channels above.
-  Pre-1.0 means schemas can still break across minors.
+
+## In flight
+
+These have foundations in place; the rest of the surface area is the
+current focus:
+
 - **Image processing pipeline** (Phase 1.18.A — shipped). Variant
   generation (col / preview / screen / hires), thumbhash placeholders,
   content-addressed cache headers, generic background-job queue with
@@ -1314,16 +1326,17 @@ The phases queued behind the current focus, in build order:
   - ✅ 1.49.A — PanicShim consolidation (shipped)
   - ✅ 1.49.B — Legacy fallback drop (shipped)
   - ✅ 1.49.C-1 — DB schema audit report (shipped via PR #132;
-    [`docs/cleanup-audit-2026-06.md`](https://github.com/mscrnt/artist-alley/blob/dev/docs/cleanup-audit-2026-06.md);
+    [`docs/cleanup-audit-2026-06.md`](https://github.com/Artist-Alley-Org/artist-alley/blob/dev/docs/cleanup-audit-2026-06.md);
     26 findings)
   - ✅ 1.49.C-2 — Migration baseline squash (shipped via PR #135
     `8c4922f`; 14 migrations → 1 baseline at
-    [`00001_baseline_v1.sql`](https://github.com/mscrnt/artist-alley/blob/dev/app/internal/db/migrations/00001_baseline_v1.sql);
+    [`00001_baseline_v0_1.sql`](https://github.com/Artist-Alley-Org/artist-alley/blob/dev/app/internal/db/migrations/00001_baseline_v0_1.sql);
     all 24 audit-derived edits applied; CI 7/7 green)
-  - ⏭ 1.49.D — Scrub product references from source (clean-room
-    on the stable baseline; independent of soak)
+  - ✅ 1.49.D — Scrub product references from source (shipped; sole
+    residual is one comparison in `app/internal/social/mention/doc.go`,
+    tracked in issue #83)
 
-  Gates the v0.1.0 release tag. Soak-compatible — the audit + the
+  Gated the v0.1.0 release tag. Soak-compatible — the audit + the
   squash + the scrub all touch DB schema / docs / source-text only;
   the federation runtime is not affected.
 
@@ -1636,7 +1649,7 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   operator registers an MCP server (URL + auth + capability
   scoping); its tools become callable from job handlers + workflow
   rules + admin actions. Validation references:
-  [SceneWeaver's tessa-mcp / comfyui-mcp pattern](https://github.com/mscrnt/artist-alley/blob/dev/docs/adr/0051-artist-alley-as-mcp-client.md)
+  [SceneWeaver's tessa-mcp / comfyui-mcp pattern](https://github.com/Artist-Alley-Org/artist-alley/blob/dev/docs/adr/0051-artist-alley-as-mcp-client.md)
   (each external service wrapped as a dedicated MCP server; AA
   orchestrates). Initial integration target: **ComfyUI MCP** for
   studios who run local image-generation infrastructure (clean
@@ -1691,10 +1704,9 @@ Larger arcs sequenced by dependency + audience — the order here reflects when 
   — engineers ingesting reviews don't have to parse prose. See ADR
   0028.
 
-- **Federation** (Phase 1.22). Peer servers, inbound + outbound
-  feeds, sync status, conflict resolution. The data model already
-  carries `origin_server_id` so today's single-instance code is
-  forward-compatible.
+- **Federation** (Phase 1.22). Federation v1 shipped (1.22.A-D wire
+  protocol + inbox/outbox, encryption arc 1.22.I); phase-2 items are
+  tracked in epic #287.
 
 - **Plugin ecosystem** (Phase 1.23). WASM extension model via
   Extism. In-tree Go packages until external authors arrive.
