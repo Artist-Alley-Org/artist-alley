@@ -9,6 +9,7 @@ phases:
   - "1.0"
 supersedes: 
   - "0003"
+  - "0005"
 related: 
   - "0001"
   - "0003"

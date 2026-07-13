@@ -29,6 +29,12 @@ excerpt: >-
   surface against itself. Dogfood infrastructure becomes a
   permanent dev surface in `infra/docker/dogfood/`, not throwaway.
 ---
+
+> **Status note (2026-07-13):** the ArchivePub soak window closed
+> 2026-06-22 clean; the spec remains **v1.0-rc1** with the
+> v1.0-final stamp pending. The canonical GitHub org is now
+> Artist-Alley-Org (links herein host-swapped).
+
 ## Implementation status (2026-06-15)
 
 The decision recorded here is **fully implemented** as of
@@ -595,5 +601,5 @@ public-demo seed pack when that ships).
   for development TLS.
 - [NaCl box construction](https://nacl.cr.yp.to/box.html) —
   X25519 + XSalsa20 + Poly1305 envelope authentication.
-- Future cross-instance presentation rooms over SSE ([#97](https://github.com/mscrnt/artist-alley/issues/97)) —
+- Future cross-instance presentation rooms over SSE ([#97](https://github.com/Artist-Alley-Org/artist-alley/issues/97)) —
   future enhancement that benefits from the same dogfood rig.

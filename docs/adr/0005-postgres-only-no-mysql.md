@@ -10,7 +10,8 @@ phases:
   - "0.5.C"
   - "0.5.D"
   - "0.5.E"
-supersedes: []
+supersedes:
+  - "0004"
 superseded_by: "0006"
 related: 
   - "0001"
