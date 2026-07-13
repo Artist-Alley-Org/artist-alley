@@ -29,6 +29,12 @@ excerpt: >-
   SMB-studio path). Three personas drive the targeting: SRE /
   DevOps operator, engineer self-hoster, SMB studio admin.
 ---
+
+> **Status note (2026-07-13):** distribution is **Docker-only until
+> v1.0.0** (1.55.T-2 decision) — the canonical image is
+> `ghcr.io/artist-alley-org/artist-alley` after the v0.1.0 org move.
+> The three-platform end-state below stands as the v1.0.0 target.
+
 ## Context
 
 Artist Alley's current distribution surface (per ADR 0006) targets
@@ -105,7 +111,7 @@ distinct distribution channels per persona:
 ### Linux — current shipping channel (no change)
 
 Distribution:
-- **Docker images** — `ghcr.io/mscrnt/artist-alley` (mirrored to
+- **Docker images** — `ghcr.io/artist-alley-org/artist-alley` (mirrored to
   Docker Hub), multi-arch (amd64 + arm64), Sigstore-signed.
 - **`.deb` and `.rpm` packages** with hardened systemd unit and
   `/etc/artist-alley/aa.env` config template. Postinstall walks
