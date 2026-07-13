@@ -1,6 +1,6 @@
 [Unit]
 Description=artist-alley — self-hosted art review and archival
-Documentation=https://github.com/mscrnt/artist-alley
+Documentation=https://github.com/Artist-Alley-Org/artist-alley
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -11,7 +11,7 @@ Group=artist-alley
 
 # Settings are sourced from /etc/artist-alley/aa.env. Edit that file
 # (see /etc/artist-alley/aa.env.example or the docs at
-# https://github.com/mscrnt/artist-alley/blob/main/docs/install/README.md)
+# https://github.com/Artist-Alley-Org/artist-alley/blob/main/docs/install/README.md)
 # to point at your Postgres + storage backend.
 EnvironmentFile=/etc/artist-alley/aa.env
 
