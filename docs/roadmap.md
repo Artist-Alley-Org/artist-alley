@@ -21,8 +21,8 @@ tag — shipped 2026-07-11, followed by the v0.1.1 patch on 2026-07-13;
 the second milestone (v1.0.0 = out of beta) sits further out.
 Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/)
 squash point #1 executed at the tag (single baseline migration, ADR
-0057); the append-only-forever trigger (v0.1.0 vs v1.0.0) remains
-under review — see issue #228; details in
+0057); the append-only-forever trigger resolved to v1.0.0
+(2026-07-11, resolves #228); details in
 [docs/v0_1_readiness.md §0](./v0_1_readiness.md).
 
 ## Shipped
@@ -1320,8 +1320,8 @@ The phases queued behind the current focus, in build order:
 - **Pre-MVP cleanup** (Phase 1.49). Foundational debt-clearing for
   the v0.1.0 release. Per [ADR 0046](/adr/0046-migration-baseline-and-squash-policy/),
   pre-MVP migrations MAY be squashed once into a single baseline;
-  the append-only-forever trigger (v0.1.0 vs v1.0.0) is under
-  review — see issue #228.
+  the append-only-forever trigger resolved to v1.0.0 (ADR 0046,
+  2026-07-11, resolves #228).
   Sub-phases:
   - ✅ 1.49.A — PanicShim consolidation (shipped)
   - ✅ 1.49.B — Legacy fallback drop (shipped)
