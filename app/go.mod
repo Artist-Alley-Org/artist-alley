@@ -19,7 +19,7 @@ require (
 	github.com/kaitai-io/kaitai_struct_go_runtime v0.11.0
 	github.com/mscrnt/mviewer/go v0.0.0-20260529200211-fe5325066d66
 	github.com/nwaples/rardecode/v2 v2.2.3
-	github.com/oapi-codegen/runtime v1.4.1
+	github.com/oapi-codegen/runtime v1.5.0
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/pgvector/pgvector-go v0.4.0
 	github.com/pressly/goose/v3 v3.27.1
