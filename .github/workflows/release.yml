@@ -37,7 +37,10 @@ permissions:
   id-token: write   # Sigstore keyless signing (OIDC)
 
 env:
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/artist-alley
+  # Hardcoded lowercase: the org owner "Artist-Alley-Org" has capitals, but
+  # OCI/Docker repository names must be lowercase. github.repository_owner
+  # would produce an invalid tag. Update if the org is ever renamed.
+  GHCR_IMAGE: ghcr.io/artist-alley-org/artist-alley
 
 jobs:
   release-notes:
