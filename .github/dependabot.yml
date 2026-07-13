@@ -16,11 +16,14 @@ updates:
     target-branch: dev
     open-pull-requests-limit: 5
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: scope
     labels:
       - deps
       - go
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
   # SvelteKit + Tailwind + everything else under web/
   - package-ecosystem: npm
@@ -33,7 +36,7 @@ updates:
     target-branch: dev
     open-pull-requests-limit: 5
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: scope
     labels:
       - deps
@@ -44,21 +47,6 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
-
-  # Astro docs site (separate package.json under site/)
-  - package-ecosystem: npm
-    directory: /site
-    schedule:
-      interval: monthly
-    target-branch: dev
-    open-pull-requests-limit: 2
-    commit-message:
-      prefix: "chore(deps)"
-      include: scope
-    labels:
-      - deps
-      - npm
-      - docs
 
   # GitHub Actions — pin updates land alongside the workflows.
   - package-ecosystem: github-actions
@@ -71,6 +59,9 @@ updates:
     labels:
       - deps
       - ci
+    groups:
+      actions:
+        patterns: ["*"]
 
   # Production Dockerfile base images.
   - package-ecosystem: docker
