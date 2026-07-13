@@ -1326,9 +1326,10 @@ The phases queued behind the current focus, in build order:
     `8c4922f`; 14 migrations → 1 baseline at
     [`00001_baseline_v0_1.sql`](https://github.com/Artist-Alley-Org/artist-alley/blob/dev/app/internal/db/migrations/00001_baseline_v0_1.sql);
     all 24 audit-derived edits applied; CI 7/7 green)
-  - ✅ 1.49.D — Scrub product references from source (shipped; sole
-    residual is one comparison in `app/internal/social/mention/doc.go`,
-    tracked in issue #83)
+  - ✅ 1.49.D — Scrub product references from source (COMPLETE
+    2026-07-13: the last comparison in `social/mention/doc.go` plus a
+    follow-up real-IP sweep — API examples, ADRs 0007/0008/0010,
+    internal-reference naming, seed scripts — closed issue #83)
 
   Gated the v0.1.0 release tag. Soak-compatible — the audit + the
   squash + the scrub all touch DB schema / docs / source-text only;
