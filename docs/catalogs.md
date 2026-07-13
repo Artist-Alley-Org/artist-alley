@@ -17,8 +17,8 @@ When you add a new catalogue: add a row here in the appropriate section, in the 
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| User lifecycle states (`pending`, `approved`, `disabled`, `deleted`) | `app/internal/users/` | `00038_user_lifecycle.sql` | `auth/`, `audit/`, admin UI |
-| Capability codes (`users.read`, `system.admin`, `share.create`, …) | seeded into `capabilities` table by migration | `00002_capabilities_roles.sql` + later seeds | every handler that calls `acls.RequireCapability` |
+| User lifecycle states (`pending`, `approved`, `disabled`, `deleted`) | `app/internal/users/` | `00001_baseline_v0_1.sql` (`users` lifecycle CHECK) | `auth/`, `audit/`, admin UI |
+| Capability codes (`users.read`, `system.admin`, `share.create`, …) | seeded into `capabilities` table by migration | `00001_baseline_v0_1.sql` (`capabilities` table + seed section) | every handler that calls `acls.RequireCapability` |
 | API-token scopes | `app/internal/auth/` | column on `api_tokens` row | token validation middleware |
 | Session source kinds (cookie / api-token / legacy) | `app/internal/auth/` | — (Go-only discriminator) | middleware, audit |
 
@@ -26,17 +26,17 @@ When you add a new catalogue: add a row here in the appropriate section, in the 
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| Archive states (`active`, `archived`, `deleted`, …) | `app/internal/assets/` | `00010_assets.sql` | every consumer of `assets.Asset.archive_state` |
+| Archive states (`active`, `archived`, `deleted`, …) | `app/internal/assets/` | `00001_baseline_v0_1.sql` (`assets.archive_state` CHECK) | every consumer of `assets.Asset.archive_state` |
 | Asset sensitivity tiers (`public` / `team` / `restricted` / `embargo`) | `app/internal/assets/` (planned with ADR 0020) | per-row column when the phase lands | viewer, share-links |
-| Metadata field types (`text`, `longtext`, `number`, `boolean`, `date`, `datetime`, `select`, `multi_select`, `tree`, `reference`, …) | `app/internal/metadata/` | `00011_metadata.sql` CHECK on `field_definition.type` | metadata validation, admin field-editor |
-| Field-value provenance (`manual` / `exif` / `iptc` / `xmp` / `api` / `import` / `computed`) | `app/internal/metadata/` | `00011_metadata.sql` CHECK on `asset_field_value.set_by` | importers, EXIF extraction |
+| Metadata field types (`text`, `longtext`, `number`, `boolean`, `date`, `datetime`, `select`, `multi_select`, `tree`, `reference`, …) | `app/internal/metadata/` | `00001_baseline_v0_1.sql` (CHECK on `field_definition.type`) | metadata validation, admin field-editor |
+| Field-value provenance (`manual` / `exif` / `iptc` / `xmp` / `api` / `import` / `computed`) | `app/internal/metadata/` | `00001_baseline_v0_1.sql` (CHECK on `asset_field_value.set_by`) | importers, EXIF extraction |
 
 ## Jobs & async work
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| Job types (`preview.image`, `preview.video`, `import.run`, `caption.transcribe`, …) | `app/internal/jobs/` (`JobType` constants) | `00024_jobs.sql` (no enforced enum — types are open) | every package that enqueues work |
-| Job statuses (`queued`, `running`, `success`, `partial`, `failed`, `cancelled`) | `app/internal/jobs/` (`Status*` constants) | `00024_jobs.sql` CHECK | worker, admin job inspector |
+| Job types (`preview.image`, `preview.video`, `import.run`, `caption.transcribe`, …) | `app/internal/jobs/` (`JobType` constants) | `00001_baseline_v0_1.sql` (`jobs` table; no enforced enum — types are open) | every package that enqueues work |
+| Job statuses (`queued`, `running`, `success`, `partial`, `failed`, `cancelled`) | `app/internal/jobs/` (`Status*` constants) | `00001_baseline_v0_1.sql` (`jobs.status` CHECK) | worker, admin job inspector |
 | Job priorities (`PriorityHigh = 50`, `PriorityNormal = 100`, `PriorityLow = 200`, `PriorityBackfill = 500`) | `app/internal/jobs/` | — (Go-only int) | enqueue sites |
 
 ## Audit & notifications
@@ -52,8 +52,8 @@ When you add a new catalogue: add a row here in the appropriate section, in the 
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| Workflow states (per-deployment configurable) | `app/internal/workflow/` rows in `workflow_states` table — not a Go enum | `00018_workflow.sql` schema (values are data, not code) | review modal, admin |
-| Workflow transition kinds | `app/internal/workflow/` | `00018_workflow.sql` | workflow service |
+| Workflow states (per-deployment configurable) | `app/internal/workflow/` rows in `workflow_states` table — not a Go enum | `00001_baseline_v0_1.sql` (`workflow_states` schema; values are data, not code) | review modal, admin |
+| Workflow transition kinds | `app/internal/workflow/` | `00001_baseline_v0_1.sql` (workflow tables) | workflow service |
 | Sensitivity-tier transitions (NDA expiry / embargo lift, planned) | `app/internal/scheduledactions/` when the phase lands | — | scheduled-action engine |
 
 ## Storage & preview
@@ -62,22 +62,22 @@ When you add a new catalogue: add a row here in the appropriate section, in the 
 |---|---|---|---|
 | Storage backend kinds (`fs` / `s3` / `import-ref` planned) | `app/internal/storage/` | — (resolved at process boot from config) | storage abstraction |
 | Preview-variant kinds (`thumb`, `preview`, `hires`, `waveform`, `sprite`, `subs/{lang}.vtt`, …) | `app/internal/preview/` | — (rows in `storage_variants` keyed on variant name) | preview pipeline, viewer |
-| Asset companion roles | `app/internal/storage/` | `00026_asset_companions.sql` | storage abstraction, 3D loaders |
+| Asset companion roles | `app/internal/storage/` | `00001_baseline_v0_1.sql` (`asset_companions` table) | storage abstraction, 3D loaders |
 
 ## ACLs & sharing
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| ACL principal kinds (`team` / `role` / `user`) | `app/internal/acls/` | `00017_acls.sql` | post / collection ACL checks |
-| ACL grant levels (`read` / `comment` / `annotate` / `edit` / `admin`) | `app/internal/acls/` | `00017_acls.sql` | every gated endpoint |
+| ACL principal kinds (`team` / `role` / `user`) | `app/internal/acls/` | `00001_baseline_v0_1.sql` (ACL tables) | post / collection ACL checks |
+| ACL grant levels (`read` / `comment` / `annotate` / `edit` / `admin`) | `app/internal/acls/` | `00001_baseline_v0_1.sql` (ACL tables) | every gated endpoint |
 | Share-link scopes (`view` / `comment` / `annotate` / `download`, planned ADR 0018) | `app/internal/sharelinks/` when the phase lands | per-row column | share-link viewer |
 
 ## Federation (Phase 1.22)
 
 | Catalogue | Owner | DB mirror | Used by |
 |---|---|---|---|
-| Activity types (`Create`, `Update`, `Delete`, `Follow`, …, `aa:Share`, `aa:Approve`, `aa:Annotation`, …) | `app/internal/federation/vocab.go` (`ActivityType` constants + `KnownActivityTypes`) | `activities.activity_type` CHECK (migration 00049) + `federation_outbox.activity_type` + `federation_inbox.activity_type` (Phase 1.22.D) | envelope parser, inbox dispatch, outbox emitters, activities ledger |
-| Activity object kinds (`post` / `comment` / `asset` / `user` / `collection` / `workspace` / `brand_kit` / `message` / `activity`) | `app/internal/activities/activities.go` (`ActivityObjectKind` + `KnownObjectKinds`) | `activities.object_kind` CHECK (migration 00049) | activities writer, federation outbox, admin audit UI |
+| Activity types (`Create`, `Update`, `Delete`, `Follow`, …, `aa:Share`, `aa:Approve`, `aa:Annotation`, …) | `app/internal/federation/vocab.go` (`ActivityType` constants + `KnownActivityTypes`) | `activities.activity_type` CHECK (`00001_baseline_v0_1.sql`) + `federation_outbox.activity_type` + `federation_inbox.activity_type` (Phase 1.22.D) | envelope parser, inbox dispatch, outbox emitters, activities ledger |
+| Activity object kinds (`post` / `comment` / `asset` / `user` / `collection` / `workspace` / `brand_kit` / `message` / `activity`) | `app/internal/activities/activities.go` (`ActivityObjectKind` + `KnownObjectKinds`) | `activities.object_kind` CHECK (`00001_baseline_v0_1.sql`) | activities writer, federation outbox, admin audit UI |
 | Object types (`Note`, `Image`, …, `aa:Asset`, `aa:Post`, `aa:Workspace`, `aa:BrandKit`, `aa:Collection`) | `app/internal/federation/vocab.go` (`ObjectType` constants + `KnownObjectTypes`) | — (Go-only at v1; object-shape validation is per-type code) | per-activity handlers |
 | Signature algorithms (`Ed25519`) | `app/internal/federation/vocab.go` (`SignatureAlgorithm`) | — | envelope `Sign` + `Verify` |
 | Encryption algorithms (`nacl-box`) | `app/internal/federation/vocab.go` (`EncryptionAlgorithm`) | — | NaCl-box envelope |
