@@ -97,8 +97,6 @@ Thumbs.db
 apply-state-*.json
 
 # --- Reference-only plugin dirs (kept locally, used as blueprints) ---
-ref_grouping/
-ref_annotations/
 .playwright-mcp/
 Reference_Plugins/
 
