@@ -118,7 +118,7 @@ Use `<<UPPER_SNAKE_CASE>>` placeholders in the JSON for the values the bridge su
 - `<<STEPS>>` — caller's step count, defaulting to 20
 - `<<SEED>>` — caller's seed, or a fresh random integer when caller sent 0
 
-The bridge auto-discovers any other `*.json` file you drop and exposes it as a `workflow:<filename>` tool, but **AA-side only `img2img` is currently wired through the typed surface**. To call a custom workflow:<name> tool from AA you'd add a `workflow:my_thing` row to the per-server tool grants and write a future feature against `mcpdispatch.Dispatcher.Invoke`. Phase 1.14.E-2 will expand the AA-side surface.
+The bridge auto-discovers any other `*.json` file you drop and exposes it as a `workflow:<filename>` tool, but **AA-side only `img2img` is currently wired through the typed surface**. To call a custom `workflow:<name>` tool from AA you'd add a `workflow:my_thing` row to the per-server tool grants and write a future feature against `mcpdispatch.Dispatcher.Invoke`. Phase 1.14.E-2 will expand the AA-side surface.
 
 ### Flux Kontext (recommended for img2img)
 

@@ -1,14 +1,14 @@
 # ArchivePub
 
-**Federated digital asset management protocol — draft v0.x**
+**Federated digital asset management protocol — v1.0-rc1**
 
 | | |
 |---|---|
 | **Title** | ArchivePub — Federated Digital Asset Management Protocol |
-| **Status** | Draft (v0.x — actively in development) |
+| **Status** | Release candidate (v1.0-rc1 — soak window closed 2026-06-22 clean; v1.0-final stamp pending) |
 | **Latest version** | This document |
 | **Canonical home** | [`docs/protocol/archivepub.md`](.) (will move to a dedicated domain when v1.0 is finalised) |
-| **Reference implementation** | [Artist Alley](https://github.com/mscrnt/artist-alley) — see [`app/internal/federation/`](../../app/internal/federation/) |
+| **Reference implementation** | [Artist Alley](https://github.com/Artist-Alley-Org/artist-alley) — see [`app/internal/federation/`](../../app/internal/federation/) |
 | **Editor** | The Artist Alley contributors |
 | **Predecessor / data model** | [ActivityPub](https://www.w3.org/TR/activitypub/) (W3C Recommendation, 2018) |
 
@@ -111,7 +111,7 @@ ArchivePub explicitly does NOT:
 - **Define a global public namespace.** Federation is walled-garden:
   peer-paired with explicit trust, not openly discoverable. Operators
   who want public-fediverse interop layer that on separately (see
-  Issue [#108](https://github.com/mscrnt/artist-alley/issues/108) on
+  Issue [#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108) on
   the reference implementation roadmap).
 - **Specify storage.** ArchivePub describes wire format + activity
   semantics, not how the underlying bytes are stored. Implementations
@@ -563,7 +563,7 @@ here for reference:
 | Question | Resolution path |
 |---|---|
 | Domain home for the spec | Operator's call; provisional `archivepub.org` |
-| Public-fediverse compatibility (webfinger + nodeinfo) | Out of scope for v1.0; tracked at reference-impl issue [#108](https://github.com/mscrnt/artist-alley/issues/108) as a separate concern |
+| Public-fediverse compatibility (webfinger + nodeinfo) | Out of scope for v1.0; tracked at reference-impl issue [#108](https://github.com/Artist-Alley-Org/artist-alley/issues/108) as a separate concern |
 | Re-sharing semantics with `admin` tier | Phase 1.22.J auto-sync work will surface the real requirements |
 
 Resolved at v1.0-rc1 (previously open):
