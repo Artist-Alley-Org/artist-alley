@@ -35,7 +35,7 @@ Next steps:
        sudo systemctl enable --now artist-alley
   4. Open http://localhost:8080 to finish setup.
 
-Docs: https://github.com/mscrnt/artist-alley/blob/main/docs/install/README.md
+Docs: https://github.com/Artist-Alley-Org/artist-alley/blob/main/docs/install/README.md
 
 EOF
 
