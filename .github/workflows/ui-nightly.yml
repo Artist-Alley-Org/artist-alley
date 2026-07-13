@@ -70,7 +70,7 @@ jobs:
           cache-dependency-path: scripts/dogfood/ui/package-lock.json
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}

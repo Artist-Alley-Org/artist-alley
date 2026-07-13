@@ -100,7 +100,7 @@ jobs:
       # Playwright's Chromium download is ~150 MB. Cache it across
       # runs so we only re-fetch when Playwright bumps.
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
