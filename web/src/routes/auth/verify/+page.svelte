@@ -11,6 +11,7 @@
   //   3. no token in URL → same as failure, prompts for email.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -71,7 +72,7 @@
   }
 </script>
 
-<svelte:head><title>{t('verify.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('verify.title')} — {site.name}</title></svelte:head>
 
 <div class="relative flex-1 flex items-center justify-center px-6 py-12 isolate">
   <div

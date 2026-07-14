@@ -19,6 +19,7 @@
 
 import { browser } from '$app/environment';
 import { api } from '$api/client';
+import { site } from '$stores/site.svelte';
 import {
   DEFAULT_BY_SLOT,
   fontById,
@@ -119,6 +120,10 @@ class AppearanceState {
       this.picks = next;
       writeCache(next);
       applyToDom(next);
+      // The site display name rides this same public boot fetch — hand
+      // it to the site store so the wordmark / titles reflect the
+      // operator-configured name without a second request.
+      site.setName(data.site_name);
     } finally {
       this.loaded = true;
     }

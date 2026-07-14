@@ -12,6 +12,7 @@
 
   import { t } from '$stores/lang.svelte';
 
+  import { site } from '$stores/site.svelte';
   interface Props {
     slug: string;       // i18n lookup key under `account.items`
     phase?: string;     // optional phase label shown as a pill
@@ -23,7 +24,7 @@
   const blurbKey = $derived(`account.items.${slug}.blurb`);
 </script>
 
-<svelte:head><title>{t(titleKey)} — artist-alley</title></svelte:head>
+<svelte:head><title>{t(titleKey)} — {site.name}</title></svelte:head>
 
 <header class="mb-4 flex items-start justify-between gap-3">
   <div>

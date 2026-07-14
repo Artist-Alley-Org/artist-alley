@@ -5,11 +5,12 @@
   // structure. Each tile is a section landing page.
 
   import { t } from '$stores/lang.svelte';
+  import { site } from '$stores/site.svelte';
   import AdminIcon from '$components/AdminIcon.svelte';
   import { ADMIN_SECTIONS } from '$lib/admin/sections';
 </script>
 
-<svelte:head><title>{t('admin.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.title')} — {site.name}</title></svelte:head>
 
 <p class="mb-4 text-sm text-fg-muted">{t('admin.intro')}</p>
 

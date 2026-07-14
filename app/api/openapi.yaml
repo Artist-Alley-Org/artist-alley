@@ -9106,6 +9106,17 @@ components:
           description: |
             Code / tabular numerics slot. Falls back to the system
             monospace stack when empty.
+        site_name:
+          type: string
+          readOnly: true
+          description: |
+            Display name of this install. Read-only here — it is owned
+            and edited via the Site config (`/admin/system/site`); it is
+            surfaced on this public boot path so the wordmark, login
+            card, and document titles can render the configured name
+            before the user has signed in. Defaults to "Artist Alley"
+            when the operator hasn't set one.
+          example: Artist Alley
     Locale:
       type: object
       description: |

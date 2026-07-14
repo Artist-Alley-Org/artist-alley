@@ -6,6 +6,7 @@
   // badges. Read-only; the decision happens at /admin/requests.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -54,7 +55,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.requests.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.requests.title')} — {site.name}</title></svelte:head>
 
 <section class="space-y-4">
   <header>

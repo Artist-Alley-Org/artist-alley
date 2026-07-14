@@ -15,6 +15,7 @@
   // peer; unshared_object → sender's local share-cache drift).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
 
   type InboxRow = {
@@ -116,7 +117,7 @@
   });
 </script>
 
-<svelte:head><title>Federation inbox — artist-alley</title></svelte:head>
+<svelte:head><title>Federation inbox — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">Federation inbox</h2>

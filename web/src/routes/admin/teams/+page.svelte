@@ -9,6 +9,7 @@
   // parent + name/description management.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import { type Team, isValidSlug, slugify } from '$lib/admin/teams';
@@ -79,7 +80,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.teams.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.teams.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
   <h2 class="text-xl font-semibold">{t('admin.teams.title')}</h2>

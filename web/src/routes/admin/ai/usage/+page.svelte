@@ -11,6 +11,7 @@
   // Cost is integer micros on the wire; we format to USD here.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -67,7 +68,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.ai_usage.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.ai_usage.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('admin.ai_usage.title')}</h2>
 <p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.ai_usage.intro')}</p>

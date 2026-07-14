@@ -20,6 +20,7 @@
   // the queue state.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
 
   type OutboxRow = {
@@ -157,7 +158,7 @@
   });
 </script>
 
-<svelte:head><title>Federation outbox — artist-alley</title></svelte:head>
+<svelte:head><title>Federation outbox — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">Federation outbox</h2>

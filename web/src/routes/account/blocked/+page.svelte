@@ -15,6 +15,7 @@
   // profile / post-author header.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -90,7 +91,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.blocked.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.blocked.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-6">
   <h2 class="text-2xl font-semibold">{t('account.blocked.title')}</h2>

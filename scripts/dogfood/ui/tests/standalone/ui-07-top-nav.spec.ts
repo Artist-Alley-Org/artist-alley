@@ -18,7 +18,7 @@ test.describe('UI-07 top navbar', () => {
 
   test('logo + brand link to home', async ({ page }) => {
     await page.goto('/admin/federation/peers');
-    const brand = page.getByRole('link', { name: 'artist-alley' }).first();
+    const brand = page.getByRole('link', { name: 'Artist Alley' }).first();
     await expect(brand).toBeVisible();
     await brand.click();
     await expect(page).toHaveURL(/\/$/);

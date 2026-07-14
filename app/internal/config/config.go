@@ -147,7 +147,7 @@ func Load() (Config, error) {
 			AdminUsername:  envStr("AA_SETUP_DEFAULT_USERNAME", ""),
 			AdminEmail:     envStr("AA_SETUP_DEFAULT_EMAIL", ""),
 			AdminFullname: envStr("AA_SETUP_DEFAULT_FULLNAME", ""),
-			SiteName:       envStr("AA_SETUP_DEFAULT_SITE_NAME", "artist-alley"),
+			SiteName:       envStr("AA_SETUP_DEFAULT_SITE_NAME", "Artist Alley"),
 			SiteBaseURL:    envStr("AA_SETUP_DEFAULT_BASE_URL", ""),
 			SMTPHost:       envStr("AA_SETUP_DEFAULT_SMTP_HOST", ""),
 			SMTPPort:       envInt("AA_SETUP_DEFAULT_SMTP_PORT", 587),

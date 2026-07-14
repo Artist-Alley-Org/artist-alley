@@ -20,6 +20,7 @@
   //     pinned operator key
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -249,7 +250,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.federation.dir_title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.federation.dir_title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">{t('admin.federation.dir_title')}</h2>

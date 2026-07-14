@@ -9,6 +9,7 @@
   // rows stay for audit. Counts above the table power the nav badge.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
 
   type FailureRow = {
@@ -128,7 +129,7 @@
   onMount(() => { void load(true); });
 </script>
 
-<svelte:head><title>Metadata extraction failures — artist-alley</title></svelte:head>
+<svelte:head><title>Metadata extraction failures — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">Metadata extraction failures</h2>

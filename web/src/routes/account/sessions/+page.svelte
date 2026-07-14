@@ -10,6 +10,7 @@
   // a "This device" badge.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import { relativeAgo } from '$lib/admin/users';
@@ -77,7 +78,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.sessions.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.sessions.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('account.sessions.title')}</h2>
 <p class="mb-4 text-sm text-fg-muted">{t('account.sessions.intro')}</p>

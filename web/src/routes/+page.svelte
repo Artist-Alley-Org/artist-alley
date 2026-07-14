@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { untrack, onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
@@ -204,7 +205,7 @@
 </script>
 
 <svelte:head>
-  <title>{query ? `${t('browse.title_search', { query })} — artist-alley` : `${t('browse.title')} — artist-alley`}</title>
+  <title>{query ? `${t('browse.title_search', { query })} — ${site.name}` : `${t('browse.title')} — ${site.name}`}</title>
 </svelte:head>
 
 <div class="w-full px-4 py-4 space-y-4 sm:px-6">

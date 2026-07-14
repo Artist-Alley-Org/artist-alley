@@ -65,7 +65,7 @@ test.describe('UI-29 404 + error pages', () => {
     // navbar must still be visible.
     const banner = page.getByRole('banner');
     await expect(banner).toBeVisible();
-    const home = banner.getByRole('link', { name: 'artist-alley' }).first();
+    const home = banner.getByRole('link', { name: 'Artist Alley' }).first();
     await home.click();
     await expect(page).toHaveURL(/\/$/);
   });

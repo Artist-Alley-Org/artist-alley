@@ -9,6 +9,7 @@
   // `controls` snippet.
 
   import { onMount, onDestroy } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import AdminBackfillPanel, {
     type BaseRun,
   } from '$components/admin/AdminBackfillPanel.svelte';
@@ -106,7 +107,7 @@
   });
 </script>
 
-<svelte:head><title>Search reindex — artist-alley</title></svelte:head>
+<svelte:head><title>Search reindex — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-5xl px-6 py-8">
   <AdminBackfillPanel
