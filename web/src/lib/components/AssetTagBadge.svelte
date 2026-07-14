@@ -40,13 +40,13 @@
   // template interpolation) so Tailwind's JIT picks them up.
   const sourceClass: Record<Source, string> = {
     manual: 'border-border bg-surface text-fg',
-    ai:     'border-accent/40 bg-accent/5 text-fg',
+    ai:     'border-secondary/40 bg-secondary/10 text-fg',
     import: 'border-warning/40 bg-warning/5 text-fg',
   };
 
   const markerClass: Record<Source, string> = {
     manual: 'bg-fg-muted',
-    ai:     'bg-accent',
+    ai:     'bg-secondary',
     import: 'bg-warning',
   };
 
