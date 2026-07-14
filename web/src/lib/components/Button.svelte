@@ -1,12 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // Hand-rolled button primitive. Three variants cover the surfaces
-  // we need in 1.13.C: primary actions (sign in, complete setup),
-  // secondary actions (cancel, sign out), and link-style affordances
-  // ("don't have an account?" type links).
+  // Hand-rolled button primitive. Variants cover the surfaces we need:
+  // primary actions (sign in, complete setup / burnt accent), the quiet
+  // neutral secondary (cancel, sign out), a steel filled-tonal for
+  // secondary-*emphasis* actions (the M3 secondary role), and link-style
+  // ghost affordances ("don't have an account?" type links).
 
-  type Variant = 'primary' | 'secondary' | 'ghost';
+  type Variant = 'primary' | 'secondary' | 'tonal' | 'ghost';
 
   interface Props {
     variant?: Variant;
@@ -40,6 +41,7 @@
   const variants: Record<Variant, string> = {
     primary: 'bg-accent text-accent-fg hover:opacity-90',
     secondary: 'border border-border bg-surface-elevated text-fg hover:bg-surface',
+    tonal: 'bg-secondary-container text-on-secondary-container hover:opacity-90',
     ghost: 'text-fg-muted hover:text-fg',
   };
 </script>

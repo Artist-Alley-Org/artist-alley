@@ -124,7 +124,7 @@
       : rel?.is_following
         ? hovering
           ? 'border-danger/40 bg-danger/10 text-danger'
-          : 'border-border bg-surface text-fg'
+          : 'border-secondary/40 bg-secondary-container text-on-secondary-container'
         : 'border-accent bg-accent text-on-accent hover:bg-accent/90',
   );
 </script>
