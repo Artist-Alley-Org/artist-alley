@@ -29,9 +29,22 @@ export $(grep -E '^(POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_HOST_PO
 # at its native port.
 export AA_DB_HOST=postgres
 export AA_DB_PORT=5432
-export AA_DB_NAME="${POSTGRES_DB:-artist_alley}"
 export AA_DB_USER="${POSTGRES_USER:-artist_alley}"
 export AA_DB_PASSWORD="${POSTGRES_PASSWORD:-}"
+
+# ── Test-database isolation (#291) ────────────────────────────────
+# The Go suite TRUNCATEs / DELETEs shared tables (users, user_roles,
+# jobs, goose_db_version). Pointed at the live dev database this has
+# repeatedly corrupted dev state — wiped the admin's roles (locking
+# login out), poisoned real background jobs, reset goose bookkeeping.
+# So the whole suite runs against a dedicated, disposable
+# `<dev>_test` database in the SAME postgres container, reset to a
+# clean migrated state each run (see "Resetting isolated test
+# database" below). Every openPool helper reads AA_DB_NAME, so this
+# single override redirects all 43 test files with no per-file edits —
+# nothing after this point touches the dev database.
+DEV_DB_NAME="${POSTGRES_DB:-artist_alley}"
+export AA_DB_NAME="${DEV_DB_NAME}_test"
 
 if ! docker compose ps --status running --format json 2>/dev/null | grep -q '"postgres"'; then
     echo "ERROR: postgres container is not running. Start it with 'docker compose up -d'." >&2
@@ -59,30 +72,17 @@ failed=0
 
 step "Go tests (app/...)"
 
-# Stop the dev app container while tests run. Phase 1.22.D-b-6
-# extended LISTEN/NOTIFY to federation_outbox + federation_inbox
-# (migration 00006), which means the live app's dispatcher +
-# delivery worker now process rows the moment the trigger fires.
-# Federation integration tests (delivery / e2e / dispatcher)
-# need DB isolation — a concurrent live worker would race the
-# test on the shared cursor / row state.
+# The dev app container can keep running. It is pinned to the dev
+# database ($DEV_DB_NAME); this suite runs entirely against
+# ${DEV_DB_NAME}_test, and LISTEN/NOTIFY channels (migration 00006 —
+# federation_outbox / federation_inbox) are per-database, so the live
+# dispatcher + delivery worker cannot race the tests. Before #291 the
+# suite shared the dev DB and we had to stop `app` to avoid exactly
+# that race; the dedicated test DB makes stopping it unnecessary.
 #
-# We restart the app after the test step regardless of outcome.
-app_was_running=""
-if docker compose ps --status running --format json 2>/dev/null | grep -q '"app"'; then
-    app_was_running="yes"
-    docker compose stop app >/dev/null 2>&1 || true
-fi
-restart_app() {
-    if [ -n "$app_was_running" ]; then
-        docker compose start app >/dev/null 2>&1 || true
-    fi
-}
-trap restart_app EXIT
-# Opt-in flag for the latency-contract e2e test
-# (TestFederation_EndToEnd_ProductionDefaults_SubSecond) —
-# it asserts sub-1s end-to-end with PRODUCTION tick intervals
-# + needs the same isolation we just secured.
+# AA_E2E_ISOLATED opts the federation latency-contract e2e test
+# (TestFederation_EndToEnd_ProductionDefaults_SubSecond) in — the
+# dedicated test DB gives it the committed-state isolation it needs.
 export AA_E2E_ISOLATED=1
 
 # When --with-s3, bring MinIO up in the same compose stack and
@@ -113,6 +113,32 @@ fi
 
 NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' \
     "$(docker compose ps -q postgres)")
+
+# Reset the isolated test DB to a clean, migrated state. Drop +
+# recreate gives every run an identical starting point regardless of
+# what the previous run's destructive tests left behind; WITH (FORCE)
+# terminates any leftover connections. The baseline migration creates
+# the pgvector extension itself, so no separate CREATE EXTENSION step
+# is needed. In CI this just creates the test DB alongside the
+# app-migrated dev DB — CI's postgres is ephemeral, so it's a safe
+# superset that keeps CI green.
+step "Resetting isolated test database ($AA_DB_NAME)"
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$AA_DB_USER" -d postgres \
+    -c "DROP DATABASE IF EXISTS ${AA_DB_NAME} WITH (FORCE);" \
+    -c "CREATE DATABASE ${AA_DB_NAME};"
+
+# Migrate it with the app's own embedded goose migrations (via the
+# aa-migrate helper) so the test schema can never drift from what the
+# server applies at boot.
+step "Migrating test database ($AA_DB_NAME)"
+docker run --rm \
+    --network "$NET" \
+    -v "${ROOT}/app:/src/app" \
+    -w /src/app \
+    -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
+    golang:1.26 \
+    go run ./cmd/aa-migrate
+
 # -p 1 serialises package execution: every test binary writes to the
 # same artist_alley DB, and parallel packages were racing on shared
 # rows (e.g. setup tests wipe system.admin user_roles to assert

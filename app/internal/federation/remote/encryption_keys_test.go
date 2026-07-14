@@ -93,12 +93,22 @@ func fixturePeerAndActor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 	peerID := uuid.New()
 	actorURI := "https://test-peer-" + randHex(t, 4) + ".local/users/alice"
 
-	// Use the seeded admin as handshake_by_user_ref so the peer
-	// row's NOT NULL FK is satisfied without leaking test state.
-	var adminRef int64
+	// Need a valid user for the peer row's NOT NULL
+	// handshake_by_user_ref FK. Reuse the bootstrapped admin when the
+	// database has one (the shared dev DB does); otherwise create a
+	// throwaway owner, matching workflow/service_test.go. This keeps
+	// the fixture self-contained against a freshly-migrated isolated
+	// test DB (#291), which has schema but no bootstrap admin.
+	var adminRef, createdOwnerRef int64
 	if err := pool.QueryRow(ctx,
 		`SELECT ref FROM "user" WHERE username = 'admin' LIMIT 1`).Scan(&adminRef); err != nil {
-		t.Fatalf("lookup admin: %v", err)
+		ownerName := "fedremote_test_owner_" + randHex(t, 4)
+		if err2 := pool.QueryRow(ctx,
+			`INSERT INTO "user" (username) VALUES ($1) RETURNING ref`,
+			ownerName).Scan(&adminRef); err2 != nil {
+			t.Fatalf("create fixture owner: %v (admin lookup: %v)", err2, err)
+		}
+		createdOwnerRef = adminRef
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -124,6 +134,9 @@ func fixturePeerAndActor(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 		ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = pool.Exec(ctx2, `DELETE FROM federation_peers WHERE id = $1`, peerID)
+		if createdOwnerRef != 0 {
+			_, _ = pool.Exec(ctx2, `DELETE FROM "user" WHERE ref = $1`, createdOwnerRef)
+		}
 	})
 	return actorURI
 }
