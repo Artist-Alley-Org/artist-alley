@@ -4,14 +4,15 @@
  * artist-alley color tokens.
  *
  * Vibe target:
- *   Light = energetic / upbeat (warm cream paper + coral accent)
- *   Dark  = cool / calm        (off-black blue-grey + soft sky-blue accent)
+ *   Light = energetic / upbeat (warm cream paper + burnt-orange accent)
+ *   Dark  = cool / calm        (off-black blue-grey + burnt-orange accent)
  *
- * Accent hue shifts across modes (hue ~30 light → hue ~250 dark), which
- * creates the temperature/mood difference. Surfaces follow suit: light
- * has a hint of warmth (hue 80, very low chroma → reads "paper"),
- * dark sits at oklch(13%) not pure black so OLED preserves breathing
- * room and thumbnails read against it.
+ * The brand accent is burnt orange (hue ~41 light / ~43 dark) in both
+ * modes, paired with a cool steel secondary (hue ~234). The dark accent
+ * is a LIGHT tone, so its on-accent text is near-black, not white.
+ * Surfaces carry the temperature difference: light has a hint of warmth
+ * (hue 80, very low chroma → reads "paper"), dark sits at oklch(13%) not
+ * pure black so OLED preserves breathing room and thumbnails read.
  *
  * Token shape borrows the M3 role naming (`--color-*` + `--color-on-*`
  * pairs, `--color-*-container` for soft variants, ladder of surface
@@ -49,13 +50,21 @@
   --color-border-subtle: oklch(93% 0.008 80);        /* non-interactive dividers */
   --color-scrim:         oklch(20% 0.015 80 / 0.6);  /* modal backdrop */
 
-  /* ── Accent (coral — energetic art-tool feel) */
-  --color-accent:               oklch(58% 0.22 30);
-  --color-accent-container:     oklch(94% 0.05 30);  /* soft tinted bg for alerts/badges */
-  --color-on-accent-container:  oklch(35% 0.15 30);  /* text on the soft tint */
+  /* ── Accent (burnt orange — energetic art-tool feel) */
+  --color-accent:               oklch(57% 0.161 41);
+  --color-accent-container:     oklch(95% 0.023 53);  /* soft tinted bg for alerts/badges */
+  --color-on-accent-container:  oklch(40% 0.140 41);  /* text on the soft tint */
 
-  /* ── Focus ring (same hue as accent; 3:1 against any surface) */
-  --color-ring: oklch(58% 0.22 30);
+  /* ── Secondary (steel — cool complement to the burnt accent).
+       Token values only for now; wiring into secondary buttons /
+       info states / data-viz is a follow-up. */
+  --color-secondary:              oklch(56% 0.098 234);
+  --color-on-secondary:           oklch(99% 0 0);
+  --color-secondary-container:    oklch(93% 0.017 231);
+  --color-on-secondary-container: oklch(40% 0.090 235);
+
+  /* ── Focus ring (brand-burnt hue, brighter for a visible ring; 3:1 against any surface) */
+  --color-ring: oklch(66% 0.179 40);
 
   /* ── Semantic — success (green hue 150) */
   --color-success:              oklch(55% 0.15 150);
@@ -78,7 +87,7 @@
   /* ── Interaction-state overlays (apply on top of base via bg utility) */
   --color-state-hover:    oklch(0% 0 0 / 0.05);
   --color-state-pressed:  oklch(0% 0 0 / 0.10);
-  --color-state-selected: oklch(58% 0.22 30 / 0.10);
+  --color-state-selected: oklch(57% 0.161 41 / 0.10);
 
   /* ── Legacy compatibility — alias old name to new one so existing
        components that still say `bg-surface-elevated` etc. keep
@@ -103,7 +112,7 @@
     --color-fg:          oklch(96% 0.005 250);
     --color-fg-muted:    oklch(78% 0.008 250);
     --color-fg-disabled: oklch(55% 0.010 250);
-    --color-on-accent:   oklch(15% 0.020 250);
+    --color-on-accent:   oklch(17% 0.025 64);          /* CRITICAL: near-black — the dark accent is LIGHT, white text fails (~2:1) */
 
     /* ── Structural */
     --color-border:        oklch(28% 0.020 250);
@@ -111,13 +120,20 @@
     --color-border-subtle: oklch(22% 0.020 250);
     --color-scrim:         oklch( 8% 0.010 250 / 0.7);
 
-    /* ── Accent (soft sky blue — desaturated for calm; M2 rule:
-         use ~200-range tones in dark, not the saturated 500) */
-    --color-accent:               oklch(72% 0.13 250);
-    --color-accent-container:     oklch(28% 0.08 250);
-    --color-on-accent-container:  oklch(85% 0.10 250);
+    /* ── Accent (burnt orange). The dark accent is LIGHT, so on-accent
+         text is near-black (see --color-on-accent), not white. */
+    --color-accent:               oklch(70% 0.167 43);
+    --color-accent-container:     oklch(28% 0.050 45);
+    --color-on-accent-container:  oklch(85% 0.100 47);
 
-    --color-ring: oklch(72% 0.13 250);
+    /* ── Secondary (steel — cool complement to the burnt accent).
+         Token values only for now; component wiring is a follow-up. */
+    --color-secondary:              oklch(68% 0.090 234);
+    --color-on-secondary:           oklch(12% 0.02 240);
+    --color-secondary-container:    oklch(24% 0.028 239);
+    --color-on-secondary-container: oklch(85% 0.08 233);
+
+    --color-ring: oklch(70% 0.167 43);
 
     /* ── Semantic (all desaturated for dark; on-* pairs stay legible) */
     --color-success:              oklch(70% 0.12 150);
@@ -138,7 +154,7 @@
     /* ── State overlays (white in dark, not black) */
     --color-state-hover:    oklch(100% 0 0 / 0.05);
     --color-state-pressed:  oklch(100% 0 0 / 0.10);
-    --color-state-selected: oklch( 72% 0.13 250 / 0.15);
+    --color-state-selected: oklch(70% 0.167 43 / 0.14);
 
     --color-accent-fg: var(--color-on-accent);
   }

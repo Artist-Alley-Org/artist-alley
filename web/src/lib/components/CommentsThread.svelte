@@ -264,7 +264,7 @@
       <button
         type="submit"
         disabled={posting || !newBody.trim()}
-        class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {posting ? t('common.posting') : t('comments.submit_label')}
       </button>
@@ -415,7 +415,7 @@
               <button
                 type="submit"
                 disabled={posting || !(replyDrafts.get(group.root.id)?.trim())}
-                class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                class="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {posting ? t('common.posting') : t('comments.reply')}
               </button>

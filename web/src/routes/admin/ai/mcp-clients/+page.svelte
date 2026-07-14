@@ -282,7 +282,7 @@
       {/if}
 
       <button type="submit" disabled={registering}
-              class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">
+              class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40">
         {registering ? t('common.loading') : t('admin.system.mcp_clients.register_submit')}
       </button>
     </form>

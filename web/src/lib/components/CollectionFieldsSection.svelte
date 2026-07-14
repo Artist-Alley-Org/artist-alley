@@ -172,7 +172,7 @@
         onclick={save}
         disabled={saving || Object.keys(dirty).length === 0}
         data-testid="collection-fields-save"
-        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
+        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40"
       >
         {saving ? t('common.loading') : t('collection_fields.save')}
       </button>
