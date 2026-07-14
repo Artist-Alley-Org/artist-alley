@@ -25,6 +25,7 @@
   //      defederate.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -317,7 +318,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.federation.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.federation.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">{t('admin.federation.title')}</h2>

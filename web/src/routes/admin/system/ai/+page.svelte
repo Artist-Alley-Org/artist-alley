@@ -18,6 +18,7 @@
 
   import { t } from '$stores/lang.svelte';
 
+  import { site } from '$stores/site.svelte';
   interface Tile {
     key: string;
     href: string;
@@ -33,7 +34,7 @@
   ];
 </script>
 
-<svelte:head><title>{t('admin.system.ai_landing.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.system.ai_landing.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-6">
   <h2 class="text-xl font-semibold">{t('admin.system.ai_landing.title')}</h2>

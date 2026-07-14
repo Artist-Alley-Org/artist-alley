@@ -17,6 +17,7 @@
   // rotations (operator + self).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
 
   type RotationEvent = {
@@ -105,7 +106,7 @@
   }
 </script>
 
-<svelte:head><title>Federation key health — artist-alley</title></svelte:head>
+<svelte:head><title>Federation key health — {site.name}</title></svelte:head>
 
 <h1 class="mb-1 text-2xl font-semibold">Federation key health</h1>
 <p class="mb-4 max-w-3xl text-sm text-fg-muted">

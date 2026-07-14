@@ -15,6 +15,7 @@
   // a deep link doesn't dead-end on a closed install.
 
   import { goto } from '$app/navigation';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
@@ -103,7 +104,7 @@
   }
 </script>
 
-<svelte:head><title>{t('register.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('register.title')} — {site.name}</title></svelte:head>
 
 <div class="relative flex-1 flex items-center justify-center px-6 py-12 isolate">
   <div

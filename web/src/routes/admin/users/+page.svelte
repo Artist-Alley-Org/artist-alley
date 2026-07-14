@@ -9,6 +9,7 @@
   // role assignment (existing).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import Avatar from '$components/Avatar.svelte';
@@ -79,7 +80,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.users.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.users.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
   <h2 class="text-xl font-semibold">{t('admin.users.title')}</h2>

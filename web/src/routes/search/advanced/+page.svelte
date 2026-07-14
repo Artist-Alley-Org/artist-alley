@@ -11,6 +11,7 @@
   // backend parser with a 400 + valid-field list.
 
   import { goto } from '$app/navigation';
+  import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
   import ReverseImageDropzone from '$components/search/ReverseImageDropzone.svelte';
 
@@ -67,7 +68,7 @@
   }
 </script>
 
-<svelte:head><title>{t('search.advanced.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('search.advanced.title')} — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-3xl px-6 py-8">
   <h1 class="font-display mb-4 text-3xl font-semibold">{t('search.advanced.heading')}</h1>

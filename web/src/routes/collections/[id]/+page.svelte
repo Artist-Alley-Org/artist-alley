@@ -13,6 +13,7 @@
   // unmount the page.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
@@ -147,7 +148,7 @@
 </script>
 
 <svelte:head>
-  <title>{collection?.name ?? t('collections.title')} — artist-alley</title>
+  <title>{collection?.name ?? t('collections.title')} — {site.name}</title>
 </svelte:head>
 
 <div class="w-full px-4 py-6 sm:px-6">

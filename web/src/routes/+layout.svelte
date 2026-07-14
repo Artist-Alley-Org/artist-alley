@@ -5,6 +5,8 @@
   import { onMount } from 'svelte';
   import { theme } from '$stores/theme.svelte';
   import { auth } from '$stores/auth.svelte';
+  import { site } from '$stores/site.svelte';
+  import BrandMark from '$components/BrandMark.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { upload } from '$stores/upload.svelte';
   import { appearance } from '$stores/appearance.svelte';
@@ -112,8 +114,8 @@
     <header class="shrink-0 border-b border-border bg-surface-elevated text-base">
       <div class="flex items-center gap-4 px-6 py-3">
         <a href="/" class="font-brand flex items-center gap-2 text-2xl tracking-tight shrink-0">
-          <img src="/logo.svg" alt="" class="h-7 w-7" aria-hidden="true" />
-          artist-alley
+          <BrandMark class="h-10 w-10" />
+          {site.name}
         </a>
 
         <!-- Left nav: Explore dropdown (Gallery + Blogs) + Collections.

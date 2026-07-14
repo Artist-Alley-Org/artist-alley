@@ -12,6 +12,7 @@
   // this page has a jump-to-user form for the abuse-review flow.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
 
   type TopQueryRow = {
@@ -63,7 +64,7 @@
   onMount(load);
 </script>
 
-<svelte:head><title>Search feedback — artist-alley</title></svelte:head>
+<svelte:head><title>Search feedback — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-5xl px-6 py-8">
   <h1 class="font-display mb-2 text-2xl font-semibold">Search feedback</h1>

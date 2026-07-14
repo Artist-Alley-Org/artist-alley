@@ -9,6 +9,7 @@
 
   import { onMount } from 'svelte';
 
+  import { site } from '$stores/site.svelte';
   type SavedSearch = {
     id: string;
     name: string;
@@ -102,7 +103,7 @@
   onMount(load);
 </script>
 
-<svelte:head><title>Saved searches — artist-alley</title></svelte:head>
+<svelte:head><title>Saved searches — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-4xl px-6 py-8">
   <h1 class="font-display mb-2 text-2xl font-semibold">Saved searches</h1>

@@ -14,6 +14,7 @@
 
   import { api } from '$api/client';
 
+  import { site } from '$stores/site.svelte';
   type RotationResult = {
     user_ref: number;
     new_version: number;
@@ -46,7 +47,7 @@
   }
 </script>
 
-<svelte:head><title>Security — artist-alley</title></svelte:head>
+<svelte:head><title>Security — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">Federation encryption keys</h2>
 <p class="mb-4 max-w-2xl text-sm text-fg-muted">
