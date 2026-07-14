@@ -129,7 +129,7 @@
 
   <div class="w-full max-w-sm space-y-8 rounded-xl border border-white/10 bg-surface/85 p-8 shadow-2xl backdrop-blur-md">
     <div class="text-center space-y-2">
-      <BrandMark class="mx-auto h-16 w-16" />
+      <BrandMark class="mx-auto h-20 w-20" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('login.title')}</h1>
       <p class="text-sm text-fg-muted">{site.name}</p>
     </div>
