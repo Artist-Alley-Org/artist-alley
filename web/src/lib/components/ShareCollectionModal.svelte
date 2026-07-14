@@ -169,7 +169,7 @@
           type="button"
           onclick={addAcl}
           disabled={!principalId.trim() || adding}
-          class="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
+          class="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40"
         >
           {adding ? '…' : t('common.add')}
         </button>

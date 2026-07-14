@@ -237,7 +237,7 @@
   <div class="mt-3 flex gap-2">
     <button
       type="button"
-      class="rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent-strong disabled:opacity-50"
+      class="rounded bg-accent px-4 py-2 text-sm text-on-accent hover:bg-accent-strong disabled:opacity-50"
       disabled={loading}
       onclick={loadShares}
     >

@@ -178,7 +178,7 @@
           type="button"
           onclick={handleSubmit}
           disabled={submitDisabled}
-          class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white shadow transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:bg-accent/40"
+          class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent shadow transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:bg-accent/40"
         >
           {upload.composeBusy ? t('common.saving') : submitLabel}
         </button>
