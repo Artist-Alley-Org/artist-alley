@@ -8,6 +8,7 @@
   // upload + validate flows ship in Phase 1.17.O-2.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -267,7 +268,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.system.license.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.system.license.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h1 class="text-xl font-semibold">{t('admin.system.license.title')}</h1>

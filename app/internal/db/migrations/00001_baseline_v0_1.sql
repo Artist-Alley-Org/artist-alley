@@ -5632,8 +5632,8 @@ INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.enabled', 
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.tag.confidence_threshold', '0.5', '2026-06-21 01:05:10.551025+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.tag.merge_semantics', '"preserve_manual"', '2026-06-21 01:05:10.551025+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.routing', '{"tag": "ollama", "embed": "clip_local", "caption": "claude", "complete": "claude", "transcribe": "whisper_local"}', '2026-07-08 14:17:09.755184+00');
-INSERT INTO public.system_config (key, value, updated_at) VALUES ('site', '{"name": "Tx Site", "base_url": "https://tx.example.com"}', '2026-07-08 14:20:06.4568+00');
-INSERT INTO public.system_config (key, value, updated_at) VALUES ('smtp', '{"host": "tx-smtp.example.com", "port": 25, "encryption": "none", "from_address": "tx@example.com"}', '2026-07-08 14:20:06.4568+00');
+INSERT INTO public.system_config (key, value, updated_at) VALUES ('site', '{"name": "Artist Alley", "base_url": ""}', '2026-07-08 14:20:06.4568+00');
+INSERT INTO public.system_config (key, value, updated_at) VALUES ('smtp', '{"host": "", "port": 587, "encryption": "starttls", "from_address": ""}', '2026-07-08 14:20:06.4568+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.whisper_local', '"large-v3"', '2026-06-21 19:55:49.177673+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.openai', '"whisper-1"', '2026-06-21 19:55:49.177673+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.gemini', '"gemini-2.5-flash"', '2026-06-21 19:55:49.177673+00');

@@ -4,6 +4,7 @@
   // Admin: search disk usage (Phase 1.16.B-5).
   import { onMount } from 'svelte';
 
+  import { site } from '$stores/site.svelte';
   type Snapshot = {
     tsvector_bytes: Record<string, number>;
     embedding_table_bytes: number;
@@ -54,7 +55,7 @@
   onMount(() => void load(false));
 </script>
 
-<svelte:head><title>Search disk usage — artist-alley</title></svelte:head>
+<svelte:head><title>Search disk usage — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-4xl px-6 py-8">
   <div class="mb-6 flex items-center justify-between gap-3">

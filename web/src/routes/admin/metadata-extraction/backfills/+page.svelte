@@ -16,6 +16,7 @@
   // the header / start-controls layout / recent-runs table.
 
   import { onMount, onDestroy } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import AdminBackfillPanel, {
     type BaseRun,
@@ -131,7 +132,7 @@
   });
 </script>
 
-<svelte:head><title>Metadata backfill — artist-alley</title></svelte:head>
+<svelte:head><title>Metadata backfill — {site.name}</title></svelte:head>
 
 <AdminBackfillPanel
   title="Metadata extraction backfill"

@@ -10,6 +10,7 @@
 
   import { onMount } from 'svelte';
 
+  import { site } from '$stores/site.svelte';
   type Row = {
     id: string;
     owner_user_ref: number;
@@ -62,7 +63,7 @@
   onMount(load);
 </script>
 
-<svelte:head><title>Saved-search failures — artist-alley</title></svelte:head>
+<svelte:head><title>Saved-search failures — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-4xl px-6 py-8">
   <div class="mb-6 flex items-center justify-between gap-3">

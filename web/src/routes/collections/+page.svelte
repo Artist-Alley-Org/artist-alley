@@ -12,6 +12,7 @@
   // when the install grows past a few hundred collections.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
@@ -119,7 +120,7 @@
 </script>
 
 <svelte:head>
-  <title>{t('collections.title')} — artist-alley</title>
+  <title>{t('collections.title')} — {site.name}</title>
 </svelte:head>
 
 <div class="w-full px-4 py-6 sm:px-6">

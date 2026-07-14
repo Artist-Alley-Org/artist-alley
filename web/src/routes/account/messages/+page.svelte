@@ -11,6 +11,7 @@
   // that grows a "Message" affordance in I-b).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
@@ -77,7 +78,7 @@
   }
 </script>
 
-<svelte:head><title>{t('messages.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('messages.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-6 flex items-baseline justify-between gap-3">
   <div>

@@ -14,15 +14,15 @@ import { loginAsAdminViaUI } from '../../helpers/auth';
 test.describe('UI-01 login + overview', () => {
   test('login form accepts admin / ArtistAlleyMogul and lands on Browse', async ({ page }) => {
     await loginAsAdminViaUI(page);
-    await expect(page).toHaveTitle(/Browse — artist-alley/);
+    await expect(page).toHaveTitle(/Browse — Artist Alley/);
     // Navbar branding is present (logo.svg or text fallback).
-    await expect(page.getByRole('link', { name: 'artist-alley' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Artist Alley' })).toBeVisible();
   });
 
   test('admin menu is reachable after login', async ({ page }) => {
     await loginAsAdminViaUI(page);
     await page.goto('/admin');
-    await expect(page).toHaveTitle(/Administration|Admin — artist-alley/);
+    await expect(page).toHaveTitle(/Administration|Admin — Artist Alley/);
   });
 
   test('federation section landing renders', async ({ page }) => {

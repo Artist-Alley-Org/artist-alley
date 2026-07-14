@@ -17,6 +17,7 @@
   // in-feed clicks since it preserves the feed underneath.
 
   import { page } from '$app/state';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import PostHost from '$components/PostHost.svelte';
   import { t } from '$stores/lang.svelte';
@@ -36,7 +37,7 @@
 </script>
 
 <svelte:head>
-  <title>{t('post.detail.title')} — artist-alley</title>
+  <title>{t('post.detail.title')} — {site.name}</title>
 </svelte:head>
 
 <PostHost {postId} onClose={handleClose} standalone />

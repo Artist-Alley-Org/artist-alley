@@ -4,11 +4,12 @@
   // /account home — full tile grid grouped by section.
 
   import { t } from '$stores/lang.svelte';
+  import { site } from '$stores/site.svelte';
   import AdminIcon from '$components/AdminIcon.svelte';
   import { ACCOUNT_GROUPS, itemsByGroup } from '$lib/account/sections';
 </script>
 
-<svelte:head><title>{t('account.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.title')} — {site.name}</title></svelte:head>
 
 <p class="mb-6 text-sm text-fg-muted">{t('account.overview.intro')}</p>
 

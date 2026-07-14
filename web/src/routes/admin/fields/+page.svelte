@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import ExtractionConfigPicker from '$components/ExtractionConfigPicker.svelte';
@@ -90,7 +91,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.fields.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.fields.title')} — {site.name}</title></svelte:head>
 
 <div class="mb-4 flex items-center justify-between gap-4">
   <h2 class="text-xl font-semibold">{t('admin.fields.title')}</h2>

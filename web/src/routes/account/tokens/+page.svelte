@@ -5,6 +5,7 @@
   // existing /auth/tokens endpoints.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -85,7 +86,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.tokens.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.tokens.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('account.tokens.title')}</h2>
 <p class="mb-4 text-sm text-fg-muted">{t('account.tokens.intro')}</p>

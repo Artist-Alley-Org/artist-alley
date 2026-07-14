@@ -17,6 +17,7 @@
   // have the cap).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -163,7 +164,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.activities.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.activities.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">{t('admin.activities.title')}</h2>

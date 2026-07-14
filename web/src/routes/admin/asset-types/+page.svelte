@@ -7,6 +7,7 @@
   // to the per-type detail page that hosts the ACL editor.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -40,7 +41,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.asset_types.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.asset_types.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('admin.asset_types.title')}</h2>
 <p class="mb-4 text-sm text-fg-muted">{t('admin.asset_types.intro')}</p>

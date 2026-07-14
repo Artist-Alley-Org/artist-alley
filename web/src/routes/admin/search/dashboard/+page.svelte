@@ -8,6 +8,7 @@
 
   import { onMount, onDestroy } from 'svelte';
 
+  import { site } from '$stores/site.svelte';
   type Health = {
     subsystem: string;
     counter_total: number;
@@ -104,7 +105,7 @@
   });
 </script>
 
-<svelte:head><title>Search dashboard — artist-alley</title></svelte:head>
+<svelte:head><title>Search dashboard — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-6xl px-6 py-8">
   <div class="mb-6 flex items-center justify-between gap-3">
