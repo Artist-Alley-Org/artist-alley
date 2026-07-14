@@ -595,5 +595,16 @@ func (h *Handler) GetPublicAppearance(
 	if err != nil {
 		return nil, fmt.Errorf("sysconfig: get public appearance: %w", err)
 	}
-	return openapi.GetPublicAppearance200JSONResponse(appearanceToAPI(cfg)), nil
+	out := appearanceToAPI(cfg)
+	// Ride the site display name along the public boot path so the
+	// frontend can render the wordmark / titles before sign-in. Read
+	// from the Site config (edited via /admin/system/site); falls back
+	// to the default when unset. Read-only here — the appearance write
+	// path never persists it.
+	name := DefaultSiteName
+	if site, siteErr := h.Store.GetSite(ctx); siteErr == nil {
+		name = SiteNameOrDefault(site.Name)
+	}
+	out.SiteName = &name
+	return openapi.GetPublicAppearance200JSONResponse(out), nil
 }

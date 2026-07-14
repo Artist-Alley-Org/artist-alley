@@ -6,6 +6,7 @@
   // members (per-team, no inheritance from descendants).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -172,7 +173,7 @@
 </script>
 
 <svelte:head>
-  <title>{team ? t('admin.team_detail.title', { name: team.name }) : 'Team'} — artist-alley</title>
+  <title>{team ? t('admin.team_detail.title', { name: team.name }) : 'Team'} — {site.name}</title>
 </svelte:head>
 
 <p class="mb-3 text-xs">

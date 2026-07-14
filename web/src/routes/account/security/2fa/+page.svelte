@@ -21,6 +21,7 @@
   // follow-up alongside a chosen JS QR lib.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -165,7 +166,7 @@
   onMount(() => { void loadStatus(); });
 </script>
 
-<svelte:head><title>{t('account.twofa.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.twofa.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-4 text-xl font-semibold">{t('account.twofa.title')}</h2>
 

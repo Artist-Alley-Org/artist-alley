@@ -7,6 +7,8 @@
   import { api } from '$api/client';
   import { auth, LoginNeedsTOTPError } from '$stores/auth.svelte';
   import { t } from '$stores/lang.svelte';
+  import { site } from '$stores/site.svelte';
+  import BrandMark from '$components/BrandMark.svelte';
   import Button from '$components/Button.svelte';
   import TextField from '$components/TextField.svelte';
   import Alert from '$components/Alert.svelte';
@@ -107,7 +109,7 @@
 </script>
 
 <svelte:head>
-  <title>{t('login.title')} — artist-alley</title>
+  <title>{t('login.title')} — {site.name}</title>
 </svelte:head>
 
 <div class="relative flex-1 flex items-center justify-center px-6 py-12 isolate">
@@ -127,9 +129,9 @@
 
   <div class="w-full max-w-sm space-y-8 rounded-xl border border-white/10 bg-surface/85 p-8 shadow-2xl backdrop-blur-md">
     <div class="text-center space-y-2">
-      <img src="/logo.svg" alt="" class="mx-auto h-16 w-16" aria-hidden="true" />
+      <BrandMark class="mx-auto h-16 w-16" />
       <h1 class="text-2xl font-semibold tracking-tight">{t('login.title')}</h1>
-      <p class="text-sm text-fg-muted">artist-alley</p>
+      <p class="text-sm text-fg-muted">{site.name}</p>
     </div>
 
     {#if passwordProviders.length > 1}

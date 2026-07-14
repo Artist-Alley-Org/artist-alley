@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +45,21 @@ type Digest struct {
 type Site struct {
 	Name    string `json:"name"`     // "Acme Art Reviews"
 	BaseURL string `json:"base_url"` // "https://art.example.com"
+}
+
+// DefaultSiteName is the display name a fresh install renders before an
+// operator sets one (empty stored Site.Name). Product name is two
+// words, no hyphen — the hyphenated "artist-alley" is the repo/package
+// slug, not the brand.
+const DefaultSiteName = "Artist Alley"
+
+// SiteNameOrDefault returns the operator-set site name, or
+// DefaultSiteName when it is blank.
+func SiteNameOrDefault(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return DefaultSiteName
+	}
+	return name
 }
 
 // SMTPEncryption is one of: "none", "starttls", "tls". Anything else

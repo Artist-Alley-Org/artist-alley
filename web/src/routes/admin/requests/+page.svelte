@@ -6,6 +6,7 @@
   // expires_at on grant) per row. 409 on race-decide.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -80,7 +81,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.requests.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.requests.title')} — {site.name}</title></svelte:head>
 
 <section class="space-y-4">
   <header>

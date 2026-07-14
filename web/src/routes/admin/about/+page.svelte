@@ -9,12 +9,13 @@
 
   import { t } from '$stores/lang.svelte';
 
+  import { site } from '$stores/site.svelte';
   const VERSION = '0.1.0-dev';
   const BUILD = 'phase-1.16';
   const LICENSE = 'BSD-3-Clause';
 </script>
 
-<svelte:head><title>{t('admin.about.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.about.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('admin.about.title')}</h2>
 <p class="mb-4 text-sm text-fg-muted">{t('admin.about.intro')}</p>

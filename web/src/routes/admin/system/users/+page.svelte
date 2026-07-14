@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -79,7 +80,7 @@
   ]);
 </script>
 
-<svelte:head><title>{t('admin.system.self_edit_gates.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.system.self_edit_gates.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('admin.system.self_edit_gates.title')}</h2>
 <p class="mb-4 max-w-2xl text-sm text-fg-muted">{t('admin.system.self_edit_gates.intro')}</p>

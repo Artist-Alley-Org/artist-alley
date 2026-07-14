@@ -5,6 +5,7 @@
   // status (Phase 1.17.B).
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$api/client';
@@ -407,7 +408,7 @@
   onMount(() => { void loadOverrides(); });
 </script>
 
-<svelte:head><title>User {ref} — artist-alley</title></svelte:head>
+<svelte:head><title>User {ref} — {site.name}</title></svelte:head>
 
 {#if loading}
   <p class="text-fg-muted">{t('common.loading')}</p>

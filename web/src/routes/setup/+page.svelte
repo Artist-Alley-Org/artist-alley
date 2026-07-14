@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { auth } from '$stores/auth.svelte';
   import Button from '$components/Button.svelte';
@@ -131,7 +132,7 @@
 </script>
 
 <svelte:head>
-  <title>{t('setup.title')} — artist-alley</title>
+  <title>{t('setup.title')} — {site.name}</title>
 </svelte:head>
 
 <div class="flex-1 flex items-center justify-center px-6 py-10">

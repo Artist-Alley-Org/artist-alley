@@ -10,6 +10,7 @@
   // reads last_health_status off the row.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
   import type { components } from '$api/schema';
@@ -122,7 +123,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.system.mcp_clients.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.system.mcp_clients.title')} — {site.name}</title></svelte:head>
 
 <nav class="mb-3 text-xs text-fg-muted">
   <a href="/admin/system/ai" class="hover:underline">{t('admin.system.ai_landing.title')}</a>

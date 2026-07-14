@@ -12,6 +12,7 @@
   // envelope pill + inbox unread counter decrement immediately.
 
   import { onMount, tick } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
@@ -140,7 +141,7 @@
   }
 </script>
 
-<svelte:head><title>{peerName || t('messages.thread')} — artist-alley</title></svelte:head>
+<svelte:head><title>{peerName || t('messages.thread')} — {site.name}</title></svelte:head>
 
 <header class="mb-4 flex items-center justify-between gap-3">
   <div>

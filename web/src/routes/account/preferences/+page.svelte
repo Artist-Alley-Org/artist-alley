@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { theme } from '$stores/theme.svelte';
   import { lang, t } from '$stores/lang.svelte';
   import { api } from '$api/client';
@@ -166,7 +167,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.preferences.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.preferences.title')} — {site.name}</title></svelte:head>
 
 <div class="mb-6 flex flex-wrap items-baseline justify-between gap-3">
   <div>

@@ -8,6 +8,7 @@
   // shows the unread count + a "Mark all read" button.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -140,7 +141,7 @@
   }
 </script>
 
-<svelte:head><title>{t('notifications.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('notifications.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-6 flex flex-wrap items-baseline justify-between gap-3">
   <div>

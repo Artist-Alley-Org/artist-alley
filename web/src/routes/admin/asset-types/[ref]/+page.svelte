@@ -13,6 +13,7 @@
   // grantees + admins see it). Removing the last row flips it back.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
@@ -141,7 +142,7 @@
 </script>
 
 <svelte:head>
-  <title>{type ? type.name ?? `asset-type ${ref}` : `asset-type ${ref}`} — artist-alley</title>
+  <title>{type ? type.name ?? `asset-type ${ref}` : `asset-type ${ref}`} — {site.name}</title>
 </svelte:head>
 
 <p class="mb-3 text-xs">

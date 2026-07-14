@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import RestrictedShareBanner from '$lib/components/federation/RestrictedShareBanner.svelte';
+  import { site } from '$stores/site.svelte';
   // Admin federation shares — Phase 1.22.C-e.
   //
   // Lists active federation_shares rows with a mutually-
@@ -156,7 +157,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.federation.shares.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.federation.shares.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4">
   <h2 class="text-2xl font-semibold">{t('admin.federation.shares.title')}</h2>

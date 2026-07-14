@@ -2,6 +2,7 @@
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { api } from '$api/client';
   import { t } from '$stores/lang.svelte';
 
@@ -31,7 +32,7 @@
   }
 </script>
 
-<svelte:head><title>{t('admin.roles.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.roles.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-4 text-xl font-semibold">{t('admin.roles.title')}</h2>
 

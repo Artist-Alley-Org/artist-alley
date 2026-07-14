@@ -9,6 +9,7 @@
   // surface its error message verbatim.
 
   import { api } from '$api/client';
+  import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
 
   let current = $state('');
@@ -57,7 +58,7 @@
   }
 </script>
 
-<svelte:head><title>{t('account.password.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('account.password.title')} — {site.name}</title></svelte:head>
 
 <h2 class="mb-2 text-xl font-semibold">{t('account.password.title')}</h2>
 <p class="mb-4 text-sm text-fg-muted">{t('account.password.intro')}</p>

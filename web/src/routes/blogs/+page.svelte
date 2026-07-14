@@ -6,9 +6,10 @@
   // when the blogs feature opens in its dedicated phase.
 
   import { t } from '$stores/lang.svelte';
+  import { site } from '$stores/site.svelte';
 </script>
 
-<svelte:head><title>{t('nav.blogs')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('nav.blogs')} — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-3xl px-6 py-12">
   <h1 class="font-display mb-2 text-3xl font-semibold">{t('nav.blogs')}</h1>

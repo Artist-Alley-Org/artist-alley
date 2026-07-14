@@ -9,6 +9,7 @@
   // current results as a new collection.
 
   import { onMount } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { t } from '$stores/lang.svelte';
@@ -242,7 +243,7 @@
   }
 </script>
 
-<svelte:head><title>{t('nav.advanced_search')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('nav.advanced_search')} — {site.name}</title></svelte:head>
 
 <div class="mx-auto flex w-full max-w-6xl gap-6 px-6 py-8">
   <!-- Facet sidebar -->

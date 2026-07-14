@@ -139,3 +139,4 @@ app/aa-abr-extract
 kaggle.txt
 .dogfood-runs
 app/.cache/
+logos/*

@@ -10,6 +10,7 @@
   // match our dark / light toggle via the `darkMode` prop.
 
   import { onMount, onDestroy } from 'svelte';
+  import { site } from '$stores/site.svelte';
   import { t } from '$stores/lang.svelte';
   import { theme } from '$stores/theme.svelte';
 
@@ -57,7 +58,7 @@
   });
 </script>
 
-<svelte:head><title>{t('admin.api_explorer.title')} — artist-alley</title></svelte:head>
+<svelte:head><title>{t('admin.api_explorer.title')} — {site.name}</title></svelte:head>
 
 <header class="mb-4 shrink-0">
   <h2 class="text-xl font-semibold">{t('admin.api_explorer.title')}</h2>

@@ -8,6 +8,7 @@
 
   import { onMount } from 'svelte';
 
+  import { site } from '$stores/site.svelte';
   type Row = {
     id: string;
     owner_user_ref: number;
@@ -79,7 +80,7 @@
   onMount(load);
 </script>
 
-<svelte:head><title>Admin: saved searches — artist-alley</title></svelte:head>
+<svelte:head><title>Admin: saved searches — {site.name}</title></svelte:head>
 
 <div class="mx-auto w-full max-w-6xl px-6 py-8">
   <h1 class="font-display mb-2 text-2xl font-semibold">Saved searches (admin)</h1>
