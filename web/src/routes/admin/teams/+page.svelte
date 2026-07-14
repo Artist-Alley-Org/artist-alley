@@ -129,7 +129,7 @@
     <button
       type="submit"
       disabled={creating || !newName || !newSlug}
-      class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
+      class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40"
     >
       {creating ? t('admin.teams.creating') : t('admin.teams.create_submit')}
     </button>

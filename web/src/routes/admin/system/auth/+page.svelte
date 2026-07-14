@@ -181,7 +181,7 @@
       <p class="rounded border border-success/40 bg-success-container px-3 py-2 text-sm text-success">{t('admin.system.auth.saved')}</p>
     {/if}
 
-    <button type="submit" disabled={saving} class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">
+    <button type="submit" disabled={saving} class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40">
       {saving ? t('common.loading') : t('admin.system.auth.save')}
     </button>
   </form>

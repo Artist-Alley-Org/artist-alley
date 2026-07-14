@@ -103,7 +103,7 @@
     {/if}
 
     {#if collection.featured}
-      <span class="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-accent/90 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+      <span class="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-accent/90 px-2 py-0.5 text-xs font-medium text-on-accent backdrop-blur-sm">
         <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2 14.39 8.26 21 9.27l-4.91 4.79L17.46 21 12 17.77 6.54 21 7.91 14.06 3 9.27l6.61-1.01z" /></svg>
         {t('collections.featured')}
       </span>

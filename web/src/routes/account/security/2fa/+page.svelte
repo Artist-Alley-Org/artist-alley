@@ -285,7 +285,7 @@
         <button
           type="submit"
           disabled={confirming}
-          class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-on-accent disabled:opacity-50"
         >{confirming ? t('common.loading') : t('account.twofa.confirm_button')}</button>
         {#if confirmError}
           <p role="alert" class="text-xs text-danger">{confirmError}</p>
@@ -301,7 +301,7 @@
       <button
         type="button"
         onclick={startEnroll}
-        class="mt-3 rounded bg-accent px-3 py-1.5 text-sm font-medium text-white"
+        class="mt-3 rounded bg-accent px-3 py-1.5 text-sm font-medium text-on-accent"
       >{t('account.twofa.enable_button')}</button>
     </section>
   {/if}

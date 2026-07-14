@@ -285,7 +285,7 @@
   <div class="mt-3 flex items-center gap-2">
     <button
       type="submit"
-      class="rounded bg-accent px-3 py-1 text-xs font-medium text-white"
+      class="rounded bg-accent px-3 py-1 text-xs font-medium text-on-accent"
     >
       {t('admin.audit.apply_filters')}
     </button>

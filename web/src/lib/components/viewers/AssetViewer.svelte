@@ -1051,7 +1051,7 @@
             autofocus
             onkeydown={(e) => { if (e.key === 'Escape') { goToOpen = false; goToValue = ''; } }}
           />
-          <button type="submit" class="rounded bg-accent px-2 py-1 text-xs font-medium text-white">Go</button>
+          <button type="submit" class="rounded bg-accent px-2 py-1 text-xs font-medium text-on-accent">Go</button>
         </form>
       </div>
     {/if}
