@@ -77,7 +77,7 @@
     <button
       type="button"
       onclick={() => (confirming = true)}
-      class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+      class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent hover:bg-accent/90"
     >
       Rotate federation keys
     </button>

@@ -294,7 +294,7 @@
       {/if}
 
       <button type="submit" disabled={saving}
-              class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">
+              class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40">
         {saving ? t('common.loading') : t('admin.system.mcp_clients.save_changes')}
       </button>
     </form>
@@ -371,7 +371,7 @@
       {/if}
 
       <button type="submit" disabled={addingTool}
-              class="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40">
+              class="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40">
         {addingTool ? t('common.loading') : t('admin.system.mcp_clients.tool_add_submit')}
       </button>
     </form>

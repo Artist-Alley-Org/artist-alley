@@ -98,7 +98,7 @@
     type="button"
     onclick={() => (showCreate = !showCreate)}
     data-testid="admin-fields-create-button"
-    class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+    class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent"
   >
     {t('admin.fields.create_button')}
   </button>
@@ -209,7 +209,7 @@
         type="submit"
         disabled={creating}
         data-testid="admin-fields-create-submit"
-        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-accent/40"
+        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-on-accent disabled:cursor-not-allowed disabled:bg-accent/40"
       >{creating ? t('common.loading') : t('admin.fields.create_submit')}</button>
     </div>
   </form>
