@@ -26,6 +26,30 @@ Supporting all three: artist-alley implements [**ArchivePub**](docs/protocol/arc
 
 ---
 
+## Screenshots
+
+Seeded with the public demo dataset ([ADR 0058](docs/adr/0058-demo-seed-dataset.md)).
+
+![Browse feed (dark)](docs/screenshots/browse-dark.png)
+
+| 3D viewer (live WebGL) | Faceted search |
+|---|---|
+| ![3D viewer](docs/screenshots/viewer-3d.png) | ![Search](docs/screenshots/search.png) |
+
+<details>
+<summary>More surfaces</summary>
+
+![Browse feed (light)](docs/screenshots/browse-light.png)
+![HDR viewer with AI variation](docs/screenshots/viewer-image.png)
+![Admin overview](docs/screenshots/admin.png)
+
+</details>
+
+Demo content in screenshots is CC0 / CC-BY / CC-BY-SA source material
+(Kenney, Khronos glTF samples, Poly Haven, Wikimedia Commons, NASA,
+public-domain books); the aggregate set is CC-BY-SA 4.0 — see the
+dataset attribution list referenced in ADR 0058.
+
 ## Architecture
 
 The target shape is intentionally small:
