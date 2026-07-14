@@ -5632,9 +5632,8 @@ INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.enabled', 
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.tag.confidence_threshold', '0.5', '2026-06-21 01:05:10.551025+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.tag.merge_semantics', '"preserve_manual"', '2026-06-21 01:05:10.551025+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.routing', '{"tag": "ollama", "embed": "clip_local", "caption": "claude", "complete": "claude", "transcribe": "whisper_local"}', '2026-07-08 14:17:09.755184+00');
-INSERT INTO public.system_config (key, value, updated_at) VALUES ('federation.instance_identity', '{"generated_at": "2026-07-08T14:19:05.171087699Z", "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqMYCMneAp097TQfeCmlel4yCo+KQQ1gvOBVSnwfBq/w=\n-----END PUBLIC KEY-----\n", "private_key_enc_b64": "AfsOYbfgDzBe/eoXDpHX9oTCRhGvx4Dz/ZruQh/W1LiX1Ds+mGoRSTYmFmsOT/4jnZv7PW+VZDqiNJZS056E2J1FysAAxB/CrOSJB6mXsjhbDSn/1HXuWvGmCx3pjvVzNBcykP/ZsSzV09I0qZbgHHMEpBCsMFDrMzR3fM7FXP/uL8e10TBUKEr8Rw+7RJKo5sEf+g=="}', '2026-07-08 14:19:05.171199+00');
-INSERT INTO public.system_config (key, value, updated_at) VALUES ('site', '{"name": "Tx Site", "base_url": "https://tx.example.com"}', '2026-07-08 14:20:06.4568+00');
-INSERT INTO public.system_config (key, value, updated_at) VALUES ('smtp', '{"host": "tx-smtp.example.com", "port": 25, "encryption": "none", "from_address": "tx@example.com"}', '2026-07-08 14:20:06.4568+00');
+INSERT INTO public.system_config (key, value, updated_at) VALUES ('site', '{"name": "Artist Alley", "base_url": ""}', '2026-07-08 14:20:06.4568+00');
+INSERT INTO public.system_config (key, value, updated_at) VALUES ('smtp', '{"host": "", "port": 587, "encryption": "starttls", "from_address": ""}', '2026-07-08 14:20:06.4568+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.whisper_local', '"large-v3"', '2026-06-21 19:55:49.177673+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.openai', '"whisper-1"', '2026-06-21 19:55:49.177673+00');
 INSERT INTO public.system_config (key, value, updated_at) VALUES ('ai.transcribe.default_model.gemini', '"gemini-2.5-flash"', '2026-06-21 19:55:49.177673+00');
