@@ -8,7 +8,7 @@
 #   3. Sigstore/cosign keyless signing of every published image
 #
 # Docker is the sole distribution channel for v0.1.0. See #238 for
-# the goreleaser CGO_ENABLED=0 vs mscrnt/webp conflict that motivated
+# the goreleaser CGO_ENABLED=0 vs Artist-Alley-Org/webp conflict that motivated
 # the Docker-only trim; binary / .deb / .rpm / Homebrew paths are
 # deferred post-v0.1.0.
 #
