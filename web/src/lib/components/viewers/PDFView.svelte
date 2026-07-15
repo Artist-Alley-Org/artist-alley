@@ -66,7 +66,9 @@
 
   // PDF.js render passes return a Promise-shaped task; keep refs
   // so we can cancel mid-flight when the user navigates away.
-  let activeDoc: { destroy: () => void } | null = null;
+  // pdfjs 6 removed PDFDocumentProxy.destroy() — teardown now goes
+  // through the loading task, which tears down the document + worker.
+  let activeTask: ReturnType<typeof pdfjs.getDocument> | null = null;
   let cancelled = false;
 
   onMount(() => {
@@ -77,9 +79,9 @@
     if (container) {
       container.removeEventListener('scroll', updateCurrentPageFromScroll);
     }
-    if (activeDoc) {
-      try { activeDoc.destroy(); } catch { /* ignore */ }
-      activeDoc = null;
+    if (activeTask) {
+      void activeTask.destroy().catch(() => { /* ignore */ });
+      activeTask = null;
     }
   });
 
@@ -91,12 +93,13 @@
 
     try {
       const task = pdfjs.getDocument({ url: fileUrl, withCredentials: true });
+      activeTask = task;
       const doc = await task.promise;
       if (cancelled) {
-        doc.destroy();
+        void task.destroy().catch(() => { /* ignore */ });
+        activeTask = null;
         return;
       }
-      activeDoc = doc;
       totalPages = doc.numPages;
 
       // Initial controller — `currentPage` updates the HUD as the
