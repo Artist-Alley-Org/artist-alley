@@ -92,19 +92,19 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-// Supply-chain forks — pinned to mscrnt/* mirrors so a small-
+// Supply-chain forks — pinned to Artist-Alley-Org/* mirrors so a small-
 // maintainer upstream can't disappear under us. See
 // memory/project_dep_fork_audit.md for the rule set + risk
 // rationale. Add a new entry here whenever a fork is created;
 // `go mod tidy` will resolve the version against the fork.
 replace (
-	github.com/chai2010/webp => github.com/mscrnt/webp v1.4.0
-	github.com/qmuntal/gltf => github.com/mscrnt/gltf v0.28.0
-	github.com/srwiley/oksvg => github.com/mscrnt/oksvg v0.0.0-20221011165216-be6e8873101c
-	github.com/srwiley/rasterx => github.com/mscrnt/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	github.com/chai2010/webp => github.com/Artist-Alley-Org/webp v1.4.0
+	github.com/qmuntal/gltf => github.com/Artist-Alley-Org/gltf v0.28.0
+	github.com/srwiley/oksvg => github.com/Artist-Alley-Org/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx => github.com/Artist-Alley-Org/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	// goreader's epub package — pure-Go EPUB parser. We only
 	// import the `epub/` subpackage (terminal UI half is dead
 	// weight Go tree-shaking drops at link time).
-	github.com/taylorskalyo/goreader => github.com/mscrnt/goreader v0.0.0-20250314214816-f9256af1ef9f
-	go.n16f.net/thumbhash => github.com/mscrnt/go-thumbhash v1.1.0
+	github.com/taylorskalyo/goreader => github.com/Artist-Alley-Org/goreader v0.0.0-20250314214816-f9256af1ef9f
+	go.n16f.net/thumbhash => github.com/Artist-Alley-Org/go-thumbhash v1.1.0
 )
