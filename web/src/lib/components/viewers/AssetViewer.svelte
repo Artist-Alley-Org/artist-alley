@@ -965,7 +965,7 @@
       style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
     >
       <!-- {#key} forces a fresh view-body mount when the asset id
-           changes. Without this, three.js / model-viewer keep the old
+           changes. Without this, the three.js viewer keeps the old
            scene loaded when a host swaps assets without unmounting
            the AssetViewer (the common multi-asset carousel pattern).
            Side-effect: pan/zoom resets per asset, which is what users
