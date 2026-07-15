@@ -752,7 +752,8 @@
           "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
           "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
           "sessions":           { "title": "Sessions",             "blurb": "Per-user active sessions; revoke any device." },
-          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." }
+          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." },
+          "requests":           { "title": "Resource requests",    "blurb": "Approve or deny pending access requests." }
         }
       },
       "content": {
@@ -815,7 +816,7 @@
         "intro": "State machines, triggers, webhooks, and the audit they emit.",
         "tiles": {
           "workflow":          { "title": "Workflow states", "blurb": "Per-domain state machines and transitions." },
-          "audit":             { "title": "Workflow audit",  "blurb": "Trail of state transitions per record." },
+          "audit":             { "title": "Audit log",  "blurb": "System-wide trail of security- and policy-relevant events." },
           "triggers":          { "title": "Triggers",        "blurb": "Event → action rules across the install." },
           "webhooks":          { "title": "Webhooks",        "blurb": "Outbound HTTP calls on selected events." },
           "notifications":     { "title": "Notification rules","blurb": "Who gets pinged for what event." },
@@ -1220,7 +1221,13 @@
       "field_note": "Note",
       "field_session_id": "Session ID",
       "field_attempted_username": "Attempted username",
-      "field_key": "Rate-limit key"
+      "field_key": "Rate-limit key",
+      "col_when": "When",
+      "col_type": "Event type",
+      "col_actor": "Actor",
+      "col_subject": "Subject",
+      "col_ip": "IP",
+      "label_event_id": "Event ID"
     },
     "system": {
       "title": "System configuration",

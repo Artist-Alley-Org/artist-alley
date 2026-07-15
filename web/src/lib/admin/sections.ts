@@ -46,7 +46,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'sessions',   status: 'live',   href: '/admin/users' },
       // `audit` moved to the automation section (its natural home alongside workflow + triggers).
       // `workflow` moved to the automation section.
-      { key: 'capability_grants', status: 'future', phase: '1.17' },
+      // Per-user grants/revokes are managed on the user-detail page
+      // (admin/users/[ref], Phase 1.17.F). The tile lands on the user
+      // list, from which an operator drills into a user to edit them.
+      { key: 'capability_grants', status: 'live',   href: '/admin/users' },
       { key: 'requests',   status: 'live',   href: '/admin/requests' },
     ],
   },
@@ -110,7 +113,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'automation',
     tiles: [
       { key: 'workflow',          status: 'live',   href: '/admin/workflow' },
-      { key: 'audit',             status: 'future', phase: '1.20' },
+      { key: 'audit',             status: 'live',   href: '/admin/audit' },
       { key: 'triggers',          status: 'future', phase: '1.18' },
       { key: 'webhooks',          status: 'future', phase: '1.18' },
       { key: 'notifications',     status: 'future', phase: '1.18' },
