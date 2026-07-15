@@ -148,6 +148,41 @@ func (s *Store) SetSite(ctx context.Context, v Site) error {
 	return s.setKey(ctx, KeySite, v)
 }
 
+// KeyJobTypeConcurrencyPrefix is the system_config key prefix for the
+// per-type worker concurrency caps. Each cap is its own scalar row,
+// `jobs.type_concurrency.<job type>`, with an integer JSON value —
+// unlike the other sections here, which store a single JSON blob.
+const KeyJobTypeConcurrencyPrefix = "jobs.type_concurrency."
+
+// GetJobTypeConcurrency returns the seeded per-type worker concurrency
+// caps, keyed by job type (the key suffix after the prefix). Values <= 0
+// or unparseable are skipped so callers treat them as uncapped; an
+// absent prefix yields an empty map. Kept job-type-agnostic (string
+// keys) so sysconfig doesn't take a dependency on the jobs package —
+// the caller maps the strings to jobs.JobType.
+func (s *Store) GetJobTypeConcurrency(ctx context.Context) (map[string]int, error) {
+	rows, err := New(s.Pool).ListSystemConfigByPrefix(ctx, KeyJobTypeConcurrencyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("sysconfig: list job type concurrency: %w", err)
+	}
+	out := make(map[string]int, len(rows))
+	for _, r := range rows {
+		typ := strings.TrimPrefix(r.Key, KeyJobTypeConcurrencyPrefix)
+		if typ == "" {
+			continue
+		}
+		var n int
+		if err := json.Unmarshal(r.Value, &n); err != nil {
+			continue // non-numeric value — treat as unset/uncapped
+		}
+		if n <= 0 {
+			continue // 0 / negative = uncapped
+		}
+		out[typ] = n
+	}
+	return out, nil
+}
+
 // GetDigest returns the digest timing config, applying defaults for
 // any unset/out-of-range knob (08:00 UTC daily; Monday 08:00 UTC
 // weekly). Range-clamped so a bad stored row can't push a digest to an
