@@ -138,6 +138,7 @@ jobs:
           if [ -n "$stale_vols" ]; then docker volume rm -f $stale_vols || true; fi
           docker network prune -f || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
+          docker builder prune -f --filter until=48h || true  # sweep old buildkit cache (keeps ~2d for CI speed)
 
       - name: Sweep stale /etc/hosts entries from previous runs
         # Older up.sh versions wrote `127.0.0.1 studio-b.local`
