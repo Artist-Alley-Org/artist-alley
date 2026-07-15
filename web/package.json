@@ -29,7 +29,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@types/node": "latest",
-    "@types/three": "^0.183.1",
+    "@types/three": "^0.185.1",
     "@vitest/coverage-v8": "^4.1.8",
     "happy-dom": "^20.9.0",
     "openapi-typescript": "latest",
@@ -74,7 +74,7 @@
     "openapi-fetch": "latest",
     "pdfjs-dist": "^6.1.200",
     "perfect-freehand": "^1.2.3",
-    "three": "^0.183.0",
+    "three": "^0.185.1",
     "thumbhash": "^0.1.1"
   }
 }
