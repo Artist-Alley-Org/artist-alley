@@ -72,7 +72,7 @@
     "hls.js": "^1.6.16",
     "marked": "^18.0.4",
     "openapi-fetch": "latest",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.1.200",
     "perfect-freehand": "^1.2.3",
     "three": "^0.183.0",
     "thumbhash": "^0.1.1"
