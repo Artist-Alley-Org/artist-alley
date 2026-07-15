@@ -293,6 +293,7 @@ jobs:
             docker rm -f $stale || true
           fi
           docker network prune -f || true
+          docker image prune -f || true  # dangling only (shared daemon: never -a)
 
       - name: Build and start the stack
         # --scale web=0 because the Vite dev container fails with
@@ -354,7 +355,9 @@ jobs:
 
       - name: Stop the stack
         if: always()
-        run: docker compose down -v --remove-orphans || true
+        run: |
+          docker compose down -v --remove-orphans || true
+          docker image prune -f || true  # dangling only (shared daemon: never -a)
 
   # ── Build the production image to confirm the multi-stage Dockerfile
   # still produces a clean amd64 artifact. Doesn't push anything —
