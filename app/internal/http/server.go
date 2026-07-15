@@ -650,14 +650,37 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Post("/federation/inbox/batch", impl.inboxHandler.PostInboxBatch)
 	}
 
+	// Per-type concurrency caps (#278). Load the seeded
+	// `jobs.type_concurrency.<type>` rows so the Pool's gate actually
+	// enforces them; without this the caps silently no-op. Best-effort
+	// at boot — a read failure logs and the pool runs uncapped rather
+	// than blocking startup. An empty map behaves exactly like the old
+	// nil (uncapped), so this is a no-op on installs that seeded none.
+	typeCaps := map[jobs.JobType]int{}
+	if raw, capErr := sysCfg.GetJobTypeConcurrency(context.Background()); capErr != nil {
+		logger.LogAttrs(context.Background(), slog.LevelWarn, "jobs.type_concurrency.load_failed",
+			slog.String("err", capErr.Error()))
+	} else {
+		for t, n := range raw {
+			typeCaps[jobs.JobType(t)] = n
+		}
+		if len(typeCaps) > 0 {
+			logger.LogAttrs(context.Background(), slog.LevelInfo, "jobs.type_concurrency.loaded",
+				slog.Int("capped_types", len(typeCaps)))
+		}
+	}
+
 	// Worker pool. Sized to NumCPU/2 so we don't starve the request
 	// pipeline on small hosts. Empty Types = drain every registered
 	// type — keeping the wiring trivial for single-process installs.
+	// With per-type caps configured, an unrestricted worker claims any
+	// registered type that is still under its cap (see Worker.claimScope).
 	workers := &jobs.Pool{
-		Service: jobSvc,
-		Logger:  logger,
-		Size:    workerPoolSize(cfg),
-		Types:   nil,
+		Service:         jobSvc,
+		Logger:          logger,
+		Size:            workerPoolSize(cfg),
+		Types:           nil,
+		TypeConcurrency: typeCaps,
 	}
 
 	// Static frontend (SvelteKit + Tailwind) — mounted last so the

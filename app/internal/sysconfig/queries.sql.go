@@ -33,6 +33,42 @@ func (q *Queries) GetSystemConfig(ctx context.Context, key string) (SystemConfig
 	return i, err
 }
 
+const listSystemConfigByPrefix = `-- name: ListSystemConfigByPrefix :many
+SELECT key, value
+FROM system_config
+WHERE starts_with(key, $1::TEXT)
+ORDER BY key
+`
+
+type ListSystemConfigByPrefixRow struct {
+	Key   string
+	Value []byte
+}
+
+// Every config row whose key starts with the given literal prefix, in
+// key order. Used to load the scalar `jobs.type_concurrency.<type>`
+// caps, which are stored one-row-per-type rather than as a single JSON
+// blob. starts_with matches the prefix literally (no LIKE wildcards).
+func (q *Queries) ListSystemConfigByPrefix(ctx context.Context, prefix string) ([]ListSystemConfigByPrefixRow, error) {
+	rows, err := q.db.Query(ctx, listSystemConfigByPrefix, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSystemConfigByPrefixRow
+	for rows.Next() {
+		var i ListSystemConfigByPrefixRow
+		if err := rows.Scan(&i.Key, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertSystemConfig = `-- name: UpsertSystemConfig :exec
 INSERT INTO system_config (key, value, updated_at)
 VALUES ($1, $2, NOW())
