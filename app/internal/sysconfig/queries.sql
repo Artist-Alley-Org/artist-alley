@@ -16,3 +16,13 @@ ON CONFLICT (key) DO UPDATE SET
 
 -- name: DeleteSystemConfig :exec
 DELETE FROM system_config WHERE key = $1;
+
+-- name: ListSystemConfigByPrefix :many
+-- Every config row whose key starts with the given literal prefix, in
+-- key order. Used to load the scalar `jobs.type_concurrency.<type>`
+-- caps, which are stored one-row-per-type rather than as a single JSON
+-- blob. starts_with matches the prefix literally (no LIKE wildcards).
+SELECT key, value
+FROM system_config
+WHERE starts_with(key, sqlc.arg('prefix')::TEXT)
+ORDER BY key;

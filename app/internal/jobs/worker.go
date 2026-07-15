@@ -20,6 +20,9 @@ type typeCapGate interface {
 	tryReserve(types []JobType) []JobType
 	confirmReservation(t JobType)
 	release(t JobType)
+	// hasCaps reports whether any per-type cap is configured, so an
+	// unrestricted worker knows whether it must consult the gate at all.
+	hasCaps() bool
 }
 
 // Worker is an in-process goroutine that polls the queue, claims jobs
@@ -84,30 +87,17 @@ func (w *Worker) Run(ctx context.Context) {
 		default:
 		}
 
-		// Per-type concurrency cap: ask the gate which of our types
-		// still have capacity. If none, back off without hitting
-		// the DB — saves a query when every type is saturated.
-		//
-		// Only gate a *type-restricted* worker. An unrestricted
-		// worker (Types == nil) drains every registered type, and
-		// tryReserve(nil) returns nil — feeding that empty scope
-		// through the guard would back the worker off on every poll
-		// so it never claims. Pass the nil scope straight to
-		// ClaimNext, whose SQL treats NULL/empty scope_types as
-		// "any type". (Per-type caps for the unrestricted pool are
-		// tracked separately — TypeConcurrency is never loaded yet.)
-		claimTypes := w.Types
-		if w.Gate != nil && len(w.Types) > 0 {
-			claimTypes = w.Gate.tryReserve(w.Types)
-			if len(claimTypes) == 0 {
-				// Every one of this worker's types is saturated.
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(w.PollInterval):
-				}
-				continue
+		// Per-type concurrency cap: figure out which types we may
+		// claim this poll, honouring the gate. If everything is
+		// saturated, back off without hitting the DB.
+		claimTypes, saturated := w.claimScope()
+		if saturated {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(w.PollInterval):
 			}
+			continue
 		}
 
 		// Bounded per-iteration context so a stuck claim query
@@ -149,6 +139,44 @@ func (w *Worker) Run(ctx context.Context) {
 			w.Gate.release(job.Type)
 		}
 	}
+}
+
+// claimScope returns the job types this worker may claim right now and
+// whether it is fully saturated (every candidate type is at its cap).
+//
+//   - Type-restricted worker (Types != nil): its own types, filtered by
+//     the gate down to those still under their cap.
+//   - Unrestricted worker (Types == nil) WITH per-type caps configured:
+//     every registered type, filtered by the gate so a type at its cap
+//     is skipped this poll. This is what makes the seeded
+//     jobs.type_concurrency.<type> limits take effect in a single-
+//     process install (#278) — the gate is otherwise never consulted
+//     for the unrestricted pool.
+//   - Unrestricted worker with no caps: a nil scope, which ClaimNext
+//     treats as "any type", skipping the gate entirely (the common,
+//     cheapest path — and it avoids scoping to the registry, so jobs of
+//     an unregistered type still get claimed + failed-terminal as before).
+func (w *Worker) claimScope() (types []JobType, saturated bool) {
+	if w.Gate == nil {
+		return w.Types, false
+	}
+	scope := w.Types
+	if len(scope) == 0 {
+		if !w.Gate.hasCaps() {
+			return nil, false
+		}
+		// Unrestricted + capped: the claim universe is the registered
+		// handlers, so the gate can exclude any type at its cap.
+		scope = w.Service.Registry.Types()
+		if len(scope) == 0 {
+			return nil, false
+		}
+	}
+	eligible := w.Gate.tryReserve(scope)
+	if len(eligible) == 0 {
+		return nil, true
+	}
+	return eligible, false
 }
 
 // runOne executes a single claimed job with a heartbeat loop. The
@@ -317,6 +345,9 @@ func (p *Pool) tryReserve(types []JobType) []JobType {
 	}
 	return out
 }
+
+// hasCaps reports whether any per-type concurrency cap is configured.
+func (p *Pool) hasCaps() bool { return len(p.TypeConcurrency) > 0 }
 
 // confirmReservation increments the running counter for the
 // claimed job's type. Called AFTER a successful claim — the
