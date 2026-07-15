@@ -96,18 +96,16 @@ func (h *CoordinatorJob) Handle(ctx context.Context, job *jobs.Claim) (json.RawM
 		enqueued++
 	}
 
-	// Self re-enqueue for the next tick.
-	wake := h.WakeSeconds
-	if wake <= 0 {
-		wake = DefaultCoordinatorWakeSeconds
-	}
-	nextTick := time.Now().Add(time.Duration(wake) * time.Second)
+	// Self re-enqueue for the next tick, aligned to the wake grid.
+	// Alignment is what makes the single-in-flight invariant actually
+	// hold: any coordinators running concurrently — or spawned by a
+	// boot kick on each restart — compute the SAME next-tick timestamp
+	// and therefore the same idempotency key, so they collapse to one
+	// pending row instead of accumulating into a hot loop (#292).
+	nextTick := NextCoordinatorTick(time.Now(), h.WakeSeconds)
 	if _, err := h.Jobs.Enqueue(ctx, JobTypeCoordinator, CoordinatorPayload{}, jobs.EnqueueOpts{
-		ScheduledFor: &nextTick,
-		// A single-in-flight coordinator invariant — the
-		// idempotency key uses "next-tick-time" so multiple ticks
-		// scheduled at once collapse to one row.
-		IdempotencyKey: "saved_search.coordinator." + nextTick.UTC().Format(time.RFC3339),
+		ScheduledFor:   &nextTick,
+		IdempotencyKey: CoordinatorTickKey(nextTick),
 	}); err != nil {
 		return nil, fmt.Errorf("saved.coordinator: reenqueue: %w", err)
 	}
@@ -214,6 +212,28 @@ func (h *RunJob) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, 
 		"added_count": len(delta.Added),
 		"notified":    sent,
 	}), nil
+}
+
+// NextCoordinatorTick returns the next wake time aligned to the
+// wake-second grid after now. Aligning (rather than now()+wake) is what
+// converges duplicate coordinators: every coordinator that reschedules
+// within the same window lands on the same grid boundary, so they share
+// an idempotency key and dedup to a single pending row. Mirrors the
+// hour-aligned email.digest.coordinator. wake <= 0 falls back to the
+// default cadence.
+func NextCoordinatorTick(now time.Time, wake int) time.Time {
+	if wake <= 0 {
+		wake = DefaultCoordinatorWakeSeconds
+	}
+	interval := time.Duration(wake) * time.Second
+	return now.UTC().Truncate(interval).Add(interval)
+}
+
+// CoordinatorTickKey is the idempotency key for a coordinator tick
+// scheduled at t. Exported so the boot kick and the self-reschedule use
+// an identical key — the linchpin of the single-in-flight invariant.
+func CoordinatorTickKey(t time.Time) string {
+	return "saved_search.coordinator." + t.UTC().Format(time.RFC3339)
 }
 
 // coordinatorIdempotencyKey builds a key so a re-fired coordinator

@@ -830,12 +830,14 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 				Logger:   logger,
 				Counter:  savedCounter,
 			})
-			// Initial coordinator kick — idempotent via the tick
-			// timestamp key so a re-fired boot doesn't double-enqueue.
-			nextTick := time.Now().Add(time.Second * saved.DefaultCoordinatorWakeSeconds)
+			// Initial coordinator kick — grid-aligned + idempotency-
+			// keyed (same helpers as the self-reschedule) so a boot on
+			// each restart collapses onto the already-pending tick
+			// instead of stacking a duplicate coordinator (#292).
+			nextTick := saved.NextCoordinatorTick(time.Now(), 0)
 			if _, err := jobSvc.Enqueue(context.Background(), saved.JobTypeCoordinator, saved.CoordinatorPayload{}, jobs.EnqueueOpts{
 				ScheduledFor:   &nextTick,
-				IdempotencyKey: "saved_search.coordinator." + nextTick.UTC().Format(time.RFC3339),
+				IdempotencyKey: saved.CoordinatorTickKey(nextTick),
 			}); err != nil {
 				logger.LogAttrs(context.Background(), slog.LevelWarn,
 					"saved.coordinator.initial_enqueue_error",
