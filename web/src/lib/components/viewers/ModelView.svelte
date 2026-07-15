@@ -439,7 +439,10 @@
     renderer.toneMapping = toneMappingValue(session.toneMapping);
     renderer.toneMappingExposure = session.exposure;
     renderer.shadowMap.enabled = session.shadows;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // three r185 deprecated PCFSoftShadowMap in the WebGL renderer — it
+    // now silently converts it to PCFShadowMap. Set PCFShadowMap
+    // directly for the identical result without the console warning.
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(renderer.domElement);
 
     // ─── PMREMGenerator + initial environment ──────────────────────
