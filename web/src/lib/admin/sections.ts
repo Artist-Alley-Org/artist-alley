@@ -107,7 +107,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'automation',
     tiles: [
       { key: 'workflow',          status: 'live',   href: '/admin/workflow' },
-      { key: 'audit',             status: 'future', phase: '1.20' },
+      { key: 'audit',             status: 'live',   href: '/admin/audit' },
       { key: 'triggers',          status: 'future', phase: '1.18' },
       { key: 'webhooks',          status: 'future', phase: '1.18' },
       { key: 'notifications',     status: 'future', phase: '1.18' },
