@@ -752,7 +752,8 @@
           "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
           "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
           "sessions":           { "title": "Sessions",             "blurb": "Active sessions across all users; revoke at will." },
-          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." }
+          "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." },
+          "requests":           { "title": "Resource requests",    "blurb": "Approve or deny pending access requests." }
         }
       },
       "content": {
