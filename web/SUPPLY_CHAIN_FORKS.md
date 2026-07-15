@@ -46,11 +46,12 @@ Go's `replace` directive in `app/go.mod` handles these cleanly —
 no CI complexity, the build resolves through the fork. Mappings:
 
 ```
-github.com/chai2010/webp     => github.com/mscrnt/webp v1.4.0
-github.com/qmuntal/gltf      => github.com/mscrnt/gltf v0.28.0
-github.com/srwiley/oksvg     => github.com/mscrnt/oksvg v0.0.0-20221011165216-be6e8873101c
-github.com/srwiley/rasterx   => github.com/mscrnt/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
-go.n16f.net/thumbhash        => github.com/mscrnt/go-thumbhash v1.1.0
+github.com/chai2010/webp      => github.com/Artist-Alley-Org/webp v1.4.0
+github.com/qmuntal/gltf        => github.com/Artist-Alley-Org/gltf v0.28.0
+github.com/srwiley/oksvg       => github.com/Artist-Alley-Org/oksvg v0.0.0-20221011165216-be6e8873101c
+github.com/srwiley/rasterx     => github.com/Artist-Alley-Org/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+github.com/taylorskalyo/goreader => github.com/Artist-Alley-Org/goreader v0.0.0-20250314214816-f9256af1ef9f
+go.n16f.net/thumbhash          => github.com/Artist-Alley-Org/go-thumbhash v1.1.0
 ```
 
 Already in effect — `go mod tidy` resolves to the forks. To bump

@@ -49,7 +49,7 @@ publication are gated on CI green.
    - Static binaries for `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`,
      `windows/amd64` (`.tar.gz` / `.zip`)
    - `.deb` + `.rpm` packages (amd64 + arm64)
-   - Homebrew formula → `mscrnt/homebrew-tap` (if `HOMEBREW_TAP_TOKEN`
+   - Homebrew formula → `Artist-Alley-Org/homebrew-tap` (if `HOMEBREW_TAP_TOKEN`
      is set)
    - Multi-arch Docker images to `ghcr.io/mscrnt/artist-alley` and
      `docker.io/${DOCKERHUB_USERNAME}/artist-alley`
@@ -83,7 +83,7 @@ For a fix that can't wait for the next `dev → main` merge:
 | `GITHUB_TOKEN`         | (auto)    | GHCR push, Release upload, OIDC for Sigstore |
 | `DOCKERHUB_USERNAME`   | optional  | Docker Hub username (mirror images there too) |
 | `DOCKERHUB_TOKEN`      | optional  | Docker Hub PAT scoped to push only |
-| `HOMEBREW_TAP_TOKEN`   | optional  | PAT (`repo` scope) for `mscrnt/homebrew-tap` |
+| `HOMEBREW_TAP_TOKEN`   | optional  | PAT (`repo` scope) for `Artist-Alley-Org/homebrew-tap` |
 
 When optional secrets are unset, the matching steps no-op silently.
 
