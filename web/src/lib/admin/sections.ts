@@ -224,11 +224,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'help',
     iconKey: 'help',
     tiles: [
-      { key: 'docs',         status: 'future', phase: '1.16' },
-      { key: 'shortcuts',    status: 'future', phase: '1.16' },
+      { key: 'docs',         status: 'live',   href: '/admin/help/docs' },
+      { key: 'shortcuts',    status: 'live',   href: '/admin/help/shortcuts' },
       { key: 'about',        status: 'live',   href: '/admin/about' },
-      { key: 'release_notes', status: 'future', phase: '1.16' },
-      { key: 'support',      status: 'future', phase: '1.16' },
+      { key: 'release_notes', status: 'live',  href: '/admin/help/release-notes' },
+      { key: 'support',      status: 'live',   href: '/admin/help/support' },
     ],
   },
 ];
