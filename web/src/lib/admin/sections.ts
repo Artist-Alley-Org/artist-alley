@@ -65,7 +65,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'taxonomy',       status: 'future', phase: '1.18' },
       { key: 'site_text',      status: 'future', phase: '1.18' },
       { key: 'email_templates', status: 'future', phase: '1.18' },
-      { key: 'featured',       status: 'future', phase: '1.14' },
+      { key: 'featured',       status: 'live',   href: '/admin/content/featured' },
       { key: 'defaults',       status: 'future', phase: '1.18' },
     ],
   },

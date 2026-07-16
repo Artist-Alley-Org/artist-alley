@@ -402,6 +402,15 @@ type ExtractionFailure struct {
 	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
 }
 
+type FeaturedItem struct {
+	ID               pgtype.UUID        `json:"id"`
+	SubjectKind      string             `json:"subject_kind"`
+	SubjectID        pgtype.UUID        `json:"subject_id"`
+	Position         int32              `json:"position"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	CreatedByUserRef *int64             `json:"created_by_user_ref"`
+}
+
 type FederationDirectory struct {
 	ID                    pgtype.UUID        `json:"id"`
 	DirectoryUrl          string             `json:"directory_url"`

@@ -68,6 +68,7 @@ import (
 	pdfext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/pdf"
 	rawpkg "github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	xmpext "github.com/mscrnt/artist-alley/app/internal/asset/metadata/xmp"
+	"github.com/mscrnt/artist-alley/app/internal/featured"
 	"github.com/mscrnt/artist-alley/app/internal/federation"
 	"github.com/mscrnt/artist-alley/app/internal/federation/inbox"
 	"github.com/mscrnt/artist-alley/app/internal/federation/outbox"
@@ -175,6 +176,7 @@ type apiServer struct {
 	capabilitySweeper *auth.CapabilitySweeper
 	requests          *requests.Handler
 	requestsHTTP      *requests.HTTPHandler
+	featuredHTTP      *featured.HTTPHandler
 	subtitles         *subtitles.Handler
 	subtitlesHTTP     *subtitles.HTTPHandler
 	aieditHTTP        *aiedit.HTTPHandler
@@ -1207,6 +1209,10 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	s.requests.SetNotifier(socialNotifyAdapter{w: notifWriter})
 	s.requestsHTTP = requests.NewHTTPHandler(s.requests, logger)
 	s.capabilitySweeper.SetRequestCascade(s.requests.MarkExpired)
+
+	// Admin-curated featured-content list (GitHub #341). Thin,
+	// system.admin-gated CRUD over the featured_items table.
+	s.featuredHTTP = featured.NewHTTPHandler(featured.NewHandler(pool, logger), logger)
 
 	// Federation user-keys admin + self-rotation HTTP surface
 	// (Phase 1.22.I-h). Three endpoints: /account/security/rotate-
@@ -2926,6 +2932,21 @@ func (s *apiServer) ListAdminRequests(ctx context.Context, req openapi.ListAdmin
 }
 func (s *apiServer) DecideAdminRequest(ctx context.Context, req openapi.DecideAdminRequestRequestObject) (openapi.DecideAdminRequestResponseObject, error) {
 	return s.requestsHTTP.DecideAdminRequest(ctx, req)
+}
+
+// --- featured content (GitHub #341) ---------------------------------------
+
+func (s *apiServer) ListFeaturedItems(ctx context.Context, req openapi.ListFeaturedItemsRequestObject) (openapi.ListFeaturedItemsResponseObject, error) {
+	return s.featuredHTTP.ListFeaturedItems(ctx, req)
+}
+func (s *apiServer) AddFeaturedItem(ctx context.Context, req openapi.AddFeaturedItemRequestObject) (openapi.AddFeaturedItemResponseObject, error) {
+	return s.featuredHTTP.AddFeaturedItem(ctx, req)
+}
+func (s *apiServer) RemoveFeaturedItem(ctx context.Context, req openapi.RemoveFeaturedItemRequestObject) (openapi.RemoveFeaturedItemResponseObject, error) {
+	return s.featuredHTTP.RemoveFeaturedItem(ctx, req)
+}
+func (s *apiServer) ReorderFeaturedItems(ctx context.Context, req openapi.ReorderFeaturedItemsRequestObject) (openapi.ReorderFeaturedItemsResponseObject, error) {
+	return s.featuredHTTP.ReorderFeaturedItems(ctx, req)
 }
 
 // --- setup -----------------------------------------------------------------
