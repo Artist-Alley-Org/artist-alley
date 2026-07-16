@@ -97,7 +97,13 @@ func NewAdminHandler(
 	}
 }
 
-const capAdmin = "system.admin"
+const (
+	capAdmin = "system.admin"
+	// capRead gates the shares READ surfaces — the share list and the
+	// defederation cascade preview (#356). Granting and revoking a
+	// share stay on capAdmin.
+	capRead = "federation.read"
+)
 
 // --- GET /admin/federation/shares ---------------------------------------
 
@@ -113,9 +119,9 @@ func (h *AdminHandler) ListFederationShares(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationShares403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	limit := int32(100)

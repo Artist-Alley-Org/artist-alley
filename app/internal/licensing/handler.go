@@ -39,6 +39,11 @@ func NewHandler(state *State, logger *slog.Logger) *Handler {
 	return &Handler{state: state, logger: logger}
 }
 
+// CapLicenseRead gates the read of the installation license status.
+// Validate + Upload stay on system.admin — installing a license is a
+// superuser action (#356).
+const CapLicenseRead = "system.license.read"
+
 // GetAdminLicenseStatus — GET /api/v1/admin/license/status
 func (h *Handler) GetAdminLicenseStatus(
 	ctx context.Context,
@@ -52,10 +57,10 @@ func (h *Handler) GetAdminLicenseStatus(
 			},
 		}, nil
 	}
-	if !id.Can(auth.SuperAdminCapability) {
+	if !id.Can(CapLicenseRead) && !id.Can(auth.SuperAdminCapability) {
 		return openapi.GetAdminLicenseStatus403JSONResponse{
 			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{
-				Error: "system.admin capability required",
+				Error: CapLicenseRead + " capability required",
 			},
 		}, nil
 	}
