@@ -30,6 +30,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -289,8 +290,8 @@ func (h *ComicHandler) extractCoverViaUnar(ctx context.Context, src, ext string)
 
 	extractCmd := exec.CommandContext(ctx, h.unarBin(),
 		"-o", dir, // output dir
-		"-q",   // quiet (no progress text on stdout)
-		"-D",   // don't create a wrapping subdirectory
+		"-q", // quiet (no progress text on stdout)
+		"-D", // don't create a wrapping subdirectory
 		src,
 		cover,
 	)
@@ -483,13 +484,7 @@ func (h *ComicHandler) markFailed(ctx context.Context, id uuid.UUID, msg string)
 	}
 }
 
-var comicExts = map[string]struct{}{
-	"cbz": {},
-	"cbr": {},
-	"cb7": {},
-}
-
 func isComicExt(ext string) bool {
-	_, ok := comicExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.ComicExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }

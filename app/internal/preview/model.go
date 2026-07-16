@@ -29,6 +29,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/preview/format3d"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -104,21 +105,6 @@ func NewModelHandler(pool *pgxpool.Pool, st *storage.Service, sc *sysconfig.Stor
 
 func (h *ModelHandler) Type() jobs.JobType { return jobs.TypePreview3D }
 
-// modelExts mirrors the dispatcher map in assets.handler.go.
-//
-// Native Blender importers cover the bulk of the list. mview goes
-// through the in-process Go mview/glb decoder; format3dExts (MD2 /
-// MD3 / MDL, see below) go through our own native Go importers
-// before the turntable. The browser viewer also has a live
-// marmoset.js path as a fallback for formats this decoder doesn't
-// yet cover (animated rigs, skinning).
-var modelExts = map[string]struct{}{
-	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
-	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
-	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
-	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
-}
-
 // format3dExts is the set of formats served by the in-tree
 // preview/format3d Go importer. We convert these to .glb up-front
 // and then fall through to the standard Blender turntable, same
@@ -134,7 +120,7 @@ var format3dExts = map[string]format3dDecoder{
 type format3dDecoder func(io.Reader) (*format3d.Model, error)
 
 func isModelExt(ext string) bool {
-	_, ok := modelExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.ModelExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }
 
@@ -512,7 +498,6 @@ func (h *ModelHandler) convertMviewToGLB(ctx context.Context, mviewPath string) 
 	}
 	return glbPath, nil
 }
-
 
 // fanThumbBytes decodes a JPEG and writes it through the raster
 // variant ladder. Shared by the mview path; could be repurposed by
@@ -916,9 +901,9 @@ func (h *ModelHandler) fanRasterLadderOpts(ctx context.Context, hash, framePath 
 // ---------------------------------------------------------------------------
 
 const (
-	modelSpriteCols = 6
-	modelSpriteRows = 6
-	modelSpriteCell = 160 // px per cell; 36 cells × 160 = 960² sprite sheet
+	modelSpriteCols       = 6
+	modelSpriteRows       = 6
+	modelSpriteCell       = 160 // px per cell; 36 cells × 160 = 960² sprite sheet
 	modelTurntableSeconds = 4.0
 )
 

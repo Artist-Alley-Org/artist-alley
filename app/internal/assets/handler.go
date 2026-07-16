@@ -47,6 +47,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
@@ -377,7 +378,7 @@ func (h *Handler) CreateAsset(
 	row, err := q.CreateAsset(ctx, CreateAssetParams{
 		Title:            title,
 		Description:      strDefault(in.Description, ""),
-		AssetType:     in.AssetType,
+		AssetType:        in.AssetType,
 		OwnerUserRef:     &id.UserRef,
 		Status:           status,
 		FileHash:         fileHashPtr,
@@ -552,8 +553,8 @@ func (h *Handler) CreateAsset(
 		// either way + the dedup-on-idempotency-key gate prevents
 		// duplicate work if the upload retries.
 		ext := strings.ToLower(strings.TrimPrefix(strDefault(in.FileExtension, ""), "."))
-		_, isVideo := videoExts[ext]
-		_, isAudio := audioExtsHandler[ext]
+		_, isVideo := dispatch.VideoExts[ext]
+		_, isAudio := dispatch.AudioExts[ext]
 		if isVideo || isAudio {
 			transcribePriority := jobs.PriorityLow
 			transcribePayload := map[string]string{
@@ -732,92 +733,11 @@ func isPgUniqueViolation(err error) bool {
 // preview.raster handles still images; preview.video runs the HLS
 // pipeline; preview.3d runs the Blender turntable renderer. Other
 // formats (audio/svg/pdf/font) land in follow-ups.
+// jobTypeForExt delegates to the shared dispatch map (#355): the
+// upload path, `aa seed`, and the preview handlers all read one set,
+// so they can never drift apart.
 func jobTypeForExt(ext *string) jobs.JobType {
-	if ext == nil {
-		return jobs.TypePreviewRaster
-	}
-	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
-	if _, ok := videoExts[e]; ok {
-		return jobs.TypePreviewVideo
-	}
-	if _, ok := modelExts[e]; ok {
-		return jobs.TypePreview3D
-	}
-	if _, ok := audioExtsHandler[e]; ok {
-		return jobs.TypePreviewAudio
-	}
-	if _, ok := pdfExtsHandler[e]; ok {
-		return jobs.TypePreviewPDF
-	}
-	if _, ok := fontExtsHandler[e]; ok {
-		return jobs.TypePreviewFont
-	}
-	if _, ok := ebookExtsHandler[e]; ok {
-		return jobs.TypePreviewEbook
-	}
-	if _, ok := epsExtsHandler[e]; ok {
-		return jobs.TypePreviewEPS
-	}
-	if _, ok := psdExtsHandler[e]; ok {
-		return jobs.TypePreviewPSD
-	}
-	if _, ok := comicExtsHandler[e]; ok {
-		return jobs.TypePreviewComic
-	}
-	if _, ok := textExtsHandler[e]; ok {
-		return jobs.TypePreviewText
-	}
-	if _, ok := archiveExtsHandler[e]; ok {
-		return jobs.TypePreviewArchive
-	}
-	return jobs.TypePreviewRaster
-}
-
-var pdfExtsHandler = map[string]struct{}{"pdf": {}}
-var fontExtsHandler = map[string]struct{}{
-	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
-}
-// ebookExtsHandler mirrors preview.ebookExts. Duplicated to avoid
-// the assets→preview import cycle (same pattern as audioExtsHandler).
-var ebookExtsHandler = map[string]struct{}{
-	"epub": {},
-}
-// epsExtsHandler mirrors preview.epsExts.
-var epsExtsHandler = map[string]struct{}{
-	"eps": {}, "ps": {},
-}
-// psdExtsHandler mirrors preview.psdExts.
-var psdExtsHandler = map[string]struct{}{
-	"psd": {}, "psb": {},
-}
-// comicExtsHandler mirrors preview.comicExts.
-var comicExtsHandler = map[string]struct{}{
-	"cbz": {}, "cbr": {}, "cb7": {},
-}
-// textExtsHandler mirrors preview.textExts.
-var textExtsHandler = map[string]struct{}{
-	"txt": {},
-}
-// archiveExtsHandler mirrors preview.archive.SupportedExtensions.
-// Routes uploads through the archive preview type so the manifest
-// is extracted + cached on metadata.archive.
-var archiveExtsHandler = map[string]struct{}{
-	"zip": {}, "jar": {}, "war": {}, "ear": {}, "apk": {}, "ipa": {},
-	"7z": {}, "rar": {},
-	"tar": {}, "tgz": {}, "tbz2": {}, "txz": {},
-	"tar.gz": {}, "tar.bz2": {}, "tar.xz": {},
-}
-
-// audioExtsHandler mirrors preview.audioExts. Duplicated here so the
-// assets package's dispatch doesn't need to import the preview
-// package (which itself depends on assets for the metadata queries).
-var audioExtsHandler = map[string]struct{}{
-	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
-	"m4a": {}, "aac": {}, "opus": {},
-	// Audiobook containers — see preview.audio.audioExts for the
-	// rationale. Routes through the same handler so we get cover
-	// extraction, duration probing, and chapter atoms.
-	"m4b": {}, "aax": {},
+	return dispatch.JobTypeForExt(ext)
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,7 +1109,7 @@ func (h *Handler) ListAssets(
 		rows, err := q.ListAssetsByTagPage(ctx, ListAssetsByTagPageParams{
 			Tag:             *req.Params.Tag,
 			OwnerUserRef:    ownerRef,
-			AssetType:    resType,
+			AssetType:       resType,
 			Status:          statusPtr,
 			CursorCreatedAt: cursorTs,
 			CursorID:        cursorID,
@@ -1545,7 +1465,7 @@ func rowToAssetWithDetails(row GetAssetRow, tags []string, details []ListAssetTa
 	a := openapi.Asset{
 		Id:               openapi_types.UUID(row.ID.Bytes),
 		Title:            row.Title,
-		AssetType:     row.AssetType,
+		AssetType:        row.AssetType,
 		Status:           openapi.AssetStatus(row.Status),
 		ProcessingStatus: openapi.AssetProcessingStatus(row.ProcessingStatus),
 		CreatedAt:        row.CreatedAt.Time,
@@ -1615,7 +1535,7 @@ func rowToAssetRow(r CreateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		AssetType:     r.AssetType,
+		AssetType:        r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1636,7 +1556,7 @@ func updateRowToGetRow(r UpdateAssetRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		AssetType:     r.AssetType,
+		AssetType:        r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1657,7 +1577,7 @@ func listRowToGetRow(r ListAssetsPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		AssetType:     r.AssetType,
+		AssetType:        r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1678,7 +1598,7 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 		ID:               r.ID,
 		Title:            r.Title,
 		Description:      r.Description,
-		AssetType:     r.AssetType,
+		AssetType:        r.AssetType,
 		OwnerUserRef:     r.OwnerUserRef,
 		Status:           r.Status,
 		FileHash:         r.FileHash,
@@ -1694,68 +1614,13 @@ func listByTagRowToGetRow(r ListAssetsByTagPageRow) GetAssetRow {
 	}
 }
 
-// imageExts is the lowercased file-extension set that gets a
-// thumbhash + processing_status='pending' at create time. Mirrors
-// the frontend's isImageExt (web/src/lib/components/PostModal.svelte)
-// — keep these in sync.
-var imageExts = map[string]struct{}{
-	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "webp": {},
-	"bmp": {}, "tiff": {}, "tif": {}, "avif": {}, "heic": {}, "heif": {},
-	"svg": {},
-	// High-dynamic-range — routed through preview.raster's HDR
-	// branch (ffmpeg tonemap → PNG → standard variant ladder).
-	"hdr": {}, "exr": {}, "pic": {},
-	// Raw camera (Phase 1.18.A-3.B). Treated as images so they get
-	// thumbhash + processing_status=pending; the raster pipeline's
-	// loadRawPreview hook decodes the embedded JPEG preview into the
-	// variant ladder (no demosaic on this path).
-	"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
-}
-
 func isImageExt(ext *string) bool {
 	if ext == nil {
 		return false
 	}
 	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
-	_, ok := imageExts[e]
+	_, ok := dispatch.ImageExts[e]
 	return ok
-}
-
-// videoExts: same role for video. Coverage is "anything we'd want
-// to spin up a video.probe job for" — the actual transcode list
-// lives in the (future) video pipeline.
-//
-// Camera + broadcast formats included so uploads from a GoPro
-// (.lrv proxy), Insta360 (.insv), AVCHD camcorder (.mts / .m2ts),
-// DVD rip (.vob), broadcast workflow (.mxf), Flash (.f4v), or
-// MPEG-4 variant (.m4v / .ts) land as Video instead of Photo /
-// unknown. RED / ARRI / ProRes RAW deferred — those need a paid
-// codec license to even probe metadata.
-var videoExts = map[string]struct{}{
-	"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
-	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
-	"m4v": {}, "ts": {}, "lrv": {}, "insv": {}, "mts": {},
-	"m2ts": {}, "vob": {}, "f4v": {}, "mxf": {},
-}
-
-// modelExts: formats the preview.3d handler can ingest.
-//
-// First tier are the natively-supported formats:
-//   - glb / gltf / fbx / obj / blend → Blender import_scene operators
-//   - dae                            → Collada (Blender import_scene)
-//   - ply / stl / 3ds / x3d / wrl    → Blender mesh/scene importers
-//   - usd / usda / usdc / usdz       → Universal Scene Description
-//   - abc                            → Alembic VFX cache
-//   - mview                          → in-process Go converter
-//     (github.com/mscrnt/mviewer/go) → glTF → Blender
-//
-// Closed/proprietary formats like .mb / .ma / .max stay on a
-// placeholder until we wire a Maya/Max worker tier.
-var modelExts = map[string]struct{}{
-	"glb": {}, "gltf": {}, "fbx": {}, "obj": {}, "blend": {}, "mview": {},
-	"dae": {}, "ply": {}, "stl": {}, "3ds": {}, "x3d": {}, "wrl": {},
-	"usd": {}, "usda": {}, "usdc": {}, "usdz": {}, "abc": {},
-	"md2": {}, "md3": {}, "mdl": {}, "ms3d": {},
 }
 
 // assetTypeFor returns the canonical asset_type ref for a file
@@ -1764,9 +1629,10 @@ var modelExts = map[string]struct{}{
 // the caller's explicit choice still wins.
 //
 // Type refs (seeded in migrations 00027 + 00031 + 00033 + 00034):
-//   1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
-//   7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture
-//   13 Sprite · 14 Code
+//
+//	1 Image · 2 Document · 3 Video · 4 Audio · 5 3D Object · 6 Archive
+//	7 Font · 8 Comic · 10 Ebook · 11 Audiobook · 12 Texture
+//	13 Sprite · 14 Code
 //
 // Editor-source files (psd / ai / eps / sketch / etc.) land in Image
 // alongside finished raster outputs. Texture / sprite / audiobook
@@ -1802,13 +1668,13 @@ func assetTypeFor(ext string) int64 {
 		"afdesign", "afphoto", "afpub", "clip", "ora", "kra":
 		return 1 // Image (editor-source files belong with finished raster)
 	}
-	if _, ok := modelExts[e]; ok {
+	if _, ok := dispatch.ModelExts[e]; ok {
 		return 5 // 3D Object
 	}
-	if _, ok := videoExts[e]; ok {
+	if _, ok := dispatch.VideoExts[e]; ok {
 		return 3 // Video
 	}
-	if _, ok := imageExts[e]; ok {
+	if _, ok := dispatch.ImageExts[e]; ok {
 		return 1 // Image
 	}
 	switch e {
@@ -1827,40 +1693,40 @@ func needsProcessing(ext *string) bool {
 		return false
 	}
 	e := strings.ToLower(strings.TrimPrefix(*ext, "."))
-	if _, ok := imageExts[e]; ok {
+	if _, ok := dispatch.ImageExts[e]; ok {
 		return true
 	}
-	if _, ok := videoExts[e]; ok {
+	if _, ok := dispatch.VideoExts[e]; ok {
 		return true
 	}
-	if _, ok := modelExts[e]; ok {
+	if _, ok := dispatch.ModelExts[e]; ok {
 		return true
 	}
-	if _, ok := audioExtsHandler[e]; ok {
+	if _, ok := dispatch.AudioExts[e]; ok {
 		return true
 	}
-	if _, ok := pdfExtsHandler[e]; ok {
+	if _, ok := dispatch.PDFExts[e]; ok {
 		return true
 	}
-	if _, ok := fontExtsHandler[e]; ok {
+	if _, ok := dispatch.FontExts[e]; ok {
 		return true
 	}
-	if _, ok := ebookExtsHandler[e]; ok {
+	if _, ok := dispatch.EbookExts[e]; ok {
 		return true
 	}
-	if _, ok := epsExtsHandler[e]; ok {
+	if _, ok := dispatch.EPSExts[e]; ok {
 		return true
 	}
-	if _, ok := psdExtsHandler[e]; ok {
+	if _, ok := dispatch.PSDExts[e]; ok {
 		return true
 	}
-	if _, ok := comicExtsHandler[e]; ok {
+	if _, ok := dispatch.ComicExts[e]; ok {
 		return true
 	}
-	if _, ok := textExtsHandler[e]; ok {
+	if _, ok := dispatch.TextExts[e]; ok {
 		return true
 	}
-	if _, ok := archiveExtsHandler[e]; ok {
+	if _, ok := dispatch.ArchiveExts[e]; ok {
 		return true
 	}
 	return false
