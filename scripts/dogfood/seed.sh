@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/dogfood/seed.sh — populate studio-b via seed/scripts/apply.py.
+# scripts/dogfood/seed.sh — populate studio-b via `aa seed`.
 #
 # studio-b ships without a baked-in dataset. The operator picks
 # whatever site/ directory they want to seed it with (different
@@ -10,11 +10,11 @@
 #   ./scripts/dogfood/seed.sh --site /path/to/site_dir
 #
 # Notes:
-#   - studio-b's API is reachable from the host at
-#     https://studio-b.local:9443/api/v1.
-#   - apply.py defaults to admin / ArtistAlleyMogul auth — works
-#     out of the box because the dogfood profile sets
-#     AA_BOOTSTRAP_DEFAULT_ADMIN=1.
+#   - Runs `aa seed` (#321) as a one-off container off the studio-b
+#     app image (app-b, dogfood profile), so it writes straight to
+#     studio-b's postgres + storage volume — no HTTP, no login.
+#   - The chosen site/ dir + the in-repo seed/profiles catalogue are
+#     mounted into that container read-only.
 
 set -euo pipefail
 
@@ -39,7 +39,7 @@ done
 if [ -z "$site" ]; then
     printf '\033[1;31mERROR:\033[0m --site is required.\n' >&2
     printf 'Pick a site/ directory that contains a MANIFEST.json (the\n' >&2
-    printf 'shape apply.py expects — see seed/scripts/apply.py).\n' >&2
+    printf 'shape aa seed expects — see seed/SEED_INSTRUCTIONS.md).\n' >&2
     exit 2
 fi
 
@@ -49,6 +49,7 @@ if [ ! -f "${site}/MANIFEST.json" ]; then
 fi
 
 printf '\033[1;36m==>\033[0m Seeding studio-b from %s\n' "$site"
-exec python3 seed/scripts/apply.py \
-    --site "$site" \
-    --api https://studio-b.local:9443/api/v1
+exec docker compose --profile dogfood run --rm --no-deps \
+    -v "$site:/seed/site:ro" \
+    -v "$ROOT/seed/profiles:/seed/profiles:ro" \
+    app-b seed --site /seed/site --catalogue /seed/profiles
