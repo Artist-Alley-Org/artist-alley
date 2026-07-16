@@ -26,6 +26,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -49,15 +50,15 @@ type PDFResult struct {
 // optional because some authoring tools strip metadata or never
 // populate it (e.g. scanned PDFs).
 type PDFMetadata struct {
-	NumPages int    `json:"num_pages,omitempty"`
-	Title    string `json:"title,omitempty"`
-	Author   string `json:"author,omitempty"`
-	Subject  string `json:"subject,omitempty"`
-	Keywords string `json:"keywords,omitempty"`
-	Creator  string `json:"creator,omitempty"`
-	Producer string `json:"producer,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Encrypted bool  `json:"encrypted,omitempty"`
+	NumPages  int    `json:"num_pages,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Author    string `json:"author,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	Keywords  string `json:"keywords,omitempty"`
+	Creator   string `json:"creator,omitempty"`
+	Producer  string `json:"producer,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Encrypted bool   `json:"encrypted,omitempty"`
 }
 
 // PDFHandler renders the first page of a PDF as a poster + fans it
@@ -65,11 +66,11 @@ type PDFMetadata struct {
 // onto the asset's metadata JSONB.
 //
 // Pipeline:
-//   1. Stage source to temp file (pdftoppm needs a path)
-//   2. pdfinfo → PDFMetadata
-//   3. pdftoppm -png -f 1 -l 1 -r 144 → first-page PNG at 144 DPI
-//   4. fan PNG through col / preview / screen / hires
-//   5. mark asset ready + write metadata
+//  1. Stage source to temp file (pdftoppm needs a path)
+//  2. pdfinfo → PDFMetadata
+//  3. pdftoppm -png -f 1 -l 1 -r 144 → first-page PNG at 144 DPI
+//  4. fan PNG through col / preview / screen / hires
+//  5. mark asset ready + write metadata
 //
 // 144 DPI gives a 1224 × 1584 image for a US letter PDF — large
 // enough that the hires variant (4096 longest) gets a near-1:1
@@ -406,12 +407,8 @@ func (h *PDFHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
 	}
 }
 
-// pdfExts: only one entry today. Kept as a map for symmetry with
-// other handler dispatch tables + so isPDFExt has the same shape.
-var pdfExts = map[string]struct{}{"pdf": {}}
-
 func isPDFExt(ext string) bool {
-	_, ok := pdfExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.PDFExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }
 

@@ -26,6 +26,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -49,15 +50,15 @@ type FontResult struct {
 // and detail view want to surface. Optional throughout because not
 // every font ships every name record (especially homebrew TTFs).
 type FontMetadata struct {
-	Family      string `json:"family,omitempty"`
-	SubFamily   string `json:"subfamily,omitempty"`     // Regular / Bold / Italic / etc.
-	FullName    string `json:"full_name,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Copyright   string `json:"copyright,omitempty"`
-	Designer    string `json:"designer,omitempty"`
-	License     string `json:"license,omitempty"`
-	NumGlyphs   int    `json:"num_glyphs,omitempty"`
-	UnitsPerEm  int    `json:"units_per_em,omitempty"`
+	Family     string `json:"family,omitempty"`
+	SubFamily  string `json:"subfamily,omitempty"` // Regular / Bold / Italic / etc.
+	FullName   string `json:"full_name,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Copyright  string `json:"copyright,omitempty"`
+	Designer   string `json:"designer,omitempty"`
+	License    string `json:"license,omitempty"`
+	NumGlyphs  int    `json:"num_glyphs,omitempty"`
+	UnitsPerEm int    `json:"units_per_em,omitempty"`
 }
 
 // FontHandler renders a multi-line specimen card for a TTF / OTF
@@ -379,15 +380,7 @@ func (h *FontHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) 
 	}
 }
 
-// fontExts: extensions the preview.font handler accepts. sfnt
-// handles TTF + OTF natively; WOFF / WOFF2 / EOT need decompression
-// we don't ship yet, but they're listed so they still route to a
-// font card (filename-only render).
-var fontExts = map[string]struct{}{
-	"ttf": {}, "otf": {}, "ttc": {}, "otc": {}, "woff": {}, "woff2": {},
-}
-
 func isFontExt(ext string) bool {
-	_, ok := fontExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.FontExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }

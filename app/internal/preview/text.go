@@ -28,6 +28,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -52,9 +53,9 @@ type TextPayload struct {
 // TextMetadata: line + byte counts. Reading the file once anyway,
 // surface the cheap stats.
 type TextMetadata struct {
-	LineCount  int   `json:"line_count,omitempty"`
-	ByteCount  int64 `json:"byte_count,omitempty"`
-	IsTruncated bool `json:"is_truncated,omitempty"`
+	LineCount   int   `json:"line_count,omitempty"`
+	ByteCount   int64 `json:"byte_count,omitempty"`
+	IsTruncated bool  `json:"is_truncated,omitempty"`
 }
 
 type TextResult struct {
@@ -375,15 +376,8 @@ func (h *TextHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) 
 	}
 }
 
-// textExts: plain-text-y extensions the handler accepts. Markdown
-// and code formats join later when we add syntax highlighting; for
-// now they fall through to preview.raster and produce no thumbnail.
-var textExts = map[string]struct{}{
-	"txt": {},
-}
-
 func isTextExt(ext string) bool {
-	_, ok := textExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.TextExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }
 

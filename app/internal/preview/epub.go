@@ -30,6 +30,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -69,8 +70,8 @@ type EPUBPayload struct {
 // hand-rolled ebooks often only set title + creator.
 type EPUBMetadata struct {
 	Title       string   `json:"title,omitempty"`
-	Creator     string   `json:"creator,omitempty"`     // author
-	Language    string   `json:"language,omitempty"`    // BCP47 (en, en-US, fr-FR, …)
+	Creator     string   `json:"creator,omitempty"`  // author
+	Language    string   `json:"language,omitempty"` // BCP47 (en, en-US, fr-FR, …)
 	Publisher   string   `json:"publisher,omitempty"`
 	Date        string   `json:"date,omitempty"`
 	Description string   `json:"description,omitempty"` // may be HTML — we strip in the view body
@@ -343,15 +344,15 @@ type opfPackage struct {
 }
 
 type opfMeta struct {
-	Title       []opfText `xml:"title"`
-	Creator     []opfText `xml:"creator"`
-	Language    []opfText `xml:"language"`
-	Publisher   []opfText `xml:"publisher"`
-	Date        []opfText `xml:"date"`
-	Description []opfText `xml:"description"`
-	Subject     []opfText `xml:"subject"`
-	Identifier  []opfText `xml:"identifier"`
-	Rights      []opfText `xml:"rights"`
+	Title       []opfText     `xml:"title"`
+	Creator     []opfText     `xml:"creator"`
+	Language    []opfText     `xml:"language"`
+	Publisher   []opfText     `xml:"publisher"`
+	Date        []opfText     `xml:"date"`
+	Description []opfText     `xml:"description"`
+	Subject     []opfText     `xml:"subject"`
+	Identifier  []opfText     `xml:"identifier"`
+	Rights      []opfText     `xml:"rights"`
 	Metas       []opfMetaItem `xml:"meta"`
 }
 
@@ -558,15 +559,7 @@ func (h *EPUBHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) 
 	}
 }
 
-// ebookExts: extensions the preview.ebook handler accepts. Only EPUB
-// today; mobi / azw / azw3 / kf8 want a different parser (the Amazon
-// .mobi / Kindle stack uses a proprietary PalmDOC-derived container)
-// so they queue here when we add them but stay rejected for now.
-var ebookExts = map[string]struct{}{
-	"epub": {},
-}
-
 func isEbookExt(ext string) bool {
-	_, ok := ebookExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.EbookExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }
