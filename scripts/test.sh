@@ -136,6 +136,7 @@ docker run --rm \
     -v "${ROOT}/app:/src/app" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
+    -e GOFLAGS -e GOMAXPROCS \
     golang:1.26 \
     go run ./cmd/aa-migrate
 
@@ -153,6 +154,7 @@ if ! docker run --rm \
     -v "${ROOT}/app:/src/app" \
     -w /src/app \
     -e AA_DB_HOST -e AA_DB_PORT -e AA_DB_NAME -e AA_DB_USER -e AA_DB_PASSWORD \
+    -e GOFLAGS -e GOMAXPROCS \
     "${s3_env[@]}" \
     golang:1.26 \
     go test -race -count=1 -p 1 ./...; then
