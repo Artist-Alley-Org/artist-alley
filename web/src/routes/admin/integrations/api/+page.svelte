@@ -4,10 +4,11 @@
   // /admin/integrations/api — Scalar API Explorer.
   //
   // Mounts the Scalar reference UI pointed at our canonical
-  // OpenAPI spec (served by /openapi.yaml/+server.ts which reads
-  // the file mounted into the web container). The reference
-  // renders interactive endpoint browser + Try-it-out, themed to
-  // match our dark / light toggle via the `darkMode` prop.
+  // OpenAPI spec, served by the Go app at /api/v1/openapi.json
+  // straight from the codegen-embedded spec blob. That path works
+  // in dev (Vite proxies /api/* → nginx → app) and prod alike. The
+  // reference renders interactive endpoint browser + Try-it-out,
+  // themed to match our dark / light toggle via the `darkMode` prop.
 
   import { onMount, onDestroy } from 'svelte';
   import { site } from '$stores/site.svelte';
@@ -37,7 +38,7 @@
       target: HTMLElement,
       config: Record<string, unknown>,
     ) => ScalarHandle)(container, {
-      url: '/openapi.yaml',
+      url: '/api/v1/openapi.json',
       darkMode: theme.resolved === 'dark',
       hideClientButton: false,
       // Self-hosted; no telemetry beacon.
