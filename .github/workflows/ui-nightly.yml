@@ -208,12 +208,12 @@ jobs:
       # keeps the interleaved parallel output readable in the run log.
       - name: Seed both sites in parallel via aa seed
         env:
-          # /datasets is the read-only mount the runner template
-          # added (Unraid → AristAlley-Github-Actions-Runner →
-          # BLACKBOX datasets); on the host it points at
-          # /mnt/remotes/192.168.69.145_Archives/datasets.
-          SITE_A_PATH: /datasets/artist_alley/site_a
-          SITE_B_PATH: /datasets/artist_alley/site_b
+          # HOST daemon paths, NOT the runner's /datasets bind mount:
+          # `docker compose run -v` resolves the source on the host
+          # daemon (the runner template maps this same host dir to
+          # /datasets inside the runner).
+          SITE_A_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_a
+          SITE_B_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_b
         run: |
           # `aa seed` (#321) writes straight to each stack's postgres +
           # storage volume via a one-off `compose run` off that stack's

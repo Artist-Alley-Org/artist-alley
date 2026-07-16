@@ -209,11 +209,14 @@ jobs:
       # in per-run; --no-deps because postgres is already up.
       - name: Seed site_a via aa seed
         env:
-          # /datasets is the read-only mount added to the runner
-          # container template (Unraid Docker tab → AristAlley-
-          # Github-Actions-Runner → BLACKBOX datasets). Source on
-          # the host: /mnt/remotes/192.168.69.145_Archives/datasets.
-          SITE_A_PATH: /datasets/artist_alley/site_a
+          # HOST daemon path, NOT the runner's /datasets bind mount.
+          # `docker compose run -v` resolves the source on the host
+          # docker daemon, which sees the dataset here; the runner
+          # template maps this same host dir to /datasets *inside* the
+          # runner, but the daemon needs the real host path. ($PWD for
+          # the catalogue works because the runner's _work dir is
+          # bind-mounted at an identical host path.)
+          SITE_A_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_a
         run: |
           docker compose \
             -f docker-compose.yml \
