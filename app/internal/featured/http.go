@@ -3,16 +3,17 @@
 
 // GitHub #341 — HTTP surface for the featured-content curation list.
 //
-// Four endpoints, all system.admin-gated:
+// Four endpoints:
 //
-//   GET    /admin/featured        — list in display order
-//   POST   /admin/featured        — add an asset/collection
-//   DELETE /admin/featured/{id}   — remove one entry
-//   PUT    /admin/featured/order  — reorder the whole list
+//   GET    /admin/featured        — list in display order  (featured.read)
+//   POST   /admin/featured        — add an asset/collection (system.admin)
+//   DELETE /admin/featured/{id}   — remove one entry        (system.admin)
+//   PUT    /admin/featured/order  — reorder the whole list  (system.admin)
 //
-// The gate is coarse (system.admin), matching the rest of the content
-// admin section. Kept separate from Handler so non-HTTP consumers
-// don't drag the openapi import.
+// The read takes a dedicated cap so a read-only auditor role can view
+// the curation list (#356); curation itself stays system.admin. Kept
+// separate from Handler so non-HTTP consumers don't drag the openapi
+// import.
 
 package featured
 
@@ -54,9 +55,9 @@ func (h *HTTPHandler) ListFeaturedItems(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(CapSystemAdmin) {
+	if !id.Can(CapFeaturedRead) && !id.Can(CapSystemAdmin) {
 		return openapi.ListFeaturedItems403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapSystemAdmin + " capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapFeaturedRead + " capability required"},
 		}, nil
 	}
 	rows, err := h.domain.List(ctx)

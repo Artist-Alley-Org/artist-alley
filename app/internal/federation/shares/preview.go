@@ -55,9 +55,9 @@ func (h *AdminHandler) PreviewFederationPeerDefederation(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.PreviewFederationPeerDefederation403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	if h.pendingHandshakeCounter == nil || h.suggestionCounter == nil || h.peerDisplay == nil {

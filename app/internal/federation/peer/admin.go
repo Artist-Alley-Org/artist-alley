@@ -34,7 +34,15 @@ func NewAdminHandler(r *Registry) *AdminHandler {
 	return &AdminHandler{registry: r}
 }
 
-const capAdmin = "system.admin"
+const (
+	capAdmin = "system.admin"
+	// capRead gates the federation READ surfaces (peers, pending
+	// inbound handshakes) so a read-only auditor role can view them
+	// without the system.admin wildcard (#356). Every mutation —
+	// create/update/delete a peer, initiate/accept a handshake —
+	// stays on capAdmin.
+	capRead = "federation.read"
+)
 
 // ListFederationPeers — GET /admin/federation/peers.
 func (h *AdminHandler) ListFederationPeers(
@@ -47,9 +55,9 @@ func (h *AdminHandler) ListFederationPeers(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationPeers403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	limit := 50
@@ -78,9 +86,9 @@ func (h *AdminHandler) GetFederationPeer(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.GetFederationPeer403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	p, err := h.registry.ByID(ctx, uuid.UUID(req.Id))
@@ -367,9 +375,9 @@ func (h *AdminHandshakeHandler) ListFederationPendingInbound(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationPendingInbound403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	peers, err := h.registry.listPendingInbound(ctx)

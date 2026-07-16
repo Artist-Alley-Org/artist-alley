@@ -14,7 +14,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-const capAdmin = "system.admin"
+const (
+	capAdmin = "system.admin"
+	// capRead gates the peer-suggestion READ (#356). Refreshing the
+	// suggestion set stays on capAdmin.
+	capRead = "federation.read"
+)
 
 // AdminHandler is the openapi-strict adapter for the suggestions
 // endpoints.
@@ -39,9 +44,9 @@ func (h *AdminHandler) ListFederationPeerSuggestions(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationPeerSuggestions403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	limit := int32(200)
