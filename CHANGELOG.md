@@ -5,6 +5,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [Unreleased] — Admin surface unlock + public demo (2026-07)
+
+Post-v0.1.2 incremental work. No-spec-impact.
+
+### Operator-facing changes
+
+- **Admin tiles unlocked (Tier 1–2).** The admin surface is now fully
+  navigable: audit-log viewer (`/admin/audit`), per-user active
+  sessions + capability grants/revokes, resource requests, **trash**
+  with soft-delete restore across assets/posts/collections, system
+  log, and an **API explorer served from the Go binary**
+  (`/api/v1/openapi.json`, replacing the external-spec fetch).
+- **`AA_DEMO_MODE`.** Env-gated demo mode — a `demo`/`demo` credential
+  hint + fill button on the sign-in screen and a read-only banner
+  when signed in as the demo user. Off by default; zero footprint on
+  real installs.
+- **Public read-only demo** at `demo.artist-alley.org` — runs the
+  release image behind a write-blocking nginx edge, seeded from the
+  Layer-A dataset, and auto-redeploys on each release.
+
 ## [Unreleased] — Encryption arc (Phase 1.22.I) complete
 
 The full encrypted-federation arc (1.22.I-a through 1.22.I-i) is

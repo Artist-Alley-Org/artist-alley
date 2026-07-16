@@ -73,12 +73,21 @@ The current release stream covers the foundations:
   scroller, sidebar with per-asset metadata, comments thread,
   likes, dedicated review canvas with zoom / pan / tile.
 - **Admin shell.** 13-section admin menu with dynamic landing
-  pages, capability-gated; Scalar-embedded API explorer; real
-  config surfaces for site, SMTP, auth providers, AI providers,
-  appearance (font slot picker — 14 fonts across 4 slots).
+  pages, capability-gated; real config surfaces for site, SMTP,
+  auth providers, AI providers, appearance (font slot picker —
+  14 fonts across 4 slots). An **admin-tile-unlock arc** (Tier 1–2,
+  2026-07) made the surface fully navigable: audit-log viewer,
+  per-user sessions + capability-grants, resource requests, trash
+  (soft-delete restore), system log, and an API explorer served
+  from the Go binary (`/api/v1/openapi.json`). Tier 3 (search/help
+  flip tiles + the remaining stubs) is in flight.
 - **Account shell.** Profile, theme + language preferences, API
-  tokens management. Other surfaces (security, sessions, drafts,
-  trash, activity, stats) stubbed with phase tags.
+  tokens management, active-session management. Remaining surfaces
+  (drafts, activity, stats) stubbed with phase tags.
+- **Public demo.** A read-only demo instance (`demo.artist-alley.org`)
+  runs the release image behind a write-blocking nginx edge, seeded
+  from the Layer-A dataset, `demo`/`demo` sign-in, env-gated demo
+  mode (`AA_DEMO_MODE`). Auto-redeploys on each release.
 - **Theme system.** M3-shaped color tokens (3-tier surface ladder,
   semantic success/warning/danger, on-* pairs, focus ring), light
   + dark palettes with intentional cross-mode hue shift, admin-
