@@ -206,14 +206,19 @@ step "Bringing up the dogfood profile (studio-b alongside dev)"
 # both failed as a cascade. Force-recreating both sides ensures
 # the binary + the schema state stay in lockstep with main's
 # tip on every nightly.
-docker compose \
-    -f docker-compose.yml \
-    -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --build
-docker compose \
-    -f docker-compose.yml \
-    -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --force-recreate app app-b
+# Layer the dogfood override onto COMPOSE_FILE rather than passing -f.
+# Compose's -f flags REPLACE the COMPOSE_FILE env wholesale, so the
+# hardcoded pair that used to live here silently discarded any override
+# the caller had layered on — including CI's resources override, which
+# is what drops every host port. That's why the nightly kept dying on
+# `Bind for 0.0.0.0:8080 failed: port is already allocated` on a shared
+# box where an unrelated service owns 8080 (#360). Appending keeps the
+# caller's layers and adds ours; the dogfood override declares no
+# ports, so a port-dropping override still wins.
+export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:infra/docker/dogfood/docker-compose.override.yml"
+
+docker compose --profile dogfood up -d --build
+docker compose --profile dogfood up -d --force-recreate app app-b
 
 # --- 5. wait for studio-b ready --------------------------------------------
 

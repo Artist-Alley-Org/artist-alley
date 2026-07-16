@@ -34,14 +34,16 @@ services:
       dockerfile: Dockerfile
       args:
         BUILD_VERSION: ci-${GITHUB_SHA:-dev}
-    # The dev compose uses `expose: [8080]` so only nginx talks to
-    # the app over the docker network. In CI we skip nginx, so
-    # publish the port to the host instead. Reuses the
-    # NGINX_HTTP_PORT env (host port) the workflow already
-    # remaps to 18188 so Playwright + apply.py both point at one
-    # URL.
-    ports:
-      - "${NGINX_HTTP_PORT:-8080}:8080"
+    # No host port is published, deliberately (#360). This used to
+    # publish ${NGINX_HTTP_PORT:-8080}, and since no workflow ever set
+    # that var it defaulted to 8080 — a port an unrelated service owns
+    # permanently on the shared runner box, so the stack could never
+    # come up. Nothing needs it either: the runner attaches to the
+    # compose network and Playwright reaches the app by DNS via the
+    # `app.aa` alias below. A hardcoded default that assumes a free
+    # port on a shared box is never safe; if a step ever genuinely
+    # needs one, publish an ephemeral port and read it back with
+    # `docker compose port app 8080`.
     # Chromium auto-upgrades single-label hostnames to HTTPS as
     # part of its dotless-host policy — `http://app:8080/login`
     # therefore fails with ERR_SSL_PROTOCOL_ERROR. Adding a
