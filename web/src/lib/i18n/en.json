@@ -783,7 +783,7 @@
           "duplicates": { "title": "Duplicate detection", "blurb": "Phash-based clustering and merge tools." },
           "checksums":  { "title": "Checksum verification", "blurb": "Re-hash stored bytes and report drift." },
           "reimport":   { "title": "Bulk re-import",  "blurb": "Re-scan and re-process from source." },
-          "trash":      { "title": "Trash",           "blurb": "Recently deleted assets pending purge." }
+          "trash":      { "title": "Trash",           "blurb": "Soft-deleted assets, posts, and collections — restore or purge." }
         }
       },
       "jobs": {
@@ -1215,6 +1215,21 @@
       "col_subject": "Subject",
       "col_ip": "IP",
       "label_event_id": "Event ID"
+    },
+    "trash": {
+      "title": "Trash",
+      "intro": "Soft-deleted assets, posts, and collections. Restore returns an item to its live state.",
+      "tab_assets": "Assets",
+      "tab_posts": "Posts",
+      "tab_collections": "Collections",
+      "empty": "Nothing here — no soft-deleted items of this type.",
+      "deleted_at": "Deleted",
+      "reason": "Reason",
+      "restore": "Restore",
+      "restoring": "Restoring…",
+      "restored": "Restored.",
+      "load_error": "Failed to load trash.",
+      "restore_error": "Failed to restore."
     },
     "system": {
       "title": "System configuration",

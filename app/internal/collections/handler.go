@@ -747,7 +747,14 @@ func (h *Handler) ListCollections(
 		if i >= int(limit) {
 			break
 		}
-		items = append(items, rowToAPI(r))
+		c := rowToAPI(r)
+		// Surface soft-delete state for the admin trash view.
+		if r.DeletedAt.Valid {
+			dt := r.DeletedAt.Time
+			c.DeletedAt = &dt
+			c.DeletedReason = r.DeletedReason
+		}
+		items = append(items, c)
 		lastCreatedAt = r.CreatedAt.Time
 		lastID = uuid.UUID(r.ID.Bytes)
 	}

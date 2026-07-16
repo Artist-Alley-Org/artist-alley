@@ -19,6 +19,21 @@
     "title": "Administration"
   },
   "admin": {
+    "trash": {
+      "title": "Corbeille",
+      "intro": "Ressources, publications et collections supprimées. Restaurer remet un élément à l'état actif.",
+      "tab_assets": "Ressources",
+      "tab_posts": "Publications",
+      "tab_collections": "Collections",
+      "empty": "Rien ici — aucun élément supprimé de ce type.",
+      "deleted_at": "Supprimé",
+      "reason": "Raison",
+      "restore": "Restaurer",
+      "restoring": "Restauration…",
+      "restored": "Restauré.",
+      "load_error": "Échec du chargement de la corbeille.",
+      "restore_error": "Échec de la restauration."
+    },
     "fields": {
       "group": "Groupe",
       "subject_kind": "Sujet",
