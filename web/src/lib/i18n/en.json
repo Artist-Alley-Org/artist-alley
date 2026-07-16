@@ -1710,7 +1710,12 @@
     "twofa_label": "Authenticator code (or recovery code)",
     "twofa_verify": "Verify",
     "twofa_cancel": "Cancel and use a different account",
-    "twofa_invalid": "That code didn't verify. Try again or use a recovery code."
+    "twofa_invalid": "That code didn't verify. Try again or use a recovery code.",
+    "demo_hint": "This is a public demo. Sign in with demo / demo to look around.",
+    "demo_fill": "Fill demo credentials"
+  },
+  "demo": {
+    "banner": "Read-only demo — changes you make won't be saved."
   },
   "register": {
     "title": "Create your account",

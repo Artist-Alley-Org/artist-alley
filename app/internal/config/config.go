@@ -88,6 +88,13 @@ type Config struct {
 	// set, missing file or pubkey mismatch fails the verifier closed.
 	OrgKeyPath string
 
+	// DemoMode mirrors AA_DEMO_MODE=1. When set, the public boot
+	// payload advertises the shared demo credentials on the login
+	// card and renders a "read-only demo" banner once signed in.
+	// Purely presentational — write-blocking for the demo deployment
+	// is enforced at the edge (nginx), not here. Off = zero footprint.
+	DemoMode bool
+
 	// Setup-wizard prefills. Pre-populating these via env makes it
 	// possible to script a deployment (Helm chart, Terraform, CI
 	// install test) without anyone typing into the browser form. None
@@ -132,6 +139,8 @@ func Load() (Config, error) {
 
 		BootstrapAdminPath:    envStr("AA_BOOTSTRAP_ADMIN_PATH", "/var/lib/artist-alley"),
 		BootstrapDefaultAdmin: envBool("AA_BOOTSTRAP_DEFAULT_ADMIN", false),
+
+		DemoMode: envBool("AA_DEMO_MODE", false),
 
 		StorageBackend:        envStr("AA_STORAGE_BACKEND", "fs"),
 		StorageFSRoot:         envStr("AA_STORAGE_FS_ROOT", "/var/lib/artist-alley/storage"),

@@ -124,6 +124,9 @@ class AppearanceState {
       // it to the site store so the wordmark / titles reflect the
       // operator-configured name without a second request.
       site.setName(data.site_name);
+      // Demo mode rides the same boot fetch — surface it so the login
+      // card and read-only banner can react without a second request.
+      site.setDemoMode(data.demo_mode);
     } finally {
       this.loaded = true;
     }

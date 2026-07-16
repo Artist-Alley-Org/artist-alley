@@ -9133,6 +9133,16 @@ components:
             before the user has signed in. Defaults to "Artist Alley"
             when the operator hasn't set one.
           example: Artist Alley
+        demo_mode:
+          type: boolean
+          readOnly: true
+          description: |
+            True when this install runs in demo mode (env
+            `AA_DEMO_MODE=1`). Surfaced on the public boot path so the
+            login card can advertise the shared demo credentials and a
+            read-only banner can render once signed in. Absent/false in
+            a normal install — zero footprint when off.
+          example: false
     Locale:
       type: object
       description: |
