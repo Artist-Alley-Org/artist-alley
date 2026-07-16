@@ -150,7 +150,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'integrations',
     iconKey: 'integrations',
     tiles: [
-      { key: 'api_explorer', status: 'stub',   href: '/admin/integrations/api' },
+      { key: 'api_explorer', status: 'live',   href: '/admin/integrations/api' },
       { key: 'api_tokens',   status: 'future', phase: '1.18' },
       { key: 'oauth_apps',   status: 'future', phase: '1.18' },
       { key: 'webhooks',     status: 'future', phase: '1.18' },
