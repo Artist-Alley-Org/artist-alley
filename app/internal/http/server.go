@@ -72,7 +72,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// cancel it after the HTTP listener stops accepting.
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 
-	backend, err := buildStorageBackend(cfg)
+	backend, err := BuildStorageBackend(cfg)
 	if err != nil {
 		serverCancel()
 		return nil, fmt.Errorf("storage backend: %w", err)
@@ -743,10 +743,11 @@ func workerPoolSize(cfg config.Config) int {
 	return n
 }
 
-// buildStorageBackend picks the storage.Backend implementation named
+// BuildStorageBackend picks the storage.Backend implementation named
 // by cfg.StorageBackend. Backend-specific config is validated by the
-// implementation's constructor.
-func buildStorageBackend(cfg config.Config) (storage.Backend, error) {
+// implementation's constructor. Exported so the `aa seed` subcommand
+// (cmd/aa) can construct the same backend the server uses.
+func BuildStorageBackend(cfg config.Config) (storage.Backend, error) {
 	switch cfg.StorageBackend {
 	case "fs", "":
 		return storagefs.New(cfg.StorageFSRoot)
