@@ -238,12 +238,28 @@ jobs:
     # portability + drift smoke gate.
     runs-on: [self-hosted, artist-alley]
     timeout-minutes: 30
-    # ui-nightly + ui-pr also queue under this group on the
-    # self-hosted runner — required to avoid the compose-stack
-    # race that took out an all-fail nightly post-#123-merge.
-    concurrency:
-      group: artist-alley-compose-stack
-      cancel-in-progress: false
+    # No compose-stack concurrency group any more (#331). Each run gets
+    # its own COMPOSE_PROJECT_NAME (isolated containers/network/volumes)
+    # and the resources override drops every host port, so two runs on
+    # the same commit — or across refs — no longer collide and don't
+    # need to be serialised. The top-level workflow concurrency (per
+    # ref) still cancels superseded runs of this workflow itself.
+    env:
+      # Per-run project name: isolates container names, the default
+      # network, and named volumes from every other run on this
+      # shared self-hosted runner. run_attempt keeps re-runs distinct.
+      COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # Layer the CI resources override onto every `docker compose`
+      # invocation — the workflow steps AND scripts/test.sh (which
+      # calls bare `docker compose`) both inherit this. It drops host
+      # ports and caps per-service memory.
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
+      # Cap Go build + test parallelism so three stacks at once stay
+      # within ~30 cores / ~24 GiB on the shared runner. Flows into the
+      # app image build (via the override's build args) and into
+      # test.sh's golang containers (forwarded with -e).
+      GOFLAGS: -p=10
+      GOMAXPROCS: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -254,9 +270,12 @@ jobs:
       # CI and local is the cause of half the "works on my machine"
       # bugs we'd otherwise hit.
       - name: Materialise .env for the stack
-        # The self-hosted runner already runs the user's own services
-        # on the default ports (postgres 5432, nginx 8080, vite 5173),
-        # so the CI stack uses high ports for every host binding.
+        # No host-port pins needed any more (#331): the resources
+        # override drops every published port, so the CI stack never
+        # touches host ports (which is what used to collide with the
+        # user's own services + between concurrent runs). Tests reach
+        # postgres via `docker compose exec` and the app over the
+        # compose network by DNS.
         #
         # AA_MASTER_KEY is required by docker-compose (the app needs
         # it to wrap the at-rest federation identity per ADR 0020).
@@ -266,31 +285,29 @@ jobs:
         run: |
           cp .env.example .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
-          {
-            echo "POSTGRES_HOST_PORT=15452"
-            echo "NGINX_HTTP_PORT=18188"
-            echo "VITE_HOST_PORT=15173"
-            echo "MINIO_API_PORT=19100"
-            echo "MINIO_CONSOLE_PORT=19101"
-            echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-          } >> .env
+          echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" >> .env
 
-      - name: Sweep any leaked CI containers from previous runs
-        # Self-hosted runners can leak containers if a previous job
-        # was cancelled or timed out. Clear them so the new run boots
-        # from a clean slate AND frees up the 15452 port if a stale
-        # container is sitting on it.
+      - name: Sweep this run's project + reap leaked CI containers
+        # First drop anything from THIS run's project (a retried run
+        # re-uses the same COMPOSE_PROJECT_NAME, so a previous attempt
+        # may have left containers behind).
         #
-        # `compose down` only knows containers tied to the current
-        # project's docker-compose.yml; an orphan container left over
-        # from a previous workspace (with the same name but a stale
-        # network ref) survives that and breaks the next `compose up`.
-        # The `docker rm -f` pass catches those by name prefix.
+        # Then reap leaked containers from OTHER crashed CI runs —
+        # but only ones that aren't running. A concurrent run's stack
+        # is up (running/healthy); restricting the reap to
+        # exited/created/dead states means we never kill a peer run
+        # that's mid-flight. This is the concurrency-safe replacement
+        # for the old blanket `docker rm -f name=^artist-alley-`, which
+        # would have taken out every parallel run.
         run: |
           docker compose down -v --remove-orphans || true
-          stale=$(docker ps -aq --filter "name=^artist-alley-")
-          if [ -n "$stale" ]; then
-            docker rm -f $stale || true
+          leaked=$(docker ps -aq \
+            --filter "name=^aa-ci-" \
+            --filter "status=exited" \
+            --filter "status=created" \
+            --filter "status=dead")
+          if [ -n "$leaked" ]; then
+            docker rm -f $leaked || true
           fi
           docker network prune -f || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
