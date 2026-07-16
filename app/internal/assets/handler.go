@@ -1234,7 +1234,15 @@ func (h *Handler) ListAssets(
 			if err != nil {
 				return nil, fmt.Errorf("assets: list tags: %w", err)
 			}
-			assetsList = append(assetsList, rowToAsset(listRowToGetRow(r), tags))
+			a := rowToAsset(listRowToGetRow(r), tags)
+			// Surface soft-delete state so the admin trash view
+			// (include_deleted=true) can identify + label deleted rows.
+			if r.DeletedAt.Valid {
+				dt := r.DeletedAt.Time
+				a.DeletedAt = &dt
+				a.DeletedReason = r.DeletedReason
+			}
+			assetsList = append(assetsList, a)
 			lastCreatedAt = r.CreatedAt.Time
 			lastID = uuid.UUID(r.ID.Bytes)
 		}

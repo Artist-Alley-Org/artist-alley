@@ -80,7 +80,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'duplicates',  status: 'future', phase: '1.15' },
       { key: 'checksums',   status: 'future', phase: '1.19' },
       { key: 'reimport',    status: 'future', phase: '1.15' },
-      { key: 'trash',       status: 'future', phase: '1.19' },
+      { key: 'trash',       status: 'live',   href: '/admin/storage/trash' },
     ],
   },
   {
