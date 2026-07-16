@@ -173,7 +173,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // directly reachable; the tile grid is the discoverable
       // entry point.
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
-      { key: 'log',          status: 'stub',   href: '/admin/system/log' },
+      { key: 'log',          status: 'live',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
       // Federation tiles moved to the dedicated `federation` section
       // — duplicating them under system was confusing UX (the
