@@ -94,7 +94,7 @@ jobs:
     # matching the lockfile and dodging the gnu rolldown parser
     # regression.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pre-pull once so subsequent steps don't each pay the
       # cold-start cost.
@@ -154,14 +154,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           cache-dependency-path: app/go.sum
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -262,7 +262,7 @@ jobs:
       GOMAXPROCS: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ---- Compose stack mirrors local dev so CI and
       # `./scripts/test.sh` exercise the same artifact (our app
@@ -387,13 +387,13 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build production image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
