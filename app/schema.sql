@@ -1816,6 +1816,21 @@ COMMENT ON COLUMN public.posts.subtitle_track_override IS 'Per-post override for
 
 
 --
+-- Name: featured_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.featured_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    subject_kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    position integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_user_ref bigint,
+    CONSTRAINT featured_items_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['asset'::text, 'collection'::text])))
+);
+
+
+--
 -- Name: resource_request; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2825,6 +2840,22 @@ ALTER TABLE ONLY public.post_tags
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: featured_items featured_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: featured_items featured_items_subject_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.featured_items
+    ADD CONSTRAINT featured_items_subject_unique UNIQUE (subject_kind, subject_id);
 
 
 --

@@ -402,6 +402,15 @@ type ExtractionFailure struct {
 	DismissedAt pgtype.Timestamptz
 }
 
+type FeaturedItem struct {
+	ID               pgtype.UUID
+	SubjectKind      string
+	SubjectID        pgtype.UUID
+	Position         int32
+	CreatedAt        pgtype.Timestamptz
+	CreatedByUserRef *int64
+}
+
 type FederationDirectory struct {
 	ID                    pgtype.UUID
 	DirectoryUrl          string
