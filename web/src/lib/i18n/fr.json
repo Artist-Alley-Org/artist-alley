@@ -46,6 +46,13 @@
       "required_marker": "obligatoire"
     }
   },
+  "login": {
+    "demo_hint": "Ceci est une démo publique. Connectez-vous avec demo / demo pour explorer.",
+    "demo_fill": "Remplir les identifiants de démo"
+  },
+  "demo": {
+    "banner": "Démo en lecture seule — vos modifications ne seront pas enregistrées."
+  },
   "common": {
     "save": "Enregistrer",
     "cancel": "Annuler"

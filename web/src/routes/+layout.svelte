@@ -106,6 +106,19 @@
          active session was minted via /admin/users/{ref}/impersonate.
          Above the header so it stays visible across navigation. -->
     <ImpersonationBanner />
+    {#if site.demoMode}
+      <!-- Read-only demo banner (AA_DEMO_MODE). Only inside showChrome,
+           so it's signed-in only; anonymous visitors see the login
+           card's demo hint instead. Write-blocking is enforced at the
+           edge — this is the visible half of that contract. -->
+      <div
+        class="shrink-0 border-b border-amber-500/40 bg-amber-500/15 px-6 py-1.5 text-center text-xs font-medium text-amber-700 dark:text-amber-300"
+        data-testid="demo-banner"
+        role="status"
+      >
+        {t('demo.banner')}
+      </div>
+    {/if}
     <!-- Header anchors at the top of the fixed-height shell. <main>
          is the scroll context for normal pages; admin overrides main
          with its own h-full / overflow-hidden flex container.
