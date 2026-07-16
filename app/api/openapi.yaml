@@ -2852,6 +2852,129 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /admin/featured:
+    get:
+      operationId: listFeaturedItems
+      summary: List admin-curated featured items (GitHub #341)
+      description: |
+        Returns the featured curation list in display order (position
+        ascending, then created_at). Each entry resolves its subject's
+        display title, plus thumbnail hints for asset subjects.
+        Requires `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Featured items in order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeaturedItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: addFeaturedItem
+      summary: Add an asset or collection to the featured list
+      description: |
+        Appends a subject to the curation list, or inserts it at the
+        given position. Re-adding an already-featured subject returns
+        409. Requires `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FeaturedItemInput" }
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeaturedItem" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Subject already featured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/featured/order:
+    put:
+      operationId: reorderFeaturedItems
+      summary: Reorder the featured list
+      description: |
+        Replaces the ordering with the supplied id sequence — each id
+        is assigned its 0-based array index as its new position, in one
+        transaction. Ids not present in the list are left untouched.
+        Requires `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Reordered.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/featured/{id}:
+    delete:
+      operationId: removeFeaturedItem
+      summary: Remove an entry from the featured list
+      description: |
+        Deletes one curation entry by its featured_items id (not the
+        subject id). Requires `system.admin`.
+      tags: [featured]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -9841,6 +9964,62 @@ components:
             (image, 3D, document, etc.). Tracks ride along with the
             asset; they do NOT appear in asset-count queries and do
             NOT federate as standalone activities.
+    FeaturedItem:
+      type: object
+      description: |
+        GitHub #341 — one admin-curated featured entry pointing at an
+        asset or collection, with an explicit ordering position and
+        the resolved subject title. Asset subjects also carry
+        thumbnail hints so the admin list can render a preview.
+      required: [id, subject_kind, subject_id, position, title, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The featured_items row id (used for remove/reorder).
+        subject_kind:
+          type: string
+          enum: [asset, collection]
+        subject_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          description: 0-based display order.
+        title:
+          type: string
+          description: |
+            Resolved subject title (asset title or collection name).
+            Empty when the subject was deleted out from under the row.
+        asset_file_hash:
+          type: string
+          nullable: true
+          description: Asset subjects only — thumbnail hint; null otherwise.
+        asset_has_image:
+          type: boolean
+          description: Asset subjects only — whether a raster thumbnail exists.
+        created_at:
+          type: string
+          format: date-time
+
+    FeaturedItemInput:
+      type: object
+      description: GitHub #341 — payload to feature an asset or collection.
+      required: [subject_kind, subject_id]
+      properties:
+        subject_kind:
+          type: string
+          enum: [asset, collection]
+        subject_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          nullable: true
+          description: |
+            Optional insertion position. Omit / null to append to the
+            end of the list.
+
     ResourceRequest:
       type: object
       description: |
