@@ -18,6 +18,7 @@
     statusBadgeClass,
     validTargetsFrom,
     transitionVerb,
+    relativeAgo,
   } from '$lib/admin/users';
 
   interface UserPublic {
@@ -405,7 +406,67 @@
     return id.slice(0, 8);
   }
 
-  onMount(() => { void loadOverrides(); });
+  // ── Active sessions (admin view; Phase 1.17.C) ──────────────────
+  // Same row shape as /account/sessions, minus `current` (the admin is
+  // viewing someone else's sessions). Any session is revocable.
+  interface SessionRow {
+    id: string;
+    created_at: string;
+    last_used_at: string;
+    expires_at?: string | null;
+    ip?: string | null;
+    user_agent?: string | null;
+  }
+
+  let sessions = $state<SessionRow[]>([]);
+  let sessionsLoading = $state(true);
+  let sessionsError = $state<string | null>(null);
+  let revokingSession = $state<string | null>(null);
+
+  async function loadSessions() {
+    sessionsLoading = true;
+    sessionsError = null;
+    try {
+      const r = await api.GET('/admin/users/{ref}/sessions', { params: { path: { ref } } });
+      if (r.error || !r.data) {
+        sessionsError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.sessions_load_error');
+        return;
+      }
+      sessions = (r.data as unknown as { items: SessionRow[] }).items ?? [];
+    } finally {
+      sessionsLoading = false;
+    }
+  }
+
+  async function revokeSession(id: string) {
+    if (revokingSession) return;
+    revokingSession = id;
+    sessionsError = null;
+    try {
+      const r = await api.DELETE('/admin/users/{ref}/sessions/{id}', { params: { path: { ref, id } } });
+      if (r.error) {
+        sessionsError = (r.error as { error?: string } | undefined)?.error
+          ?? t('admin.user_detail.sessions_revoke_error');
+        return;
+      }
+      sessions = sessions.filter((s) => s.id !== id);
+    } finally {
+      revokingSession = null;
+    }
+  }
+
+  function deviceLabel(ua: string | null | undefined): string {
+    if (!ua) return t('admin.user_detail.sessions_ua_unknown');
+    if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+    if (/Android/.test(ua)) return 'Android';
+    if (/Macintosh/.test(ua)) return 'macOS';
+    if (/Windows/.test(ua)) return 'Windows';
+    if (/Linux/.test(ua)) return 'Linux';
+    return ua.slice(0, 40);
+  }
+
+  onMount(() => { void loadOverrides(); void loadSessions(); });
 </script>
 
 <svelte:head><title>User {ref} — {site.name}</title></svelte:head>
@@ -767,6 +828,44 @@
           </div>
         </div>
       </div>
+    {/if}
+  </section>
+
+  <section class="mt-8">
+    <h3 class="mb-1 text-lg font-semibold">{t('admin.user_detail.sessions_section')}</h3>
+    <p class="mb-3 text-sm text-fg-muted">{t('admin.user_detail.sessions_intro')}</p>
+    {#if sessionsLoading}
+      <p class="text-sm text-fg-muted">{t('common.loading')}</p>
+    {:else if sessionsError}
+      <p role="alert" class="rounded border border-danger/40 bg-danger-container px-3 py-2 text-sm text-danger">{sessionsError}</p>
+    {:else if sessions.length === 0}
+      <p class="text-sm text-fg-muted">{t('admin.user_detail.sessions_none')}</p>
+    {:else}
+      <ul class="space-y-3">
+        {#each sessions as s (s.id)}
+          <li class="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-elevated px-4 py-3">
+            <div class="min-w-0 flex-1">
+              <span class="text-sm font-medium" title={s.user_agent ?? ''}>{deviceLabel(s.user_agent)}</span>
+              <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-muted">
+                {#if s.ip}<span>{t('admin.user_detail.sessions_ip')}: {s.ip}</span>{/if}
+                <span>{t('admin.user_detail.sessions_last_used')}: {relativeAgo(s.last_used_at)}</span>
+                <span>{t('admin.user_detail.sessions_created')}: {relativeAgo(s.created_at)}</span>
+                <span title={s.expires_at ?? ''}>
+                  {t('admin.user_detail.sessions_expires')}: {s.expires_at ? relativeAgo(s.expires_at) : t('admin.user_detail.sessions_never')}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onclick={() => revokeSession(s.id)}
+              disabled={revokingSession === s.id}
+              class="rounded border border-danger bg-danger/10 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/20 disabled:opacity-50"
+            >
+              {revokingSession === s.id ? t('admin.user_detail.sessions_revoking') : t('admin.user_detail.sessions_revoke')}
+            </button>
+          </li>
+        {/each}
+      </ul>
     {/if}
   </section>
 {/if}
