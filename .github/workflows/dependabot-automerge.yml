@@ -1,0 +1,162 @@
+# Auto-merge low-risk Dependabot bumps (#351).
+#
+# Dependabot opens weekly grouped minor-and-patch PRs per ecosystem
+# (gomod /app, npm /web, github_actions) targeting dev. Nobody triages
+# them, so green low-risk bumps sit and their transient failures read as
+# noise. This lands them automatically once CI is green, and leaves
+# major-version bumps for a human.
+#
+# Why this shape (not `gh pr merge --auto`):
+#   GitHub's native auto-merge requires a PROTECTED branch with required
+#   checks. dev has none, and adding protection would gate EVERY push to
+#   dev — including the planning agent's direct doc/roadmap/ADR pushes —
+#   behind PRs + required checks (admin-bypass or not, a repo-wide
+#   behaviour change). This workflow is self-contained: no branch
+#   protection, no repo-settings side effects.
+#
+# How it works (two triggers, one file):
+#   1. `pull_request` triage — reads the update type with
+#      dependabot/fetch-metadata and labels the PR: `automerge` for
+#      minor+patch (incl. the grouped minor-and-patch PRs, where
+#      fetch-metadata reports the HIGHEST bump in the group), or
+#      `major-review` + a comment for major (never merged).
+#   2. `workflow_run` merge — fires when a CI workflow finishes. Because
+#      workflow_run is NOT a Dependabot-triggered event, its GITHUB_TOKEN
+#      has normal write permissions (a Dependabot-triggered `pull_request`
+#      token is read-only-by-default, which is why the merge can't live
+#      there). It resolves the PR, and if it's an `automerge` candidate
+#      AND every check on the head SHA is green, squash-merges + deletes
+#      the branch. If other checks are still pending, it no-ops; the next
+#      workflow to finish re-fires it, so the last-to-finish check drives
+#      the merge.
+
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_run:
+    # Every workflow that produces a check on a Dependabot PR. When each
+    # finishes it re-evaluates the merge gate; the gate itself checks
+    # ALL checks, so listing the slow ones is enough to catch the last.
+    # (MDX hazard check is path-filtered to docs/** and never runs on a
+    # dependency bump, so it's not listed.)
+    workflows: ["CI", "UI dogfood (standalone)"]
+    types: [completed]
+
+# Deny by default; each job opts into exactly what it needs.
+permissions: {}
+
+jobs:
+  # ── Triage: label the PR by update type. Runs in the Dependabot
+  # `pull_request` context, where fetch-metadata can read the bump.
+  triage:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # label + comment the PR
+      issues: write          # create the labels if missing (labels API)
+    steps:
+      - name: Ensure the triage labels exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # `gh pr edit --add-label` fails on a label that doesn't exist;
+          # --force makes create idempotent (create-or-update).
+          gh label create automerge --repo "$GITHUB_REPOSITORY" --force \
+            --color 0e8a16 --description "Dependabot minor/patch — auto-merges on green CI"
+          gh label create major-review --repo "$GITHUB_REPOSITORY" --force \
+            --color b60205 --description "Dependabot major bump — needs manual review"
+
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Label minor + patch for auto-merge
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label automerge
+
+      - name: Flag major for manual review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label major-review
+          # Comment only on open/reopen, not on every synchronize push.
+          if [ "${{ github.event.action }}" != "synchronize" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body \
+              "🛑 Major-version bump — left for manual review. Auto-merge covers minor + patch only."
+          fi
+
+  # ── Merge: fires on CI completion, with a normal write token.
+  automerge:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # squash-merge + delete the branch
+      pull-requests: write   # merge the PR
+      checks: read           # gh pr checks — check runs
+      statuses: read         # gh pr checks — commit statuses
+    steps:
+      - name: Resolve the PR + gate on labels and all-green checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # The PR whose head is the SHA this CI run tested. (Reliable
+          # even when workflow_run.pull_requests is empty.)
+          pr=$(gh api "/repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+                 --jq '[.[] | select(.state=="open")][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open PR for ${HEAD_SHA}; nothing to merge."
+            exit 0
+          fi
+          echo "Resolved PR #${pr}"
+
+          # Defence in depth: must be a Dependabot PR flagged for
+          # auto-merge (minor/patch). Majors carry `major-review` only.
+          info=$(gh pr view "$pr" --repo "$REPO" \
+                   --json author,labels,state,isDraft)
+          if [ "$(echo "$info" | jq -r '.author.login')" != "app/dependabot" ]; then
+            echo "PR #${pr} is not a Dependabot PR; skipping."
+            exit 0
+          fi
+          if [ "$(echo "$info" | jq -r '.state')" != "OPEN" ] \
+             || [ "$(echo "$info" | jq -r '.isDraft')" = "true" ]; then
+            echo "PR #${pr} not open/ready; skipping."
+            exit 0
+          fi
+          if ! echo "$info" | jq -e '.labels[] | select(.name=="automerge")' >/dev/null; then
+            echo "PR #${pr} not labelled automerge (major or untriaged); skipping."
+            exit 0
+          fi
+
+          # Gate: every check on the PR must be green. `gh pr checks`
+          # exits non-zero while any check is pending or failing — so a
+          # still-running sibling workflow simply defers the merge to
+          # whichever check finishes last.
+          if ! gh pr checks "$pr" --repo "$REPO"; then
+            echo "PR #${pr} still has pending or failing checks; deferring."
+            exit 0
+          fi
+
+          echo "All checks green — squash-merging PR #${pr}."
+          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
