@@ -505,6 +505,30 @@
       "deny": "Deny",
       "decided": "Decision recorded ({decision})."
     },
+    "featured": {
+      "title": "Featured content",
+      "intro": "Hand-picked assets and collections a home or browse surface can spotlight. Drag order sets how they appear.",
+      "empty": "Nothing featured yet. Add an asset or collection below.",
+      "add_heading": "Feature an item",
+      "kind": "Kind",
+      "kind_asset": "Asset",
+      "kind_collection": "Collection",
+      "subject_id": "Asset or collection ID",
+      "subject_id_placeholder": "Paste a UUID",
+      "add": "Add",
+      "adding": "Adding…",
+      "remove": "Remove",
+      "move_up": "Move up",
+      "move_down": "Move down",
+      "untitled": "(untitled or deleted)",
+      "position": "Position {n}",
+      "added": "Added to featured.",
+      "removed": "Removed from featured.",
+      "reordered": "Order updated.",
+      "err_bad_id": "Enter a valid asset or collection ID.",
+      "err_duplicate": "That item is already featured.",
+      "err_generic": "Something went wrong. Try again."
+    },
     "federation": {
       "title": "Federation peers",
       "intro": "Trusted artist-alley instances this install will exchange activities with. Per ADR 0043, pairing alone shares no content.",
@@ -820,7 +844,7 @@
           "taxonomy":        { "title": "Tag taxonomy",    "blurb": "Tag hierarchy, aliases, and merge tools." },
           "site_text":       { "title": "Site text",       "blurb": "Override built-in strings without forking the catalogue." },
           "email_templates": { "title": "Email templates", "blurb": "Customize outbound mail bodies per event." },
-          "featured":        { "title": "Featured content","blurb": "Homepage curation and pinned collections." },
+          "featured":        { "title": "Featured content","blurb": "Curate the assets and collections a home or browse surface spotlights." },
           "defaults":        { "title": "Group defaults",  "blurb": "Resource defaults applied when a group uploads." }
         }
       },
