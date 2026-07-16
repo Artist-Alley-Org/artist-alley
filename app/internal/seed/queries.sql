@@ -109,3 +109,133 @@ RETURNING id, target_kind, target_id, parent_id, root_id, depth,
           like_count, edited_at, deleted_at,
           origin_server_id, created_at, updated_at,
           peer_id, actor_uri, activity_uri;
+
+-- =========================================================================
+-- `aa seed` DB-direct loader queries (issue #321). These replace the
+-- HTTP round-trips apply.py used to make; the seeder walks the same
+-- dependency-ordered phases but writes straight to the tables. All
+-- inserts are idempotent (ON CONFLICT DO NOTHING) so a re-run against
+-- a partially-seeded DB is a no-op rather than a hard error.
+-- =========================================================================
+
+-- name: SeedGetUserRefByUsername :one
+-- Lean username -> ref lookup used to resolve the bootstrap admin
+-- (collection owner) + asset/post authors that were created in an
+-- earlier run (so a resumed seed re-hydrates its ID map).
+SELECT ref FROM "user" WHERE username = $1;
+
+-- name: SeedListWorkflowStates :many
+-- Every workflow state, keyed by (domain, code) in the seeder. The
+-- baseline migration seeds domains 'asset:1' + 'post'; the seeder
+-- collapses the richer dataset state names onto these.
+SELECT id, domain, code FROM workflow_states;
+
+-- name: SeedListAssetTypes :many
+-- asset_type registry (Image=1, Document=2, ... seeded by baseline).
+-- The seeder maps the dataset's typed-folder labels onto these refs.
+SELECT ref, name FROM asset_types WHERE name IS NOT NULL;
+
+-- name: SeedInsertTeam :one
+-- Stable team id comes from dataset.teams.json. ON CONFLICT on the
+-- (origin_server_id, slug) unique key AND the id pkey are both
+-- possible on a resumed run; a bare DO NOTHING catches either.
+INSERT INTO teams (id, slug, name, description)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+RETURNING id;
+
+-- name: SeedGetTeamBySlug :one
+SELECT id FROM teams WHERE slug = $1 AND deleted_at IS NULL;
+
+-- name: SeedInsertTeamClosureSelf :exec
+-- Every team is its own depth-0 ancestor. The team hierarchy
+-- queries assume this self-row exists (matches the POST /teams path).
+INSERT INTO team_closure (ancestor_id, descendant_id, depth)
+VALUES ($1, $1, 0)
+ON CONFLICT DO NOTHING;
+
+-- name: SeedInsertTeamMembership :exec
+INSERT INTO team_memberships (team_id, user_ref)
+VALUES ($1, $2)
+ON CONFLICT (team_id, user_ref) DO NOTHING;
+
+-- name: SeedInsertField :one
+-- Field definition. `code` is the federation-stable natural key.
+INSERT INTO field_definition (
+    code, label, type, options, required, searchable, applies_to, subject_kind
+)
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+ON CONFLICT (code) DO NOTHING
+RETURNING id;
+
+-- name: SeedGetFieldByCode :one
+SELECT id FROM field_definition WHERE code = $1;
+
+-- name: SeedInsertCollection :one
+-- Stable id from dataset.collections.json; owner is the bootstrap
+-- admin (the dataset carries no per-collection owner).
+INSERT INTO collections (id, owner_user_ref, name, description, visibility)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO NOTHING
+RETURNING id;
+
+-- name: SeedInsertAsset :one
+-- Stable id from the MANIFEST. A bare ON CONFLICT DO NOTHING catches
+-- both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
+-- partial unique index (byte-identical duplicate owned by the same
+-- user) — the latter legitimately collapses one asset, matching the
+-- product's content-address invariant.
+INSERT INTO assets (
+    id, title, description, asset_type, owner_user_ref, status,
+    file_hash, file_extension, file_size_bytes, metadata,
+    state_id, team_id, sensitivity, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT DO NOTHING
+RETURNING id;
+
+-- name: SeedInsertAssetTag :exec
+INSERT INTO asset_tag (asset_id, tag, source)
+VALUES ($1, $2, 'import')
+ON CONFLICT (asset_id, tag) DO NOTHING;
+
+-- name: SeedInsertCollectionResource :exec
+INSERT INTO collection_resources (collection_id, asset_id)
+VALUES ($1, $2)
+ON CONFLICT (collection_id, asset_id) DO NOTHING;
+
+-- name: SeedInsertAssetFieldValue :exec
+-- Multi-type value column carried by the caller per the field's
+-- declared type (mirrors metadata handler.go's typeFromFieldDef).
+INSERT INTO asset_field_value (
+    asset_id, field_id, value_text, value_num, value_date, value_options, value_ref, set_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'import')
+ON CONFLICT (asset_id, field_id) DO NOTHING;
+
+-- name: SeedInsertPost :one
+-- Stable id from posts.json. author_user_ref resolved from
+-- author_username. cover set to the first resolved member asset.
+INSERT INTO posts (
+    id, author_user_ref, title, description, visibility,
+    cover_asset_id, cover_thumbnail_asset_id, state_id, team_id,
+    created_at, updated_at, posted_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $9)
+ON CONFLICT (id) DO NOTHING
+RETURNING id;
+
+-- name: SeedInsertPostAsset :exec
+INSERT INTO post_assets (post_id, asset_id, sort_order)
+VALUES ($1, $2, $3)
+ON CONFLICT (post_id, asset_id) DO NOTHING;
+
+-- name: SeedInsertPostTag :exec
+INSERT INTO post_tags (post_id, tag)
+VALUES ($1, $2)
+ON CONFLICT (post_id, tag) DO NOTHING;
+
+-- name: SeedInsertCollectionPost :exec
+INSERT INTO collection_posts (collection_id, post_id)
+VALUES ($1, $2)
+ON CONFLICT (collection_id, post_id) DO NOTHING;

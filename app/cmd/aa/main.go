@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,18 +25,123 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/federation/userkeys"
 	aahttp "github.com/mscrnt/artist-alley/app/internal/http"
 	"github.com/mscrnt/artist-alley/app/internal/logging"
+	"github.com/mscrnt/artist-alley/app/internal/seed"
+	"github.com/mscrnt/artist-alley/app/internal/storage"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Version is overwritten at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
 func main() {
+	// `aa seed ...` is a one-shot DB-direct loader subcommand (issue
+	// #321) that populates an instance from a site dataset without a
+	// running server. Everything else falls through to the server.
+	if len(os.Args) > 1 && os.Args[1] == "seed" {
+		if err := runSeed(os.Args[2:]); err != nil {
+			slog.Error("seed failed", slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		// At this point logging may already be set up; if not, fall
 		// back to stderr.
 		slog.Error("startup failed", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
+}
+
+// runSeed parses the seed flags, opens a pool + storage backend the
+// same way the server does, optionally resets the content tables, and
+// runs the seeder. It does NOT boot the HTTP server.
+func runSeed(args []string) error {
+	fs := flag.NewFlagSet("seed", flag.ContinueOnError)
+	site := fs.String("site", "", "populated site root (MANIFEST.json + posts.json + bytes)")
+	catalogue := fs.String("catalogue", "seed/profiles", "catalogue directory (seed/profiles)")
+	limitPerExt := fs.Int("limit-per-extension", 0, "keep at most N assets per file_extension (0 = no limit)")
+	reset := fs.Bool("reset", false, "TRUNCATE seed content tables before loading")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *site == "" {
+		return errors.New("seed: --site is required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := logging.Setup(cfg.LogLevel, cfg.LogFormat)
+
+	// User keypair minting in applyUsers wraps private keys with the
+	// AA_MASTER_KEY-derived cipher — init it up front, same as the
+	// server boot path.
+	if err := atrest.Init(); err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	pool, err := db.Open(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if *reset {
+		if err := resetSeedTables(ctx, pool, bootstrap.DefaultUsername); err != nil {
+			return fmt.Errorf("seed reset: %w", err)
+		}
+		logger.Info("seed.reset.done")
+	}
+
+	backend, err := aahttp.BuildStorageBackend(cfg)
+	if err != nil {
+		return fmt.Errorf("seed: storage backend: %w", err)
+	}
+	storageSvc := storage.NewService(backend, pool)
+
+	runner := seed.NewRunner(pool, storageSvc, seed.Options{
+		SiteRoot:      *site,
+		CatalogueRoot: *catalogue,
+		LimitPerExt:   *limitPerExt,
+		AdminUsername: bootstrap.DefaultUsername,
+		Logger:        logger,
+	})
+	counts, err := runner.Run(ctx)
+	if err != nil {
+		return err
+	}
+	logger.Info("seed.complete",
+		"users", counts.Users, "teams", counts.Teams,
+		"collections", counts.Collections, "assets", counts.Assets,
+		"posts", counts.Posts, "comments", counts.Comments)
+	fmt.Printf("seed complete: users=%d teams=%d collections=%d assets=%d posts=%d comments=%d\n",
+		counts.Users, counts.Teams, counts.Collections, counts.Assets, counts.Posts, counts.Comments)
+	return nil
+}
+
+// resetSeedTables clears the content tables so a re-seed starts from a
+// clean slate. Baseline lookups (workflow_states, asset_types) and the
+// bootstrap admin survive; every fictional user + all their content is
+// removed. CASCADE handles the join/dependent tables.
+func resetSeedTables(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error {
+	const truncate = `TRUNCATE
+	    assets, posts, comments, collections, teams, field_definition,
+	    storage_objects
+	    RESTART IDENTITY CASCADE`
+	if _, err := pool.Exec(ctx, truncate); err != nil {
+		return err
+	}
+	// Fictional users (everyone but the bootstrap admin). Their
+	// federation keys + profiles cascade.
+	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE username <> $1`, adminUsername); err != nil {
+		return err
+	}
+	return nil
 }
 
 func run() error {
