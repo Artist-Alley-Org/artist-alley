@@ -37,6 +37,21 @@
     }
   },
   "admin": {
+    "trash": {
+      "title": "Papelera",
+      "intro": "Recursos, publicaciones y colecciones eliminados. Restaurar devuelve un elemento a su estado activo.",
+      "tab_assets": "Recursos",
+      "tab_posts": "Publicaciones",
+      "tab_collections": "Colecciones",
+      "empty": "Nada aquí — no hay elementos eliminados de este tipo.",
+      "deleted_at": "Eliminado",
+      "reason": "Motivo",
+      "restore": "Restaurar",
+      "restoring": "Restaurando…",
+      "restored": "Restaurado.",
+      "load_error": "No se pudo cargar la papelera.",
+      "restore_error": "No se pudo restaurar."
+    },
     "title": "Administración",
     "fields": {
       "group": "Grupo",

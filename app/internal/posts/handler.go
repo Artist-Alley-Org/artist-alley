@@ -794,6 +794,15 @@ func (h *Handler) ListPosts(
 		full, err := h.fetchFullPost(ctx, r.ID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
+				// fetchFullPost (GetPost) filters deleted_at IS NULL, so a
+				// soft-deleted row lands here. For the admin trash view
+				// (include_deleted=true) surface it from the list row
+				// rather than dropping it.
+				if r.DeletedAt.Valid {
+					items = append(items, deletedPostFromListRow(r))
+					lastPostedAt = r.PostedAt.Time
+					lastID = uuid.UUID(r.ID.Bytes)
+				}
 				continue
 			}
 			return nil, err
@@ -1222,6 +1231,43 @@ func postRowToAPI(p GetPostRow, members []ListPostAssetsRow, tags []string) open
 			SortOrder: int(m.SortOrder),
 			Asset:     memberToAsset(m),
 		})
+	}
+	return out
+}
+
+// deletedPostFromListRow builds a minimal Post for a soft-deleted row
+// in the admin trash listing. GetPost (used by fetchFullPost) filters
+// deleted_at IS NULL, so a deleted post can't be fully hydrated — the
+// scalar fields the list row carries are enough for the trash view
+// (title + deletion metadata + a restore target).
+func deletedPostFromListRow(r ListPostsPageRow) openapi.Post {
+	out := openapi.Post{
+		Id:            openapi_types.UUID(r.ID.Bytes),
+		AuthorUserRef: r.AuthorUserRef,
+		Title:         r.Title,
+		Visibility:    openapi.PostVisibility(r.Visibility),
+		PostedAt:      r.PostedAt.Time,
+		CreatedAt:     r.CreatedAt.Time,
+		UpdatedAt:     r.UpdatedAt.Time,
+		Members:       []openapi.PostMember{},
+		Tags:          []string{},
+	}
+	if r.DeletedAt.Valid {
+		dt := r.DeletedAt.Time
+		out.DeletedAt = &dt
+		out.DeletedReason = r.DeletedReason
+	}
+	if r.StateID.Valid {
+		v := openapi_types.UUID(r.StateID.Bytes)
+		out.StateId = &v
+	}
+	if r.TeamID.Valid {
+		v := openapi_types.UUID(r.TeamID.Bytes)
+		out.TeamId = &v
+	}
+	if r.OriginServerID.Valid {
+		v := openapi_types.UUID(r.OriginServerID.Bytes)
+		out.OriginServerId = &v
 	}
 	return out
 }

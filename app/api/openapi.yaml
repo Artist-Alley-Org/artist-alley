@@ -9613,6 +9613,18 @@ components:
             collections sync in from a peer in a later phase.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Soft-delete timestamp. Non-null only on rows surfaced by
+            the admin `include_deleted=true` listing (the trash view);
+            null on live rows.
+        deleted_reason:
+          type: string
+          nullable: true
+          description: Optional reason captured at soft-delete time.
     CollectionCreate:
       type: object
       required: [name]
@@ -9807,6 +9819,18 @@ components:
             non-image resources.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Soft-delete timestamp. Non-null only on rows surfaced by
+            the admin `include_deleted=true` listing (the trash view);
+            null on live rows.
+        deleted_reason:
+          type: string
+          nullable: true
+          description: Optional reason captured at soft-delete time.
         subtitle_tracks:
           type: array
           items: { $ref: '#/components/schemas/SubtitleTrack' }
@@ -10208,6 +10232,18 @@ components:
             team scope; only visibility / role / ACL gates apply.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Soft-delete timestamp. Non-null only on rows surfaced by
+            the admin `include_deleted=true` listing (the trash view);
+            null on live rows.
+        deleted_reason:
+          type: string
+          nullable: true
+          description: Optional reason captured at soft-delete time.
     PostMember:
       type: object
       description: |
