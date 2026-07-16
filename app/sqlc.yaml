@@ -472,6 +472,19 @@ sql:
         emit_prepared_queries: false
         emit_methods_with_db_argument: false
   - engine: postgresql
+    queries: internal/featured/queries.sql
+    schema: schema.sql
+    gen:
+      go:
+        package: featured
+        out: internal/featured
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_interface: false
+        emit_prepared_queries: false
+        emit_methods_with_db_argument: false
+  - engine: postgresql
     queries: internal/search/saved/queries.sql
     schema: schema.sql
     gen:

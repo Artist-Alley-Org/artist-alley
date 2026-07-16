@@ -220,6 +220,26 @@ func (*PanicShim) RestoreCollection(context.Context, openapi.RestoreCollectionRe
 	panic("PanicShim: RestoreCollection called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListFeaturedItems panics by default; test shims override.
+func (*PanicShim) ListFeaturedItems(context.Context, openapi.ListFeaturedItemsRequestObject) (openapi.ListFeaturedItemsResponseObject, error) {
+	panic("PanicShim: ListFeaturedItems called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// AddFeaturedItem panics by default; test shims override.
+func (*PanicShim) AddFeaturedItem(context.Context, openapi.AddFeaturedItemRequestObject) (openapi.AddFeaturedItemResponseObject, error) {
+	panic("PanicShim: AddFeaturedItem called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ReorderFeaturedItems panics by default; test shims override.
+func (*PanicShim) ReorderFeaturedItems(context.Context, openapi.ReorderFeaturedItemsRequestObject) (openapi.ReorderFeaturedItemsResponseObject, error) {
+	panic("PanicShim: ReorderFeaturedItems called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RemoveFeaturedItem panics by default; test shims override.
+func (*PanicShim) RemoveFeaturedItem(context.Context, openapi.RemoveFeaturedItemRequestObject) (openapi.RemoveFeaturedItemResponseObject, error) {
+	panic("PanicShim: RemoveFeaturedItem called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListFederationDirectories panics by default; test shims override.
 func (*PanicShim) ListFederationDirectories(context.Context, openapi.ListFederationDirectoriesRequestObject) (openapi.ListFederationDirectoriesResponseObject, error) {
 	panic("PanicShim: ListFederationDirectories called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
