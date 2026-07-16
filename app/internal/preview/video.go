@@ -26,6 +26,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -115,10 +116,10 @@ func (h *VideoHandler) Type() jobs.JobType { return jobs.TypePreviewVideo }
 // for the H.264 ladder. Higher = preferred. The worker picks the
 // highest-rank profile the local ffmpeg actually has compiled.
 type EncoderProfile struct {
-	Name        string // "h264_nvenc", "h264_qsv", "h264_vaapi", "h264_videotoolbox", "libx264"
-	Kind        string // "gpu" or "cpu"
-	ExtraArgs   []string
-	RankAtBoot  int // diagnostic, set at probe time
+	Name       string // "h264_nvenc", "h264_qsv", "h264_vaapi", "h264_videotoolbox", "libx264"
+	Kind       string // "gpu" or "cpu"
+	ExtraArgs  []string
+	RankAtBoot int // diagnostic, set at probe time
 }
 
 func (h *VideoHandler) detectEncoder(ctx context.Context) EncoderProfile {
@@ -502,8 +503,8 @@ func (h *VideoHandler) writePosterVariants(ctx context.Context, hash, posterPath
 // ---------------------------------------------------------------------------
 
 type rendition struct {
-	Name        string
-	Height      int
+	Name         string
+	Height       int
 	VideoBitkbps int
 	AudioBitkbps int
 	Bandwidth    int // for master playlist; ~1.2x bitrate
@@ -788,14 +789,20 @@ func (h *VideoHandler) markFailed(ctx context.Context, id uuid.UUID, msg string)
 	}
 }
 
-// videoExts mirrors assets.videoExts (kept in sync by convention).
-var videoExts = map[string]struct{}{
-	"mp4": {}, "mov": {}, "mkv": {}, "webm": {}, "avi": {},
-	"wmv": {}, "mpg": {}, "mpeg": {}, "3gp": {}, "flv": {},
-	"m4v": {}, "ts": {},
-}
-
+// isVideoExt reports whether preview.video can decode ext.
+//
+// It reads dispatch.VideoExts — the very set that ROUTES work here —
+// rather than a private copy kept in sync "by convention" (#362). That
+// copy had silently drifted 7 entries behind the router, so f4v, insv,
+// lrv, m2ts, mts, mxf and vob were routed here and then hard-rejected,
+// and those assets never got a preview. One set, read by both the
+// router and the handler, cannot drift; preview_dispatch_test.go
+// asserts it.
+//
+// All seven are demuxable by the ffmpeg this handler already shells out
+// to (mxf; mts/m2ts via mpegts; vob via mpeg-ps; f4v via flv; lrv +
+// insv are mp4) — the set was simply under-declared. Verified against
+// the runtime image's `ffmpeg -formats`.
 func isVideoExt(ext string) bool {
-	_, ok := videoExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
-	return ok
+	return dispatch.Has(dispatch.VideoExts, ext)
 }
