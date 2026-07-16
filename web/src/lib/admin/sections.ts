@@ -101,10 +101,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'search',
     tiles: [
       { key: 'index',        status: 'future', phase: '1.12' },
-      { key: 'reindex',      status: 'future', phase: '1.12' },
-      { key: 'analytics',    status: 'future', phase: '1.12' },
+      { key: 'reindex',      status: 'live',   href: '/admin/search/reindex' },
+      { key: 'analytics',    status: 'live',   href: '/admin/search/dashboard' },
       { key: 'synonyms',     status: 'future', phase: '1.12' },
-      { key: 'saved',        status: 'future', phase: '1.12' },
+      { key: 'saved',        status: 'live',   href: '/admin/saved-searches' },
       { key: 'smart',        status: 'future', phase: '1.11' },
     ],
   },
@@ -166,6 +166,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'smtp',         status: 'live',   href: '/admin/system/smtp' },
       { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
       { key: 'self_edit_gates', status: 'live', href: '/admin/system/users' },
+      // The license page (/admin/system/license) shipped with the
+      // licensing work but never got a tile — this is its front door.
+      { key: 'license',      status: 'live',   href: '/admin/system/license' },
       // Phase 1.14.A-bridge — collapsed three AI tiles into one
       // landing tile. /admin/system/ai is now a hub pointing at the
       // provider list, the inference config, the usage dashboard,

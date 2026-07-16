@@ -869,6 +869,7 @@
           "smtp":         { "title": "SMTP",          "blurb": "Outbound email server." },
           "auth":         { "title": "Authentication","blurb": "Password policy and SSO providers." },
           "self_edit_gates": { "title": "User self-edit", "blurb": "Per-field locks for what users can edit on their own profile." },
+          "license":      { "title": "License",       "blurb": "Installation license status, tier, and upload." },
           "ai":           { "title": "AI",            "blurb": "Provider credentials, inference routing, cost dashboard, and tag provenance — one hub." },
           "log":          { "title": "System log",    "blurb": "Audit trail of admin actions." },
           "activities":   { "title": "Activity ledger","blurb": "Activity ledger — every Create/Update/Delete/Like/Follow emitted and received (per ADR 0044)." },
