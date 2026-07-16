@@ -18,7 +18,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-const capAdmin = "system.admin"
+const (
+	capAdmin = "system.admin"
+	// capRead gates the directory READ surfaces (#356). Subscribe,
+	// unsubscribe, poll, and publish-listing stay on capAdmin.
+	capRead = "federation.read"
+)
 
 // AdminHandler is the openapi-strict adapter.
 type AdminHandler struct {
@@ -56,9 +61,9 @@ func (h *AdminHandler) ListFederationDirectories(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationDirectories403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	dirs, err := h.registry.List(ctx)
@@ -208,9 +213,9 @@ func (h *AdminHandler) ListFederationDirectoryEntries(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.ListFederationDirectoryEntries403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 	if _, err := h.registry.ByID(ctx, uuid.UUID(req.Id)); err != nil {

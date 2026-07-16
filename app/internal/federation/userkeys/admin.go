@@ -50,7 +50,12 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 )
 
-const capAdmin = "system.admin"
+const (
+	capAdmin = "system.admin"
+	// capRead gates the key-health READ (#356). Admin-initiated key
+	// rotation stays on capAdmin; self-rotation is the user's own.
+	capRead = "federation.read"
+)
 
 // RetentionDaysSysconfigKey is the system_config row that holds
 // the default retained_until grace window (in days). Migration
@@ -219,9 +224,9 @@ func (h *AdminHandler) GetFederationKeyHealth(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !id.Can(capAdmin) {
+	if !id.Can(capRead) && !id.Can(capAdmin) {
 		return openapi.GetFederationKeyHealth403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: capRead + " capability required"},
 		}, nil
 	}
 
