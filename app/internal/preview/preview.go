@@ -64,6 +64,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/asset/metadata/raw"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -259,6 +260,11 @@ func (h *RasterHandler) loadSourceWithMeta(ctx context.Context, hash, ext string
 		// 8-bit-per-channel range every other variant expects.
 		// ffmpeg handles both in one call: see decodeHDR.
 		img, err := decodeHDR(io.LimitReader(rc, h.MaxSourceBytes+1), e)
+		return img, nil, err
+	case "avif", "heic", "heif":
+		// HEIF family — no stdlib decoder, and ffmpeg 5.1 can't demux
+		// HEIC at all. ImageMagick carries libheif: see decodeHEIF.
+		img, err := decodeHEIF(io.LimitReader(rc, h.MaxSourceBytes+1), e)
 		return img, nil, err
 	}
 	// Buffer the bytes so we can both decode + return them for
@@ -519,22 +525,22 @@ func (h *RasterHandler) markFailed(ctx context.Context, id uuid.UUID, msg string
 // helpers
 // ---------------------------------------------------------------------------
 
-// rasterExts is the extension allowlist for preview.raster. Mirrors
-// assets.imageExts (kept in sync by convention). Includes raw-camera
-// formats (CR2/NEF/DNG/ARW/RW2) — handled via the embedded-preview
-// fallback in loadRawPreview rather than image.Decode.
-var rasterExts = map[string]struct{}{
-	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "bmp": {},
-	"tif": {}, "tiff": {}, "webp": {},
-	"svg": {},
-	"hdr": {}, "exr": {}, "pic": {},
-	// Raw camera (Phase 1.18.A-3.B):
-	"cr2": {}, "nef": {}, "dng": {}, "arw": {}, "rw2": {},
-}
-
+// isRasterExt reports whether preview.raster can decode ext.
+//
+// It reads dispatch.ImageExts — the very set that ROUTES work here —
+// rather than a local copy (#362). There used to be a private
+// `rasterExts` that claimed to mirror assets.imageExts "by convention";
+// it had drifted to 3 fewer entries, so avif/heic/heif routed here and
+// were then terminal-rejected, and the asset never got a preview.
+// Convention is not a mechanism. One set, read by both the router and
+// the handler, cannot drift — and preview_dispatch_test.go asserts it.
+//
+// Sub-paths inside the raster handler still branch by extension
+// (rawExts → embedded preview, svg → rsvg, hdr/exr → ffmpeg,
+// avif/heic/heif → libheif); those are decode strategies, not
+// membership.
 func isRasterExt(ext string) bool {
-	_, ok := rasterExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
-	return ok
+	return dispatch.Has(dispatch.ImageExts, ext)
 }
 
 // rawExts is the raw-camera subset of rasterExts. Used by the
