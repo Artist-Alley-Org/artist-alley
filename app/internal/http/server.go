@@ -335,6 +335,24 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		r.Get("/assets/{id}/variants/views/*",
 			handlers.NewPathVariantHandler(pool, storageSvc, logger, "views").ServeHTTP)
 
+		// Serve the embedded OpenAPI spec as JSON for the in-app API
+		// explorer (Scalar, at /admin/integrations/api). Public — the
+		// spec is the published contract, not a secret — and served
+		// straight from the codegen-embedded blob so there's no spec
+		// file to mount. Works identically in dev (Vite proxies
+		// /api/* → nginx → app) and prod, which the old dev-only
+		// SvelteKit file-read route did not.
+		r.Get("/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
+			spec, err := openapi.RawSpecJSON()
+			if err != nil {
+				http.Error(w, "openapi spec unavailable", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=300")
+			_, _ = w.Write(spec)
+		})
+
 		impl = newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
 		// Hand the provider registry to the auth handler now that
 		// both exist. Done out-of-band rather than threading through

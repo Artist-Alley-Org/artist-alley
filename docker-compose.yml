@@ -66,6 +66,11 @@ services:
       # random password out of the boot log. PRODUCTION DEPLOYS
       # MUST OMIT THIS — see internal/bootstrap/bootstrap.go.
       AA_BOOTSTRAP_DEFAULT_ADMIN: ${AA_BOOTSTRAP_DEFAULT_ADMIN:-1}
+      # Demo mode: advertise the shared demo credentials on the login
+      # card + render a "read-only demo" banner once signed in. Off by
+      # default (zero footprint); the public demo deployment sets
+      # AA_DEMO_MODE=1. Write-blocking itself is enforced at the edge.
+      AA_DEMO_MODE: ${AA_DEMO_MODE:-0}
       # Storage root for the fs backend. Mounted as a named volume below
       # so uploads survive container rebuilds. Operators pointing at s3
       # set AA_STORAGE_BACKEND=s3 and ignore this.

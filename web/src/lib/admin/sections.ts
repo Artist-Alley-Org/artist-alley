@@ -40,7 +40,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       { key: 'users',      status: 'live',   href: '/admin/users' },
       { key: 'roles',      status: 'live',   href: '/admin/roles' },
       { key: 'groups',     status: 'live',   href: '/admin/teams' },
-      { key: 'sessions',   status: 'future', phase: '1.17' },
+      // Per-user active sessions are managed on the user-detail page
+      // (admin/users/[ref], Phase 1.17.C). The tile lands on the user
+      // list; drill into a user to view + revoke their sessions.
+      { key: 'sessions',   status: 'live',   href: '/admin/users' },
       // `audit` moved to the automation section (its natural home alongside workflow + triggers).
       // `workflow` moved to the automation section.
       // Per-user grants/revokes are managed on the user-detail page
@@ -147,7 +150,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'integrations',
     iconKey: 'integrations',
     tiles: [
-      { key: 'api_explorer', status: 'stub',   href: '/admin/integrations/api' },
+      { key: 'api_explorer', status: 'live',   href: '/admin/integrations/api' },
       { key: 'api_tokens',   status: 'future', phase: '1.18' },
       { key: 'oauth_apps',   status: 'future', phase: '1.18' },
       { key: 'webhooks',     status: 'future', phase: '1.18' },
@@ -170,7 +173,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
       // directly reachable; the tile grid is the discoverable
       // entry point.
       { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
-      { key: 'log',          status: 'stub',   href: '/admin/system/log' },
+      { key: 'log',          status: 'live',   href: '/admin/system/log' },
       { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
       // Federation tiles moved to the dedicated `federation` section
       // — duplicating them under system was confusing UX (the

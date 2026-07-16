@@ -33,6 +33,13 @@ function readCache(): string {
 class SiteState {
   name = $state(readCache());
 
+  /** True when this install runs in demo mode (env AA_DEMO_MODE). Rides
+   *  the same public /appearance boot fetch as the name. Drives the
+   *  login-card demo-credential hint and the read-only banner. Not
+   *  cached — it defaults to false until the boot fetch confirms it, so
+   *  a normal install never briefly flashes demo chrome. */
+  demoMode = $state(false);
+
   /** Called by the appearance store after the public boot fetch. A
    *  blank/absent value keeps the default rather than clearing it. */
   setName(next: string | null | undefined): void {
@@ -45,6 +52,11 @@ class SiteState {
         // localStorage disabled / quota'd — ignore; in-memory value stands.
       }
     }
+  }
+
+  /** Called by the appearance store after the public boot fetch. */
+  setDemoMode(next: boolean | null | undefined): void {
+    this.demoMode = next === true;
   }
 }
 

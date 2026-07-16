@@ -751,7 +751,7 @@
           "users":              { "title": "Users",                "blurb": "List, search, suspend, and assign roles." },
           "roles":              { "title": "Roles & capabilities", "blurb": "Roles and the capabilities each one grants." },
           "groups":             { "title": "Groups & teams",       "blurb": "Group analogues and the team hierarchy." },
-          "sessions":           { "title": "Sessions",             "blurb": "Active sessions across all users; revoke at will." },
+          "sessions":           { "title": "Sessions",             "blurb": "Per-user active sessions; revoke any device." },
           "capability_grants":  { "title": "Capability grants",    "blurb": "Per-user explicit grants and revokes." },
           "requests":           { "title": "Resource requests",    "blurb": "Approve or deny pending access requests." }
         }
@@ -1025,7 +1025,20 @@
       "overrides_add_grant_error": "Failed to add grant.",
       "overrides_remove_grant_error": "Failed to remove grant.",
       "overrides_add_revoke_error": "Failed to add revoke.",
-      "overrides_remove_revoke_error": "Failed to remove revoke."
+      "overrides_remove_revoke_error": "Failed to remove revoke.",
+      "sessions_section": "Active sessions",
+      "sessions_intro": "This user's active sign-in sessions. Revoke any to force that device to re-authenticate.",
+      "sessions_load_error": "Failed to load sessions.",
+      "sessions_revoke_error": "Failed to revoke session.",
+      "sessions_none": "No active sessions.",
+      "sessions_ip": "IP",
+      "sessions_last_used": "Last used",
+      "sessions_created": "Signed in",
+      "sessions_expires": "Expires",
+      "sessions_never": "never",
+      "sessions_revoke": "Revoke",
+      "sessions_revoking": "Revoking…",
+      "sessions_ua_unknown": "Unknown device"
     },
     "roles": {
       "title": "Roles & capabilities",
@@ -1712,7 +1725,12 @@
     "twofa_label": "Authenticator code (or recovery code)",
     "twofa_verify": "Verify",
     "twofa_cancel": "Cancel and use a different account",
-    "twofa_invalid": "That code didn't verify. Try again or use a recovery code."
+    "twofa_invalid": "That code didn't verify. Try again or use a recovery code.",
+    "demo_hint": "This is a public demo. Sign in with demo / demo to look around.",
+    "demo_fill": "Fill demo credentials"
+  },
+  "demo": {
+    "banner": "Read-only demo — changes you make won't be saved."
   },
   "register": {
     "title": "Create your account",

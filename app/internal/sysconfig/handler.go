@@ -63,6 +63,12 @@ type Handler struct {
 	// (test fixtures that don't exercise email), SendSMTPTestEmail
 	// returns a 500 explaining the boot wire is missing.
 	Email *EmailDeps
+
+	// DemoMode mirrors config.Config.DemoMode (env AA_DEMO_MODE). When
+	// true it's surfaced on the public /appearance boot payload so the
+	// login card and read-only banner can render. Defaults to the zero
+	// value (false) — a normal install never advertises demo mode.
+	DemoMode bool
 }
 
 // EmailDeps bundles the email-related dependencies the handler
@@ -606,5 +612,10 @@ func (h *Handler) GetPublicAppearance(
 		name = SiteNameOrDefault(site.Name)
 	}
 	out.SiteName = &name
+	// Advertise demo mode along the same boot path so the login card
+	// and read-only banner can react without a second fetch. Only ever
+	// true when AA_DEMO_MODE=1 was set at boot.
+	demo := h.DemoMode
+	out.DemoMode = &demo
 	return openapi.GetPublicAppearance200JSONResponse(out), nil
 }

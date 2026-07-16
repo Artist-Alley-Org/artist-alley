@@ -279,7 +279,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 		social:       social.NewHandler(pool, logger, cacheReg),
 		setup:        setup.NewHandler(pool, logger, cfg, sysCfg, storageBackend, auditRec),
 		workflow:     workflow.NewHandler(pool, logger, cacheReg),
-		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec),
+		sysconfigH:   sysconfigHandlerWithAudit(pool, sysCfg, logger, auditRec, cfg.DemoMode),
 		i18n:         i18n.NewHandler(logger),
 		jobs:         jobs.NewHTTPHandler(jobSvc, logger),
 		jobsSvc:      jobSvc,
@@ -1997,9 +1997,10 @@ func usersHandlerWithAudit(pool *pgxpool.Pool, logger *slog.Logger, cacheReg *ca
 // sysconfigHandlerWithAudit mirrors usersHandlerWithAudit — wires
 // the audit recorder so Phase 1.17.D's RecordChange call sites in
 // the Update* config handlers have somewhere to emit to.
-func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder) *sysconfig.Handler {
+func sysconfigHandlerWithAudit(pool *pgxpool.Pool, store *sysconfig.Store, logger *slog.Logger, auditRec *audit.Recorder, demoMode bool) *sysconfig.Handler {
 	h := sysconfig.NewHTTPHandler(pool, store, logger)
 	h.SetAuditRecorder(auditRec)
+	h.DemoMode = demoMode
 	return h
 }
 
