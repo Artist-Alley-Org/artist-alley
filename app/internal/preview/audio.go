@@ -28,6 +28,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cue"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
 	"github.com/mscrnt/artist-alley/app/internal/nfo"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -44,10 +45,10 @@ type AudioPayload struct {
 // AudioResult — what the worker writes back into jobs.result for
 // the admin queue page.
 type AudioResult struct {
-	Variants    []string      `json:"variants"`
-	Skipped     []string      `json:"skipped"`
-	Metadata    AudioMetadata `json:"metadata"`
-	WorkS       float64       `json:"work_s"`
+	Variants []string      `json:"variants"`
+	Skipped  []string      `json:"skipped"`
+	Metadata AudioMetadata `json:"metadata"`
+	WorkS    float64       `json:"work_s"`
 }
 
 // AudioMetadata is the extracted track info the asset page will
@@ -108,10 +109,10 @@ type AudioMetadata struct {
 // the chapter's TAGS.title; empty string when missing (we render
 // "Chapter N" in that case at the frontend).
 type AudioChapter struct {
-	ID      int     `json:"id"`
-	StartS  float64 `json:"start_s"`
-	EndS    float64 `json:"end_s"`
-	Title   string  `json:"title,omitempty"`
+	ID     int     `json:"id"`
+	StartS float64 `json:"start_s"`
+	EndS   float64 `json:"end_s"`
+	Title  string  `json:"title,omitempty"`
 }
 
 // AlbumInfo is the projected album metadata for an audiobook —
@@ -119,17 +120,17 @@ type AudioChapter struct {
 // commit, fetched from an online catalogue (Audible / OpenLibrary /
 // MusicBrainz). All fields optional.
 type AlbumInfo struct {
-	Title         string       `json:"title,omitempty"`
-	Artist        string       `json:"artist,omitempty"`
-	AlbumArtist   string       `json:"album_artist,omitempty"`
-	Genre         string       `json:"genre,omitempty"`
-	Year          string       `json:"year,omitempty"`
-	Summary       string       `json:"summary,omitempty"`
-	RuntimeS      float64      `json:"runtime_s,omitempty"`
-	MBAlbumID     string       `json:"mb_album_id,omitempty"`
-	MBArtistID    string       `json:"mb_artist_id,omitempty"`
-	MBReleaseID   string       `json:"mb_release_id,omitempty"`
-	Tracks        []AlbumTrack `json:"tracks,omitempty"`
+	Title       string       `json:"title,omitempty"`
+	Artist      string       `json:"artist,omitempty"`
+	AlbumArtist string       `json:"album_artist,omitempty"`
+	Genre       string       `json:"genre,omitempty"`
+	Year        string       `json:"year,omitempty"`
+	Summary     string       `json:"summary,omitempty"`
+	RuntimeS    float64      `json:"runtime_s,omitempty"`
+	MBAlbumID   string       `json:"mb_album_id,omitempty"`
+	MBArtistID  string       `json:"mb_artist_id,omitempty"`
+	MBReleaseID string       `json:"mb_release_id,omitempty"`
+	Tracks      []AlbumTrack `json:"tracks,omitempty"`
 }
 
 // AlbumTrack is one entry in an album's track listing. Position
@@ -166,14 +167,14 @@ type SubtitleTrack struct {
 // codec, ID3/Vorbis tags, etc) onto the asset's metadata JSONB.
 //
 // Pipeline:
-//   1. Stage source bytes to a temp file (ffmpeg / ffprobe need a
-//      seekable path)
-//   2. ffprobe → JSON → AudioMetadata
-//   3. ffmpeg's `showwavespic` filter → wide PNG waveform
-//   4. fan PNG through col / preview / screen / hires (same encoder
-//      used by preview.raster, so transparent waveforms preserve
-//      alpha automatically)
-//   5. mark asset ready + write metadata
+//  1. Stage source bytes to a temp file (ffmpeg / ffprobe need a
+//     seekable path)
+//  2. ffprobe → JSON → AudioMetadata
+//  3. ffmpeg's `showwavespic` filter → wide PNG waveform
+//  4. fan PNG through col / preview / screen / hires (same encoder
+//     used by preview.raster, so transparent waveforms preserve
+//     alpha automatically)
+//  5. mark asset ready + write metadata
 //
 // The original audio file itself is the asset's `original` variant;
 // the frontend's <audio> player streams that directly.
@@ -561,14 +562,15 @@ func (h *AudioHandler) renderWaveform(ctx context.Context, src, outPath string) 
 // covr atom for MP4/M4A) and writes it to the "cover" variant.
 //
 // ffmpeg invocation:
-//   -an: drop audio streams from the output (we only want the picture)
-//   -vn implicit-off: we DO want the video stream (the cover)
-//   -frames:v 1: cap at one frame so multi-page TIFF-style covers
-//     don't bloat the output
-//   -c copy: pass the embedded picture through without re-encoding —
-//     the embedded format is already JPEG or PNG in 99% of cases and
-//     re-encoding loses quality for no gain. The "cover" variant's
-//     content-type is set from the codec we read out of ffprobe.
+//
+//	-an: drop audio streams from the output (we only want the picture)
+//	-vn implicit-off: we DO want the video stream (the cover)
+//	-frames:v 1: cap at one frame so multi-page TIFF-style covers
+//	  don't bloat the output
+//	-c copy: pass the embedded picture through without re-encoding —
+//	  the embedded format is already JPEG or PNG in 99% of cases and
+//	  re-encoding loses quality for no gain. The "cover" variant's
+//	  content-type is set from the codec we read out of ffprobe.
 //
 // Output sits in the same temp dir as the waveform render so the
 // existing cleanup defers it cleanly.
@@ -731,23 +733,8 @@ func (h *AudioHandler) markFailed(ctx context.Context, id uuid.UUID, msg string)
 	}
 }
 
-// audioExts: extensions the preview.audio handler accepts. Mirrors
-// the frontend AUDIO_EXTS in web/src/lib/components/viewers/controller.ts.
-var audioExts = map[string]struct{}{
-	"mp3": {}, "wav": {}, "flac": {}, "ogg": {}, "oga": {},
-	"m4a": {}, "aac": {}, "opus": {},
-	// Audiobook containers. .m4b is functionally the same as .m4a
-	// (AAC inside MP4) but with chapter atoms + the .m4b extension
-	// that signals "treat as long-form spoken word". .aax is
-	// Audible's encrypted variant — ffprobe can read its metadata
-	// + chapter table even without decryption, so we route it
-	// through here to get the chapter list for the player even
-	// though playback itself requires activation bytes.
-	"m4b": {}, "aax": {},
-}
-
 func isAudioExt(ext string) bool {
-	_, ok := audioExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.AudioExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }
 

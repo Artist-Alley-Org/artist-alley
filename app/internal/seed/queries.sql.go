@@ -529,7 +529,7 @@ INSERT INTO posts (
     cover_asset_id, cover_thumbnail_asset_id, state_id, team_id,
     created_at, updated_at, posted_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $9)
+VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $9)
 ON CONFLICT (id) DO NOTHING
 RETURNING id
 `
@@ -549,6 +549,15 @@ type SeedInsertPostParams struct {
 
 // Stable id from posts.json. author_user_ref resolved from
 // author_username. cover set to the first resolved member asset.
+//
+// cover_thumbnail_asset_id is left NULL on purpose (#355). It means
+// "optional STANDALONE thumbnail asset, NOT a member of the post" — an
+// override for when an uploader supplies a separate cover image. The
+// seed dataset has no such standalone covers, so the honest value is
+// NULL; pointing it at the cover (a member) both contradicted the
+// field's contract and made every seeded post look like it carried a
+// custom thumbnail. Cards read cover_asset_id and render its `col`
+// variant, which the preview dispatch now produces.
 func (q *Queries) SeedInsertPost(ctx context.Context, arg SeedInsertPostParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, seedInsertPost,
 		arg.ID,
