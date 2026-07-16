@@ -375,7 +375,7 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 // --- phase: assets ----------------------------------------------------
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
-	inserted, deduped, missing := 0, 0, 0
+	inserted, ownerless, deduped, missing := 0, 0, 0, 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -411,7 +411,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		hash := up.Hash
 		size := up.Size
 		ext := a.FileExtension
-		id, err := r.q.SeedInsertAsset(ctx, SeedInsertAssetParams{
+		params := SeedInsertAssetParams{
 			ID:            parseUUID(a.ID),
 			Title:         orDefault(a.Title, "Untitled"),
 			Description:   a.Description,
@@ -427,14 +427,29 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			Sensitivity:   sensitivity(a.SensitivityTier),
 			CreatedAt:     created,
 			UpdatedAt:     updated,
-		})
-		if err != nil {
+		}
+		id, err := r.q.SeedInsertAsset(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The (owner_user_ref, file_hash) partial unique index blocked
+			// this row: a byte-identical sibling owned by the same user is
+			// already in. These are distinct catalogue assets that happen
+			// to share bytes (e.g. a texture exported next to both the OBJ
+			// and FBX of a model), so re-insert with a NULL owner — NULLs
+			// are distinct in the unique index, letting both coexist while
+			// still respecting the per-owner content-address invariant for
+			// real uploads. Bytes still serve via file_hash.
+			params.OwnerUserRef = nil
+			id, err = r.q.SeedInsertAsset(ctx, params)
 			if errors.Is(err, pgx.ErrNoRows) {
-				// (owner_user_ref, file_hash) collision — byte-identical
-				// duplicate owned by the same user. Legitimately collapsed.
+				// Pure id-pkey conflict (resumed run) — already present.
 				deduped++
 				continue
 			}
+			if err == nil {
+				ownerless++
+			}
+		}
+		if err != nil {
 			return fmt.Errorf("insert asset %s: %w", a.ID, err)
 		}
 		r.assets[a.ID] = id
@@ -464,7 +479,8 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 			r.log.Info("seed.assets.progress", "processed", i+1, "inserted", inserted)
 		}
 	}
-	r.log.Info("seed.assets", "inserted", inserted, "deduped", deduped, "missing", missing)
+	r.log.Info("seed.assets", "inserted", inserted, "ownerless_dupbytes", ownerless,
+		"deduped", deduped, "missing", missing)
 	return nil
 }
 
