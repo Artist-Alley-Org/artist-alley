@@ -173,6 +173,28 @@ func (q *Queries) SeedGetCommentParentInfo(ctx context.Context, id pgtype.UUID) 
 	return i, err
 }
 
+const seedGetFieldByCode = `-- name: SeedGetFieldByCode :one
+SELECT id FROM field_definition WHERE code = $1
+`
+
+func (q *Queries) SeedGetFieldByCode(ctx context.Context, code string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedGetFieldByCode, code)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedGetTeamBySlug = `-- name: SeedGetTeamBySlug :one
+SELECT id FROM teams WHERE slug = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) SeedGetTeamBySlug(ctx context.Context, slug string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedGetTeamBySlug, slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const seedGetUserByUsername = `-- name: SeedGetUserByUsername :one
 SELECT ref, username, fullname, email, usergroup, approved, created
 FROM "user"
@@ -203,6 +225,196 @@ func (q *Queries) SeedGetUserByUsername(ctx context.Context, username *string) (
 		&i.Created,
 	)
 	return i, err
+}
+
+const seedGetUserRefByUsername = `-- name: SeedGetUserRefByUsername :one
+
+SELECT ref FROM "user" WHERE username = $1
+`
+
+// =========================================================================
+// `aa seed` DB-direct loader queries (issue #321). These replace the
+// HTTP round-trips apply.py used to make; the seeder walks the same
+// dependency-ordered phases but writes straight to the tables. All
+// inserts are idempotent (ON CONFLICT DO NOTHING) so a re-run against
+// a partially-seeded DB is a no-op rather than a hard error.
+// =========================================================================
+// Lean username -> ref lookup used to resolve the bootstrap admin
+// (collection owner) + asset/post authors that were created in an
+// earlier run (so a resumed seed re-hydrates its ID map).
+func (q *Queries) SeedGetUserRefByUsername(ctx context.Context, username *string) (int64, error) {
+	row := q.db.QueryRow(ctx, seedGetUserRefByUsername, username)
+	var ref int64
+	err := row.Scan(&ref)
+	return ref, err
+}
+
+const seedInsertAsset = `-- name: SeedInsertAsset :one
+INSERT INTO assets (
+    id, title, description, asset_type, owner_user_ref, status,
+    file_hash, file_extension, file_size_bytes, metadata,
+    state_id, team_id, sensitivity, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT DO NOTHING
+RETURNING id
+`
+
+type SeedInsertAssetParams struct {
+	ID            pgtype.UUID
+	Title         string
+	Description   string
+	AssetType     int64
+	OwnerUserRef  *int64
+	Status        string
+	FileHash      *string
+	FileExtension *string
+	FileSizeBytes *int64
+	Metadata      []byte
+	StateID       pgtype.UUID
+	TeamID        pgtype.UUID
+	Sensitivity   string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// Stable id from the MANIFEST. A bare ON CONFLICT DO NOTHING catches
+// both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
+// partial unique index (byte-identical duplicate owned by the same
+// user) — the latter legitimately collapses one asset, matching the
+// product's content-address invariant.
+func (q *Queries) SeedInsertAsset(ctx context.Context, arg SeedInsertAssetParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedInsertAsset,
+		arg.ID,
+		arg.Title,
+		arg.Description,
+		arg.AssetType,
+		arg.OwnerUserRef,
+		arg.Status,
+		arg.FileHash,
+		arg.FileExtension,
+		arg.FileSizeBytes,
+		arg.Metadata,
+		arg.StateID,
+		arg.TeamID,
+		arg.Sensitivity,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedInsertAssetFieldValue = `-- name: SeedInsertAssetFieldValue :exec
+INSERT INTO asset_field_value (
+    asset_id, field_id, value_text, value_num, value_date, value_options, value_ref, set_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'import')
+ON CONFLICT (asset_id, field_id) DO NOTHING
+`
+
+type SeedInsertAssetFieldValueParams struct {
+	AssetID      pgtype.UUID
+	FieldID      pgtype.UUID
+	ValueText    *string
+	ValueNum     *float64
+	ValueDate    pgtype.Timestamptz
+	ValueOptions []string
+	ValueRef     pgtype.UUID
+}
+
+// Multi-type value column carried by the caller per the field's
+// declared type (mirrors metadata handler.go's typeFromFieldDef).
+func (q *Queries) SeedInsertAssetFieldValue(ctx context.Context, arg SeedInsertAssetFieldValueParams) error {
+	_, err := q.db.Exec(ctx, seedInsertAssetFieldValue,
+		arg.AssetID,
+		arg.FieldID,
+		arg.ValueText,
+		arg.ValueNum,
+		arg.ValueDate,
+		arg.ValueOptions,
+		arg.ValueRef,
+	)
+	return err
+}
+
+const seedInsertAssetTag = `-- name: SeedInsertAssetTag :exec
+INSERT INTO asset_tag (asset_id, tag, source)
+VALUES ($1, $2, 'import')
+ON CONFLICT (asset_id, tag) DO NOTHING
+`
+
+type SeedInsertAssetTagParams struct {
+	AssetID pgtype.UUID
+	Tag     string
+}
+
+func (q *Queries) SeedInsertAssetTag(ctx context.Context, arg SeedInsertAssetTagParams) error {
+	_, err := q.db.Exec(ctx, seedInsertAssetTag, arg.AssetID, arg.Tag)
+	return err
+}
+
+const seedInsertCollection = `-- name: SeedInsertCollection :one
+INSERT INTO collections (id, owner_user_ref, name, description, visibility)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO NOTHING
+RETURNING id
+`
+
+type SeedInsertCollectionParams struct {
+	ID           pgtype.UUID
+	OwnerUserRef int64
+	Name         string
+	Description  string
+	Visibility   string
+}
+
+// Stable id from dataset.collections.json; owner is the bootstrap
+// admin (the dataset carries no per-collection owner).
+func (q *Queries) SeedInsertCollection(ctx context.Context, arg SeedInsertCollectionParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedInsertCollection,
+		arg.ID,
+		arg.OwnerUserRef,
+		arg.Name,
+		arg.Description,
+		arg.Visibility,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedInsertCollectionPost = `-- name: SeedInsertCollectionPost :exec
+INSERT INTO collection_posts (collection_id, post_id)
+VALUES ($1, $2)
+ON CONFLICT (collection_id, post_id) DO NOTHING
+`
+
+type SeedInsertCollectionPostParams struct {
+	CollectionID pgtype.UUID
+	PostID       pgtype.UUID
+}
+
+func (q *Queries) SeedInsertCollectionPost(ctx context.Context, arg SeedInsertCollectionPostParams) error {
+	_, err := q.db.Exec(ctx, seedInsertCollectionPost, arg.CollectionID, arg.PostID)
+	return err
+}
+
+const seedInsertCollectionResource = `-- name: SeedInsertCollectionResource :exec
+INSERT INTO collection_resources (collection_id, asset_id)
+VALUES ($1, $2)
+ON CONFLICT (collection_id, asset_id) DO NOTHING
+`
+
+type SeedInsertCollectionResourceParams struct {
+	CollectionID pgtype.UUID
+	AssetID      pgtype.UUID
+}
+
+func (q *Queries) SeedInsertCollectionResource(ctx context.Context, arg SeedInsertCollectionResourceParams) error {
+	_, err := q.db.Exec(ctx, seedInsertCollectionResource, arg.CollectionID, arg.AssetID)
+	return err
 }
 
 const seedInsertComment = `-- name: SeedInsertComment :one
@@ -282,6 +494,170 @@ func (q *Queries) SeedInsertComment(ctx context.Context, arg SeedInsertCommentPa
 	return i, err
 }
 
+const seedInsertField = `-- name: SeedInsertField :one
+INSERT INTO field_definition (
+    code, label, type, options, required, searchable, applies_to, subject_kind
+)
+VALUES ($1, $2, $3, $4, false, true, '{}'::bigint[], 'asset')
+ON CONFLICT (code) DO NOTHING
+RETURNING id
+`
+
+type SeedInsertFieldParams struct {
+	Code    string
+	Label   string
+	Type    string
+	Options []byte
+}
+
+// Field definition. `code` is the federation-stable natural key.
+func (q *Queries) SeedInsertField(ctx context.Context, arg SeedInsertFieldParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedInsertField,
+		arg.Code,
+		arg.Label,
+		arg.Type,
+		arg.Options,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedInsertPost = `-- name: SeedInsertPost :one
+INSERT INTO posts (
+    id, author_user_ref, title, description, visibility,
+    cover_asset_id, cover_thumbnail_asset_id, state_id, team_id,
+    created_at, updated_at, posted_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $9)
+ON CONFLICT (id) DO NOTHING
+RETURNING id
+`
+
+type SeedInsertPostParams struct {
+	ID            pgtype.UUID
+	AuthorUserRef int64
+	Title         string
+	Description   string
+	Visibility    string
+	CoverAssetID  pgtype.UUID
+	StateID       pgtype.UUID
+	TeamID        pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+// Stable id from posts.json. author_user_ref resolved from
+// author_username. cover set to the first resolved member asset.
+func (q *Queries) SeedInsertPost(ctx context.Context, arg SeedInsertPostParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedInsertPost,
+		arg.ID,
+		arg.AuthorUserRef,
+		arg.Title,
+		arg.Description,
+		arg.Visibility,
+		arg.CoverAssetID,
+		arg.StateID,
+		arg.TeamID,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedInsertPostAsset = `-- name: SeedInsertPostAsset :exec
+INSERT INTO post_assets (post_id, asset_id, sort_order)
+VALUES ($1, $2, $3)
+ON CONFLICT (post_id, asset_id) DO NOTHING
+`
+
+type SeedInsertPostAssetParams struct {
+	PostID    pgtype.UUID
+	AssetID   pgtype.UUID
+	SortOrder int32
+}
+
+func (q *Queries) SeedInsertPostAsset(ctx context.Context, arg SeedInsertPostAssetParams) error {
+	_, err := q.db.Exec(ctx, seedInsertPostAsset, arg.PostID, arg.AssetID, arg.SortOrder)
+	return err
+}
+
+const seedInsertPostTag = `-- name: SeedInsertPostTag :exec
+INSERT INTO post_tags (post_id, tag)
+VALUES ($1, $2)
+ON CONFLICT (post_id, tag) DO NOTHING
+`
+
+type SeedInsertPostTagParams struct {
+	PostID pgtype.UUID
+	Tag    string
+}
+
+func (q *Queries) SeedInsertPostTag(ctx context.Context, arg SeedInsertPostTagParams) error {
+	_, err := q.db.Exec(ctx, seedInsertPostTag, arg.PostID, arg.Tag)
+	return err
+}
+
+const seedInsertTeam = `-- name: SeedInsertTeam :one
+INSERT INTO teams (id, slug, name, description)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+RETURNING id
+`
+
+type SeedInsertTeamParams struct {
+	ID          pgtype.UUID
+	Slug        string
+	Name        string
+	Description string
+}
+
+// Stable team id comes from dataset.teams.json. ON CONFLICT on the
+// (origin_server_id, slug) unique key AND the id pkey are both
+// possible on a resumed run; a bare DO NOTHING catches either.
+func (q *Queries) SeedInsertTeam(ctx context.Context, arg SeedInsertTeamParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, seedInsertTeam,
+		arg.ID,
+		arg.Slug,
+		arg.Name,
+		arg.Description,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const seedInsertTeamClosureSelf = `-- name: SeedInsertTeamClosureSelf :exec
+INSERT INTO team_closure (ancestor_id, descendant_id, depth)
+VALUES ($1, $1, 0)
+ON CONFLICT DO NOTHING
+`
+
+// Every team is its own depth-0 ancestor. The team hierarchy
+// queries assume this self-row exists (matches the POST /teams path).
+func (q *Queries) SeedInsertTeamClosureSelf(ctx context.Context, ancestorID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, seedInsertTeamClosureSelf, ancestorID)
+	return err
+}
+
+const seedInsertTeamMembership = `-- name: SeedInsertTeamMembership :exec
+INSERT INTO team_memberships (team_id, user_ref)
+VALUES ($1, $2)
+ON CONFLICT (team_id, user_ref) DO NOTHING
+`
+
+type SeedInsertTeamMembershipParams struct {
+	TeamID  pgtype.UUID
+	UserRef int64
+}
+
+func (q *Queries) SeedInsertTeamMembership(ctx context.Context, arg SeedInsertTeamMembershipParams) error {
+	_, err := q.db.Exec(ctx, seedInsertTeamMembership, arg.TeamID, arg.UserRef)
+	return err
+}
+
 const seedInsertUser = `-- name: SeedInsertUser :one
 INSERT INTO "user" (
     username, password, fullname, email, usergroup, approved, created
@@ -338,6 +714,70 @@ func (q *Queries) SeedInsertUser(ctx context.Context, arg SeedInsertUserParams) 
 		&i.Created,
 	)
 	return i, err
+}
+
+const seedListAssetTypes = `-- name: SeedListAssetTypes :many
+SELECT ref, name FROM asset_types WHERE name IS NOT NULL
+`
+
+type SeedListAssetTypesRow struct {
+	Ref  int64
+	Name *string
+}
+
+// asset_type registry (Image=1, Document=2, ... seeded by baseline).
+// The seeder maps the dataset's typed-folder labels onto these refs.
+func (q *Queries) SeedListAssetTypes(ctx context.Context) ([]SeedListAssetTypesRow, error) {
+	rows, err := q.db.Query(ctx, seedListAssetTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedListAssetTypesRow
+	for rows.Next() {
+		var i SeedListAssetTypesRow
+		if err := rows.Scan(&i.Ref, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const seedListWorkflowStates = `-- name: SeedListWorkflowStates :many
+SELECT id, domain, code FROM workflow_states
+`
+
+type SeedListWorkflowStatesRow struct {
+	ID     pgtype.UUID
+	Domain string
+	Code   string
+}
+
+// Every workflow state, keyed by (domain, code) in the seeder. The
+// baseline migration seeds domains 'asset:1' + 'post'; the seeder
+// collapses the richer dataset state names onto these.
+func (q *Queries) SeedListWorkflowStates(ctx context.Context) ([]SeedListWorkflowStatesRow, error) {
+	rows, err := q.db.Query(ctx, seedListWorkflowStates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedListWorkflowStatesRow
+	for rows.Next() {
+		var i SeedListWorkflowStatesRow
+		if err := rows.Scan(&i.ID, &i.Domain, &i.Code); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const seedPostExists = `-- name: SeedPostExists :one
