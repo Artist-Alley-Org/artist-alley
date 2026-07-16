@@ -134,6 +134,25 @@
       <p class="text-sm text-fg-muted">{site.name}</p>
     </div>
 
+    {#if site.demoMode}
+      <!-- Demo mode (AA_DEMO_MODE): advertise the shared read-only
+           credentials + a one-tap fill so visitors can look around
+           without registering. Only rendered when the boot fetch
+           confirms demo mode; a normal install never shows this. -->
+      <div class="rounded-lg border border-accent/40 bg-accent/10 p-3 text-center text-xs" data-testid="login-demo-hint">
+        <p class="text-fg">{t('login.demo_hint')}</p>
+        <button
+          type="button"
+          class="mt-2 rounded border border-accent bg-accent/10 px-3 py-1 font-medium text-accent hover:bg-accent/20"
+          onclick={() => { selectedProvider = 'password'; username = 'demo'; password = 'demo'; }}
+          disabled={submitting}
+          data-testid="login-demo-fill"
+        >
+          {t('login.demo_fill')}
+        </button>
+      </div>
+    {/if}
+
     {#if passwordProviders.length > 1}
       <fieldset class="space-y-2">
         <legend class="block text-xs font-medium text-fg-muted">

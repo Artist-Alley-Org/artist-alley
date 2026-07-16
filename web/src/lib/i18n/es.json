@@ -65,6 +65,13 @@
       "required_marker": "obligatorio"
     }
   },
+  "login": {
+    "demo_hint": "Esta es una demo pública. Inicia sesión con demo / demo para explorar.",
+    "demo_fill": "Rellenar credenciales de demo"
+  },
+  "demo": {
+    "banner": "Demo de solo lectura: los cambios que hagas no se guardarán."
+  },
   "common": {
     "save": "Guardar",
     "cancel": "Cancelar"
