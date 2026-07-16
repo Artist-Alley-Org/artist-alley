@@ -46,17 +46,23 @@ jobs:
     # under load) + teardown. Last run got cancelled at 45 min
     # halfway through the UI suite.
     timeout-minutes: 60
-    # Serialize with every other workflow that brings up the
-    # artist-alley docker compose stack on the self-hosted
-    # runner. Two workflows sharing the same compose project name
-    # ("artist-alley") clobber each other's containers + volumes
-    # mid-run — a #123-merge ui-pr standalone race with this
-    # ui-nightly produced an all-fail nightly. cancel-in-progress
-    # is false so jobs queue rather than cancel; ui-nightly
-    # finishes its pair + scenarios, THEN the standalone runs.
-    concurrency:
-      group: artist-alley-compose-stack
-      cancel-in-progress: false
+    # No compose-stack concurrency group (#342, extending #337): the
+    # per-run COMPOSE_PROJECT_NAME + the resources override (host ports
+    # dropped) isolate this run's containers, network, and volumes, so
+    # it no longer clobbers — or is clobbered by — ui-pr / ci.yml. The
+    # workflow-level concurrency (ui-nightly-*, above) still keeps two
+    # nightlies from overlapping.
+    env:
+      # Per-run project name isolates the whole dual-stack (studio-a +
+      # studio-b) from any other run on the shared self-hosted runner.
+      COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # Dev images (dogfood dual-stack) + the resources override, which
+      # drops every host port and caps per-service memory. No prod-image
+      # override here (unlike ui-pr) — the federation UI needs the real
+      # two-instance stack. Applied to every `docker compose` call.
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
+      GOFLAGS: -p=10
+      GOMAXPROCS: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -84,58 +90,36 @@ jobs:
       #     so up.sh's capability check skips the mkcert step).
       #   - studio-b.local resolves through the docker network alias
       #     on nginx-b (see docker-compose.yml) — works from any
-      #     container attached to artist-alley_default, including
-      #     the runner once we `docker network connect` to it.
+      #     container attached to this run's ${COMPOSE_PROJECT_NAME}_default
+      #     network, including the runner once we `docker network connect`.
       # See infra/runner/README.md for the runner-provisioning side.
 
       - name: Materialise .env for the stack
-        # The runner host (Unraid) keeps the user's own dev stack
-        # bound on the dogfood defaults — postgres 5432, nginx
-        # 8080, vite 5173 — so docker can't bind any of them and
-        # `up.sh` fails before the seed runs. Remap every host
-        # port to high values; nothing downstream cares because
-        # the runner reaches the stack via docker DNS (postgres,
-        # app, nginx, studio-b.local — all aliases) after the
-        # `Attach runner to the compose network` step. pair.sh's
-        # studio-b URL is `https://studio-b.local:9443` which is
-        # ALSO docker-internal (nginx-b listens on 9443 inside the
-        # network); the host port binding is just for host-side
-        # operator access.
+        # No host-port pins needed (#342): the resources override drops
+        # every published port for both stacks, so nothing binds the
+        # host and concurrent runs can't collide. Everything downstream
+        # reaches the stack via docker DNS after the attach step —
+        # including pair.sh's `https://studio-b.local:9443`, which is
+        # docker-internal (nginx-b listens on 9443 inside the network).
         run: |
           cp .env.example .env
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
-          {
-            echo "POSTGRES_HOST_PORT=15452"
-            echo "NGINX_HTTP_PORT=18188"
-            echo "VITE_HOST_PORT=15173"
-            echo "MINIO_API_PORT=19100"
-            echo "MINIO_CONSOLE_PORT=19101"
-            echo "STUDIO_B_HTTPS_PORT=19443"
-            echo "STUDIO_B_PG_PORT=15433"
-            echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-          } >> .env
+          echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" >> .env
 
-      - name: Sweep leaked CI containers
-        # The default-profile down only knows the default services;
-        # without --profile dogfood, app-b/nginx-b/postgres-b
-        # (profile-gated) survive teardown + so do their volumes.
-        # Studio-a's volumes get wiped, studio-b's persist with
-        # stale federation_peers + identity keypair from the prior
-        # run. Pair.sh then sees stale state on studio-b's side +
-        # subsequent scenarios fail at the peer-row check.
-        #
-        # Pass --profile dogfood so down -v removes profile-gated
-        # services + their volumes too. The --volumes flag on the
-        # final pass is belt-and-braces in case a volume gets
-        # orphaned from a service that no longer exists in the
-        # compose file (rare but seen during version transitions).
+      - name: Sweep this run's project + reap leaked CI containers
+        # Drop THIS run's own project first (a retried run re-uses the
+        # name) — with --profile dogfood so the profile-gated
+        # app-b/nginx-b/postgres-b + their volumes go too. Then reap
+        # only NON-running aa-ci-* containers so a concurrent run's
+        # live dual-stack is never touched (#342, matches ci.yml).
         run: |
           docker compose --profile dogfood down -v --remove-orphans || true
-          docker compose down -v --remove-orphans || true
-          stale=$(docker ps -aq --filter "name=^artist-alley-")
-          if [ -n "$stale" ]; then docker rm -f $stale || true; fi
-          stale_vols=$(docker volume ls -q --filter "name=^artist-alley_")
-          if [ -n "$stale_vols" ]; then docker volume rm -f $stale_vols || true; fi
+          leaked=$(docker ps -aq \
+            --filter "name=^aa-ci-" \
+            --filter "status=exited" \
+            --filter "status=created" \
+            --filter "status=dead")
+          if [ -n "$leaked" ]; then docker rm -f $leaked || true; fi
           docker network prune -f || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
           docker builder prune -f --filter until=48h || true  # sweep old buildkit cache (keeps ~2d for CI speed)
@@ -195,8 +179,9 @@ jobs:
       # and the seed step reaches both stacks' containers.
       - name: Attach runner to the compose network
         run: |
-          docker network connect artist-alley_default "$(hostname)" 2>/dev/null \
-            || docker network connect artist-alley_default "$(cat /etc/hostname)"
+          net="${COMPOSE_PROJECT_NAME}_default"
+          docker network connect "$net" "$(hostname)" 2>/dev/null \
+            || docker network connect "$net" "$(cat /etc/hostname)"
 
       # Seeds users + teams + assets + posts + federation rows from the
       # upstream dataset. Without this, the federation tests assert
@@ -365,7 +350,7 @@ jobs:
         # leaves the next workflow attached to a network its
         # containers no longer belong to.
         run: |
-          docker network disconnect artist-alley_default "$(hostname)" 2>/dev/null || true
+          docker network disconnect "${COMPOSE_PROJECT_NAME}_default" "$(hostname)" 2>/dev/null || true
 
       - name: Stop the stack
         if: always()

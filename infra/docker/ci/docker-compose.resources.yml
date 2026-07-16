@@ -37,6 +37,12 @@ services:
       args:
         GOFLAGS: ${GOFLAGS:-}
         GOMAXPROCS: ${GOMAXPROCS:-}
+    # The UI CI override (docker-compose.ci.yml) publishes the app's
+    # port to the host for host-side operator access; under isolation
+    # that would collide between concurrent UI runs, and CI reaches the
+    # app over the compose network by DNS anyway — so drop it. A no-op
+    # for the dev/backend app (which has no host port).
+    ports: !reset []
     mem_limit: 4g
 
   postgres:
@@ -54,3 +60,16 @@ services:
   minio:
     ports: !reset []
     mem_limit: 512m
+
+  # Dogfood studio-b dual-stack (ui-nightly). Profile-gated, so these
+  # entries are inert for every run that doesn't start them.
+  postgres-b:
+    ports: !reset []
+    mem_limit: 2g
+
+  nginx-b:
+    ports: !reset []
+    mem_limit: 256m
+
+  app-b:
+    mem_limit: 4g
