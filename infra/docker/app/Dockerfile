@@ -34,7 +34,14 @@ RUN go mod download
 COPY app/ ./
 
 ARG BUILD_VERSION
-RUN CGO_ENABLED=1 GOOS=linux go build \
+# CI passes GOFLAGS=-p=N / GOMAXPROCS=N (from the job env, via the
+# resources compose override's build args) to cap this compile's
+# parallelism so several stacks can build at once on a shared runner
+# without starving each other. Both default empty → local builds use
+# every core exactly as before.
+ARG GOFLAGS=""
+ARG GOMAXPROCS=""
+RUN CGO_ENABLED=1 GOOS=linux GOFLAGS="${GOFLAGS}" GOMAXPROCS="${GOMAXPROCS}" go build \
     -trimpath \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION}" \
     -o /out/aa \

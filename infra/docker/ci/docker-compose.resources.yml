@@ -1,0 +1,56 @@
+# Compose override for concurrency-safe, resource-capped CI (#331).
+#
+# Layered on top of docker-compose.yml so several CI runs can share one
+# self-hosted runner host without colliding or starving each other:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f infra/docker/ci/docker-compose.resources.yml \
+#     up -d --build
+#
+# The CI job also sets COMPOSE_PROJECT_NAME to a per-run value
+# (aa-ci-<run_id>-<attempt>), which already isolates container names,
+# the default network, and named volumes. This override adds the two
+# things a unique project name can't fix on its own:
+#
+#   1. No host-published ports. The dev compose publishes postgres,
+#      nginx, web, and minio on host ports; two concurrent runs would
+#      fight over them. CI never needs them — the integration tests
+#      reach postgres via `docker compose exec` and Playwright/apply.py
+#      reach the app over the compose network by DNS (app:8080 /
+#      app.aa:8080) — so we clear every `ports:` mapping. A plain
+#      `ports: []` in an override MERGES (adds nothing, base list
+#      survives); the `!reset []` tag (Compose spec, v2.24+) is what
+#      actually empties an inherited sequence.
+#
+#   2. Per-service memory ceilings. Three stacks at once must stay
+#      within the runner's budget (~24 GiB across 3 → ~8 GiB each).
+#      mem_limit is the non-swarm compose knob for that.
+#
+# The app build also picks up GOFLAGS / GOMAXPROCS (passed as build
+# args from the job env) so the in-image `go build` caps its own
+# parallelism; unset locally → Go uses all cores as before.
+
+services:
+  app:
+    build:
+      args:
+        GOFLAGS: ${GOFLAGS:-}
+        GOMAXPROCS: ${GOMAXPROCS:-}
+    mem_limit: 4g
+
+  postgres:
+    ports: !reset []
+    mem_limit: 2g
+
+  nginx:
+    ports: !reset []
+    mem_limit: 256m
+
+  web:
+    ports: !reset []
+    mem_limit: 1500m
+
+  minio:
+    ports: !reset []
+    mem_limit: 512m
