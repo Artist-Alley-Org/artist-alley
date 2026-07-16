@@ -198,51 +198,42 @@ jobs:
           docker compose logs app --tail=80 || true
           exit 1
 
-      # apply.py is the gold-standard idempotent loader. First run
-      # seeds users + teams + assets + posts + federation rows;
-      # re-runs are no-ops via stable UUIDs derived from the source
-      # files. --strict-verify fails the step if the per-phase
-      # verify-pass finds >10% divergence between expected and
-      # actual counts — surfaces a corrupted dataset / network
-      # blip BEFORE the test step rather than as 30 mysterious
-      # red tests.
-      - name: Seed site_a via apply.py
+      # `aa seed` is the native DB-direct loader (#321): it writes
+      # straight to postgres + the storage volume via the app's own
+      # service layer — no HTTP, no admin login. Run as a one-off
+      # `compose run` container off the same app image, so it shares
+      # the app's DB creds, storage volume, and network; the running
+      # app then serves the seeded bytes. It exits non-zero on any
+      # phase failure, which fails this step (replacing apply.py's
+      # --strict-verify gate). The dataset + catalogue are mounted
+      # in per-run; --no-deps because postgres is already up.
+      - name: Seed site_a via aa seed
         env:
-          # Runner is on the compose network — reach the app via
-          # docker DNS, not the host-published port. Same shape as
-          # the dev `web` service points its proxy at
-          # `http://nginx:80` in the source.
-          #
-          # /api/v1 in the base because apply.py's `_do` does
-          # `urljoin(self.api_base + "/", path)` and the seed paths
-          # are `/auth/login`, `/users`, etc. without a version
-          # prefix — Go's chi router mounts every API surface
-          # under /api/v1/, so api_base has to include it.
-          AA_API_BASE: http://app:8080/api/v1
-          # /datasets is the read-only mount added to the runner
-          # container template (Unraid Docker tab → AristAlley-
-          # Github-Actions-Runner → BLACKBOX datasets). Source on
-          # the host: /mnt/remotes/192.168.69.145_Archives/datasets.
-          SITE_A_PATH: /datasets/artist_alley/site_a
+          # HOST daemon path, NOT the runner's /datasets bind mount.
+          # `docker compose run -v` resolves the source on the host
+          # docker daemon, which sees the dataset here; the runner
+          # template maps this same host dir to /datasets *inside* the
+          # runner, but the daemon needs the real host path. ($PWD for
+          # the catalogue works because the runner's _work dir is
+          # bind-mounted at an identical host path.)
+          SITE_A_PATH: /mnt/remotes/192.168.69.145_Archives/datasets/artist_alley/site_a
         run: |
-          python3 -m pip install --user --quiet kagglehub requests || true
-          python3 seed/scripts/apply.py \
-            --site "$SITE_A_PATH" \
-            --catalogue seed/profiles \
-            --api "$AA_API_BASE" \
-            --workers 16 \
-            --strict-verify
+          docker compose \
+            -f docker-compose.yml \
+            -f infra/docker/ci/docker-compose.ci.yml \
+            run --rm --no-deps \
+            -v "$SITE_A_PATH:/seed/site:ro" \
+            -v "$PWD/seed/profiles:/seed/profiles:ro" \
+            app seed --site /seed/site --catalogue /seed/profiles
 
-      - name: Apply state diagnostic on failure
+      - name: Seed diagnostic on failure
         if: failure()
         run: |
-          ls -la apply-state-*.json 2>/dev/null || echo "no state file"
-          for f in apply-state-*.json; do
-            [ -f "$f" ] || continue
-            echo "=== $f ==="
-            jq '.phases_completed, {users: (.users|length), assets: (.assets|length), posts: (.posts|length)}' \
-              "$f" 2>/dev/null || cat "$f"
-          done
+          docker compose exec -T postgres psql -U artist_alley -d artist_alley -tAc \
+            "SELECT 'users', count(*) FROM \"user\"
+             UNION ALL SELECT 'assets', count(*) FROM assets
+             UNION ALL SELECT 'posts', count(*) FROM posts
+             UNION ALL SELECT 'comments', count(*) FROM comments;" || true
 
       - name: Install Playwright + browsers
         working-directory: scripts/dogfood/ui
