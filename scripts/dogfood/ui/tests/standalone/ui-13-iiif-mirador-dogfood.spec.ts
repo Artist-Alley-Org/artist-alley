@@ -173,7 +173,7 @@ test.describe('UI-13 IIIF Mirador dogfood (nightly)', () => {
     // `metadata` may be undefined OR empty. Assert only that the
     // FIELD is a valid shape — either absent OR an array. Real
     // metadata pop-through will show up in the metadata screenshot
-    // once operator-owned custom fields are seeded via apply.py.
+    // once operator-owned custom fields are seeded via `aa seed`.
     expect(manifest.metadata === undefined || Array.isArray(manifest.metadata)).toBe(true);
 
     // Second: load in Mirador + open the sidebar. Assert the
