@@ -28,7 +28,12 @@
   let { open = $bindable(), onclose }: Props = $props();
 
   const u = $derived(auth.user);
-  const isAdmin = $derived(auth.can('system.admin'));
+  // #385 — same per-cap gating as the desktop AdminMenu: show the admin
+  // block to any read-cap holder, list only openable sections.
+  const canSeeAdmin = $derived(auth.canSeeAdmin);
+  const visibleSections = $derived(
+    ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
+  );
 
   const NAV_LINKS: Array<{ href: string; labelKey: string }> = [
     { href: '/',            labelKey: 'nav.gallery' },
@@ -146,14 +151,16 @@
         </div>
       {/if}
 
-      <!-- Admin sections — gated on system.admin, same as the desktop
-           AdminMenu. Render-time hide only; the backend enforces. -->
-      {#if isAdmin}
+      <!-- Admin sections — gated per-capability (#385), same as the
+           desktop AdminMenu: any read-cap holder sees the block, and
+           only the sections they can open. Render-time hide only; the
+           backend enforces every action. -->
+      {#if canSeeAdmin}
         <div class="border-t border-border px-2 py-2">
           <a href="/admin" onclick={close} class="tap-target flex items-center rounded-lg px-3 py-2.5 text-sm font-medium text-fg hover:bg-state-hover">
             {t('admin_menu.overview')}
           </a>
-          {#each ADMIN_SECTIONS as section (section.slug)}
+          {#each visibleSections as section (section.slug)}
             <a
               href={`/admin/${section.slug}`}
               onclick={close}

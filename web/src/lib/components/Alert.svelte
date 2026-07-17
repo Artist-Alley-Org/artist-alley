@@ -15,7 +15,11 @@
 
   const tones: Record<Tone, string> = {
     error: 'border-danger/40 bg-danger-container text-on-danger-container',
-    info: 'border-border bg-surface-elevated text-fg-muted',
+    // Informational tone uses the steel secondary set (#295) so info
+    // reads as a distinct semantic — a deliberate "note", not a plain
+    // neutral box — and stays clearly apart from danger (red) and
+    // success (green). Mirrors the error/success container pattern.
+    info: 'border-secondary/40 bg-secondary-container text-on-secondary-container',
     success: 'border-success/40 bg-success-container text-on-success-container',
   };
 </script>
