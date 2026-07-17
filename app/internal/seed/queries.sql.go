@@ -494,6 +494,35 @@ func (q *Queries) SeedInsertComment(ctx context.Context, arg SeedInsertCommentPa
 	return i, err
 }
 
+const seedInsertFeatured = `-- name: SeedInsertFeatured :exec
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref)
+VALUES (
+    $1,
+    $2,
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items),
+    $3
+)
+ON CONFLICT (subject_kind, subject_id) DO NOTHING
+`
+
+type SeedInsertFeaturedParams struct {
+	SubjectKind      string
+	SubjectID        pgtype.UUID
+	CreatedByUserRef *int64
+}
+
+// Feature one collection/asset on the homepage + /admin/featured (#380).
+// Position appends after any existing rows (max+1) — the SAME rule as
+// the admin InsertFeaturedItem (internal/featured/queries.sql), so
+// seeded rows and later admin curation interleave in one order. The
+// (subject_kind, subject_id) unique constraint + ON CONFLICT DO NOTHING
+// make a re-seed a no-op: no duplicates, and no position drift because
+// the conflicting row is already counted in MAX(position).
+func (q *Queries) SeedInsertFeatured(ctx context.Context, arg SeedInsertFeaturedParams) error {
+	_, err := q.db.Exec(ctx, seedInsertFeatured, arg.SubjectKind, arg.SubjectID, arg.CreatedByUserRef)
+	return err
+}
+
 const seedInsertField = `-- name: SeedInsertField :one
 INSERT INTO field_definition (
     code, label, type, options, required, searchable, applies_to, subject_kind
@@ -798,4 +827,20 @@ func (q *Queries) SeedPostExists(ctx context.Context, id pgtype.UUID) (int32, er
 	var ok int32
 	err := row.Scan(&ok)
 	return ok, err
+}
+
+const seedSetCollectionFeatured = `-- name: SeedSetCollectionFeatured :exec
+UPDATE collections SET featured = TRUE WHERE id = $1
+`
+
+// Sets the per-collection browse-filter flag (collections.featured),
+// which is what the PUBLIC /collections "featured" tab filters on —
+// distinct from the featured_items curation rail the admin page reads
+// (see 00002_featured_items.sql). Idempotent by nature (UPDATE), so a
+// re-seed is a no-op. Only ever sets TRUE; unflagging a collection in
+// the catalogue takes effect on the next full reset, which is how the
+// demo re-seeds.
+func (q *Queries) SeedSetCollectionFeatured(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, seedSetCollectionFeatured, id)
+	return err
 }

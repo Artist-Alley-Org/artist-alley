@@ -19,7 +19,8 @@
     "studio_membership": [
       "b",
       "shared"
-    ]
+    ],
+    "featured": true
   },
   {
     "id": "d1a0739c-9f71-9302-47f7-28fb67f77960",
@@ -40,7 +41,8 @@
     "name": "Internet Reference",
     "studio_membership": [
       "shared"
-    ]
+    ],
+    "featured": true
   },
   {
     "id": "31e1ce3f-daec-ca6b-a8ee-c9c31c8985c7",
@@ -61,7 +63,8 @@
     "name": "Project Citylight",
     "studio_membership": [
       "a"
-    ]
+    ],
+    "featured": true
   },
   {
     "id": "7269d1d3-65bb-6d3e-5f79-11062181e5eb",
@@ -76,7 +79,8 @@
     "studio_membership": [
       "a",
       "shared"
-    ]
+    ],
+    "featured": true
   },
   {
     "id": "bb9fab50-9b44-0f5e-ec0b-f5ca8b757bbc",
@@ -97,7 +101,8 @@
     "name": "Project Mirror",
     "studio_membership": [
       "a"
-    ]
+    ],
+    "featured": true
   },
   {
     "id": "8c44b529-f0ba-7387-649f-3fa83017b207",
