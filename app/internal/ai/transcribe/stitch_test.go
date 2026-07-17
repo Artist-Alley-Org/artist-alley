@@ -45,9 +45,9 @@ func TestStitch_TrimsOverlapHalves(t *testing.T) {
 			Chunk: TimeChunk{StartMS: 0, EndMS: 25_000},
 			Transcript: ai.Transcript{
 				Segments: []ai.TranscriptSegment{
-					{StartMS: 18_000, EndMS: 19_000, Text: "before-overlap"},  // mid 18_500 < 22_500 → keep
-					{StartMS: 21_000, EndMS: 22_000, Text: "boundary-near"},   // mid 21_500 < 22_500 → keep
-					{StartMS: 23_000, EndMS: 24_500, Text: "boundary-far"},    // mid 23_750 >= 22_500 → drop
+					{StartMS: 18_000, EndMS: 19_000, Text: "before-overlap"}, // mid 18_500 < 22_500 → keep
+					{StartMS: 21_000, EndMS: 22_000, Text: "boundary-near"},  // mid 21_500 < 22_500 → keep
+					{StartMS: 23_000, EndMS: 24_500, Text: "boundary-far"},   // mid 23_750 >= 22_500 → drop
 				},
 			},
 		},

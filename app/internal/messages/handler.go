@@ -95,8 +95,8 @@ type Handler struct {
 	// h.activities.WithEmission so the DM row + Create(Note) activity
 	// commit atomically and the direct_message_received notification
 	// fires after commit. nil-safe pre-ADR-0044 fallback for tests.
-	activities  *activities.Writer
-	baseURLFn   func(ctx context.Context) string
+	activities *activities.Writer
+	baseURLFn  func(ctx context.Context) string
 }
 
 // NewHandler wires the handler + the per-recipient unread cache.

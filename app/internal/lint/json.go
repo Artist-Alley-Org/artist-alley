@@ -42,7 +42,7 @@ func CheckJSON(text []byte) []Diagnostic {
 		line, col := byteOffsetToLineCol(text, int(off))
 		return []Diagnostic{{
 			Line: line, Col: col, Severity: "error",
-			Source: "json",
+			Source:  "json",
 			Message: "unexpected content after top-level value",
 		}}
 	}

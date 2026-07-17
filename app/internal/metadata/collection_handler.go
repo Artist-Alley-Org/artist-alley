@@ -482,10 +482,10 @@ func buildCollectionUpsertParams(
 	userRef *int64,
 ) UpsertCollectionFieldValueParams {
 	p := UpsertCollectionFieldValueParams{
-		CollectionID:  collectionID,
-		FieldID:       fieldID,
-		SetBy:         setBy,
-		SetByUserRef:  userRef,
+		CollectionID: collectionID,
+		FieldID:      fieldID,
+		SetBy:        setBy,
+		SetByUserRef: userRef,
 	}
 	switch fieldType {
 	case "text", "longtext", "rich_text":

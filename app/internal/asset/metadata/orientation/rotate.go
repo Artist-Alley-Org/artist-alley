@@ -21,14 +21,14 @@ import (
 // (https://exiftool.org/TagNames/EXIF.html#Composite). Naming
 // matches the camera-vendor convention.
 const (
-	Identity         = 1
-	FlipHorizontal   = 2
-	Rotate180        = 3
-	FlipVertical     = 4
-	Transpose        = 5 // flip horizontal then rotate 90 CCW
-	Rotate90CW       = 6
-	Transverse       = 7 // flip horizontal then rotate 90 CW
-	Rotate90CCW      = 8
+	Identity       = 1
+	FlipHorizontal = 2
+	Rotate180      = 3
+	FlipVertical   = 4
+	Transpose      = 5 // flip horizontal then rotate 90 CCW
+	Rotate90CW     = 6
+	Transverse     = 7 // flip horizontal then rotate 90 CW
+	Rotate90CCW    = 8
 )
 
 // RotateFromEXIF returns a new image.Image with the rotation

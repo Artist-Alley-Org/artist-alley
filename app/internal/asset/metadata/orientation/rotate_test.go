@@ -13,10 +13,10 @@ import (
 // colours so per-transform tests can assert exact pixel positions
 // after rotation.
 //
-//   tl(red)    .  .  tr(green)
-//   .          .  .  .
-//   .          .  .  .
-//   bl(blue)   .  .  br(yellow)
+//	tl(red)    .  .  tr(green)
+//	.          .  .  .
+//	.          .  .  .
+//	bl(blue)   .  .  br(yellow)
 func makeCorneredImage() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	for y := 0; y < 4; y++ {

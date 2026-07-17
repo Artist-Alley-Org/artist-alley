@@ -41,7 +41,6 @@
 package httpsig
 
 import (
-
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -198,10 +197,10 @@ func splitParams(s string) []string {
 // BuildSigningString constructs the canonical string the
 // Signature covers per Cavage §2.3:
 //
-//   For each header name in order:
-//     "(request-target): <method-lower> <path-and-query>"  (special-case)
-//   OR:
-//     "<header-lower>: <value-folded>"
+//	For each header name in order:
+//	  "(request-target): <method-lower> <path-and-query>"  (special-case)
+//	OR:
+//	  "<header-lower>: <value-folded>"
 //
 // Joined with "\n", no trailing newline. Header values are
 // trimmed of leading/trailing whitespace; multi-value headers
@@ -261,13 +260,13 @@ type KeyResolver func(keyID string) (ed25519.PublicKey, error)
 // replaced with a fresh reader over the buffered bytes.
 //
 // Validation order matches §2.2 of the 1.22.D design pipeline:
-//   1. Parse Signature header (→ ErrUnsignedRequest / ErrSigMalformed)
-//   2. Algorithm in allowlist (→ ErrUnsupportedAlgorithm)
-//   3. All MinSignedHeaders covered (→ ErrMissingHeader)
-//   4. Resolve keyId (→ ErrUnknownKey)
-//   5. Body hash matches Digest (→ ErrDigestMismatch)
-//   6. Date within ReplayWindow (→ ErrStaleRequest)
-//   7. Signature verifies (→ ErrSigInvalid)
+//  1. Parse Signature header (→ ErrUnsignedRequest / ErrSigMalformed)
+//  2. Algorithm in allowlist (→ ErrUnsupportedAlgorithm)
+//  3. All MinSignedHeaders covered (→ ErrMissingHeader)
+//  4. Resolve keyId (→ ErrUnknownKey)
+//  5. Body hash matches Digest (→ ErrDigestMismatch)
+//  6. Date within ReplayWindow (→ ErrStaleRequest)
+//  7. Signature verifies (→ ErrSigInvalid)
 //
 // Each step short-circuits on its own error so the caller can
 // surface the right §12.1 reject reason.

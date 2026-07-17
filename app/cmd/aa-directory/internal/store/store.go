@@ -43,12 +43,12 @@ var (
 // private key lives on disk in a separate file; the store only
 // holds the public half).
 type Operator struct {
-	Name           string `json:"name"`
-	OperatorURL    string `json:"operator_url"`
-	Contact        string `json:"contact"`
-	SpecVersion    string `json:"spec_version"`
-	PublicKeyPEM   string `json:"public_key_pem"`
-	Fingerprint    string `json:"fingerprint"`
+	Name         string `json:"name"`
+	OperatorURL  string `json:"operator_url"`
+	Contact      string `json:"contact"`
+	SpecVersion  string `json:"spec_version"`
+	PublicKeyPEM string `json:"public_key_pem"`
+	Fingerprint  string `json:"fingerprint"`
 }
 
 // Listing is one entry in the directory.

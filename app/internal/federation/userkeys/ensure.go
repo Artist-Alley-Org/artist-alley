@@ -33,7 +33,7 @@ import (
 // [audit.EventFederationUserKeyGenerated]; the "already had one"
 // path doesn't, because nothing changed.
 //
-// Concurrency
+// # Concurrency
 //
 // The check-then-insert pattern races against a concurrent
 // EnsureCurrentForUser for the same user. The migration's partial
@@ -62,7 +62,7 @@ func EnsureCurrentForUser(ctx context.Context, q *Queries, userRef int64) (alrea
 	}
 
 	_, err = q.InsertUserKey(ctx, InsertUserKeyParams{
-		UserRef:        userRef,
+		UserRef:       userRef,
 		Version:       1,
 		Algorithm:     Algorithm,
 		PublicKey:     pub,

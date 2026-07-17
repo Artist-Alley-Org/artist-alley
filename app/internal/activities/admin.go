@@ -87,11 +87,11 @@ func (h *AdminHandler) ListAdminActivities(
 	}
 
 	params := ListActivitiesAdminParams{
-		ActivityType:  req.Params.ActivityType,
-		Source:        req.Params.Source,
-		ActorUserRef:  req.Params.ActorUserRef,
-		ObjectKind:    req.Params.ObjectKind,
-		RowLimit:      limit,
+		ActivityType: req.Params.ActivityType,
+		Source:       req.Params.Source,
+		ActorUserRef: req.Params.ActorUserRef,
+		ObjectKind:   req.Params.ObjectKind,
+		RowLimit:     limit,
 	}
 	if req.Params.Since != nil {
 		params.Since = pgtype.Timestamptz{Time: *req.Params.Since, Valid: true}
@@ -144,20 +144,20 @@ func (h *AdminHandler) ListAdminActivities(
 // the caller doesn't need a second hop.
 func adminRowToAPI(r Activity) openapi.AdminActivity {
 	out := openapi.AdminActivity{
-		Id:           uuid.UUID(r.ID.Bytes),
-		ActivityUri:  r.ActivityUri,
-		ActivityType: r.ActivityType,
-		ActorUri:     r.ActorUri,
-		ActorUserRef: r.ActorUserRef,
-		ObjectUri:    r.ObjectUri,
-		ObjectKind:   r.ObjectKind,
-		ObjectLocalId: r.ObjectLocalID,
-		TargetUri:    r.TargetUri,
+		Id:              uuid.UUID(r.ID.Bytes),
+		ActivityUri:     r.ActivityUri,
+		ActivityType:    r.ActivityType,
+		ActorUri:        r.ActorUri,
+		ActorUserRef:    r.ActorUserRef,
+		ObjectUri:       r.ObjectUri,
+		ObjectKind:      r.ObjectKind,
+		ObjectLocalId:   r.ObjectLocalID,
+		TargetUri:       r.TargetUri,
 		SignatureValue:  r.SignatureValue,
 		SignaturePubkey: r.SignaturePubkey,
-		Source:       r.Source,
-		PublishedAt:  r.PublishedAt.Time,
-		CreatedAt:    r.CreatedAt.Time,
+		Source:          r.Source,
+		PublishedAt:     r.PublishedAt.Time,
+		CreatedAt:       r.CreatedAt.Time,
 	}
 	_ = json.Unmarshal(r.ToUris, &out.To)
 	_ = json.Unmarshal(r.CcUris, &out.Cc)

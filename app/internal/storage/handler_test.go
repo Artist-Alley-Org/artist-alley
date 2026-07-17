@@ -182,8 +182,6 @@ func (s shimImpl) DownloadStorageObjectVariant(ctx context.Context, req openapi.
 	return s.h.DownloadStorageObjectVariant(ctx, req)
 }
 
-
-
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()
 	host := envOr("AA_DB_HOST", "postgres")
@@ -211,6 +209,3 @@ func envOr(key, def string) string {
 	}
 	return def
 }
-
-
-

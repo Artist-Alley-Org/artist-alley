@@ -302,8 +302,8 @@ func (h *Handler) ResendVerificationEmail(
 	}
 
 	httpReq := RequestFromContext(ctx)
-	if !h.Limiter.Allow("register-resend-ip:" + clientIPKey(httpReq)) ||
-		!h.Limiter.Allow("register-resend-email:" + emailAddr) {
+	if !h.Limiter.Allow("register-resend-ip:"+clientIPKey(httpReq)) ||
+		!h.Limiter.Allow("register-resend-email:"+emailAddr) {
 		return openapi.ResendVerificationEmail429JSONResponse{
 			TooManyRequestsJSONResponse: openapi.TooManyRequestsJSONResponse{Error: "too many attempts; try again shortly"},
 		}, nil

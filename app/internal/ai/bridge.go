@@ -85,7 +85,7 @@ type AssetLookup interface {
 //   - video:  PreviewURL → first-frame; OriginalURL → source video
 //   - audio:  PreviewURL → cover art (if any); OriginalURL → audio file
 //   - other:  both may be empty; AI handler should return
-//             ErrAssetKindNotSupported
+//     ErrAssetKindNotSupported
 //
 // ExistingTags carries the asset's current tags + their source so
 // the AI handler can include them as prompt context (don't re-

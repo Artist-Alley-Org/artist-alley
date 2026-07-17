@@ -75,7 +75,7 @@ func CheckMarkdown(text []byte) []Diagnostic {
 			if hashes >= 1 && hashes <= 6 && len(h) > 0 && h[0] != ' ' && h[0] != '\t' {
 				out = append(out, Diagnostic{
 					Line: i + 1, Col: hashes + 1, Severity: "warning",
-					Source: "markdown",
+					Source:  "markdown",
 					Message: "missing space after heading marker",
 				})
 			}
@@ -93,7 +93,7 @@ func CheckMarkdown(text []byte) []Diagnostic {
 	if inFence {
 		out = append(out, Diagnostic{
 			Line: fenceOpenedAt, Col: 1, Severity: "error",
-			Source: "markdown",
+			Source:  "markdown",
 			Message: "code fence opened here is never closed",
 		})
 	}

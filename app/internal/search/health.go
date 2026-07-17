@@ -109,23 +109,23 @@ const (
 	// coordinator + run jobs. Surfaced in the by_result map on
 	// /admin/search/health so operators see coordinator health +
 	// per-run outcome mix.
-	ResultSavedSearchCoordinatorTick Result = "saved_search_coordinator_tick"
-	ResultSavedSearchRunHit          Result = "saved_search_run_hit"
-	ResultSavedSearchRunEmpty        Result = "saved_search_run_empty"
-	ResultSavedSearchRunDisabled     Result = "saved_search_run_disabled"
-	ResultSavedSearchRunError        Result = "saved_search_run_error"
-	ResultSavedSearchDeltaHit        Result = "saved_search_delta_hit"
+	ResultSavedSearchCoordinatorTick  Result = "saved_search_coordinator_tick"
+	ResultSavedSearchRunHit           Result = "saved_search_run_hit"
+	ResultSavedSearchRunEmpty         Result = "saved_search_run_empty"
+	ResultSavedSearchRunDisabled      Result = "saved_search_run_disabled"
+	ResultSavedSearchRunError         Result = "saved_search_run_error"
+	ResultSavedSearchDeltaHit         Result = "saved_search_delta_hit"
 	ResultSavedSearchNotificationSent Result = "saved_search_notification_sent"
 	// Phase 1.16.B-5-followup — feedback loop result classes.
 	// Increment per successful Submit/Delete; the shared search
 	// Counter's requests[] map surfaces them alongside the query
 	// result classes so operators can spot feedback traffic mixed
 	// with search traffic on one health JSON.
-	ResultSearchFeedbackUp       Result = "search_feedback_up"
-	ResultSearchFeedbackDown     Result = "search_feedback_down"
-	ResultSearchFeedbackUndo     Result = "search_feedback_undo"
+	ResultSearchFeedbackUp        Result = "search_feedback_up"
+	ResultSearchFeedbackDown      Result = "search_feedback_down"
+	ResultSearchFeedbackUndo      Result = "search_feedback_undo"
 	ResultSearchFeedbackRateLimit Result = "search_feedback_rate_limit"
-	ResultSearchFeedbackDisabled Result = "search_feedback_disabled"
+	ResultSearchFeedbackDisabled  Result = "search_feedback_disabled"
 )
 
 // RecordLatency bumps the per-result-class request counter AND
@@ -264,5 +264,5 @@ func pct(sorted []time.Duration, p float64) time.Duration {
 // testing. Explicit no-op so the linter doesn't cull the import.
 var _ atomic.Int64
 
-func itoa(n int64) string { return strconvFormatInt(n) }
+func itoa(n int64) string               { return strconvFormatInt(n) }
 func itoaMillis(d time.Duration) string { return strconvFormatInt(d.Milliseconds()) }

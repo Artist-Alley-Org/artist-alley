@@ -42,7 +42,7 @@ type Payload struct {
 type Counter interface {
 	RecordReindexStart()
 	RecordReindexBatch(processed, succeeded, failed int64)
-	RecordReindexComplete(result string) // "completed" | "cancelled" | "failed"
+	RecordReindexComplete(result string)    // "completed" | "cancelled" | "failed"
 	RecordEmbedHookTriggered(source string) // "reindex" | "boot_backfill"
 }
 
@@ -60,14 +60,15 @@ type Job struct {
 func (j *Job) Type() jobs.JobType { return JobTypeReindex }
 
 // Handle walks the scope in batches. Every batch:
-//   1. Cancel-probes the run row (short-circuit on cancelled_at)
-//   2. Fetches up to BatchSize asset IDs matching the scope past
-//      the last cursor
-//   3. For target ∈ {embedding, both}, enqueues ai.embed with the
-//      shared idempotency key
-//   4. For target ∈ {tsvector, both}, calls the entity's
-//      rebuild function so the trigger recomputes
-//   5. Records progress
+//  1. Cancel-probes the run row (short-circuit on cancelled_at)
+//  2. Fetches up to BatchSize asset IDs matching the scope past
+//     the last cursor
+//  3. For target ∈ {embedding, both}, enqueues ai.embed with the
+//     shared idempotency key
+//  4. For target ∈ {tsvector, both}, calls the entity's
+//     rebuild function so the trigger recomputes
+//  5. Records progress
+//
 // Loop exits when the fetch returns fewer than BatchSize rows.
 func (j *Job) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessage, error) {
 	var p Payload

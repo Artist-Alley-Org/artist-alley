@@ -176,8 +176,8 @@ func TestSMTPSender_DeliversPlainNoAuth(t *testing.T) {
 	defer cancel()
 
 	err := sender.Send(ctx, email.Message{
-		To:      []string{"alice@example.com", "bob@example.com"},
-		Subject: "hi",
+		To:       []string{"alice@example.com", "bob@example.com"},
+		Subject:  "hi",
 		TextBody: "hello",
 	})
 	if err != nil {

@@ -18,8 +18,8 @@ import (
 // Handler mounts the user-facing feedback endpoints. Authenticated
 // callers only; anonymous returns 401.
 type Handler struct {
-	Service     *Service
-	Logger      *slog.Logger
+	Service *Service
+	Logger  *slog.Logger
 	// ScrambleKey is the shared HMAC salt for the IP subnet hash
 	// (matches the 1.19.D lockout pattern). Empty disables the hash
 	// (audit rows land with ip_hash NULL).

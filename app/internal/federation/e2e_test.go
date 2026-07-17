@@ -152,8 +152,8 @@ func TestFederation_EndToEnd_ProductionDefaults_SubSecond(t *testing.T) {
 	// B's inbox handler. lookupPeer maps A's HTTP-Sig keyID
 	// to A's seeded peer row.
 	bInboxHandler := inbox.NewHandler(inbox.HandlerDeps{
-		Pool: inbox.New(pool),
-		Lookup: &e2eByKeyID{keyID: aKeyURL, peerID: aPeerID, peerURL: aBaseURL, pubKey: aPub},
+		Pool:         inbox.New(pool),
+		Lookup:       &e2eByKeyID{keyID: aKeyURL, peerID: aPeerID, peerURL: aBaseURL, pubKey: aPub},
 		Logger:       logger,
 		LocalBaseURL: func(context.Context) string { return "" }, // skip host check (we're flexible in tests)
 	})
@@ -415,7 +415,7 @@ func (l *e2eByKeyID) ByKeyID(_ context.Context, keyID string) (inbox.PeerInfo, e
 		return inbox.PeerInfo{
 			ID: l.peerID, InstanceURL: l.peerURL,
 			InstancePublicKey: l.pubKey,
-			Enabled: true, Connected: true,
+			Enabled:           true, Connected: true,
 		}, nil
 	}
 	return inbox.PeerInfo{}, inbox.ErrPeerNotFound

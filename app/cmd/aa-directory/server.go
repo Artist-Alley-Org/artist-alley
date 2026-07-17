@@ -45,9 +45,9 @@ func (s *serverConfig) handleGetOperator(w http.ResponseWriter, _ *http.Request)
 // --- GET /v1/listing -----------------------------------------------------
 
 type listingResponse struct {
-	Directory listingDirectory `json:"directory"`
-	Entries   []store.Listing  `json:"entries"`
-	NextCursor *string         `json:"next_cursor"`
+	Directory  listingDirectory `json:"directory"`
+	Entries    []store.Listing  `json:"entries"`
+	NextCursor *string          `json:"next_cursor"`
 }
 
 type listingDirectory struct {
@@ -143,13 +143,13 @@ func (s *serverConfig) handlePostChallenge(w http.ResponseWriter, r *http.Reques
 // --- POST /v1/register ---------------------------------------------------
 
 type registerRequest struct {
-	InstanceURL           string   `json:"instance_url"`
-	DisplayName           string   `json:"display_name"`
-	InstancePublicKeyPEM  string   `json:"instance_public_key_pem"`
-	Region                string   `json:"region,omitempty"`
-	Description           string   `json:"description,omitempty"`
-	Tags                  []string `json:"tags,omitempty"`
-	DNSTXTToken           string   `json:"dns_txt_token"`
+	InstanceURL          string   `json:"instance_url"`
+	DisplayName          string   `json:"display_name"`
+	InstancePublicKeyPEM string   `json:"instance_public_key_pem"`
+	Region               string   `json:"region,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Tags                 []string `json:"tags,omitempty"`
+	DNSTXTToken          string   `json:"dns_txt_token"`
 }
 
 func (s *serverConfig) handlePostRegister(w http.ResponseWriter, r *http.Request) {

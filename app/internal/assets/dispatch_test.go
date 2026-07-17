@@ -196,7 +196,7 @@ func TestJobTypeForExt(t *testing.T) {
 		{"zip", jobs.TypePreviewArchive},
 		{"7z", jobs.TypePreviewArchive},
 		{"rar", jobs.TypePreviewArchive},
-		{"png", jobs.TypePreviewRaster},  // image fallback
+		{"png", jobs.TypePreviewRaster},     // image fallback
 		{"unknown", jobs.TypePreviewRaster}, // unknown fallback
 	}
 	for _, c := range cases {

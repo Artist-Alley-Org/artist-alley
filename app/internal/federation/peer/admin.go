@@ -271,12 +271,12 @@ func peerToAPI(p Peer) openapi.FederationPeer {
 		DisplayName:        p.DisplayName,
 		InstancePublicKey:  p.InstancePublicKey,
 		Status:             openapi.FederationPeerStatus(p.Status),
-		TrustTier:           openapi.FederationPeerTrustTier(p.TrustTier),
-		EncryptionPolicy:    openapi.FederationPeerEncryptionPolicy(p.EncryptionPolicy),
-		Enabled:             p.Enabled,
-		HandshakeByUserRef:  p.HandshakeByUserRef,
-		Notes:               p.Notes,
-		ShareInVisibleList:  &share,
+		TrustTier:          openapi.FederationPeerTrustTier(p.TrustTier),
+		EncryptionPolicy:   openapi.FederationPeerEncryptionPolicy(p.EncryptionPolicy),
+		Enabled:            p.Enabled,
+		HandshakeByUserRef: p.HandshakeByUserRef,
+		Notes:              p.Notes,
+		ShareInVisibleList: &share,
 	}
 	if p.HandshakeAt.Valid {
 		out.HandshakeAt = p.HandshakeAt.Time

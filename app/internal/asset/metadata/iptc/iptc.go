@@ -19,11 +19,11 @@
 //     8BIM walker for both carriers.
 //
 //   - Inside the 0x0404 block: a sequence of records, each:
-//        0x1C    record marker (one byte; always 0x1C)
-//        rr      record number (1 byte)
-//        dd      dataset number (1 byte)
-//        len     2-byte big-endian payload length
-//        payload `len` bytes
+//     0x1C    record marker (one byte; always 0x1C)
+//     rr      record number (1 byte)
+//     dd      dataset number (1 byte)
+//     len     2-byte big-endian payload length
+//     payload `len` bytes
 //     Extended records (high bit of the first length byte set)
 //     are extremely rare in practice; the parser skips them
 //     gracefully rather than crashing.
@@ -53,19 +53,19 @@ import (
 const (
 	dsCodedCharacterSet uint8 = 90 // record 1; declares encoding
 
-	dsObjectName       uint8 = 5   // 2:5
-	dsKeywords         uint8 = 25  // 2:25 (repeatable; we join with ", ")
-	dsInstructions     uint8 = 40  // 2:40
-	dsByline           uint8 = 80  // 2:80
-	dsBylineTitle      uint8 = 85  // 2:85
-	dsCity             uint8 = 90  // 2:90
-	dsProvinceState    uint8 = 95  // 2:95
-	dsCountry          uint8 = 101 // 2:101
-	dsHeadline         uint8 = 105 // 2:105
-	dsCredit           uint8 = 110 // 2:110
-	dsSource           uint8 = 115 // 2:115
-	dsCopyrightNotice  uint8 = 116 // 2:116
-	dsCaptionAbstract  uint8 = 120 // 2:120
+	dsObjectName      uint8 = 5   // 2:5
+	dsKeywords        uint8 = 25  // 2:25 (repeatable; we join with ", ")
+	dsInstructions    uint8 = 40  // 2:40
+	dsByline          uint8 = 80  // 2:80
+	dsBylineTitle     uint8 = 85  // 2:85
+	dsCity            uint8 = 90  // 2:90
+	dsProvinceState   uint8 = 95  // 2:95
+	dsCountry         uint8 = 101 // 2:101
+	dsHeadline        uint8 = 105 // 2:105
+	dsCredit          uint8 = 110 // 2:110
+	dsSource          uint8 = 115 // 2:115
+	dsCopyrightNotice uint8 = 116 // 2:116
+	dsCaptionAbstract uint8 = 120 // 2:120
 )
 
 // Result is the typed projection of one IPTC parse. Empty fields

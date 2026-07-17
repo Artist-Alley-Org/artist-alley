@@ -202,7 +202,7 @@ func (p *Provider) ListTools(ctx context.Context) ([]ListedTool, error) {
 	}
 	if resp.Error != nil {
 		return nil, &ai.ProviderError{
-			Class:   ai.ErrClassPermanent, Provider: p.cfg.Name,
+			Class: ai.ErrClassPermanent, Provider: p.cfg.Name,
 			Wrapped: fmt.Errorf("tools/list: %s (code %d)", resp.Error.Message, resp.Error.Code),
 		}
 	}
@@ -227,7 +227,7 @@ func (p *Provider) ListTools(ctx context.Context) ([]ListedTool, error) {
 func (p *Provider) InvokeTool(ctx context.Context, tool string, args map[string]any) (json.RawMessage, error) {
 	if tool == "" {
 		return nil, &ai.ProviderError{
-			Class:   ai.ErrClassPermanent, Provider: p.cfg.Name,
+			Class: ai.ErrClassPermanent, Provider: p.cfg.Name,
 			Wrapped: errors.New("invoke: tool name required"),
 		}
 	}
@@ -256,7 +256,7 @@ func (p *Provider) InvokeTool(ctx context.Context, tool string, args map[string]
 			class = ai.ErrClassTransient
 		}
 		return nil, &ai.ProviderError{
-			Class:   class, Provider: p.cfg.Name, Model: tool,
+			Class: class, Provider: p.cfg.Name, Model: tool,
 			Wrapped: fmt.Errorf("tools/call %q: %s (code %d)", tool, resp.Error.Message, resp.Error.Code),
 		}
 	}
@@ -306,13 +306,13 @@ func (p *Provider) rpc(ctx context.Context, method string, params any) (jsonRPCR
 		resp.StatusCode == http.StatusServiceUnavailable ||
 		resp.StatusCode >= 500 {
 		return jsonRPCResponse{}, &ai.ProviderError{
-			Class:   ai.ErrClassTransient, Provider: p.cfg.Name,
+			Class: ai.ErrClassTransient, Provider: p.cfg.Name,
 			Wrapped: fmt.Errorf("status %d: %s", resp.StatusCode, snippet(respBody, 200)),
 		}
 	}
 	if resp.StatusCode >= 400 {
 		return jsonRPCResponse{}, &ai.ProviderError{
-			Class:   ai.ErrClassPermanent, Provider: p.cfg.Name,
+			Class: ai.ErrClassPermanent, Provider: p.cfg.Name,
 			Wrapped: fmt.Errorf("status %d: %s", resp.StatusCode, snippet(respBody, 200)),
 		}
 	}

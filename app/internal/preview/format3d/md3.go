@@ -22,11 +22,11 @@ import (
 // thumbnail case; if a real authoring use shows up we'd promote
 // Model.Vertices/Triangles to []MeshGroup.
 const (
-	md3Magic       uint32 = 0x33504449 // "IDP3"
-	md3Version     uint32 = 15
-	md3NameLen            = 64
+	md3Magic        uint32 = 0x33504449 // "IDP3"
+	md3Version      uint32 = 15
+	md3NameLen             = 64
 	md3SurfaceMagic uint32 = 0x37534449 // "IDS7"
-	md3XyzScale           = 1.0 / 64.0  // i16 → world units
+	md3XyzScale            = 1.0 / 64.0 // i16 → world units
 )
 
 // md3Header sits at offset 0.

@@ -4,8 +4,8 @@
 // Generate procedural .md2/.md3/.mdl samples for the artist-alley
 // dataset. Run:
 //
-//   go run ./scripts/generate-format3d-samples \
-//       --out /mnt/d/Projects/unraid_management/artist-alley_dataset/format3d
+//	go run ./scripts/generate-format3d-samples \
+//	    --out /mnt/d/Projects/unraid_management/artist-alley_dataset/format3d
 //
 // Each shape gets emitted as all three formats so the gallery
 // gets variety across the engine pipelines we now own natively.
@@ -44,8 +44,8 @@ func main() {
 	}
 
 	formats := []struct {
-		ext     string
-		encode  func(*format3d.Model, *os.File) error
+		ext    string
+		encode func(*format3d.Model, *os.File) error
 	}{
 		{"md2", func(m *format3d.Model, f *os.File) error { return format3d.EncodeMD2(m, f) }},
 		{"md3", func(m *format3d.Model, f *os.File) error { return format3d.EncodeMD3(m, f) }},

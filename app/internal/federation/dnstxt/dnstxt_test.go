@@ -38,8 +38,8 @@ func (f *fakeResolver) LookupTXT(_ context.Context, name string) ([]string, erro
 func TestMatchesRecord_Accepts(t *testing.T) {
 	cases := []string{
 		"v=aa1; directory=artist-alley.org; token=ed7c91",
-		"v=aa1;directory=artist-alley.org;token=ed7c91",            // no spaces
-		"v=aa1 ; directory=Artist-Alley.org ; token=ed7c91 ",       // mixed case + spacing in directory
+		"v=aa1;directory=artist-alley.org;token=ed7c91",             // no spaces
+		"v=aa1 ; directory=Artist-Alley.org ; token=ed7c91 ",        // mixed case + spacing in directory
 		"v=aa1; directory=artist-alley.org; token=ed7c91; extra=ok", // unknown key ignored
 	}
 	for _, c := range cases {
@@ -51,8 +51,8 @@ func TestMatchesRecord_Accepts(t *testing.T) {
 
 func TestMatchesRecord_Rejects(t *testing.T) {
 	cases := []struct {
-		rec  string
-		why  string
+		rec string
+		why string
 	}{
 		{"v=aa0; directory=artist-alley.org; token=ed7c91", "wrong version"},
 		{"directory=artist-alley.org; token=ed7c91", "missing version"},

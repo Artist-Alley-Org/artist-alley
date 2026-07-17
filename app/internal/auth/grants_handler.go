@@ -150,11 +150,11 @@ func (h *Handler) AddAdminUserGrant(
 	}
 	if err := q.InsertUserGrant(ctx, InsertUserGrantParams{
 		UserRef:          req.Ref,
-		CapabilityCode:    req.Body.Capability,
-		TeamID:            teamUUID,
+		CapabilityCode:   req.Body.Capability,
+		TeamID:           teamUUID,
 		GrantedByUserRef: &caller.UserRef,
-		Note:              note,
-		ExpiresAt:         expiresAt,
+		Note:             note,
+		ExpiresAt:        expiresAt,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert grant: %w", err)
 	}
@@ -205,7 +205,7 @@ func (h *Handler) RemoveAdminUserGrant(
 	}
 
 	n, err := q.DeleteUserGrant(ctx, DeleteUserGrantParams{
-		UserRef:       req.Ref,
+		UserRef:        req.Ref,
 		CapabilityCode: req.Capability,
 		TeamID:         teamUUID,
 	})
@@ -294,11 +294,11 @@ func (h *Handler) AddAdminUserRevoke(
 	}
 	if err := q.InsertUserRevoke(ctx, InsertUserRevokeParams{
 		UserRef:          req.Ref,
-		CapabilityCode:    req.Body.Capability,
-		TeamID:            teamUUID,
+		CapabilityCode:   req.Body.Capability,
+		TeamID:           teamUUID,
 		RevokedByUserRef: &caller.UserRef,
-		Note:              note,
-		ExpiresAt:         expiresAt,
+		Note:             note,
+		ExpiresAt:        expiresAt,
 	}); err != nil {
 		return nil, fmt.Errorf("auth: insert revoke: %w", err)
 	}
@@ -334,7 +334,7 @@ func (h *Handler) RemoveAdminUserRevoke(
 	q := New(h.Pool)
 	teamUUID := openAPIToPgUUID(req.Params.TeamId)
 	n, err := q.DeleteUserRevoke(ctx, DeleteUserRevokeParams{
-		UserRef:       req.Ref,
+		UserRef:        req.Ref,
 		CapabilityCode: req.Capability,
 		TeamID:         teamUUID,
 	})
@@ -404,9 +404,9 @@ func strPtrOrNil(s string) *string {
 // body into the pgtype.Timestamptz the sqlc layer wants. Phase 1.17.C —
 // time-bound grants and revokes share this validation:
 //
-//   * nil pointer → permanent (Valid=false → INSERT NULL)
-//   * future timestamp → time-bound (Valid=true)
-//   * past timestamp → ErrPastExpiry; caller maps to 400
+//   - nil pointer → permanent (Valid=false → INSERT NULL)
+//   - future timestamp → time-bound (Valid=true)
+//   - past timestamp → ErrPastExpiry; caller maps to 400
 //
 // A past value is operator error: the sweeper would reap the row on
 // its next tick, producing a silent grant-that-never-was. Better to

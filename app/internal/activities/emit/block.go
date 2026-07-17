@@ -15,14 +15,14 @@ import (
 // Critical AP invariant: Block MUST NOT be delivered to the
 // blocked actor. We enforce this two ways:
 //
-//   1. The `to` field is EMPTY (no addressee) so the federation
-//      outbox dispatcher in Phase 1.22.D has nothing to deliver
-//      to.
-//   2. The blocked user's ref goes in the payload under
-//      target_user_ref so admin audit + DSAR queries can still
-//      answer "who has user X blocked"; this is a local-only
-//      detail, never serialized to the federation wire to the
-//      blocked actor.
+//  1. The `to` field is EMPTY (no addressee) so the federation
+//     outbox dispatcher in Phase 1.22.D has nothing to deliver
+//     to.
+//  2. The blocked user's ref goes in the payload under
+//     target_user_ref so admin audit + DSAR queries can still
+//     answer "who has user X blocked"; this is a local-only
+//     detail, never serialized to the federation wire to the
+//     blocked actor.
 //
 // No notification — the blocked party doesn't get notified.
 func Block(blocker ActorContext, blocked UserRef, reason string) Emission {

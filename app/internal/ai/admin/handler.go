@@ -4,9 +4,9 @@
 // Package admin provides the HTTP surface for the AI inference
 // subsystem's operator-facing endpoints (Phase 1.14.A):
 //
-//   GET  /admin/ai/config  → AIInferenceConfig + validator findings
-//   PUT  /admin/ai/config  → replace + validate
-//   GET  /admin/ai/usage   → per-provider cost rollup for one period
+//	GET  /admin/ai/config  → AIInferenceConfig + validator findings
+//	PUT  /admin/ai/config  → replace + validate
+//	GET  /admin/ai/usage   → per-provider cost rollup for one period
 //
 // All three require the ai.admin capability (seeded for the Admin
 // role by migration 00009). The capability gate runs inside each

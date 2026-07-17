@@ -33,9 +33,9 @@ type LicenseSource interface {
 }
 
 var (
-	licMu                sync.RWMutex
-	licSource            LicenseSource
-	capLicenseFeatures   map[string]string // cap code -> required license feature; entry absent = no license dep
+	licMu              sync.RWMutex
+	licSource          LicenseSource
+	capLicenseFeatures map[string]string // cap code -> required license feature; entry absent = no license dep
 )
 
 // SetLicenseSource installs the LicenseSource consulted by Can(). Call

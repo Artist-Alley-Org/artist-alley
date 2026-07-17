@@ -27,14 +27,15 @@ import (
 //   - fallback chain references undefined providers
 //   - lock_sensitive_to_local is on but local_providers is empty
 //     (no provider could ever serve a restricted asset)
+//
 // These are surfaced at parse time so the admin UI can show the
 // error inline rather than at first inference-call time.
 type Config struct {
-	Enabled         bool                 // ai.enabled — master switch
-	Routing         map[Concern]string   // per-task default provider
-	FallbackChains  map[Concern][]string // walk if primary fails
-	Privacy         PrivacyPolicy        // lock + local provider list
-	DefaultBudget   BudgetDefaults       // applied to newly-configured providers
+	Enabled        bool                 // ai.enabled — master switch
+	Routing        map[Concern]string   // per-task default provider
+	FallbackChains map[Concern][]string // walk if primary fails
+	Privacy        PrivacyPolicy        // lock + local provider list
+	DefaultBudget  BudgetDefaults       // applied to newly-configured providers
 }
 
 // BudgetDefaults mirrors the `ai.budgets.default` JSONB shape. $0
@@ -275,7 +276,7 @@ type ErrConfigInvalid struct {
 // ConfigFinding is one validation error. Code lets the UI render
 // localized messages; Message is the fallback English.
 type ConfigFinding struct {
-	Code    string // stable identifier ("routing_undefined_provider", etc.)
+	Code    string  // stable identifier ("routing_undefined_provider", etc.)
 	Concern Concern // empty when not concern-specific
 	Message string
 }

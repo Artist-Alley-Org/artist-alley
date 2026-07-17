@@ -14,12 +14,14 @@
 //   - Smoke-testing the parser after a regen
 //
 // Usage:
-//   aa-abr-extract <input.abr> <output-dir>
+//
+//	aa-abr-extract <input.abr> <output-dir>
 //
 // Output layout:
-//   <output-dir>/
-//     manifest.json        — { brushes: [{id, file, w, h}, ...] }
-//     stamps/<id>.png      — one grayscale PNG per brush stamp
+//
+//	<output-dir>/
+//	  manifest.json        — { brushes: [{id, file, w, h}, ...] }
+//	  stamps/<id>.png      — one grayscale PNG per brush stamp
 //
 // The grayscale PNGs are the brush "alpha mask" — 255 = solid,
 // 0 = transparent. The frontend stamp renderer composes them with
