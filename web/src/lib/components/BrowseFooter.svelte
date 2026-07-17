@@ -46,6 +46,10 @@
   ];
 
   let expanded = $state(false);
+  /** Mobile filter dropdown. Below `sm` the four segments don't fit
+   *  beside the switcher + sort (measured: 498px needed, 343 available
+   *  at 390px), so they collapse into one pill that opens a menu. */
+  let filterOpen = $state(false);
 
   // Scroll state moved to $stores/chromeScroll: the header needs the
   // same signal, and a second listener on `main` would mean two
@@ -76,6 +80,10 @@
     { id: 'following', labelKey: 'browse.filter.following' },
   ];
 
+  /** The pill's label below `sm`. Falls back to `latest`, the store's
+   *  own default, rather than to the first segment. */
+  const activeFilter = $derived(FILTERS.find((f) => f.id === browseView.filter) ?? FILTERS[2]);
+
   function pick(mode: ViewMode) {
     browseView.setMode(mode);
     expanded = false;
@@ -101,13 +109,13 @@
   // Close the expanded cluster on Escape so keyboard users can dismiss
   // without picking. Click-outside is handled by the floating wrapper.
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && expanded) {
-      expanded = false;
-    }
+    if (e.key !== 'Escape') return;
+    if (filterOpen) filterOpen = false;
+    else if (expanded) expanded = false;
   }
 
   $effect(() => {
-    if (!expanded) return;
+    if (!expanded && !filterOpen) return;
     window.addEventListener('keydown', onWindowKey);
     return () => window.removeEventListener('keydown', onWindowKey);
   });
@@ -294,10 +302,62 @@
   {/if}
   </div>
 
-  <!-- MIDDLE cluster: segmented filter (centred via flex spacers). -->
+  <!-- MIDDLE cluster: feed filter.
+       Two presentations of one control, swapped STRUCTURALLY (which is
+       what breakpoints are for — neither is a resize of the other):
+
+         below sm — a single pill showing the active filter, opening a
+                    menu upward. Measured at 390px the three clusters
+                    need 498px and have 343; the segmented control is
+                    336px of that. Collapsing it to ~110px is what lets
+                    the footer stay on ONE row, which matters more on a
+                    phone than anywhere else — vertical space is the
+                    scarce axis, and reclaiming it is the whole point of
+                    hiding this bar on scroll.
+         sm and up — the full segmented control, unchanged.
+  -->
   <div class="flex flex-1 justify-center">
+    <!-- Below sm: collapsed to a menu. `relative` anchors the popup;
+         it opens upward (bottom-full) because this bar is pinned to the
+         bottom of the viewport. -->
+    <div class="pointer-events-auto relative sm:hidden">
+      <button
+        type="button"
+        onclick={() => (filterOpen = !filterOpen)}
+        aria-haspopup="menu"
+        aria-expanded={filterOpen}
+        aria-label={t('browse.filter.label')}
+        class="inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm font-medium text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {t(activeFilter.labelKey)}
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform" class:rotate-180={filterOpen}>
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+      {#if filterOpen}
+        <div
+          role="menu"
+          aria-label={t('browse.filter.label')}
+          class="absolute bottom-full left-1/2 mb-2 min-w-[9rem] -translate-x-1/2 rounded-xl border border-border bg-surface-elevated p-1 shadow-lg"
+        >
+          {#each FILTERS as f (f.id)}
+            {@const active = browseView.filter === f.id}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => { browseView.setFilter(f.id); filterOpen = false; }}
+              class={`block w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? 'bg-accent text-on-accent' : 'text-fg hover:bg-state-hover'}`}
+            >
+              {t(f.labelKey)}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- sm and up: the segmented control, unchanged. -->
     <div
-      class="pointer-events-auto inline-flex items-center rounded-full border border-border bg-surface-elevated p-1 shadow-lg"
+      class="pointer-events-auto hidden items-center rounded-full border border-border bg-surface-elevated p-1 shadow-lg sm:inline-flex"
       role="tablist"
       aria-label={t('browse.filter.label')}
     >
@@ -322,7 +382,7 @@
     onclick={() => browseView.toggleFeedDir()}
     title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
     aria-label={t('browse.sort.toggle')}
-    class="pointer-events-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if browseView.feedDir === 'desc'}

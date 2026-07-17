@@ -322,25 +322,38 @@
    */
   :global(.posts-grid) {
     display: grid;
-    /* `min(--tile-min, 100%)`, never a bare `--tile-min`.
+    /* `min(--tile-min, 40vw)`, never a bare `--tile-min`.
      *
-     * A grid track cannot shrink below its minmax() minimum, so once
-     * the container is narrower than one tile the row overflows and the
-     * page scrolls sideways — a 23rem tile in a 328px phone column
-     * overflows by 40px. Measured, not theorised: it's what this grid
-     * did at 390px before the min() went in, and it's invisible to
-     * svelte-check and to a documentElement scrollWidth check, because
-     * the overflow lives in <main>.
+     * Two bugs, one cap:
      *
-     * min() caps the floor at the container width, so the narrowest
-     * case degrades to exactly one full-width column instead. */
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 23rem), 100%), 1fr));
+     * 1. A grid track cannot shrink below its minmax() minimum, so once
+     *    the container is narrower than one tile the row overflows and
+     *    the page scrolls sideways — a 22rem tile in a 328px phone
+     *    column overflows by 40px.
+     *
+     * 2. An ABSOLUTE floor doesn't adapt, which is the very thing this
+     *    design is supposed to fix. The ladder is calibrated at 1920px,
+     *    so at 390px eight of its nine rungs render one column: grid
+     *    became pixel-identical to feed, and the stepper was dead
+     *    unless you clicked all the way to the bottom rung.
+     *
+     * 40vw makes the floor relative when the screen is small and inert
+     * when it isn't: at 390px it caps a 352px tile to 156px, so a
+     * deliberate `grid` is a real 2-column grid; at 1920px 40vw is
+     * 768px, the rem is smaller, and the ladder is untouched. Both
+     * measured. The cap also makes overflow impossible, since 40vw is
+     * always under the container.
+     *
+     * vw and not %: `column-width` below needs the same expression and
+     * only accepts <length>, so a percentage would work here and break
+     * masonry. One rule, both layouts. */
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 22rem), 40vw), 1fr));
   }
   /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
      the browser fits as many columns as it can. Same lever, same
      token, no `column-count` to guess. */
   :global(.posts-masonry) {
-    column-width: var(--tile-min, 23rem);
+    column-width: min(var(--tile-min, 22rem), 40vw);
     column-gap: 0.5rem;
   }
   /* feed is the honest floor of the same scale rather than a special
