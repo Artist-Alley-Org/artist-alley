@@ -14,6 +14,7 @@
   import { page } from '$app/state';
   import SearchBar from '$components/SearchBar.svelte';
   import { chromeScroll } from '$stores/chromeScroll.svelte';
+  import MobileNavDrawer from '$components/MobileNavDrawer.svelte';
   import NavUploadButton from '$components/NavUploadButton.svelte';
   import UploadModal from '$components/upload/UploadModal.svelte';
   import UploadDropZone from '$components/upload/UploadDropZone.svelte';
@@ -105,6 +106,9 @@
   // whichever mounts first installs it and the last to leave removes it.
   $effect(() => chromeScroll.attach());
   const chromeHidden = $derived(chromeScroll.hidden);
+  /** Mobile nav drawer (below md). Holds the left-nav links, account
+   *  menu, and admin sections — everything the bar drops on a phone. */
+  let drawerOpen = $state(false);
   /** Measured height of the chrome layer (banners + header). Drives
    *  <main>'s padding-top — see the markup for why it's measured. */
   let chromeH = $state(0);
@@ -177,7 +181,23 @@
       <!-- Two rows on a narrow viewport, one row from `md` up. This is
            a genuine STRUCTURAL change (the shape of the header), which
            is what breakpoints are for — every size in here is fluid. -->
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 md:flex-nowrap md:px-6 md:py-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 md:flex-nowrap md:gap-x-4 md:px-6 md:py-3">
+        <!-- Hamburger — below md only. Opens the nav drawer that holds
+             what the bar drops on a phone (nav links, account, admin).
+             44x44 on coarse pointers via tap-target. -->
+        <button
+          type="button"
+          onclick={() => (drawerOpen = true)}
+          aria-label={t('nav.menu')}
+          aria-expanded={drawerOpen}
+          class="tap-target -ml-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-fg hover:bg-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
         <a href="/" class="font-brand flex shrink-0 items-center gap-2 text-xl tracking-tight md:text-2xl">
           <BrandMark class="h-8 w-8 md:h-10 md:w-10" />
           {site.name}
@@ -256,8 +276,14 @@
           <NavUploadButton />
           <NotificationsButton />
           <MessagesButton />
-          <UserMenu />
-          <AdminMenu />
+          <!-- UserMenu + AdminMenu are dropdown triggers; below md their
+               CONTENTS move into the drawer, so hide the triggers there
+               to avoid two ways in. Upload / notifications / messages
+               stay inline at every width. -->
+          <div class="hidden md:contents">
+            <UserMenu />
+            <AdminMenu />
+          </div>
         </div>
       </div>
     </header>
@@ -270,6 +296,8 @@
   >
     {@render children?.()}
   </main>
+
+  <MobileNavDrawer bind:open={drawerOpen} onclose={() => (drawerOpen = false)} />
 
   {#if !!auth.user}
     <!-- Upload modal + drop overlay are gated on auth: only signed-in
