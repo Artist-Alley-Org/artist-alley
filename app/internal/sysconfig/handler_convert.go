@@ -33,8 +33,26 @@ func siteToAPI(v Site) openapi.SiteConfig {
 	return out
 }
 
-func apiToSite(v openapi.SiteConfig) Site {
-	out := Site{Name: v.Name}
+// apiToSite is the PATCH-input converter. It MERGES against the stored
+// config rather than replacing it — the same COALESCE-PATCH shape as
+// apiToSMTP above (#374). Without this, PATCH {base_url: "x"} wrote
+// name: "" and silently un-named the site, because SiteConfig is one
+// schema serving GET-response, PATCH-body, and PATCH-response at once,
+// so an omitted `name` deserializes to "" and the schema's
+// required:[name] can't tell omitted from empty.
+//
+// The two fields have different "omitted" markers, so they merge
+// differently. Name is a non-pointer string, so an omitted field is
+// indistinguishable from "" — and since a site cannot be nameless,
+// empty means LEAVE UNCHANGED, never clear. BaseUrl is a genuine
+// optional pointer, so its semantics are exact: nil (omitted) keeps the
+// stored value; non-nil sets it, including to "" to deliberately clear
+// it, which is valid because base_url is empty on a fresh install.
+func apiToSite(v openapi.SiteConfig, before Site) Site {
+	out := before
+	if v.Name != "" {
+		out.Name = v.Name
+	}
 	if v.BaseUrl != nil {
 		out.BaseURL = *v.BaseUrl
 	}
