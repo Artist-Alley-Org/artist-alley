@@ -25,9 +25,20 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Branch / tag / SHA to test"
+        # Empty by default so it falls through to github.ref — i.e. the
+        # ref you dispatched from. This kills the #370 footgun: the old
+        # `default: "dev"` meant `gh workflow run --ref feat/x` (no
+        # -f ref) ran feat/x's WORKFLOW FILE but checked out DEV's CODE,
+        # a silent wrong-answer generator. With "" the no-arg dispatch
+        # tests the branch you dispatched from; pass a value only to test
+        # a DIFFERENT ref than the one carrying the workflow file.
+        #
+        # Schedule is unaffected: it has no inputs, so this default never
+        # applied to it — a scheduled run resolves github.ref to the
+        # default branch (main) and tests main, exactly as before.
+        description: "Branch / tag / SHA to test (default: the ref you dispatch from)"
         required: false
-        default: "dev"
+        default: ""
 
 concurrency:
   group: ui-nightly-${{ github.workflow }}
@@ -76,6 +87,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # inputs.ref is "" unless explicitly overridden, so this
+          # resolves to github.ref — the dispatched ref on
+          # workflow_dispatch, the default branch (main) on schedule.
+          # See the `ref` input above (#370).
           ref: ${{ github.event.inputs.ref || github.ref }}
 
       - uses: actions/setup-node@v4

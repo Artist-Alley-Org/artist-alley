@@ -479,12 +479,23 @@ func (h *Handler) CreateAsset(
 			"file_hash":      *fileHashPtr,
 			"file_extension": strDefault(in.FileExtension, ""),
 		}
-		if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
-			Priority: &priority,
-		}); err != nil {
-			h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+		// Only enqueue when something can actually render this ext.
+		// Unroutable extensions fall through to preview.raster, which
+		// terminal-rejects them — a guaranteed dead job (#366). Skip
+		// instead; the asset still uploads fine, it just has no preview.
+		if dispatch.CanPreview(in.FileExtension) {
+			if _, err := h.Jobs.Enqueue(ctx, jobTypeForExt(in.FileExtension), payload, jobs.EnqueueOpts{
+				Priority: &priority,
+			}); err != nil {
+				h.Logger.LogAttrs(ctx, slog.LevelWarn, "assets.create.enqueue_preview_failed",
+					slog.String("asset_id", newID.String()),
+					slog.String("err", err.Error()),
+				)
+			}
+		} else {
+			h.Logger.LogAttrs(ctx, slog.LevelDebug, "assets.create.no_preview_for_ext",
 				slog.String("asset_id", newID.String()),
-				slog.String("err", err.Error()),
+				slog.String("ext", strDefault(in.FileExtension, "")),
 			)
 		}
 
@@ -1293,6 +1304,15 @@ func (h *Handler) RecreateAssetPreview(
 	if row.FileHash == nil || *row.FileHash == "" {
 		return openapi.RecreateAssetPreview400JSONResponse{
 			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "asset has no file_hash; nothing to preview"},
+		}, nil
+	}
+	// A deliberate "regenerate preview" for a file no handler can render
+	// would enqueue a job whose only outcome is a TerminalError (#366).
+	// Tell the caller plainly instead of handing back a 202 for a job
+	// doomed to fail.
+	if !dispatch.CanPreview(row.FileExtension) {
+		return openapi.RecreateAssetPreview400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "no preview is available for this file type"},
 		}, nil
 	}
 
