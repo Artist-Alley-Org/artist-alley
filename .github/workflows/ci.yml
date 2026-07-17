@@ -170,7 +170,20 @@ jobs:
       - name: Install codegen tools
         run: |
           docker pull sqlc/sqlc:latest
-          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+          # Pin oapi-codegen to the SAME version scripts/generate.sh uses,
+          # sourced from that file so the two can't drift. `@latest` here
+          # (the old value) is exactly what generate.sh's own comment
+          # forbids: it silently tracked v2.7.2 -> v2.8.0 the day v2.8.0
+          # shipped, and every PR started failing this drift check against
+          # a locally-generated file that is not stale. The pin lives in
+          # ONE place; CI reads it.
+          ver=$(sed -n 's/^OAPI_CODEGEN_VERSION=//p' scripts/generate.sh)
+          if [ -z "$ver" ]; then
+            echo "::error::couldn't read OAPI_CODEGEN_VERSION from scripts/generate.sh"
+            exit 1
+          fi
+          echo "oapi-codegen pinned to ${ver} (from scripts/generate.sh)"
+          go install "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${ver}"
 
       - name: Regenerate Go specs (sqlc + oapi-codegen)
         run: |
@@ -287,29 +300,39 @@ jobs:
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
           echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" >> .env
 
-      - name: Sweep this run's project + reap leaked CI containers
-        # First drop anything from THIS run's project (a retried run
-        # re-uses the same COMPOSE_PROJECT_NAME, so a previous attempt
-        # may have left containers behind).
+      - name: Sweep this run's project
+        # Drops anything from THIS run's project — a retried run re-uses
+        # the same COMPOSE_PROJECT_NAME, so a previous attempt may have
+        # left containers behind. `down` matches on the
+        # com.docker.compose.project label, so it targets exactly what
+        # this run created and can't reach a peer run's containers.
         #
-        # Then reap leaked containers from OTHER crashed CI runs —
-        # but only ones that aren't running. A concurrent run's stack
-        # is up (running/healthy); restricting the reap to
-        # exited/created/dead states means we never kill a peer run
-        # that's mid-flight. This is the concurrency-safe replacement
-        # for the old blanket `docker rm -f name=^artist-alley-`, which
-        # would have taken out every parallel run.
+        # This step used to also reap `name=^aa-ci-` containers in
+        # exited/created/dead states, on the theory that a concurrent
+        # run's stack is always "running" and therefore safe (#342).
+        # `created` is a mid-flight state: with
+        # `depends_on: condition: service_healthy` a container sits in
+        # `created` for the whole dependency health-check. Run
+        # 29550460998 lost its app container to a peer's reap inside an
+        # 11-second window between `Created` and `Starting` — the wildcard
+        # matched every run's containers, not just its own.
+        #
+        # Nothing replaces it, because nothing needs to: `down` above
+        # already removes precisely what this run created, every workflow
+        # runs it again under `if: always()`, and `docker ps -a --filter
+        # name=aa-ci-` on the runner returns zero — nothing accumulates.
+        # The reap only ever covered a hard-killed run (crash/OOM), which
+        # is speculative; the races it caused were real. If a leak is ever
+        # observed, the project name carries the run id, so a reaper can
+        # ask the API whether that run is still in progress and reap only
+        # if it isn't. Build that then, not now — and never with a
+        # wildcard.
+        #
+        # `docker network prune -f` went with it: same race (a peer's
+        # network is young and may momentarily have no running container
+        # attached), and `down` already removes this run's own network.
         run: |
           docker compose down -v --remove-orphans || true
-          leaked=$(docker ps -aq \
-            --filter "name=^aa-ci-" \
-            --filter "status=exited" \
-            --filter "status=created" \
-            --filter "status=dead")
-          if [ -n "$leaked" ]; then
-            docker rm -f $leaked || true
-          fi
-          docker network prune -f || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
 
       - name: Build and start the stack

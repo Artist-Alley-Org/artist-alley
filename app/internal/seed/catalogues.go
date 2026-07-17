@@ -32,6 +32,10 @@ type catTeam struct {
 type catCollection struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Featured flags a collection for the homepage + /admin/featured
+	// curation surface (#380). Absent/false leaves it unfeatured.
+	// applyFeatured writes a featured_items row per flagged entry.
+	Featured bool `json:"featured"`
 }
 
 type catField struct {

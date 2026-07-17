@@ -179,6 +179,33 @@ VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO NOTHING
 RETURNING id;
 
+-- name: SeedSetCollectionFeatured :exec
+-- Sets the per-collection browse-filter flag (collections.featured),
+-- which is what the PUBLIC /collections "featured" tab filters on —
+-- distinct from the featured_items curation rail the admin page reads
+-- (see 00002_featured_items.sql). Idempotent by nature (UPDATE), so a
+-- re-seed is a no-op. Only ever sets TRUE; unflagging a collection in
+-- the catalogue takes effect on the next full reset, which is how the
+-- demo re-seeds.
+UPDATE collections SET featured = TRUE WHERE id = $1;
+
+-- name: SeedInsertFeatured :exec
+-- Feature one collection/asset on the homepage + /admin/featured (#380).
+-- Position appends after any existing rows (max+1) — the SAME rule as
+-- the admin InsertFeaturedItem (internal/featured/queries.sql), so
+-- seeded rows and later admin curation interleave in one order. The
+-- (subject_kind, subject_id) unique constraint + ON CONFLICT DO NOTHING
+-- make a re-seed a no-op: no duplicates, and no position drift because
+-- the conflicting row is already counted in MAX(position).
+INSERT INTO featured_items (subject_kind, subject_id, position, created_by_user_ref)
+VALUES (
+    $1,
+    $2,
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM featured_items),
+    $3
+)
+ON CONFLICT (subject_kind, subject_id) DO NOTHING;
+
 -- name: SeedInsertAsset :one
 -- Stable id from the MANIFEST. A bare ON CONFLICT DO NOTHING catches
 -- both the id pkey (resumed run) AND the (owner_user_ref, file_hash)
@@ -216,12 +243,21 @@ ON CONFLICT (asset_id, field_id) DO NOTHING;
 -- name: SeedInsertPost :one
 -- Stable id from posts.json. author_user_ref resolved from
 -- author_username. cover set to the first resolved member asset.
+--
+-- cover_thumbnail_asset_id is left NULL on purpose (#355). It means
+-- "optional STANDALONE thumbnail asset, NOT a member of the post" — an
+-- override for when an uploader supplies a separate cover image. The
+-- seed dataset has no such standalone covers, so the honest value is
+-- NULL; pointing it at the cover (a member) both contradicted the
+-- field's contract and made every seeded post look like it carried a
+-- custom thumbnail. Cards read cover_asset_id and render its `col`
+-- variant, which the preview dispatch now produces.
 INSERT INTO posts (
     id, author_user_ref, title, description, visibility,
     cover_asset_id, cover_thumbnail_asset_id, state_id, team_id,
     created_at, updated_at, posted_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $9)
+VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10, $9)
 ON CONFLICT (id) DO NOTHING
 RETURNING id;
 

@@ -206,14 +206,52 @@ step "Bringing up the dogfood profile (studio-b alongside dev)"
 # both failed as a cascade. Force-recreating both sides ensures
 # the binary + the schema state stay in lockstep with main's
 # tip on every nightly.
-docker compose \
-    -f docker-compose.yml \
-    -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --build
-docker compose \
-    -f docker-compose.yml \
-    -f infra/docker/dogfood/docker-compose.override.yml \
-    --profile dogfood up -d --force-recreate app app-b
+# Layer the dogfood override onto COMPOSE_FILE rather than passing -f.
+# Compose's -f flags REPLACE the COMPOSE_FILE env wholesale, so the
+# hardcoded pair that used to live here silently discarded any override
+# the caller had layered on — including CI's resources override, which
+# is what drops every host port. That's why the nightly kept dying on
+# `Bind for 0.0.0.0:8080 failed: port is already allocated` on a shared
+# box where an unrelated service owns 8080 (#360). Appending keeps the
+# caller's layers and adds ours; the dogfood override declares no
+# ports, so a port-dropping override still wins.
+export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:infra/docker/dogfood/docker-compose.override.yml"
+
+# # Why the nginxes are in the force-recreate list (#368)
+#
+# Recreate what depends on what you just replaced. Both proxies use a
+# static upstream (`server app:8080;` / `server app-b:8080;`), and
+# nginx resolves those names ONCE at config load, then caches the IP
+# for the container's lifetime. Recreating the two apps but not the
+# two proxies left each nginx pointing at an address its app no
+# longer held — and because both apps are recreated together they
+# routinely SWAP addresses on the bridge, so each nginx didn't 502,
+# it silently proxied THE OTHER STACK'S APP.
+#
+# That crossed studio-a and studio-b for weeks, hidden behind the
+# Vite gate: pair.sh POSTed studio-b's peer row to `http://nginx`,
+# which reached app-b, so the row landed in postgres-b and returned a
+# truthful HTTP 201 — while the scenarios read studio-a's postgres
+# via `docker compose exec` (compose-resolved, so always correct) and
+# found nothing. Anything over docker DNS hit the wrong stack;
+# anything via compose hit the right one. Reproduced locally with dev
+# images: after the old two-service recreate, studio-b.local:9443
+# served studio-a's fingerprint.
+#
+# depends_on already orders app before nginx and app-b before
+# nginx-b, so naming all four recreates the proxies after their
+# upstreams settle, and each re-resolves the new address.
+#
+# The alternative — teaching nginx to re-resolve at runtime — was
+# rejected. nginx OSS cannot re-resolve names inside an `upstream {}`
+# block at all (the `resolve` parameter is nginx Plus); the OSS
+# workaround is to drop the upstream block for a `resolver` +
+# variable `proxy_pass`, which gives up the `keepalive 16` connection
+# pool both configs deliberately set and changes proxy_pass URI
+# semantics. That's a prod-shape nginx change to fix a dev-stack
+# script bug. The script caused it; the script fixes it.
+docker compose --profile dogfood up -d --build
+docker compose --profile dogfood up -d --force-recreate app app-b nginx nginx-b
 
 # --- 5. wait for studio-b ready --------------------------------------------
 

@@ -26,41 +26,46 @@
   // actually scrolled.
 
   import { browseView, type ViewMode, type FeedFilter } from '$stores/browseView.svelte';
+  import { chromeScroll } from '$stores/chromeScroll.svelte';
   import { t } from '$stores/lang.svelte';
 
   // ── View catalogue. Order chosen so the icons cluster naturally:
   //    grid (square grid), masonry (offset columns), thumbnail (dense
   //    grid), list (rows). Keeping `grid` first means the default
   //    active button visually anchors centre when expanded.
+  //    `feed` sits between masonry and thumbnail: it's the one-column
+  //    floor of the same tile scale (image at full column width), and
+  //    it's the default on coarse pointers. Available at every width —
+  //    it's a layout you can want on a 4k panel, not a phone fallback.
   const VIEWS: Array<{ id: ViewMode; labelKey: string; icon: string }> = [
     { id: 'grid',      labelKey: 'browse.view.grid',      icon: 'grid' },
     { id: 'masonry',   labelKey: 'browse.view.masonry',   icon: 'masonry' },
+    { id: 'feed',      labelKey: 'browse.view.feed',      icon: 'feed' },
     { id: 'thumbnail', labelKey: 'browse.view.thumbnail', icon: 'thumbnail' },
     { id: 'list',      labelKey: 'browse.view.list',      icon: 'list' },
   ];
 
   let expanded = $state(false);
+  /** Mobile filter dropdown. Below `sm` the four segments don't fit
+   *  beside the switcher + sort (measured: 498px needed, 343 available
+   *  at 390px), so they collapse into one pill that opens a menu. */
+  let filterOpen = $state(false);
 
-  // Show back-to-top only when the user has actually scrolled down.
-  // Tracks main's scrollTop via a passive listener; we use a 200px
-  // threshold so it doesn't pop in/out at the slightest scroll.
-  let scrolled = $state(false);
+  // Scroll state moved to $stores/chromeScroll: the header needs the
+  // same signal, and a second listener on `main` would mean two
+  // handlers per scroll event for one piece of information. Attach is
+  // ref-counted, so this effect is still the thing that owns the
+  // listener's lifetime here.
+  //
+  // Still doesn't reference `expanded`: that would tear down and re-run
+  // the effect on every toggle, which used to close the menu the
+  // instant it opened.
+  $effect(() => chromeScroll.attach());
 
-  // Scroll listener — only tracks scrolled position; does NOT
-  // reference `expanded` so toggling it doesn't tear down + re-run
-  // the effect (which previously closed the menu the moment it
-  // opened, because the initial onScroll() call fired with the new
-  // expanded state).
-  $effect(() => {
-    const main = document.querySelector('main');
-    if (!main) return;
-    const onScroll = () => {
-      scrolled = main.scrollTop > 200;
-    };
-    onScroll();
-    main.addEventListener('scroll', onScroll, { passive: true });
-    return () => main.removeEventListener('scroll', onScroll);
-  });
+  const scrolled = $derived(chromeScroll.scrolled);
+  // Keep the cluster on screen while the menu is open — yanking it
+  // away mid-interaction would be hostile.
+  const hidden = $derived(chromeScroll.hidden && !expanded);
 
   const activeView = $derived(VIEWS.find((v) => v.id === browseView.mode) ?? VIEWS[0]);
   const otherViews = $derived(VIEWS.filter((v) => v.id !== browseView.mode));
@@ -74,6 +79,10 @@
     { id: 'latest',    labelKey: 'browse.filter.latest' },
     { id: 'following', labelKey: 'browse.filter.following' },
   ];
+
+  /** The pill's label below `sm`. Falls back to `latest`, the store's
+   *  own default, rather than to the first segment. */
+  const activeFilter = $derived(FILTERS.find((f) => f.id === browseView.filter) ?? FILTERS[2]);
 
   function pick(mode: ViewMode) {
     browseView.setMode(mode);
@@ -100,13 +109,13 @@
   // Close the expanded cluster on Escape so keyboard users can dismiss
   // without picking. Click-outside is handled by the floating wrapper.
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && expanded) {
-      expanded = false;
-    }
+    if (e.key !== 'Escape') return;
+    if (filterOpen) filterOpen = false;
+    else if (expanded) expanded = false;
   }
 
   $effect(() => {
-    if (!expanded) return;
+    if (!expanded && !filterOpen) return;
     window.addEventListener('keydown', onWindowKey);
     return () => window.removeEventListener('keydown', onWindowKey);
   });
@@ -122,7 +131,9 @@
     right   — feed sort direction toggle
 -->
 <div
-  class="pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3"
+  class="chrome-slide pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3 transition-transform duration-200 ease-out"
+  class:chrome-hidden-bottom={hidden}
+  style="padding-bottom: env(safe-area-inset-bottom, 0px)"
   aria-label={t('browse.footer.label')}
 >
   <!-- LEFT cluster: view switcher + back-to-top -->
@@ -166,6 +177,11 @@
               <rect x="3"  y="17" width="4" height="4" rx="0.5" />
               <rect x="10" y="17" width="4" height="4" rx="0.5" />
               <rect x="17" y="17" width="4" height="4" rx="0.5" />
+            </svg>
+          {:else if v.icon === 'feed'}
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="12" rx="1" />
+              <line x1="3" y1="19" x2="14" y2="19" />
             </svg>
           {:else if v.icon === 'list'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -220,6 +236,11 @@
             <rect x="14" y="3" width="7" height="6" rx="1" />
             <rect x="3" y="16" width="7" height="5" rx="1" />
             <rect x="14" y="12" width="7" height="9" rx="1" />
+          </svg>
+        {:else if activeView.icon === 'feed'}
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="12" rx="1" />
+            <line x1="3" y1="19" x2="14" y2="19" />
           </svg>
         {:else if activeView.icon === 'thumbnail'}
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -281,10 +302,62 @@
   {/if}
   </div>
 
-  <!-- MIDDLE cluster: segmented filter (centred via flex spacers). -->
+  <!-- MIDDLE cluster: feed filter.
+       Two presentations of one control, swapped STRUCTURALLY (which is
+       what breakpoints are for — neither is a resize of the other):
+
+         below sm — a single pill showing the active filter, opening a
+                    menu upward. Measured at 390px the three clusters
+                    need 498px and have 343; the segmented control is
+                    336px of that. Collapsing it to ~110px is what lets
+                    the footer stay on ONE row, which matters more on a
+                    phone than anywhere else — vertical space is the
+                    scarce axis, and reclaiming it is the whole point of
+                    hiding this bar on scroll.
+         sm and up — the full segmented control, unchanged.
+  -->
   <div class="flex flex-1 justify-center">
+    <!-- Below sm: collapsed to a menu. `relative` anchors the popup;
+         it opens upward (bottom-full) because this bar is pinned to the
+         bottom of the viewport. -->
+    <div class="pointer-events-auto relative sm:hidden">
+      <button
+        type="button"
+        onclick={() => (filterOpen = !filterOpen)}
+        aria-haspopup="menu"
+        aria-expanded={filterOpen}
+        aria-label={t('browse.filter.label')}
+        class="inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm font-medium text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {t(activeFilter.labelKey)}
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform" class:rotate-180={filterOpen}>
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+      {#if filterOpen}
+        <div
+          role="menu"
+          aria-label={t('browse.filter.label')}
+          class="absolute bottom-full left-1/2 mb-2 min-w-[9rem] -translate-x-1/2 rounded-xl border border-border bg-surface-elevated p-1 shadow-lg"
+        >
+          {#each FILTERS as f (f.id)}
+            {@const active = browseView.filter === f.id}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => { browseView.setFilter(f.id); filterOpen = false; }}
+              class={`block w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? 'bg-accent text-on-accent' : 'text-fg hover:bg-state-hover'}`}
+            >
+              {t(f.labelKey)}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- sm and up: the segmented control, unchanged. -->
     <div
-      class="pointer-events-auto inline-flex items-center rounded-full border border-border bg-surface-elevated p-1 shadow-lg"
+      class="pointer-events-auto hidden items-center rounded-full border border-border bg-surface-elevated p-1 shadow-lg sm:inline-flex"
       role="tablist"
       aria-label={t('browse.filter.label')}
     >
@@ -309,7 +382,7 @@
     onclick={() => browseView.toggleFeedDir()}
     title={browseView.feedDir === 'desc' ? t('browse.sort.newest_first') : t('browse.sort.oldest_first')}
     aria-label={t('browse.sort.toggle')}
-    class="pointer-events-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="pointer-events-auto ml-auto inline-flex h-11 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-4 text-sm text-fg shadow-lg transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       {#if browseView.feedDir === 'desc'}
@@ -333,3 +406,13 @@
     </span>
   </button>
 </div>
+
+<style>
+  /* Slide the whole cluster below the viewport edge. `translate` only —
+     compositable, so the scroll stays off the main thread. Animating
+     `bottom` here would force layout on every frame of a flick.
+     The extra 2rem clears the safe-area inset + shadow. */
+  .chrome-hidden-bottom {
+    transform: translateY(calc(100% + 2rem));
+  }
+</style>

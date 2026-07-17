@@ -127,11 +127,12 @@ func (h *HTTPHandler) ListAdminRequests(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	// Coarse gate: holder of share.grant globally OR system.admin.
+	// Read gate: a read-only auditor (requests.read), an approver who
+	// acts on this queue (share.grant, held globally), or system.admin.
 	// Per-row asset-team scoping happens at decide time.
-	if !id.Can(CapShareGrant) && !id.Can("system.admin") {
+	if !id.Can(CapRequestsRead) && !id.Can(CapShareGrant) && !id.Can("system.admin") {
 		return openapi.ListAdminRequests403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapShareGrant + " capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapRequestsRead + " capability required"},
 		}, nil
 	}
 	limit := int32(50)

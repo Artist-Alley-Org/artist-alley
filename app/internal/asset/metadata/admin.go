@@ -15,6 +15,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// CapExtractionRead gates the read of the metadata-extraction failure
+// queue + backfill runs, so a read-only auditor role can view them
+// without the system.admin wildcard (#356). Dismiss + backfill-start
+// stay system.admin. The gate itself lives at the HTTP layer
+// (internal/http/api.go), where the other admin gates for this surface
+// already are.
+const CapExtractionRead = "system.metadata_extraction.read"
+
 // AdminHandler owns the admin-side reads + dismiss writes for the
 // extraction_failure queue. The job handler writes rows via
 // FailureWriter; this handler is the operator's mirror surface.

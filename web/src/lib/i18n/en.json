@@ -9,6 +9,7 @@
       "open_admin_menu": "Open admin menu",
       "explore": "Explore",
       "gallery": "Gallery",
+      "menu": "Menu",
       "blogs": "Blogs",
       "collections": "Collections",
       "review": "Review",
@@ -116,6 +117,7 @@
       "view": {
         "grid": "Grid",
         "masonry": "Masonry",
+        "feed": "Feed",
         "thumbnail": "Thumbnail",
         "list": "List"
       },
