@@ -116,6 +116,7 @@
       "view": {
         "grid": "Grid",
         "masonry": "Masonry",
+        "feed": "Feed",
         "thumbnail": "Thumbnail",
         "list": "List"
       },

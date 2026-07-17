@@ -233,22 +233,21 @@
   {:else}
     <!--
       Layout is driven by browseView (footer switcher + localStorage).
-        grid / thumbnail → CSS grid with --cols
-        masonry          → CSS multi-column for variable heights
-        list             → vertical stack (cols=1)
-      --cols is set inline so user adjustments take effect without a
-      Tailwind rebuild.
+        grid / thumbnail → auto-fill grid, tiles ≥ --tile-min
+        masonry          → multi-column flow, columns ≥ --tile-min
+        feed             → single column, image full-bleed
+        list             → sortable table
+      `--tile-min` is set inline because it's user state, not a design
+      token — it changes per interaction, so it can't be a class.
+      Column COUNT is never computed: see browseView.svelte.ts.
     -->
     {#if browseView.mode === 'list'}
       <PostListTable {items} {loading} />
     {:else if browseView.mode === 'masonry'}
-      <div
-        class="posts-masonry"
-        style="column-count: {browseView.cols}"
-      >
+      <div class="posts-masonry" style="--tile-min: {browseView.tileMin}">
         {#each items as post (post.id)}
           <div class="mb-2 break-inside-avoid">
-            <PostCard {post} />
+            <PostCard {post} tileMin={browseView.tileMin} />
           </div>
         {/each}
         {#if loading}
@@ -257,13 +256,21 @@
           {/each}
         {/if}
       </div>
-    {:else}
-      <div
-        class="posts-grid gap-2"
-        style="--cols: {browseView.cols}"
-      >
+    {:else if browseView.mode === 'feed'}
+      <div class="posts-feed gap-4">
         {#each items as post (post.id)}
-          <PostCard {post} />
+          <PostCard {post} feed />
+        {/each}
+        {#if loading}
+          {#each Array(3) as _, i (i)}
+            <div class="aspect-square rounded-lg bg-surface-elevated border border-border animate-pulse"></div>
+          {/each}
+        {/if}
+      </div>
+    {:else}
+      <div class="posts-grid gap-2" style="--tile-min: {browseView.tileMin}">
+        {#each items as post (post.id)}
+          <PostCard {post} tileMin={browseView.tileMin} />
         {/each}
 
         {#if loading}
@@ -298,17 +305,63 @@
 <BrowseFooter />
 
 <style>
-  /* Grid utility driven by the --cols custom property (the
-     BrowseFooter writes this on the container). gap is on the
-     element to stay Tailwind-controllable. */
+  /* The whole responsive story for the feed, in two declarations.
+   *
+   * `--tile-min` is a SIZE the user picked; the column count is
+   * whatever fits. 390px → 1 column, 1920px → 5, 3840px → 10, 32:9 →
+   * however many, with no breakpoint, no resize listener, and no
+   * width written down anywhere. Nothing enumerates aspect ratios, so
+   * no aspect ratio can be missed.
+   *
+   * auto-fill, NOT auto-fit: WebKit bug 256047 collapses auto-fit
+   * tracks under inline-size containment, and this grid is exactly
+   * the shape that triggers it. The two differ only when a row is
+   * underfull — auto-fit collapses the empty tracks, so a lone card
+   * would stretch across the whole 3840px row. auto-fill keeps them,
+   * which is both the behaviour we want and the one Safari renders.
+   */
   :global(.posts-grid) {
     display: grid;
-    grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
+    /* `min(--tile-min, 100%)`, never a bare `--tile-min`.
+     *
+     * A grid track cannot shrink below its minmax() minimum, so once
+     * the container is narrower than one tile the row overflows and the
+     * page scrolls sideways — a 23rem tile in a 328px phone column
+     * overflows by 40px. Measured, not theorised: it's what this grid
+     * did at 390px before the min() went in, and it's invisible to
+     * svelte-check and to a documentElement scrollWidth check, because
+     * the overflow lives in <main>.
+     *
+     * min() caps the floor at the container width, so the narrowest
+     * case degrades to exactly one full-width column instead. */
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 23rem), 100%), 1fr));
   }
-  /* Masonry uses CSS multi-column flow. column-gap mirrors the
-     posts-grid gap so the visual rhythm matches when toggling
-     between modes. */
+  /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
+     the browser fits as many columns as it can. Same lever, same
+     token, no `column-count` to guess. */
   :global(.posts-masonry) {
+    column-width: var(--tile-min, 23rem);
     column-gap: 0.5rem;
+  }
+  /* feed is the honest floor of the same scale rather than a special
+     case: one column at every width, image at full column width.
+   *
+   * The max-width is a MEASURE, and it's the same argument as prose's
+   * 65ch rather than an exception to the full-bleed rule. Measured at
+   * 3840x1080: an uncapped feed column is 3762px wide, so its square
+   * media box is 3760px TALL — 3.5x the 1080px viewport. You'd see a
+   * slice of one image and scroll four screens to reach the next. The
+   * cap is what makes "one column" mean something at 32:9.
+   *
+   * 46rem (736px) stays under a 1080px-tall viewport with room for
+   * chrome, and phones never reach it — 390px < 736px, so `min()`
+   * resolves to 100% and the image is genuinely full-bleed there.
+   * Layout is still full-bleed; it's the single-column CONTENT that
+   * gets a measure. */
+  :global(.posts-feed) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: min(100%, 46rem);
+    margin-inline: auto;
   }
 </style>

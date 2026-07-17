@@ -13,6 +13,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import SearchBar from '$components/SearchBar.svelte';
+  import { chromeScroll } from '$stores/chromeScroll.svelte';
   import NavUploadButton from '$components/NavUploadButton.svelte';
   import UploadModal from '$components/upload/UploadModal.svelte';
   import UploadDropZone from '$components/upload/UploadDropZone.svelte';
@@ -98,10 +99,46 @@
   }
 
   // Sign-out + theme cycling moved into UserMenu.
+
+  // Auto-hiding chrome. The store owns the single scroll listener on
+  // <main>; the browse footer attaches to the same one. Ref-counted, so
+  // whichever mounts first installs it and the last to leave removes it.
+  $effect(() => chromeScroll.attach());
+  const chromeHidden = $derived(chromeScroll.hidden);
+  /** Measured height of the chrome layer (banners + header). Drives
+   *  <main>'s padding-top — see the markup for why it's measured. */
+  let chromeH = $state(0);
 </script>
 
-<div class="flex h-screen flex-col overflow-hidden bg-surface text-fg">
+<!-- `h-dvh`, not `h-screen`. Tailwind's h-screen is 100vh, which on
+     mobile Safari/Chrome means the viewport WITHOUT the browser chrome
+     subtracted — so the shell runs taller than the visible area and the
+     bottom of the page hides behind the URL bar. dvh tracks the chrome
+     as it collapses. -->
+<div class="relative flex h-dvh flex-col overflow-hidden bg-surface text-fg">
   {#if showChrome}
+    <!--
+      The chrome layer (banners + header) overlays <main> rather than
+      sitting in the flex flow, so hiding it costs one transform and
+      zero layout. If it stayed in flow, translating it up would leave
+      a hole, and closing that hole means animating margin or height —
+      main-thread layout on every frame, i.e. exactly the jank this is
+      meant to remove.
+
+      <main> carries the layer's measured height as padding-top, so the
+      first screenful still starts below the chrome. The padding is only
+      "wasted" space at scrollTop 0, where the chrome is visible anyway
+      — by the time it hides (past 96px) that padding has scrolled off.
+
+      bind:clientHeight measures instead of hardcoding: the header is
+      two rows on a phone and one from md up, and the banners come and
+      go. A constant would be wrong in at least three states.
+    -->
+    <div
+      class="chrome-slide absolute inset-x-0 top-0 z-30 transition-transform duration-200 ease-out"
+      class:chrome-hidden-top={chromeHidden}
+      bind:clientHeight={chromeH}
+    >
     <!-- Persistent impersonation banner — only renders when the
          active session was minted via /admin/users/{ref}/impersonate.
          Above the header so it stays visible across navigation. -->
@@ -124,10 +161,25 @@
          with its own h-full / overflow-hidden flex container.
          backdrop-blur softens the boundary against image-heavy pages
          when scroll content sits underneath. -->
+    <!--
+      The header hides on scroll-down and returns on scroll-up (see
+      $stores/chromeScroll). Maximum image real estate — and it's an
+      ultrawide win before it's a phone one: a 3840x1080 32:9 panel has
+      less vertical room than a tablet, and the chrome eats exactly
+      that axis.
+
+      Implemented with a transform + a negative margin rather than a
+      height animation: transform is compositable (no main-thread
+      layout per frame), and the margin lets <main> reclaim the space
+      instead of leaving a hole where the header was.
+    -->
     <header class="shrink-0 border-b border-border bg-surface-elevated text-base">
-      <div class="flex items-center gap-4 px-6 py-3">
-        <a href="/" class="font-brand flex items-center gap-2 text-2xl tracking-tight shrink-0">
-          <BrandMark class="h-10 w-10" />
+      <!-- Two rows on a narrow viewport, one row from `md` up. This is
+           a genuine STRUCTURAL change (the shape of the header), which
+           is what breakpoints are for — every size in here is fluid. -->
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 md:flex-nowrap md:px-6 md:py-3">
+        <a href="/" class="font-brand flex shrink-0 items-center gap-2 text-xl tracking-tight md:text-2xl">
+          <BrandMark class="h-8 w-8 md:h-10 md:w-10" />
           {site.name}
         </a>
 
@@ -151,11 +203,20 @@
         </nav>
 
         {#if showSearch}
-          <!-- Search fills all space between the left nav and the
-               right cluster. The advanced-search button is attached
-               to the right edge of the bar so it reads as a single
-               input + filter pair. -->
-          <div class="flex flex-1 items-center gap-2 min-w-0">
+          <!-- Search gets its OWN FULL-WIDTH ROW below `md`, and shares
+               the row from `md` up.
+               `order-last basis-full` wraps it onto a second flex line;
+               `md:order-none md:basis-auto` puts it back inline.
+
+               The standing rule is that search is never hidden. On a
+               390px phone, sharing one row with the brand + five icon
+               buttons honoured that rule to the letter and produced an
+               82px input — visible, and useless. Its own row is the
+               first time the rule is honoured in substance.
+
+               (Scrolling away with the header is a different thing: the
+               rule means "never route-gated", not "never scrolls".) -->
+          <div class="order-last flex basis-full items-center gap-2 min-w-0 md:order-none md:flex-1 md:basis-auto">
             <div class="flex-1 min-w-0">
               <SearchBar
                 bind:value={searchValue}
@@ -181,7 +242,7 @@
             </a>
           </div>
         {:else}
-          <div class="flex-1"></div>
+          <div class="hidden flex-1 md:block"></div>
         {/if}
 
         <!-- Right cluster, in order: upload (primary CTA), notifications,
@@ -189,7 +250,9 @@
              admin overflow menu. Theme + sign-out + language live
              inside the user menu. AdminMenu self-gates on system.admin
              so non-admins never see it. -->
-        <div class="flex items-center gap-1.5 shrink-0">
+        <!-- ml-auto so the cluster stays right-aligned when search
+             wraps to its own row and no longer provides the flex push. -->
+        <div class="ml-auto flex shrink-0 items-center gap-1.5 md:ml-0">
           <NavUploadButton />
           <NotificationsButton />
           <MessagesButton />
@@ -198,9 +261,13 @@
         </div>
       </div>
     </header>
+    </div>
   {/if}
 
-  <main class="flex flex-1 flex-col overflow-y-auto">
+  <main
+    class="flex flex-1 flex-col overflow-y-auto"
+    style={showChrome ? `padding-top:${chromeH}px` : undefined}
+  >
     {@render children?.()}
   </main>
 
@@ -212,3 +279,13 @@
     <UploadDropZone />
   {/if}
 </div>
+
+<style>
+  /* Slide the chrome layer up out of view. transform only — compositable,
+     off the main thread, no layout per frame. 100% is the layer's own
+     height, so this stays correct as the header reflows between one and
+     two rows and as banners appear. */
+  .chrome-hidden-top {
+    transform: translateY(-100%);
+  }
+</style>

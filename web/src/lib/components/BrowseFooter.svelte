@@ -26,41 +26,42 @@
   // actually scrolled.
 
   import { browseView, type ViewMode, type FeedFilter } from '$stores/browseView.svelte';
+  import { chromeScroll } from '$stores/chromeScroll.svelte';
   import { t } from '$stores/lang.svelte';
 
   // ── View catalogue. Order chosen so the icons cluster naturally:
   //    grid (square grid), masonry (offset columns), thumbnail (dense
   //    grid), list (rows). Keeping `grid` first means the default
   //    active button visually anchors centre when expanded.
+  //    `feed` sits between masonry and thumbnail: it's the one-column
+  //    floor of the same tile scale (image at full column width), and
+  //    it's the default on coarse pointers. Available at every width —
+  //    it's a layout you can want on a 4k panel, not a phone fallback.
   const VIEWS: Array<{ id: ViewMode; labelKey: string; icon: string }> = [
     { id: 'grid',      labelKey: 'browse.view.grid',      icon: 'grid' },
     { id: 'masonry',   labelKey: 'browse.view.masonry',   icon: 'masonry' },
+    { id: 'feed',      labelKey: 'browse.view.feed',      icon: 'feed' },
     { id: 'thumbnail', labelKey: 'browse.view.thumbnail', icon: 'thumbnail' },
     { id: 'list',      labelKey: 'browse.view.list',      icon: 'list' },
   ];
 
   let expanded = $state(false);
 
-  // Show back-to-top only when the user has actually scrolled down.
-  // Tracks main's scrollTop via a passive listener; we use a 200px
-  // threshold so it doesn't pop in/out at the slightest scroll.
-  let scrolled = $state(false);
+  // Scroll state moved to $stores/chromeScroll: the header needs the
+  // same signal, and a second listener on `main` would mean two
+  // handlers per scroll event for one piece of information. Attach is
+  // ref-counted, so this effect is still the thing that owns the
+  // listener's lifetime here.
+  //
+  // Still doesn't reference `expanded`: that would tear down and re-run
+  // the effect on every toggle, which used to close the menu the
+  // instant it opened.
+  $effect(() => chromeScroll.attach());
 
-  // Scroll listener — only tracks scrolled position; does NOT
-  // reference `expanded` so toggling it doesn't tear down + re-run
-  // the effect (which previously closed the menu the moment it
-  // opened, because the initial onScroll() call fired with the new
-  // expanded state).
-  $effect(() => {
-    const main = document.querySelector('main');
-    if (!main) return;
-    const onScroll = () => {
-      scrolled = main.scrollTop > 200;
-    };
-    onScroll();
-    main.addEventListener('scroll', onScroll, { passive: true });
-    return () => main.removeEventListener('scroll', onScroll);
-  });
+  const scrolled = $derived(chromeScroll.scrolled);
+  // Keep the cluster on screen while the menu is open — yanking it
+  // away mid-interaction would be hostile.
+  const hidden = $derived(chromeScroll.hidden && !expanded);
 
   const activeView = $derived(VIEWS.find((v) => v.id === browseView.mode) ?? VIEWS[0]);
   const otherViews = $derived(VIEWS.filter((v) => v.id !== browseView.mode));
@@ -122,7 +123,9 @@
     right   — feed sort direction toggle
 -->
 <div
-  class="pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3"
+  class="chrome-slide pointer-events-none fixed inset-x-4 bottom-4 z-20 flex items-end gap-3 transition-transform duration-200 ease-out"
+  class:chrome-hidden-bottom={hidden}
+  style="padding-bottom: env(safe-area-inset-bottom, 0px)"
   aria-label={t('browse.footer.label')}
 >
   <!-- LEFT cluster: view switcher + back-to-top -->
@@ -166,6 +169,11 @@
               <rect x="3"  y="17" width="4" height="4" rx="0.5" />
               <rect x="10" y="17" width="4" height="4" rx="0.5" />
               <rect x="17" y="17" width="4" height="4" rx="0.5" />
+            </svg>
+          {:else if v.icon === 'feed'}
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="12" rx="1" />
+              <line x1="3" y1="19" x2="14" y2="19" />
             </svg>
           {:else if v.icon === 'list'}
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -220,6 +228,11 @@
             <rect x="14" y="3" width="7" height="6" rx="1" />
             <rect x="3" y="16" width="7" height="5" rx="1" />
             <rect x="14" y="12" width="7" height="9" rx="1" />
+          </svg>
+        {:else if activeView.icon === 'feed'}
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="12" rx="1" />
+            <line x1="3" y1="19" x2="14" y2="19" />
           </svg>
         {:else if activeView.icon === 'thumbnail'}
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -333,3 +346,13 @@
     </span>
   </button>
 </div>
+
+<style>
+  /* Slide the whole cluster below the viewport edge. `translate` only —
+     compositable, so the scroll stays off the main thread. Animating
+     `bottom` here would force layout on every frame of a flick.
+     The extra 2rem clears the safe-area inset + shadow. */
+  .chrome-hidden-bottom {
+    transform: translateY(calc(100% + 2rem));
+  }
+</style>
