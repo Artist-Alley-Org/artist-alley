@@ -177,6 +177,7 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyMemberships", r.applyMemberships},
 		{"applyFields", r.applyFields},
 		{"applyCollections", r.applyCollections},
+		{"applyFeatured", r.applyFeatured},
 		{"applyAssets", r.applyAssets},
 		{"applyPosts", r.applyPosts},
 		{"applyComments", r.applyComments},
@@ -392,6 +393,64 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 		r.collections[c.Name] = id
 	}
 	r.log.Info("seed.collections", "count", len(r.collections))
+	return nil
+}
+
+// --- phase: featured --------------------------------------------------
+
+// applyFeatured marks each collection flagged `"featured": true` in
+// dataset.collections.json (#380) so the demo's featured surfaces aren't
+// empty on a fresh reset. There are TWO of them, deliberately separate
+// (see 00002_featured_items.sql), and one flag drives both:
+//
+//   featured_items row      — the admin-curated rail /admin/content/
+//                             featured reads. #356 made that page
+//                             readable by demo-viewer, so it must not
+//                             open to nothing.
+//   collections.featured    — the boolean the PUBLIC /collections
+//                             "featured" tab filters on. #341 built no
+//                             public featured_items renderer, so this
+//                             column is the only public featured
+//                             surface — without it the front-of-house
+//                             tab stays empty.
+//
+// Runs after applyCollections, so every flagged collection already has
+// a row + a stable id in r.collections. subject_kind is always
+// 'collection': the featured_items CHECK also accepts 'asset', but
+// assets live in the archive manifest, not this versioned catalogue, so
+// featuring them would belong to a different phase.
+//
+// Idempotent: the UPDATE is naturally so, the INSERT is ON CONFLICT DO
+// NOTHING, and the owner is the bootstrap admin — the same
+// created_by_user_ref applyCollections uses for the collections.
+func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
+	featured := 0
+	for _, c := range cat.Collections {
+		if !c.Featured {
+			continue
+		}
+		id, ok := r.collections[c.Name]
+		if !ok {
+			// A featured flag on a collection applyCollections didn't
+			// create is a catalogue mistake, not a fatal seed error.
+			r.log.Warn("seed.featured.unknown_collection", "name", c.Name)
+			continue
+		}
+		// Public browse-tab flag.
+		if err := r.q.SeedSetCollectionFeatured(ctx, id); err != nil {
+			return fmt.Errorf("flag collection %s featured: %w", c.Name, err)
+		}
+		// Admin curation rail.
+		if err := r.q.SeedInsertFeatured(ctx, SeedInsertFeaturedParams{
+			SubjectKind:      "collection",
+			SubjectID:        id,
+			CreatedByUserRef: &r.adminRef,
+		}); err != nil {
+			return fmt.Errorf("feature collection %s: %w", c.Name, err)
+		}
+		featured++
+	}
+	r.log.Info("seed.featured", "count", featured)
 	return nil
 }
 
