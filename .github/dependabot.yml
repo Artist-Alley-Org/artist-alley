@@ -60,8 +60,19 @@ updates:
       - deps
       - ci
     groups:
-      actions:
+      # Split minor+patch from major, same shape as the npm/gomod
+      # ecosystems above (#353). dependabot/fetch-metadata reports a
+      # grouped PR's update-type as the HIGHEST bump in the group, so
+      # the old catch-all `patterns: ["*"]` group meant a single major
+      # action bump flipped the whole grouped PR to semver-major — and
+      # the dependabot-automerge workflow (which auto-merges only
+      # minor/patch) then held every routine action bump for manual
+      # review. Grouping only minor+patch keeps routine bumps
+      # auto-mergeable; majors fall outside the group into individual
+      # PRs, each correctly flagged major-review.
+      actions-minor-patch:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   # Production Dockerfile base images.
   - package-ecosystem: docker
