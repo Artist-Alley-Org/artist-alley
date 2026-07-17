@@ -243,16 +243,52 @@ class BrowseViewState {
   feedDir = $state<SortDir>('desc');
   hydrated = $state(false);
 
+  /** The active rung in rem, after the thumbnail density offset. */
+  private get activeRem(): number {
+    const offset = this.mode === 'thumbnail' ? THUMBNAIL_RUNG_OFFSET : 0;
+    const idx = Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, this.tileIdx + offset));
+    return TILE_STEPS_REM[idx];
+  }
+
   /** Minimum tile width for the current mode, as a CSS length. Feeds
    *  `--tile-min`; the browser derives the column count from it.
    *
-   *  There is deliberately no `cols` getter any more. Nothing in the
-   *  app knows the column count — it's a property of the viewport, and
-   *  the only thing qualified to compute it is the layout engine. */
+   *  Not a bare `${R}rem`. A single absolute length can't span the
+   *  useful column range at both ends: 22rem is 5 columns at 1920px but
+   *  ONE column at 390px, and worse, every rung ≥ 10rem is one column
+   *  at 390px — so on a phone the stepper did nothing and grid looked
+   *  identical to feed. (An earlier fix capped the floor at a flat 40vw,
+   *  which just pinned every rung to 2 columns instead of 1: same dead
+   *  stepper, different number.)
+   *
+   *  So the rung drives a three-zone clamp, all three parts scaled by R
+   *  so stepping moves the ACTIVE part at every width:
+   *    floor  0.4·R rem — governs < 768px. Scales with the rung, so the
+   *                       phone stepper spans 1–4 columns instead of
+   *                       flattening.
+   *    vw     R·(16/19.2) vw — governs 768–1920px. Equals the rem
+   *                       ceiling exactly at 1920 and the floor exactly
+   *                       at 768, so both handoffs are seamless.
+   *    ceil   R rem — governs > 1920px. This IS the old ladder, so
+   *                       desktop is untouched: default still 5 cols at
+   *                       1920 and 10 at 3840.
+   *  The grid wraps this in min(…, 100%) for overflow safety.
+   *
+   *  There is deliberately no `cols` getter. Nothing in the app knows
+   *  the column count — it's a property of the viewport, and the only
+   *  thing qualified to compute it is the layout engine. */
   get tileMin(): string {
-    const offset = this.mode === 'thumbnail' ? THUMBNAIL_RUNG_OFFSET : 0;
-    const idx = Math.max(TILE_MIN_IDX, Math.min(TILE_MAX_IDX, this.tileIdx + offset));
-    return `${TILE_STEPS_REM[idx]}rem`;
+    const r = this.activeRem;
+    const floor = +(r * 0.4).toFixed(2);
+    const vw = +(r * (16 / 19.2)).toFixed(2);
+    return `clamp(${floor}rem, ${vw}vw, ${r}rem)`;
+  }
+
+  /** The active rung as a plain `${R}rem`, for the `<img sizes>` desktop
+   *  clause. `sizes` is not CSS and rejects clamp()/min()/var(), so it
+   *  can't consume `tileMin` — it needs a bare length. */
+  get tileSizesLen(): string {
+    return `${this.activeRem}rem`;
   }
 
   /** Whether dec / inc are currently meaningful. list + feed lock both:

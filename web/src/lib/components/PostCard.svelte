@@ -55,11 +55,12 @@
      *  rendered far larger than a grid tile. Only affects `sizes` —
      *  the card treatment is deliberately identical. */
     feed?: boolean;
-    /** The grid's --tile-min, as a concrete length, for `sizes`. */
-    tileMin?: string;
+    /** The active rung as a plain `${R}rem`, for `sizes` (not the
+     *  clamp — `sizes` rejects clamp()). */
+    tileSizesLen?: string;
   }
 
-  let { post, feed = false, tileMin = '23rem' }: Props = $props();
+  let { post, feed = false, tileSizesLen = '22rem' }: Props = $props();
 
   // Pick the cover asset id. Falls back to the first member; falls
   // back further to nothing (placeholder).
@@ -170,13 +171,10 @@
   // floor is the honest lower bound and the browser's DPR multiplier
   // covers the stretch.
   //
-  // `tileMin` arrives as a prop rather than being read from the CSS
-  // variable that drives the grid: `sizes` is NOT CSS and does not
-  // accept var() — the HTML spec takes a <source-size-value>, and an
-  // invalid one is dropped for the 100vw default, which is the worst
-  // possible guess for a 10-across thumbnail wall. Also not
-  // `sizes="auto"`: it requires loading=lazy and isn't in Safari,
-  // where it degrades to that same 100vw.
+  // The length comes in as a prop (tileSizesLen), NOT from the CSS var
+  // that drives the grid: `sizes` is not CSS and drops var()/clamp()/
+  // min() for the 100vw default — the worst guess for a thumbnail wall.
+  // Also not `sizes="auto"`: it needs loading=lazy and isn't in Safari.
   //
   // Feed mirrors .posts-feed's capped column (min(100%, 46rem)) as a
   // MEDIA-CONDITION LIST, not a min() expression. `sizes` is not CSS:
@@ -186,7 +184,15 @@
   // same trap as var() in sizes, one layer down. The two-clause form
   // is plain <source-size-value> and universally understood.
   const imgSizes = $derived(
-    imgSrcset ? (feed ? '(max-width: 46rem) 100vw, 46rem' : tileMin) : undefined,
+    imgSrcset
+      ? feed
+        ? '(max-width: 46rem) 100vw, 46rem'
+        // Grid: the tile is ~half the viewport on a phone (the clamp
+        // floor) and the rung's rem on desktop. Two clauses beat the
+        // bare rem, which over-hinted on mobile and pulled a larger
+        // variant than a ~150px box needs.
+        : `(max-width: 640px) 50vw, ${tileSizesLen}`
+      : undefined,
   );
 
   // Hover scrub preview. Video covers animate frames from preview.video's

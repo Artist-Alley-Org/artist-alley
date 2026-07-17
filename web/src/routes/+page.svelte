@@ -247,7 +247,7 @@
       <div class="posts-masonry" style="--tile-min: {browseView.tileMin}">
         {#each items as post (post.id)}
           <div class="mb-2 break-inside-avoid">
-            <PostCard {post} tileMin={browseView.tileMin} />
+            <PostCard {post} tileSizesLen={browseView.tileSizesLen} />
           </div>
         {/each}
         {#if loading}
@@ -270,7 +270,7 @@
     {:else}
       <div class="posts-grid gap-2" style="--tile-min: {browseView.tileMin}">
         {#each items as post (post.id)}
-          <PostCard {post} tileMin={browseView.tileMin} />
+          <PostCard {post} tileSizesLen={browseView.tileSizesLen} />
         {/each}
 
         {#if loading}
@@ -322,38 +322,23 @@
    */
   :global(.posts-grid) {
     display: grid;
-    /* `min(--tile-min, 40vw)`, never a bare `--tile-min`.
+    /* `--tile-min` is already a viewport-aware clamp (see
+     * browseView.svelte.ts). Here we only guard overflow: a grid track
+     * can't shrink below its minmax() floor, so at the largest rungs the
+     * floor can exceed a phone's column width — min(…, 100%) degrades
+     * that to a single full-width column instead of scrolling sideways.
      *
-     * Two bugs, one cap:
-     *
-     * 1. A grid track cannot shrink below its minmax() minimum, so once
-     *    the container is narrower than one tile the row overflows and
-     *    the page scrolls sideways — a 22rem tile in a 328px phone
-     *    column overflows by 40px.
-     *
-     * 2. An ABSOLUTE floor doesn't adapt, which is the very thing this
-     *    design is supposed to fix. The ladder is calibrated at 1920px,
-     *    so at 390px eight of its nine rungs render one column: grid
-     *    became pixel-identical to feed, and the stepper was dead
-     *    unless you clicked all the way to the bottom rung.
-     *
-     * 40vw makes the floor relative when the screen is small and inert
-     * when it isn't: at 390px it caps a 352px tile to 156px, so a
-     * deliberate `grid` is a real 2-column grid; at 1920px 40vw is
-     * 768px, the rem is smaller, and the ladder is untouched. Both
-     * measured. The cap also makes overflow impossible, since 40vw is
-     * always under the container.
-     *
-     * vw and not %: `column-width` below needs the same expression and
-     * only accepts <length>, so a percentage would work here and break
-     * masonry. One rule, both layouts. */
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 22rem), 40vw), 1fr));
+     * An earlier version capped at a flat 40vw here instead. That pinned
+     * every rung to 2 columns at 390px — the stepper still did nothing,
+     * just at a different count. The fix belonged in the value, not a
+     * cap on it. */
+    grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min, 22rem), 100%), 1fr));
   }
   /* Masonry's analogue of auto-fill: `column-width` is a MINIMUM, and
      the browser fits as many columns as it can. Same lever, same
      token, no `column-count` to guess. */
   :global(.posts-masonry) {
-    column-width: min(var(--tile-min, 22rem), 40vw);
+    column-width: min(var(--tile-min, 22rem), 100%);
     column-gap: 0.5rem;
   }
   /* feed is the honest floor of the same scale rather than a special
