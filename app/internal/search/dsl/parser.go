@@ -19,13 +19,13 @@ type Field string
 const (
 	FieldTitle       Field = "title"
 	FieldDescription Field = "description"
-	FieldBody        Field = "body"        // alias for description on posts
+	FieldBody        Field = "body" // alias for description on posts
 	FieldTag         Field = "tag"
 	FieldOwner       Field = "owner"
 	FieldType        Field = "type"        // asset_type name / id
 	FieldSensitivity Field = "sensitivity" // public / team / restricted / embargo
 	FieldExtension   Field = "extension"
-	FieldSimilarTo   Field = "similar_to"  // reserved — compilation returns 501
+	FieldSimilarTo   Field = "similar_to" // reserved — compilation returns 501
 )
 
 // AllFields is the whitelist. Exposed so error responses can list
@@ -306,6 +306,6 @@ func (e DSLError) Error() string { return e.Message }
 
 // Sentinels wrapped in fmt.Errorf so errors.Is works.
 var (
-	ErrParseUnexpected           = errors.New("dsl: unexpected token")
-	ErrSimilarToNotImplemented   = errors.New("dsl: similar_to reserved for Phase 1.16.B-3")
+	ErrParseUnexpected         = errors.New("dsl: unexpected token")
+	ErrSimilarToNotImplemented = errors.New("dsl: similar_to reserved for Phase 1.16.B-3")
 )

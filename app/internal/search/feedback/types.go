@@ -63,11 +63,11 @@ type SubmitResult struct {
 // TopQueryRow is a row in the "queries with most down-votes" admin
 // aggregation.
 type TopQueryRow struct {
-	QueryHash    string
-	DSLQuery     string
-	TotalVotes   int64
-	DownVotes    int64
-	DownVotePct  float32
+	QueryHash   string
+	DSLQuery    string
+	TotalVotes  int64
+	DownVotes   int64
+	DownVotePct float32
 }
 
 // UnderRankedHitRow is a row in the "under-ranked hits" admin

@@ -194,16 +194,16 @@ func (h *Handler) GetEncryptionKey(ctx context.Context, actorURI string) (Remote
 // Returns:
 //
 //   - changed=true       when this was a real key change (different
-//                        bytes OR different version OR first-time set).
-//                        Caller emits federation.remote_actor.key_updated.
+//     bytes OR different version OR first-time set).
+//     Caller emits federation.remote_actor.key_updated.
 //   - changed=false      when the inbound (key, version) match the
-//                        cached value exactly — refresh-only. The
-//                        DB row's updated_at still moves forward
-//                        per the column's docs.
+//     cached value exactly — refresh-only. The
+//     DB row's updated_at still moves forward
+//     per the column's docs.
 //   - ErrEncryptionKeyMalformed when len(key) != 32 at the in-process
-//                        boundary, even before reaching the DB.
+//     boundary, even before reaching the DB.
 //   - ErrNoActor         when no row matched actor_uri (UpsertRemoteActor
-//                        wasn't called).
+//     wasn't called).
 //
 // On success the cache entry is Invalidated (broadcast across
 // peers) so the next read picks up the fresh value.
@@ -219,8 +219,8 @@ func (h *Handler) SetEncryptionKey(ctx context.Context, actorURI string, key []b
 	// ErrNoEncryptionKey both mean "no prior key" — that's a
 	// first-time set, which is a change. Any other error bubbles.
 	var (
-		prevKey     [32]byte
-		hadPrev     bool
+		prevKey [32]byte
+		hadPrev bool
 	)
 	prev, prevErr := h.GetEncryptionKey(ctx, actorURI)
 	switch {

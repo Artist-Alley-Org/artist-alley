@@ -97,11 +97,11 @@ func (h *AdminHandler) RefreshFederationPeerSuggestions(
 	}
 	outcomes := h.client.RefreshAll(ctx, h.registry)
 	rows := make([]struct {
-		Count             int                 `json:"count"`
-		Error             *string             `json:"error,omitempty"`
-		SourceDisplayName string              `json:"source_display_name"`
-		SourcePeerId      openapi_types.UUID  `json:"source_peer_id"`
-		SourceUrl         string              `json:"source_url"`
+		Count             int                `json:"count"`
+		Error             *string            `json:"error,omitempty"`
+		SourceDisplayName string             `json:"source_display_name"`
+		SourcePeerId      openapi_types.UUID `json:"source_peer_id"`
+		SourceUrl         string             `json:"source_url"`
 	}, len(outcomes))
 	for i, o := range outcomes {
 		rows[i].Count = o.Count

@@ -52,10 +52,10 @@ type FieldValueWriter interface {
 // "exif" so the existing audit-history feed surfaces the
 // extraction provenance.
 type WriteAssetFieldValueParams struct {
-	AssetID  uuid.UUID
-	FieldID  uuid.UUID
-	Value    Value
-	SetBy    string // "exif" / "iptc" / "xmp" / "operator"
+	AssetID uuid.UUID
+	FieldID uuid.UUID
+	Value   Value
+	SetBy   string // "exif" / "iptc" / "xmp" / "operator"
 }
 
 // FailureWriter records one extraction_failure row for the admin

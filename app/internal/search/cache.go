@@ -84,10 +84,10 @@ func NewCache(reg *appcache.Registry, maxEntries int, ttl time.Duration, logger 
 	}
 	inner := appcache.Register[cacheEntry](reg, CacheDomain, maxEntries)
 	c := &Cache{
-		inner:  inner,
+		inner:   inner,
 		nowFunc: time.Now,
-		logger: logger,
-		ttl:    ttl,
+		logger:  logger,
+		ttl:     ttl,
 	}
 	c.invalidateAll = func(ctx context.Context) error {
 		return inner.InvalidateAll(ctx)
@@ -290,4 +290,3 @@ type CacheStatsSnapshot struct {
 	Misses        int64 `json:"misses"`
 	Invalidations int64 `json:"invalidations"`
 }
-

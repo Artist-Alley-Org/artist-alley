@@ -11,17 +11,18 @@ import (
 
 // testdata/sample.7z is a tiny p7zip-built archive — see
 // testdata/README.md for the generation recipe. Layout:
-//   payload/hello.txt        ("hello from sevenzip\n", 20 bytes)
-//   payload/sub/file2.txt    ("nested entry\n",         13 bytes)
+//
+//	payload/hello.txt        ("hello from sevenzip\n", 20 bytes)
+//	payload/sub/file2.txt    ("nested entry\n",         13 bytes)
 const (
-	sevenZipFixture        = "testdata/sample.7z"
-	sevenZipEntryHello     = "payload/hello.txt"
-	sevenZipEntryNested    = "payload/sub/file2.txt"
-	sevenZipHelloBody      = "hello from sevenzip\n"
-	sevenZipNestedBody     = "nested entry\n"
-	sevenZipExpectedEntry  = 3 // 1 root dir + 2 files (sevenzip lists payload/ and sub/ as dirs)
-	sevenZipExpectedFiles  = 2
-	sevenZipExpectedDirs   = 1
+	sevenZipFixture       = "testdata/sample.7z"
+	sevenZipEntryHello    = "payload/hello.txt"
+	sevenZipEntryNested   = "payload/sub/file2.txt"
+	sevenZipHelloBody     = "hello from sevenzip\n"
+	sevenZipNestedBody    = "nested entry\n"
+	sevenZipExpectedEntry = 3 // 1 root dir + 2 files (sevenzip lists payload/ and sub/ as dirs)
+	sevenZipExpectedFiles = 2
+	sevenZipExpectedDirs  = 1
 )
 
 func openSevenZipFixture(t *testing.T) (*os.File, int64) {

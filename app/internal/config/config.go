@@ -53,20 +53,20 @@ type Config struct {
 	// when set, the documented literal admin/ArtistAlleyMogul is
 	// used instead of a random password + a loud WARN banner is
 	// printed. DEVELOPMENT ONLY.
-	BootstrapAdminPath     string
-	BootstrapDefaultAdmin  bool
+	BootstrapAdminPath    string
+	BootstrapDefaultAdmin bool
 
 	// Storage. Backend selects which storage.Backend implementation
 	// the app constructs at boot. The other fields are backend-specific
 	// — only the ones for the selected backend need to be set.
-	StorageBackend         string // "fs" | "s3" | ...
-	StorageFSRoot          string // "fs": absolute path to the storage root
-	StorageS3Endpoint      string // "s3": e.g., http://minio:9000 (AWS endpoint when empty)
-	StorageS3Region        string // "s3": e.g., us-east-1
-	StorageS3Bucket        string // "s3": bucket name
-	StorageS3AccessKey     string // "s3"
-	StorageS3SecretKey     string // "s3"
-	StorageS3UsePathStyle  bool   // "s3": true for MinIO and similar
+	StorageBackend        string // "fs" | "s3" | ...
+	StorageFSRoot         string // "fs": absolute path to the storage root
+	StorageS3Endpoint     string // "s3": e.g., http://minio:9000 (AWS endpoint when empty)
+	StorageS3Region       string // "s3": e.g., us-east-1
+	StorageS3Bucket       string // "s3": bucket name
+	StorageS3AccessKey    string // "s3"
+	StorageS3SecretKey    string // "s3"
+	StorageS3UsePathStyle bool   // "s3": true for MinIO and similar
 
 	// License file path (Phase 1.17.O). When empty or the file
 	// doesn't exist, the licensing package falls into "community
@@ -155,7 +155,7 @@ func Load() (Config, error) {
 		SetupDefaults: SetupDefaults{
 			AdminUsername:  envStr("AA_SETUP_DEFAULT_USERNAME", ""),
 			AdminEmail:     envStr("AA_SETUP_DEFAULT_EMAIL", ""),
-			AdminFullname: envStr("AA_SETUP_DEFAULT_FULLNAME", ""),
+			AdminFullname:  envStr("AA_SETUP_DEFAULT_FULLNAME", ""),
 			SiteName:       envStr("AA_SETUP_DEFAULT_SITE_NAME", "Artist Alley"),
 			SiteBaseURL:    envStr("AA_SETUP_DEFAULT_BASE_URL", ""),
 			SMTPHost:       envStr("AA_SETUP_DEFAULT_SMTP_HOST", ""),

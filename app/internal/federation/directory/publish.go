@@ -59,8 +59,8 @@ type PublishMetadata struct {
 
 // Errors callers may distinguish on.
 var (
-	ErrPublishNotPending = errors.New("publish: directory not in pending_dns; request a challenge first")
-	ErrPublishNoToken    = errors.New("publish: no pending token on this directory")
+	ErrPublishNotPending   = errors.New("publish: directory not in pending_dns; request a challenge first")
+	ErrPublishNoToken      = errors.New("publish: no pending token on this directory")
 	ErrPublishTokenExpired = errors.New("publish: token expired; request a fresh challenge")
 )
 
@@ -149,13 +149,13 @@ func (c *Client) RegisterListing(
 
 	url := strings.TrimRight(d.URL, "/") + "/v1/register"
 	payload := map[string]any{
-		"instance_url":             instanceURL,
-		"display_name":             meta.DisplayName,
-		"instance_public_key_pem":  string(id.PublicKeyPEM()),
-		"region":                   meta.Region,
-		"description":              meta.Description,
-		"tags":                     meta.Tags,
-		"dns_txt_token":            d.PublishPendingToken,
+		"instance_url":            instanceURL,
+		"display_name":            meta.DisplayName,
+		"instance_public_key_pem": string(id.PublicKeyPEM()),
+		"region":                  meta.Region,
+		"description":             meta.Description,
+		"tags":                    meta.Tags,
+		"dns_txt_token":           d.PublishPendingToken,
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -204,11 +204,11 @@ func (c *Client) RegisterListing(
 func (r *Registry) SetPublishMetadata(ctx context.Context, id uuid.UUID, m PublishMetadata) (*Directory, error) {
 	tagsJSON, _ := json.Marshal(m.Tags)
 	row, err := New(r.Pool).SetDirectoryPublishMetadata(ctx, SetDirectoryPublishMetadataParams{
-		ID:                  pgtype.UUID{Bytes: id, Valid: true},
-		PublishDisplayName:  m.DisplayName,
-		PublishRegion:       m.Region,
-		PublishDescription:  m.Description,
-		PublishTags:         tagsJSON,
+		ID:                 pgtype.UUID{Bytes: id, Valid: true},
+		PublishDisplayName: m.DisplayName,
+		PublishRegion:      m.Region,
+		PublishDescription: m.Description,
+		PublishTags:        tagsJSON,
 	})
 	if err != nil {
 		return nil, err
@@ -218,11 +218,11 @@ func (r *Registry) SetPublishMetadata(ctx context.Context, id uuid.UUID, m Publi
 
 func (r *Registry) setPublishChallenge(ctx context.Context, id uuid.UUID, token string, expires time.Time, recName, recValue string) (*Directory, error) {
 	row, err := New(r.Pool).SetDirectoryPublishChallenge(ctx, SetDirectoryPublishChallengeParams{
-		ID:                     pgtype.UUID{Bytes: id, Valid: true},
-		PublishPendingToken:    token,
-		PublishTokenExpiresAt:  pgtype.Timestamptz{Time: expires, Valid: true},
-		PublishRecordName:      recName,
-		PublishRecordValue:     recValue,
+		ID:                    pgtype.UUID{Bytes: id, Valid: true},
+		PublishPendingToken:   token,
+		PublishTokenExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
+		PublishRecordName:     recName,
+		PublishRecordValue:    recValue,
 	})
 	if err != nil {
 		return nil, err
@@ -232,8 +232,8 @@ func (r *Registry) setPublishChallenge(ctx context.Context, id uuid.UUID, token 
 
 func (r *Registry) setPublishListed(ctx context.Context, id uuid.UUID, listingID string) (*Directory, error) {
 	row, err := New(r.Pool).SetDirectoryPublishListed(ctx, SetDirectoryPublishListedParams{
-		ID:                pgtype.UUID{Bytes: id, Valid: true},
-		PublishListingID:  listingID,
+		ID:               pgtype.UUID{Bytes: id, Valid: true},
+		PublishListingID: listingID,
 	})
 	if err != nil {
 		return nil, err
@@ -243,8 +243,8 @@ func (r *Registry) setPublishListed(ctx context.Context, id uuid.UUID, listingID
 
 func (r *Registry) setPublishFailed(ctx context.Context, id uuid.UUID, errMsg string) (*Directory, error) {
 	row, err := New(r.Pool).SetDirectoryPublishFailed(ctx, SetDirectoryPublishFailedParams{
-		ID:                pgtype.UUID{Bytes: id, Valid: true},
-		PublishLastError:  errMsg,
+		ID:               pgtype.UUID{Bytes: id, Valid: true},
+		PublishLastError: errMsg,
 	})
 	if err != nil {
 		return nil, err

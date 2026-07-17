@@ -10,10 +10,10 @@ func TestValidateHash(t *testing.T) {
 	bad := []string{
 		"",
 		"too-short",
-		"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", // uppercase
-		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",  // 63 chars
+		"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",  // uppercase
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",   // 63 chars
 		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", // 65 chars
-		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdez", // non-hex char
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdez",  // non-hex char
 	}
 	if err := ValidateHash(good); err != nil {
 		t.Errorf("good hash rejected: %v", err)

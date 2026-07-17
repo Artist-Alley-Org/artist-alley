@@ -403,16 +403,16 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 // empty on a fresh reset. There are TWO of them, deliberately separate
 // (see 00002_featured_items.sql), and one flag drives both:
 //
-//   featured_items row      — the admin-curated rail /admin/content/
-//                             featured reads. #356 made that page
-//                             readable by demo-viewer, so it must not
-//                             open to nothing.
-//   collections.featured    — the boolean the PUBLIC /collections
-//                             "featured" tab filters on. #341 built no
-//                             public featured_items renderer, so this
-//                             column is the only public featured
-//                             surface — without it the front-of-house
-//                             tab stays empty.
+//	featured_items row      — the admin-curated rail /admin/content/
+//	                          featured reads. #356 made that page
+//	                          readable by demo-viewer, so it must not
+//	                          open to nothing.
+//	collections.featured    — the boolean the PUBLIC /collections
+//	                          "featured" tab filters on. #341 built no
+//	                          public featured_items renderer, so this
+//	                          column is the only public featured
+//	                          surface — without it the front-of-house
+//	                          tab stays empty.
 //
 // Runs after applyCollections, so every flagged collection already has
 // a row + a stable id in r.collections. subject_kind is always

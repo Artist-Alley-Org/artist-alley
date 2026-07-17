@@ -60,4 +60,3 @@ func (a savedSearchCounterAdapter) RecordDeltaHit() {
 	}
 	a.c.RecordEvent(ResultSavedSearchDeltaHit)
 }
-

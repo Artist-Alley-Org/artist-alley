@@ -461,15 +461,15 @@ func (e *Engine) runAssets(ctx context.Context, q Query, limit int) ([]Hit, int,
 	hits := make([]Hit, 0, limit)
 	for rows.Next() {
 		var (
-			id       uuid.UUID
-			title    string
-			descr    string
-			owner    *int64
-			origin   *uuid.UUID
-			thumb    []byte
-			created  time.Time
-			updated  time.Time
-			score    float64
+			id      uuid.UUID
+			title   string
+			descr   string
+			owner   *int64
+			origin  *uuid.UUID
+			thumb   []byte
+			created time.Time
+			updated time.Time
+			score   float64
 		)
 		if err := rows.Scan(&id, &title, &descr, &owner, &origin, &thumb, &created, &updated, &score); err != nil {
 			return nil, 0, err
@@ -608,15 +608,15 @@ func (e *Engine) runPosts(ctx context.Context, q Query, limit int) ([]Hit, int, 
 	hits := make([]Hit, 0, limit)
 	for rows.Next() {
 		var (
-			id       uuid.UUID
-			title    string
-			descr    string
-			author   *int64
-			origin   *uuid.UUID
-			cover    *uuid.UUID
-			created  time.Time
-			updated  time.Time
-			score    float64
+			id      uuid.UUID
+			title   string
+			descr   string
+			author  *int64
+			origin  *uuid.UUID
+			cover   *uuid.UUID
+			created time.Time
+			updated time.Time
+			score   float64
 		)
 		if err := rows.Scan(&id, &title, &descr, &author, &origin, &cover, &created, &updated, &score); err != nil {
 			return nil, 0, err

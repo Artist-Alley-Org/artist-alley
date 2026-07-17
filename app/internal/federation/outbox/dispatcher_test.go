@@ -36,8 +36,8 @@ import (
 // share row, and constructs a wired dispatcher (with audit spy
 // + visibility lookup pointing at the post).
 type dispatcherFixture struct {
-	t            *testing.T
-	pool         interface {
+	t    *testing.T
+	pool interface {
 		QueryRow(context.Context, string, ...any) interface{}
 		Exec(context.Context, string, ...any) (any, error)
 	}

@@ -711,8 +711,8 @@ func (w *Worker) deliverOne(ctx context.Context, row FederationOutbox) deliveryO
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		_, _ = w.q.MarkOutboxSent(ctx, MarkOutboxSentParams{
-			ID:                  row.ID,
-			DeliveredWithKeyID:  ptrStr(w.signer.KeyID()),
+			ID:                 row.ID,
+			DeliveredWithKeyID: ptrStr(w.signer.KeyID()),
 		})
 		return deliveryOutcomeSent
 
@@ -936,23 +936,23 @@ func (w *Worker) buildEnvelope(ctx context.Context, activityID, outboxID, peerID
 // # Inputs the caller threads in
 //
 //   - outboxID                  — federation_outbox row ID;
-//                                  used to mark was_encrypted or
-//                                  refused on the right row.
+//     used to mark was_encrypted or
+//     refused on the right row.
 //   - peerID                    — recipient peer's UUID; audit
-//                                  metadata + capability lookup.
+//     metadata + capability lookup.
 //   - recipientActorURI         — recipient's actor URI; remote-
-//                                  actor encryption-key lookup +
-//                                  EncryptionBlock.RecipientKeyID.
+//     actor encryption-key lookup +
+//     EncryptionBlock.RecipientKeyID.
 //   - sensitivityFromRow        — federation_outbox.sensitivity
-//                                  denormalized at INSERT time
-//                                  (1.22.I-g, migration 00012);
-//                                  NULL → conservative-public.
+//     denormalized at INSERT time
+//     (1.22.I-g, migration 00012);
+//     NULL → conservative-public.
 //   - senderKeyVersion +
 //     senderPrivateEnc          — buildEnvelope's JOIN against
-//                                  federation_user_keys; wrapped
-//                                  private key gets unwrapped
-//                                  here for box.Seal + zeroed
-//                                  via the userkeys.Unwrap helper.
+//     federation_user_keys; wrapped
+//     private key gets unwrapped
+//     here for box.Seal + zeroed
+//     via the userkeys.Unwrap helper.
 //
 // # Why the path comes back as a value
 //

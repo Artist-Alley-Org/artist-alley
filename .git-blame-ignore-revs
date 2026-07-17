@@ -1,0 +1,7 @@
+# Revisions to skip in `git blame` — mechanical, semantics-preserving
+# reformatting only. Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub applies this file automatically.)
+
+# style: gofmt -w ./... (Go 1.19+ doc-comment reformatting) (#367)
+f6af8a1438c829fa5264f8dae49ba4266c4f8b22

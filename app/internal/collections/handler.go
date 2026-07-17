@@ -926,7 +926,6 @@ func (h *Handler) AddCollectionResource(
 // return 404 without surfacing as a 500 server error.
 var errAssetMissing = errors.New("collections: asset row absent")
 
-
 // ---------------------------------------------------------------------------
 // RemoveCollectionResource
 // ---------------------------------------------------------------------------
@@ -1078,12 +1077,12 @@ func (h *Handler) AddCollectionAcl(
 		expires = pgtype.Timestamptz{Time: *req.Body.ExpiresAt, Valid: true}
 	}
 	if err := New(h.Pool).AddCollectionAcl(ctx, AddCollectionAclParams{
-		CollectionID:        pgID,
-		PrincipalType:       string(req.Body.PrincipalType),
-		PrincipalID:         req.Body.PrincipalId,
-		Permission:          string(req.Body.Permission),
-		GrantedByUserRef:   &caller.UserRef,
-		ExpiresAt:           expires,
+		CollectionID:     pgID,
+		PrincipalType:    string(req.Body.PrincipalType),
+		PrincipalID:      req.Body.PrincipalId,
+		Permission:       string(req.Body.Permission),
+		GrantedByUserRef: &caller.UserRef,
+		ExpiresAt:        expires,
 	}); err != nil {
 		return nil, fmt.Errorf("collections: add acl: %w", err)
 	}
@@ -1236,7 +1235,7 @@ func resourceRowToAPI(r ListCollectionResourcesPageRow) openapi.CollectionResour
 		Pinned:       r.Pinned,
 		AddedAt:      r.AddedAt.Time,
 		Title:        r.Title,
-		AssetType: r.AssetType,
+		AssetType:    r.AssetType,
 		Status:       openapi.CollectionResourceStatus(r.Status),
 		FileHash:     r.FileHash,
 	}

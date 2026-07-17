@@ -39,7 +39,7 @@ func TestFieldDefinitionLifecycle(t *testing.T) {
 	pool := openPool(t, pwd)
 	defer pool.Close()
 
-	router, _ := makeRouter(t, pool, /*admin=*/ true)
+	router, _ := makeRouter(t, pool /*admin=*/, true)
 
 	// Pre-clean any leftover test fields.
 	cleanTestFields(t, pool)
@@ -243,7 +243,7 @@ func TestNonAdminCannotCreateField(t *testing.T) {
 	pool := openPool(t, pwd)
 	defer pool.Close()
 
-	router, _ := makeRouter(t, pool, /*admin=*/ false)
+	router, _ := makeRouter(t, pool /*admin=*/, false)
 	rr := postJSON(t, router, "/fields", map[string]any{
 		"code": "nonadmin_field", "label": "X", "type": "text",
 	})
@@ -263,7 +263,7 @@ func TestAssetFieldValueLifecycle(t *testing.T) {
 	pool := openPool(t, pwd)
 	defer pool.Close()
 
-	router, userRef := makeRouter(t, pool, /*admin=*/ true)
+	router, userRef := makeRouter(t, pool /*admin=*/, true)
 	cleanTestFields(t, pool)
 	t.Cleanup(func() { cleanTestFields(t, pool) })
 
@@ -593,8 +593,3 @@ func (s metaShim) ClearCollectionFieldValue(ctx context.Context, req openapi.Cle
 func (s metaShim) GetCollectionFieldValueHistory(ctx context.Context, req openapi.GetCollectionFieldValueHistoryRequestObject) (openapi.GetCollectionFieldValueHistoryResponseObject, error) {
 	return s.h.GetCollectionFieldValueHistory(ctx, req)
 }
-
-
-
-
-

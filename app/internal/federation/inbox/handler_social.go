@@ -376,4 +376,3 @@ func isMissingTargetError(err error) bool {
 		strings.Contains(s, "violates foreign key") ||
 		strings.Contains(s, "no rows in result set")
 }
-

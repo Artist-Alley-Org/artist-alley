@@ -28,10 +28,10 @@ func (s stubVisibility) CanSee(context.Context, int64, uuid.UUID) (bool, error) 
 
 // countingCounter records invocations for assertions.
 type countingCounter struct {
-	feedback     int
-	undo         int
-	rateLimited  int
-	disabled     int
+	feedback      int
+	undo          int
+	rateLimited   int
+	disabled      int
 	lastDirection string
 }
 

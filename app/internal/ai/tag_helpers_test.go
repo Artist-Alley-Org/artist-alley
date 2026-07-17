@@ -21,8 +21,8 @@ type stubCompletionForTag struct {
 	lastRequest CompletionRequest
 }
 
-func (s *stubCompletionForTag) Name() string             { return s.name }
-func (s *stubCompletionForTag) SupportsVision() bool     { return true }
+func (s *stubCompletionForTag) Name() string         { return s.name }
+func (s *stubCompletionForTag) SupportsVision() bool { return true }
 func (s *stubCompletionForTag) Complete(_ context.Context, req CompletionRequest) (CompletionResponse, error) {
 	s.lastRequest = req
 	if s.err != nil {

@@ -16,10 +16,10 @@ import (
 // version 8; any other value means we're looking at a different
 // format that happens to share the IDP* family namespace.
 const (
-	md2Magic   uint32 = 0x32504449 // "IDP2"
-	md2Version uint32 = 8
-	md2FrameNameLen        = 16
-	md2VertexNormalsCount  = 162
+	md2Magic              uint32 = 0x32504449 // "IDP2"
+	md2Version            uint32 = 8
+	md2FrameNameLen              = 16
+	md2VertexNormalsCount        = 162
 )
 
 // md2Header is the 17-uint32 file header. Field order + names
@@ -334,4 +334,3 @@ var md2Normals = [md2VertexNormalsCount][3]float32{
 	{-0.425325, 0.688191, -0.587785}, {-0.425325, -0.688191, -0.587785},
 	{-0.587785, -0.425325, -0.688191}, {-0.688191, -0.587785, -0.425325},
 }
-

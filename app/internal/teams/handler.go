@@ -495,9 +495,9 @@ func (h *Handler) ListTeamMembers(
 	out := make([]openapi.TeamMember, 0, len(rows))
 	for _, r := range rows {
 		m := openapi.TeamMember{
-			TeamId:    openapi_types.UUID(r.TeamID.Bytes),
-			UserRef:  r.UserRef,
-			AddedAt:   r.AddedAt.Time,
+			TeamId:  openapi_types.UUID(r.TeamID.Bytes),
+			UserRef: r.UserRef,
+			AddedAt: r.AddedAt.Time,
 		}
 		if r.AddedByUserRef != nil {
 			m.AddedByUserRef = r.AddedByUserRef
@@ -528,9 +528,9 @@ func (h *Handler) AddTeamMember(
 		}, nil
 	}
 	if err := New(h.Pool).AddTeamMember(ctx, AddTeamMemberParams{
-		TeamID:              pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
-		UserRef:            req.Body.UserRef,
-		AddedByUserRef:     &caller.UserRef,
+		TeamID:         pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		UserRef:        req.Body.UserRef,
+		AddedByUserRef: &caller.UserRef,
 	}); err != nil {
 		if isFKViolation(err) {
 			return openapi.AddTeamMember404JSONResponse{
@@ -558,7 +558,7 @@ func (h *Handler) RemoveTeamMember(
 		}, nil
 	}
 	rows, err := New(h.Pool).RemoveTeamMember(ctx, RemoveTeamMemberParams{
-		TeamID:   pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		TeamID:  pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
 		UserRef: req.UserRef,
 	})
 	if err != nil {
@@ -696,9 +696,9 @@ func decodeCursor(s string) (string, uuid.UUID, error) {
 
 // isUniqueViolation / isFKViolation / isCheckViolation match by pg
 // SQLSTATE class so we don't depend on error-string formatting.
-func isUniqueViolation(err error) bool   { return pgErrCode(err) == "23505" }
-func isFKViolation(err error) bool       { return pgErrCode(err) == "23503" }
-func isCheckViolation(err error) bool    { return pgErrCode(err) == "23514" }
+func isUniqueViolation(err error) bool { return pgErrCode(err) == "23505" }
+func isFKViolation(err error) bool     { return pgErrCode(err) == "23503" }
+func isCheckViolation(err error) bool  { return pgErrCode(err) == "23514" }
 
 func pgErrCode(err error) string {
 	var pgErr *pgconn.PgError

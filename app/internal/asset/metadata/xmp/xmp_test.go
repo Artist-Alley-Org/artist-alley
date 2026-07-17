@@ -204,8 +204,8 @@ func xmpAPP1Body(packet []byte) []byte {
 
 func wrapInJPEG_APP1(body []byte) []byte {
 	var buf bytes.Buffer
-	buf.Write([]byte{0xFF, 0xD8})       // SOI
-	buf.Write([]byte{0xFF, 0xE1})       // APP1
+	buf.Write([]byte{0xFF, 0xD8}) // SOI
+	buf.Write([]byte{0xFF, 0xE1}) // APP1
 	var lenBytes [2]byte
 	binary.BigEndian.PutUint16(lenBytes[:], uint16(len(body)+2))
 	buf.Write(lenBytes[:])

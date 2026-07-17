@@ -34,7 +34,7 @@ type AdminHandler struct {
 	// construction via SetPublishDeps; nil-safe so subscribe-only
 	// installs (no AA_MASTER_KEY, no instance identity) still get
 	// list/subscribe/unsubscribe/poll working.
-	identity     *identity.Manager
+	identity      *identity.Manager
 	instanceURLFn func(ctx context.Context) string
 }
 
@@ -378,27 +378,27 @@ func (h *AdminHandler) RegisterFederationDirectoryPublishListing(
 
 func directoryToAPI(d Directory) openapi.FederationDirectory {
 	out := openapi.FederationDirectory{
-		Id:                   d.ID,
-		DirectoryUrl:         d.URL,
-		OperatorName:         d.OperatorName,
-		OperatorPublicKey:    d.OperatorPublicKey,
-		OperatorFingerprint:  d.OperatorFingerprint,
-		Enabled:              d.Enabled,
-		SubscribedByUserRef:  d.SubscribedByUserRef,
-		LastPollStatus:       openapi.FederationDirectoryLastPollStatus(d.LastPollStatus),
-		LastPollError:        d.LastPollError,
-		PollIntervalSeconds:  int(d.PollIntervalSeconds),
-		Notes:                d.Notes,
-		PublishStatus:        ptrFederationDirectoryPublishStatus(d.PublishStatus),
-		PublishPendingToken:  strPtr(d.PublishPendingToken),
-		PublishRecordName:    strPtr(d.PublishRecordName),
-		PublishRecordValue:   strPtr(d.PublishRecordValue),
-		PublishListingId:     strPtr(d.PublishListingID),
-		PublishLastError:     strPtr(d.PublishLastError),
-		PublishDisplayName:   strPtr(d.PublishDisplayName),
-		PublishRegion:        strPtr(d.PublishRegion),
-		PublishDescription:   strPtr(d.PublishDescription),
-		PublishTags:          &d.PublishTags,
+		Id:                  d.ID,
+		DirectoryUrl:        d.URL,
+		OperatorName:        d.OperatorName,
+		OperatorPublicKey:   d.OperatorPublicKey,
+		OperatorFingerprint: d.OperatorFingerprint,
+		Enabled:             d.Enabled,
+		SubscribedByUserRef: d.SubscribedByUserRef,
+		LastPollStatus:      openapi.FederationDirectoryLastPollStatus(d.LastPollStatus),
+		LastPollError:       d.LastPollError,
+		PollIntervalSeconds: int(d.PollIntervalSeconds),
+		Notes:               d.Notes,
+		PublishStatus:       ptrFederationDirectoryPublishStatus(d.PublishStatus),
+		PublishPendingToken: strPtr(d.PublishPendingToken),
+		PublishRecordName:   strPtr(d.PublishRecordName),
+		PublishRecordValue:  strPtr(d.PublishRecordValue),
+		PublishListingId:    strPtr(d.PublishListingID),
+		PublishLastError:    strPtr(d.PublishLastError),
+		PublishDisplayName:  strPtr(d.PublishDisplayName),
+		PublishRegion:       strPtr(d.PublishRegion),
+		PublishDescription:  strPtr(d.PublishDescription),
+		PublishTags:         &d.PublishTags,
 	}
 	if d.OperatorContact != "" {
 		c := d.OperatorContact

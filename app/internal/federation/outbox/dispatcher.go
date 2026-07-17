@@ -89,13 +89,13 @@ type VisibilityLookup func(ctx context.Context, objectKind string, objectID uuid
 
 // Dispatcher fans out activities into federation_outbox rows.
 type Dispatcher struct {
-	cfg              DispatcherConfig
-	pool             *pgxpool.Pool
-	q                *Queries
-	resolver         *Resolver
-	logger           *slog.Logger
-	auditSkipped     SkippedAuditFn
-	resolveVisibility VisibilityLookup
+	cfg                DispatcherConfig
+	pool               *pgxpool.Pool
+	q                  *Queries
+	resolver           *Resolver
+	logger             *slog.Logger
+	auditSkipped       SkippedAuditFn
+	resolveVisibility  VisibilityLookup
 	resolveSensitivity SensitivityLookup
 
 	// wake is signalled by the LISTEN goroutine whenever a NOTIFY

@@ -64,12 +64,12 @@ type SSOProvider struct {
 // to passwords stored on `user.password`; SSO logins bypass it
 // entirely.
 type PasswordPolicy struct {
-	MinLength       int  `json:"min_length"`
-	RequireUpper    bool `json:"require_upper"`
-	RequireNumber   bool `json:"require_number"`
-	RequireSymbol   bool `json:"require_symbol"`
-	DisallowCommon  bool `json:"disallow_common"` // reject "password", "123456", etc.
-	MaxAgeDays      int  `json:"max_age_days"`    // 0 = no expiry
+	MinLength      int  `json:"min_length"`
+	RequireUpper   bool `json:"require_upper"`
+	RequireNumber  bool `json:"require_number"`
+	RequireSymbol  bool `json:"require_symbol"`
+	DisallowCommon bool `json:"disallow_common"` // reject "password", "123456", etc.
+	MaxAgeDays     int  `json:"max_age_days"`    // 0 = no expiry
 }
 
 // AuthConfig is the full auth settings payload stored under KeyAuth.

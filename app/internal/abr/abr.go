@@ -6,18 +6,19 @@
 package abr
 
 import (
-	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	"bytes"
+	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	"golang.org/x/text/encoding/unicode"
 )
 
-
 type Abr_Tag int
+
 const (
 	Abr_Tag__Tag8bim Abr_Tag = 943868237
 )
 
 type Abr_Subtag int
+
 const (
 	Abr_Subtag__Desc Abr_Subtag = 1684370275
 	Abr_Subtag__Patt Abr_Subtag = 1885434996
@@ -26,37 +27,40 @@ const (
 )
 
 type Abr_DescriptorType int
+
 const (
 	Abr_DescriptorType__Descriptor Abr_DescriptorType = 1331849827
-	Abr_DescriptorType__String Abr_DescriptorType = 1413830740
-	Abr_DescriptorType__UnitFloat Abr_DescriptorType = 1433302086
-	Abr_DescriptorType__List Abr_DescriptorType = 1449938035
-	Abr_DescriptorType__Boolean Abr_DescriptorType = 1651470188
-	Abr_DescriptorType__Double Abr_DescriptorType = 1685026146
+	Abr_DescriptorType__String     Abr_DescriptorType = 1413830740
+	Abr_DescriptorType__UnitFloat  Abr_DescriptorType = 1433302086
+	Abr_DescriptorType__List       Abr_DescriptorType = 1449938035
+	Abr_DescriptorType__Boolean    Abr_DescriptorType = 1651470188
+	Abr_DescriptorType__Double     Abr_DescriptorType = 1685026146
 	Abr_DescriptorType__Enumerated Abr_DescriptorType = 1701737837
-	Abr_DescriptorType__Integer Abr_DescriptorType = 1819242087
-	Abr_DescriptorType__Alias Abr_DescriptorType = 2540464499
+	Abr_DescriptorType__Integer    Abr_DescriptorType = 1819242087
+	Abr_DescriptorType__Alias      Abr_DescriptorType = 2540464499
 )
 
 type Abr_FloatUnit int
+
 const (
-	Abr_FloatUnit__Angle Abr_FloatUnit = 591490663
-	Abr_FloatUnit__None Abr_FloatUnit = 592342629
-	Abr_FloatUnit__Percent Abr_FloatUnit = 592474723
-	Abr_FloatUnit__Pixels Abr_FloatUnit = 592476268
+	Abr_FloatUnit__Angle    Abr_FloatUnit = 591490663
+	Abr_FloatUnit__None     Abr_FloatUnit = 592342629
+	Abr_FloatUnit__Percent  Abr_FloatUnit = 592474723
+	Abr_FloatUnit__Pixels   Abr_FloatUnit = 592476268
 	Abr_FloatUnit__Distance Abr_FloatUnit = 592604276
-	Abr_FloatUnit__Density Abr_FloatUnit = 592606060
+	Abr_FloatUnit__Density  Abr_FloatUnit = 592606060
 )
+
 type Abr struct {
-	Header *Abr_Header
+	Header   *Abr_Header
 	Sections []*Abr_Section
-	_io *kaitai.Stream
-	_root *Abr
-	_parent interface{}
+	_io      *kaitai.Stream
+	_root    *Abr
+	_parent  interface{}
 }
+
 func NewAbr() *Abr {
-	return &Abr{
-	}
+	return &Abr{}
 }
 
 func (this *Abr) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -70,7 +74,7 @@ func (this *Abr) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err err
 		return err
 	}
 	this.Header = tmp1
-	for i := 1;; i++ {
+	for i := 1; ; i++ {
 		tmp2, err := this._io.EOF()
 		if err != nil {
 			return err
@@ -87,18 +91,19 @@ func (this *Abr) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err err
 	}
 	return err
 }
+
 type Abr_Channel struct {
-	IsWritten uint32
-	Length uint32
+	IsWritten   uint32
+	Length      uint32
 	UnusedDepth uint32
-	ImageData *Abr_ImageData
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_V62
+	ImageData   *Abr_ImageData
+	_io         *kaitai.Stream
+	_root       *Abr
+	_parent     *Abr_V62
 }
+
 func NewAbr_Channel() *Abr_Channel {
-	return &Abr_Channel{
-	}
+	return &Abr_Channel{}
 }
 
 func (this *Abr_Channel) Read(io *kaitai.Stream, parent *Abr_V62, root *Abr) (err error) {
@@ -111,21 +116,21 @@ func (this *Abr_Channel) Read(io *kaitai.Stream, parent *Abr_V62, root *Abr) (er
 		return err
 	}
 	this.IsWritten = uint32(tmp4)
-	if (this.IsWritten > 0) {
+	if this.IsWritten > 0 {
 		tmp5, err := this._io.ReadU4be()
 		if err != nil {
 			return err
 		}
 		this.Length = uint32(tmp5)
 	}
-	if ( ((this.IsWritten > 0) && (this.Length > 0)) ) {
+	if (this.IsWritten > 0) && (this.Length > 0) {
 		tmp6, err := this._io.ReadU4be()
 		if err != nil {
 			return err
 		}
 		this.UnusedDepth = uint32(tmp6)
 	}
-	if ( ((this.IsWritten > 0) && (this.Length > 0)) ) {
+	if (this.IsWritten > 0) && (this.Length > 0) {
 		tmp7 := NewAbr_ImageData()
 		err = tmp7.Read(this._io, this, this._root)
 		if err != nil {
@@ -135,16 +140,17 @@ func (this *Abr_Channel) Read(io *kaitai.Stream, parent *Abr_V62, root *Abr) (er
 	}
 	return err
 }
+
 type Abr_DescriptorList struct {
 	ItemCount uint32
-	Items []*Abr_TypedValue
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_TypedValue
+	Items     []*Abr_TypedValue
+	_io       *kaitai.Stream
+	_root     *Abr
+	_parent   *Abr_TypedValue
 }
+
 func NewAbr_DescriptorList() *Abr_DescriptorList {
-	return &Abr_DescriptorList{
-	}
+	return &Abr_DescriptorList{}
 }
 
 func (this *Abr_DescriptorList) Read(io *kaitai.Stream, parent *Abr_TypedValue, root *Abr) (err error) {
@@ -168,21 +174,22 @@ func (this *Abr_DescriptorList) Read(io *kaitai.Stream, parent *Abr_TypedValue, 
 	}
 	return err
 }
+
 type Abr_ImageData struct {
-	Top uint32
-	Left uint32
-	Bottom uint32
-	Right uint32
-	Depth uint16
+	Top         uint32
+	Left        uint32
+	Bottom      uint32
+	Right       uint32
+	Depth       uint16
 	Compression uint8
-	Bitmap []byte
-	_io *kaitai.Stream
-	_root *Abr
-	_parent interface{}
+	Bitmap      []byte
+	_io         *kaitai.Stream
+	_root       *Abr
+	_parent     interface{}
 }
+
 func NewAbr_ImageData() *Abr_ImageData {
-	return &Abr_ImageData{
-	}
+	return &Abr_ImageData{}
 }
 
 func (this *Abr_ImageData) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -228,16 +235,17 @@ func (this *Abr_ImageData) Read(io *kaitai.Stream, parent interface{}, root *Abr
 	this.Bitmap = tmp16
 	return err
 }
+
 type Abr_TypedValue struct {
-	Type Abr_DescriptorType
-	Value interface{}
-	_io *kaitai.Stream
-	_root *Abr
+	Type    Abr_DescriptorType
+	Value   interface{}
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent interface{}
 }
+
 func NewAbr_TypedValue() *Abr_TypedValue {
-	return &Abr_TypedValue{
-	}
+	return &Abr_TypedValue{}
 }
 
 func (this *Abr_TypedValue) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -250,7 +258,7 @@ func (this *Abr_TypedValue) Read(io *kaitai.Stream, parent interface{}, root *Ab
 		return err
 	}
 	this.Type = Abr_DescriptorType(tmp17)
-	switch (this.Type) {
+	switch this.Type {
 	case Abr_DescriptorType__String:
 		tmp18 := NewAbr_UnicodeString()
 		err = tmp18.Read(this._io, this, this._root)
@@ -314,16 +322,17 @@ func (this *Abr_TypedValue) Read(io *kaitai.Stream, parent interface{}, root *Ab
 	}
 	return err
 }
+
 type Abr_CompactString struct {
-	StrLen uint32
-	Text string
-	_io *kaitai.Stream
-	_root *Abr
+	StrLen  uint32
+	Text    string
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent interface{}
 }
+
 func NewAbr_CompactString() *Abr_CompactString {
-	return &Abr_CompactString{
-	}
+	return &Abr_CompactString{}
 }
 
 func (this *Abr_CompactString) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -336,8 +345,8 @@ func (this *Abr_CompactString) Read(io *kaitai.Stream, parent interface{}, root 
 		return err
 	}
 	this.StrLen = uint32(tmp27)
-	var tmp28 uint32;
-	if (this.StrLen > 0) {
+	var tmp28 uint32
+	if this.StrLen > 0 {
 		tmp28 = this.StrLen
 	} else {
 		tmp28 = 4
@@ -350,18 +359,19 @@ func (this *Abr_CompactString) Read(io *kaitai.Stream, parent interface{}, root 
 	this.Text = string(tmp29)
 	return err
 }
+
 type Abr_Descriptor struct {
-	ClassName *Abr_UnicodeString
-	ClassId *Abr_CompactString
-	ItemCount uint32
+	ClassName  *Abr_UnicodeString
+	ClassId    *Abr_CompactString
+	ItemCount  uint32
 	KeyedItems []*Abr_KeyedItem
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_TypedValue
+	_io        *kaitai.Stream
+	_root      *Abr
+	_parent    *Abr_TypedValue
 }
+
 func NewAbr_Descriptor() *Abr_Descriptor {
-	return &Abr_Descriptor{
-	}
+	return &Abr_Descriptor{}
 }
 
 func (this *Abr_Descriptor) Read(io *kaitai.Stream, parent *Abr_TypedValue, root *Abr) (err error) {
@@ -397,20 +407,21 @@ func (this *Abr_Descriptor) Read(io *kaitai.Stream, parent *Abr_TypedValue, root
 	}
 	return err
 }
+
 type Abr_Section struct {
-	Tag Abr_Tag
-	Subtag Abr_Subtag
-	BodyLen uint32
-	Body interface{}
-	Padding []byte
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr
+	Tag       Abr_Tag
+	Subtag    Abr_Subtag
+	BodyLen   uint32
+	Body      interface{}
+	Padding   []byte
+	_io       *kaitai.Stream
+	_root     *Abr
+	_parent   *Abr
 	_raw_Body []byte
 }
+
 func NewAbr_Section() *Abr_Section {
-	return &Abr_Section{
-	}
+	return &Abr_Section{}
 }
 
 func (this *Abr_Section) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err error) {
@@ -433,7 +444,7 @@ func (this *Abr_Section) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err er
 		return err
 	}
 	this.BodyLen = uint32(tmp36)
-	switch (this.Subtag) {
+	switch this.Subtag {
 	case Abr_Subtag__Samp:
 		tmp37, err := this._io.ReadBytes(int(this.BodyLen))
 		if err != nil {
@@ -488,7 +499,7 @@ func (this *Abr_Section) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err er
 	if err != nil {
 		return err
 	}
-	if (!(tmp44)) {
+	if !(tmp44) {
 		tmp45 := -(this.BodyLen) % 4
 		if tmp45 < 0 {
 			tmp45 += 4
@@ -502,15 +513,16 @@ func (this *Abr_Section) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err er
 	}
 	return err
 }
+
 type Abr_SamplesSectionBody struct {
 	Samples []*Abr_Sample
-	_io *kaitai.Stream
-	_root *Abr
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent *Abr_Section
 }
+
 func NewAbr_SamplesSectionBody() *Abr_SamplesSectionBody {
-	return &Abr_SamplesSectionBody{
-	}
+	return &Abr_SamplesSectionBody{}
 }
 
 func (this *Abr_SamplesSectionBody) Read(io *kaitai.Stream, parent *Abr_Section, root *Abr) (err error) {
@@ -518,7 +530,7 @@ func (this *Abr_SamplesSectionBody) Read(io *kaitai.Stream, parent *Abr_Section,
 	this._parent = parent
 	this._root = root
 
-	for i := 1;; i++ {
+	for i := 1; ; i++ {
 		tmp47, err := this._io.EOF()
 		if err != nil {
 			return err
@@ -535,16 +547,17 @@ func (this *Abr_SamplesSectionBody) Read(io *kaitai.Stream, parent *Abr_Section,
 	}
 	return err
 }
+
 type Abr_KeyedItem struct {
-	Key *Abr_CompactString
-	Item *Abr_TypedValue
-	_io *kaitai.Stream
-	_root *Abr
+	Key     *Abr_CompactString
+	Item    *Abr_TypedValue
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent interface{}
 }
+
 func NewAbr_KeyedItem() *Abr_KeyedItem {
-	return &Abr_KeyedItem{
-	}
+	return &Abr_KeyedItem{}
 }
 
 func (this *Abr_KeyedItem) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -566,16 +579,17 @@ func (this *Abr_KeyedItem) Read(io *kaitai.Stream, parent interface{}, root *Abr
 	this.Item = tmp50
 	return err
 }
+
 type Abr_PascalStringU4 struct {
-	StrLen uint32
-	Text string
-	_io *kaitai.Stream
-	_root *Abr
+	StrLen  uint32
+	Text    string
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent interface{}
 }
+
 func NewAbr_PascalStringU4() *Abr_PascalStringU4 {
-	return &Abr_PascalStringU4{
-	}
+	return &Abr_PascalStringU4{}
 }
 
 func (this *Abr_PascalStringU4) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -596,18 +610,19 @@ func (this *Abr_PascalStringU4) Read(io *kaitai.Stream, parent interface{}, root
 	this.Text = string(tmp52)
 	return err
 }
+
 type Abr_SampleData struct {
-	IdLen uint8
+	IdLen   uint8
 	BrushId []byte
 	BodyV62 *Abr_V62
 	BodyV61 *Abr_V61
-	_io *kaitai.Stream
-	_root *Abr
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent *Abr_Sample
 }
+
 func NewAbr_SampleData() *Abr_SampleData {
-	return &Abr_SampleData{
-	}
+	return &Abr_SampleData{}
 }
 
 func (this *Abr_SampleData) Read(io *kaitai.Stream, parent *Abr_Sample, root *Abr) (err error) {
@@ -626,7 +641,7 @@ func (this *Abr_SampleData) Read(io *kaitai.Stream, parent *Abr_Sample, root *Ab
 	}
 	tmp54 = tmp54
 	this.BrushId = tmp54
-	if (this._root.Header.Subversion == 2) {
+	if this._root.Header.Subversion == 2 {
 		tmp55 := NewAbr_V62()
 		err = tmp55.Read(this._io, this, this._root)
 		if err != nil {
@@ -634,7 +649,7 @@ func (this *Abr_SampleData) Read(io *kaitai.Stream, parent *Abr_Sample, root *Ab
 		}
 		this.BodyV62 = tmp55
 	}
-	if (this._root.Header.Subversion == 1) {
+	if this._root.Header.Subversion == 1 {
 		tmp56 := NewAbr_V61()
 		err = tmp56.Read(this._io, this, this._root)
 		if err != nil {
@@ -644,21 +659,22 @@ func (this *Abr_SampleData) Read(io *kaitai.Stream, parent *Abr_Sample, root *Ab
 	}
 	return err
 }
+
 type Abr_V62 struct {
-	MetaLen uint16
-	MetaA uint16
-	Version uint32
-	Length uint32
-	Bounds []byte
+	MetaLen     uint16
+	MetaA       uint16
+	Version     uint32
+	Length      uint32
+	Bounds      []byte
 	NumChannels uint32
-	Channels []*Abr_Channel
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_SampleData
+	Channels    []*Abr_Channel
+	_io         *kaitai.Stream
+	_root       *Abr
+	_parent     *Abr_SampleData
 }
+
 func NewAbr_V62() *Abr_V62 {
-	return &Abr_V62{
-	}
+	return &Abr_V62{}
 }
 
 func (this *Abr_V62) Read(io *kaitai.Stream, parent *Abr_SampleData, root *Abr) (err error) {
@@ -708,15 +724,16 @@ func (this *Abr_V62) Read(io *kaitai.Stream, parent *Abr_SampleData, root *Abr) 
 	}
 	return err
 }
+
 type Abr_HierarchiesSectionBody struct {
 	UnknownData []byte
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_Section
+	_io         *kaitai.Stream
+	_root       *Abr
+	_parent     *Abr_Section
 }
+
 func NewAbr_HierarchiesSectionBody() *Abr_HierarchiesSectionBody {
-	return &Abr_HierarchiesSectionBody{
-	}
+	return &Abr_HierarchiesSectionBody{}
 }
 
 func (this *Abr_HierarchiesSectionBody) Read(io *kaitai.Stream, parent *Abr_Section, root *Abr) (err error) {
@@ -732,16 +749,17 @@ func (this *Abr_HierarchiesSectionBody) Read(io *kaitai.Stream, parent *Abr_Sect
 	this.UnknownData = tmp64
 	return err
 }
+
 type Abr_EnumeratedValue struct {
-	Type *Abr_CompactString
-	Enum *Abr_CompactString
-	_io *kaitai.Stream
-	_root *Abr
+	Type    *Abr_CompactString
+	Enum    *Abr_CompactString
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent *Abr_TypedValue
 }
+
 func NewAbr_EnumeratedValue() *Abr_EnumeratedValue {
-	return &Abr_EnumeratedValue{
-	}
+	return &Abr_EnumeratedValue{}
 }
 
 func (this *Abr_EnumeratedValue) Read(io *kaitai.Stream, parent *Abr_TypedValue, root *Abr) (err error) {
@@ -763,18 +781,19 @@ func (this *Abr_EnumeratedValue) Read(io *kaitai.Stream, parent *Abr_TypedValue,
 	this.Enum = tmp66
 	return err
 }
+
 type Abr_Sample struct {
 	SampleLen uint32
-	Data *Abr_SampleData
-	Padding []byte
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_SamplesSectionBody
+	Data      *Abr_SampleData
+	Padding   []byte
+	_io       *kaitai.Stream
+	_root     *Abr
+	_parent   *Abr_SamplesSectionBody
 	_raw_Data []byte
 }
+
 func NewAbr_Sample() *Abr_Sample {
-	return &Abr_Sample{
-	}
+	return &Abr_Sample{}
 }
 
 func (this *Abr_Sample) Read(io *kaitai.Stream, parent *Abr_SamplesSectionBody, root *Abr) (err error) {
@@ -812,16 +831,17 @@ func (this *Abr_Sample) Read(io *kaitai.Stream, parent *Abr_SamplesSectionBody, 
 	this.Padding = tmp71
 	return err
 }
+
 type Abr_Header struct {
-	Version uint16
+	Version    uint16
 	Subversion uint16
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr
+	_io        *kaitai.Stream
+	_root      *Abr
+	_parent    *Abr
 }
+
 func NewAbr_Header() *Abr_Header {
-	return &Abr_Header{
-	}
+	return &Abr_Header{}
 }
 
 func (this *Abr_Header) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err error) {
@@ -841,16 +861,17 @@ func (this *Abr_Header) Read(io *kaitai.Stream, parent *Abr, root *Abr) (err err
 	this.Subversion = uint16(tmp73)
 	return err
 }
+
 type Abr_UnicodeString struct {
 	Utf16CharCount uint32
-	Text string
-	_io *kaitai.Stream
-	_root *Abr
-	_parent interface{}
+	Text           string
+	_io            *kaitai.Stream
+	_root          *Abr
+	_parent        interface{}
 }
+
 func NewAbr_UnicodeString() *Abr_UnicodeString {
-	return &Abr_UnicodeString{
-	}
+	return &Abr_UnicodeString{}
 }
 
 func (this *Abr_UnicodeString) Read(io *kaitai.Stream, parent interface{}, root *Abr) (err error) {
@@ -875,17 +896,18 @@ func (this *Abr_UnicodeString) Read(io *kaitai.Stream, parent interface{}, root 
 	this.Text = tmp76
 	return err
 }
+
 type Abr_DescriptorsSectionBody struct {
-	Unknown []byte
-	ItemCount uint32
+	Unknown    []byte
+	ItemCount  uint32
 	KeyedItems []*Abr_KeyedItem
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_Section
+	_io        *kaitai.Stream
+	_root      *Abr
+	_parent    *Abr_Section
 }
+
 func NewAbr_DescriptorsSectionBody() *Abr_DescriptorsSectionBody {
-	return &Abr_DescriptorsSectionBody{
-	}
+	return &Abr_DescriptorsSectionBody{}
 }
 
 func (this *Abr_DescriptorsSectionBody) Read(io *kaitai.Stream, parent *Abr_Section, root *Abr) (err error) {
@@ -915,16 +937,17 @@ func (this *Abr_DescriptorsSectionBody) Read(io *kaitai.Stream, parent *Abr_Sect
 	}
 	return err
 }
+
 type Abr_AliasValue struct {
-	Length uint32
-	Data []byte
-	_io *kaitai.Stream
-	_root *Abr
+	Length  uint32
+	Data    []byte
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent *Abr_TypedValue
 }
+
 func NewAbr_AliasValue() *Abr_AliasValue {
-	return &Abr_AliasValue{
-	}
+	return &Abr_AliasValue{}
 }
 
 func (this *Abr_AliasValue) Read(io *kaitai.Stream, parent *Abr_TypedValue, root *Abr) (err error) {
@@ -945,16 +968,17 @@ func (this *Abr_AliasValue) Read(io *kaitai.Stream, parent *Abr_TypedValue, root
 	this.Data = tmp81
 	return err
 }
+
 type Abr_V61 struct {
-	Unknown []byte
+	Unknown   []byte
 	ImageData *Abr_ImageData
-	_io *kaitai.Stream
-	_root *Abr
-	_parent *Abr_SampleData
+	_io       *kaitai.Stream
+	_root     *Abr
+	_parent   *Abr_SampleData
 }
+
 func NewAbr_V61() *Abr_V61 {
-	return &Abr_V61{
-	}
+	return &Abr_V61{}
 }
 
 func (this *Abr_V61) Read(io *kaitai.Stream, parent *Abr_SampleData, root *Abr) (err error) {
@@ -976,16 +1000,17 @@ func (this *Abr_V61) Read(io *kaitai.Stream, parent *Abr_SampleData, root *Abr) 
 	this.ImageData = tmp83
 	return err
 }
+
 type Abr_UnitFloatValue struct {
-	Unit Abr_FloatUnit
-	Value float64
-	_io *kaitai.Stream
-	_root *Abr
+	Unit    Abr_FloatUnit
+	Value   float64
+	_io     *kaitai.Stream
+	_root   *Abr
 	_parent *Abr_TypedValue
 }
+
 func NewAbr_UnitFloatValue() *Abr_UnitFloatValue {
-	return &Abr_UnitFloatValue{
-	}
+	return &Abr_UnitFloatValue{}
 }
 
 func (this *Abr_UnitFloatValue) Read(io *kaitai.Stream, parent *Abr_TypedValue, root *Abr) (err error) {

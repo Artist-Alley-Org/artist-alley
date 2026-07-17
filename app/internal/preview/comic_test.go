@@ -32,7 +32,7 @@ func TestIsComicPage(t *testing.T) {
 		// OS / metadata noise that historically sorted to position 0.
 		{".DS_Store", false},
 		{".thumbs/page1.jpg", true}, // hidden folder but the page name isn't itself dotted
-		{"._cover.jpg", false},       // macOS resource fork
+		{"._cover.jpg", false},      // macOS resource fork
 		{"__MACOSX/cover.jpg", false},
 		{"_metadata.json", false},
 		{"ComicInfo.xml", false},
@@ -70,10 +70,10 @@ func TestExtractCoverZIP_FirstPageWins(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.cbz")
 	writeFixtureCBZ(t, path, map[string]bool{
-		"page-002.png": true, // marker — this should NOT be picked
-		"page-001.png": true, // this should be the cover
-		"page-003.png": true,
-		"__MACOSX/page-000.png": true, // would sort first but must be skipped
+		"page-002.png":          true, // marker — this should NOT be picked
+		"page-001.png":          true, // this should be the cover
+		"page-003.png":          true,
+		"__MACOSX/page-000.png": true,  // would sort first but must be skipped
 		"ComicInfo.xml":         false, // not an image
 	})
 
@@ -122,9 +122,9 @@ func TestExtractCoverZIP_OnlyNoise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "noise.cbz")
 	writeFixtureCBZ(t, path, map[string]bool{
-		"ComicInfo.xml":          false,
-		"Thumbs.db":              false,
-		"__MACOSX/page.jpg":      true, // skipped by macOS-prefix rule
+		"ComicInfo.xml":     false,
+		"Thumbs.db":         false,
+		"__MACOSX/page.jpg": true, // skipped by macOS-prefix rule
 	})
 	h := &ComicHandler{}
 	_, cover, err := h.extractCoverZIP(path)

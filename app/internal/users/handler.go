@@ -267,7 +267,7 @@ func InvalidateProfile(ctx context.Context, registry *cache.Registry, userRef in
 // sqlc result types. sqlc generates a distinct type per query so we
 // adapt both into this shared shape before rendering.
 type publicRow struct {
-	UserRef              int64
+	UserRef               int64
 	Username              *string
 	Fullname              *string
 	CreatedAt             pgtype.Timestamptz
@@ -517,7 +517,7 @@ func (h *Handler) UpdateUserProfile(
 			Activity: em.Activity,
 		}, func(tx pgx.Tx) error {
 			_, err := New(tx).UpsertUserProfile(ctx, UpsertUserProfileParams{
-				UserRef:    req.Ref,
+				UserRef:     req.Ref,
 				DisplayName: &displayName,
 				Bio:         bio,
 				AvatarUrl:   avatarURL,
@@ -536,7 +536,7 @@ func (h *Handler) UpdateUserProfile(
 		// Legacy fallback: admin-edits-other (no activity) + the
 		// test path (no activities writer wired).
 		if _, err := q.UpsertUserProfile(ctx, UpsertUserProfileParams{
-			UserRef:    req.Ref,
+			UserRef:     req.Ref,
 			DisplayName: &displayName,
 			Bio:         bio,
 			AvatarUrl:   avatarURL,
@@ -626,9 +626,10 @@ type profileSnapshot struct {
 // resolving display_name precedence and computing post_count.
 //
 // Precedence for display_name (the always-non-empty resolved string):
-//   1. profile.display_name (if non-empty)
-//   2. user.fullname (if non-empty)
-//   3. user.username
+//  1. profile.display_name (if non-empty)
+//  2. user.fullname (if non-empty)
+//  3. user.username
+//
 // The frontend never has to do this resolution itself.
 func (h *Handler) rowToAPI(ctx context.Context, q *Queries, r publicRow) (*openapi.UserPublic, error) {
 	display := r.DisplayName

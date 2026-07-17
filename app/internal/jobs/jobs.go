@@ -11,18 +11,18 @@
 // Three worker shapes can drain the same queue without any change
 // here:
 //
-//   1. In-process workers, started during app boot (Worker.Run).
-//      They use the Handler interface directly.
+//  1. In-process workers, started during app boot (Worker.Run).
+//     They use the Handler interface directly.
 //
-//   2. External render farms hitting the HTTP claim/complete surface
-//      (see /jobs/claim in openapi.yaml). The farm receives the same
-//      payload shape as Handler.Handle would; it just executes the
-//      work on its own metal and POSTs the result back.
+//  2. External render farms hitting the HTTP claim/complete surface
+//     (see /jobs/claim in openapi.yaml). The farm receives the same
+//     payload shape as Handler.Handle would; it just executes the
+//     work on its own metal and POSTs the result back.
 //
-//   3. Federated peer instances that opt in to help with our jobs.
-//      Same HTTP surface as external farms — the peer authenticates
-//      with a `worker` API token whose allowed types overlap with
-//      our enqueued types.
+//  3. Federated peer instances that opt in to help with our jobs.
+//     Same HTTP surface as external farms — the peer authenticates
+//     with a `worker` API token whose allowed types overlap with
+//     our enqueued types.
 //
 // All three are race-free because ClaimNextJob uses
 // `FOR UPDATE SKIP LOCKED` plus a lease (`lease_expires_at`) that a
@@ -58,18 +58,18 @@ type JobType string
 // Common pre-registered job types. Handlers in other packages refer
 // to these to avoid stringly-typed misspellings.
 const (
-	TypePreviewRaster JobType = "preview.raster"
-	TypePreviewVector JobType = "preview.vector"
-	TypePreviewVideo  JobType = "preview.video"
-	TypePreviewAudio  JobType = "preview.audio"
-	TypePreviewPDF    JobType = "preview.pdf"
-	TypePreviewFont   JobType = "preview.font"
-	TypePreview3D     JobType = "preview.3d"
-	TypePreviewEbook  JobType = "preview.ebook"
-	TypePreviewEPS    JobType = "preview.eps"
-	TypePreviewPSD    JobType = "preview.psd"
-	TypePreviewComic  JobType = "preview.comic"
-	TypePreviewText   JobType = "preview.text"
+	TypePreviewRaster  JobType = "preview.raster"
+	TypePreviewVector  JobType = "preview.vector"
+	TypePreviewVideo   JobType = "preview.video"
+	TypePreviewAudio   JobType = "preview.audio"
+	TypePreviewPDF     JobType = "preview.pdf"
+	TypePreviewFont    JobType = "preview.font"
+	TypePreview3D      JobType = "preview.3d"
+	TypePreviewEbook   JobType = "preview.ebook"
+	TypePreviewEPS     JobType = "preview.eps"
+	TypePreviewPSD     JobType = "preview.psd"
+	TypePreviewComic   JobType = "preview.comic"
+	TypePreviewText    JobType = "preview.text"
 	TypePreviewArchive JobType = "preview.archive"
 
 	// Audiobook background work — async because ffmpeg concat /
@@ -86,7 +86,6 @@ const (
 	// today; ffmpeg subtitles-filter integration is Phase
 	// 1.18.B-3-b. Enqueued from POST /assets/{id}/burn-subtitles.
 	TypeSubtitleBurn JobType = "subtitle.burn"
-
 )
 
 // Priority defaults. Lower numbers run sooner. Handlers can override.
@@ -223,10 +222,10 @@ func NewService(pool *pgxpool.Pool, logger *slog.Logger, reg *Registry) *Service
 // Completed/failed jobs with the same key don't block — that's
 // historical, the new call is genuinely fresh work.
 type EnqueueOpts struct {
-	Priority       *int       // default 100 in SQL
-	MaxAttempts    *int       // default 3 in SQL
+	Priority       *int // default 100 in SQL
+	MaxAttempts    *int // default 3 in SQL
 	ScheduledFor   *time.Time
-	IdempotencyKey string     // optional; see type doc
+	IdempotencyKey string // optional; see type doc
 }
 
 // Enqueue inserts a new job. Returns the row id.
@@ -456,4 +455,3 @@ func (s *Service) PurgeOldDone(ctx context.Context) (int64, error) {
 	}
 	return n, nil
 }
-

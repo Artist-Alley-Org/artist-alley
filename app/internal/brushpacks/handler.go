@@ -250,11 +250,11 @@ func packToAPI(p BrushPack, stamps []BrushPackStamp) openapi.BrushPack {
 
 func stampToAPI(s BrushPackStamp) openapi.BrushPackStamp {
 	out := openapi.BrushPackStamp{
-		Id:           pgToUUID(s.ID),
-		Width:        int(s.Width),
-		Height:       int(s.Height),
-		Spacing:      s.Spacing,
-		AlignToPath:  s.AlignToPath,
+		Id:          pgToUUID(s.ID),
+		Width:       int(s.Width),
+		Height:      int(s.Height),
+		Spacing:     s.Spacing,
+		AlignToPath: s.AlignToPath,
 	}
 	if s.Label != nil {
 		v := *s.Label

@@ -108,10 +108,10 @@ func TestParseDuration(t *testing.T) {
 		want float64
 	}{
 		{"", 0},
-		{"45", 45},                           // bare seconds
-		{"1:30", 90},                         // M:SS
-		{"14:30", 870},                       // MM:SS
-		{"1:02:45", 1*3600 + 2*60 + 45},      // H:MM:SS
+		{"45", 45},                             // bare seconds
+		{"1:30", 90},                           // M:SS
+		{"14:30", 870},                         // MM:SS
+		{"1:02:45", 1*3600 + 2*60 + 45},        // H:MM:SS
 		{"  2 : 03 : 04  ", 2*3600 + 3*60 + 4}, // tolerant of inner whitespace
 	}
 	for _, c := range cases {

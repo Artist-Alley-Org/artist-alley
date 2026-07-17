@@ -142,7 +142,7 @@ type gateFixture struct {
 	reg      *shares.Registry
 	regCache *cache.Registry
 
-	peerID    uuid.UUID
+	peerID     uuid.UUID
 	grantorRef int64
 	activityID uuid.UUID
 }

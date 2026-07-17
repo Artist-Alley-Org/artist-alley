@@ -103,11 +103,11 @@ func (r *Reader) FindSimilarByAnchor(
 	switch dim {
 	case 768:
 		rows, err := q.FindSimilarAssetsByAnchorD768(ctx, FindSimilarAssetsByAnchorD768Params{
-			Provider:       provider,
-			Model:          model,
-			Modality:       modality,
-			AnchorAssetID:  pgtype.UUID{Bytes: anchorID, Valid: true},
-			ResultLimit:    int32(limit),
+			Provider:      provider,
+			Model:         model,
+			Modality:      modality,
+			AnchorAssetID: pgtype.UUID{Bytes: anchorID, Valid: true},
+			ResultLimit:   int32(limit),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("embeddings.FindSimilarByAnchor: knn: %w", err)

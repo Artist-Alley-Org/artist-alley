@@ -118,7 +118,7 @@ func freshKeyParams(t *testing.T, userRef int64, version int32, isCurrent bool) 
 		t.Fatalf("Generate: %v", err)
 	}
 	p := userkeys.InsertUserKeyParams{
-		UserRef:        userRef,
+		UserRef:       userRef,
 		Version:       version,
 		Algorithm:     userkeys.Algorithm,
 		PublicKey:     pub,
@@ -213,7 +213,7 @@ func TestQueries_GetUserKeyByVersion_FindsExactRow(t *testing.T) {
 	}
 
 	got, err := q.GetUserKeyByVersion(ctx, userkeys.GetUserKeyByVersionParams{
-		UserRef:  userRef,
+		UserRef: userRef,
 		Version: 1,
 	})
 	if err != nil {

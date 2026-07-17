@@ -209,7 +209,7 @@ func (r *recordingSweeperHooks) RevokeCalls() int {
 	defer r.mu.Unlock()
 	return r.revokeCalls
 }
-func (r *recordingSweeperHooks) InvalidateCount() int    { return int(r.invalidate.Load()) }
+func (r *recordingSweeperHooks) InvalidateCount() int      { return int(r.invalidate.Load()) }
 func (r *recordingSweeperHooks) LastInvalidateUser() int64 { return r.lastInvalidate.Load() }
 
 func pastTime(t *testing.T, ago time.Duration) pgtype.Timestamptz {

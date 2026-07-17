@@ -19,20 +19,20 @@ import (
 //
 // Format dispatch:
 //
-//   .hdr / .pic  → pure-Go RGBE decoder (decodeRadiance). Debian
-//                  bookworm's ffmpeg ships only the EXR decoder, so
-//                  shelling out for Radiance fails on stock hosts.
-//                  The format is small + well-spec'd, owning it in Go
-//                  removes both the missing-decoder problem and the
-//                  apt-extras dependency.
+//	.hdr / .pic  → pure-Go RGBE decoder (decodeRadiance). Debian
+//	               bookworm's ffmpeg ships only the EXR decoder, so
+//	               shelling out for Radiance fails on stock hosts.
+//	               The format is small + well-spec'd, owning it in Go
+//	               removes both the missing-decoder problem and the
+//	               apt-extras dependency.
 //
-//   .exr         → ffmpeg with zscale → tonemap=mobius → zscale →
-//                  rgb24. OpenEXR is much heavier (multi-channel,
-//                  multiple compression schemes, optional tiles) and
-//                  ffmpeg's libopenexr binding is the cheapest path.
-//                  If libzimg/zscale isn't present we fall back to a
-//                  flat-format conversion that loses highlight detail
-//                  but still produces *a* thumbnail.
+//	.exr         → ffmpeg with zscale → tonemap=mobius → zscale →
+//	               rgb24. OpenEXR is much heavier (multi-channel,
+//	               multiple compression schemes, optional tiles) and
+//	               ffmpeg's libopenexr binding is the cheapest path.
+//	               If libzimg/zscale isn't present we fall back to a
+//	               flat-format conversion that loses highlight detail
+//	               but still produces *a* thumbnail.
 func decodeHDR(r io.Reader, ext string) (image.Image, error) {
 	body, err := io.ReadAll(r)
 	if err != nil {

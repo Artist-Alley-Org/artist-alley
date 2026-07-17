@@ -13,12 +13,12 @@ import "sync/atomic"
 //
 // Zero value is usable — nil-safe on the pending-gauge accessor too.
 type Counter struct {
-	success      atomic.Int64
-	transient    atomic.Int64
-	permanent    atomic.Int64
-	rateLimited  atomic.Int64
-	skipped      atomic.Int64
-	pending      atomic.Int64
+	success     atomic.Int64
+	transient   atomic.Int64
+	permanent   atomic.Int64
+	rateLimited atomic.Int64
+	skipped     atomic.Int64
+	pending     atomic.Int64
 }
 
 // NewCounter constructs a Counter with all counters zeroed.
@@ -102,11 +102,11 @@ func (c *Counter) Snapshot() map[string]int64 {
 		return nil
 	}
 	return map[string]int64{
-		"visual_embed_auto_success":            c.success.Load(),
-		"visual_embed_auto_transient_failed":   c.transient.Load(),
-		"visual_embed_auto_permanent_failed":   c.permanent.Load(),
-		"visual_embed_auto_rate_limited_wait":  c.rateLimited.Load(),
-		"visual_embed_auto_skipped":            c.skipped.Load(),
-		"visual_embed_auto_pending":            c.pending.Load(),
+		"visual_embed_auto_success":           c.success.Load(),
+		"visual_embed_auto_transient_failed":  c.transient.Load(),
+		"visual_embed_auto_permanent_failed":  c.permanent.Load(),
+		"visual_embed_auto_rate_limited_wait": c.rateLimited.Load(),
+		"visual_embed_auto_skipped":           c.skipped.Load(),
+		"visual_embed_auto_pending":           c.pending.Load(),
 	}
 }

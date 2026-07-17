@@ -35,19 +35,19 @@ package notifications
 // "who's writing this verb?" code review.
 const (
 	// Wired in 1.17.I2 itself (social handler comment/like/follow paths).
-	VerbCommentOnMyPost  = "comment_on_my_post"   // emitter: social.CreatePostComment
-	VerbLikeOnMyPost     = "like_on_my_post"      // emitter: social.LikePost
-	VerbReplyToMyComment = "reply_to_my_comment"  // emitter: social.CreatePostComment (parent_id path)
-	VerbNewFollower      = "new_follower"         // emitter: social.FollowUser
+	VerbCommentOnMyPost  = "comment_on_my_post"  // emitter: social.CreatePostComment
+	VerbLikeOnMyPost     = "like_on_my_post"     // emitter: social.LikePost
+	VerbReplyToMyComment = "reply_to_my_comment" // emitter: social.CreatePostComment (parent_id path)
+	VerbNewFollower      = "new_follower"        // emitter: social.FollowUser
 
 	// Wired by later sub-phases on this branch.
-	VerbMentionOfMe              = "mention_of_me"                         // emitter: I2 mention parser (planned)
-	VerbFollowedPosts            = "post_from_followed_user"               // emitter: posts.CreatePost (planned)
-	VerbDirectMessageReceived    = "direct_message_received"               // emitter: I (1.17.I DMs)
-	VerbBroadcastReceived        = "broadcast_received"                    // emitter: I admin broadcast
-	VerbResourceRequestReceived  = "resource_request_received_to_approve" // emitter: L (1.17.L resource_requests)
-	VerbResourceRequestApproved  = "resource_request_approved"             // emitter: L
-	VerbResourceRequestDenied    = "resource_request_denied"               // emitter: L
+	VerbMentionOfMe             = "mention_of_me"                        // emitter: I2 mention parser (planned)
+	VerbFollowedPosts           = "post_from_followed_user"              // emitter: posts.CreatePost (planned)
+	VerbDirectMessageReceived   = "direct_message_received"              // emitter: I (1.17.I DMs)
+	VerbBroadcastReceived       = "broadcast_received"                   // emitter: I admin broadcast
+	VerbResourceRequestReceived = "resource_request_received_to_approve" // emitter: L (1.17.L resource_requests)
+	VerbResourceRequestApproved = "resource_request_approved"            // emitter: L
+	VerbResourceRequestDenied   = "resource_request_denied"              // emitter: L
 
 	// System-generated (actor NULL); already-shipped emitters call
 	// these via the same Notify writer.

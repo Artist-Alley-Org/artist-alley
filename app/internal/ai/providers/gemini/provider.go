@@ -12,9 +12,10 @@
 // surface (see transcribe.go).
 //
 // Wire reference: https://ai.google.dev/api/generate-content
-//   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}
-//   Body: {contents: [{role, parts: [{text} | {inline_data}]}], generationConfig: {...}}
-//   Response: {candidates: [{content: {parts: [{text}]}, finishReason}], usageMetadata: {...}}
+//
+//	POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}
+//	Body: {contents: [{role, parts: [{text} | {inline_data}]}], generationConfig: {...}}
+//	Response: {candidates: [{content: {parts: [{text}]}, finishReason}], usageMetadata: {...}}
 package gemini
 
 import (
@@ -91,14 +92,14 @@ func (p *Provider) SupportsVision() bool { return true }
 // ---------------------------------------------------------------------------
 
 type geminiRequest struct {
-	Contents          []geminiContent     `json:"contents"`
-	SystemInstruction *geminiContent      `json:"systemInstruction,omitempty"`
-	GenerationConfig  *geminiGenConfig    `json:"generationConfig,omitempty"`
+	Contents          []geminiContent  `json:"contents"`
+	SystemInstruction *geminiContent   `json:"systemInstruction,omitempty"`
+	GenerationConfig  *geminiGenConfig `json:"generationConfig,omitempty"`
 }
 
 type geminiContent struct {
-	Role  string        `json:"role,omitempty"`
-	Parts []geminiPart  `json:"parts"`
+	Role  string       `json:"role,omitempty"`
+	Parts []geminiPart `json:"parts"`
 }
 
 type geminiPart struct {

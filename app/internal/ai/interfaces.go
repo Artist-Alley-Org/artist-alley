@@ -64,7 +64,7 @@ type Content struct {
 type ContentType string
 
 const (
-	ContentTypeText    ContentType = "text"
+	ContentTypeText     ContentType = "text"
 	ContentTypeImageURL ContentType = "image_url"
 	ContentTypeImageB64 ContentType = "image_b64"
 	ContentTypeAudioURL ContentType = "audio_url"
@@ -118,17 +118,17 @@ type AudioInput struct {
 // TranscribeOpts carries optional knobs (language hint, model
 // override). Adding fields here is non-breaking.
 type TranscribeOpts struct {
-	Model           string
-	LanguageHint    string // ISO 639-1 if known; "" lets the model auto-detect
+	Model                 string
+	LanguageHint          string // ISO 639-1 if known; "" lets the model auto-detect
 	IncludeWordTimestamps bool
 }
 
 // Transcript is the universal transcription output shape.
 type Transcript struct {
-	Text              string
-	DetectedLanguage  string
-	Segments          []TranscriptSegment // empty if word/segment timestamps weren't requested
-	Duration          time.Duration
+	Text                   string
+	DetectedLanguage       string
+	Segments               []TranscriptSegment // empty if word/segment timestamps weren't requested
+	Duration               time.Duration
 	EstimatedCostUSDMicros int64
 }
 
@@ -159,7 +159,7 @@ type AssetRef struct {
 // version override, optional vocabulary constraints.
 type TagOpts struct {
 	MaxTags        int
-	PromptVersion  string  // empty = use registry default
+	PromptVersion  string   // empty = use registry default
 	VocabularyHint []string // optional bias toward these tags
 }
 
@@ -172,9 +172,9 @@ type Tag struct {
 
 // CaptionOpts knobs the captioning behaviour.
 type CaptionOpts struct {
-	MaxLength      int
-	PromptVersion  string // empty = use registry default
-	StyleHint      string // optional ("descriptive" / "concise" / "marketing")
+	MaxLength     int
+	PromptVersion string // empty = use registry default
+	StyleHint     string // optional ("descriptive" / "concise" / "marketing")
 }
 
 // ---------------------------------------------------------------------------

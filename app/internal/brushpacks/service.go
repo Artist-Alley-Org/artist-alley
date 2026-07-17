@@ -121,9 +121,9 @@ func (s *Service) ImportABR(ctx context.Context, ownerRef int64, name, sourceFil
 	qtx := s.q.WithTx(tx)
 
 	pack, err := qtx.CreatePack(ctx, CreatePackParams{
-		OwnerUserRef:   ownerRef,
-		Name:       name,
-		SourceFile: nilStr(sourceFile),
+		OwnerUserRef: ownerRef,
+		Name:         name,
+		SourceFile:   nilStr(sourceFile),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("brushpacks: create pack: %w", err)
