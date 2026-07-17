@@ -170,7 +170,20 @@ jobs:
       - name: Install codegen tools
         run: |
           docker pull sqlc/sqlc:latest
-          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+          # Pin oapi-codegen to the SAME version scripts/generate.sh uses,
+          # sourced from that file so the two can't drift. `@latest` here
+          # (the old value) is exactly what generate.sh's own comment
+          # forbids: it silently tracked v2.7.2 -> v2.8.0 the day v2.8.0
+          # shipped, and every PR started failing this drift check against
+          # a locally-generated file that is not stale. The pin lives in
+          # ONE place; CI reads it.
+          ver=$(sed -n 's/^OAPI_CODEGEN_VERSION=//p' scripts/generate.sh)
+          if [ -z "$ver" ]; then
+            echo "::error::couldn't read OAPI_CODEGEN_VERSION from scripts/generate.sh"
+            exit 1
+          fi
+          echo "oapi-codegen pinned to ${ver} (from scripts/generate.sh)"
+          go install "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${ver}"
 
       - name: Regenerate Go specs (sqlc + oapi-codegen)
         run: |
