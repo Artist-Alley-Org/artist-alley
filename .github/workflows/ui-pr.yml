@@ -125,19 +125,14 @@ jobs:
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci_password/" .env
           echo "AA_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" >> .env
 
-      - name: Sweep this run's project + reap leaked CI containers
-        # Drop this run's own project first (retries re-use the name),
-        # then reap only NON-running aa-ci-* containers so a concurrent
-        # run's live stack is never touched (#342, matches ci.yml).
+      - name: Sweep this run's project
+        # Label-scoped to this run's own project (retries re-use the
+        # name). The cross-run `name=^aa-ci-` reap + `network prune` that
+        # used to follow are gone (#371) — `created` is a mid-flight
+        # state, so the reap deleted peer runs' containers. See ci.yml
+        # for the full reasoning.
         run: |
           docker compose down -v --remove-orphans || true
-          leaked=$(docker ps -aq \
-            --filter "name=^aa-ci-" \
-            --filter "status=exited" \
-            --filter "status=created" \
-            --filter "status=dead")
-          if [ -n "$leaked" ]; then docker rm -f $leaked || true; fi
-          docker network prune -f || true
           docker image prune -f || true  # dangling only (shared daemon: never -a)
 
       # Replace the dev `app` service with the production image
