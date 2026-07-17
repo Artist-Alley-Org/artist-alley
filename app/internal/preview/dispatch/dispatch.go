@@ -146,3 +146,30 @@ func JobTypeForExt(ext *string) jobs.JobType {
 	}
 	return jobs.TypePreviewRaster
 }
+
+// CanPreview reports whether SOME handler will actually produce a
+// preview for ext. It is the guard the enqueue path needs (#366).
+//
+// JobTypeForExt always returns a concrete type — preview.raster is the
+// catch-all — so on its own it can't distinguish "raster handles this"
+// from "nothing does": both come back as preview.raster. Enqueue a job
+// for the second case and its ONLY possible outcome is a TerminalError
+// (raster rejects any ext outside ImageExts), i.e. a guaranteed dead
+// job. Enqueueing none is strictly better.
+//
+// Derived from JobTypeForExt rather than re-listing the sets, so it
+// cannot drift from the router: every non-fallback route is a set-
+// membership match whose handler accepts the ext, and the sole route
+// that can still reject is the raster fallback, which accepts exactly
+// ImageExts. A nil/empty ext lands on that fallback and is rejected, so
+// it is not previewable either — which matches today's outcome (a job
+// that terminal-fails), minus the dead job.
+func CanPreview(ext *string) bool {
+	if ext == nil {
+		return false
+	}
+	if JobTypeForExt(ext) != jobs.TypePreviewRaster {
+		return true
+	}
+	return Has(ImageExts, Normalize(*ext))
+}

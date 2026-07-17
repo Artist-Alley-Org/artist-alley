@@ -160,7 +160,7 @@ func (h *Handler) UpdateSiteConfig(
 	// without a before (RecordChange will diff against the zero
 	// value). The operator-action signal is preserved either way.
 	before, beforeErr := h.Store.GetSite(ctx)
-	site := apiToSite(*req.Body)
+	site := apiToSite(*req.Body, before)
 	if err := h.Store.SetSite(ctx, site); err != nil {
 		return nil, fmt.Errorf("sysconfig: set site: %w", err)
 	}
