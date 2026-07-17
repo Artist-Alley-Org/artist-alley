@@ -200,3 +200,98 @@
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace);
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+ * Fluid sizing system — 390px phone → 3840px 4k, 16:9 → 32:9.
+ *
+ * That's a 10x width range. It cannot be enumerated with sm:/md:/lg:
+ * — every aspect ratio nobody thought of becomes a new bug, and the
+ * values between breakpoints are wrong by construction. So sizing
+ * here is CONTINUOUS: one clamp() covers the whole range and there is
+ * no width at which it steps.
+ *
+ * Breakpoints remain correct for STRUCTURAL change — a nav that
+ * collapses, a row that becomes a column. They are never used for
+ * sizing. If you find yourself writing `text-sm md:text-base`, the
+ * scale below is the thing you actually wanted.
+ *
+ * On clamp() and zoom: each step pairs a rem basis with the vw term
+ * (`1rem + 0.5vw`), never vw alone. A pure-vw font size doesn't
+ * respond to browser zoom or the user's font-size preference, which
+ * fails WCAG 1.4.4 (Resize Text). The rem half keeps that working.
+ * ============================================================ */
+@theme {
+  /* ── Type scale. Min = the 390px value, max = the 3840px value.
+       Body settles at 16px on a phone and 18px on a 4k panel — the
+       viewer sits further from a 4k display, so the growth is real
+       readability rather than decoration. */
+  --text-2xs:  clamp(0.6875rem, 0.66rem + 0.14vw, 0.8125rem);
+  --text-xs:   clamp(0.75rem,   0.72rem + 0.15vw, 0.875rem);
+  --text-sm:   clamp(0.875rem,  0.85rem + 0.13vw, 1rem);
+  --text-base: clamp(1rem,      0.96rem + 0.20vw, 1.125rem);
+  --text-lg:   clamp(1.125rem,  1.07rem + 0.28vw, 1.375rem);
+  --text-xl:   clamp(1.25rem,   1.16rem + 0.45vw, 1.75rem);
+  --text-2xl:  clamp(1.5rem,    1.35rem + 0.75vw, 2.25rem);
+  --text-3xl:  clamp(1.875rem,  1.64rem + 1.17vw, 3rem);
+  --text-4xl:  clamp(2.25rem,   1.9rem + 1.75vw, 4rem);
+
+  /* ── Prose measure. Layout stays full-bleed (the wide-screen rule);
+       TEXT gets a measure. A 3840px-wide paragraph is unreadable at
+       any aspect ratio — the eye loses the line on the return sweep.
+       45–75ch is the readability band; 65ch sits in the middle. This
+       is a text constraint, not a page cap, and it bites hardest
+       exactly where the no-max-width rule is most tempting. */
+  --measure: 65ch;
+  --measure-tight: 45ch;
+}
+
+@utility measure {
+  max-width: var(--measure);
+}
+@utility measure-tight {
+  max-width: var(--measure-tight);
+}
+
+@layer base {
+  /* Reserve the scrollbar's width at all times. Without this, a page
+     that grows past one viewport reflows every element horizontally
+     the instant the scrollbar appears — which reads as a flicker on
+     load and shifts the grid's column count on the boundary. */
+  html {
+    scrollbar-gutter: stable;
+  }
+}
+
+/* ── Touch targets.
+ *
+ * Sized by INPUT MODALITY, not viewport width. A touchscreen laptop at
+ * 1920px needs a thumb-sized target; a mouse at 390px does not. Width
+ * is a proxy that gets both wrong, and it's the part of responsive
+ * work that's most routinely botched.
+ *
+ * On the number: WCAG 2.2 SC 2.5.8 (Level AA) is 24x24 CSS px, and
+ * SC 2.5.5 (44x44) is Level AAA. The existing 36px icon buttons and
+ * 32px chips ALREADY conform at AA — there is no violation here. 44px
+ * is our product bar for a touch media browser (Apple HIG 44pt,
+ * Material 48dp), not a compliance fix. Claiming otherwise would be
+ * wrong on the facts.
+ */
+@media (pointer: coarse) {
+  .tap-target,
+  button.tap-target,
+  a.tap-target {
+    min-height: 2.75rem; /* 44px */
+    min-width: 2.75rem;
+  }
+}
+
+/* ── Motion.
+ * Everything that moves in the chrome moves via transform only —
+ * compositable, off the main thread. Animating height/top would force
+ * layout on every frame of a scroll, which is precisely the jank this
+ * is trying to avoid. */
+@media (prefers-reduced-motion: reduce) {
+  .chrome-slide {
+    transition: none;
+  }
+}
