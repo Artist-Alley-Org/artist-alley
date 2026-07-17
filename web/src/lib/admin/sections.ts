@@ -24,6 +24,13 @@ export interface AdminTile {
   href?: string;      // omit for future tiles
   status: TileStatus;
   phase?: string;     // e.g. "1.17" — only meaningful for status='future'
+  // Capability the tile's backend GET/list handler enforces (#385),
+  // derived from the handler source, not memory. Present on live tiles
+  // that a read cap can open; ABSENT means the page requires
+  // `system.admin` (no read alternative) — a superuser-only tile.
+  // A read-cap holder sees exactly the tiles whose `cap` they hold, so
+  // no tile 403s on click.
+  cap?: string;
 }
 
 export interface AdminSection {
@@ -37,20 +44,20 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'identity',
     iconKey: 'identity',
     tiles: [
-      { key: 'users',      status: 'live',   href: '/admin/users' },
-      { key: 'roles',      status: 'live',   href: '/admin/roles' },
-      { key: 'groups',     status: 'live',   href: '/admin/teams' },
+      { key: 'users',      status: 'live',   href: '/admin/users', cap: 'users.read' },
+      { key: 'roles',      status: 'live',   href: '/admin/roles', cap: 'roles.read' },
+      { key: 'groups',     status: 'live',   href: '/admin/teams', cap: 'teams.read' },
       // Per-user active sessions are managed on the user-detail page
       // (admin/users/[ref], Phase 1.17.C). The tile lands on the user
       // list; drill into a user to view + revoke their sessions.
-      { key: 'sessions',   status: 'live',   href: '/admin/users' },
+      { key: 'sessions',   status: 'live',   href: '/admin/users', cap: 'users.read' },
       // `audit` moved to the automation section (its natural home alongside workflow + triggers).
       // `workflow` moved to the automation section.
       // Per-user grants/revokes are managed on the user-detail page
       // (admin/users/[ref], Phase 1.17.F). The tile lands on the user
       // list, from which an operator drills into a user to edit them.
-      { key: 'capability_grants', status: 'live',   href: '/admin/users' },
-      { key: 'requests',   status: 'live',   href: '/admin/requests' },
+      { key: 'capability_grants', status: 'live',   href: '/admin/users', cap: 'users.read' },
+      { key: 'requests',   status: 'live',   href: '/admin/requests', cap: 'requests.read' },
     ],
   },
   {
@@ -59,13 +66,13 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     tiles: [
       { key: 'asset_types', status: 'live',   href: '/admin/asset-types' },
       { key: 'fields',         status: 'live',   href: '/admin/fields' },
-      { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures' },
+      { key: 'metadata_extraction', status: 'live', href: '/admin/metadata-extraction/failures', cap: 'system.metadata_extraction.read' },
       { key: 'field_options',  status: 'future', phase: '1.17' },
       { key: 'field_sets',     status: 'future', phase: '1.17' },
       { key: 'taxonomy',       status: 'future', phase: '1.18' },
       { key: 'site_text',      status: 'future', phase: '1.18' },
       { key: 'email_templates', status: 'future', phase: '1.18' },
-      { key: 'featured',       status: 'live',   href: '/admin/content/featured' },
+      { key: 'featured',       status: 'live',   href: '/admin/content/featured', cap: 'featured.read' },
       { key: 'defaults',       status: 'future', phase: '1.18' },
     ],
   },
@@ -113,7 +120,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'automation',
     tiles: [
       { key: 'workflow',          status: 'live',   href: '/admin/workflow' },
-      { key: 'audit',             status: 'live',   href: '/admin/audit' },
+      { key: 'audit',             status: 'live',   href: '/admin/audit', cap: 'system.audit.read' },
       { key: 'triggers',          status: 'future', phase: '1.18' },
       { key: 'webhooks',          status: 'future', phase: '1.18' },
       { key: 'notifications',     status: 'future', phase: '1.18' },
@@ -137,11 +144,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'federation',
     iconKey: 'federation',
     tiles: [
-      { key: 'peers',         status: 'live',   href: '/admin/federation/peers' },
-      { key: 'directories',   status: 'live',   href: '/admin/federation/directories' },
-      { key: 'shares',        status: 'live',   href: '/admin/federation/shares' },
-      { key: 'outbox',        status: 'live',   href: '/admin/federation/outbox' },
-      { key: 'inbox',         status: 'live',   href: '/admin/federation/inbox' },
+      { key: 'peers',         status: 'live',   href: '/admin/federation/peers', cap: 'federation.read' },
+      { key: 'directories',   status: 'live',   href: '/admin/federation/directories', cap: 'federation.read' },
+      { key: 'shares',        status: 'live',   href: '/admin/federation/shares', cap: 'federation.read' },
+      { key: 'outbox',        status: 'live',   href: '/admin/federation/outbox', cap: 'federation.read' },
+      { key: 'inbox',         status: 'live',   href: '/admin/federation/inbox', cap: 'federation.read' },
       { key: 'blocklist',     status: 'future', phase: '1.22.G' },
       { key: 'activitypub',   status: 'future', phase: '1.22.K' },
     ],
@@ -162,27 +169,27 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'system',
     iconKey: 'system',
     tiles: [
-      { key: 'site',         status: 'live',   href: '/admin/system/site' },
-      { key: 'smtp',         status: 'live',   href: '/admin/system/smtp' },
-      { key: 'auth',         status: 'live',   href: '/admin/system/auth' },
+      { key: 'site',         status: 'live',   href: '/admin/system/site', cap: 'system.config.read' },
+      { key: 'smtp',         status: 'live',   href: '/admin/system/smtp', cap: 'system.config.read' },
+      { key: 'auth',         status: 'live',   href: '/admin/system/auth', cap: 'system.config.read' },
       { key: 'self_edit_gates', status: 'live', href: '/admin/system/users' },
       // The license page (/admin/system/license) shipped with the
       // licensing work but never got a tile — this is its front door.
-      { key: 'license',      status: 'live',   href: '/admin/system/license' },
+      { key: 'license',      status: 'live',   href: '/admin/system/license', cap: 'system.license.read' },
       // Phase 1.14.A-bridge — collapsed three AI tiles into one
       // landing tile. /admin/system/ai is now a hub pointing at the
       // provider list, the inference config, the usage dashboard,
       // and the tag-provenance operator doc. Each surface is still
       // directly reachable; the tile grid is the discoverable
       // entry point.
-      { key: 'ai',           status: 'live',   href: '/admin/system/ai' },
-      { key: 'log',          status: 'live',   href: '/admin/system/log' },
-      { key: 'activities',   status: 'live',   href: '/admin/system/activities' },
+      { key: 'ai',           status: 'live',   href: '/admin/system/ai', cap: 'system.config.read' },
+      { key: 'log',          status: 'live',   href: '/admin/system/log', cap: 'system.config.read' },
+      { key: 'activities',   status: 'live',   href: '/admin/system/activities', cap: 'system.activities.read' },
       // Federation tiles moved to the dedicated `federation` section
       // — duplicating them under system was confusing UX (the
       // section landing pages would each show partial overlapping
       // sets).
-      { key: 'themes',       status: 'live',   href: '/admin/system/themes' },
+      { key: 'themes',       status: 'live',   href: '/admin/system/themes', cap: 'system.config.read' },
       { key: 'maintenance',  status: 'future', phase: '1.19' },
       { key: 'feature_flags', status: 'future', phase: '1.20' },
       { key: 'backup',       status: 'future', phase: '1.19' },
@@ -236,3 +243,16 @@ export const ADMIN_SECTIONS: AdminSection[] = [
 export function sectionBySlug(slug: string): AdminSection | undefined {
   return ADMIN_SECTIONS.find((s) => s.slug === slug);
 }
+
+// Every capability referenced by a live tile. `canSeeAdmin` uses this to
+// decide whether to show the admin entry point at all: a user who holds
+// any one of these can open at least one admin surface. Superuser-only
+// tiles (no `cap`) aren't here — they don't grant a read-only user the
+// menu, `system.admin` does.
+export const ADMIN_TILE_CAPS: readonly string[] = [
+  ...new Set(
+    ADMIN_SECTIONS.flatMap((s) => s.tiles)
+      .filter((t) => t.status === 'live' && t.cap)
+      .map((t) => t.cap as string),
+  ),
+];

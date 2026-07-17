@@ -17,6 +17,7 @@
 
 import { api } from '$api/client';
 import { t } from '$stores/lang.svelte';
+import { ADMIN_TILE_CAPS } from '$lib/admin/sections';
 
 export interface AuthUser {
   ref: number;
@@ -54,6 +55,33 @@ class AuthState {
   can(code: string): boolean {
     if (this.caps.includes(SYSTEM_ADMIN)) return true;
     return this.caps.includes(code);
+  }
+
+  /**
+   * Whether to show the admin entry point at all (#385). True for
+   * `system.admin`, and also for any read-cap holder who can open at
+   * least one admin surface — so the backend read caps (#356) actually
+   * surface in the UI instead of the old binary `system.admin` gate
+   * hiding admin entirely from read-only roles.
+   *
+   * A getter, not a $derived: it reads `this.caps` ($state), so callers
+   * that reference it inside their own $derived/effect stay reactive.
+   */
+  get canSeeAdmin(): boolean {
+    if (this.caps.includes(SYSTEM_ADMIN)) return true;
+    return ADMIN_TILE_CAPS.some((c) => this.caps.includes(c));
+  }
+
+  /**
+   * Whether the current user can open one admin tile. `system.admin`
+   * sees everything; otherwise the tile is visible only if the user
+   * holds the exact capability its page enforces. A tile with no `cap`
+   * is superuser-only (no read alternative), so only `system.admin`
+   * sees it — never a read-only role. This is what stops a shown tile
+   * from 403-ing on click.
+   */
+  canSeeTile(tile: { cap?: string }): boolean {
+    return this.can(tile.cap ?? SYSTEM_ADMIN);
   }
 
   /** Re-fetch the current session from the server. */
