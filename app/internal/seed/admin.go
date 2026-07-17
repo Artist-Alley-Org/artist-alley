@@ -261,21 +261,21 @@ type CommentInput struct {
 
 // CommentResult mirrors the existing comments-table row.
 type CommentResult struct {
-	ID               uuid.UUID
-	TargetKind       string
-	TargetID         uuid.UUID
-	ParentID         *uuid.UUID
-	RootID           uuid.UUID
-	Depth            int32
-	AuthorUserRef    *int64
-	Body             string
-	BodyHTML         string
-	AnnotationType   *string
-	AnnotationData   []byte
-	LikeCount        int64
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	AlreadyExisted   bool // true on idempotent re-run
+	ID             uuid.UUID
+	TargetKind     string
+	TargetID       uuid.UUID
+	ParentID       *uuid.UUID
+	RootID         uuid.UUID
+	Depth          int32
+	AuthorUserRef  *int64
+	Body           string
+	BodyHTML       string
+	AnnotationType *string
+	AnnotationData []byte
+	LikeCount      int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	AlreadyExisted bool // true on idempotent re-run
 }
 
 // Common errors surfaced to the HTTP layer.

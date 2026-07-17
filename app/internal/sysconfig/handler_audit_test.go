@@ -105,9 +105,9 @@ func TestUpdateSMTPConfig_StripsPasswordField(t *testing.T) {
 		callAsAdmin(t, ctx, pool, func(ctx context.Context) {
 			body := openapi.SMTPConfig{
 				Host: "smtp.new.example", Port: 465,
-				Encryption: openapi.SMTPConfigEncryptionTls,
-				Username:   strPtr("user"),
-				Password:   strPtr("NEW-EVEN-WORSE-SECRET"),
+				Encryption:  openapi.SMTPConfigEncryptionTls,
+				Username:    strPtr("user"),
+				Password:    strPtr("NEW-EVEN-WORSE-SECRET"),
 				FromAddress: "x@a",
 			}
 			if _, err := h.UpdateSMTPConfig(ctx, openapi.UpdateSMTPConfigRequestObject{Body: &body}); err != nil {
@@ -160,14 +160,14 @@ func TestUpdateAIConfig_StripsProvidersWithAPIKeys(t *testing.T) {
 				DefaultProviderId: strPtr("new-id"),
 			}
 			body.Providers = append(body.Providers, struct {
-				ApiKey      *string                 `json:"api_key,omitempty"`
-				BaseUrl     *string                 `json:"base_url,omitempty"`
-				Config      *map[string]interface{} `json:"config,omitempty"`
-				DisplayName string                  `json:"display_name"`
-				Enabled     bool                    `json:"enabled"`
-				Id          *string                 `json:"id,omitempty"`
+				ApiKey      *string                       `json:"api_key,omitempty"`
+				BaseUrl     *string                       `json:"base_url,omitempty"`
+				Config      *map[string]interface{}       `json:"config,omitempty"`
+				DisplayName string                        `json:"display_name"`
+				Enabled     bool                          `json:"enabled"`
+				Id          *string                       `json:"id,omitempty"`
 				Kind        openapi.AIConfigProvidersKind `json:"kind"`
-				Model       *string                 `json:"model,omitempty"`
+				Model       *string                       `json:"model,omitempty"`
 			}{
 				Id:          strPtr("new-id"),
 				Kind:        openapi.AIConfigProvidersKind("openai"),
@@ -272,8 +272,8 @@ func withAuditStore(t *testing.T, fn func(context.Context, *sysconfig.Handler, *
 func callAsAdmin(t *testing.T, ctx context.Context, _ *pgxpool.Pool, fn func(context.Context)) {
 	t.Helper()
 	id := &auth.Identity{
-		UserRef:      1,
-		Username:     "admin",
+		UserRef:  1,
+		Username: "admin",
 		Capabilities: []string{
 			sysconfig.CapConfigWrite,
 			sysconfig.CapAuthWrite,

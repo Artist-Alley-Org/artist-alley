@@ -25,8 +25,8 @@ type PolicyProvider func(ctx context.Context) Config
 // for public-facing auth (5 attempts, 15 minute lockout); operators
 // tune per their threat model via /admin/system/auth-config.
 type Config struct {
-	Threshold          int32
-	DurationMinutes    int32
+	Threshold       int32
+	DurationMinutes int32
 }
 
 // DefaultConfig is the fallback policy used when the sysconfig PolicyProvider

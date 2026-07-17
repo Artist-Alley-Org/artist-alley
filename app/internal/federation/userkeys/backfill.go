@@ -317,16 +317,16 @@ var errRaceLoser = errors.New("userkeys.backfill: race-loser")
 //   - 23505 (unique_violation) — three sub-cases all benign for
 //     the sweep:
 //     1. Concurrent EnsureCurrentForUser for the same user
-//        committed past our defensive recheck (the partial
-//        unique index on (user_ref) WHERE is_current=true wins).
+//     committed past our defensive recheck (the partial
+//     unique index on (user_ref) WHERE is_current=true wins).
 //     2. PK collision on (user_ref, version) when the user has
-//        a retired version=1 row but no current one — leftover
-//        from a rolled-back rotation, broken test fixture, or
-//        pre-I-b orphan. The sweep can't fix this; an operator
-//        cleanup or rotation can. Counting it as a sweep error
-//        masked the real backfill flake (#153).
+//     a retired version=1 row but no current one — leftover
+//     from a rolled-back rotation, broken test fixture, or
+//     pre-I-b orphan. The sweep can't fix this; an operator
+//     cleanup or rotation can. Counting it as a sweep error
+//     masked the real backfill flake (#153).
 //     3. Concurrent winner inserted at a higher version. Re-
-//        check would have found their current row.
+//     check would have found their current row.
 //   - 23503 (foreign_key_violation) — the user_ref row was
 //     deleted between [ListUsersWithoutCurrentKey] and our
 //     INSERT INTO federation_user_keys. CASCADE from "user"

@@ -36,16 +36,16 @@ import (
 // --- fixtures ----------------------------------------------------------
 
 type fixture struct {
-	t          *testing.T
-	pool       *pgxpool.Pool
-	q          *inbox.Queries
-	peerID     uuid.UUID
-	peerURL    string
-	peerKeyID  string
-	peerPub    ed25519.PublicKey
-	peerPriv   ed25519.PrivateKey
-	handler    *inbox.Handler
-	rejects    *rejectRecorder
+	t         *testing.T
+	pool      *pgxpool.Pool
+	q         *inbox.Queries
+	peerID    uuid.UUID
+	peerURL   string
+	peerKeyID string
+	peerPub   ed25519.PublicKey
+	peerPriv  ed25519.PrivateKey
+	handler   *inbox.Handler
+	rejects   *rejectRecorder
 }
 
 // rejectRecorder captures the audit hook's calls so tests can
@@ -207,12 +207,12 @@ func (fx *fixture) newSignedRequest(envelope []byte) *http.Request {
 // in 1.22.D-a).
 func (fx *fixture) newPlaintextEnvelope() []byte {
 	env := map[string]any{
-		"@context":   federation.ContextV1,
-		"type":       "Like",
-		"id":         fx.peerURL + "/activities/" + uuid.NewString(),
-		"actor":      fx.peerURL + "/users/alice",
-		"published":  time.Now().UTC().Format(time.RFC3339),
-		"object":     fx.peerURL + "/posts/" + uuid.NewString(),
+		"@context":  federation.ContextV1,
+		"type":      "Like",
+		"id":        fx.peerURL + "/activities/" + uuid.NewString(),
+		"actor":     fx.peerURL + "/users/alice",
+		"published": time.Now().UTC().Format(time.RFC3339),
+		"object":    fx.peerURL + "/posts/" + uuid.NewString(),
 		"signature": map[string]string{
 			"type":      "Ed25519",
 			"publicKey": fx.peerURL + "/users/alice#main-key",

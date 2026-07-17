@@ -120,8 +120,8 @@ type NavPlaceProperties struct {
 // NavPlace is the extension block emitted at manifest top level
 // when the asset has GPS coordinates.
 type NavPlace struct {
-	Context  string             `json:"@context"`
-	Type     string             `json:"type"`
+	Context  string            `json:"@context"`
+	Type     string            `json:"type"`
 	Features []NavPlaceFeature `json:"features"`
 }
 
@@ -129,11 +129,11 @@ type NavPlace struct {
 // manifests have a length-1 items list; multi-canvas (post +
 // future PDF multi-page) get one canvas per source unit.
 type Canvas struct {
-	ID     string         `json:"id"`
-	Type   string         `json:"type"`
-	Label  LangString     `json:"label"`
-	Height int            `json:"height,omitempty"`
-	Width  int            `json:"width,omitempty"`
+	ID     string           `json:"id"`
+	Type   string           `json:"type"`
+	Label  LangString       `json:"label"`
+	Height int              `json:"height,omitempty"`
+	Width  int              `json:"width,omitempty"`
 	Items  []AnnotationPage `json:"items,omitempty"`
 }
 
@@ -149,11 +149,11 @@ type AnnotationPage struct {
 // Annotation is one content anchor. For image-on-canvas, body is
 // the Image API endpoint; target is the canvas id.
 type Annotation struct {
-	ID         string      `json:"id"`
-	Type       string      `json:"type"`
-	Motivation string      `json:"motivation"`
-	Body       ImageBody   `json:"body"`
-	Target     string      `json:"target"`
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Motivation string    `json:"motivation"`
+	Body       ImageBody `json:"body"`
+	Target     string    `json:"target"`
 }
 
 // ImageBody is the tile-source reference. Service points at Image
@@ -178,17 +178,17 @@ type ImageService struct {
 // Manifest is the top-level JSON body for an asset or single-
 // entity view. Collections use CollectionManifest below.
 type Manifest struct {
-	Context           any                `json:"@context"` // string OR []string when navPlace present
-	ID                string             `json:"id"`
-	Type              string             `json:"type"`
-	Label             LangString         `json:"label"`
-	Rights            string             `json:"rights,omitempty"`
-	RequiredStatement *MetadataPair      `json:"requiredStatement,omitempty"`
-	Metadata          []MetadataPair     `json:"metadata,omitempty"`
-	Provider          []Provider         `json:"provider,omitempty"`
-	Homepage          []Homepage         `json:"homepage,omitempty"`
-	Thumbnail         []Thumbnail        `json:"thumbnail,omitempty"`
-	NavPlace          *NavPlace          `json:"navPlace,omitempty"`
+	Context           any            `json:"@context"` // string OR []string when navPlace present
+	ID                string         `json:"id"`
+	Type              string         `json:"type"`
+	Label             LangString     `json:"label"`
+	Rights            string         `json:"rights,omitempty"`
+	RequiredStatement *MetadataPair  `json:"requiredStatement,omitempty"`
+	Metadata          []MetadataPair `json:"metadata,omitempty"`
+	Provider          []Provider     `json:"provider,omitempty"`
+	Homepage          []Homepage     `json:"homepage,omitempty"`
+	Thumbnail         []Thumbnail    `json:"thumbnail,omitempty"`
+	NavPlace          *NavPlace      `json:"navPlace,omitempty"`
 	// Items is REQUIRED by IIIF Presentation 3.0 on a Manifest —
 	// emitted even when empty (embargo stub has no canvases).
 	Items []Canvas `json:"items"`
@@ -200,15 +200,15 @@ type Manifest struct {
 // CollectionManifest is the collection variant. items contains
 // references to member manifests rather than canvases.
 type CollectionManifest struct {
-	Context           any                     `json:"@context"`
-	ID                string                  `json:"id"`
-	Type              string                  `json:"type"`
-	Label             LangString              `json:"label"`
-	RequiredStatement *MetadataPair           `json:"requiredStatement,omitempty"`
-	Metadata          []MetadataPair          `json:"metadata,omitempty"`
-	Provider          []Provider              `json:"provider,omitempty"`
-	Homepage          []Homepage              `json:"homepage,omitempty"`
-	Thumbnail         []Thumbnail             `json:"thumbnail,omitempty"`
+	Context           any            `json:"@context"`
+	ID                string         `json:"id"`
+	Type              string         `json:"type"`
+	Label             LangString     `json:"label"`
+	RequiredStatement *MetadataPair  `json:"requiredStatement,omitempty"`
+	Metadata          []MetadataPair `json:"metadata,omitempty"`
+	Provider          []Provider     `json:"provider,omitempty"`
+	Homepage          []Homepage     `json:"homepage,omitempty"`
+	Thumbnail         []Thumbnail    `json:"thumbnail,omitempty"`
 	// Items is REQUIRED by IIIF Presentation 3.0 on a Collection —
 	// emitted even when empty (a fresh collection with no members).
 	Items   []CollectionMember `json:"items"`
@@ -225,11 +225,11 @@ type CollectionMember struct {
 // SeeAlso links to companion resources — Content Search 2.0
 // service, related manifests, or (future) annotation collections.
 type SeeAlso struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
+	ID      string     `json:"id"`
+	Type    string     `json:"type"`
 	Label   LangString `json:"label,omitempty"`
-	Profile string `json:"profile,omitempty"`
-	Format  string `json:"format,omitempty"`
+	Profile string     `json:"profile,omitempty"`
+	Format  string     `json:"format,omitempty"`
 }
 
 // EntityRef is the plain-Go projection of an asset or collection
@@ -253,10 +253,10 @@ type EntityRef struct {
 	// to defaultCanvasWidth × defaultCanvasHeight). Required by
 	// IIIF Presentation 3.0 §5.7 — Mirador's OpenSeadragon
 	// integration crashes without them.
-	Width  int
-	Height int
-	Latitude       *float64
-	Longitude      *float64
+	Width     int
+	Height    int
+	Latitude  *float64
+	Longitude *float64
 	// EmbargoUntil is optional; when non-nil and in the future,
 	// the manifest builder emits a stub manifest instead of the
 	// full canvas payload.

@@ -39,12 +39,12 @@ import (
 
 // Capability codes. Stable strings; seeded by migration 00023.
 const (
-	CapConfigRead       = "system.config.read"
-	CapConfigWrite      = "system.config.write"
-	CapAuthWrite        = "system.auth.write"
-	CapAIWrite          = "system.ai.write"
-	CapAppearanceWrite  = "system.appearance.write"
-	CapSystemAdmin      = "system.admin"
+	CapConfigRead      = "system.config.read"
+	CapConfigWrite     = "system.config.write"
+	CapAuthWrite       = "system.auth.write"
+	CapAIWrite         = "system.ai.write"
+	CapAppearanceWrite = "system.appearance.write"
+	CapSystemAdmin     = "system.admin"
 )
 
 // Handler implements the system-config slice of the API.

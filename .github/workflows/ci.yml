@@ -161,6 +161,24 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: app/go.sum
 
+      # gofmt gate (#367). Runs before codegen so an unformatted commit
+      # fails fast + points the author at the fix, rather than getting
+      # buried behind the drift diff. gofmt is a static formatter — no
+      # build, no modules — so it's near-instant. `gofmt -l` lists files
+      # that AREN'T formatted; any output means the tree drifted and the
+      # step fails. Land this gate on an already-clean tree (the gofmt
+      # commit in this PR) so it starts green.
+      - name: gofmt check
+        working-directory: app
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-clean. Run 'gofmt -w ./...' in app/ and commit:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: all files formatted"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

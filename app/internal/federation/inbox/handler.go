@@ -106,12 +106,12 @@ var ErrUnknownObject = errors.New("inbox: object URL does not resolve to a local
 // Handler is the chi-mountable handler for POST /federation/inbox.
 // All dependencies are injected so tests can wire stubs.
 type Handler struct {
-	pool         *Queries // sqlc binding — see queries.sql.go
-	lookup       PeerLookup
-	limiter      *PeerRateLimiter
-	replayCache  *ReplayCache
-	logger       *slog.Logger
-	clock        func() time.Time
+	pool        *Queries // sqlc binding — see queries.sql.go
+	lookup      PeerLookup
+	limiter     *PeerRateLimiter
+	replayCache *ReplayCache
+	logger      *slog.Logger
+	clock       func() time.Time
 	// localBaseURL resolves the receiver instance's canonical
 	// base URL (e.g. https://studio-a.example). The inbox-stage
 	// object-ref check compares envelope.object's host against
@@ -124,13 +124,13 @@ type Handler struct {
 // HandlerDeps bundles the constructor inputs. Required for the
 // non-trivial set + lets tests skip the rejectAudit hook cleanly.
 type HandlerDeps struct {
-	Pool         *Queries
-	Lookup       PeerLookup
-	Limiter      *PeerRateLimiter
-	ReplayCache  *ReplayCache
-	Logger       *slog.Logger
+	Pool        *Queries
+	Lookup      PeerLookup
+	Limiter     *PeerRateLimiter
+	ReplayCache *ReplayCache
+	Logger      *slog.Logger
 	// Clock override for tests. Defaults to time.Now if nil.
-	Clock        func() time.Time
+	Clock func() time.Time
 	// LocalBaseURL resolves the receiver instance's canonical
 	// base URL (used by the object-ref host check). nil → host
 	// check is skipped (tests that don't care about it).
@@ -138,7 +138,7 @@ type HandlerDeps struct {
 	// Audit hook. Called whenever the pipeline rejects an
 	// envelope post-peer-resolution. Production wires
 	// audit.Recorder.ActivityRejected. nil-safe (skipped).
-	RejectAudit  func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string)
+	RejectAudit func(ctx context.Context, peerID uuid.UUID, reason federation.InboxStatus, activityURI, msg string)
 }
 
 // NewHandler wires the handler.
@@ -363,14 +363,14 @@ func (h *Handler) PostInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, err := h.pool.InsertInbox(ctx, InsertInboxParams{
-		ActivityUri:   activityURI,
-		PeerID:        pgtype.UUID{Bytes: peer.ID, Valid: true},
-		ActorUri:      env.Actor,
-		ActivityType:  string(env.Type),
-		ObjectKind:    objectKindPtr,
-		ObjectID:      objectIDPtr,
-		EnvelopeJson:  body,
-		HttpSigKey:    sigParams.KeyID,
+		ActivityUri:  activityURI,
+		PeerID:       pgtype.UUID{Bytes: peer.ID, Valid: true},
+		ActorUri:     env.Actor,
+		ActivityType: string(env.Type),
+		ObjectKind:   objectKindPtr,
+		ObjectID:     objectIDPtr,
+		EnvelopeJson: body,
+		HttpSigKey:   sigParams.KeyID,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -444,20 +444,20 @@ func peekActivityID(body []byte) (string, error) {
 // per spec §8.2 (`<base>/<kind>/<uuid>`). Returns three outcomes:
 //
 //   - (kind, uuid, nil)        — known kind, well-formed URL.
-//                                Stored on the inbox row for
-//                                admin filtering.
+//     Stored on the inbox row for
+//     admin filtering.
 //   - (nil, zero, nil)         — activity has no Object field
-//                                (Follow, Block, Subscribe etc.)
-//                                OR the kind is one we don't
-//                                index on the inbox row. The
-//                                row still lands; dispatch
-//                                handles it.
+//     (Follow, Block, Subscribe etc.)
+//     OR the kind is one we don't
+//     index on the inbox row. The
+//     row still lands; dispatch
+//     handles it.
 //   - (nil, zero, ErrUnknownObject) — object URL is present but
-//                                doesn't resolve to a local row.
-//                                Wrong host, or URL shape isn't
-//                                `<base>/<kind>/<uuid>`, or UUID
-//                                portion unparseable. Caller
-//                                rejects with §12.1 unknown_object.
+//     doesn't resolve to a local row.
+//     Wrong host, or URL shape isn't
+//     `<base>/<kind>/<uuid>`, or UUID
+//     portion unparseable. Caller
+//     rejects with §12.1 unknown_object.
 //
 // The host check uses localBaseURL (passed at construction).
 // nil-safe — when localBaseURL isn't wired the host check

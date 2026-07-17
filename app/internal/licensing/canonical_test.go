@@ -87,9 +87,9 @@ func TestCanonicalLicenseMap_BoundDomainsNullVsEmpty(t *testing.T) {
 	c := LicenseClaims{
 		V: 1, KID: "k", LID: "l", Product: "p", Tier: "t",
 		Owner: "o", Org: "or", NotBefore: 1, Expires: 2, IssuedAt: 1,
-		Features: []string{"core"},
+		Features:     []string{"core"},
 		BoundDomains: nil, // → null
-		Issuer: "i",
+		Issuer:       "i",
 	}
 	gotNull, err := canonicalBytes(canonicalLicenseMap(c))
 	if err != nil {

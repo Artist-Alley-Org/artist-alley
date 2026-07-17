@@ -96,8 +96,8 @@ func TestTeamClosureTriggers(t *testing.T) {
 
 	pairs := closurePairs(t, ctx, tx, diablo, rnd, character, crossStudio)
 	wantChain := map[[2]uuid.UUID]bool{
-		{diablo, rnd}:      true,
-		{rnd, character}:   true,
+		{diablo, rnd}:       true,
+		{rnd, character}:    true,
 		{diablo, character}: true,
 	}
 	for pair := range wantChain {

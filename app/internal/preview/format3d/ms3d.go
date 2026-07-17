@@ -22,13 +22,13 @@ import (
 // Spec: file signature "MS3D000000" (10 bytes) + version uint32
 // (must be 4). Then a sequence of length-prefixed sections:
 //
-//   vertices  : 2-byte count, 15 bytes/entry
-//   triangles : 2-byte count, 70 bytes/entry
-//   groups    : 2-byte count, variable-length entries
-//   materials : 2-byte count, 361 bytes/entry
-//   animation : float fps, float currentTime, int32 totalFrames
-//   joints    : 2-byte count, variable (skinning)
-//   <optional sub-version + comments + extra vertex info>
+//	vertices  : 2-byte count, 15 bytes/entry
+//	triangles : 2-byte count, 70 bytes/entry
+//	groups    : 2-byte count, variable-length entries
+//	materials : 2-byte count, 361 bytes/entry
+//	animation : float fps, float currentTime, int32 totalFrames
+//	joints    : 2-byte count, variable (skinning)
+//	<optional sub-version + comments + extra vertex info>
 //
 // We decode through `materials`, then bail at the animation header
 // — the per-vertex per-frame deformation pipeline MS3D uses doesn't
@@ -124,8 +124,8 @@ func DecodeMS3D(r io.Reader) (*Model, error) {
 		return nil, fmt.Errorf("ms3d: group count: %w", err)
 	}
 	for g := uint16(0); g < numGroups; g++ {
-		c.pos++          // flags u8
-		c.skip(32)       // name[32]
+		c.pos++    // flags u8
+		c.skip(32) // name[32]
 		nt, err := c.u16()
 		if err != nil {
 			return nil, fmt.Errorf("ms3d: group %d triangle-count: %w", g, err)
@@ -149,13 +149,13 @@ func DecodeMS3D(r io.Reader) (*Model, error) {
 			return nil, fmt.Errorf("ms3d: material 0 truncated: %w", err)
 		}
 		name := readFixedString(c.buf[c.pos:c.pos+32], 32)
-		c.skip(32)              // name
+		c.skip(32)                // name
 		c.skip(16 + 16 + 16 + 16) // ambient/diffuse/specular/emissive (4×4 floats)
-		c.skip(4 + 4)           // shininess, transparency
-		c.skip(1)               // mode
+		c.skip(4 + 4)             // shininess, transparency
+		c.skip(1)                 // mode
 		tex := readFixedString(c.buf[c.pos:c.pos+128], 128)
-		c.skip(128)             // diffuse texture path
-		c.skip(128)             // alpha map path
+		c.skip(128) // diffuse texture path
+		c.skip(128) // alpha map path
 		if name == "" {
 			name = "ms3d_mat"
 		}

@@ -178,12 +178,12 @@ func TestShareScopeAtLeast(t *testing.T) {
 
 func TestInboxStatusIsReject(t *testing.T) {
 	cases := map[federation.InboxStatus]bool{
-		federation.InboxStatusPending:           false,
-		federation.InboxStatusProcessed:         false,
-		federation.InboxStatusInvalidContext:    true,
-		federation.InboxStatusSigInvalid:        true,
-		federation.InboxStatusUnsharedObject:    true,
-		federation.InboxStatus("bogus"):         false,
+		federation.InboxStatusPending:        false,
+		federation.InboxStatusProcessed:      false,
+		federation.InboxStatusInvalidContext: true,
+		federation.InboxStatusSigInvalid:     true,
+		federation.InboxStatusUnsharedObject: true,
+		federation.InboxStatus("bogus"):      false,
 	}
 	for s, want := range cases {
 		if got := s.IsReject(); got != want {

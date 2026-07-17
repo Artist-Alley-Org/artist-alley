@@ -34,16 +34,16 @@ import (
 // handler streams just that file's decompressed bytes back.
 //
 // Per-archive-kind cost:
-//   * ZIP: O(1) — central directory parse + seek to local header.
+//   - ZIP: O(1) — central directory parse + seek to local header.
 //     We slurp the whole archive into memory (capped) since
 //     archive/zip needs io.ReaderAt; future optimisation:
 //     DownloadRange the tail + the entry's data range only.
-//   * 7z: O(1) — header at end-of-file, same slurp-into-RAM path.
-//   * TAR: O(entries before target) — must scan forward until we
+//   - 7z: O(1) — header at end-of-file, same slurp-into-RAM path.
+//   - TAR: O(entries before target) — must scan forward until we
 //     hit the matching header. A 1k-entry tar feels instant; a
 //     100k-entry tar will take seconds per click. Defer optimisation
 //     until we see one in the wild.
-//   * RAR: O(entries before target) — solid-archive mode makes
+//   - RAR: O(entries before target) — solid-archive mode makes
 //     random access unreliable so streaming is the only safe path.
 //
 // MIME inference reuses the same extension table other media

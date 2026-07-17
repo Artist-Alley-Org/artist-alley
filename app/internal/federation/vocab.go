@@ -48,8 +48,8 @@ const (
 	// Custom artist-alley activities — the load-bearing extension
 	// set. Every `aa:*` activity MUST gate on a current
 	// federation_shares row (Phase 1.22.C).
-	ActivityAAShare              ActivityType = "aa:Share"
-	ActivityAAUnshare            ActivityType = "aa:Unshare"
+	ActivityAAShare   ActivityType = "aa:Share"
+	ActivityAAUnshare ActivityType = "aa:Unshare"
 	// ActivityAARevokeShare is RESERVED per the 1.22.C design
 	// proposal §12.5 #3. v1 implementations MUST treat any inbound
 	// aa:RevokeShare as an aa:Unshare (forward-compat parsing).
@@ -268,10 +268,10 @@ func (t TrustTier) Valid() bool {
 // CHECK constraint added in migration 00056 on posts.visibility
 // + collections.visibility (and any future shareable object).
 //
-//   private        — author + local admins only (no federation)
-//   org-only       — local users with ACL access (no federation)
-//   followers      — federated via Accept(Follow) per-user gates
-//   explicit-share — federated via per-recipient federation_shares
+//	private        — author + local admins only (no federation)
+//	org-only       — local users with ACL access (no federation)
+//	followers      — federated via Accept(Follow) per-user gates
+//	explicit-share — federated via per-recipient federation_shares
 //
 // `public` is reserved for a future public-fediverse phase; v1
 // implementations MUST reject it at the write API per the
@@ -280,10 +280,10 @@ func (t TrustTier) Valid() bool {
 type ObjectVisibility string
 
 const (
-	ObjectVisibilityPrivate        ObjectVisibility = "private"
-	ObjectVisibilityOrgOnly        ObjectVisibility = "org-only"
-	ObjectVisibilityFollowers      ObjectVisibility = "followers"
-	ObjectVisibilityExplicitShare  ObjectVisibility = "explicit-share"
+	ObjectVisibilityPrivate       ObjectVisibility = "private"
+	ObjectVisibilityOrgOnly       ObjectVisibility = "org-only"
+	ObjectVisibilityFollowers     ObjectVisibility = "followers"
+	ObjectVisibilityExplicitShare ObjectVisibility = "explicit-share"
 )
 
 // Valid reports whether v is in the closed catalogue. `public` is
@@ -309,12 +309,12 @@ func (v ObjectVisibility) IsFederated() bool {
 //
 // Ordering: view < comment < annotate < remix.
 //
-//   view     — read-only; can Like / Announce
-//   comment  — view + can Create(Note) (comments)
-//   annotate — comment + can aa:Annotation (whiteboards, text annotations)
-//   remix    — annotate + can incorporate shared assets into
-//              own posts/collections/workspaces/brand_kits on
-//              recipient instance. Original NEVER modified.
+//	view     — read-only; can Like / Announce
+//	comment  — view + can Create(Note) (comments)
+//	annotate — comment + can aa:Annotation (whiteboards, text annotations)
+//	remix    — annotate + can incorporate shared assets into
+//	           own posts/collections/workspaces/brand_kits on
+//	           recipient instance. Original NEVER modified.
 //
 // Future fifth scope `edit` reserved for cross-instance edit of
 // the original (lands when that becomes a real ask). Not v1.
@@ -365,15 +365,15 @@ func (s ShareScope) Covers(required ShareScope) bool {
 // kinds per the 1.22.C design proposal §2.2. Mirrors the CHECK
 // constraint on federation_shares.object_kind.
 //
-//   asset, post, collection — current shareable objects
-//   workspace, brand_kit    — future containers (tables land later;
-//                              enum value present now so the
-//                              federation_shares schema is
-//                              forward-compatible)
-//   user                    — followers: a share row with
-//                              object_kind=user IS the follower
-//                              relationship (no separate followers
-//                              table).
+//	asset, post, collection — current shareable objects
+//	workspace, brand_kit    — future containers (tables land later;
+//	                           enum value present now so the
+//	                           federation_shares schema is
+//	                           forward-compatible)
+//	user                    — followers: a share row with
+//	                           object_kind=user IS the follower
+//	                           relationship (no separate followers
+//	                           table).
 type ShareObjectKind string
 
 const (
@@ -399,14 +399,14 @@ func (k ShareObjectKind) Valid() bool {
 // to a federation directory per migration 00054 + the publish
 // flow in docs/spec/federation-directory/v1.md §"POST /v1/register".
 //
-//   not_published    — fresh row; we've never tried to be listed
-//   pending_dns      — challenge issued; operator must add the
-//                      TXT record we showed them
-//   pending_register — DNS visible (or operator clicked anyway);
-//                      /v1/register POST is in flight
-//   listed           — directory accepted us; publish_listing_id
-//                      populated
-//   failed           — any step failed; publish_last_error populated
+//	not_published    — fresh row; we've never tried to be listed
+//	pending_dns      — challenge issued; operator must add the
+//	                   TXT record we showed them
+//	pending_register — DNS visible (or operator clicked anyway);
+//	                   /v1/register POST is in flight
+//	listed           — directory accepted us; publish_listing_id
+//	                   populated
+//	failed           — any step failed; publish_last_error populated
 type PublishStatus string
 
 const (
@@ -549,51 +549,51 @@ const (
 	InboxStatusInvalidPublished     InboxStatus = "invalid_published"     // published not RFC 3339
 
 	// Reject reasons — semantic layer (require state to evaluate).
-	InboxStatusUnknownActor        InboxStatus = "unknown_actor"          // actor does not resolve
-	InboxStatusUnknownPeer         InboxStatus = "unknown_peer"           // sender instance not in federation_peers
-	InboxStatusPeerDisabled        InboxStatus = "peer_disabled"          // peer known but disabled
-	InboxStatusUnknownObject       InboxStatus = "unknown_object"         // object URL does not resolve to a local row (wrong host OR unknown UUID)
-	InboxStatusUnsharedObject      InboxStatus = "unshared_object"        // local row exists but no current federation_shares grant
-	InboxStatusEnvelopeSigMissing    InboxStatus = "envelope_sig_missing"     // structural: signature field absent/malformed (distinct from SigInvalid which is crypto failure with present-but-bad)
-	InboxStatusEncryptionRequired    InboxStatus = "encryption_required"      // SENDER violated a MUST-encrypt rule (inverse of EncryptionNotSupported)
+	InboxStatusUnknownActor           InboxStatus = "unknown_actor"            // actor does not resolve
+	InboxStatusUnknownPeer            InboxStatus = "unknown_peer"             // sender instance not in federation_peers
+	InboxStatusPeerDisabled           InboxStatus = "peer_disabled"            // peer known but disabled
+	InboxStatusUnknownObject          InboxStatus = "unknown_object"           // object URL does not resolve to a local row (wrong host OR unknown UUID)
+	InboxStatusUnsharedObject         InboxStatus = "unshared_object"          // local row exists but no current federation_shares grant
+	InboxStatusEnvelopeSigMissing     InboxStatus = "envelope_sig_missing"     // structural: signature field absent/malformed (distinct from SigInvalid which is crypto failure with present-but-bad)
+	InboxStatusEncryptionRequired     InboxStatus = "encryption_required"      // SENDER violated a MUST-encrypt rule (inverse of EncryptionNotSupported)
 	InboxStatusEncryptionNotSupported InboxStatus = "encryption_not_supported" // RECEIVER hasn't shipped 1.22.I X25519 decode yet (inverse of EncryptionRequired)
-	InboxStatusPlaintextTypeMismatch InboxStatus = "plaintext_type_mismatch" // decrypted type ≠ envelope type
-	InboxStatusDecryptFailed       InboxStatus = "decrypt_failed"         // 1.22.I-f: walked every retained receiver key + every attempt's nacl/box.Open returned !ok — tamper, corruption, or sender used a recipient key version we've fully aged out
-	InboxStatusStaleRequest        InboxStatus = "stale_request"          // HTTP-Sig date out of window
-	InboxStatusReplay              InboxStatus = "replay"                 // activity id already seen
-	InboxStatusError               InboxStatus = "error"                  // internal error during processing
+	InboxStatusPlaintextTypeMismatch  InboxStatus = "plaintext_type_mismatch"  // decrypted type ≠ envelope type
+	InboxStatusDecryptFailed          InboxStatus = "decrypt_failed"           // 1.22.I-f: walked every retained receiver key + every attempt's nacl/box.Open returned !ok — tamper, corruption, or sender used a recipient key version we've fully aged out
+	InboxStatusStaleRequest           InboxStatus = "stale_request"            // HTTP-Sig date out of window
+	InboxStatusReplay                 InboxStatus = "replay"                   // activity id already seen
+	InboxStatusError                  InboxStatus = "error"                    // internal error during processing
 )
 
 // KnownInboxStatuses is the closed catalogue (used by the
 // migration's CHECK + by exhaustive switches that need to assert
 // no value escaped).
 var KnownInboxStatuses = map[InboxStatus]struct{}{
-	InboxStatusPending:               {},
-	InboxStatusProcessed:             {},
-	InboxStatusInvalidContext:        {},
-	InboxStatusUnsigned:              {},
-	InboxStatusUnsupportedAlgorithm:  {},
-	InboxStatusSigMalformed:          {},
-	InboxStatusSigInvalid:            {},
-	InboxStatusUnknownKey:            {},
-	InboxStatusUnknownField:          {},
-	InboxStatusInvalidType:           {},
-	InboxStatusInvalidActor:          {},
-	InboxStatusInvalidObject:         {},
-	InboxStatusInvalidPublished:      {},
-	InboxStatusUnknownActor:          {},
-	InboxStatusUnknownPeer:           {},
-	InboxStatusPeerDisabled:          {},
-	InboxStatusUnknownObject:         {},
-	InboxStatusUnsharedObject:        {},
-	InboxStatusEnvelopeSigMissing:    {},
-	InboxStatusEncryptionRequired:    {},
+	InboxStatusPending:                {},
+	InboxStatusProcessed:              {},
+	InboxStatusInvalidContext:         {},
+	InboxStatusUnsigned:               {},
+	InboxStatusUnsupportedAlgorithm:   {},
+	InboxStatusSigMalformed:           {},
+	InboxStatusSigInvalid:             {},
+	InboxStatusUnknownKey:             {},
+	InboxStatusUnknownField:           {},
+	InboxStatusInvalidType:            {},
+	InboxStatusInvalidActor:           {},
+	InboxStatusInvalidObject:          {},
+	InboxStatusInvalidPublished:       {},
+	InboxStatusUnknownActor:           {},
+	InboxStatusUnknownPeer:            {},
+	InboxStatusPeerDisabled:           {},
+	InboxStatusUnknownObject:          {},
+	InboxStatusUnsharedObject:         {},
+	InboxStatusEnvelopeSigMissing:     {},
+	InboxStatusEncryptionRequired:     {},
 	InboxStatusEncryptionNotSupported: {},
-	InboxStatusPlaintextTypeMismatch: {},
-	InboxStatusDecryptFailed:        {},
-	InboxStatusStaleRequest:          {},
-	InboxStatusReplay:                {},
-	InboxStatusError:                 {},
+	InboxStatusPlaintextTypeMismatch:  {},
+	InboxStatusDecryptFailed:          {},
+	InboxStatusStaleRequest:           {},
+	InboxStatusReplay:                 {},
+	InboxStatusError:                  {},
 }
 
 // IsReject reports whether s is one of the rejection statuses (vs

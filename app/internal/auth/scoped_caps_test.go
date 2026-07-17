@@ -83,7 +83,7 @@ func TestCan_GlobalRolePassesEverywhere(t *testing.T) {
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   pgtype.UUID{Bytes: roleID, Valid: true},
+			RoleID:  pgtype.UUID{Bytes: roleID, Valid: true},
 		}); err != nil {
 			t.Fatalf("assign global: %v", err)
 		}
@@ -165,7 +165,7 @@ func TestCan_SystemAdminBypassesScope(t *testing.T) {
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   adminID,
+			RoleID:  adminID,
 		}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
 		}

@@ -178,9 +178,9 @@ func (s *Store) IsCancelled(ctx context.Context, id uuid.UUID) (bool, error) {
 
 func scanRow(rows pgx.Rows) (Row, error) {
 	var (
-		r         Row
-		scopeRaw  []byte
-		target    string
+		r        Row
+		scopeRaw []byte
+		target   string
 	)
 	if err := rows.Scan(
 		&r.ID, &r.StartedAt, &r.CompletedAt, &r.CancelledAt,

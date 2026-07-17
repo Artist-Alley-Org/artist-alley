@@ -30,9 +30,9 @@ type LoginLimiter struct {
 }
 
 type limiterEntry struct {
-	key       string
-	tokens    float64
-	lastFill  time.Time
+	key      string
+	tokens   float64
+	lastFill time.Time
 }
 
 // NewLoginLimiter returns a limiter sized for solo-deploy traffic.

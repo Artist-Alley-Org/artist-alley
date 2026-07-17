@@ -86,10 +86,10 @@ func TestConformance_RFC8785(t *testing.T) {
 // hex-encoded keypair keeps the fixture readable. The unsigned
 // envelope is the input to Sign; signed is the expected output.
 type envelopeVector struct {
-	Description       string          `json:"description"`
-	ActorPrivateKeyHex string         `json:"actor_private_key_hex"` // 64-hex (32-byte seed)
-	ActorPublicKeyHex  string         `json:"actor_public_key_hex"`  // 64-hex (32-byte public)
-	PublishedFixed     string          `json:"published_fixed"`        // RFC3339Nano timestamp for determinism
+	Description        string          `json:"description"`
+	ActorPrivateKeyHex string          `json:"actor_private_key_hex"` // 64-hex (32-byte seed)
+	ActorPublicKeyHex  string          `json:"actor_public_key_hex"`  // 64-hex (32-byte public)
+	PublishedFixed     string          `json:"published_fixed"`       // RFC3339Nano timestamp for determinism
 	EnvelopeUnsigned   json.RawMessage `json:"envelope_unsigned"`
 	CanonicalBytesB64  string          `json:"canonical_bytes_b64"`
 	SignatureValueB64  string          `json:"signature_value_b64"`
@@ -288,14 +288,14 @@ func errorsIs(err, target error) bool {
 // ephemeral/nonces and confirm ciphertexts match; decrypt with
 // each recipient key and confirm plaintext matches.
 type naclVector struct {
-	Description       string   `json:"description"`
-	PlaintextHex      string   `json:"plaintext_hex"`
-	EphemeralPrivHex  string   `json:"ephemeral_priv_hex"`
-	EphemeralPubHex   string   `json:"ephemeral_pub_hex"`
-	RecipientPubHex   []string `json:"recipient_pub_hex"`
-	RecipientPrivHex  []string `json:"recipient_priv_hex"`
-	NonceHex          []string `json:"nonce_hex"`
-	CiphertextHex     []string `json:"ciphertext_hex"`
+	Description      string   `json:"description"`
+	PlaintextHex     string   `json:"plaintext_hex"`
+	EphemeralPrivHex string   `json:"ephemeral_priv_hex"`
+	EphemeralPubHex  string   `json:"ephemeral_pub_hex"`
+	RecipientPubHex  []string `json:"recipient_pub_hex"`
+	RecipientPrivHex []string `json:"recipient_priv_hex"`
+	NonceHex         []string `json:"nonce_hex"`
+	CiphertextHex    []string `json:"ciphertext_hex"`
 }
 
 func TestConformance_NaCl(t *testing.T) {

@@ -43,12 +43,12 @@ type CoordinatorPayload struct{}
 // Self-re-enqueues at the end of every tick via
 // EnqueueOpts.ScheduledFor so no external cron is needed.
 type CoordinatorJob struct {
-	Store         *Store
-	Jobs          *jobs.Service
-	Logger        *slog.Logger
-	WakeSeconds   int
-	BatchSize     int32
-	Counter       CoordinatorCounter
+	Store       *Store
+	Jobs        *jobs.Service
+	Logger      *slog.Logger
+	WakeSeconds int
+	BatchSize   int32
+	Counter     CoordinatorCounter
 }
 
 // CoordinatorCounter is the observability hook. Nil-safe.

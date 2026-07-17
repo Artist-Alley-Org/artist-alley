@@ -24,7 +24,7 @@ func minimalJPEG(length int) []byte {
 		length = 4
 	}
 	b := make([]byte, length)
-	b[0], b[1] = 0xFF, 0xD8 // SOI
+	b[0], b[1] = 0xFF, 0xD8               // SOI
 	b[len(b)-2], b[len(b)-1] = 0xFF, 0xD9 // EOI
 	return b
 }

@@ -63,9 +63,9 @@ func TestTracker_CheckBudgetBefore_ZeroCapFailsClosed(t *testing.T) {
 // Under-cap call should pass. Sanity test for the happy path.
 func TestTracker_CheckBudgetBefore_UnderCapAllowed(t *testing.T) {
 	usage := BudgetUsage{
-		Provider:       "openai",
-		HardCapMicros:  1_000_000, // $1.00
-		SpentMicros:    500_000,
+		Provider:      "openai",
+		HardCapMicros: 1_000_000, // $1.00
+		SpentMicros:   500_000,
 	}
 	if err := wouldBlockBudget(usage, 100_000); err != nil {
 		t.Errorf("under-cap call rejected: %v", err)
@@ -75,9 +75,9 @@ func TestTracker_CheckBudgetBefore_UnderCapAllowed(t *testing.T) {
 // Estimated cost that would push past the hard cap blocks.
 func TestTracker_CheckBudgetBefore_ExceedsCapBlocked(t *testing.T) {
 	usage := BudgetUsage{
-		Provider:       "openai",
-		HardCapMicros:  1_000_000,
-		SpentMicros:    900_000,
+		Provider:      "openai",
+		HardCapMicros: 1_000_000,
+		SpentMicros:   900_000,
 	}
 	err := wouldBlockBudget(usage, 200_000) // would land at $1.10
 	if err == nil {
@@ -140,11 +140,11 @@ func TestSoftWarn_FiresOnCrossing(t *testing.T) {
 		softWarn  int64
 		want      bool
 	}{
-		{"clean cross", 90, 20, 100, true},   // 90→110, crosses 100
+		{"clean cross", 90, 20, 100, true},       // 90→110, crosses 100
 		{"already crossed", 110, 20, 100, false}, // 110→130, stays above
-		{"under warn", 50, 30, 100, false},   // 50→80, stays below
-		{"zero softwarn", 50, 30, 0, false},  // soft=0 disables the warn
-		{"exactly at", 90, 10, 100, true},    // 90→100, == counts as cross
+		{"under warn", 50, 30, 100, false},       // 50→80, stays below
+		{"zero softwarn", 50, 30, 0, false},      // soft=0 disables the warn
+		{"exactly at", 90, 10, 100, true},        // 90→100, == counts as cross
 	}
 	for _, c := range cases {
 		got := softWarnCrossed(c.prevSpent, c.prevSpent+c.actual, c.softWarn)

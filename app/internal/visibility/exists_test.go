@@ -16,11 +16,11 @@ import (
 // capturingPool records the SQL + args every CanSee call passes so
 // the tests can assert the exact composed query without a real DB.
 type capturingPool struct {
-	sql        string
-	args       []any
-	scanValue  bool
-	scanErr    error
-	callCount  int
+	sql       string
+	args      []any
+	scanValue bool
+	scanErr   error
+	callCount int
 }
 
 type capturedRow struct {

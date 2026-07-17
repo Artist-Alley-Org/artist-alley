@@ -88,22 +88,22 @@ func (h *Handler) GetSetupStatus(
 	return openapi.GetSetupStatus200JSONResponse{
 		NeedsSetup: needs,
 		Deployment: openapi.SetupDeploymentInfo{
-			DbHost:          h.Cfg.DBHost,
-			DbPort:          h.Cfg.DBPort,
-			DbName:          h.Cfg.DBName,
+			DbHost:         h.Cfg.DBHost,
+			DbPort:         h.Cfg.DBPort,
+			DbName:         h.Cfg.DBName,
 			StorageBackend: h.StorageBackendName,
 		},
 		Defaults: openapi.SetupDefaults{
-			AdminUsername:    d.AdminUsername,
-			AdminEmail:       d.AdminEmail,
-			AdminFullname:    d.AdminFullname,
-			SiteName:         d.SiteName,
-			SiteBaseUrl:      d.SiteBaseURL,
-			SmtpHost:         d.SMTPHost,
-			SmtpPort:         d.SMTPPort,
-			SmtpEncryption:   openapi.SetupDefaultsSmtpEncryption(normaliseEncryption(d.SMTPEncryption)),
-			SmtpUsername:     d.SMTPUsername,
-			SmtpFromAddress:  d.SMTPFromAddr,
+			AdminUsername:   d.AdminUsername,
+			AdminEmail:      d.AdminEmail,
+			AdminFullname:   d.AdminFullname,
+			SiteName:        d.SiteName,
+			SiteBaseUrl:     d.SiteBaseURL,
+			SmtpHost:        d.SMTPHost,
+			SmtpPort:        d.SMTPPort,
+			SmtpEncryption:  openapi.SetupDefaultsSmtpEncryption(normaliseEncryption(d.SMTPEncryption)),
+			SmtpUsername:    d.SMTPUsername,
+			SmtpFromAddress: d.SMTPFromAddr,
 		},
 	}, nil
 }
@@ -262,7 +262,7 @@ func (h *Handler) CompleteSetup(
 	}
 	if err := q.SetUserGlobalRole(ctx, auth.SetUserGlobalRoleParams{
 		UserRef:           userRow.Ref,
-		RoleID:             adminRole.ID,
+		RoleID:            adminRole.ID,
 		AssignedByUserRef: nil, // bootstrap; no actor
 	}); err != nil {
 		return nil, fmt.Errorf("setup: assign admin role: %w", err)

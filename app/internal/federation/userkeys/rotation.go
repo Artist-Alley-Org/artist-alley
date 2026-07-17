@@ -94,7 +94,7 @@ const DefaultRetentionDays = 30
 type RotationResult struct {
 	UserRef         int64
 	NewVersion      int32
-	PreviousVersion int32 // 0 when this was the user's first key
+	PreviousVersion int32  // 0 when this was the user's first key
 	NewPublicKey    []byte // raw 32 bytes; caller base64s for transport
 	Algorithm       string // always Algorithm today; recorded for forward compat
 }

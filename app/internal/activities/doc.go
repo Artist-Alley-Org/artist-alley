@@ -31,11 +31,11 @@
 // # Two sources, one ledger
 //
 //   - source = "local"      — emitted by handlers on this instance.
-//                             Federation outbox (Phase 1.22.D)
-//                             reads these to publish to peers.
+//     Federation outbox (Phase 1.22.D)
+//     reads these to publish to peers.
 //   - source = "https://..." — received from a federated peer.
-//                             Inbox dispatch (Phase 1.22.D) writes
-//                             these as it admits inbound activities.
+//     Inbox dispatch (Phase 1.22.D) writes
+//     these as it admits inbound activities.
 //
 // # Caching
 //

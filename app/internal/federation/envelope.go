@@ -100,8 +100,8 @@ type Envelope struct {
 // encrypted. See nacl/box.go for the encrypt + decrypt primitives
 // and docs/spec/federation/v1.md §6 for the wire shape.
 type EncryptedEnvelope struct {
-	Alg          EncryptionAlgorithm `json:"alg"`
-	EphemeralKey string              `json:"ephemeralKey"` // base64url-no-padding, 32 bytes X25519 pubkey
+	Alg          EncryptionAlgorithm  `json:"alg"`
+	EphemeralKey string               `json:"ephemeralKey"` // base64url-no-padding, 32 bytes X25519 pubkey
 	Recipients   []EncryptedRecipient `json:"recipients"`
 }
 

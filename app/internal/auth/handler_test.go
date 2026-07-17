@@ -259,8 +259,8 @@ func TestApiTokens_CreateListBearerRevoke(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type fixture struct {
-	pool       *pgxpool.Pool
-	tx         interface {
+	pool *pgxpool.Pool
+	tx   interface {
 		Exec(ctx context.Context, sql string, args ...any) (pg pgcmd, err error)
 		Query(ctx context.Context, sql string, args ...any) (pgxRowsIface, error)
 		QueryRow(ctx context.Context, sql string, args ...any) pgxRowIface
@@ -885,5 +885,3 @@ func (a authOnlyImpl) UpdateAIConfig(_ context.Context, _ openapi.UpdateAIConfig
 func (a authOnlyImpl) ListLocales(_ context.Context, _ openapi.ListLocalesRequestObject) (openapi.ListLocalesResponseObject, error) {
 	panic("ListLocales called from auth test shim")
 }
-
-

@@ -197,11 +197,11 @@ type Hit struct {
 // QueryResult is the unified response the engine returns to the
 // HTTP handler.
 type QueryResult struct {
-	Hits            []Hit
-	NextCursor      *Cursor
-	TotalCount      int
+	Hits             []Hit
+	NextCursor       *Cursor
+	TotalCount       int
 	TotalCountCapped bool
-	TypesMatched    []HitType
+	TypesMatched     []HitType
 
 	// Facets is the B-2 placeholder for facet buckets. Empty in
 	// B-1 so the outer shape doesn't change when facets land.

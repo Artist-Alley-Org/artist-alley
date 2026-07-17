@@ -288,22 +288,22 @@ func (w *Writer) RecordActivity(ctx context.Context, tx pgx.Tx, in Input) (*Reco
 
 	q := New(tx)
 	row, err := q.InsertActivity(ctx, InsertActivityParams{
-		ActivityUri:    in.ActivityURI,
-		ActivityType:   string(in.Type),
-		ActorUri:       in.ActorURI,
-		ActorUserRef:   in.ActorUserRef,
-		ObjectUri:      objectURI,
-		ObjectKind:     objectKind,
-		ObjectLocalID:  objectLocalID,
-		TargetUri:      targetURI,
-		ToUris:         toJSON,
-		CcUris:         ccJSON,
-		BtoUris:        btoJSON,
-		BccUris:        bccJSON,
-		AudienceUris:   audJSON,
-		Payload:        payloadJSON,
-		Source:         in.Source,
-		PublishedAt:    pgtype.Timestamptz{Time: in.Published, Valid: true},
+		ActivityUri:   in.ActivityURI,
+		ActivityType:  string(in.Type),
+		ActorUri:      in.ActorURI,
+		ActorUserRef:  in.ActorUserRef,
+		ObjectUri:     objectURI,
+		ObjectKind:    objectKind,
+		ObjectLocalID: objectLocalID,
+		TargetUri:     targetURI,
+		ToUris:        toJSON,
+		CcUris:        ccJSON,
+		BtoUris:       btoJSON,
+		BccUris:       bccJSON,
+		AudienceUris:  audJSON,
+		Payload:       payloadJSON,
+		Source:        in.Source,
+		PublishedAt:   pgtype.Timestamptz{Time: in.Published, Valid: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("activities: insert: %w", err)
@@ -377,10 +377,10 @@ func (w *Writer) LookupMostRecent(ctx context.Context, actorUserRef int64, activ
 	}
 	kindStr := string(objectKind)
 	uri, err := New(w.Pool).LookupMostRecentLocalActivity(ctx, LookupMostRecentLocalActivityParams{
-		ActorUserRef:   &actorUserRef,
-		ActivityType:   string(activityType),
-		ObjectKind:     &kindStr,
-		ObjectLocalID:  &objectLocalID,
+		ActorUserRef:  &actorUserRef,
+		ActivityType:  string(activityType),
+		ObjectKind:    &kindStr,
+		ObjectLocalID: &objectLocalID,
 	})
 	if err != nil {
 		if w.Logger != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -402,22 +402,22 @@ func (w *Writer) LookupMostRecent(ctx context.Context, actorUserRef int64, activ
 // Activity per the table — we use Record here to avoid the name
 // collision and to make the "ledger row" meaning explicit).
 type Record struct {
-	ID              uuid.UUID
-	ActivityURI     string
-	Type            federation.ActivityType
-	ActorURI        string
-	ActorUserRef    *int64
-	ObjectURI       string
-	ObjectKind      ActivityObjectKind
-	ObjectLocalID   string
-	TargetURI       string
+	ID                         uuid.UUID
+	ActivityURI                string
+	Type                       federation.ActivityType
+	ActorURI                   string
+	ActorUserRef               *int64
+	ObjectURI                  string
+	ObjectKind                 ActivityObjectKind
+	ObjectLocalID              string
+	TargetURI                  string
 	To, CC, BTo, BCC, Audience []string
-	Payload         map[string]json.RawMessage
-	SignatureValue  string
-	SignaturePubkey string
-	Source          string
-	PublishedAt     time.Time
-	CreatedAt       time.Time
+	Payload                    map[string]json.RawMessage
+	SignatureValue             string
+	SignaturePubkey            string
+	Source                     string
+	PublishedAt                time.Time
+	CreatedAt                  time.Time
 }
 
 // --- helpers --------------------------------------------------------------

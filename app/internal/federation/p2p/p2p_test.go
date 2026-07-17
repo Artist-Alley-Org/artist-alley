@@ -166,10 +166,10 @@ func TestVisibleSnapshot_FiltersByShareToggle(t *testing.T) {
 	shareTrue := true
 	shareFalse := false
 	pVisible, err := peerReg.Add(ctx, peer.AddInput{
-		InstanceURL:         "https://visible-" + randHex(t, 4) + ".example",
-		DisplayName:         "Visible Peer",
-		InstancePublicKey:   freshPEM(t),
-		TrustTier:           federation.TrustConnected,
+		InstanceURL:        "https://visible-" + randHex(t, 4) + ".example",
+		DisplayName:        "Visible Peer",
+		InstancePublicKey:  freshPEM(t),
+		TrustTier:          federation.TrustConnected,
 		EncryptionPolicy:   federation.EncryptionPlaintext,
 		HandshakeByUserRef: admin,
 	})
@@ -185,10 +185,10 @@ func TestVisibleSnapshot_FiltersByShareToggle(t *testing.T) {
 	}
 
 	pHidden, err := peerReg.Add(ctx, peer.AddInput{
-		InstanceURL:         "https://hidden-" + randHex(t, 4) + ".example",
-		DisplayName:         "Hidden Peer",
-		InstancePublicKey:   freshPEM(t),
-		TrustTier:           federation.TrustConnected,
+		InstanceURL:        "https://hidden-" + randHex(t, 4) + ".example",
+		DisplayName:        "Hidden Peer",
+		InstancePublicKey:  freshPEM(t),
+		TrustTier:          federation.TrustConnected,
 		EncryptionPolicy:   federation.EncryptionPlaintext,
 		HandshakeByUserRef: admin,
 	})
@@ -341,7 +341,7 @@ func TestListSuggestions_DedupsAgainstOwnPeers(t *testing.T) {
 		{"instance_url": alreadyURL, "display_name": "Already Paired",
 			"instance_public_key": freshPEM(t), "fingerprint": "fap"},
 		{"instance_url": "https://genuinely-new-" + randHex(t, 4) + ".example",
-			"display_name": "Genuinely New",
+			"display_name":        "Genuinely New",
 			"instance_public_key": freshPEM(t), "fingerprint": "fnew"},
 	})
 	client := rewriteClient(t, srv.URL)

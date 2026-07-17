@@ -181,13 +181,13 @@ func TestNormalizeCameraMakeModel(t *testing.T) {
 	cases := []struct {
 		make_, model, want string
 	}{
-		{"Canon", "Canon EOS 5D", "Canon EOS 5D"},                     // dup-prefix strip
-		{"Sony", "ILCE-7M3", "Sony ILCE-7M3"},                         // clean concat
-		{"SONY", "Sony FE 24-70mm", "SONY FE 24-70mm"},                // case-insensitive strip
-		{"", "EOS 5D", "EOS 5D"},                                      // empty make
-		{"Canon", "", "Canon"},                                        // empty model
+		{"Canon", "Canon EOS 5D", "Canon EOS 5D"},      // dup-prefix strip
+		{"Sony", "ILCE-7M3", "Sony ILCE-7M3"},          // clean concat
+		{"SONY", "Sony FE 24-70mm", "SONY FE 24-70mm"}, // case-insensitive strip
+		{"", "EOS 5D", "EOS 5D"},                       // empty make
+		{"Canon", "", "Canon"},                         // empty model
 		{"NIKON CORPORATION", "NIKON CORPORATION D850", "NIKON CORPORATION D850"},
-		{"Canon", "Canon", "Canon"},                                   // dup whole-string passes through cleanly (make==model edge case)
+		{"Canon", "Canon", "Canon"}, // dup whole-string passes through cleanly (make==model edge case)
 	}
 	for _, c := range cases {
 		t.Run(c.make_+"/"+c.model, func(t *testing.T) {

@@ -174,19 +174,19 @@ func authToAPI(v AuthConfig) openapi.AuthConfig {
 	out.PasswordPolicy.MaxAgeDays = v.PasswordPolicy.MaxAgeDays
 
 	out.SsoProviders = make([]struct {
-		Config      *map[string]interface{}              `json:"config,omitempty"`
-		DisplayName string                               `json:"display_name"`
-		Enabled     bool                                 `json:"enabled"`
-		Id          *string                              `json:"id,omitempty"`
-		Kind        openapi.AuthConfigSsoProvidersKind   `json:"kind"`
+		Config      *map[string]interface{}            `json:"config,omitempty"`
+		DisplayName string                             `json:"display_name"`
+		Enabled     bool                               `json:"enabled"`
+		Id          *string                            `json:"id,omitempty"`
+		Kind        openapi.AuthConfigSsoProvidersKind `json:"kind"`
 	}, 0, len(v.SSOProviders))
 	for _, p := range v.SSOProviders {
 		entry := struct {
-			Config      *map[string]interface{}              `json:"config,omitempty"`
-			DisplayName string                               `json:"display_name"`
-			Enabled     bool                                 `json:"enabled"`
-			Id          *string                              `json:"id,omitempty"`
-			Kind        openapi.AuthConfigSsoProvidersKind   `json:"kind"`
+			Config      *map[string]interface{}            `json:"config,omitempty"`
+			DisplayName string                             `json:"display_name"`
+			Enabled     bool                               `json:"enabled"`
+			Id          *string                            `json:"id,omitempty"`
+			Kind        openapi.AuthConfigSsoProvidersKind `json:"kind"`
 		}{
 			DisplayName: p.DisplayName,
 			Enabled:     p.Enabled,
@@ -277,25 +277,25 @@ func aiToAPI(v AIConfig) openapi.AIConfig {
 		out.DefaultProviderId = &s
 	}
 	out.Providers = make([]struct {
-		ApiKey      *string                          `json:"api_key,omitempty"`
-		BaseUrl     *string                          `json:"base_url,omitempty"`
-		Config      *map[string]interface{}          `json:"config,omitempty"`
-		DisplayName string                           `json:"display_name"`
-		Enabled     bool                             `json:"enabled"`
-		Id          *string                          `json:"id,omitempty"`
-		Kind        openapi.AIConfigProvidersKind    `json:"kind"`
-		Model       *string                          `json:"model,omitempty"`
+		ApiKey      *string                       `json:"api_key,omitempty"`
+		BaseUrl     *string                       `json:"base_url,omitempty"`
+		Config      *map[string]interface{}       `json:"config,omitempty"`
+		DisplayName string                        `json:"display_name"`
+		Enabled     bool                          `json:"enabled"`
+		Id          *string                       `json:"id,omitempty"`
+		Kind        openapi.AIConfigProvidersKind `json:"kind"`
+		Model       *string                       `json:"model,omitempty"`
 	}, 0, len(v.Providers))
 	for _, p := range v.Providers {
 		entry := struct {
-			ApiKey      *string                          `json:"api_key,omitempty"`
-			BaseUrl     *string                          `json:"base_url,omitempty"`
-			Config      *map[string]interface{}          `json:"config,omitempty"`
-			DisplayName string                           `json:"display_name"`
-			Enabled     bool                             `json:"enabled"`
-			Id          *string                          `json:"id,omitempty"`
-			Kind        openapi.AIConfigProvidersKind    `json:"kind"`
-			Model       *string                          `json:"model,omitempty"`
+			ApiKey      *string                       `json:"api_key,omitempty"`
+			BaseUrl     *string                       `json:"base_url,omitempty"`
+			Config      *map[string]interface{}       `json:"config,omitempty"`
+			DisplayName string                        `json:"display_name"`
+			Enabled     bool                          `json:"enabled"`
+			Id          *string                       `json:"id,omitempty"`
+			Kind        openapi.AIConfigProvidersKind `json:"kind"`
+			Model       *string                       `json:"model,omitempty"`
 		}{
 			DisplayName: p.DisplayName,
 			Enabled:     p.Enabled,

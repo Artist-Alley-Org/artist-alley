@@ -45,7 +45,7 @@ func TestCapsCache_PopulatesAndHits(t *testing.T) {
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   pgUUID(roleID),
+			RoleID:  pgUUID(roleID),
 		}); err != nil {
 			t.Fatalf("assign role: %v", err)
 		}
@@ -143,4 +143,3 @@ func TestCapsCache_NilRegistryFallsBackToDB(t *testing.T) {
 	r.loadCapabilities(context.Background(), New(pool), id)
 	// No assertion on the cap set; we're testing that nil-cache works.
 }
-

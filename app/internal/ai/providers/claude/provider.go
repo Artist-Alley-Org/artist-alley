@@ -13,13 +13,14 @@
 // transcription support either.
 //
 // Wire reference: https://docs.anthropic.com/en/api/messages
-//   POST https://api.anthropic.com/v1/messages
-//   Headers:
-//     x-api-key: <key>
-//     anthropic-version: 2023-06-01
-//     content-type: application/json
-//   Body: {model, max_tokens, system?, messages: [{role, content}]}
-//   Response: {content: [{type, text}], usage: {input_tokens, output_tokens}}
+//
+//	POST https://api.anthropic.com/v1/messages
+//	Headers:
+//	  x-api-key: <key>
+//	  anthropic-version: 2023-06-01
+//	  content-type: application/json
+//	Body: {model, max_tokens, system?, messages: [{role, content}]}
+//	Response: {content: [{type, text}], usage: {input_tokens, output_tokens}}
 package claude
 
 import (
@@ -44,7 +45,7 @@ import (
 const Name = "claude"
 
 const (
-	defaultBaseURL  = "https://api.anthropic.com"
+	defaultBaseURL   = "https://api.anthropic.com"
 	anthropicVersion = "2023-06-01"
 )
 
@@ -99,15 +100,15 @@ func (p *Provider) SupportsVision() bool { return true } // Claude 3+ supports v
 // ---------------------------------------------------------------------------
 
 type claudeRequest struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
-	Messages  []claudeMessage  `json:"messages"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"`
+	Messages  []claudeMessage `json:"messages"`
 }
 
 type claudeMessage struct {
-	Role    string                `json:"role"` // "user" | "assistant"
-	Content []claudeContentBlock  `json:"content"`
+	Role    string               `json:"role"` // "user" | "assistant"
+	Content []claudeContentBlock `json:"content"`
 }
 
 type claudeContentBlock struct {
@@ -117,7 +118,7 @@ type claudeContentBlock struct {
 }
 
 type claudeImageSource struct {
-	Type      string `json:"type"`       // "base64" | "url"
+	Type      string `json:"type"` // "base64" | "url"
 	MediaType string `json:"media_type"`
 	Data      string `json:"data,omitempty"` // base64-encoded; for type="base64"
 	URL       string `json:"url,omitempty"`  // for type="url"

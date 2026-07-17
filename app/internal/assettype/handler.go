@@ -161,7 +161,7 @@ func (h *Handler) HasTypeAccess(ctx context.Context, id *auth.Identity, typeRef 
 		return true, nil
 	}
 	return h.queries.HasAssetTypeAccess(ctx, HasAssetTypeAccessParams{
-		UserRef:     userRef,
+		UserRef:      userRef,
 		AssetTypeRef: typeRef,
 		Permission:   permission,
 	})

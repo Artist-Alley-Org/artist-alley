@@ -44,8 +44,8 @@ func TestCollectionLifecycle(t *testing.T) {
 	cleanTestCollections(t, pool)
 	t.Cleanup(func() { cleanTestCollections(t, pool) })
 
-	ownerRouter, _ := makeRouter(t, pool, 720001, /*admin=*/ false)
-	intruderRouter, _ := makeRouter(t, pool, 720002, /*admin=*/ false)
+	ownerRouter, _ := makeRouter(t, pool, 720001 /*admin=*/, false)
+	intruderRouter, _ := makeRouter(t, pool, 720002 /*admin=*/, false)
 
 	// Missing body -> 400
 	bad := postJSON(t, ownerRouter, "/collections", map[string]any{})
@@ -505,8 +505,3 @@ func (s collShim) AddCollectionResource(ctx context.Context, req openapi.AddColl
 func (s collShim) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.h.RemoveCollectionResource(ctx, req)
 }
-
-
-
-
-

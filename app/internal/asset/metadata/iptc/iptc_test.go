@@ -71,10 +71,10 @@ func TestParseIPTCBlob_Latin1Default(t *testing.T) {
 	// No 1:90 charset → bytes default to Latin-1. Test with a
 	// pure-ASCII payload (round-trips identically under either).
 	blob := bytes.Join([][]byte{
-		dataset(2, 80, []byte("Ada Lovelace")),       // by-line
-		dataset(2, 120, []byte("A test caption.")),   // caption
-		dataset(2, 25, []byte("nature")),             // keyword #1
-		dataset(2, 25, []byte("river")),              // keyword #2
+		dataset(2, 80, []byte("Ada Lovelace")),     // by-line
+		dataset(2, 120, []byte("A test caption.")), // caption
+		dataset(2, 25, []byte("nature")),           // keyword #1
+		dataset(2, 25, []byte("river")),            // keyword #2
 	}, nil)
 
 	res, err := iptc.ParseIPTCBlob(blob)

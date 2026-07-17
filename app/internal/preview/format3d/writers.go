@@ -304,17 +304,17 @@ func EncodeMD3(m *Model, w io.Writer) error {
 
 	// Surface.
 	sh := md3SurfaceHeader{
-		Magic:          md3SurfaceMagic,
-		Flags:          0,
-		NumFrames:      numFrames,
-		NumShaders:     0,
-		NumVerts:       numVerts,
-		NumTriangles:   numTris,
+		Magic:           md3SurfaceMagic,
+		Flags:           0,
+		NumFrames:       numFrames,
+		NumShaders:      0,
+		NumVerts:        numVerts,
+		NumTriangles:    numTris,
 		OffsetTriangles: surfTriOff,
-		OffsetShaders:  surfShaderOff,
-		OffsetST:       surfSTOff,
+		OffsetShaders:   surfShaderOff,
+		OffsetST:        surfSTOff,
 		OffsetXYZNormal: surfXYZOff,
-		OffsetEnd:      surfEndOff,
+		OffsetEnd:       surfEndOff,
 	}
 	copy(sh.Name[:], truncateName(m.Name+"_surf0", 63))
 	_ = binary.Write(&buf, binary.LittleEndian, sh)
