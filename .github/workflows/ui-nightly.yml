@@ -41,10 +41,11 @@ jobs:
     name: Playwright federation + shell scenarios
     runs-on: [self-hosted, artist-alley]
     # 60 min: build (~3 min) + parallel seed (~5.5 min) + pair
-    # (~30s) + Vite cold-boot (~5 min) + shell scenarios + UI
-    # `all` (133 standalone + 4 federation tests at ~2s each
-    # under load) + teardown. Last run got cancelled at 45 min
-    # halfway through the UI suite.
+    # (~30s) + shell scenarios + UI `all` (133 standalone + 4
+    # federation tests at ~2s each under load) + teardown. The
+    # ~5 min Vite cold-boot is gone (#365) but the budget stays —
+    # a run once got cancelled at 45 min halfway through the UI
+    # suite, so the headroom was already thin.
     timeout-minutes: 60
     # No compose-stack concurrency group (#342, extending #337): the
     # per-run COMPOSE_PROJECT_NAME + the resources override (host ports
@@ -56,11 +57,19 @@ jobs:
       # Per-run project name isolates the whole dual-stack (studio-a +
       # studio-b) from any other run on the shared self-hosted runner.
       COMPOSE_PROJECT_NAME: aa-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      # Dev images (dogfood dual-stack) + the resources override, which
-      # drops every host port and caps per-service memory. No prod-image
-      # override here (unlike ui-pr) — the federation UI needs the real
-      # two-instance stack. Applied to every `docker compose` call.
-      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.resources.yml
+      # Prod-image override (same as ui-pr) + the resources override,
+      # which drops every host port and caps per-service memory.
+      # scripts/dogfood/up.sh appends the dogfood override to this for
+      # the studio-b half (#363), giving studio-a the prod image AND
+      # the mkcert CA mount. Applied to every `docker compose` call.
+      #
+      # studio-a runs the prod image so the SPA is embedded in the Go
+      # binary and there's no Vite container (#365). studio-b stays on
+      # the dev image: nothing browses it — both Playwright projects
+      # point baseURL at STUDIO_A_HOST, and the federation project
+      # reads studio-b *through studio-a's session* — so app-b only
+      # ever serves /api/v1 + /federation, which the dev image does.
+      COMPOSE_FILE: docker-compose.yml:infra/docker/ci/docker-compose.ci.yml:infra/docker/ci/docker-compose.resources.yml
       GOFLAGS: -p=10
       GOMAXPROCS: 10
 
@@ -263,27 +272,6 @@ jobs:
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/pair.sh
 
-      - name: Wait for Vite dev server (studio-a SPA)
-        # The dev `app` container has no embed_web build, so it
-        # serves the SPA via Vite (web container, port 5173 on the
-        # docker network — `vite.aa` alias). Vite cold-boot
-        # re-optimises dep bundles into the anonymous node_modules
-        # volume; observed wall time 6m04s on this runner.
-        # Wait 10 min for headroom — same number ui-pr.yml settled
-        # on before we abandoned Vite there. Success path exits
-        # early on first 200; only slow paths use the budget.
-        run: |
-          for i in $(seq 1 300); do
-            if curl -fsS -o /dev/null "http://vite.aa:5173/"; then
-              echo "Vite ready after ${i} attempts"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Vite never became ready" >&2
-          docker compose logs web --tail=80 || true
-          exit 1
-
       - name: Install Playwright + browsers
         working-directory: scripts/dogfood/ui
         run: |
@@ -305,13 +293,20 @@ jobs:
       - name: Run UI suite (all projects)
         env:
           CI: "1"
-          # vite.aa is the dotted alias on the `web` (Vite) service
-          # (declared in docker-compose.yml). Dev's nginx routes /
-          # to app:8080, but the dev app has no embed_web build so
-          # the SPA only lives behind Vite — STUDIO_A_HOST has to
-          # point there directly. studio-b stays on its nginx-b
-          # alias; the embedded build is what ships.
-          STUDIO_A_HOST: http://vite.aa:5173
+          # app.aa is the dotted alias on the prod `app` service
+          # (infra/docker/ci/docker-compose.ci.yml) — the same target
+          # ui-pr drives, now that both suites test the embedded build.
+          # Dotted because Chromium's dotless-host policy auto-upgrades
+          # `http://app:8080` to HTTPS and fails with
+          # ERR_SSL_PROTOCOL_ERROR.
+          #
+          # No readiness wait needed before this step: the SPA is
+          # embedded in the Go binary, so the /healthz gate pair.sh
+          # already clears means the SPA is being served too. That was
+          # never true of Vite — a healthy `app` said nothing about
+          # whether a separate dev server had finished booting, which
+          # is why this step used to need a 10-minute preamble.
+          STUDIO_A_HOST: http://app.aa:8080
           STUDIO_B_HOST: https://studio-b.local:9443
         run: ./scripts/dogfood/run-ui.sh all
 
