@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need the PR base ref locally to diff changed files.
           fetch-depth: 0

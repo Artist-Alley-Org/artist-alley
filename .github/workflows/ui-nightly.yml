@@ -85,7 +85,7 @@ jobs:
       GOMAXPROCS: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # inputs.ref is "" unless explicitly overridden, so this
           # resolves to github.ref — the dispatched ref on
@@ -93,14 +93,14 @@ jobs:
           # See the `ref` input above (#370).
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: scripts/dogfood/ui/package-lock.json
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('scripts/dogfood/ui/package-lock.json') }}
@@ -325,7 +325,7 @@ jobs:
         # even on green — we want the operator to be able to glance
         # at flakes / slow tests trending.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pw-report-federation-${{ github.run_id }}
           path: |
@@ -337,7 +337,7 @@ jobs:
 
       - name: Upload shell-scenario reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shell-scenario-reports-${{ github.run_id }}
           path: scripts/dogfood/.dogfood-runs/
