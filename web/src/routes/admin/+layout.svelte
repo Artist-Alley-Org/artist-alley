@@ -21,7 +21,15 @@
     if (!auth.user) void goto('/login?next=' + encodeURIComponent(page.url.pathname));
   });
 
-  const isAdmin = $derived(auth.can('system.admin'));
+  // #385 — allow the admin shell for any read-cap holder, not just
+  // `system.admin`. The sidebar then lists only the sections they can
+  // open (a section counts if it has a live tile whose cap they hold).
+  // Every page still enforces its own cap server-side; this is the UX
+  // gate that stops a read-only role seeing a bare "no permission".
+  const canSeeAdmin = $derived(auth.canSeeAdmin);
+  const visibleSections = $derived(
+    ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
+  );
   const aboutActive = $derived(page.url.pathname.startsWith('/admin/about'));
   const overviewActive = $derived(page.url.pathname === '/admin');
 </script>
@@ -44,7 +52,7 @@
 <div class="flex h-full overflow-hidden">
   {#if !auth.ready}
     <div class="flex-1 p-6 text-fg-muted">{t('common.loading')}</div>
-  {:else if !isAdmin}
+  {:else if !canSeeAdmin}
     <div class="flex-1 p-6">
       <div class="rounded-lg border border-danger/40 bg-danger-container p-4 text-sm text-on-danger-container">
         {t('common.no_permission')}
@@ -78,7 +86,7 @@
           {t('admin_menu.overview')}
         </a>
 
-        {#each ADMIN_SECTIONS as section (section.slug)}
+        {#each visibleSections as section (section.slug)}
           {@const href = `/admin/${section.slug}`}
           {@const active = page.url.pathname === href || page.url.pathname.startsWith(href + '/')}
           <a
