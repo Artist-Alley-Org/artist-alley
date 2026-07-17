@@ -474,7 +474,11 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		// same dispatch map + payload shape as the upload path, so the
 		// two can't diverge. Best-effort: a queue hiccup shouldn't fail
 		// an otherwise-good seed, so we log and carry on.
-		if r.opts.Previews {
+		// Skip exts no handler can render — they'd dispatch to
+		// preview.raster and terminal-fail (#366). CanPreview keeps the
+		// seed from minting dead jobs for the odd unpreviewable file in
+		// the catalogue.
+		if r.opts.Previews && dispatch.CanPreview(&ext) {
 			if _, jErr := r.jobs.Enqueue(ctx,
 				dispatch.JobTypeForExt(&ext),
 				map[string]string{

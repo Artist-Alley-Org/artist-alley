@@ -85,20 +85,53 @@ func TestEveryRoutedExtIsAcceptedByItsHandler(t *testing.T) {
 	}
 }
 
-// TestUnroutableExtFallsBackToRasterAndIsAccepted pins the dispatcher's
-// fallback. Anything unrecognised routes to preview.raster, so if that
-// fallback ever aims somewhere the handler can't decode, every unknown
-// extension becomes a dead job.
-func TestUnroutableExtFallsBackToRasterAndIsAccepted(t *testing.T) {
+// TestUnroutableExtFallsBackToRaster pins the dispatcher's fallback:
+// anything unrecognised routes to preview.raster. It does NOT assert the
+// handler accepts it — the raster handler rejects an unknown ext at
+// decode time, which is why the enqueue path guards with CanPreview
+// (below) rather than trusting the route. The old name for this test
+// —"…AndIsAccepted"— claimed an invariant its body never checked, the
+// exact species of comment #362 set out to kill.
+func TestUnroutableExtFallsBackToRaster(t *testing.T) {
 	unknown := "definitely-not-a-real-extension"
 	if jt := dispatch.JobTypeForExt(&unknown); jt != jobs.TypePreviewRaster {
 		t.Fatalf("fallback changed: unknown ext routes to %q, not %q — if the fallback "+
 			"moves, re-check that the target accepts arbitrary input", jt, jobs.TypePreviewRaster)
 	}
-	// NOTE: the raster handler deliberately rejects the unknown ext at
-	// decode time. That is the fallback's known rough edge, not drift:
-	// it is the one case where routing and accept legitimately disagree,
-	// because there is nowhere else to send an unknown file.
+}
+
+// TestCanPreviewGatesUnrenderableExts is the #366 invariant: the enqueue
+// path must not create a job whose only outcome is a TerminalError. So
+// CanPreview is true for exactly the exts some handler renders, and
+// false for the unroutable ones that JobTypeForExt hides behind the
+// raster fallback.
+func TestCanPreviewGatesUnrenderableExts(t *testing.T) {
+	// Every ext in every routed set is previewable — this is the same
+	// coverage the accept invariant checks, now from the enqueue side.
+	for setName, set := range routedSets {
+		for ext := range set {
+			ext := ext
+			t.Run("preview/"+setName+"/"+ext, func(t *testing.T) {
+				if !dispatch.CanPreview(&ext) {
+					t.Errorf("%s ext %q is routed + accepted but CanPreview=false — "+
+						"a renderable asset would get no preview job", setName, ext)
+				}
+			})
+		}
+	}
+	// Unknown + nil are NOT previewable: they hit the raster fallback,
+	// which rejects them. Gating them here is the whole point.
+	unknown := "definitely-not-a-real-extension"
+	if dispatch.CanPreview(&unknown) {
+		t.Error("unknown ext reports CanPreview=true — would enqueue a guaranteed-terminal raster job")
+	}
+	if dispatch.CanPreview(nil) {
+		t.Error("nil ext reports CanPreview=true — would enqueue a guaranteed-terminal raster job")
+	}
+	empty := ""
+	if dispatch.CanPreview(&empty) {
+		t.Error("empty ext reports CanPreview=true — would enqueue a guaranteed-terminal raster job")
+	}
 }
 
 // TestNilExtRoutesToRaster guards the nil-extension path the upload
