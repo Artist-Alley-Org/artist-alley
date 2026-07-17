@@ -31,12 +31,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// CapSystemAdmin is the capability the featured curation surface
-// gates on. The content admin section (asset types, fields, metadata
-// extraction) uses the same coarse system.admin gate; featured
-// follows suit rather than minting a narrower content.* code for a
-// single tile.
-const CapSystemAdmin = "system.admin"
+// Capabilities for the featured curation surface. Reads take the
+// dedicated read cap so a read-only auditor role can view the list
+// (#356); every write still requires system.admin, which wildcards
+// every capability check.
+const (
+	CapFeaturedRead = "featured.read"
+	CapSystemAdmin  = "system.admin"
+)
 
 // ErrAlreadyFeatured is returned by Add when the (subject_kind,
 // subject_id) unique constraint rejects a duplicate. The HTTP layer

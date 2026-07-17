@@ -71,15 +71,36 @@ step "Setting site.base_url on both stacks"
 # which can't match anything → 401 "unknown_peer". Set it now so
 # the URLs align: studio-a signs as `http://nginx/...` (studio-b's
 # peer-row URL) and studio-b signs as `https://studio-b.local:9443/...`.
+#
+# `label` is for log lines only — it must NOT reach the request body.
+# This used to send `{"name": "studio-a", ...}`, renaming the instance
+# as a side effect of setting base_url. Harmless until #294 made the
+# configured site name drive every page <title> and the navbar brand
+# link, at which point it started failing 4 standalone UI specs that
+# assert the real brand (`Browse — studio-a` vs `Browse — Artist
+# Alley`). ui-pr never saw it because ui-pr doesn't pair (#373).
+#
+# The name is re-sent rather than omitted because PATCH
+# /admin/system/site replaces rather than merges: omitting `name`
+# returns 200 and blanks it to "". So read the configured name and
+# hand it straight back — that keeps whatever the brand is today and
+# survives it changing, which hardcoding "Artist Alley" wouldn't.
 patch_site() {
-    local name="$1" host="$2" cookies="$3" base_url="$4"
+    local label="$1" host="$2" cookies="$3" base_url="$4"
+    local current_name body
+    current_name=$(curl -sk -b "$cookies" "${host}/api/v1/admin/system/site" \
+        | python3 -c 'import sys, json; print(json.load(sys.stdin)["name"])') \
+        || fail "${label} GET /admin/system/site failed — can't preserve site name"
+    body=$(python3 -c \
+        'import json, sys; print(json.dumps({"name": sys.argv[1], "base_url": sys.argv[2]}))' \
+        "$current_name" "$base_url")
     code=$(curl -sk -o /dev/null -w "%{http_code}" \
         -b "$cookies" -X PATCH "${host}/api/v1/admin/system/site" \
         -H "Content-Type: application/json" \
-        -d "{\"name\": \"${name}\", \"base_url\": \"${base_url}\"}")
+        -d "$body")
     case "$code" in
-        200|204) pass "${name} site.base_url = ${base_url}" ;;
-        *)       fail "${name} PATCH /admin/system/site: HTTP ${code}" ;;
+        200|204) pass "${label} site.base_url = ${base_url} (name kept: ${current_name})" ;;
+        *)       fail "${label} PATCH /admin/system/site: HTTP ${code}" ;;
     esac
 }
 patch_site "studio-a" "$A_HOST" "$a_cookies" "$A_URL_FROM_B"

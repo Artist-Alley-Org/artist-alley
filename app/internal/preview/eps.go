@@ -25,6 +25,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -309,15 +310,7 @@ func (h *EPSHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
 	}
 }
 
-// epsExts: PostScript family extensions the handler accepts. .eps
-// is the canonical one; .ps is plain PostScript (multi-page).
-// Ghostscript treats both transparently via the device-driven CLI.
-var epsExts = map[string]struct{}{
-	"eps": {},
-	"ps":  {},
-}
-
 func isEPSExt(ext string) bool {
-	_, ok := epsExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.EPSExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }

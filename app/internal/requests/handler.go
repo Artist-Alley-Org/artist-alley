@@ -52,11 +52,17 @@ import (
 // approver-gate uses Identity.Can("share.grant", InTeam(teamID))
 // at the api layer.
 //
-// This is a new constant for 1.17.E; the audit found no existing
-// "share.grant" code in the codebase. Operators grant it
-// explicitly via the standard /admin/users/{ref}/grants surface;
-// no role-seed default.
+// Seeded into the catalogue by migration 00003 (#356). Before that it
+// was referenced here but had no row in `capabilities`, so nothing
+// could ever hold it and the OR-fallback was dead code — the surface
+// was effectively system.admin-only. Operators grant it explicitly via
+// /admin/users/{ref}/grants; no role-seed default.
 const CapShareGrant = "share.grant"
+
+// CapRequestsRead gates reading the admin request queue. An approver
+// (share.grant) still reads the queue they act on; this cap lets a
+// read-only auditor role view it without being able to decide (#356).
+const CapRequestsRead = "requests.read"
 
 // SubmitInput is the parameter list for Submit. Kept as a struct
 // so future fields (priority, team_scope_request, etc.) don't

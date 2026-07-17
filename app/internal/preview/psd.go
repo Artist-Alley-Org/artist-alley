@@ -26,6 +26,7 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -168,11 +169,11 @@ func (h *PSDHandler) Handle(ctx context.Context, job *jobs.Claim) (json.RawMessa
 // extractEmbeddedThumbnail walks the PSD's Image Resources section
 // looking for resource ID 1036 (thumbnail v5/v6). The block layout:
 //
-//   8BIM signature (4 bytes)
-//   resource id  (u16 BE)
-//   pascal name  (1-byte length + name bytes, padded to even total)
-//   data length  (u32 BE)
-//   data         (data length bytes, padded to even)
+//	8BIM signature (4 bytes)
+//	resource id  (u16 BE)
+//	pascal name  (1-byte length + name bytes, padded to even total)
+//	data length  (u32 BE)
+//	data         (data length bytes, padded to even)
 //
 // Resource 1036 data starts with a 28-byte header (format, width,
 // height, widthBytes, totalSize, compressedSize, bitsPerPixel,
@@ -437,12 +438,7 @@ func (h *PSDHandler) markFailed(ctx context.Context, id uuid.UUID, msg string) {
 	}
 }
 
-var psdExts = map[string]struct{}{
-	"psd": {},
-	"psb": {}, // large-document version, same container
-}
-
 func isPSDExt(ext string) bool {
-	_, ok := psdExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	_, ok := dispatch.PSDExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }

@@ -47,8 +47,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 )
+
+// previewPriority: bulk seeds go in at backfill priority so 970 assets
+// can never preempt interactive work. The upload path uses
+// PriorityHigh, which is right for one interactive upload and wrong for
+// a whole dataset (#355).
+var previewPriority = jobs.PriorityBackfil
 
 // Options configures a seed Run.
 type Options struct {
@@ -57,6 +65,16 @@ type Options struct {
 	LimitPerExt   int    // >0: keep at most N assets per file_extension (CI shrink)
 	AdminUsername string // bootstrap admin username; owns collections
 	Logger        *slog.Logger
+
+	// Previews enqueues a preview job per seeded asset (#355). Without
+	// it a seeded instance has originals and zero derivatives — no card
+	// thumbnails (`col`), no video hover sprites — which is what the
+	// HTTP-era apply.py got for free by uploading through the API.
+	//
+	// Jobs are enqueued at PriorityBackfil so a bulk seed can never
+	// preempt interactive work; the running app's worker pool drains
+	// them. Set false for a fast metadata-only seed.
+	Previews bool
 }
 
 // Counts is the verify-phase tally.
@@ -75,6 +93,7 @@ type Runner struct {
 	q       *Queries
 	storage *storage.Service
 	admin   *AdminHandler
+	jobs    *jobs.Service
 	log     *slog.Logger
 	opts    Options
 
@@ -110,10 +129,14 @@ func NewRunner(pool *pgxpool.Pool, storageSvc *storage.Service, opts Options) *R
 		opts.AdminUsername = "admin"
 	}
 	return &Runner{
-		pool:        pool,
-		q:           New(pool),
-		storage:     storageSvc,
-		admin:       NewAdminHandler(pool, nil, nil, nil, nil, nil),
+		pool:    pool,
+		q:       New(pool),
+		storage: storageSvc,
+		admin:   NewAdminHandler(pool, nil, nil, nil, nil, nil),
+		// Enqueue-only Service: the seeder never runs jobs, it just
+		// inserts rows for the serving process's pool to drain. A nil
+		// Registry is fine — Enqueue doesn't consult it.
+		jobs:        jobs.NewService(pool, opts.Logger, nil),
 		log:         opts.Logger,
 		opts:        opts,
 		assetStates: map[string]pgtype.UUID{},
@@ -154,6 +177,7 @@ func (r *Runner) Run(ctx context.Context) (Counts, error) {
 		{"applyMemberships", r.applyMemberships},
 		{"applyFields", r.applyFields},
 		{"applyCollections", r.applyCollections},
+		{"applyFeatured", r.applyFeatured},
 		{"applyAssets", r.applyAssets},
 		{"applyPosts", r.applyPosts},
 		{"applyComments", r.applyComments},
@@ -372,10 +396,68 @@ func (r *Runner) applyCollections(ctx context.Context, cat *catalogues) error {
 	return nil
 }
 
+// --- phase: featured --------------------------------------------------
+
+// applyFeatured marks each collection flagged `"featured": true` in
+// dataset.collections.json (#380) so the demo's featured surfaces aren't
+// empty on a fresh reset. There are TWO of them, deliberately separate
+// (see 00002_featured_items.sql), and one flag drives both:
+//
+//   featured_items row      — the admin-curated rail /admin/content/
+//                             featured reads. #356 made that page
+//                             readable by demo-viewer, so it must not
+//                             open to nothing.
+//   collections.featured    — the boolean the PUBLIC /collections
+//                             "featured" tab filters on. #341 built no
+//                             public featured_items renderer, so this
+//                             column is the only public featured
+//                             surface — without it the front-of-house
+//                             tab stays empty.
+//
+// Runs after applyCollections, so every flagged collection already has
+// a row + a stable id in r.collections. subject_kind is always
+// 'collection': the featured_items CHECK also accepts 'asset', but
+// assets live in the archive manifest, not this versioned catalogue, so
+// featuring them would belong to a different phase.
+//
+// Idempotent: the UPDATE is naturally so, the INSERT is ON CONFLICT DO
+// NOTHING, and the owner is the bootstrap admin — the same
+// created_by_user_ref applyCollections uses for the collections.
+func (r *Runner) applyFeatured(ctx context.Context, cat *catalogues) error {
+	featured := 0
+	for _, c := range cat.Collections {
+		if !c.Featured {
+			continue
+		}
+		id, ok := r.collections[c.Name]
+		if !ok {
+			// A featured flag on a collection applyCollections didn't
+			// create is a catalogue mistake, not a fatal seed error.
+			r.log.Warn("seed.featured.unknown_collection", "name", c.Name)
+			continue
+		}
+		// Public browse-tab flag.
+		if err := r.q.SeedSetCollectionFeatured(ctx, id); err != nil {
+			return fmt.Errorf("flag collection %s featured: %w", c.Name, err)
+		}
+		// Admin curation rail.
+		if err := r.q.SeedInsertFeatured(ctx, SeedInsertFeaturedParams{
+			SubjectKind:      "collection",
+			SubjectID:        id,
+			CreatedByUserRef: &r.adminRef,
+		}); err != nil {
+			return fmt.Errorf("feature collection %s: %w", c.Name, err)
+		}
+		featured++
+	}
+	r.log.Info("seed.featured", "count", featured)
+	return nil
+}
+
 // --- phase: assets ----------------------------------------------------
 
 func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
-	inserted, deduped, missing := 0, 0, 0
+	inserted, deduped, missing, queued := 0, 0, 0, 0
 	for i, a := range cat.Assets {
 		abs := filepath.Join(r.opts.SiteRoot, a.FilePath)
 		f, err := os.Open(abs)
@@ -446,6 +528,31 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 		r.assets[a.ID] = id
 
+		// Dispatch the preview job (#355). Enqueued AFTER the asset row
+		// exists — the handler resolves the asset by id — and using the
+		// same dispatch map + payload shape as the upload path, so the
+		// two can't diverge. Best-effort: a queue hiccup shouldn't fail
+		// an otherwise-good seed, so we log and carry on.
+		// Skip exts no handler can render — they'd dispatch to
+		// preview.raster and terminal-fail (#366). CanPreview keeps the
+		// seed from minting dead jobs for the odd unpreviewable file in
+		// the catalogue.
+		if r.opts.Previews && dispatch.CanPreview(&ext) {
+			if _, jErr := r.jobs.Enqueue(ctx,
+				dispatch.JobTypeForExt(&ext),
+				map[string]string{
+					"asset_id":       id.String(),
+					"file_hash":      hash,
+					"file_extension": ext,
+				},
+				jobs.EnqueueOpts{Priority: &previewPriority},
+			); jErr != nil {
+				r.log.Warn("seed.preview.enqueue_failed", "asset", a.ID, "err", jErr.Error())
+			} else {
+				queued++
+			}
+		}
+
 		// tags
 		for _, tag := range dedupStrings(a.Tags) {
 			if err := r.q.SeedInsertAssetTag(ctx, SeedInsertAssetTagParams{AssetID: id, Tag: tag}); err != nil {
@@ -472,7 +579,7 @@ func (r *Runner) applyAssets(ctx context.Context, cat *catalogues) error {
 		}
 	}
 	r.log.Info("seed.assets", "inserted", inserted,
-		"deduped", deduped, "missing", missing)
+		"deduped", deduped, "missing", missing, "previews_queued", queued)
 	return nil
 }
 

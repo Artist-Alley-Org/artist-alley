@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kenneth Blossom
 
 // Admin audit surface for the activities ledger — Phase
-// 1.22.A-bis-3b. Gated on system.admin per ADR 0044.
+// 1.22.A-bis-3b. Read-gated on `system.activities.read` OR
+// `system.admin` (#356): the feed is viewable by a read-only auditor
+// role without handing over the system.admin wildcard.
 //
 // Hot-path / caching note: deliberately not LRU-cached. The
 // filter combination space is unbounded (type × source × actor ×
@@ -27,6 +29,13 @@ import (
 
 	"github.com/mscrnt/artist-alley/app/internal/auth"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
+)
+
+const (
+	// CapActivitiesRead gates the read of the admin activity feed.
+	CapActivitiesRead = "system.activities.read"
+	// CapSystemAdmin is the wildcard superuser capability.
+	CapSystemAdmin = "system.admin"
 )
 
 // AdminHandler is the openapi-strict adapter for the admin audit
@@ -56,12 +65,12 @@ func (h *AdminHandler) ListAdminActivities(
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	// system.admin is the v1 gate. A finer-grained
-	// federation.admin capability is documented in ADR 0043's
-	// audit surface but doesn't ship until the moderation phase.
-	if !id.Can("system.admin") {
+	// Read gate: the dedicated read cap, or system.admin (which
+	// wildcards every check). Writes on this surface don't exist —
+	// the ledger is append-only from the app's own emitters.
+	if !id.Can(CapActivitiesRead) && !id.Can(CapSystemAdmin) {
 		return openapi.ListAdminActivities403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin capability required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: CapActivitiesRead + " capability required"},
 		}, nil
 	}
 

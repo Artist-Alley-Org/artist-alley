@@ -34,6 +34,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/archive"
 	"github.com/mscrnt/artist-alley/app/internal/assets"
 	"github.com/mscrnt/artist-alley/app/internal/jobs"
+	"github.com/mscrnt/artist-alley/app/internal/preview/dispatch"
 	"github.com/mscrnt/artist-alley/app/internal/storage"
 	"github.com/mscrnt/artist-alley/app/internal/sysconfig"
 )
@@ -45,10 +46,10 @@ type ArchivePayload struct {
 }
 
 type ArchiveResult struct {
-	Variants  []string          `json:"variants,omitempty"`
-	Skipped   []string          `json:"skipped,omitempty"`
-	Manifest  *archive.Manifest `json:"manifest,omitempty"`
-	WorkS     float64           `json:"work_s"`
+	Variants []string          `json:"variants,omitempty"`
+	Skipped  []string          `json:"skipped,omitempty"`
+	Manifest *archive.Manifest `json:"manifest,omitempty"`
+	WorkS    float64           `json:"work_s"`
 }
 
 type ArchiveHandler struct {
@@ -191,18 +192,9 @@ func (h *ArchiveHandler) markFailedArchive(ctx context.Context, id uuid.UUID, ms
 	}
 }
 
-// archiveExtsHandler — mirrored on the assets dispatcher side so
-// uploads route to the archive preview type. Stays in lock-step
-// with archive.SupportedExtensions().
-var archiveExtsHandler = func() map[string]struct{} {
-	m := map[string]struct{}{}
-	for _, e := range archive.SupportedExtensions() {
-		m[e] = struct{}{}
-	}
-	return m
-}()
-
 func IsArchiveExt(ext string) bool {
-	_, ok := archiveExtsHandler[strings.ToLower(strings.TrimPrefix(ext, "."))]
+	// dispatch.ArchiveExts derives from archive.SupportedExtensions(),
+	// so the routing map and this accept-check share one source (#355).
+	_, ok := dispatch.ArchiveExts[strings.ToLower(strings.TrimPrefix(ext, "."))]
 	return ok
 }

@@ -3406,9 +3406,11 @@ func (s *apiServer) ListMetadataExtractionFailures(ctx context.Context, req open
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
 		}, nil
 	}
-	if !caller.Can("system.admin") {
+	// Read gate: the dedicated read cap, or system.admin (#356).
+	// Dismissing a failure stays system.admin-only.
+	if !caller.Can(assetmetadata.CapExtractionRead) && !caller.Can("system.admin") {
 		return openapi.ListMetadataExtractionFailures403JSONResponse{
-			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: assetmetadata.CapExtractionRead + " required"},
 		}, nil
 	}
 	f := assetmetadata.ListFailuresFilter{}

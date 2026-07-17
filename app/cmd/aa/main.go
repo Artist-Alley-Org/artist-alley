@@ -62,6 +62,9 @@ func runSeed(args []string) error {
 	catalogue := fs.String("catalogue", "seed/profiles", "catalogue directory (seed/profiles)")
 	limitPerExt := fs.Int("limit-per-extension", 0, "keep at most N assets per file_extension (0 = no limit)")
 	reset := fs.Bool("reset", false, "TRUNCATE seed content tables before loading")
+	previews := fs.Bool("previews", true,
+		"enqueue a preview job per asset so the seed produces derivatives "+
+			"(card thumbnails, video sprites); false = fast metadata-only seed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,6 +113,7 @@ func runSeed(args []string) error {
 		LimitPerExt:   *limitPerExt,
 		AdminUsername: bootstrap.DefaultUsername,
 		Logger:        logger,
+		Previews:      *previews,
 	})
 	counts, err := runner.Run(ctx)
 	if err != nil {
@@ -129,16 +133,51 @@ func runSeed(args []string) error {
 // bootstrap admin survive; every fictional user + all their content is
 // removed. CASCADE handles the join/dependent tables.
 func resetSeedTables(ctx context.Context, pool *pgxpool.Pool, adminUsername string) error {
+	// storage_objects is deliberately NOT truncated (#355). The content
+	// store is content-addressed and asset-independent: storage_objects
+	// / storage_variants are keyed by object_hash and describe what is
+	// physically on the storage volume, which a DB truncate obviously
+	// does not erase. Truncating them (CASCADE also took storage_variants
+	// + storage_pins) desynced the two — the blobs stayed on disk while
+	// their rows vanished, and because the preview handlers skip any
+	// variant whose blob already exists, a re-seed would then regenerate
+	// nothing and leave the instance with originals and zero variant
+	// rows: /variants/col 404s, exactly the bug this issue is about.
+	//
+	// Leaving them alone is also idempotent: the seed's asset ids are
+	// stable (from MANIFEST.json), so a re-seed re-uploads the same
+	// hashes, dedups onto the existing objects, and re-pins identically.
 	const truncate = `TRUNCATE
-	    assets, posts, comments, collections, teams, field_definition,
-	    storage_objects
+	    assets, posts, comments, collections, field_definition
 	    RESTART IDENTITY CASCADE`
 	if _, err := pool.Exec(ctx, truncate); err != nil {
+		return err
+	}
+	// teams gets a per-row DELETE, NOT a slot in the TRUNCATE above.
+	// TRUNCATE ... CASCADE empties dependent tables WHOLESALE, and
+	// user_roles / user_capability_grants / user_capability_revokes all
+	// carry a team_id FK — so naming teams in the TRUNCATE wiped every
+	// role and capability grant in the install, including the bootstrap
+	// admin's GLOBAL (team_id IS NULL) role. The instance then answered
+	// needs_setup=true and nobody could log in, after every --reset.
+	//
+	// A per-row DELETE follows the same FK with ON DELETE CASCADE but
+	// only removes the rows that actually reference a deleted team, so
+	// global roles + grants survive.
+	if _, err := pool.Exec(ctx, `DELETE FROM teams`); err != nil {
 		return err
 	}
 	// Fictional users (everyone but the bootstrap admin). Their
 	// federation keys + profiles cascade.
 	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE username <> $1`, adminUsername); err != nil {
+		return err
+	}
+	// Preview jobs for the content we just truncated (#355). Every
+	// preview job names an asset_id; with the assets gone they'd churn
+	// through their retries and land in `failed`. Now that a seed
+	// dispatches one per asset, skipping this would orphan a whole
+	// dataset's worth on every --reset.
+	if _, err := pool.Exec(ctx, `DELETE FROM jobs WHERE type LIKE 'preview.%'`); err != nil {
 		return err
 	}
 	return nil
