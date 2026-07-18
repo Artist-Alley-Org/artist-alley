@@ -43,6 +43,10 @@ The current release stream covers the foundations:
   read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
   native `aa seed` (retiring the Python `apply.py` loader), and CI
   parallelised across three self-hosted runners.
+- **v0.3.1 (2026-07-17).** Admin UI for read-only capability holders (the
+  frontend half of v0.3.0's read caps — the admin menu gates per-tile on the
+  cap each surface enforces, so read-only roles can browse admin), a
+  repo-wide `gofmt` gate, and a `make release` target.
 - **v0.3.0 (2026-07-17).** Media derivatives generated on seed/upload
   (thumbnails + video sprites); read-only admin access via `*.read`
   capabilities without the `system.admin` superuser cap; a fully
@@ -579,7 +583,7 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
-- **v0.3.1 — foundation cleanup** (mostly shipped): admin read-cap UI
+- **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
   (#385), `gofmt` CI gate, `make release`, dependabot split, steel token.
 - **v0.4.0 — operator visibility: Jobs + Storage.** Make the async
   pipeline observable — the whole derivative/preview/AI/federation
