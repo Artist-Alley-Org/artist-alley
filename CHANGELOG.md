@@ -5,7 +5,43 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
-## [Unreleased] — Admin surface unlock + public demo (2026-07)
+## [v0.3.0] — 2026-07-17
+
+Derivatives, read-only admin, responsive UI. No-spec-impact.
+
+### Operator-facing changes
+
+- **Media derivatives generated on seed/upload.** `aa seed` (and the
+  upload path) now produce `col`/`hires`/`screen` thumbnails plus
+  `sprites.jpg` video hover-scrub sheets — the browse grid renders real
+  thumbnails instead of 404ing, and videos get a slideshow preview.
+- **Read-only admin access.** A role can hold `*.read` admin
+  capabilities and browse the admin surface **without** the
+  `system.admin` superuser cap — six previously superuser-only surfaces
+  (activities, featured, license, metadata-extraction, federation,
+  requests) now render read-only, and the admin menu + route guard show
+  each section per the capability its handler enforces. Backend enforces
+  every write regardless.
+- **Responsive + accessible UI.** Browse + navbar are fluid from a 390px
+  phone to a 3840px / 32:9 ultrawide — an `auto-fill` grid where size is
+  the lever and column count is the outcome (no breakpoint cliffs), an
+  Instagram-style single-column `feed` view, hide-on-scroll chrome, and
+  WCAG 2.2 AA target sizing on coarse pointers. Desktop layout unchanged.
+- **Featured content curation** is seeded, so the admin Featured rail and
+  the public collections featured tab both show content on a fresh seed.
+- **Operator-bug fixes.** `PATCH /admin/system/site` now merges instead
+  of blanking omitted fields (was: updating base_url wiped the site
+  name); unroutable file extensions no longer mint guaranteed-terminal
+  preview jobs; the nightly `ref` dispatch footgun is closed.
+
+### Infrastructure
+
+- CI/nightly stability arc — per-run compose isolation + resource caps,
+  and five stacked shared-daemon/host causes fixed; the federation
+  nightly is green for the first time since 2026-06-21. Repo-wide `gofmt`
+  normalization + a `gofmt -l` CI gate.
+
+## [v0.2.0] — 2026-07-16 — Admin surface unlock + public demo
 
 Post-v0.1.2 incremental work. No-spec-impact.
 
