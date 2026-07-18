@@ -8529,6 +8529,157 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/jobs/{id}/requeue:
+    post:
+      operationId: requeueJob
+      summary: Requeue a failed or cancelled job
+      description: |
+        Admin action (#401): send a dead job back to the pending pool —
+        attempts reset, claim/lease/error cleared. Guarded on the source
+        status: a running job is never touched (409). Gated on
+        `system.admin` (mutations are admin-only; reads use
+        `system.jobs.read`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Job requeued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/jobs/{id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel a pending or failed job
+      description: |
+        Admin action (#401): move a pending/failed job to `cancelled`.
+        A running job cannot be cancelled this sprint (409). Gated on
+        `system.admin`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Job cancelled.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/jobs/scheduled:
+    get:
+      operationId: listScheduledJobs
+      summary: List future-dated pending jobs
+      description: |
+        Read-only view of pending jobs with a `scheduled_for` in the
+        future (#401). There is no cron subsystem — these are jobs a
+        producer enqueued to run later (e.g. the digest coordinator's
+        self-reschedule). Soonest first. Gated on `system.jobs.read`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Scheduled jobs + total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledJobList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/concurrency:
+    get:
+      operationId: listJobConcurrency
+      summary: Per-type worker concurrency caps
+      description: |
+        Every registered job type with its current concurrency cap
+        (`0` = uncapped). Caps live in system_config and are loaded by
+        the worker Pool at BOOT, so `applies_on_restart` is true — an
+        edit takes effect on the next restart. Gated on
+        `system.jobs.read`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Type caps.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobConcurrencyList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/concurrency/{type}:
+    put:
+      operationId: setJobConcurrency
+      summary: Set a job type's concurrency cap
+      description: |
+        Upsert one per-type cap (#401). `cap` of 0 clears it (uncapped).
+        Takes effect on the next restart (the Pool loads caps at boot).
+        Gated on `system.admin`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          description: The job type, e.g. preview.video.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetJobConcurrency" }
+      responses:
+        "204":
+          description: Cap saved.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -13944,6 +14095,59 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/JobStatusCount" }
+    ScheduledJob:
+      type: object
+      required: [id, type, status, priority, attempts, max_attempts, due_in_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status: { type: string }
+        priority: { type: integer }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        scheduled_for: { type: string, format: date-time, nullable: true }
+        enqueued_at: { type: string, format: date-time, nullable: true }
+        due_in_seconds:
+          type: integer
+          format: int64
+          description: Seconds until scheduled_for (server-computed).
+    ScheduledJobList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduledJob" }
+        total: { type: integer, format: int64 }
+    JobConcurrency:
+      type: object
+      required: [type, cap]
+      properties:
+        type: { type: string }
+        cap:
+          type: integer
+          description: Max concurrent jobs of this type; 0 means uncapped.
+    JobConcurrencyList:
+      type: object
+      required: [items, applies_on_restart]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobConcurrency" }
+        applies_on_restart:
+          type: boolean
+          description: |
+            True — the worker Pool loads caps at boot, so an edit takes
+            effect on the next restart, not live. The UI surfaces this.
+    SetJobConcurrency:
+      type: object
+      required: [cap]
+      properties:
+        cap:
+          type: integer
+          minimum: 0
+          maximum: 64
+          description: Max concurrent; 0 clears the cap (uncapped).
     MetadataBackfillStart:
       type: object
       description: |

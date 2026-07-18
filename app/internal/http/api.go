@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -184,6 +185,7 @@ type apiServer struct {
 	metaAdmin         *assetmetadata.AdminHandler
 	jobsSvc           *jobs.Service
 	jobsAdmin         *jobs.AdminHandler
+	sysCfg            *sysconfig.Store
 	seedAdmin         *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
@@ -936,6 +938,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// from prior runs stay for audit).
 	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
 	s.jobsAdmin = jobs.NewAdminHandler(pool)
+	s.sysCfg = sysCfg
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
@@ -3729,6 +3732,140 @@ func jobSummaryToAPI(r jobs.JobRow) openapi.JobSummary {
 		out.OriginServerId = &id
 	}
 	return out
+}
+
+// --- jobs admin actions (#401, v0.4.0 Sprint 1) -----------------------
+//
+// Reads (scheduled, concurrency) gate on jobs.CapJobsRead OR system.admin
+// via jobsReadDenied above. MUTATIONS (requeue/cancel, set-concurrency)
+// gate on system.admin only — mirrors the metadata-extraction split
+// (reads on the read cap, writes on system.admin).
+
+func (s *apiServer) adminDenied(ctx context.Context) bool {
+	caller := auth.IdentityFromContext(ctx)
+	return caller == nil || !caller.Can("system.admin")
+}
+
+func (s *apiServer) RequeueJob(ctx context.Context, req openapi.RequeueJobRequestObject) (openapi.RequeueJobResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.RequeueJob401JSONResponse{UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"}}, nil
+	}
+	if s.adminDenied(ctx) {
+		return openapi.RequeueJob403JSONResponse{ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"}}, nil
+	}
+	switch err := s.jobsAdmin.RequeueJob(ctx, uuid.UUID(req.Id)); {
+	case err == nil:
+		return openapi.RequeueJob204Response{}, nil
+	case errors.Is(err, jobs.ErrJobNotFound):
+		return openapi.RequeueJob404JSONResponse{NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "job not found"}}, nil
+	case errors.Is(err, jobs.ErrJobNotActionable):
+		return openapi.RequeueJob409JSONResponse{ConflictJSONResponse: openapi.ConflictJSONResponse{Error: "job is not failed or cancelled; cannot requeue"}}, nil
+	default:
+		return nil, err
+	}
+}
+
+func (s *apiServer) CancelJob(ctx context.Context, req openapi.CancelJobRequestObject) (openapi.CancelJobResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.CancelJob401JSONResponse{UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"}}, nil
+	}
+	if s.adminDenied(ctx) {
+		return openapi.CancelJob403JSONResponse{ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"}}, nil
+	}
+	switch err := s.jobsAdmin.CancelJob(ctx, uuid.UUID(req.Id)); {
+	case err == nil:
+		return openapi.CancelJob204Response{}, nil
+	case errors.Is(err, jobs.ErrJobNotFound):
+		return openapi.CancelJob404JSONResponse{NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "job not found"}}, nil
+	case errors.Is(err, jobs.ErrJobNotActionable):
+		return openapi.CancelJob409JSONResponse{ConflictJSONResponse: openapi.ConflictJSONResponse{Error: "job is running or already finished; cannot cancel"}}, nil
+	default:
+		return nil, err
+	}
+}
+
+func (s *apiServer) ListScheduledJobs(ctx context.Context, req openapi.ListScheduledJobsRequestObject) (openapi.ListScheduledJobsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListScheduledJobs401JSONResponse{UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"}}, nil
+	}
+	if s.jobsReadDenied(ctx) {
+		return openapi.ListScheduledJobs403JSONResponse{ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: jobs.CapJobsRead + " required"}}, nil
+	}
+	var limit, offset int32 = 50, 0
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		offset = int32(*req.Params.Offset)
+	}
+	rows, total, err := s.jobsAdmin.ListScheduledJobs(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.ScheduledJob, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, openapi.ScheduledJob{
+			Id:           openapi_types.UUID(r.ID),
+			Type:         r.Type,
+			Status:       r.Status,
+			Priority:     int(r.Priority),
+			Attempts:     int(r.Attempts),
+			MaxAttempts:  int(r.MaxAttempts),
+			ScheduledFor: r.ScheduledFor,
+			EnqueuedAt:   r.EnqueuedAt,
+			DueInSeconds: r.DueInSeconds,
+		})
+	}
+	return openapi.ListScheduledJobs200JSONResponse{Items: items, Total: total}, nil
+}
+
+func (s *apiServer) ListJobConcurrency(ctx context.Context, req openapi.ListJobConcurrencyRequestObject) (openapi.ListJobConcurrencyResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListJobConcurrency401JSONResponse{UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"}}, nil
+	}
+	if s.jobsReadDenied(ctx) {
+		return openapi.ListJobConcurrency403JSONResponse{ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: jobs.CapJobsRead + " required"}}, nil
+	}
+	caps, err := s.sysCfg.GetJobTypeConcurrency(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Canonical type set = registered handlers, unioned with any type
+	// that has a cap configured but no live handler (a stale/edited row
+	// still shows so the operator can clear it).
+	seen := map[string]struct{}{}
+	items := make([]openapi.JobConcurrency, 0)
+	for _, t := range s.jobsSvc.Registry.Types() {
+		ts := string(t)
+		seen[ts] = struct{}{}
+		items = append(items, openapi.JobConcurrency{Type: ts, Cap: caps[ts]})
+	}
+	for t, c := range caps {
+		if _, ok := seen[t]; !ok {
+			items = append(items, openapi.JobConcurrency{Type: t, Cap: c})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Type < items[j].Type })
+	return openapi.ListJobConcurrency200JSONResponse{Items: items, AppliesOnRestart: true}, nil
+}
+
+func (s *apiServer) SetJobConcurrency(ctx context.Context, req openapi.SetJobConcurrencyRequestObject) (openapi.SetJobConcurrencyResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.SetJobConcurrency401JSONResponse{UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"}}, nil
+	}
+	if s.adminDenied(ctx) {
+		return openapi.SetJobConcurrency403JSONResponse{ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"}}, nil
+	}
+	if req.Body == nil {
+		return openapi.SetJobConcurrency400JSONResponse{BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "missing body"}}, nil
+	}
+	if req.Body.Cap < 0 || req.Body.Cap > 64 {
+		return openapi.SetJobConcurrency400JSONResponse{BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "cap must be 0-64 (0 = uncapped)"}}, nil
+	}
+	if err := s.sysCfg.SetJobTypeConcurrency(ctx, req.Type, req.Body.Cap); err != nil {
+		return nil, err
+	}
+	return openapi.SetJobConcurrency204Response{}, nil
 }
 
 func metaFailureToAPI(r assetmetadata.FailureRow) openapi.ExtractionFailure {
