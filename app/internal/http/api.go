@@ -190,6 +190,7 @@ type apiServer struct {
 	metaAdmin         *assetmetadata.AdminHandler
 	jobsSvc           *jobs.Service
 	jobsAdmin         *jobs.AdminHandler
+	storageAdmin      *storage.AdminHandler
 	sysCfg            *sysconfig.Store
 	seedAdmin         *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
@@ -943,6 +944,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// from prior runs stay for audit).
 	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
 	s.jobsAdmin = jobs.NewAdminHandler(pool)
+	s.storageAdmin = storage.NewAdminHandler(pool)
 	s.sysCfg = sysCfg
 
 	// Wire the social-graph seam into posts so visibility='followers'
@@ -3625,6 +3627,85 @@ func metaBackfillToAPI(r assetmetadata.BackfillRunRow) openapi.MetadataBackfillR
 // All three GETs are gated on jobs.CapJobsRead (or system.admin) and
 // are strictly read-only — no requeue/cancel path exists under this cap
 // (Sprint 1, #401). Mirrors the metadata-extraction admin gate above.
+
+// --- storage (admin reads, #402) -------------------------------------------
+
+// storageReadDenied mirrors jobsReadDenied: the read cap OR the
+// system.admin wildcard opens the storage admin surface.
+func (s *apiServer) storageReadDenied(ctx context.Context) bool {
+	caller := auth.IdentityFromContext(ctx)
+	return caller == nil || (!caller.Can(storage.CapStorageRead) && !caller.Can("system.admin"))
+}
+
+func (s *apiServer) GetStorageUsage(ctx context.Context, _ openapi.GetStorageUsageRequestObject) (openapi.GetStorageUsageResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.GetStorageUsage401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageReadDenied(ctx) {
+		return openapi.GetStorageUsage403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: storage.CapStorageRead + " required"},
+		}, nil
+	}
+	u, err := s.storageAdmin.GetUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cts := make([]openapi.StorageContentTypeBucket, 0, len(u.ByContentType))
+	for _, r := range u.ByContentType {
+		cts = append(cts, openapi.StorageContentTypeBucket{
+			ContentType:  r.ContentType,
+			VariantCount: r.VariantCount,
+			TotalBytes:   r.TotalBytes,
+		})
+	}
+	backends := make([]openapi.StorageBackendBucket, 0, len(u.ByBackend))
+	for _, r := range u.ByBackend {
+		backends = append(backends, openapi.StorageBackendBucket{
+			Backend:     r.Backend,
+			ObjectCount: r.ObjectCount,
+		})
+	}
+	return openapi.GetStorageUsage200JSONResponse{
+		ObjectCount:     u.ObjectCount,
+		VariantCount:    u.VariantCount,
+		TotalBytes:      u.TotalBytes,
+		OriginalBytes:   u.OriginalBytes,
+		DerivativeBytes: u.DerivativeBytes,
+		ByContentType:   cts,
+		ByBackend:       backends,
+	}, nil
+}
+
+func (s *apiServer) ListStorageVariantFamilies(ctx context.Context, _ openapi.ListStorageVariantFamiliesRequestObject) (openapi.ListStorageVariantFamiliesResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListStorageVariantFamilies401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageReadDenied(ctx) {
+		return openapi.ListStorageVariantFamilies403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: storage.CapStorageRead + " required"},
+		}, nil
+	}
+	rows, err := s.storageAdmin.ListFamilies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.StorageVariantFamily, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, openapi.StorageVariantFamily{
+			Family:       r.Family,
+			VariantCount: r.VariantCount,
+			DistinctKeys: r.DistinctKeys,
+			ObjectCount:  r.ObjectCount,
+			TotalBytes:   r.TotalBytes,
+			NewestAt:     r.NewestAt,
+		})
+	}
+	return openapi.ListStorageVariantFamilies200JSONResponse{Items: items}, nil
+}
 
 func (s *apiServer) jobsReadDenied(ctx context.Context) bool {
 	caller := auth.IdentityFromContext(ctx)

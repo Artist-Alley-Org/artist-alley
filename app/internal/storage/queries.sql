@@ -63,3 +63,67 @@ WHERE hash = $1
   AND NOT EXISTS (
       SELECT 1 FROM storage_pins WHERE object_hash = $1
   );
+
+-- ---------------------------------------------------------------------
+-- Admin read surface (#402, v0.4.0 Sprint 2). All aggregates, all
+-- read-only, gated on system.storage.read at the HTTP layer.
+--
+-- Byte accounting note: storage_variants ALREADY contains one row per
+-- object under variant_key='original' whose size_bytes equals
+-- storage_objects.size_bytes (verified on dev: both sum to exactly
+-- 2684754681). So SUM(storage_variants.size_bytes) is the complete
+-- deduplicated on-disk total, and adding storage_objects to it would
+-- double-count every original. storage_objects is used here only for
+-- the distinct-object count and backend grouping, never for bytes.
+-- ---------------------------------------------------------------------
+
+-- name: AdminStorageTotals :one
+-- One-row rollup for the usage tile: distinct objects, variant rows,
+-- total bytes on disk, and the originals/derivatives split.
+SELECT
+    COUNT(DISTINCT object_hash)::BIGINT                                          AS object_count,
+    COUNT(*)::BIGINT                                                             AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT                                         AS total_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key = 'original'), 0)::BIGINT AS original_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key <> 'original'), 0)::BIGINT AS derivative_bytes
+FROM storage_variants;
+
+-- name: AdminStorageByFamily :many
+-- Per-family rollup for the variants tile. variant_key is
+-- high-cardinality (2090 distinct on dev — one key per HLS segment and
+-- per turntable frame), so a raw per-key listing is unusable. The
+-- family is the segment before the first '/' ('turntable/0028.png' ->
+-- 'turntable'); keys without a '/' are their own family ('original',
+-- 'hires'). That collapses to ~12 rows, which is the useful grain.
+SELECT
+    split_part(variant_key, '/', 1)::TEXT   AS family,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COUNT(DISTINCT variant_key)::BIGINT     AS distinct_keys,
+    COUNT(DISTINCT object_hash)::BIGINT     AS object_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes,
+    MAX(created_at)::TIMESTAMPTZ            AS newest_at
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC;
+
+-- name: AdminStorageByContentType :many
+-- Content-type breakdown for the usage tile (22 distinct on dev, so no
+-- paging needed).
+SELECT
+    content_type::TEXT                      AS content_type,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC;
+
+-- name: AdminStorageByBackend :many
+-- Object counts per storage backend, from storage_objects (the object
+-- registry). Bytes deliberately come from the variants rollup above,
+-- not from here — see the accounting note.
+SELECT
+    backend::TEXT       AS backend,
+    COUNT(*)::BIGINT    AS object_count
+FROM storage_objects
+GROUP BY 1
+ORDER BY object_count DESC;
