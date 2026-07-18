@@ -855,8 +855,8 @@
         "intro": "Backends, usage, dedupe, and the byte-level cleanup tools.",
         "tiles": {
           "backends":   { "title": "Storage backends", "blurb": "Filesystem or S3 config and active backend selection." },
-          "usage":      { "title": "Storage usage",   "blurb": "Disk used by hash, top assets, top users." },
-          "variants":   { "title": "Variants & previews", "blurb": "Generated sizes and their parameters." },
+          "usage":      { "title": "Storage usage",   "blurb": "Deduplicated bytes on disk, originals vs derivatives, by type and backend." },
+          "variants":   { "title": "Variants & previews", "blurb": "Derivative families — counts and size share of each." },
           "orphans":    { "title": "Orphan bytes",    "blurb": "Storage entries no live asset references." },
           "duplicates": { "title": "Duplicate detection", "blurb": "Phash-based clustering and merge tools." },
           "checksums":  { "title": "Checksum verification", "blurb": "Re-hash stored bytes and report drift." },

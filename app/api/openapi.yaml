@@ -8460,6 +8460,74 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/storage/usage:
+    get:
+      operationId: getStorageUsage
+      summary: Install-wide storage usage rollup
+      description: |
+        Read-only admin view of what storage holds (#402): distinct
+        objects, variant rows, total bytes on disk, the
+        originals-vs-derivatives split, and breakdowns by content type
+        and backend.
+
+        `total_bytes` is DEDUPLICATED on-disk bytes — storage is
+        content-addressed, so a byte counted once is a byte stored
+        once. It is summed from `storage_variants` alone: that table
+        already carries one row per object under `variant_key`
+        `original` mirroring the object's size, so adding
+        `storage_objects` on top would double-count every original.
+
+        Aggregates only, so no paging. Gated on `system.storage.read`
+        (or `system.admin`). No write path.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Storage usage rollup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageUsage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/storage/variants:
+    get:
+      operationId: listStorageVariantFamilies
+      summary: Per-family variant inventory
+      description: |
+        Read-only inventory of derivative families (#402), largest
+        first.
+
+        Rows are grouped by variant FAMILY — the segment of
+        `variant_key` before the first `/` (`turntable/0028.png` →
+        `turntable`), or the whole key when it has none (`original`,
+        `hires`). `variant_key` itself is high-cardinality (one key per
+        HLS segment and per turntable frame — 2090 distinct on a dev
+        install), so a raw per-key listing would be thousands of
+        unreadable rows; the family grain is roughly a dozen.
+        `distinct_keys` reports how many raw keys each family covers.
+
+        Small result set, so no paging. Gated on `system.storage.read`
+        (or `system.admin`). No write path.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Variant families, largest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageVariantFamilyList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/jobs:
     get:
       operationId: listJobs
@@ -14079,6 +14147,82 @@ components:
           type: integer
           format: int64
           description: Seconds since the job was enqueued (server-computed).
+    StorageUsage:
+      type: object
+      required: [object_count, variant_count, total_bytes, original_bytes, derivative_bytes, by_content_type, by_backend]
+      properties:
+        object_count:
+          type: integer
+          format: int64
+          description: Distinct content-addressed objects.
+        variant_count:
+          type: integer
+          format: int64
+          description: Total variant rows (every rendition of every object, including the original).
+        total_bytes:
+          type: integer
+          format: int64
+          description: Deduplicated bytes on disk. Summed from storage_variants alone — see the endpoint description.
+        original_bytes:
+          type: integer
+          format: int64
+          description: Bytes held by the `original` variant of every object.
+        derivative_bytes:
+          type: integer
+          format: int64
+          description: Bytes held by every non-original variant (previews, turntables, HLS segments, ...).
+        by_content_type:
+          type: array
+          items: { $ref: "#/components/schemas/StorageContentTypeBucket" }
+        by_backend:
+          type: array
+          items: { $ref: "#/components/schemas/StorageBackendBucket" }
+    StorageContentTypeBucket:
+      type: object
+      required: [content_type, variant_count, total_bytes]
+      properties:
+        content_type: { type: string, example: "image/png" }
+        variant_count: { type: integer, format: int64 }
+        total_bytes: { type: integer, format: int64 }
+    StorageBackendBucket:
+      type: object
+      required: [backend, object_count]
+      properties:
+        backend: { type: string, example: "fs" }
+        object_count: { type: integer, format: int64 }
+    StorageVariantFamily:
+      type: object
+      required: [family, variant_count, distinct_keys, object_count, total_bytes]
+      properties:
+        family:
+          type: string
+          description: variant_key up to the first '/', or the whole key when it has none.
+          example: "turntable"
+        variant_count:
+          type: integer
+          format: int64
+          description: Variant rows in this family.
+        distinct_keys:
+          type: integer
+          format: int64
+          description: How many distinct raw variant_keys the family covers.
+        object_count:
+          type: integer
+          format: int64
+          description: Distinct objects that have at least one variant in this family.
+        total_bytes: { type: integer, format: int64 }
+        newest_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: created_at of the most recent variant in the family.
+    StorageVariantFamilyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageVariantFamily" }
     JobList:
       type: object
       required: [items, total]

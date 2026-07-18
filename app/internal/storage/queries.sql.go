@@ -28,6 +28,182 @@ func (q *Queries) AddPin(ctx context.Context, arg AddPinParams) error {
 	return err
 }
 
+const adminStorageByBackend = `-- name: AdminStorageByBackend :many
+SELECT
+    backend::TEXT       AS backend,
+    COUNT(*)::BIGINT    AS object_count
+FROM storage_objects
+GROUP BY 1
+ORDER BY object_count DESC
+`
+
+type AdminStorageByBackendRow struct {
+	Backend     string
+	ObjectCount int64
+}
+
+// Object counts per storage backend, from storage_objects (the object
+// registry). Bytes deliberately come from the variants rollup above,
+// not from here — see the accounting note.
+func (q *Queries) AdminStorageByBackend(ctx context.Context) ([]AdminStorageByBackendRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByBackend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByBackendRow
+	for rows.Next() {
+		var i AdminStorageByBackendRow
+		if err := rows.Scan(&i.Backend, &i.ObjectCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageByContentType = `-- name: AdminStorageByContentType :many
+SELECT
+    content_type::TEXT                      AS content_type,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC
+`
+
+type AdminStorageByContentTypeRow struct {
+	ContentType  string
+	VariantCount int64
+	TotalBytes   int64
+}
+
+// Content-type breakdown for the usage tile (22 distinct on dev, so no
+// paging needed).
+func (q *Queries) AdminStorageByContentType(ctx context.Context) ([]AdminStorageByContentTypeRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByContentType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByContentTypeRow
+	for rows.Next() {
+		var i AdminStorageByContentTypeRow
+		if err := rows.Scan(&i.ContentType, &i.VariantCount, &i.TotalBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageByFamily = `-- name: AdminStorageByFamily :many
+SELECT
+    split_part(variant_key, '/', 1)::TEXT   AS family,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COUNT(DISTINCT variant_key)::BIGINT     AS distinct_keys,
+    COUNT(DISTINCT object_hash)::BIGINT     AS object_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes,
+    MAX(created_at)::TIMESTAMPTZ            AS newest_at
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC
+`
+
+type AdminStorageByFamilyRow struct {
+	Family       string
+	VariantCount int64
+	DistinctKeys int64
+	ObjectCount  int64
+	TotalBytes   int64
+	NewestAt     pgtype.Timestamptz
+}
+
+// Per-family rollup for the variants tile. variant_key is
+// high-cardinality (2090 distinct on dev — one key per HLS segment and
+// per turntable frame), so a raw per-key listing is unusable. The
+// family is the segment before the first '/' ('turntable/0028.png' ->
+// 'turntable'); keys without a '/' are their own family ('original',
+// 'hires'). That collapses to ~12 rows, which is the useful grain.
+func (q *Queries) AdminStorageByFamily(ctx context.Context) ([]AdminStorageByFamilyRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByFamily)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByFamilyRow
+	for rows.Next() {
+		var i AdminStorageByFamilyRow
+		if err := rows.Scan(
+			&i.Family,
+			&i.VariantCount,
+			&i.DistinctKeys,
+			&i.ObjectCount,
+			&i.TotalBytes,
+			&i.NewestAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageTotals = `-- name: AdminStorageTotals :one
+
+SELECT
+    COUNT(DISTINCT object_hash)::BIGINT                                          AS object_count,
+    COUNT(*)::BIGINT                                                             AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT                                         AS total_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key = 'original'), 0)::BIGINT AS original_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key <> 'original'), 0)::BIGINT AS derivative_bytes
+FROM storage_variants
+`
+
+type AdminStorageTotalsRow struct {
+	ObjectCount     int64
+	VariantCount    int64
+	TotalBytes      int64
+	OriginalBytes   int64
+	DerivativeBytes int64
+}
+
+// ---------------------------------------------------------------------
+// Admin read surface (#402, v0.4.0 Sprint 2). All aggregates, all
+// read-only, gated on system.storage.read at the HTTP layer.
+//
+// Byte accounting note: storage_variants ALREADY contains one row per
+// object under variant_key='original' whose size_bytes equals
+// storage_objects.size_bytes (verified on dev: both sum to exactly
+// 2684754681). So SUM(storage_variants.size_bytes) is the complete
+// deduplicated on-disk total, and adding storage_objects to it would
+// double-count every original. storage_objects is used here only for
+// the distinct-object count and backend grouping, never for bytes.
+// ---------------------------------------------------------------------
+// One-row rollup for the usage tile: distinct objects, variant rows,
+// total bytes on disk, and the originals/derivatives split.
+func (q *Queries) AdminStorageTotals(ctx context.Context) (AdminStorageTotalsRow, error) {
+	row := q.db.QueryRow(ctx, adminStorageTotals)
+	var i AdminStorageTotalsRow
+	err := row.Scan(
+		&i.ObjectCount,
+		&i.VariantCount,
+		&i.TotalBytes,
+		&i.OriginalBytes,
+		&i.DerivativeBytes,
+	)
+	return i, err
+}
+
 const clearGCEligible = `-- name: ClearGCEligible :exec
 
 UPDATE storage_objects
