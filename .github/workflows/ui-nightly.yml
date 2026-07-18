@@ -88,7 +88,7 @@ jobs:
       - name: Clear stale git locks (persistent self-hosted workspace)
         run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # inputs.ref is "" unless explicitly overridden, so this
           # resolves to github.ref — the dispatched ref on
