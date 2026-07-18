@@ -490,6 +490,21 @@ func (*PanicShim) SeedCreateUser(context.Context, openapi.SeedCreateUserRequestO
 	panic("PanicShim: SeedCreateUser called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListStorageSweeps panics by default; test shims override.
+func (*PanicShim) ListStorageSweeps(context.Context, openapi.ListStorageSweepsRequestObject) (openapi.ListStorageSweepsResponseObject, error) {
+	panic("PanicShim: ListStorageSweeps called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// TriggerStorageSweep panics by default; test shims override.
+func (*PanicShim) TriggerStorageSweep(context.Context, openapi.TriggerStorageSweepRequestObject) (openapi.TriggerStorageSweepResponseObject, error) {
+	panic("PanicShim: TriggerStorageSweep called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListStorageSweepFindings panics by default; test shims override.
+func (*PanicShim) ListStorageSweepFindings(context.Context, openapi.ListStorageSweepFindingsRequestObject) (openapi.ListStorageSweepFindingsResponseObject, error) {
+	panic("PanicShim: ListStorageSweepFindings called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetStorageUsage panics by default; test shims override.
 func (*PanicShim) GetStorageUsage(context.Context, openapi.GetStorageUsageRequestObject) (openapi.GetStorageUsageResponseObject, error) {
 	panic("PanicShim: GetStorageUsage called without override in test fixture (embed *strictservershim.PanicShim and override this method)")

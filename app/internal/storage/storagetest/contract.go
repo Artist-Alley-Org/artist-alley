@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,100 @@ import (
 // recognises and skips those assertions.
 func RunBackendContract(t *testing.T, makeBackend func(t *testing.T) storage.Backend) {
 	t.Helper()
+
+	t.Run("List", func(t *testing.T) {
+		b := makeBackend(t)
+		ctx := context.Background()
+
+		// Two objects, and deliberately include a variant pair where a
+		// dot-suffixed key and a directory-style key share a stem
+		// ("sprites.vtt" vs "sprites/0001.png"). '.' sorts below '/', so
+		// these two are exactly the case where a depth-first walk
+		// disagrees with lexicographic key order — the ordering bug this
+		// contract is here to catch.
+		type put struct{ hash, variant string }
+		bodies := map[put][]byte{}
+		mk := func(seed, variant string) put {
+			body := []byte("body-" + seed + "-" + variant)
+			h := sha256Hex([]byte(seed))
+			p := put{h, variant}
+			bodies[p] = body
+			return p
+		}
+		_ = []put{
+			mk("obj-a", storage.VariantOriginal),
+			mk("obj-a", "sprites.vtt"),
+			mk("obj-a", "sprites/0001.png"),
+			mk("obj-a", "hls/720p/seg00001.ts"),
+			mk("obj-b", storage.VariantOriginal),
+		}
+		for p, body := range bodies {
+			if _, err := b.Put(ctx, p.hash, p.variant, bytes.NewReader(body)); err != nil {
+				t.Fatalf("Put(%s,%s): %v", p.hash[:8], p.variant, err)
+			}
+		}
+
+		want := map[string]int64{}
+		for p, body := range bodies {
+			want[storage.ObjectPath(p.hash, p.variant)] = int64(len(body))
+		}
+
+		// Drain via the cursor, one small page at a time, so paging and
+		// resumption are exercised rather than a single big read.
+		got := map[string]int64{}
+		var order []string
+		cursor := ""
+		for i := 0; ; i++ {
+			if i > 100 {
+				t.Fatalf("List did not terminate; cursor=%q", cursor)
+			}
+			refs, next, err := b.List(ctx, cursor, 2)
+			if err != nil {
+				t.Fatalf("List(cursor=%q): %v", cursor, err)
+			}
+			if len(refs) > 2 {
+				t.Fatalf("List returned %d refs, limit was 2", len(refs))
+			}
+			for _, r := range refs {
+				k := r.Key()
+				if _, dup := got[k]; dup {
+					t.Errorf("List returned %q twice", k)
+				}
+				got[k] = r.Size
+				order = append(order, k)
+			}
+			if next == "" {
+				break
+			}
+			cursor = next
+		}
+
+		if len(got) != len(want) {
+			t.Errorf("List yielded %d objects, want %d", len(got), len(want))
+		}
+		for k, size := range want {
+			gotSize, ok := got[k]
+			if !ok {
+				t.Errorf("List missed %q", k)
+				continue
+			}
+			if gotSize != size {
+				t.Errorf("List reported size %d for %q, want %d", gotSize, k, size)
+			}
+		}
+		if !sort.StringsAreSorted(order) {
+			t.Errorf("List did not yield keys in lexicographic order: %v", order)
+		}
+
+		// A cursor past every key terminates cleanly rather than looping.
+		refs, next, err := b.List(ctx, "zz", 10)
+		if err != nil {
+			t.Fatalf("List(past-end): %v", err)
+		}
+		if len(refs) != 0 || next != "" {
+			t.Errorf("List past end returned %d refs / cursor %q, want 0 / \"\"", len(refs), next)
+		}
+	})
 
 	t.Run("PutGetStat", func(t *testing.T) {
 		b := makeBackend(t)

@@ -8494,6 +8494,123 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /admin/storage/sweeps:
+    get:
+      operationId: listStorageSweeps
+      summary: Recent storage integrity sweep runs
+      description: |
+        Read-only list of sweep runs, newest first (#403), optionally
+        filtered by kind. Gated on `system.storage.read` (or
+        `system.admin`).
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          description: Filter by sweep kind (orphan_scan / checksum_verify).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Sweep runs, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweepList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: triggerStorageSweep
+      summary: Start a storage integrity sweep
+      description: |
+        Opens a sweep run and enqueues the first batch (#403). The job
+        re-enqueues itself with an advancing cursor until the scan
+        completes, so this returns as soon as the work is queued — the
+        run shows up in the jobs admin queue while it works.
+
+        A MUTATION in the sense that it creates work, so it is gated on
+        `system.admin`, mirroring the jobs requeue/cancel split. The
+        sweeps themselves are read-only against storage: they record
+        findings and never delete.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerSweep" }
+      responses:
+        "202":
+          description: Sweep queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweep" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/storage/sweeps/{id}/findings:
+    get:
+      operationId: listStorageSweepFindings
+      summary: Findings recorded by one sweep run
+      description: |
+        Paginated findings for a run (#403), optionally filtered by
+        finding type. Gated on `system.storage.read` (or
+        `system.admin`).
+
+        Findings are advisory and reflect scan time, not now — anything
+        acting on one must re-verify first.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: finding
+          in: query
+          required: false
+          description: Filter by finding type (missing_object / orphan_object / checksum_mismatch / size_mismatch).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A page of findings plus the total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweepFindingList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /admin/storage/variants:
     get:
       operationId: listStorageVariantFamilies
@@ -14147,6 +14264,54 @@ components:
           type: integer
           format: int64
           description: Seconds since the job was enqueued (server-computed).
+    TriggerSweep:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [orphan_scan, checksum_verify]
+          description: Which sweep to run.
+    StorageSweep:
+      type: object
+      required: [id, kind, status, objects_scanned, findings_count]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, example: "orphan_scan" }
+        status: { type: string, enum: [running, completed, failed] }
+        objects_scanned: { type: integer, format: int64 }
+        findings_count: { type: integer, format: int64 }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    StorageSweepList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageSweep" }
+    StorageSweepFinding:
+      type: object
+      required: [id, finding, object_hash, variant_key, detail]
+      properties:
+        id: { type: string, format: uuid }
+        finding:
+          type: string
+          enum: [missing_object, orphan_object, checksum_mismatch, size_mismatch]
+        object_hash: { type: string }
+        variant_key: { type: string }
+        detail: { type: string, description: Human-readable specifics (expected vs actual). }
+        detected_at: { type: string, format: date-time, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+    StorageSweepFindingList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageSweepFinding" }
+        total: { type: integer, format: int64 }
     StorageUsage:
       type: object
       required: [object_count, variant_count, total_bytes, original_bytes, derivative_bytes, by_content_type, by_backend]

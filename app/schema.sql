@@ -5423,3 +5423,44 @@ ALTER TABLE ONLY public.workflow_transitions
 
 \unrestrict BIawPaLNrAa1UYpG7hem3AQptIFpU8M7DvjZ4he0fDcFV12iKTSuRDviek2Uif9
 
+
+--
+-- Storage integrity sweeps (#403, migration 00007). Appended rather
+-- than re-dumping the whole schema: a full pg_dump refresh also pulls
+-- in unrelated drift that has accumulated since this file was last
+-- regenerated, which changes sqlc output for other packages.
+--
+
+CREATE TABLE public.storage_sweep_runs (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    cursor text,
+    objects_scanned bigint DEFAULT 0 NOT NULL,
+    findings_count bigint DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    error text,
+    triggered_by_user_ref bigint,
+    CONSTRAINT storage_sweep_runs_counts_check CHECK (((objects_scanned >= 0) AND (findings_count >= 0))),
+    CONSTRAINT storage_sweep_runs_kind_check CHECK ((kind = ANY (ARRAY['orphan_scan'::text, 'checksum_verify'::text]))),
+    CONSTRAINT storage_sweep_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))
+);
+
+CREATE TABLE public.storage_sweep_findings (
+    id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    finding text NOT NULL,
+    object_hash text NOT NULL,
+    variant_key text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT storage_sweep_findings_finding_check CHECK ((finding = ANY (ARRAY['missing_object'::text, 'orphan_object'::text, 'checksum_mismatch'::text, 'size_mismatch'::text])))
+);
+
+CREATE INDEX storage_sweep_findings_run_idx ON public.storage_sweep_findings USING btree (run_id, detected_at DESC);
+
+CREATE INDEX storage_sweep_findings_subject_idx ON public.storage_sweep_findings USING btree (object_hash, variant_key) WHERE (resolved_at IS NULL);
+
+CREATE INDEX storage_sweep_runs_kind_started_idx ON public.storage_sweep_runs USING btree (kind, started_at DESC);

@@ -944,7 +944,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// from prior runs stay for audit).
 	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
 	s.jobsAdmin = jobs.NewAdminHandler(pool)
-	s.storageAdmin = storage.NewAdminHandler(pool)
+	s.storageAdmin = storage.NewAdminHandler(pool).WithJobs(jobSvc)
 	s.sysCfg = sysCfg
 
 	// Wire the social-graph seam into posts so visibility='followers'
@@ -3635,6 +3635,125 @@ func metaBackfillToAPI(r assetmetadata.BackfillRunRow) openapi.MetadataBackfillR
 func (s *apiServer) storageReadDenied(ctx context.Context) bool {
 	caller := auth.IdentityFromContext(ctx)
 	return caller == nil || (!caller.Can(storage.CapStorageRead) && !caller.Can("system.admin"))
+}
+
+// storageAdminDenied gates the sweep MUTATION (triggering a scan) on
+// system.admin, mirroring the jobs requeue/cancel split: reads on the
+// read cap, actions on the wildcard.
+func (s *apiServer) storageAdminDenied(ctx context.Context) bool {
+	caller := auth.IdentityFromContext(ctx)
+	return caller == nil || !caller.Can("system.admin")
+}
+
+func (s *apiServer) ListStorageSweeps(ctx context.Context, req openapi.ListStorageSweepsRequestObject) (openapi.ListStorageSweepsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListStorageSweeps401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageReadDenied(ctx) {
+		return openapi.ListStorageSweeps403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: storage.CapStorageRead + " required"},
+		}, nil
+	}
+	var limit, offset int32
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		offset = int32(*req.Params.Offset)
+	}
+	runs, err := s.storageAdmin.ListSweepRuns(ctx, req.Params.Kind, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.StorageSweep, 0, len(runs))
+	for _, r := range runs {
+		items = append(items, sweepToAPI(r))
+	}
+	return openapi.ListStorageSweeps200JSONResponse{Items: items}, nil
+}
+
+func (s *apiServer) TriggerStorageSweep(ctx context.Context, req openapi.TriggerStorageSweepRequestObject) (openapi.TriggerStorageSweepResponseObject, error) {
+	caller := auth.IdentityFromContext(ctx)
+	if caller == nil {
+		return openapi.TriggerStorageSweep401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageAdminDenied(ctx) {
+		return openapi.TriggerStorageSweep403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: "system.admin required"},
+		}, nil
+	}
+	if req.Body == nil {
+		return openapi.TriggerStorageSweep400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: "body required"},
+		}, nil
+	}
+	kind := string(req.Body.Kind)
+	ref := caller.UserRef
+	runID, err := s.storageAdmin.TriggerSweep(ctx, kind, &ref)
+	if err != nil {
+		return openapi.TriggerStorageSweep400JSONResponse{
+			BadRequestJSONResponse: openapi.BadRequestJSONResponse{Error: err.Error()},
+		}, nil
+	}
+	runs, err := s.storageAdmin.ListSweepRuns(ctx, &kind, 1, 0)
+	if err != nil || len(runs) == 0 {
+		return openapi.TriggerStorageSweep202JSONResponse{Id: runID, Kind: kind, Status: "running"}, nil
+	}
+	return openapi.TriggerStorageSweep202JSONResponse(sweepToAPI(runs[0])), nil
+}
+
+func (s *apiServer) ListStorageSweepFindings(ctx context.Context, req openapi.ListStorageSweepFindingsRequestObject) (openapi.ListStorageSweepFindingsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListStorageSweepFindings401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.storageReadDenied(ctx) {
+		return openapi.ListStorageSweepFindings403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: storage.CapStorageRead + " required"},
+		}, nil
+	}
+	var limit, offset int32
+	if req.Params.Limit != nil {
+		limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		offset = int32(*req.Params.Offset)
+	}
+	rows, total, err := s.storageAdmin.ListSweepFindings(ctx, req.Id, req.Params.Finding, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.StorageSweepFinding, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, openapi.StorageSweepFinding{
+			Id:         r.ID,
+			Finding:    openapi.StorageSweepFindingFinding(r.Finding),
+			ObjectHash: r.ObjectHash,
+			VariantKey: r.VariantKey,
+			Detail:     r.Detail,
+			DetectedAt: r.DetectedAt,
+			ResolvedAt: r.ResolvedAt,
+		})
+	}
+	return openapi.ListStorageSweepFindings200JSONResponse{Items: items, Total: total}, nil
+}
+
+func sweepToAPI(r storage.SweepRun) openapi.StorageSweep {
+	return openapi.StorageSweep{
+		Id:             r.ID,
+		Kind:           r.Kind,
+		Status:         openapi.StorageSweepStatus(r.Status),
+		ObjectsScanned: r.ObjectsScanned,
+		FindingsCount:  r.FindingsCount,
+		StartedAt:      r.StartedAt,
+		FinishedAt:     r.FinishedAt,
+		Error:          r.Error,
+	}
 }
 
 func (s *apiServer) GetStorageUsage(ctx context.Context, _ openapi.GetStorageUsageRequestObject) (openapi.GetStorageUsageResponseObject, error) {
