@@ -86,6 +86,52 @@ containers' Go binary honours `SSL_CERT_DIR` directly.
 it's on; it just checks whether the certs exist OR whether
 mkcert is available.
 
+## Persistent workspace + stale git locks (#350)
+
+Unlike a GitHub-hosted runner, which hands every job a fresh VM,
+our self-hosted runners reuse one workspace directory per repo
+(`_work/artist-alley/artist-alley`) across every job they ever
+run. That reuse is what makes checkouts fast, and it's also what
+lets one job's wreckage break the next one.
+
+Most workflows set `concurrency.cancel-in-progress: true`, so a
+superseded run is killed wherever it happens to be — including
+mid-`git fetch`. Git writes `.git/index.lock`,
+`.git/refs/**/*.lock`, and friends before mutating a ref and
+removes them after; a SIGKILL in that window leaves them behind.
+Because the workspace persists, the *next* job to land on that
+runner hits `actions/checkout` and fails with "Unable to create
+'.../index.lock': File exists" — a failure with nothing to do
+with the commit under test, on a job whose author changed
+nothing.
+
+Every self-hosted job therefore sweeps the locks immediately
+before `actions/checkout`:
+
+```yaml
+- name: Clear stale git locks (persistent self-hosted workspace)
+  run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+```
+
+The `-path '*/.git/*'` guard matters: it confines the sweep to
+git's own metadata so a legitimate `*.lock` file tracked in the
+working tree is never touched. The step is idempotent and always
+exits 0 — a clean workspace, or one that doesn't exist yet on a
+brand-new runner, is a no-op rather than a failure.
+
+GitHub-hosted jobs (`ubuntu-latest`, e.g. ci.yml's
+`codegen-drift`) get a fresh workspace per run and deliberately
+do **not** carry the step.
+
+**Future hardening, not implemented:** the runner supports
+`ACTIONS_RUNNER_HOOK_JOB_STARTED`, a script the runner executes
+before every job, which would centralise this sweep instead of
+repeating it per job. It isn't used here because these runners
+are provisioned from the Unraid container template above — the
+hook would be one more piece of host-side state to re-create on
+reprovision, and it would silently not exist on any runner added
+without it. The in-workflow step travels with the repo.
+
 ## Tested with
 
 - `myoung34/github-runner:latest` (verified 2026-06-10).
