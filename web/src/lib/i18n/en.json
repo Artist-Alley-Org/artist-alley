@@ -870,9 +870,9 @@
         "tiles": {
           "queue":       { "title": "Job queue",     "blurb": "Live queue dashboard and depth per kind." },
           "workers":     { "title": "Workers",       "blurb": "Active workers, capabilities, and last-heartbeat." },
-          "kinds":       { "title": "Job kinds",     "blurb": "Catalogue of job kinds and their retry config." },
-          "failed":      { "title": "Failed jobs",   "blurb": "Inspect, retry, or cancel failed jobs." },
-          "schedules":   { "title": "Schedules",     "blurb": "Cron-style periodic jobs." },
+          "kinds":       { "title": "Job kinds",     "blurb": "Registered job types and their per-type concurrency cap." },
+          "failed":      { "title": "Failed jobs",   "blurb": "Inspect, requeue, or cancel failed jobs." },
+          "schedules":   { "title": "Schedules",     "blurb": "Pending work dated to run in the future." },
           "live":        { "title": "Live progress", "blurb": "SSE stream of running jobs and progress." },
           "render_farm": { "title": "Render farm",   "blurb": "Tractor / external render-farm adapter status." }
         }

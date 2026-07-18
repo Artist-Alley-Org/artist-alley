@@ -183,6 +183,34 @@ func (s *Store) GetJobTypeConcurrency(ctx context.Context) (map[string]int, erro
 	return out, nil
 }
 
+// SetJobTypeConcurrency upserts one per-type cap (#401). `cap` <= 0
+// deletes the row (uncapped) rather than storing a no-op, so the config
+// stays clean. The value is a bare integer JSON scalar, matching what
+// GetJobTypeConcurrency reads. Note the Pool loads these at BOOT
+// (http/server.go), so a change here applies on the next restart — the
+// admin UI surfaces that.
+func (s *Store) SetJobTypeConcurrency(ctx context.Context, jobType string, cap int) error {
+	if jobType == "" {
+		return fmt.Errorf("sysconfig: SetJobTypeConcurrency: empty job type")
+	}
+	q := New(s.Pool)
+	key := KeyJobTypeConcurrencyPrefix + jobType
+	if cap <= 0 {
+		if err := q.DeleteSystemConfig(ctx, key); err != nil {
+			return fmt.Errorf("sysconfig: clear job type concurrency %q: %w", jobType, err)
+		}
+		return nil
+	}
+	val, err := json.Marshal(cap)
+	if err != nil {
+		return fmt.Errorf("sysconfig: marshal job type concurrency: %w", err)
+	}
+	if err := q.UpsertSystemConfig(ctx, UpsertSystemConfigParams{Key: key, Value: val}); err != nil {
+		return fmt.Errorf("sysconfig: set job type concurrency %q: %w", jobType, err)
+	}
+	return nil
+}
+
 // GetDigest returns the digest timing config, applying defaults for
 // any unset/out-of-range knob (08:00 UTC daily; Monday 08:00 UTC
 // weekly). Range-clamped so a bad stored row can't push a digest to an

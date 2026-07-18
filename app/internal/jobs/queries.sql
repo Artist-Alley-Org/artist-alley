@@ -240,3 +240,59 @@ SELECT claimed_by, id AS job_id, type, priority, attempts,
  WHERE status = 'running'
    AND claimed_by IS NOT NULL
  ORDER BY claimed_by ASC, claimed_at ASC;
+
+-- name: AdminRequeueJob :execrows
+-- Admin action (#401): send a dead job back to the queue. Distinct
+-- from the worker-facing FailJob (which requires a claimed_by match) —
+-- this is an operator forcing a retry from the admin UI, so it keys on
+-- id alone. The `status IN ('failed','cancelled')` guard is load-
+-- bearing: a RUNNING job must never be yanked out from under its worker
+-- (execrows returns 0 if the row isn't in a requeuable state, which the
+-- handler maps to 409). Resets the row to a clean pending state —
+-- attempts back to 0 for a genuine fresh retry, and every claim/lease/
+-- error/finish field cleared so ClaimNext treats it like new work.
+UPDATE jobs SET
+    status           = 'pending',
+    attempts         = 0,
+    claimed_by       = NULL,
+    claimed_at       = NULL,
+    lease_expires_at = NULL,
+    last_error       = NULL,
+    finished_at      = NULL
+ WHERE id = $1
+   AND status IN ('failed', 'cancelled');
+
+-- name: AdminCancelJob :execrows
+-- Admin action (#401): cancel a job that hasn't started (pending) or a
+-- dead one (failed). This is the FIRST writer of status='cancelled' —
+-- the enum reserved it but nothing produced it until now. The
+-- `status IN ('pending','failed')` guard means a RUNNING job can't be
+-- cancelled mid-flight this sprint (cooperative running-cancel is out
+-- of scope); execrows=0 => 409.
+UPDATE jobs SET
+    status      = 'cancelled',
+    finished_at = NOW()
+ WHERE id = $1
+   AND status IN ('pending', 'failed');
+
+-- name: AdminListScheduledJobs :many
+-- Read-only view of future-dated pending work (#401). There is no cron
+-- subsystem — these are jobs a producer enqueued with a scheduled_for
+-- in the future (e.g. the digest coordinator's self-reschedule), so the
+-- operator can see what's coming without psql. Soonest first.
+SELECT id, type, status, priority, attempts, max_attempts,
+       scheduled_for, enqueued_at,
+       EXTRACT(EPOCH FROM (scheduled_for - NOW()))::BIGINT AS due_in_seconds
+  FROM jobs
+ WHERE scheduled_for IS NOT NULL
+   AND scheduled_for > NOW()
+   AND status = 'pending'
+ ORDER BY scheduled_for ASC
+ LIMIT $1 OFFSET $2;
+
+-- name: AdminCountScheduledJobs :one
+SELECT COUNT(*)::BIGINT
+  FROM jobs
+ WHERE scheduled_for IS NOT NULL
+   AND scheduled_for > NOW()
+   AND status = 'pending';

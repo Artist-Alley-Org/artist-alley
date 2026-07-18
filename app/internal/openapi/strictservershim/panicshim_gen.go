@@ -380,6 +380,21 @@ func (*PanicShim) ListJobs(context.Context, openapi.ListJobsRequestObject) (open
 	panic("PanicShim: ListJobs called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// ListJobConcurrency panics by default; test shims override.
+func (*PanicShim) ListJobConcurrency(context.Context, openapi.ListJobConcurrencyRequestObject) (openapi.ListJobConcurrencyResponseObject, error) {
+	panic("PanicShim: ListJobConcurrency called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// SetJobConcurrency panics by default; test shims override.
+func (*PanicShim) SetJobConcurrency(context.Context, openapi.SetJobConcurrencyRequestObject) (openapi.SetJobConcurrencyResponseObject, error) {
+	panic("PanicShim: SetJobConcurrency called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListScheduledJobs panics by default; test shims override.
+func (*PanicShim) ListScheduledJobs(context.Context, openapi.ListScheduledJobsRequestObject) (openapi.ListScheduledJobsResponseObject, error) {
+	panic("PanicShim: ListScheduledJobs called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListJobStatusCounts panics by default; test shims override.
 func (*PanicShim) ListJobStatusCounts(context.Context, openapi.ListJobStatusCountsRequestObject) (openapi.ListJobStatusCountsResponseObject, error) {
 	panic("PanicShim: ListJobStatusCounts called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
@@ -388,6 +403,16 @@ func (*PanicShim) ListJobStatusCounts(context.Context, openapi.ListJobStatusCoun
 // ListJobWorkers panics by default; test shims override.
 func (*PanicShim) ListJobWorkers(context.Context, openapi.ListJobWorkersRequestObject) (openapi.ListJobWorkersResponseObject, error) {
 	panic("PanicShim: ListJobWorkers called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// CancelJob panics by default; test shims override.
+func (*PanicShim) CancelJob(context.Context, openapi.CancelJobRequestObject) (openapi.CancelJobResponseObject, error) {
+	panic("PanicShim: CancelJob called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// RequeueJob panics by default; test shims override.
+func (*PanicShim) RequeueJob(context.Context, openapi.RequeueJobRequestObject) (openapi.RequeueJobResponseObject, error) {
+	panic("PanicShim: RequeueJob called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
 // GetAdminLicenseStatus panics by default; test shims override.
