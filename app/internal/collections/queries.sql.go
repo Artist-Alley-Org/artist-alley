@@ -104,14 +104,15 @@ func (q *Queries) CountCollectionResources(ctx context.Context, collectionID pgt
 
 const createCollection = `-- name: CreateCollection :one
 
+
 INSERT INTO collections (
     owner_user_ref, name, description, visibility, membership,
     expires_at, featured, purpose, origin_server_id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason
 `
 
 type CreateCollectionParams struct {
@@ -129,6 +130,14 @@ type CreateCollectionParams struct {
 // ---------------------------------------------------------------------------
 // collections (the entity)
 // ---------------------------------------------------------------------------
+// Column ORDER in the explicit lists below is load-bearing, not style.
+// It matches the physical column order a migrated database actually has
+// (search_text/smart_query were added before the soft-delete columns).
+// When a query's column list matches table order, sqlc reuses the
+// Collection model; when it doesn't, sqlc emits a bespoke per-query Row
+// struct and every caller that assigns to Collection stops compiling.
+// See #420 -- app/schema.sql previously described an order migrations
+// never produce, which is what hid this.
 func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionParams) (Collection, error) {
 	row := q.db.QueryRow(ctx, createCollection,
 		arg.OwnerUserRef,
@@ -155,10 +164,10 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
+		&i.DeletedAt,
+		&i.DeletedReason,
 	)
 	return i, err
 }
@@ -187,8 +196,8 @@ func (q *Queries) DeleteCollection(ctx context.Context, arg DeleteCollectionPara
 const getCollection = `-- name: GetCollection :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -211,10 +220,10 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
+		&i.DeletedAt,
+		&i.DeletedReason,
 	)
 	return i, err
 }
@@ -222,8 +231,8 @@ func (q *Queries) GetCollection(ctx context.Context, id pgtype.UUID) (Collection
 const getCollectionIncludingDeleted = `-- name: GetCollectionIncludingDeleted :one
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1
 `
@@ -247,10 +256,10 @@ func (q *Queries) GetCollectionIncludingDeleted(ctx context.Context, id pgtype.U
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
+		&i.DeletedAt,
+		&i.DeletedReason,
 	)
 	return i, err
 }
@@ -377,8 +386,8 @@ func (q *Queries) ListCollectionResourcesPage(ctx context.Context, arg ListColle
 const listCollectionsPage = `-- name: ListCollectionsPage :many
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections c
 WHERE ($1::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND ($2::BIGINT  IS NULL OR owner_user_ref = $2::BIGINT)
@@ -456,10 +465,10 @@ func (q *Queries) ListCollectionsPage(ctx context.Context, arg ListCollectionsPa
 			&i.OriginServerID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.DeletedReason,
 			&i.SearchText,
 			&i.SmartQuery,
+			&i.DeletedAt,
+			&i.DeletedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -526,8 +535,8 @@ UPDATE collections SET
 WHERE id = $8
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason
 `
 
 type UpdateCollectionParams struct {
@@ -567,10 +576,10 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.OriginServerID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.DeletedReason,
 		&i.SearchText,
 		&i.SmartQuery,
+		&i.DeletedAt,
+		&i.DeletedReason,
 	)
 	return i, err
 }
