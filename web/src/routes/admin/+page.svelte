@@ -41,19 +41,4 @@
       </div>
     </a>
   {/each}
-
-  <a
-    href="/admin/about"
-    class="rounded-lg border border-border bg-surface-elevated p-4 transition-colors hover:border-accent hover:bg-state-hover"
-  >
-    <div class="flex items-start gap-3">
-      <span class="mt-0.5 text-fg-muted">
-        <AdminIcon name="about" size={22} />
-      </span>
-      <div class="min-w-0">
-        <h2 class="text-base font-semibold text-fg">{t('admin.about.title')}</h2>
-        <p class="mt-1 text-sm text-fg-muted">{t('admin.about.intro')}</p>
-      </div>
-    </div>
-  </a>
 </div>

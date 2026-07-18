@@ -887,6 +887,30 @@ type StoragePin struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type StorageSweepFinding struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	Finding    string
+	ObjectHash string
+	VariantKey string
+	Detail     string
+	DetectedAt pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
+}
+
+type StorageSweepRun struct {
+	ID                 pgtype.UUID
+	Kind               string
+	Status             string
+	Cursor             *string
+	ObjectsScanned     int64
+	FindingsCount      int64
+	StartedAt          pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	Error              *string
+	TriggeredByUserRef *int64
+}
+
 type StorageVariant struct {
 	ObjectHash  string
 	VariantKey  string

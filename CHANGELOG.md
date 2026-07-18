@@ -5,6 +5,77 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [v0.4.0] — 2026-07-18
+
+Operator visibility: the async pipeline and the storage layer are now
+observable and manageable from the admin surface. No-spec-impact.
+
+### Operator-facing changes
+
+- **Jobs admin.** The whole async pipeline (derivatives, previews, AI
+  tagging, federation outbox) runs on the job queue, and until now it could
+  only be inspected with `psql`. New surfaces, read-gated on
+  `system.jobs.read` so a read-only operator can watch without holding
+  `system.admin`: **queue** (jobs by status/type with age and priority),
+  **workers** (active workers, lease state, stale-lease flag), **live**
+  (status counts), **failed** (with `last_error`), **kinds** (per-type
+  concurrency), **schedules** (future-dated work). Requeue, cancel, and
+  concurrency edits require `system.admin`; a job that is currently running
+  is never touched by either action.
+- **Storage admin.** **Usage** (deduplicated bytes on disk, originals vs
+  derivatives, breakdowns by content type and backend) and **variants**
+  (per-family inventory), read-gated on the new `system.storage.read`.
+- **Storage integrity sweeps.** `orphan_scan` reconciles the object store
+  against the database in both directions; `checksum_verify` re-hashes
+  stored bytes against the content-addressed key. Both run as batched,
+  resumable job kinds, so they appear in the jobs queue like any other work,
+  and both report into an admin surface. Findings are **advisory** and
+  record scan time; no destructive cleanup ships in this release.
+- **About reports the real version.** The page previously showed a
+  hard-coded placeholder. It now reads a new anonymous `GET /build-info`
+  endpoint serving the version baked in at build time. The displayed licence
+  was also corrected to AGPL-3.0-only, matching the repository.
+- **Help is visible to read-only operators.** Documentation, shortcuts,
+  about, release notes, and support are now explicitly public admin tiles
+  rather than implicitly superuser-only, and appear identically on desktop
+  and mobile (ADR 0061).
+
+### Infrastructure / housekeeping
+
+- Storage backends gained an ordered, cursor-resumable `List` (ADR 0062).
+  Filesystem walk order is not lexicographic over the key space, so the fs
+  backend prunes and sorts to honour the contract; a shared contract test
+  enforces it for every backend.
+- Dependabot grouped per ecosystem into minor-and-patch versus majors with a
+  lower open-PR limit, so routine bumps stay auto-mergeable and a batch no
+  longer starves the self-hosted runners ahead of a release.
+- Pre-checkout stale-`.git`-lock sweep on every self-hosted job, fixing
+  intermittent checkout failures caused by cancelled mid-fetch runs.
+
+## [v0.3.1] — 2026-07-17
+
+Admin read-cap UI + foundation cleanup. No-spec-impact.
+
+### Operator-facing changes
+
+- **Admin UI for read-cap holders.** The frontend half of v0.3.0's read
+  capabilities: the admin menu + route guard now gate **per-tile on the
+  capability each surface enforces**, so a read-only role (without
+  `system.admin`) sees and can browse the admin sections its caps permit —
+  the admin menu lights up on the public demo. Backend still enforces every
+  write.
+
+### Infrastructure / housekeeping
+
+- Repo-wide `gofmt` normalization + a `gofmt -l` CI gate.
+- `make release` target codifying the release prep (version bump, openapi
+  regen, drift check, open the promotion PR) — does not tag or toggle
+  protection.
+- Dependabot `github-actions` group split (routine bumps auto-merge; majors
+  gated); steel secondary token wired into the Alert info tone.
+- CHANGELOG + roadmap reconciled to current (they had drifted two releases
+  behind).
+
 ## [v0.3.0] — 2026-07-17
 
 Derivatives, read-only admin, responsive UI. No-spec-impact.

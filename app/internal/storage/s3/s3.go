@@ -281,3 +281,66 @@ func isNotFoundError(err error) bool {
 	}
 	return false
 }
+
+// List enumerates stored variants in lexicographic key order (#403).
+// Implements storage.Backend.List.
+//
+// S3 already returns keys in lexicographic order and already has a
+// resumable cursor, so this is a thin mapping: StartAfter for the
+// caller's cursor, MaxKeys for the page size. We use StartAfter rather
+// than a continuation token so the cursor stays a plain key — the
+// sweep persists it between batches, and an opaque token that expires
+// would make a resumed sweep fail rather than continue.
+//
+// Keys that don't parse as object paths are skipped — see
+// storage.ParseObjectPath.
+func (b *Backend) List(ctx context.Context, cursor string, limit int) ([]storage.ObjectRef, string, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	in := &awss3.ListObjectsV2Input{
+		Bucket:  aws.String(b.bucket),
+		MaxKeys: aws.Int32(int32(limit)),
+	}
+	if cursor != "" {
+		in.StartAfter = aws.String(cursor)
+	}
+
+	refs := make([]storage.ObjectRef, 0, limit)
+	lastKey := ""
+	truncated := false
+
+	// One request per call: the caller drives paging via the returned
+	// cursor, so we must not drain the whole bucket here.
+	out, err := b.cli.ListObjectsV2(ctx, in)
+	if err != nil {
+		return nil, "", fmt.Errorf("s3: list: %w", err)
+	}
+	for _, o := range out.Contents {
+		if o.Key == nil {
+			continue
+		}
+		lastKey = *o.Key
+		hash, variant, perr := storage.ParseObjectPath(lastKey)
+		if perr != nil {
+			continue // not an object we wrote
+		}
+		var size int64
+		if o.Size != nil {
+			size = *o.Size
+		}
+		refs = append(refs, storage.ObjectRef{Hash: hash, Variant: variant, Size: size})
+	}
+	if out.IsTruncated != nil {
+		truncated = *out.IsTruncated
+	}
+
+	next := ""
+	if truncated && lastKey != "" {
+		// Resume after the last key S3 examined, not the last one we
+		// kept — otherwise a page consisting only of unparseable keys
+		// would loop forever on the same offset.
+		next = lastKey
+	}
+	return refs, next, nil
+}

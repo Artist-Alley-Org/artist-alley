@@ -31,6 +31,13 @@ export interface AdminTile {
   // A read-cap holder sees exactly the tiles whose `cap` they hold, so
   // no tile 403s on click.
   cap?: string;
+  // Universally visible — the tile's page guards nothing sensitive
+  // (help, docs, about, release notes, support) and enforces no
+  // server-side cap. Distinct from an absent `cap`, which means
+  // superuser-only (#399): most cap-less tiles are unmigrated admin
+  // surfaces, NOT public. Only set `public` where the page is safe for
+  // any operator who can reach the admin shell.
+  public?: boolean;
 }
 
 export interface AdminSection {
@@ -81,11 +88,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'storage',
     tiles: [
       { key: 'backends',    status: 'future', phase: '1.19' },
-      { key: 'usage',       status: 'future', phase: '1.19' },
-      { key: 'variants',    status: 'future', phase: '1.15' },
-      { key: 'orphans',     status: 'future', phase: '1.19' },
+      { key: 'usage',       status: 'live',   href: '/admin/storage/usage',    cap: 'system.storage.read' },
+      { key: 'variants',    status: 'live',   href: '/admin/storage/variants', cap: 'system.storage.read' },
+      { key: 'orphans',     status: 'live',   href: '/admin/storage/orphans',   cap: 'system.storage.read' },
       { key: 'duplicates',  status: 'future', phase: '1.15' },
-      { key: 'checksums',   status: 'future', phase: '1.19' },
+      { key: 'checksums',   status: 'live',   href: '/admin/storage/checksums', cap: 'system.storage.read' },
       { key: 'reimport',    status: 'future', phase: '1.15' },
       { key: 'trash',       status: 'live',   href: '/admin/storage/trash' },
     ],
@@ -94,12 +101,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'jobs',
     iconKey: 'jobs',
     tiles: [
-      { key: 'queue',        status: 'future', phase: '1.15' },
-      { key: 'workers',      status: 'future', phase: '1.15' },
-      { key: 'kinds',        status: 'future', phase: '1.15' },
-      { key: 'failed',       status: 'future', phase: '1.15' },
-      { key: 'schedules',    status: 'future', phase: '1.15' },
-      { key: 'live',         status: 'future', phase: '1.15' },
+      { key: 'queue',        status: 'live',   href: '/admin/jobs/queue',   cap: 'system.jobs.read' },
+      { key: 'workers',      status: 'live',   href: '/admin/jobs/workers', cap: 'system.jobs.read' },
+      { key: 'kinds',        status: 'live',   href: '/admin/jobs/kinds',     cap: 'system.jobs.read' },
+      { key: 'failed',       status: 'live',   href: '/admin/jobs/failed',    cap: 'system.jobs.read' },
+      { key: 'schedules',    status: 'live',   href: '/admin/jobs/schedules', cap: 'system.jobs.read' },
+      { key: 'live',         status: 'live',   href: '/admin/jobs/live',    cap: 'system.jobs.read' },
       { key: 'render_farm',  status: 'future', phase: '1.16' },
     ],
   },
@@ -231,11 +238,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'help',
     iconKey: 'help',
     tiles: [
-      { key: 'docs',         status: 'live',   href: '/admin/help/docs' },
-      { key: 'shortcuts',    status: 'live',   href: '/admin/help/shortcuts' },
-      { key: 'about',        status: 'live',   href: '/admin/about' },
-      { key: 'release_notes', status: 'live',  href: '/admin/help/release-notes' },
-      { key: 'support',      status: 'live',   href: '/admin/help/support' },
+      { key: 'docs',         status: 'live',   href: '/admin/help/docs',          public: true },
+      { key: 'shortcuts',    status: 'live',   href: '/admin/help/shortcuts',     public: true },
+      { key: 'about',        status: 'live',   href: '/admin/about',              public: true },
+      { key: 'release_notes', status: 'live',  href: '/admin/help/release-notes', public: true },
+      { key: 'support',      status: 'live',   href: '/admin/help/support',       public: true },
     ],
   },
 ];
