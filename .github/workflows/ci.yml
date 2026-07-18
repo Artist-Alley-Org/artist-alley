@@ -94,6 +94,9 @@ jobs:
     # matching the lockfile and dodging the gnu rolldown parser
     # regression.
     steps:
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
       - uses: actions/checkout@v4
 
       # Pre-pull once so subsequent steps don't each pay the
@@ -293,6 +296,9 @@ jobs:
       GOMAXPROCS: 10
 
     steps:
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
       - uses: actions/checkout@v4
 
       # ---- Compose stack mirrors local dev so CI and
@@ -428,6 +434,9 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
       - uses: actions/checkout@v4
 
       - name: Set up Docker buildx

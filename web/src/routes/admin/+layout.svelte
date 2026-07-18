@@ -30,7 +30,6 @@
   const visibleSections = $derived(
     ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
   );
-  const aboutActive = $derived(page.url.pathname.startsWith('/admin/about'));
   const overviewActive = $derived(page.url.pathname === '/admin');
 </script>
 
@@ -99,17 +98,6 @@
             <span>{t(`admin.sections.${section.slug}.title`)}</span>
           </a>
         {/each}
-
-        <div class="my-2 border-t border-border"></div>
-        <a
-          href="/admin/about"
-          class={`flex items-center gap-2.5 rounded-md px-3 py-2 ${aboutActive ? 'bg-accent-container text-on-accent-container font-medium' : 'text-fg-muted hover:bg-state-hover hover:text-fg'}`}
-        >
-          <span class={aboutActive ? 'text-on-accent-container' : 'text-fg-muted'}>
-            <AdminIcon name="about" size={17} />
-          </span>
-          <span>{t('admin_menu.about')}</span>
-        </a>
       </nav>
     </aside>
 

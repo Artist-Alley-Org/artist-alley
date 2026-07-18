@@ -28,6 +28,209 @@ func (q *Queries) AddPin(ctx context.Context, arg AddPinParams) error {
 	return err
 }
 
+const adminStorageByBackend = `-- name: AdminStorageByBackend :many
+SELECT
+    backend::TEXT       AS backend,
+    COUNT(*)::BIGINT    AS object_count
+FROM storage_objects
+GROUP BY 1
+ORDER BY object_count DESC
+`
+
+type AdminStorageByBackendRow struct {
+	Backend     string
+	ObjectCount int64
+}
+
+// Object counts per storage backend, from storage_objects (the object
+// registry). Bytes deliberately come from the variants rollup above,
+// not from here — see the accounting note.
+func (q *Queries) AdminStorageByBackend(ctx context.Context) ([]AdminStorageByBackendRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByBackend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByBackendRow
+	for rows.Next() {
+		var i AdminStorageByBackendRow
+		if err := rows.Scan(&i.Backend, &i.ObjectCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageByContentType = `-- name: AdminStorageByContentType :many
+SELECT
+    content_type::TEXT                      AS content_type,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC
+`
+
+type AdminStorageByContentTypeRow struct {
+	ContentType  string
+	VariantCount int64
+	TotalBytes   int64
+}
+
+// Content-type breakdown for the usage tile (22 distinct on dev, so no
+// paging needed).
+func (q *Queries) AdminStorageByContentType(ctx context.Context) ([]AdminStorageByContentTypeRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByContentType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByContentTypeRow
+	for rows.Next() {
+		var i AdminStorageByContentTypeRow
+		if err := rows.Scan(&i.ContentType, &i.VariantCount, &i.TotalBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageByFamily = `-- name: AdminStorageByFamily :many
+SELECT
+    split_part(variant_key, '/', 1)::TEXT   AS family,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COUNT(DISTINCT variant_key)::BIGINT     AS distinct_keys,
+    COUNT(DISTINCT object_hash)::BIGINT     AS object_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes,
+    MAX(created_at)::TIMESTAMPTZ            AS newest_at
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC
+`
+
+type AdminStorageByFamilyRow struct {
+	Family       string
+	VariantCount int64
+	DistinctKeys int64
+	ObjectCount  int64
+	TotalBytes   int64
+	NewestAt     pgtype.Timestamptz
+}
+
+// Per-family rollup for the variants tile. variant_key is
+// high-cardinality (2090 distinct on dev — one key per HLS segment and
+// per turntable frame), so a raw per-key listing is unusable. The
+// family is the segment before the first '/' ('turntable/0028.png' ->
+// 'turntable'); keys without a '/' are their own family ('original',
+// 'hires'). That collapses to ~12 rows, which is the useful grain.
+func (q *Queries) AdminStorageByFamily(ctx context.Context) ([]AdminStorageByFamilyRow, error) {
+	rows, err := q.db.Query(ctx, adminStorageByFamily)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminStorageByFamilyRow
+	for rows.Next() {
+		var i AdminStorageByFamilyRow
+		if err := rows.Scan(
+			&i.Family,
+			&i.VariantCount,
+			&i.DistinctKeys,
+			&i.ObjectCount,
+			&i.TotalBytes,
+			&i.NewestAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminStorageTotals = `-- name: AdminStorageTotals :one
+
+SELECT
+    COUNT(DISTINCT object_hash)::BIGINT                                          AS object_count,
+    COUNT(*)::BIGINT                                                             AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT                                         AS total_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key = 'original'), 0)::BIGINT AS original_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key <> 'original'), 0)::BIGINT AS derivative_bytes
+FROM storage_variants
+`
+
+type AdminStorageTotalsRow struct {
+	ObjectCount     int64
+	VariantCount    int64
+	TotalBytes      int64
+	OriginalBytes   int64
+	DerivativeBytes int64
+}
+
+// ---------------------------------------------------------------------
+// Admin read surface (#402, v0.4.0 Sprint 2). All aggregates, all
+// read-only, gated on system.storage.read at the HTTP layer.
+//
+// Byte accounting note: storage_variants ALREADY contains one row per
+// object under variant_key='original' whose size_bytes equals
+// storage_objects.size_bytes (verified on dev: both sum to exactly
+// 2684754681). So SUM(storage_variants.size_bytes) is the complete
+// deduplicated on-disk total, and adding storage_objects to it would
+// double-count every original. storage_objects is used here only for
+// the distinct-object count and backend grouping, never for bytes.
+// ---------------------------------------------------------------------
+// One-row rollup for the usage tile: distinct objects, variant rows,
+// total bytes on disk, and the originals/derivatives split.
+func (q *Queries) AdminStorageTotals(ctx context.Context) (AdminStorageTotalsRow, error) {
+	row := q.db.QueryRow(ctx, adminStorageTotals)
+	var i AdminStorageTotalsRow
+	err := row.Scan(
+		&i.ObjectCount,
+		&i.VariantCount,
+		&i.TotalBytes,
+		&i.OriginalBytes,
+		&i.DerivativeBytes,
+	)
+	return i, err
+}
+
+const advanceSweepRun = `-- name: AdvanceSweepRun :exec
+UPDATE storage_sweep_runs
+SET cursor = $2,
+    objects_scanned = objects_scanned + $3,
+    findings_count = findings_count + $4
+WHERE id = $1
+`
+
+type AdvanceSweepRunParams struct {
+	ID             pgtype.UUID
+	Cursor         *string
+	ObjectsScanned int64
+	FindingsCount  int64
+}
+
+// Batch checkpoint: record the resume cursor + running totals without
+// closing the run, so a sweep survives a restart mid-scan.
+func (q *Queries) AdvanceSweepRun(ctx context.Context, arg AdvanceSweepRunParams) error {
+	_, err := q.db.Exec(ctx, advanceSweepRun,
+		arg.ID,
+		arg.Cursor,
+		arg.ObjectsScanned,
+		arg.FindingsCount,
+	)
+	return err
+}
+
 const clearGCEligible = `-- name: ClearGCEligible :exec
 
 UPDATE storage_objects
@@ -53,6 +256,60 @@ func (q *Queries) CountActivePins(ctx context.Context, objectHash string) (int64
 	var value int64
 	err := row.Scan(&value)
 	return value, err
+}
+
+const countSweepFindings = `-- name: CountSweepFindings :one
+SELECT COUNT(*)::BIGINT
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND ($2::TEXT IS NULL OR finding = $2::TEXT)
+`
+
+type CountSweepFindingsParams struct {
+	RunID   pgtype.UUID
+	Finding *string
+}
+
+func (q *Queries) CountSweepFindings(ctx context.Context, arg CountSweepFindingsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSweepFindings, arg.RunID, arg.Finding)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const createSweepRun = `-- name: CreateSweepRun :one
+
+INSERT INTO storage_sweep_runs (id, kind, triggered_by_user_ref)
+VALUES ($1, $2, $3)
+RETURNING id, kind, status, cursor, objects_scanned, findings_count,
+          started_at, finished_at, error, triggered_by_user_ref
+`
+
+type CreateSweepRunParams struct {
+	ID                 pgtype.UUID
+	Kind               string
+	TriggeredByUserRef *int64
+}
+
+// ---------------------------------------------------------------------
+// Integrity sweeps (#403). Runs + findings; see 00007 for the shape.
+// ---------------------------------------------------------------------
+func (q *Queries) CreateSweepRun(ctx context.Context, arg CreateSweepRunParams) (StorageSweepRun, error) {
+	row := q.db.QueryRow(ctx, createSweepRun, arg.ID, arg.Kind, arg.TriggeredByUserRef)
+	var i StorageSweepRun
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.Cursor,
+		&i.ObjectsScanned,
+		&i.FindingsCount,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.TriggeredByUserRef,
+	)
+	return i, err
 }
 
 const findObject = `-- name: FindObject :one
@@ -84,6 +341,23 @@ func (q *Queries) FindObject(ctx context.Context, hash string) (FindObjectRow, e
 		&i.GcEligibleAt,
 	)
 	return i, err
+}
+
+const finishSweepRun = `-- name: FinishSweepRun :exec
+UPDATE storage_sweep_runs
+SET status = $2, error = $3, cursor = NULL, finished_at = NOW()
+WHERE id = $1
+`
+
+type FinishSweepRunParams struct {
+	ID     pgtype.UUID
+	Status string
+	Error  *string
+}
+
+func (q *Queries) FinishSweepRun(ctx context.Context, arg FinishSweepRunParams) error {
+	_, err := q.db.Exec(ctx, finishSweepRun, arg.ID, arg.Status, arg.Error)
+	return err
 }
 
 const getVariant = `-- name: GetVariant :one
@@ -144,6 +418,172 @@ func (q *Queries) InsertObject(ctx context.Context, arg InsertObjectParams) erro
 	return err
 }
 
+const latestSweepRun = `-- name: LatestSweepRun :one
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE kind = $1
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) LatestSweepRun(ctx context.Context, kind string) (StorageSweepRun, error) {
+	row := q.db.QueryRow(ctx, latestSweepRun, kind)
+	var i StorageSweepRun
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.Cursor,
+		&i.ObjectsScanned,
+		&i.FindingsCount,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Error,
+		&i.TriggeredByUserRef,
+	)
+	return i, err
+}
+
+const listSweepFindings = `-- name: ListSweepFindings :many
+SELECT id, run_id, finding, object_hash, variant_key, detail, detected_at, resolved_at
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND ($4::TEXT IS NULL OR finding = $4::TEXT)
+ORDER BY detected_at DESC, id
+LIMIT $2 OFFSET $3
+`
+
+type ListSweepFindingsParams struct {
+	RunID   pgtype.UUID
+	Limit   int32
+	Offset  int32
+	Finding *string
+}
+
+// Unresolved findings for a run, newest first.
+func (q *Queries) ListSweepFindings(ctx context.Context, arg ListSweepFindingsParams) ([]StorageSweepFinding, error) {
+	rows, err := q.db.Query(ctx, listSweepFindings,
+		arg.RunID,
+		arg.Limit,
+		arg.Offset,
+		arg.Finding,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StorageSweepFinding
+	for rows.Next() {
+		var i StorageSweepFinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Finding,
+			&i.ObjectHash,
+			&i.VariantKey,
+			&i.Detail,
+			&i.DetectedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSweepRuns = `-- name: ListSweepRuns :many
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE ($3::TEXT IS NULL OR kind = $3::TEXT)
+ORDER BY started_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListSweepRunsParams struct {
+	Limit  int32
+	Offset int32
+	Kind   *string
+}
+
+func (q *Queries) ListSweepRuns(ctx context.Context, arg ListSweepRunsParams) ([]StorageSweepRun, error) {
+	rows, err := q.db.Query(ctx, listSweepRuns, arg.Limit, arg.Offset, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StorageSweepRun
+	for rows.Next() {
+		var i StorageSweepRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Status,
+			&i.Cursor,
+			&i.ObjectsScanned,
+			&i.FindingsCount,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Error,
+			&i.TriggeredByUserRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVariantsForVerify = `-- name: ListVariantsForVerify :many
+SELECT object_hash, variant_key, size_bytes
+FROM storage_variants
+WHERE (object_hash, variant_key) > ($1::TEXT, $2::TEXT)
+ORDER BY object_hash, variant_key
+LIMIT $3
+`
+
+type ListVariantsForVerifyParams struct {
+	Column1 string
+	Column2 string
+	Limit   int32
+}
+
+type ListVariantsForVerifyRow struct {
+	ObjectHash string
+	VariantKey string
+	SizeBytes  int64
+}
+
+// Paged walk of the DB side, ordered so a sweep can resume after a
+// (hash, variant) cursor.
+func (q *Queries) ListVariantsForVerify(ctx context.Context, arg ListVariantsForVerifyParams) ([]ListVariantsForVerifyRow, error) {
+	rows, err := q.db.Query(ctx, listVariantsForVerify, arg.Column1, arg.Column2, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVariantsForVerifyRow
+	for rows.Next() {
+		var i ListVariantsForVerifyRow
+		if err := rows.Scan(&i.ObjectHash, &i.VariantKey, &i.SizeBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markGCEligibleIfOrphaned = `-- name: MarkGCEligibleIfOrphaned :exec
 UPDATE storage_objects
 SET gc_eligible_at = NOW() + ($2::INTERVAL)
@@ -163,6 +603,32 @@ type MarkGCEligibleIfOrphanedParams struct {
 // the bytes + row after the grace expires.
 func (q *Queries) MarkGCEligibleIfOrphaned(ctx context.Context, arg MarkGCEligibleIfOrphanedParams) error {
 	_, err := q.db.Exec(ctx, markGCEligibleIfOrphaned, arg.Hash, arg.Column2)
+	return err
+}
+
+const recordSweepFinding = `-- name: RecordSweepFinding :exec
+INSERT INTO storage_sweep_findings (id, run_id, finding, object_hash, variant_key, detail)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type RecordSweepFindingParams struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	Finding    string
+	ObjectHash string
+	VariantKey string
+	Detail     string
+}
+
+func (q *Queries) RecordSweepFinding(ctx context.Context, arg RecordSweepFindingParams) error {
+	_, err := q.db.Exec(ctx, recordSweepFinding,
+		arg.ID,
+		arg.RunID,
+		arg.Finding,
+		arg.ObjectHash,
+		arg.VariantKey,
+		arg.Detail,
+	)
 	return err
 }
 
@@ -212,4 +678,25 @@ func (q *Queries) UpsertVariant(ctx context.Context, arg UpsertVariantParams) er
 		arg.Metadata,
 	)
 	return err
+}
+
+const variantExists = `-- name: VariantExists :one
+SELECT EXISTS (
+    SELECT 1 FROM storage_variants
+    WHERE object_hash = $1 AND variant_key = $2
+)::BOOLEAN
+`
+
+type VariantExistsParams struct {
+	ObjectHash string
+	VariantKey string
+}
+
+// Re-verification probe: is this (hash, variant) still referenced?
+// Used at ACTION time, never trusting a scan-time finding.
+func (q *Queries) VariantExists(ctx context.Context, arg VariantExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, variantExists, arg.ObjectHash, arg.VariantKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }

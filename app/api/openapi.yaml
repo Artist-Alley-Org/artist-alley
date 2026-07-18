@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: artist-alley API
-  version: 0.2.0
+  version: 0.4.0
   description: |
     The Artist Alley REST API. Every endpoint lives under the `/api/v1`
     base path and speaks JSON.
@@ -7324,6 +7324,28 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /build-info:
+    get:
+      operationId: getBuildInfo
+      summary: Server version / build info
+      description: |
+        Returns the running server's version string — the git tag baked
+        in at build time via `-ldflags "-X main.Version=..."`, or `dev`
+        on an untagged build. Anonymous: the version is not sensitive
+        and is useful for support, federation handshakes, and the admin
+        About page (which renders it instead of a hardcoded stub).
+      tags: [setup]
+      security: []
+      responses:
+        "200":
+          description: Build info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /setup/status:
     get:
       operationId: getSetupStatus
@@ -8438,6 +8460,433 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/storage/usage:
+    get:
+      operationId: getStorageUsage
+      summary: Install-wide storage usage rollup
+      description: |
+        Read-only admin view of what storage holds (#402): distinct
+        objects, variant rows, total bytes on disk, the
+        originals-vs-derivatives split, and breakdowns by content type
+        and backend.
+
+        `total_bytes` is DEDUPLICATED on-disk bytes — storage is
+        content-addressed, so a byte counted once is a byte stored
+        once. It is summed from `storage_variants` alone: that table
+        already carries one row per object under `variant_key`
+        `original` mirroring the object's size, so adding
+        `storage_objects` on top would double-count every original.
+
+        Aggregates only, so no paging. Gated on `system.storage.read`
+        (or `system.admin`). No write path.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Storage usage rollup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageUsage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/storage/sweeps:
+    get:
+      operationId: listStorageSweeps
+      summary: Recent storage integrity sweep runs
+      description: |
+        Read-only list of sweep runs, newest first (#403), optionally
+        filtered by kind. Gated on `system.storage.read` (or
+        `system.admin`).
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          description: Filter by sweep kind (orphan_scan / checksum_verify).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Sweep runs, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweepList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: triggerStorageSweep
+      summary: Start a storage integrity sweep
+      description: |
+        Opens a sweep run and enqueues the first batch (#403). The job
+        re-enqueues itself with an advancing cursor until the scan
+        completes, so this returns as soon as the work is queued — the
+        run shows up in the jobs admin queue while it works.
+
+        A MUTATION in the sense that it creates work, so it is gated on
+        `system.admin`, mirroring the jobs requeue/cancel split. The
+        sweeps themselves are read-only against storage: they record
+        findings and never delete.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerSweep" }
+      responses:
+        "202":
+          description: Sweep queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweep" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/storage/sweeps/{id}/findings:
+    get:
+      operationId: listStorageSweepFindings
+      summary: Findings recorded by one sweep run
+      description: |
+        Paginated findings for a run (#403), optionally filtered by
+        finding type. Gated on `system.storage.read` (or
+        `system.admin`).
+
+        Findings are advisory and reflect scan time, not now — anything
+        acting on one must re-verify first.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: finding
+          in: query
+          required: false
+          description: Filter by finding type (missing_object / orphan_object / checksum_mismatch / size_mismatch).
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A page of findings plus the total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageSweepFindingList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/storage/variants:
+    get:
+      operationId: listStorageVariantFamilies
+      summary: Per-family variant inventory
+      description: |
+        Read-only inventory of derivative families (#402), largest
+        first.
+
+        Rows are grouped by variant FAMILY — the segment of
+        `variant_key` before the first `/` (`turntable/0028.png` →
+        `turntable`), or the whole key when it has none (`original`,
+        `hires`). `variant_key` itself is high-cardinality (one key per
+        HLS segment and per turntable frame — 2090 distinct on a dev
+        install), so a raw per-key listing would be thousands of
+        unreadable rows; the family grain is roughly a dozen.
+        `distinct_keys` reports how many raw keys each family covers.
+
+        Small result set, so no paging. Gated on `system.storage.read`
+        (or `system.admin`). No write path.
+      tags: [admin, storage]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Variant families, largest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageVariantFamilyList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs by status and type
+      description: |
+        Read-only admin view of the job queue (#400). Paginated, ordered
+        priority ASC then enqueued_at ASC (the run order). Optional
+        `status` + `type` filters. Each row carries `age_seconds`
+        (NOW() - enqueued_at) so the UI needn't trust a client clock.
+        Gated on `system.jobs.read` (or `system.admin`). No write path.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by status (pending/running/done/failed/cancelled). Omit for all.
+          schema: { type: string }
+        - name: type
+          in: query
+          required: false
+          description: Filter by job type (e.g. preview.raster). Omit for all.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A page of jobs + the total under the same filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/workers:
+    get:
+      operationId: listJobWorkers
+      summary: List active workers and the job each holds
+      description: |
+        One entry per running job = one busy worker (#400). Carries the
+        worker id (`claimed_by`), the held job, and lease state
+        (`lease_expires_at`, `lease_stale`). Gated on `system.jobs.read`
+        (or `system.admin`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active workers with their held jobs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobWorkerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/status-counts:
+    get:
+      operationId: listJobStatusCounts
+      summary: Live per-type per-status job counts
+      description: |
+        Aggregate counts grouped by (type, status) for the live queue
+        dashboard (#400). The UI polls this on an interval (no SSE this
+        sprint). Gated on `system.jobs.read` (or `system.admin`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-(type, status) counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatusCountList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/{id}/requeue:
+    post:
+      operationId: requeueJob
+      summary: Requeue a failed or cancelled job
+      description: |
+        Admin action (#401): send a dead job back to the pending pool —
+        attempts reset, claim/lease/error cleared. Guarded on the source
+        status: a running job is never touched (409). Gated on
+        `system.admin` (mutations are admin-only; reads use
+        `system.jobs.read`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Job requeued.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/jobs/{id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel a pending or failed job
+      description: |
+        Admin action (#401): move a pending/failed job to `cancelled`.
+        A running job cannot be cancelled this sprint (409). Gated on
+        `system.admin`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Job cancelled.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/jobs/scheduled:
+    get:
+      operationId: listScheduledJobs
+      summary: List future-dated pending jobs
+      description: |
+        Read-only view of pending jobs with a `scheduled_for` in the
+        future (#401). There is no cron subsystem — these are jobs a
+        producer enqueued to run later (e.g. the digest coordinator's
+        self-reschedule). Soonest first. Gated on `system.jobs.read`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Scheduled jobs + total.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledJobList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/concurrency:
+    get:
+      operationId: listJobConcurrency
+      summary: Per-type worker concurrency caps
+      description: |
+        Every registered job type with its current concurrency cap
+        (`0` = uncapped). Caps live in system_config and are loaded by
+        the worker Pool at BOOT, so `applies_on_restart` is true — an
+        edit takes effect on the next restart. Gated on
+        `system.jobs.read`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Type caps.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobConcurrencyList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/concurrency/{type}:
+    put:
+      operationId: setJobConcurrency
+      summary: Set a job type's concurrency cap
+      description: |
+        Upsert one per-type cap (#401). `cap` of 0 clears it (uncapped).
+        Takes effect on the next restart (the Pool loads caps at boot).
+        Gated on `system.admin`.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          description: The job type, e.g. preview.video.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetJobConcurrency" }
+      responses:
+        "204":
+          description: Cap saved.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -8642,6 +9091,14 @@ components:
         providers:
           type: array
           items: { $ref: "#/components/schemas/IdentityProviderSummary" }
+    BuildInfo:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Server version — the git tag baked in at build time, or "dev".
+          example: "0.3.1"
     SetupStatus:
       type: object
       required: [needs_setup, deployment, defaults]
@@ -13782,6 +14239,254 @@ components:
             limit/offset but obeying the error_kind + format filters.
             Powers the admin nav badge.
 
+    JobSummary:
+      type: object
+      required: [id, type, status, priority, attempts, max_attempts, age_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status:
+          type: string
+          enum: [pending, running, done, failed, cancelled]
+        priority: { type: integer }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        claimed_by: { type: string, nullable: true }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        last_error: { type: string, nullable: true }
+        origin_server_id: { type: string, format: uuid, nullable: true }
+        scheduled_for: { type: string, format: date-time, nullable: true }
+        enqueued_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        age_seconds:
+          type: integer
+          format: int64
+          description: Seconds since the job was enqueued (server-computed).
+    TriggerSweep:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [orphan_scan, checksum_verify]
+          description: Which sweep to run.
+    StorageSweep:
+      type: object
+      required: [id, kind, status, objects_scanned, findings_count]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, example: "orphan_scan" }
+        status: { type: string, enum: [running, completed, failed] }
+        objects_scanned: { type: integer, format: int64 }
+        findings_count: { type: integer, format: int64 }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    StorageSweepList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageSweep" }
+    StorageSweepFinding:
+      type: object
+      required: [id, finding, object_hash, variant_key, detail]
+      properties:
+        id: { type: string, format: uuid }
+        finding:
+          type: string
+          enum: [missing_object, orphan_object, checksum_mismatch, size_mismatch]
+        object_hash: { type: string }
+        variant_key: { type: string }
+        detail: { type: string, description: Human-readable specifics (expected vs actual). }
+        detected_at: { type: string, format: date-time, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+    StorageSweepFindingList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageSweepFinding" }
+        total: { type: integer, format: int64 }
+    StorageUsage:
+      type: object
+      required: [object_count, variant_count, total_bytes, original_bytes, derivative_bytes, by_content_type, by_backend]
+      properties:
+        object_count:
+          type: integer
+          format: int64
+          description: Distinct content-addressed objects.
+        variant_count:
+          type: integer
+          format: int64
+          description: Total variant rows (every rendition of every object, including the original).
+        total_bytes:
+          type: integer
+          format: int64
+          description: Deduplicated bytes on disk. Summed from storage_variants alone — see the endpoint description.
+        original_bytes:
+          type: integer
+          format: int64
+          description: Bytes held by the `original` variant of every object.
+        derivative_bytes:
+          type: integer
+          format: int64
+          description: Bytes held by every non-original variant (previews, turntables, HLS segments, ...).
+        by_content_type:
+          type: array
+          items: { $ref: "#/components/schemas/StorageContentTypeBucket" }
+        by_backend:
+          type: array
+          items: { $ref: "#/components/schemas/StorageBackendBucket" }
+    StorageContentTypeBucket:
+      type: object
+      required: [content_type, variant_count, total_bytes]
+      properties:
+        content_type: { type: string, example: "image/png" }
+        variant_count: { type: integer, format: int64 }
+        total_bytes: { type: integer, format: int64 }
+    StorageBackendBucket:
+      type: object
+      required: [backend, object_count]
+      properties:
+        backend: { type: string, example: "fs" }
+        object_count: { type: integer, format: int64 }
+    StorageVariantFamily:
+      type: object
+      required: [family, variant_count, distinct_keys, object_count, total_bytes]
+      properties:
+        family:
+          type: string
+          description: variant_key up to the first '/', or the whole key when it has none.
+          example: "turntable"
+        variant_count:
+          type: integer
+          format: int64
+          description: Variant rows in this family.
+        distinct_keys:
+          type: integer
+          format: int64
+          description: How many distinct raw variant_keys the family covers.
+        object_count:
+          type: integer
+          format: int64
+          description: Distinct objects that have at least one variant in this family.
+        total_bytes: { type: integer, format: int64 }
+        newest_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: created_at of the most recent variant in the family.
+    StorageVariantFamilyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorageVariantFamily" }
+    JobList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobSummary" }
+        total:
+          type: integer
+          format: int64
+          description: Total jobs under the same status+type filter, ignoring limit/offset.
+    JobWorker:
+      type: object
+      required: [claimed_by, job_id, type, priority, attempts, lease_stale]
+      properties:
+        claimed_by: { type: string, description: Worker id holding the job. }
+        job_id: { type: string, format: uuid }
+        type: { type: string }
+        priority: { type: integer }
+        attempts: { type: integer }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        lease_stale:
+          type: boolean
+          description: True when the lease has lapsed (RequeueStuckJobs will reclaim it).
+    JobWorkerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobWorker" }
+    JobStatusCount:
+      type: object
+      required: [type, status, count]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        count: { type: integer, format: int64 }
+    JobStatusCountList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobStatusCount" }
+    ScheduledJob:
+      type: object
+      required: [id, type, status, priority, attempts, max_attempts, due_in_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status: { type: string }
+        priority: { type: integer }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        scheduled_for: { type: string, format: date-time, nullable: true }
+        enqueued_at: { type: string, format: date-time, nullable: true }
+        due_in_seconds:
+          type: integer
+          format: int64
+          description: Seconds until scheduled_for (server-computed).
+    ScheduledJobList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduledJob" }
+        total: { type: integer, format: int64 }
+    JobConcurrency:
+      type: object
+      required: [type, cap]
+      properties:
+        type: { type: string }
+        cap:
+          type: integer
+          description: Max concurrent jobs of this type; 0 means uncapped.
+    JobConcurrencyList:
+      type: object
+      required: [items, applies_on_restart]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobConcurrency" }
+        applies_on_restart:
+          type: boolean
+          description: |
+            True — the worker Pool loads caps at boot, so an edit takes
+            effect on the next restart, not live. The UI surfaces this.
+    SetJobConcurrency:
+      type: object
+      required: [cap]
+      properties:
+        cap:
+          type: integer
+          minimum: 0
+          maximum: 64
+          description: Max concurrent; 0 clears the cap (uncapped).
     MetadataBackfillStart:
       type: object
       description: |

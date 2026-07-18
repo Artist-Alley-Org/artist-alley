@@ -197,6 +197,12 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 	// preview.model adds the Blender-headless turntable in 1.18.B-11.
 	// SVG joins the raster handler (extension lives in rasterExts).
 	// pdf / font still pending.
+	// Storage integrity sweeps (#403) — registered as job kinds so a
+	// long scan is visible in the jobs admin queue rather than running
+	// as an invisible background thread.
+	jobRegistry.Register(storage.NewOrphanScanHandler(pool, storageSvc, jobSvc, logger))
+	jobRegistry.Register(storage.NewChecksumVerifyHandler(pool, storageSvc, jobSvc, logger))
+
 	jobRegistry.Register(preview.NewRasterHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewVideoHandler(pool, storageSvc, sysCfg, logger))
 	jobRegistry.Register(preview.NewModelHandler(pool, storageSvc, sysCfg, logger))
@@ -354,6 +360,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		})
 
 		impl = newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
+		impl.version = version
 		// Hand the provider registry to the auth handler now that
 		// both exist. Done out-of-band rather than threading through
 		// newAPIServer's positional args — same shape as the

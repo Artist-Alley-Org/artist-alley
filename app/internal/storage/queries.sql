@@ -63,3 +63,143 @@ WHERE hash = $1
   AND NOT EXISTS (
       SELECT 1 FROM storage_pins WHERE object_hash = $1
   );
+
+-- ---------------------------------------------------------------------
+-- Admin read surface (#402, v0.4.0 Sprint 2). All aggregates, all
+-- read-only, gated on system.storage.read at the HTTP layer.
+--
+-- Byte accounting note: storage_variants ALREADY contains one row per
+-- object under variant_key='original' whose size_bytes equals
+-- storage_objects.size_bytes (verified on dev: both sum to exactly
+-- 2684754681). So SUM(storage_variants.size_bytes) is the complete
+-- deduplicated on-disk total, and adding storage_objects to it would
+-- double-count every original. storage_objects is used here only for
+-- the distinct-object count and backend grouping, never for bytes.
+-- ---------------------------------------------------------------------
+
+-- name: AdminStorageTotals :one
+-- One-row rollup for the usage tile: distinct objects, variant rows,
+-- total bytes on disk, and the originals/derivatives split.
+SELECT
+    COUNT(DISTINCT object_hash)::BIGINT                                          AS object_count,
+    COUNT(*)::BIGINT                                                             AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT                                         AS total_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key = 'original'), 0)::BIGINT AS original_bytes,
+    COALESCE(SUM(size_bytes) FILTER (WHERE variant_key <> 'original'), 0)::BIGINT AS derivative_bytes
+FROM storage_variants;
+
+-- name: AdminStorageByFamily :many
+-- Per-family rollup for the variants tile. variant_key is
+-- high-cardinality (2090 distinct on dev — one key per HLS segment and
+-- per turntable frame), so a raw per-key listing is unusable. The
+-- family is the segment before the first '/' ('turntable/0028.png' ->
+-- 'turntable'); keys without a '/' are their own family ('original',
+-- 'hires'). That collapses to ~12 rows, which is the useful grain.
+SELECT
+    split_part(variant_key, '/', 1)::TEXT   AS family,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COUNT(DISTINCT variant_key)::BIGINT     AS distinct_keys,
+    COUNT(DISTINCT object_hash)::BIGINT     AS object_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes,
+    MAX(created_at)::TIMESTAMPTZ            AS newest_at
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC;
+
+-- name: AdminStorageByContentType :many
+-- Content-type breakdown for the usage tile (22 distinct on dev, so no
+-- paging needed).
+SELECT
+    content_type::TEXT                      AS content_type,
+    COUNT(*)::BIGINT                        AS variant_count,
+    COALESCE(SUM(size_bytes), 0)::BIGINT    AS total_bytes
+FROM storage_variants
+GROUP BY 1
+ORDER BY total_bytes DESC;
+
+-- name: AdminStorageByBackend :many
+-- Object counts per storage backend, from storage_objects (the object
+-- registry). Bytes deliberately come from the variants rollup above,
+-- not from here — see the accounting note.
+SELECT
+    backend::TEXT       AS backend,
+    COUNT(*)::BIGINT    AS object_count
+FROM storage_objects
+GROUP BY 1
+ORDER BY object_count DESC;
+
+-- ---------------------------------------------------------------------
+-- Integrity sweeps (#403). Runs + findings; see 00007 for the shape.
+-- ---------------------------------------------------------------------
+
+-- name: CreateSweepRun :one
+INSERT INTO storage_sweep_runs (id, kind, triggered_by_user_ref)
+VALUES ($1, $2, $3)
+RETURNING id, kind, status, cursor, objects_scanned, findings_count,
+          started_at, finished_at, error, triggered_by_user_ref;
+
+-- name: AdvanceSweepRun :exec
+-- Batch checkpoint: record the resume cursor + running totals without
+-- closing the run, so a sweep survives a restart mid-scan.
+UPDATE storage_sweep_runs
+SET cursor = $2,
+    objects_scanned = objects_scanned + $3,
+    findings_count = findings_count + $4
+WHERE id = $1;
+
+-- name: FinishSweepRun :exec
+UPDATE storage_sweep_runs
+SET status = $2, error = $3, cursor = NULL, finished_at = NOW()
+WHERE id = $1;
+
+-- name: RecordSweepFinding :exec
+INSERT INTO storage_sweep_findings (id, run_id, finding, object_hash, variant_key, detail)
+VALUES ($1, $2, $3, $4, $5, $6);
+
+-- name: LatestSweepRun :one
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE kind = $1
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: ListSweepRuns :many
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE (sqlc.narg('kind')::TEXT IS NULL OR kind = sqlc.narg('kind')::TEXT)
+ORDER BY started_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: ListSweepFindings :many
+-- Unresolved findings for a run, newest first.
+SELECT id, run_id, finding, object_hash, variant_key, detail, detected_at, resolved_at
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND (sqlc.narg('finding')::TEXT IS NULL OR finding = sqlc.narg('finding')::TEXT)
+ORDER BY detected_at DESC, id
+LIMIT $2 OFFSET $3;
+
+-- name: CountSweepFindings :one
+SELECT COUNT(*)::BIGINT
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND (sqlc.narg('finding')::TEXT IS NULL OR finding = sqlc.narg('finding')::TEXT);
+
+-- name: ListVariantsForVerify :many
+-- Paged walk of the DB side, ordered so a sweep can resume after a
+-- (hash, variant) cursor.
+SELECT object_hash, variant_key, size_bytes
+FROM storage_variants
+WHERE (object_hash, variant_key) > ($1::TEXT, $2::TEXT)
+ORDER BY object_hash, variant_key
+LIMIT $3;
+
+-- name: VariantExists :one
+-- Re-verification probe: is this (hash, variant) still referenced?
+-- Used at ACTION time, never trusting a scan-time finding.
+SELECT EXISTS (
+    SELECT 1 FROM storage_variants
+    WHERE object_hash = $1 AND variant_key = $2
+)::BOOLEAN;

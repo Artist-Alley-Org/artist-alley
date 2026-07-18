@@ -14,16 +14,35 @@ updates:
       time: "06:00"
       timezone: Etc/UTC
     target-branch: dev
-    open-pull-requests-limit: 5
+    # Two open PRs max: the grouped minor+patch one and the grouped
+    # majors one below. A weekly wake used to open up to 5 per
+    # ecosystem (1 grouped + 4 individual majors), and each one runs
+    # the full self-hosted compose stack — a batch queued the v0.3.1
+    # release ~47min behind it (#396).
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "chore"
       include: scope
     labels:
       - deps
       - go
+    # Two groups, split by update-type on purpose (#396). Bundling
+    # majors into the routine group would collapse everything to one
+    # PR, but dependabot/fetch-metadata reports a grouped PR's
+    # update-type as the HIGHEST bump in it — so a single major would
+    # flag the whole PR `major-review` and the auto-merge workflow
+    # (minor/patch only) would hold every routine bump behind it. That
+    # is the exact regression #353 fixed for github-actions. Keeping
+    # majors in their own group means the minor+patch PR stays
+    # auto-mergeable, and the majors collapse into ONE review PR
+    # instead of one per dependency.
     groups:
       minor-and-patch:
+        patterns: ["*"]
         update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
 
   # SvelteKit + Tailwind + everything else under web/
   - package-ecosystem: npm
@@ -34,19 +53,25 @@ updates:
       time: "06:00"
       timezone: Etc/UTC
     target-branch: dev
-    open-pull-requests-limit: 5
+    # Same two-PR cap as gomod above (#396).
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "chore"
       include: scope
     labels:
       - deps
       - npm
-    # Group minor + patch bumps into a single PR per week to keep the
-    # review queue manageable; majors stay separate so they get the
-    # attention they deserve.
+    # Group minor + patch into one weekly PR that auto-merges on green,
+    # and collapse majors into a second PR for manual review. See the
+    # gomod block above for why majors are NOT folded into the routine
+    # group (it would block auto-merge on every routine bump).
     groups:
       minor-and-patch:
+        patterns: ["*"]
         update-types: [minor, patch]
+      majors:
+        patterns: ["*"]
+        update-types: [major]
 
   # GitHub Actions — pin updates land alongside the workflows.
   - package-ecosystem: github-actions

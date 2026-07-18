@@ -43,6 +43,22 @@ The current release stream covers the foundations:
   read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
   native `aa seed` (retiring the Python `apply.py` loader), and CI
   parallelised across three self-hosted runners.
+- **v0.4.0 (2026-07-18).** Operator visibility. The async pipeline became
+  observable and manageable — queue, workers, live counts, failed jobs with
+  requeue/cancel, per-type concurrency, and scheduled work, read-gated on
+  `system.jobs.read`. Storage gained usage + variant inventory
+  (`system.storage.read`) and **integrity sweeps**: orphan scan (both
+  directions, on a new ordered cursor-resumable backend `List` — ADR 0062)
+  and checksum verification against the content-addressed key, both running
+  as batched job kinds. Also: About now reports the real build version via an
+  anonymous `/build-info`, help became explicitly public to read-only
+  operators (ADR 0061), and CI stopped starving itself on dependabot batches
+  and stale git locks. Destructive orphan cleanup deliberately deferred —
+  findings are advisory and must be re-verified at delete time.
+- **v0.3.1 (2026-07-17).** Admin UI for read-only capability holders (the
+  frontend half of v0.3.0's read caps — the admin menu gates per-tile on the
+  cap each surface enforces, so read-only roles can browse admin), a
+  repo-wide `gofmt` gate, and a `make release` target.
 - **v0.3.0 (2026-07-17).** Media derivatives generated on seed/upload
   (thumbnails + video sprites); read-only admin access via `*.read`
   capabilities without the `system.admin` superuser cap; a fully
@@ -579,15 +595,30 @@ milestones are the source of truth. The admin menu is 36 live / 64
 future tiles across 13 sections; the future tiles cluster by area and
 map to the milestones below.
 
-- **v0.3.1 — foundation cleanup** (mostly shipped): admin read-cap UI
+- **v0.3.1 — foundation cleanup** (shipped 2026-07-17): admin read-cap UI
   (#385), `gofmt` CI gate, `make release`, dependabot split, steel token.
-- **v0.4.0 — operator visibility: Jobs + Storage.** Make the async
-  pipeline observable — the whole derivative/preview/AI/federation
-  subsystem runs on the job queue and there's currently zero admin
-  visibility into it (Jobs admin epic #384). Plus storage tooling
-  (variants / orphans / dedup, #22).
-- **v0.5.0 — Reports & Moderation** (#23 + #24).
-- **v0.6.0 — Content config & Integrations** (#21).
+- **v0.4.0 — operator visibility: Jobs + Storage** (shipped 2026-07-18):
+  Jobs admin epic #384 complete (queue / workers / live / failed / kinds /
+  schedules behind `system.jobs.read`, with requeue, cancel, and concurrency
+  edits behind `system.admin`), storage usage + variants
+  (`system.storage.read`), and integrity sweeps — orphan scan + checksum
+  verification as batched job kinds (ADR 0062).
+- **v0.4.1 — storage remainder** (#22): destructive orphan cleanup (#419,
+  must re-verify at delete time), the `schema.sql` drift (#420), per-asset
+  variant drill-down (#412), jobs live concurrency reload (#408), plus
+  duplicates / reimport / backends config and the RS-parity extensions
+  (scheduled integrity windows, tiered storage, bandwidth attribution).
+- **v0.5.0 — public mode: anonymous browsing** (epic #413). Content is
+  currently unreachable without an account: only four endpoints are
+  unauthenticated, `collections` and `posts` have no `public` value in their
+  visibility constraints, and the visibility predicate is not wired into the
+  main read paths — so asset sensitivity is unenforced even for signed-in
+  callers. The arc introduces a real public tier, enforces one predicate
+  everywhere (P0 #414), opens an anonymous API surface (P1 #415), ships a
+  logged-out frontend with operator controls (P2 #416), and finally the
+  public featured rail (P3 #417, closing #382).
+- **v0.6.0 — Reports & Moderation** (#23 + #24).
+- **v0.7.0 — Content config & Integrations** (#21).
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
 

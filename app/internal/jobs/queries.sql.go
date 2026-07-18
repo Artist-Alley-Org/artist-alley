@@ -11,6 +11,300 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminCancelJob = `-- name: AdminCancelJob :execrows
+UPDATE jobs SET
+    status      = 'cancelled',
+    finished_at = NOW()
+ WHERE id = $1
+   AND status IN ('pending', 'failed')
+`
+
+// Admin action (#401): cancel a job that hasn't started (pending) or a
+// dead one (failed). This is the FIRST writer of status='cancelled' —
+// the enum reserved it but nothing produced it until now. The
+// `status IN ('pending','failed')` guard means a RUNNING job can't be
+// cancelled mid-flight this sprint (cooperative running-cancel is out
+// of scope); execrows=0 => 409.
+func (q *Queries) AdminCancelJob(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, adminCancelJob, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const adminCountJobs = `-- name: AdminCountJobs :one
+SELECT COUNT(*)::BIGINT
+  FROM jobs
+ WHERE ($1::TEXT IS NULL OR status = $1::TEXT)
+   AND ($2::TEXT   IS NULL OR type   = $2::TEXT)
+`
+
+type AdminCountJobsParams struct {
+	Status *string
+	Type   *string
+}
+
+// Total under the same status + type filter (ignores limit/offset), so
+// the queue UI can page + show a total.
+func (q *Queries) AdminCountJobs(ctx context.Context, arg AdminCountJobsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountJobs, arg.Status, arg.Type)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const adminCountScheduledJobs = `-- name: AdminCountScheduledJobs :one
+SELECT COUNT(*)::BIGINT
+  FROM jobs
+ WHERE scheduled_for IS NOT NULL
+   AND scheduled_for > NOW()
+   AND status = 'pending'
+`
+
+func (q *Queries) AdminCountScheduledJobs(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountScheduledJobs)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const adminListActiveWorkers = `-- name: AdminListActiveWorkers :many
+SELECT claimed_by, id AS job_id, type, priority, attempts,
+       claimed_at, lease_expires_at,
+       (lease_expires_at < NOW()) AS lease_stale
+  FROM jobs
+ WHERE status = 'running'
+   AND claimed_by IS NOT NULL
+ ORDER BY claimed_by ASC, claimed_at ASC
+`
+
+type AdminListActiveWorkersRow struct {
+	ClaimedBy      *string
+	JobID          pgtype.UUID
+	Type           string
+	Priority       int32
+	Attempts       int32
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LeaseStale     bool
+}
+
+// One row per running job = one busy worker holding that job (#400).
+// `claimed_by` is the worker id; lease_expires_at is when the lease
+// lapses (RequeueStuckJobs reclaims a job whose lease expired). Ordered
+// by worker then claim time so a worker's held work groups together.
+// Bounded by the running-job count (workerPoolSize is NumCPU/2 ≤ 8), so
+// no LIMIT is needed. lease_stale is a convenience flag the UI colours.
+func (q *Queries) AdminListActiveWorkers(ctx context.Context) ([]AdminListActiveWorkersRow, error) {
+	rows, err := q.db.Query(ctx, adminListActiveWorkers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListActiveWorkersRow
+	for rows.Next() {
+		var i AdminListActiveWorkersRow
+		if err := rows.Scan(
+			&i.ClaimedBy,
+			&i.JobID,
+			&i.Type,
+			&i.Priority,
+			&i.Attempts,
+			&i.ClaimedAt,
+			&i.LeaseExpiresAt,
+			&i.LeaseStale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListJobs = `-- name: AdminListJobs :many
+SELECT id, type, status, priority, attempts, max_attempts,
+       claimed_by, claimed_at, lease_expires_at, last_error,
+       origin_server_id, scheduled_for, enqueued_at, started_at, finished_at,
+       EXTRACT(EPOCH FROM (NOW() - enqueued_at))::BIGINT AS age_seconds
+  FROM jobs
+ WHERE ($3::TEXT IS NULL OR status = $3::TEXT)
+   AND ($4::TEXT   IS NULL OR type   = $4::TEXT)
+ ORDER BY priority ASC, enqueued_at ASC
+ LIMIT $1 OFFSET $2
+`
+
+type AdminListJobsParams struct {
+	Limit  int32
+	Offset int32
+	Status *string
+	Type   *string
+}
+
+type AdminListJobsRow struct {
+	ID             pgtype.UUID
+	Type           string
+	Status         string
+	Priority       int32
+	Attempts       int32
+	MaxAttempts    int32
+	ClaimedBy      *string
+	ClaimedAt      pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	LastError      *string
+	OriginServerID pgtype.UUID
+	ScheduledFor   pgtype.Timestamptz
+	EnqueuedAt     pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	AgeSeconds     int64
+}
+
+// Read-only admin queue view (#400). Optional status + type filters
+// (NULL = all). Ordered priority ASC, enqueued_at ASC — the same order
+// the pending index (priority, enqueued_at) and ClaimNextJob use, so
+// the operator sees jobs in roughly the order they'll run. `age_seconds`
+// is derived server-side (NOW() - enqueued_at) so the UI needn't trust a
+// client clock. LIMIT/OFFSET paging mirrors the metadata-extraction
+// admin list.
+func (q *Queries) AdminListJobs(ctx context.Context, arg AdminListJobsParams) ([]AdminListJobsRow, error) {
+	rows, err := q.db.Query(ctx, adminListJobs,
+		arg.Limit,
+		arg.Offset,
+		arg.Status,
+		arg.Type,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListJobsRow
+	for rows.Next() {
+		var i AdminListJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Status,
+			&i.Priority,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.LeaseExpiresAt,
+			&i.LastError,
+			&i.OriginServerID,
+			&i.ScheduledFor,
+			&i.EnqueuedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.AgeSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListScheduledJobs = `-- name: AdminListScheduledJobs :many
+SELECT id, type, status, priority, attempts, max_attempts,
+       scheduled_for, enqueued_at,
+       EXTRACT(EPOCH FROM (scheduled_for - NOW()))::BIGINT AS due_in_seconds
+  FROM jobs
+ WHERE scheduled_for IS NOT NULL
+   AND scheduled_for > NOW()
+   AND status = 'pending'
+ ORDER BY scheduled_for ASC
+ LIMIT $1 OFFSET $2
+`
+
+type AdminListScheduledJobsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type AdminListScheduledJobsRow struct {
+	ID           pgtype.UUID
+	Type         string
+	Status       string
+	Priority     int32
+	Attempts     int32
+	MaxAttempts  int32
+	ScheduledFor pgtype.Timestamptz
+	EnqueuedAt   pgtype.Timestamptz
+	DueInSeconds int64
+}
+
+// Read-only view of future-dated pending work (#401). There is no cron
+// subsystem — these are jobs a producer enqueued with a scheduled_for
+// in the future (e.g. the digest coordinator's self-reschedule), so the
+// operator can see what's coming without psql. Soonest first.
+func (q *Queries) AdminListScheduledJobs(ctx context.Context, arg AdminListScheduledJobsParams) ([]AdminListScheduledJobsRow, error) {
+	rows, err := q.db.Query(ctx, adminListScheduledJobs, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListScheduledJobsRow
+	for rows.Next() {
+		var i AdminListScheduledJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Status,
+			&i.Priority,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.ScheduledFor,
+			&i.EnqueuedAt,
+			&i.DueInSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminRequeueJob = `-- name: AdminRequeueJob :execrows
+UPDATE jobs SET
+    status           = 'pending',
+    attempts         = 0,
+    claimed_by       = NULL,
+    claimed_at       = NULL,
+    lease_expires_at = NULL,
+    last_error       = NULL,
+    finished_at      = NULL
+ WHERE id = $1
+   AND status IN ('failed', 'cancelled')
+`
+
+// Admin action (#401): send a dead job back to the queue. Distinct
+// from the worker-facing FailJob (which requires a claimed_by match) —
+// this is an operator forcing a retry from the admin UI, so it keys on
+// id alone. The `status IN ('failed','cancelled')` guard is load-
+// bearing: a RUNNING job must never be yanked out from under its worker
+// (execrows returns 0 if the row isn't in a requeuable state, which the
+// handler maps to 409). Resets the row to a clean pending state —
+// attempts back to 0 for a genuine fresh retry, and every claim/lease/
+// error/finish field cleared so ClaimNext treats it like new work.
+func (q *Queries) AdminRequeueJob(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, adminRequeueJob, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimJobBatch = `-- name: ClaimJobBatch :many
 WITH picked AS (
     SELECT id
