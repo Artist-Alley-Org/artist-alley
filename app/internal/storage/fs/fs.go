@@ -29,8 +29,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/mscrnt/artist-alley/app/internal/storage"
@@ -257,4 +259,151 @@ func (cr ctxReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return cr.r.Read(p)
+}
+
+// List enumerates stored variants in lexicographic key order (#403).
+// Implements storage.Backend.List.
+//
+// Ordering is deliberate rather than incidental. filepath.WalkDir's
+// depth-first order is NOT globally lexicographic: given variants
+// "a.b" and "a/b" under one object, '.' (0x2E) sorts below '/' (0x2F),
+// so "a.b" < "a/b" as keys — but the walk descends into directory "a"
+// first and emits "a/b" earlier. Paging on a cursor derived from that
+// order would skip keys permanently. Since this feeds orphan
+// detection, and orphan detection feeds a delete path, "usually
+// ordered" is not good enough.
+//
+// So the walk is structured around the layout instead. The first three
+// levels ("ab/cd/<hash>") are fixed-width hex and cannot collide
+// ambiguously, so they are iterated in sorted order and skipped
+// wholesale when they sort past the cursor. The variants beneath a
+// single object are few (bounded by the preview pipeline), so that
+// subtree is materialised and sorted properly, which is where the
+// ambiguity lives.
+//
+// Keys that don't parse as object paths (the writability probe, an
+// operator's stray file) are skipped — see storage.ParseObjectPath.
+func (b *Backend) List(ctx context.Context, cursor string, limit int) ([]storage.ObjectRef, string, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	refs := make([]storage.ObjectRef, 0, limit)
+
+	shards, err := sortedDirNames(b.Root)
+	if err != nil {
+		return nil, "", fmt.Errorf("fs: list: %w", err)
+	}
+	for _, s1 := range shards {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		if cursor != "" && s1 < cursor[:min(2, len(cursor))] {
+			continue
+		}
+		subs, err := sortedDirNames(filepath.Join(b.Root, s1))
+		if err != nil {
+			return nil, "", fmt.Errorf("fs: list: %w", err)
+		}
+		for _, s2 := range subs {
+			prefix2 := s1 + "/" + s2
+			if cursor != "" && prefix2 < cursor[:min(len(prefix2), len(cursor))] {
+				continue
+			}
+			hashes, err := sortedDirNames(filepath.Join(b.Root, s1, s2))
+			if err != nil {
+				return nil, "", fmt.Errorf("fs: list: %w", err)
+			}
+			for _, h := range hashes {
+				objDir := filepath.Join(b.Root, s1, s2, h)
+				objPrefix := prefix2 + "/" + h
+				if cursor != "" && objPrefix < cursor[:min(len(objPrefix), len(cursor))] {
+					continue
+				}
+				// Materialise this one object's variants and sort them
+				// properly — this is the only place ordering is subtle.
+				objRefs, err := listObjectVariants(ctx, objDir, objPrefix)
+				if err != nil {
+					return nil, "", fmt.Errorf("fs: list: %w", err)
+				}
+				for _, r := range objRefs {
+					if cursor != "" && r.Key() <= cursor {
+						continue
+					}
+					if len(refs) == limit {
+						// A full page with more to come: resume after
+						// the last key we actually returned.
+						return refs, refs[len(refs)-1].Key(), nil
+					}
+					refs = append(refs, r)
+				}
+			}
+		}
+	}
+	return refs, "", nil
+}
+
+// listObjectVariants collects every variant beneath one object
+// directory, sorted by full key. The subtree is small (one object's
+// renditions), so materialising it is cheap and lets us sort by the
+// real key rather than trusting traversal order.
+func listObjectVariants(ctx context.Context, objDir, objPrefix string) ([]storage.ObjectRef, error) {
+	var out []storage.ObjectRef
+	err := filepath.WalkDir(objDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil // vanished mid-walk against a live store
+			}
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(objDir, p)
+		if rerr != nil {
+			return nil
+		}
+		key := objPrefix + "/" + filepath.ToSlash(rel)
+		hash, variant, perr := storage.ParseObjectPath(key)
+		if perr != nil {
+			return nil // not an object we wrote
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			if errors.Is(ierr, os.ErrNotExist) {
+				return nil
+			}
+			return ierr
+		}
+		out = append(out, storage.ObjectRef{Hash: hash, Variant: variant, Size: info.Size()})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
+	return out, nil
+}
+
+// sortedDirNames returns the subdirectory names of dir, sorted. A
+// missing dir yields no entries rather than an error, so enumerating a
+// backend that has never been written to is a clean empty result.
+func sortedDirNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }

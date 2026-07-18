@@ -5,11 +5,16 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/mscrnt/artist-alley/app/internal/jobs"
 )
 
 // CapStorageRead gates the read-only admin view of storage usage
@@ -23,6 +28,16 @@ const CapStorageRead = "system.storage.read"
 // admin surface. It never mutates an object, a variant, or a pin.
 type AdminHandler struct {
 	q *Queries
+	// jobsSvc enqueues sweep jobs (#403). Nil in contexts that only
+	// read (the S2 usage/variants surface), so TriggerSweep reports
+	// unavailable rather than panicking.
+	jobsSvc *jobs.Service
+}
+
+// WithJobs returns the handler wired to enqueue sweep jobs.
+func (h *AdminHandler) WithJobs(s *jobs.Service) *AdminHandler {
+	h.jobsSvc = s
+	return h
 }
 
 // NewAdminHandler wires the storage admin handler off the pool,
@@ -150,4 +165,129 @@ func tsPtr(ts pgtype.Timestamptz) *time.Time {
 	}
 	t := ts.Time
 	return &t
+}
+
+// --- integrity sweeps (#403) -------------------------------------------------
+
+// SweepRun is one sweep execution as the admin surface sees it.
+type SweepRun struct {
+	ID             uuid.UUID
+	Kind           string
+	Status         string
+	ObjectsScanned int64
+	FindingsCount  int64
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	Error          *string
+}
+
+// SweepFinding is one problem a sweep recorded.
+type SweepFinding struct {
+	ID         uuid.UUID
+	Finding    string
+	ObjectHash string
+	VariantKey string
+	Detail     string
+	DetectedAt *time.Time
+	ResolvedAt *time.Time
+}
+
+// TriggerSweep opens a run row and enqueues the first batch. The job
+// re-enqueues itself with an advancing cursor until the scan completes,
+// so this returns as soon as the work is queued rather than blocking on
+// a full scan.
+func (h *AdminHandler) TriggerSweep(ctx context.Context, kind string, byUser *int64) (uuid.UUID, error) {
+	var jobType jobs.JobType
+	switch kind {
+	case "orphan_scan":
+		jobType = JobOrphanScan
+	case "checksum_verify":
+		jobType = JobChecksumVerify
+	default:
+		return uuid.Nil, fmt.Errorf("storage: unknown sweep kind %q", kind)
+	}
+	if h.jobsSvc == nil {
+		return uuid.Nil, errors.New("storage: sweeps unavailable (no job service)")
+	}
+
+	runID := uuid.New()
+	if _, err := h.q.CreateSweepRun(ctx, CreateSweepRunParams{
+		ID:                 pgtype.UUID{Bytes: runID, Valid: true},
+		Kind:               kind,
+		TriggeredByUserRef: byUser,
+	}); err != nil {
+		return uuid.Nil, fmt.Errorf("storage.TriggerSweep: create run: %w", err)
+	}
+	payload, err := json.Marshal(sweepPayload{RunID: runID})
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("storage.TriggerSweep: payload: %w", err)
+	}
+	if _, err := h.jobsSvc.Enqueue(ctx, jobType, json.RawMessage(payload), jobs.EnqueueOpts{}); err != nil {
+		return uuid.Nil, fmt.Errorf("storage.TriggerSweep: enqueue: %w", err)
+	}
+	return runID, nil
+}
+
+// ListSweepRuns returns recent runs, newest first, optionally filtered
+// by kind.
+func (h *AdminHandler) ListSweepRuns(ctx context.Context, kind *string, limit, offset int32) ([]SweepRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := h.q.ListSweepRuns(ctx, ListSweepRunsParams{Kind: kind, Limit: limit, Offset: offset})
+	if err != nil {
+		return nil, fmt.Errorf("storage.ListSweepRuns: %w", err)
+	}
+	out := make([]SweepRun, 0, len(rows))
+	for _, r := range rows {
+		run := SweepRun{
+			Kind:           r.Kind,
+			Status:         r.Status,
+			ObjectsScanned: r.ObjectsScanned,
+			FindingsCount:  r.FindingsCount,
+			Error:          r.Error,
+			StartedAt:      tsPtr(r.StartedAt),
+			FinishedAt:     tsPtr(r.FinishedAt),
+		}
+		if r.ID.Valid {
+			run.ID = uuid.UUID(r.ID.Bytes)
+		}
+		out = append(out, run)
+	}
+	return out, nil
+}
+
+// ListSweepFindings returns a page of findings for one run, plus the
+// total under the same filter.
+func (h *AdminHandler) ListSweepFindings(ctx context.Context, runID uuid.UUID, finding *string, limit, offset int32) ([]SweepFinding, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	pgRun := pgtype.UUID{Bytes: runID, Valid: true}
+	rows, err := h.q.ListSweepFindings(ctx, ListSweepFindingsParams{
+		RunID: pgRun, Finding: finding, Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("storage.ListSweepFindings: %w", err)
+	}
+	out := make([]SweepFinding, 0, len(rows))
+	for _, r := range rows {
+		f := SweepFinding{
+			Finding:    r.Finding,
+			ObjectHash: r.ObjectHash,
+			VariantKey: r.VariantKey,
+			Detail:     r.Detail,
+			DetectedAt: tsPtr(r.DetectedAt),
+			ResolvedAt: tsPtr(r.ResolvedAt),
+		}
+		if r.ID.Valid {
+			f.ID = uuid.UUID(r.ID.Bytes)
+		}
+		out = append(out, f)
+	}
+	total, err := h.q.CountSweepFindings(ctx, CountSweepFindingsParams{RunID: pgRun, Finding: finding})
+	if err != nil {
+		return nil, 0, fmt.Errorf("storage.ListSweepFindings: count: %w", err)
+	}
+	return out, total, nil
 }
