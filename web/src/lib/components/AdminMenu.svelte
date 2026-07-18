@@ -18,11 +18,18 @@
   import AdminIcon from '$components/AdminIcon.svelte';
   import { ADMIN_SECTIONS } from '$lib/admin/sections';
 
-  const isAdmin = $derived(auth.can('system.admin'));
+  // #385 — show the gear to anyone who can open at least one admin
+  // surface (read-cap holders included), and list only the sections
+  // that have a live tile they can actually open. `system.admin` sees
+  // everything, unchanged.
+  const canSeeAdmin = $derived(auth.canSeeAdmin);
+  const visibleSections = $derived(
+    ADMIN_SECTIONS.filter((s) => s.tiles.some((t) => auth.canSeeTile(t))),
+  );
   const pendingCount = 0; // future: pending workflow approvals etc.
 </script>
 
-{#if isAdmin}
+{#if canSeeAdmin}
   <Menu align="right" triggerTestId="nav-admin-menu-trigger" panelTestId="admin-menu-panel">
     {#snippet trigger({ open })}
       <span
@@ -49,7 +56,7 @@
       </a>
       <div class="my-1 border-t border-border"></div>
 
-      {#each ADMIN_SECTIONS as section (section.slug)}
+      {#each visibleSections as section (section.slug)}
         <a
           href={`/admin/${section.slug}`}
           role="menuitem"

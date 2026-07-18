@@ -205,4 +205,3 @@ func tiltedFirstAxis(major, minor float32, dim int) []float32 {
 	v[1] = minor
 	return v
 }
-

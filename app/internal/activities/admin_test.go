@@ -34,9 +34,9 @@ import (
 // activities_test.go integration tests use, plus pre-seeds a
 // handful of activities the admin endpoint can list.
 type adminFixture struct {
-	pool    *pgxpool.Pool
-	writer  *activities.Writer
-	handler *activities.AdminHandler
+	pool     *pgxpool.Pool
+	writer   *activities.Writer
+	handler  *activities.AdminHandler
 	actorRef int64
 }
 

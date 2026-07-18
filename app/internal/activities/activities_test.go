@@ -343,8 +343,8 @@ func TestRecordActivity_PreservesPayload(t *testing.T) {
 	uri := "https://test.example/activities/" + randHex(t, 16)
 	in := newInput(ref, actorURI, uri, federation.ActivityAAApprove)
 	in.Payload = map[string]any{
-		"aa:comment":     "Approved with minor lighting note.",
-		"aa:reviewedAt":  "2026-06-04T10:00:00Z",
+		"aa:comment":    "Approved with minor lighting note.",
+		"aa:reviewedAt": "2026-06-04T10:00:00Z",
 		"nested": map[string]any{
 			"deep":  true,
 			"count": 42,

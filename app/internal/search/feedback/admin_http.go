@@ -122,11 +122,11 @@ func topQueryRowsToJSON(rows []TopQueryRow) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, map[string]any{
-			"query_hash":     r.QueryHash,
-			"dsl_query":      r.DSLQuery,
-			"total_votes":    r.TotalVotes,
-			"down_votes":     r.DownVotes,
-			"down_vote_pct":  r.DownVotePct,
+			"query_hash":    r.QueryHash,
+			"dsl_query":     r.DSLQuery,
+			"total_votes":   r.TotalVotes,
+			"down_votes":    r.DownVotes,
+			"down_vote_pct": r.DownVotePct,
 		})
 	}
 	return out
@@ -151,14 +151,14 @@ func perUserRowsToJSON(rows []PerUserRow) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
 		m := map[string]any{
-			"id":            r.ID.String(),
-			"query_hash":    r.QueryHash,
-			"dsl_query":     r.DSLQuery,
-			"hit_asset_id":  r.HitAssetID.String(),
-			"hit_position":  r.HitPosition,
-			"direction":     string(r.Direction),
-			"feedback_at":   r.FeedbackAt.Format("2006-01-02T15:04:05.000000000Z07:00"),
-			"asset_title":   r.AssetTitle,
+			"id":           r.ID.String(),
+			"query_hash":   r.QueryHash,
+			"dsl_query":    r.DSLQuery,
+			"hit_asset_id": r.HitAssetID.String(),
+			"hit_position": r.HitPosition,
+			"direction":    string(r.Direction),
+			"feedback_at":  r.FeedbackAt.Format("2006-01-02T15:04:05.000000000Z07:00"),
+			"asset_title":  r.AssetTitle,
 		}
 		if r.IPHash != nil {
 			m["ip_hash"] = *r.IPHash

@@ -162,10 +162,10 @@ func RunBackendContract(t *testing.T, makeBackend func(t *testing.T) storage.Bac
 		hash := sha256Hex([]byte("source-of-variants"))
 		ctx := context.Background()
 		variants := map[string][]byte{
-			storage.VariantOriginal:    []byte("ORIGINAL"),
-			"thumb_512":        []byte("THUMB-bytes"),
-			"hls/index.m3u8":   []byte("#EXTM3U\n"),
-			"hls/seg00001.ts":  []byte("SEG1"),
+			storage.VariantOriginal: []byte("ORIGINAL"),
+			"thumb_512":             []byte("THUMB-bytes"),
+			"hls/index.m3u8":        []byte("#EXTM3U\n"),
+			"hls/seg00001.ts":       []byte("SEG1"),
 		}
 		for k, v := range variants {
 			if _, err := b.Put(ctx, hash, k, bytes.NewReader(v)); err != nil {

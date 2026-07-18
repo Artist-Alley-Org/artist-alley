@@ -12,16 +12,16 @@ import (
 // comment. Handlers build this from their existing comment-row
 // state. The parent fields are zero when the comment is top-level.
 type CommentRef struct {
-	ID            string // UUID stringified
-	PostID        string
-	PostTitle     string
-	PostAuthorRef int64
-	PostAuthorURI string
-	ParentID      string // empty for top-level
+	ID              string // UUID stringified
+	PostID          string
+	PostTitle       string
+	PostAuthorRef   int64
+	PostAuthorURI   string
+	ParentID        string // empty for top-level
 	ParentAuthorRef int64
 	ParentAuthorURI string
-	Body          string
-	Depth         int32 // 0 for top-level, 1+ for replies
+	Body            string
+	Depth           int32 // 0 for top-level, 1+ for replies
 }
 
 // Excerpt returns the first 120 chars of the comment body,
@@ -42,11 +42,11 @@ func (c CommentRef) Excerpt() string {
 // the parent's audience.
 //
 // Two notifications fire:
-//   1. comment_on_my_post to the post author (always).
-//   2. reply_to_my_comment to the parent comment's author (only
-//      when this is a reply AND the parent author is different
-//      from the post author — the writer's notifier guards on
-//      actor != recipient but doesn't dedup across notifications).
+//  1. comment_on_my_post to the post author (always).
+//  2. reply_to_my_comment to the parent comment's author (only
+//     when this is a reply AND the parent author is different
+//     from the post author — the writer's notifier guards on
+//     actor != recipient but doesn't dedup across notifications).
 func CreateComment(actor ActorContext, comment CommentRef) Emission {
 	actorRef := actor.UserRef
 	commentObjectURI := actor.ObjectURI(activities.ObjectKindComment, comment.ID)
@@ -72,11 +72,11 @@ func CreateComment(actor ActorContext, comment CommentRef) Emission {
 			},
 			To: []string{comment.PostAuthorURI},
 			Payload: map[string]any{
-				"object_type":    "Note",
-				"inReplyTo":      inReplyTo,
-				"content":        comment.Body,
-				"comment_depth":  comment.Depth + 1, // 1-indexed for human readability
-				"target_post_id": comment.PostID,
+				"object_type":       "Note",
+				"inReplyTo":         inReplyTo,
+				"content":           comment.Body,
+				"comment_depth":     comment.Depth + 1, // 1-indexed for human readability
+				"target_post_id":    comment.PostID,
 				"target_post_title": comment.PostTitle,
 			},
 		},

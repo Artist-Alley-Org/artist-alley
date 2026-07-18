@@ -37,14 +37,14 @@ import (
 type Tracker struct {
 	pool    *pgxpool.Pool
 	caches  *Caches
-	loader  *Loader   // for per-provider budget overrides + defaults
+	loader  *Loader      // for per-provider budget overrides + defaults
 	auditor *CallAuditor // for the soft-warn audit event
 
 	// mu guards per-provider serialisation. One mutex per provider
 	// is created on first touch via the inner map; the outer mu
 	// gates map mutation. Avoids cross-provider contention.
-	mu         sync.Mutex
-	perProvMu  map[string]*sync.Mutex
+	mu        sync.Mutex
+	perProvMu map[string]*sync.Mutex
 }
 
 // ProviderBudget is the per-provider knob set the tracker compares

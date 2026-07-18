@@ -30,12 +30,12 @@ import (
 // Recorder. The string value is what lands in audit_events.event_type
 // — keep it stable; downstream tooling will pivot on it.
 const (
-	EventLoginSucceeded   = "login.succeeded"
-	EventLoginFailed      = "login.failed"
-	EventLoginRateLimited = "login.rate_limited"
-	EventLogout           = "logout"
-	EventSessionRevoked   = "session.revoked"
-	EventSessionExpired   = "session.expired"
+	EventLoginSucceeded    = "login.succeeded"
+	EventLoginFailed       = "login.failed"
+	EventLoginRateLimited  = "login.rate_limited"
+	EventLogout            = "logout"
+	EventSessionRevoked    = "session.revoked"
+	EventSessionExpired    = "session.expired"
 	EventUserStatusChanged = "user.status_changed"
 
 	// Phase 1.17.A — typed per-transition admin events. The
@@ -56,8 +56,8 @@ const (
 	// is unambiguous and easy to alert on.
 	EventAdminUserRefusedLastAdmin = "admin.users.refused_last_admin"
 
-	EventPasswordChanged   = "user.password_changed"
-	EventPasswordReset     = "user.password_reset"
+	EventPasswordChanged = "user.password_changed"
+	EventPasswordReset   = "user.password_reset"
 
 	// Phase 1.19.A-2 — admin impersonation lifecycle. Two
 	// events, both with subject=target_user_ref + actor=admin_
@@ -69,8 +69,8 @@ const (
 	EventAdminImpersonationEnded   = "admin.impersonation.ended"
 
 	// Phase 1.19.C — self-service registration lifecycle.
-	EventUserRegistered     = "user.registered"
-	EventUserEmailVerified  = "user.email_verified"
+	EventUserRegistered    = "user.registered"
+	EventUserEmailVerified = "user.email_verified"
 
 	// Phase 1.19.D — per-username account lockout. Emitted exactly
 	// once per lockout window (the failed attempt that CROSSES the
@@ -82,10 +82,10 @@ const (
 	// unlock (source=admin, actor=admin.user_ref) and on
 	// successful login after auto-clear (source=auto,
 	// actor=self via userRef; treated separately below).
-	EventAuthLockoutCleared = "auth.lockout.cleared"
-	EventCapabilityGranted = "user.capability_granted"
-	EventCapabilityRevoked = "user.capability_revoked"
-	EventCapabilityGrantRemoved = "user.capability_grant_removed"
+	EventAuthLockoutCleared      = "auth.lockout.cleared"
+	EventCapabilityGranted       = "user.capability_granted"
+	EventCapabilityRevoked       = "user.capability_revoked"
+	EventCapabilityGrantRemoved  = "user.capability_grant_removed"
 	EventCapabilityRevokeRemoved = "user.capability_revoke_removed"
 
 	// Phase 1.17.C — fired by capability_sweeper.go once per
@@ -135,8 +135,8 @@ const (
 	// 1.22.C federation share events. Emitted via WriteInTx so
 	// the audit row commits atomically with the share write per
 	// the design proposal §7.2 write-ahead invariant.
-	EventFederationShareGranted    = "federation.share.granted"
-	EventFederationShareRevoked    = "federation.share.revoked"
+	EventFederationShareGranted     = "federation.share.granted"
+	EventFederationShareRevoked     = "federation.share.revoked"
 	EventFederationActivityRejected = "federation.activity.rejected"
 
 	// 1.22.D-b outbox-dispatcher emission events. emission.skipped
@@ -149,8 +149,8 @@ const (
 	// 1.22.D-c admin operator events. Both pool-bound (NOT tx-
 	// bound) — the admin handler's tx is the state-change unit;
 	// the audit records the operator decision after commit.
-	EventFederationOutboxRequeued         = "federation.outbox.requeued"
-	EventFederationPeerCascadeCancelled   = "federation.peer.cascade_cancelled"
+	EventFederationOutboxRequeued       = "federation.outbox.requeued"
+	EventFederationPeerCascadeCancelled = "federation.peer.cascade_cancelled"
 
 	// 1.22.I-b per-user federation keypair events. Fired from the
 	// three user-create paths (bootstrap, /setup, /admin/seed/users)
@@ -296,16 +296,16 @@ const (
 	// state machine IS the user soft-delete concept (see
 	// [[project_locked_decisions]] + pre-audit for 1.55.C-1). Only
 	// the hard-delete-by-gc event is new for user.
-	EventAdminAssetSoftDeleted        = "admin.asset.soft_deleted"
-	EventAdminAssetRestored           = "admin.asset.restored"
-	EventAdminAssetHardDeletedByGC    = "admin.asset.hard_deleted_by_gc"
-	EventAdminPostSoftDeleted         = "admin.post.soft_deleted"
-	EventAdminPostRestored            = "admin.post.restored"
-	EventAdminPostHardDeletedByGC     = "admin.post.hard_deleted_by_gc"
-	EventAdminCollectionSoftDeleted   = "admin.collection.soft_deleted"
-	EventAdminCollectionRestored      = "admin.collection.restored"
+	EventAdminAssetSoftDeleted          = "admin.asset.soft_deleted"
+	EventAdminAssetRestored             = "admin.asset.restored"
+	EventAdminAssetHardDeletedByGC      = "admin.asset.hard_deleted_by_gc"
+	EventAdminPostSoftDeleted           = "admin.post.soft_deleted"
+	EventAdminPostRestored              = "admin.post.restored"
+	EventAdminPostHardDeletedByGC       = "admin.post.hard_deleted_by_gc"
+	EventAdminCollectionSoftDeleted     = "admin.collection.soft_deleted"
+	EventAdminCollectionRestored        = "admin.collection.restored"
 	EventAdminCollectionHardDeletedByGC = "admin.collection.hard_deleted_by_gc"
-	EventAdminUserHardDeletedByGC     = "admin.user.hard_deleted_by_gc"
+	EventAdminUserHardDeletedByGC       = "admin.user.hard_deleted_by_gc"
 )
 
 // Recorder writes audit events. Construct one at server startup and
@@ -731,10 +731,10 @@ func (r *Recorder) OutboxRequeued(
 	outboxID, peerID, activityID, priorLastError string,
 ) {
 	meta := map[string]any{
-		"outbox_id":         outboxID,
-		"peer_id":           peerID,
-		"activity_id":       activityID,
-		"prior_last_error":  priorLastError,
+		"outbox_id":        outboxID,
+		"peer_id":          peerID,
+		"activity_id":      activityID,
+		"prior_last_error": priorLastError,
 	}
 	r.write(ctx, EventFederationOutboxRequeued, nil, &actorUserRef, ctxFromRequest(req), meta)
 }
@@ -850,10 +850,10 @@ func (r *Recorder) EmissionSkipped(
 // Pool-bound. Metadata fields are the per-emission detail an
 // operator wants when grepping the audit log:
 //
-//   peer_id                — recipient peer's UUID
-//   activity_type          — the verb (Like / Comment / etc.)
-//   sender_key_version     — sender's key version sealed against
-//   recipient_key_version  — recipient's key version sealed against
+//	peer_id                — recipient peer's UUID
+//	activity_type          — the verb (Like / Comment / etc.)
+//	sender_key_version     — sender's key version sealed against
+//	recipient_key_version  — recipient's key version sealed against
 //
 // One row per encrypted recipient. A broadcast activity to N
 // peers that all support e2e produces N audit rows.
@@ -1049,21 +1049,21 @@ func (r *Recorder) WriteInTx(ctx context.Context, q *Queries, eventType string, 
 // semantics; the audit feed accepts the "domain write committed,
 // audit row missed" gap as the lesser failure mode.
 //
-//   peerID                  — sender peer's UUID (audit metadata
-//                             for the admin federation surface).
-//   activityType            — the verb (Like / Comment / etc.).
-//   activityID              — envelope.id (so the audit feed
-//                             cross-references the inbox row).
-//   senderKeyVersion        — sender's key version sealed against
-//                             (from envelope.encryption block).
-//   decryptedWithKeyVersion — which receiver key actually opened
-//                             the payload. 1 = current key (steady
-//                             state); 2+ = retained key fallback
-//                             fired (rotation grace window).
-//   attemptCount            — how many keys the dispatcher tried
-//                             before one worked. AttemptCount=1 is
-//                             the common case; >1 means rotation
-//                             drift saved us.
+//	peerID                  — sender peer's UUID (audit metadata
+//	                          for the admin federation surface).
+//	activityType            — the verb (Like / Comment / etc.).
+//	activityID              — envelope.id (so the audit feed
+//	                          cross-references the inbox row).
+//	senderKeyVersion        — sender's key version sealed against
+//	                          (from envelope.encryption block).
+//	decryptedWithKeyVersion — which receiver key actually opened
+//	                          the payload. 1 = current key (steady
+//	                          state); 2+ = retained key fallback
+//	                          fired (rotation grace window).
+//	attemptCount            — how many keys the dispatcher tried
+//	                          before one worked. AttemptCount=1 is
+//	                          the common case; >1 means rotation
+//	                          drift saved us.
 func (r *Recorder) FederationInboxDecrypted(
 	ctx context.Context,
 	subjectUserRef *int64,
@@ -1093,18 +1093,18 @@ func (r *Recorder) FederationInboxDecrypted(
 //
 // `reason` is the operator-facing breakdown:
 //   - "no_keys_walked"          — recipient had no current + no
-//                                  retained keys (post-I-b
-//                                  invariant violation; defensive).
+//     retained keys (post-I-b
+//     invariant violation; defensive).
 //   - "sender_key_missing"      — sender pubkey lookup returned
-//                                  empty; pre-I-c peer that hasn't
-//                                  advertised an encryption key.
+//     empty; pre-I-c peer that hasn't
+//     advertised an encryption key.
 //   - "recipient_unresolvable"  — envelope.to didn't resolve to a
-//                                  local user (likely misrouted
-//                                  delivery).
+//     local user (likely misrouted
+//     delivery).
 //   - "no_key_worked"           — walked every retained key, none
-//                                  opened. Tamper, corruption, or
-//                                  sender used a recipient key
-//                                  version we've fully aged out.
+//     opened. Tamper, corruption, or
+//     sender used a recipient key
+//     version we've fully aged out.
 //
 // `recipientKeyVersionAttempted` is the version of the FIRST key
 // the dispatcher tried (current key, by convention). 0 when no
@@ -1116,11 +1116,11 @@ func (r *Recorder) FederationInboxDecryptFailed(
 	senderKeyVersion, recipientKeyVersionAttempted int32,
 ) {
 	meta := map[string]any{
-		"peer_id":                        peerID,
-		"activity_type":                  activityType,
-		"activity_id":                    activityID,
-		"reason":                         reason,
-		"sender_key_version":             senderKeyVersion,
+		"peer_id":                         peerID,
+		"activity_type":                   activityType,
+		"activity_id":                     activityID,
+		"reason":                          reason,
+		"sender_key_version":              senderKeyVersion,
 		"recipient_key_version_attempted": recipientKeyVersionAttempted,
 	}
 	r.write(ctx, EventFederationInboxDecryptFailed, subjectUserRef, nil, reqContext{}, meta)
@@ -1139,16 +1139,16 @@ func (r *Recorder) FederationInboxDecryptFailed(
 // "DB write committed, audit row missed" gap as the lesser
 // failure mode (same contract as I-e/I-f).
 //
-//   peerID        — recipient peer's UUID. Operator dashboards
-//                   group on this to surface "which peers cause
-//                   the most refusals?"
-//   activityType  — verb (Like / Create / aa:Share / etc.).
-//   sensitivity   — share tier that triggered the refusal
-//                   (restricted / embargo / future tier).
-//   reason        — catalogue value from
-//                   [outbox.RefuseReason]. Today only
-//                   encryption_required_but_unavailable;
-//                   future reasons land here as new constants.
+//	peerID        — recipient peer's UUID. Operator dashboards
+//	                group on this to surface "which peers cause
+//	                the most refusals?"
+//	activityType  — verb (Like / Create / aa:Share / etc.).
+//	sensitivity   — share tier that triggered the refusal
+//	                (restricted / embargo / future tier).
+//	reason        — catalogue value from
+//	                [outbox.RefuseReason]. Today only
+//	                encryption_required_but_unavailable;
+//	                future reasons land here as new constants.
 func (r *Recorder) FederationEmissionRefused(
 	ctx context.Context,
 	peerID, activityType, sensitivity, reason string,
@@ -1243,13 +1243,13 @@ func (r *Recorder) FederationUserKeyRetainedExpired(
 // the audit feed. The dedicated event type makes the gate's
 // firing greppable.
 //
-//   peerID        — sender peer's UUID.
-//   activityType  — verb on the envelope (Like / Create / etc.).
-//   activityID    — envelope.id.
-//   objectKind    — target object's kind ("post" / "asset" / etc.);
-//                   empty when row.ObjectKind was nil (the gate
-//                   shouldn't have fired in that case but the
-//                   audit records the actual value seen).
+//	peerID        — sender peer's UUID.
+//	activityType  — verb on the envelope (Like / Create / etc.).
+//	activityID    — envelope.id.
+//	objectKind    — target object's kind ("post" / "asset" / etc.);
+//	                empty when row.ObjectKind was nil (the gate
+//	                shouldn't have fired in that case but the
+//	                audit records the actual value seen).
 func (r *Recorder) FederationInboxEncryptionRequiredRejected(
 	ctx context.Context,
 	subjectUserRef *int64,

@@ -35,11 +35,11 @@ func ValidTarget(s string) bool {
 type ScopeKind string
 
 const (
-	ScopeAll                ScopeKind = "all"
-	ScopeAssetType          ScopeKind = "asset_type"
-	ScopeCollection         ScopeKind = "collection"
-	ScopeEmbeddingModel     ScopeKind = "embedding_model"
-	ScopeFederationMissing  ScopeKind = "federation_missing"
+	ScopeAll               ScopeKind = "all"
+	ScopeAssetType         ScopeKind = "asset_type"
+	ScopeCollection        ScopeKind = "collection"
+	ScopeEmbeddingModel    ScopeKind = "embedding_model"
+	ScopeFederationMissing ScopeKind = "federation_missing"
 )
 
 // Scope carries the parsed scope filter. Stored on the run row as

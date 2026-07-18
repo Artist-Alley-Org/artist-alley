@@ -77,12 +77,12 @@ const (
 type PollStatus string
 
 const (
-	PollStatusNeverPolled          PollStatus = "never_polled"
-	PollStatusOK                   PollStatus = "ok"
-	PollStatusUnreachable          PollStatus = "unreachable"
-	PollStatusSignatureFailed      PollStatus = "signature_failed"
-	PollStatusMalformed            PollStatus = "malformed"
-	PollStatusSpecVersionMismatch  PollStatus = "spec_version_mismatch"
+	PollStatusNeverPolled         PollStatus = "never_polled"
+	PollStatusOK                  PollStatus = "ok"
+	PollStatusUnreachable         PollStatus = "unreachable"
+	PollStatusSignatureFailed     PollStatus = "signature_failed"
+	PollStatusMalformed           PollStatus = "malformed"
+	PollStatusSpecVersionMismatch PollStatus = "spec_version_mismatch"
 )
 
 // Valid reports whether s is in the closed catalogue.
@@ -97,20 +97,20 @@ func (s PollStatus) Valid() bool {
 
 // Directory is the in-memory shape of one subscription.
 type Directory struct {
-	ID                   uuid.UUID
-	URL                  string
-	OperatorName         string
-	OperatorPublicKey    string
-	OperatorFingerprint  string
-	OperatorContact      string
-	SubscribedAt         pgtype.Timestamptz
-	SubscribedByUserRef  int64
-	Enabled              bool
-	LastPolledAt         pgtype.Timestamptz
-	LastPollStatus       PollStatus
-	LastPollError        string
-	PollIntervalSeconds  int32
-	Notes                string
+	ID                  uuid.UUID
+	URL                 string
+	OperatorName        string
+	OperatorPublicKey   string
+	OperatorFingerprint string
+	OperatorContact     string
+	SubscribedAt        pgtype.Timestamptz
+	SubscribedByUserRef int64
+	Enabled             bool
+	LastPolledAt        pgtype.Timestamptz
+	LastPollStatus      PollStatus
+	LastPollError       string
+	PollIntervalSeconds int32
+	Notes               string
 	// Publish-side state (1.22.B-c-bis). Tracks whether THIS
 	// instance has self-published to the directory.
 	PublishStatus         federation.PublishStatus
@@ -129,19 +129,19 @@ type Directory struct {
 
 // Entry is the in-memory shape of one cached directory entry.
 type Entry struct {
-	ID                 uuid.UUID
-	DirectoryID        uuid.UUID
-	InstanceURL        string
-	DisplayName        string
-	InstancePublicKey  string
-	Fingerprint        string
-	Region             string
-	Description        string
-	Tags               []string
-	VerifiedAt         pgtype.Timestamptz
-	VerifiedVia        string
-	ListingID          string
-	CachedAt           pgtype.Timestamptz
+	ID                uuid.UUID
+	DirectoryID       uuid.UUID
+	InstanceURL       string
+	DisplayName       string
+	InstancePublicKey string
+	Fingerprint       string
+	Region            string
+	Description       string
+	Tags              []string
+	VerifiedAt        pgtype.Timestamptz
+	VerifiedVia       string
+	ListingID         string
+	CachedAt          pgtype.Timestamptz
 }
 
 // Errors callers may distinguish on.
@@ -258,13 +258,13 @@ func (r *Registry) Subscribe(ctx context.Context, in SubscribeInput) (*Directory
 		return nil, ErrAlreadySubscribed
 	}
 	row, err := New(r.Pool).InsertDirectory(ctx, InsertDirectoryParams{
-		DirectoryUrl:         url,
-		OperatorName:         in.OperatorName,
-		OperatorPublicKey:    in.OperatorPublicKey,
-		OperatorFingerprint:  in.OperatorFingerprint,
-		OperatorContact:      in.OperatorContact,
-		SubscribedByUserRef:  in.SubscribedByUserRef,
-		Notes:                in.Notes,
+		DirectoryUrl:        url,
+		OperatorName:        in.OperatorName,
+		OperatorPublicKey:   in.OperatorPublicKey,
+		OperatorFingerprint: in.OperatorFingerprint,
+		OperatorContact:     in.OperatorContact,
+		SubscribedByUserRef: in.SubscribedByUserRef,
+		Notes:               in.Notes,
 	})
 	if err != nil {
 		return nil, err
@@ -315,9 +315,9 @@ func (r *Registry) recordPollOutcome(ctx context.Context, id uuid.UUID, status P
 		return fmt.Errorf("directory: invalid poll status %q", status)
 	}
 	return New(r.Pool).UpdateDirectoryPollOutcome(ctx, UpdateDirectoryPollOutcomeParams{
-		ID:              pgtype.UUID{Bytes: id, Valid: true},
-		LastPollStatus:  string(status),
-		LastPollError:   errMsg,
+		ID:             pgtype.UUID{Bytes: id, Valid: true},
+		LastPollStatus: string(status),
+		LastPollError:  errMsg,
 	})
 }
 
@@ -335,17 +335,17 @@ func (r *Registry) persistEntries(ctx context.Context, directoryID uuid.UUID, en
 		keepURLs[i] = e.InstanceURL
 		tagsJSON, _ := json.Marshal(e.Tags)
 		if err := q.UpsertDirectoryEntry(ctx, UpsertDirectoryEntryParams{
-			DirectoryID:        pgtype.UUID{Bytes: directoryID, Valid: true},
-			InstanceUrl:        e.InstanceURL,
-			DisplayName:        e.DisplayName,
-			InstancePublicKey:  e.InstancePublicKey,
-			Fingerprint:        e.Fingerprint,
-			Region:             e.Region,
-			Description:        e.Description,
-			Tags:               tagsJSON,
-			VerifiedAt:         e.VerifiedAt,
-			VerifiedVia:        e.VerifiedVia,
-			ListingID:          e.ListingID,
+			DirectoryID:       pgtype.UUID{Bytes: directoryID, Valid: true},
+			InstanceUrl:       e.InstanceURL,
+			DisplayName:       e.DisplayName,
+			InstancePublicKey: e.InstancePublicKey,
+			Fingerprint:       e.Fingerprint,
+			Region:            e.Region,
+			Description:       e.Description,
+			Tags:              tagsJSON,
+			VerifiedAt:        e.VerifiedAt,
+			VerifiedVia:       e.VerifiedVia,
+			ListingID:         e.ListingID,
 		}); err != nil {
 			return err
 		}
@@ -548,17 +548,17 @@ func (c *Client) Poll(ctx context.Context, reg *Registry, d *Directory) error {
 	entries := make([]Entry, len(parsed))
 	for i, e := range parsed {
 		entries[i] = Entry{
-			DirectoryID:        d.ID,
-			InstanceURL:        e.InstanceURL,
-			DisplayName:        e.DisplayName,
-			InstancePublicKey:  e.InstancePublicKeyPEM,
-			Fingerprint:        e.Fingerprint,
-			Region:             e.Region,
-			Description:        e.Description,
-			Tags:               e.Tags,
-			VerifiedAt:         pgtype.Timestamptz{Time: e.VerifiedAt, Valid: true},
-			VerifiedVia:        e.VerifiedVia,
-			ListingID:          e.ListingID,
+			DirectoryID:       d.ID,
+			InstanceURL:       e.InstanceURL,
+			DisplayName:       e.DisplayName,
+			InstancePublicKey: e.InstancePublicKeyPEM,
+			Fingerprint:       e.Fingerprint,
+			Region:            e.Region,
+			Description:       e.Description,
+			Tags:              e.Tags,
+			VerifiedAt:        pgtype.Timestamptz{Time: e.VerifiedAt, Valid: true},
+			VerifiedVia:       e.VerifiedVia,
+			ListingID:         e.ListingID,
 		}
 	}
 	if err := reg.persistEntries(ctx, d.ID, entries); err != nil {

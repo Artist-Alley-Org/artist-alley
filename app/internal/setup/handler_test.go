@@ -221,7 +221,7 @@ func TestCompleteSetup_InputValidation(t *testing.T) {
 				Site:  openapi.SiteConfig{Name: "S"},
 				Smtp: &openapi.SMTPConfig{
 					Host: "smtp.example.com", Port: 587,
-					Encryption: openapi.SMTPConfigEncryption("blarghtls"),
+					Encryption:  openapi.SMTPConfigEncryption("blarghtls"),
 					FromAddress: "x@x.com",
 				},
 			},
@@ -463,8 +463,6 @@ func (s shimImpl) CompleteSetup(ctx context.Context, req openapi.CompleteSetupRe
 	return s.h.CompleteSetup(ctx, req)
 }
 
-
-
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -518,6 +516,3 @@ func strPtr(s string) *string { return &s }
 func uniqueSuffix() string {
 	return time.Now().Format("150405.000") // HH:MM:SS.mmm
 }
-
-
-

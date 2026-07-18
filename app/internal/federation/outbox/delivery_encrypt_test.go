@@ -104,8 +104,8 @@ func freshRecipientKeypair(t *testing.T) (pub, priv []byte) {
 // audit.Recorder against the DB. Not wired by default (the
 // tests below wire it via worker.SetAudit when they need it).
 type fakeAudit struct {
-	mu       sync.Mutex
-	calls    []auditCall
+	mu    sync.Mutex
+	calls []auditCall
 }
 
 type auditCall struct {

@@ -123,11 +123,11 @@ func TestAdd_RejectsBadURLs(t *testing.T) {
 	good := freshPEM(t)
 
 	cases := []string{
-		"",                              // empty
-		"http://peer.example",           // not https
-		"ftp://peer.example",            // not https
-		"https://peer.example/api",      // has path
-		"https://",                      // no host
+		"",                         // empty
+		"http://peer.example",      // not https
+		"ftp://peer.example",       // not https
+		"https://peer.example/api", // has path
+		"https://",                 // no host
 	}
 	for _, u := range cases {
 		_, err := r.Add(ctx, peer.AddInput{

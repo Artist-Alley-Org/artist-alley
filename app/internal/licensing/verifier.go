@@ -32,16 +32,16 @@ import (
 // distinguish "signature failed" from "expired" from "wrong issuer"
 // when surfacing license status to admins.
 var (
-	ErrNotInWindow     = errors.New("license: outside validity window")
-	ErrNotYetValid     = errors.New("license: not yet valid")
-	ErrExpired         = errors.New("license: expired")
-	ErrUnknownKID      = errors.New("license: unknown signing key")
-	ErrBadSignature    = errors.New("license: signature invalid")
-	ErrWrongIssuer     = errors.New("license: wrong issuer")
-	ErrBadEnvelope     = errors.New("license: malformed envelope")
-	ErrChainExpired    = errors.New("license: publisher cert expired")
-	ErrChainBadSig     = errors.New("license: publisher cert signature invalid")
-	ErrChainScope      = errors.New("license: plugin not in publisher's allowed_products")
+	ErrNotInWindow      = errors.New("license: outside validity window")
+	ErrNotYetValid      = errors.New("license: not yet valid")
+	ErrExpired          = errors.New("license: expired")
+	ErrUnknownKID       = errors.New("license: unknown signing key")
+	ErrBadSignature     = errors.New("license: signature invalid")
+	ErrWrongIssuer      = errors.New("license: wrong issuer")
+	ErrBadEnvelope      = errors.New("license: malformed envelope")
+	ErrChainExpired     = errors.New("license: publisher cert expired")
+	ErrChainBadSig      = errors.New("license: publisher cert signature invalid")
+	ErrChainScope       = errors.New("license: plugin not in publisher's allowed_products")
 	ErrChainKIDMismatch = errors.New("license: plugin kid does not match cert kid")
 
 	// Org cross-binding (Layer-1) errors. Surface when the .lic
@@ -126,13 +126,13 @@ func VerifyPublisherCert(cert SignedPublisherCert) error {
 
 // VerifyPluginChain walks the chain of trust for a plugin license:
 //
-//   1. Verify the embedded publisher cert with our root key.
-//   2. Check the cert is in its temporal window.
-//   3. Verify the plugin license signature against the publisher's
-//      pubkey (taken from the embedded cert).
-//   4. Check the plugin license is in its temporal window.
-//   5. Confirm plugin.publisher_kid == cert.publisher_kid.
-//   6. Confirm plugin.prod ∈ cert.allowed_products.
+//  1. Verify the embedded publisher cert with our root key.
+//  2. Check the cert is in its temporal window.
+//  3. Verify the plugin license signature against the publisher's
+//     pubkey (taken from the embedded cert).
+//  4. Check the plugin license is in its temporal window.
+//  5. Confirm plugin.publisher_kid == cert.publisher_kid.
+//  6. Confirm plugin.prod ∈ cert.allowed_products.
 //
 // Returns the validated plugin claims on success; typed error on any
 // failed step.

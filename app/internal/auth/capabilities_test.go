@@ -56,7 +56,7 @@ func TestEffectiveCapabilities_ResolvesRoleChain(t *testing.T) {
 		// Put the test user into the Director role.
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   pgtype.UUID{Bytes: dirID, Valid: true},
+			RoleID:  pgtype.UUID{Bytes: dirID, Valid: true},
 		}); err != nil {
 			t.Fatalf("SetUserGlobalRole: %v", err)
 		}
@@ -82,7 +82,7 @@ func TestEffectiveCapabilities_GrantsAndRevokes(t *testing.T) {
 
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   pgtype.UUID{Bytes: roleID, Valid: true},
+			RoleID:  pgtype.UUID{Bytes: roleID, Valid: true},
 		}); err != nil {
 			t.Fatalf("SetUserGlobalRole: %v", err)
 		}
@@ -133,7 +133,7 @@ func TestHandlers_CapabilityEnforcement(t *testing.T) {
 		q := New(fx.pool)
 		if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 			UserRef: fx.userRef,
-			RoleID:   adminID,
+			RoleID:  adminID,
 		}); err != nil {
 			t.Fatalf("assign Admin: %v", err)
 		}

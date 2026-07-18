@@ -98,8 +98,8 @@ func TestAdminUserCursor_Roundtrip(t *testing.T) {
 
 func TestAdminUserCursor_RejectsGarbage(t *testing.T) {
 	cases := []string{
-		"",                       // empty
-		"not-base64-!@#",         // bad b64
+		"",               // empty
+		"not-base64-!@#", // bad b64
 		base64.RawURLEncoding.EncodeToString([]byte("only-one-part")), // missing |
 		base64.RawURLEncoding.EncodeToString([]byte("bad-time|123")),  // unparseable time
 		base64.RawURLEncoding.EncodeToString([]byte("2026-06-03T08:00:00Z|not-an-int")),
@@ -261,4 +261,3 @@ func TestStatusFromApprovedResult(t *testing.T) {
 		t.Error("approved=1 → not Active (prev enum)")
 	}
 }
-

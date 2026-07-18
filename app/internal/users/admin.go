@@ -473,4 +473,3 @@ func emitTypedTransition(ctx context.Context, rec auditRecorder, req *http.Reque
 		rec.AdminUserArchived(ctx, req, subjectUserRef, actorUserRef, prev, next, reason)
 	}
 }
-

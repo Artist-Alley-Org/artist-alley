@@ -111,11 +111,11 @@ type AccessDecision struct {
 // AccessRequest is the typed argument shape — five fields the
 // inbox dispatcher passes per activity.
 type AccessRequest struct {
-	PeerID         uuid.UUID
-	UserURL        string // requesting user's actor URL on the peer; "" if not user-scoped
-	ObjectKind     federation.ShareObjectKind
-	ObjectID       uuid.UUID
-	RequiredScope  federation.ShareScope
+	PeerID        uuid.UUID
+	UserURL       string // requesting user's actor URL on the peer; "" if not user-scoped
+	ObjectKind    federation.ShareObjectKind
+	ObjectID      uuid.UUID
+	RequiredScope federation.ShareScope
 
 	// PeerEnabled + PeerConnected are passed in by the inbox
 	// dispatcher (which has the peer row already, no need for us
@@ -135,7 +135,7 @@ type AccessRequest struct {
 //  4. Container fallback for assets: any covering Collection
 //     share that satisfies (peer, user, scope).
 //  5. (Future: workspace fallback for collections — deferred
-//      until the workspaces table exists.)
+//     until the workspaces table exists.)
 //
 // Returns the FIRST allowing share found per the §5.1 ordering
 // (specific user > broadcast; higher scope > lower scope). When
@@ -310,9 +310,10 @@ func pickBestMatch(candidates []Share, req AccessRequest) (*Share, RejectReason,
 }
 
 // rankMatch is the tiebreak key for pickBestMatch:
-//   specific-user shares score above broadcast (10),
-//   plus the scope rank (1-4),
-//   plus a uuid-derived constant for deterministic ties.
+//
+//	specific-user shares score above broadcast (10),
+//	plus the scope rank (1-4),
+//	plus a uuid-derived constant for deterministic ties.
 func rankMatch(s *Share) int {
 	score := s.Scope.Rank()
 	if s.TargetUserURL != nil && *s.TargetUserURL != "" {

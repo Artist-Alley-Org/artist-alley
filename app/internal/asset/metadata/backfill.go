@@ -289,7 +289,7 @@ type backfillAssetRow struct {
 //     no extension filter.
 //   - has_image gate: by default we keep the Phase 1.18.A-2 PR-B
 //     image-only behaviour. scope.IncludeNonImage opens up to PDFs
-//     + future paginated asset types.
+//   - future paginated asset types.
 //
 // Pure SQL — no dynamic strcat, so the EXPLAIN plan stays stable
 // across scope combinations. The COALESCE+ANY-OR-NULL idiom keeps

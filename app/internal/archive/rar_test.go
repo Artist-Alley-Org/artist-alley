@@ -10,9 +10,10 @@ import (
 )
 
 // testdata/sample.rar holds:
-//   hello.txt        ("hello from sevenzip\n", 20 bytes — same payload as the 7z fixture)
-//   sub/file2.txt    ("nested entry\n", 13 bytes)
-//   sub              (directory entry)
+//
+//	hello.txt        ("hello from sevenzip\n", 20 bytes — same payload as the 7z fixture)
+//	sub/file2.txt    ("nested entry\n", 13 bytes)
+//	sub              (directory entry)
 const (
 	rarFixture       = "testdata/sample.rar"
 	rarEntryHello    = "hello.txt"

@@ -39,6 +39,17 @@ The current release stream covers the foundations:
   fix (#279) restoring media processing, GHCR owner-casing fix
   (#280), dependency cleanup (#281 / #283 / #284) clearing all open
   Dependabot alerts.
+- **v0.2.0 (2026-07-16).** Admin tile unlock (Tier 1–3), a public
+  read-only demo at demo.artist-alley.org, env-gated `AA_DEMO_MODE`,
+  native `aa seed` (retiring the Python `apply.py` loader), and CI
+  parallelised across three self-hosted runners.
+- **v0.3.0 (2026-07-17).** Media derivatives generated on seed/upload
+  (thumbnails + video sprites); read-only admin access via `*.read`
+  capabilities without the `system.admin` superuser cap; a fully
+  responsive + WCAG-2.2-AA browse/navbar surface (390px → 4k / 32:9)
+  with a single-column `feed` view; seeded featured content; and a
+  CI/nightly-stability arc that turned the federation nightly green for
+  the first time since 2026-06-21.
 - **Single binary deploy.** Go server with the SvelteKit SPA
   embedded via `go:embed`. Multi-arch Docker images (amd64 + arm64),
   every image Sigstore-signed. Docker is the sole distribution
@@ -560,6 +571,30 @@ The current release stream covers the foundations:
   list + Restore action on collection detail; posts/assets admin
   detail-page Restore UI deferred (no admin detail page exists;
   assets viewer-based). Live smoke green end-to-end.
+
+## Release roadmap
+
+The near-term release train is an **admin-completion spine** — GitHub
+milestones are the source of truth. The admin menu is 36 live / 64
+future tiles across 13 sections; the future tiles cluster by area and
+map to the milestones below.
+
+- **v0.3.1 — foundation cleanup** (mostly shipped): admin read-cap UI
+  (#385), `gofmt` CI gate, `make release`, dependabot split, steel token.
+- **v0.4.0 — operator visibility: Jobs + Storage.** Make the async
+  pipeline observable — the whole derivative/preview/AI/federation
+  subsystem runs on the job queue and there's currently zero admin
+  visibility into it (Jobs admin epic #384). Plus storage tooling
+  (variants / orphans / dedup, #22).
+- **v0.5.0 — Reports & Moderation** (#23 + #24).
+- **v0.6.0 — Content config & Integrations** (#21).
+- **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
+  static binaries, Homebrew (#286).
+
+Product-feature epics (the review-tool arc, AI creative editing,
+commerce, physical-archive mode, MCP server/client, external imports,
+and the rest) are a **parallel track** tracked as un-milestoned epics —
+they interleave with the admin spine rather than blocking it.
 
 ## In flight
 

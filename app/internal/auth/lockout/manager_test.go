@@ -87,22 +87,22 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) int64 {
 // fakeAuditor captures the audit callbacks so tests can assert on
 // them without touching the audit package.
 type fakeAuditor struct {
-	mu           sync.Mutex
-	triggered    []auditTriggeredCall
-	cleared      []auditClearedCall
+	mu        sync.Mutex
+	triggered []auditTriggeredCall
+	cleared   []auditClearedCall
 }
 
 type auditTriggeredCall struct {
-	UserRef                    int64
-	FailedCount, Threshold     int32
-	DurationMinutes            int32
-	IPSubnetHash               string
+	UserRef                int64
+	FailedCount, Threshold int32
+	DurationMinutes        int32
+	IPSubnetHash           string
 }
 type auditClearedCall struct {
-	UserRef            int64
-	AdminUserRef       *int64
-	PriorFailedCount   int32
-	Source             string
+	UserRef          int64
+	AdminUserRef     *int64
+	PriorFailedCount int32
+	Source           string
 }
 
 func (a *fakeAuditor) LockoutTriggered(ctx context.Context, userRef int64, failedCount, threshold, durationMinutes int32, ipSubnetHash string) {

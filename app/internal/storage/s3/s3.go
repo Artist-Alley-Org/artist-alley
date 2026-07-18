@@ -49,9 +49,9 @@ type Config struct {
 
 // Backend talks S3 via the AWS SDK Go v2 client.
 type Backend struct {
-	bucket   string
-	cli      *awss3.Client
-	presign  *awss3.PresignClient
+	bucket  string
+	cli     *awss3.Client
+	presign *awss3.PresignClient
 }
 
 // New constructs and validates an s3 backend. Verifies the bucket

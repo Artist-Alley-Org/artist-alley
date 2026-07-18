@@ -26,11 +26,11 @@ import (
 // (workflow.Service uses its own connection from the pool), so we
 // cleanup explicitly.
 type fixture struct {
-	pool     *pgxpool.Pool
-	svc      *workflow.Service
-	assetID  uuid.UUID
-	teamID   uuid.UUID
-	caller   *auth.Identity
+	pool    *pgxpool.Pool
+	svc     *workflow.Service
+	assetID uuid.UUID
+	teamID  uuid.UUID
+	caller  *auth.Identity
 }
 
 func newFixture(t *testing.T) *fixture {

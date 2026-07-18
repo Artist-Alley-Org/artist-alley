@@ -179,14 +179,14 @@ type PasswordPolicy struct {
 // older tests that haven't been updated to pass a recorder.
 type nopAudit struct{}
 
-func (nopAudit) LoginSucceeded(context.Context, *http.Request, int64, string)            {}
-func (nopAudit) LoginFailed(context.Context, *http.Request, string, *int64, string)      {}
-func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)         {}
-func (nopAudit) Logout(context.Context, *http.Request, int64, string)                    {}
+func (nopAudit) LoginSucceeded(context.Context, *http.Request, int64, string)       {}
+func (nopAudit) LoginFailed(context.Context, *http.Request, string, *int64, string) {}
+func (nopAudit) LoginRateLimited(context.Context, *http.Request, string, string)    {}
+func (nopAudit) Logout(context.Context, *http.Request, int64, string)               {}
 func (nopAudit) SessionRevoked(context.Context, *http.Request, int64, int64, string, string) {
 }
-func (nopAudit) PasswordChanged(context.Context, *http.Request, int64, int)            {}
-func (nopAudit) PasswordReset(context.Context, *http.Request, int64, int64, string)     {}
+func (nopAudit) PasswordChanged(context.Context, *http.Request, int64, int)         {}
+func (nopAudit) PasswordReset(context.Context, *http.Request, int64, int64, string) {}
 func (nopAudit) CapabilityGranted(context.Context, *http.Request, int64, int64, string, string, string) {
 }
 func (nopAudit) CapabilityRevoked(context.Context, *http.Request, int64, int64, string, string, string) {
@@ -847,7 +847,7 @@ func (h *Handler) CreateApiToken(
 		scopes = *req.Body.Scopes
 	}
 	params := CreateApiTokenParams{
-		UserRef:  id.UserRef,
+		UserRef:   id.UserRef,
 		Name:      strings.TrimSpace(req.Body.Name),
 		TokenHash: HashAPIToken(plaintext),
 		Scopes:    scopes,
@@ -889,7 +889,7 @@ func (h *Handler) RevokeApiToken(
 	}
 	q := New(h.Pool)
 	n, err := q.RevokeApiToken(ctx, RevokeApiTokenParams{
-		ID:       pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		ID:      pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
 		UserRef: id.UserRef,
 	})
 	if err != nil {
@@ -1090,7 +1090,7 @@ func (h *Handler) SetUserRole(
 	// endpoint shape hasn't changed; only the storage semantics did.
 	if err := q.SetUserGlobalRole(ctx, SetUserGlobalRoleParams{
 		UserRef:           req.Ref,
-		RoleID:             roleUUID,
+		RoleID:            roleUUID,
 		AssignedByUserRef: &id.UserRef,
 	}); err != nil {
 		return nil, err

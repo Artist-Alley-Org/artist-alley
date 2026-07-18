@@ -39,12 +39,12 @@ import (
 // publish endpoints is controllable per-test (succeed, fail-202,
 // fail-403, fail-malformed).
 type publishStubServer struct {
-	pub          []byte // PEM
-	priv         []byte // unused (Ed25519 sig in /v1/listing)
-	pubKey       []byte // raw
-	signer       func([]byte) []byte
-	registerCode int    // 0 → default success path
-	registerBody string // body to write on register
+	pub           []byte // PEM
+	priv          []byte // unused (Ed25519 sig in /v1/listing)
+	pubKey        []byte // raw
+	signer        func([]byte) []byte
+	registerCode  int    // 0 → default success path
+	registerBody  string // body to write on register
 	lastChallenge map[string]string
 }
 
@@ -56,11 +56,11 @@ func newPublishStub(t *testing.T, registerCode int, registerBody string) (*publi
 	}
 	pubPEM, _ := federation.PublicKeyToPEM(pub)
 	stub := &publishStubServer{
-		pub:    pubPEM,
-		pubKey: pub,
-		signer: func(b []byte) []byte { return federation.Sign(priv, b) },
-		registerCode: registerCode,
-		registerBody: registerBody,
+		pub:           pubPEM,
+		pubKey:        pub,
+		signer:        func(b []byte) []byte { return federation.Sign(priv, b) },
+		registerCode:  registerCode,
+		registerBody:  registerBody,
 		lastChallenge: map[string]string{},
 	}
 	_ = stub.priv

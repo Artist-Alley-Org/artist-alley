@@ -67,12 +67,12 @@ type ExtractJobPayload struct {
 //   - Apply / Read transient errors → retry per job-framework
 //     backoff.
 type ExtractJobHandler struct {
-	loader      SourceLoader
-	lookup      AssetLookup
-	applier     Applier
-	failures    FailureWriter
-	extractors  []Extractor
-	logger      *slog.Logger
+	loader     SourceLoader
+	lookup     AssetLookup
+	applier    Applier
+	failures   FailureWriter
+	extractors []Extractor
+	logger     *slog.Logger
 	// counter is the per-process extraction event counter from
 	// Phase 1.18.A-2 follow-up B (commit 2). Bumped per Handle()
 	// outcome; surfaced via /admin/metadata-extraction/health.

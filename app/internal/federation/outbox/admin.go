@@ -71,31 +71,31 @@ func NewAdminHandler(
 // AdminOutboxRow is the projection the admin UI consumes —
 // includes the joined activity_type for filter rendering.
 type AdminOutboxRow struct {
-	ID                  uuid.UUID
-	ActivityID          uuid.UUID
-	PeerID              uuid.UUID
-	TargetUserURL       *string
-	Status              string
-	Attempts            int16
-	NextAttemptAt       time.Time
-	LastAttemptAt       *time.Time
-	LastError           string
-	SentAt              *time.Time
-	DeliveredWithKeyID  *string
-	ActivityType        string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                 uuid.UUID
+	ActivityID         uuid.UUID
+	PeerID             uuid.UUID
+	TargetUserURL      *string
+	Status             string
+	Attempts           int16
+	NextAttemptAt      time.Time
+	LastAttemptAt      *time.Time
+	LastError          string
+	SentAt             *time.Time
+	DeliveredWithKeyID *string
+	ActivityType       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // AdminListOutboxFilter mirrors the spec's query-param shape.
 type AdminListOutboxFilter struct {
-	PeerID            *uuid.UUID
-	Status            *string
-	ActivityType      *string
-	Since             *time.Time
-	Limit             int32 // capped 1-500; default 100
-	CursorCreatedAt   *time.Time
-	CursorID          *uuid.UUID
+	PeerID          *uuid.UUID
+	Status          *string
+	ActivityType    *string
+	Since           *time.Time
+	Limit           int32 // capped 1-500; default 100
+	CursorCreatedAt *time.Time
+	CursorID        *uuid.UUID
 }
 
 // ListOutboxForAdmin returns the filtered + paginated list +
@@ -129,18 +129,18 @@ func (h *AdminHandler) ListOutboxForAdmin(ctx context.Context, f AdminListOutbox
 	out := make([]AdminOutboxRow, 0, len(rows))
 	for _, r := range rows {
 		row := AdminOutboxRow{
-			ID:                  uuid.UUID(r.ID.Bytes),
-			ActivityID:          uuid.UUID(r.ActivityID.Bytes),
-			PeerID:              uuid.UUID(r.PeerID.Bytes),
-			TargetUserURL:       r.TargetUserUrl,
-			Status:              r.Status,
-			Attempts:            r.Attempts,
-			NextAttemptAt:       r.NextAttemptAt.Time,
-			LastError:           r.LastError,
-			ActivityType:        r.ActivityType,
-			CreatedAt:           r.CreatedAt.Time,
-			UpdatedAt:           r.UpdatedAt.Time,
-			DeliveredWithKeyID:  r.DeliveredWithKeyID,
+			ID:                 uuid.UUID(r.ID.Bytes),
+			ActivityID:         uuid.UUID(r.ActivityID.Bytes),
+			PeerID:             uuid.UUID(r.PeerID.Bytes),
+			TargetUserURL:      r.TargetUserUrl,
+			Status:             r.Status,
+			Attempts:           r.Attempts,
+			NextAttemptAt:      r.NextAttemptAt.Time,
+			LastError:          r.LastError,
+			ActivityType:       r.ActivityType,
+			CreatedAt:          r.CreatedAt.Time,
+			UpdatedAt:          r.UpdatedAt.Time,
+			DeliveredWithKeyID: r.DeliveredWithKeyID,
 		}
 		if r.LastAttemptAt.Valid {
 			t := r.LastAttemptAt.Time
@@ -162,32 +162,32 @@ func (h *AdminHandler) ListOutboxForAdmin(ctx context.Context, f AdminListOutbox
 
 // AdminInboxRow mirrors the openapi.FederationInboxRow shape.
 type AdminInboxRow struct {
-	ID                      uuid.UUID
-	ActivityURI             string
-	PeerID                  uuid.UUID
-	ActorURI                string
-	ActivityType            string
-	ObjectKind              *string
-	ObjectID                *uuid.UUID
-	HTTPSigKey              string
-	Status                  string
-	RejectReason            *string
-	DispatchAttempts        int32
-	LastAttemptAt           *time.Time
-	LastError               *string
-	ReceivedAt              time.Time
-	ProcessedAt             *time.Time
-	CorrelationActivityID   *uuid.UUID
+	ID                    uuid.UUID
+	ActivityURI           string
+	PeerID                uuid.UUID
+	ActorURI              string
+	ActivityType          string
+	ObjectKind            *string
+	ObjectID              *uuid.UUID
+	HTTPSigKey            string
+	Status                string
+	RejectReason          *string
+	DispatchAttempts      int32
+	LastAttemptAt         *time.Time
+	LastError             *string
+	ReceivedAt            time.Time
+	ProcessedAt           *time.Time
+	CorrelationActivityID *uuid.UUID
 }
 
 type AdminListInboxFilter struct {
-	PeerID             *uuid.UUID
-	Status             *string
-	ActivityType       *string
-	Since              *time.Time
-	Limit              int32
-	CursorReceivedAt   *time.Time
-	CursorID           *uuid.UUID
+	PeerID           *uuid.UUID
+	Status           *string
+	ActivityType     *string
+	Since            *time.Time
+	Limit            int32
+	CursorReceivedAt *time.Time
+	CursorID         *uuid.UUID
 }
 
 func (h *AdminHandler) ListInboxForAdmin(ctx context.Context, f AdminListInboxFilter) ([]AdminInboxRow, string, error) {

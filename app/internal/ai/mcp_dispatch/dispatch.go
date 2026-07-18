@@ -52,12 +52,12 @@ import (
 // distinct status code; job handlers classify against the existing
 // ai.ProviderError + jobs.TerminalError set.
 var (
-	ErrServerDisabled        = errors.New("mcpdispatch: server is disabled")
-	ErrToolNotWhitelisted    = errors.New("mcpdispatch: tool not in operator whitelist")
-	ErrToolDisabled          = errors.New("mcpdispatch: tool grant is disabled")
-	ErrMissingCapability     = errors.New("mcpdispatch: caller lacks required capability")
-	ErrPrivacyBlocked        = errors.New("mcpdispatch: cloud MCP server blocked for restricted/embargo asset")
-	ErrBudgetExhausted       = errors.New("mcpdispatch: server's cost cap reached")
+	ErrServerDisabled     = errors.New("mcpdispatch: server is disabled")
+	ErrToolNotWhitelisted = errors.New("mcpdispatch: tool not in operator whitelist")
+	ErrToolDisabled       = errors.New("mcpdispatch: tool grant is disabled")
+	ErrMissingCapability  = errors.New("mcpdispatch: caller lacks required capability")
+	ErrPrivacyBlocked     = errors.New("mcpdispatch: cloud MCP server blocked for restricted/embargo asset")
+	ErrBudgetExhausted    = errors.New("mcpdispatch: server's cost cap reached")
 )
 
 // BudgetGate is the narrow surface this package needs from the

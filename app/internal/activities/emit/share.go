@@ -25,14 +25,14 @@ import (
 // the share itself. Handlers build this from the post-insert
 // federation_shares row.
 type ShareRef struct {
-	ShareID      uuid.UUID
-	ObjectKind   federation.ShareObjectKind
-	ObjectID     uuid.UUID
-	PeerURL      string                       // peer's instance URL (for envelope `to`)
-	TargetUserURL string                      // recipient's actor URL; "" = broadcast within peer
-	Scope        federation.ShareScope
-	ExpiresAt    *time.Time
-	Notes        string
+	ShareID       uuid.UUID
+	ObjectKind    federation.ShareObjectKind
+	ObjectID      uuid.UUID
+	PeerURL       string // peer's instance URL (for envelope `to`)
+	TargetUserURL string // recipient's actor URL; "" = broadcast within peer
+	Scope         federation.ShareScope
+	ExpiresAt     *time.Time
+	Notes         string
 }
 
 // Share emits an aa:Share activity per ADR 0043 §"Custom activity
@@ -65,12 +65,12 @@ func Share(actor ActorContext, ref ShareRef) Emission {
 	}
 
 	payload := map[string]any{
-		"share_id":      ref.ShareID.String(),
-		"object_kind":   string(ref.ObjectKind),
-		"object_id":     ref.ObjectID.String(),
-		"object_uri":    objectURI,
-		"scope":         string(ref.Scope),
-		"peer_url":      ref.PeerURL,
+		"share_id":    ref.ShareID.String(),
+		"object_kind": string(ref.ObjectKind),
+		"object_id":   ref.ObjectID.String(),
+		"object_uri":  objectURI,
+		"scope":       string(ref.Scope),
+		"peer_url":    ref.PeerURL,
 	}
 	if ref.TargetUserURL != "" {
 		payload["target_user_url"] = ref.TargetUserURL
@@ -130,12 +130,12 @@ func Unshare(actor ActorContext, ref ShareRef, originalShareActivityURI string) 
 		to = append(to, ref.PeerURL)
 	}
 	payload := map[string]any{
-		"share_id":                ref.ShareID.String(),
-		"object_kind":             string(ref.ObjectKind),
-		"object_id":               ref.ObjectID.String(),
-		"object_uri":              objectURI,
-		"peer_url":                ref.PeerURL,
-		"previous_activity_uri":   originalShareActivityURI,
+		"share_id":              ref.ShareID.String(),
+		"object_kind":           string(ref.ObjectKind),
+		"object_id":             ref.ObjectID.String(),
+		"object_uri":            objectURI,
+		"peer_url":              ref.PeerURL,
+		"previous_activity_uri": originalShareActivityURI,
 	}
 	if ref.TargetUserURL != "" {
 		payload["target_user_url"] = ref.TargetUserURL

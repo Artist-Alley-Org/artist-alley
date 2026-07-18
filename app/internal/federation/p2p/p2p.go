@@ -56,13 +56,13 @@ const (
 
 // Suggestion is the in-memory shape of one cached suggestion.
 type Suggestion struct {
-	ID                    uuid.UUID
-	SourcePeerID          uuid.UUID
-	SuggestedURL          string
-	SuggestedDisplayName  string
-	SuggestedPublicKey    string
-	SuggestedFingerprint  string
-	CachedAt              pgtype.Timestamptz
+	ID                   uuid.UUID
+	SourcePeerID         uuid.UUID
+	SuggestedURL         string
+	SuggestedDisplayName string
+	SuggestedPublicKey   string
+	SuggestedFingerprint string
+	CachedAt             pgtype.Timestamptz
 
 	// Source — joined-in by the registry so the admin UI can
 	// render "via Studio B" provenance without a second fetch.
@@ -72,7 +72,7 @@ type Suggestion struct {
 
 // Errors callers may distinguish on.
 var (
-	ErrSourceNotFound = errors.New("p2p: source peer not found")
+	ErrSourceNotFound    = errors.New("p2p: source peer not found")
 	ErrSourceUnreachable = errors.New("p2p: could not fetch /federation/peers/visible from source")
 )
 

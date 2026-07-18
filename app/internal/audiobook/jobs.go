@@ -48,9 +48,9 @@ import (
 // MemberAssetIDs and supplies the per-member chapter title to bake
 // into the m4b's chpl atom (typically each member's display title).
 type MergePayload struct {
-	PostID          uuid.UUID   `json:"post_id"`
-	MemberAssetIDs  []uuid.UUID `json:"member_asset_ids"`
-	ChapterTitles   []string    `json:"chapter_titles"`
+	PostID         uuid.UUID   `json:"post_id"`
+	MemberAssetIDs []uuid.UUID `json:"member_asset_ids"`
+	ChapterTitles  []string    `json:"chapter_titles"`
 	// OutputTitle is the title for the merged .m4b's metadata tags.
 	OutputTitle string `json:"output_title"`
 	// AuthorOverride / NarratorOverride — when set, override the

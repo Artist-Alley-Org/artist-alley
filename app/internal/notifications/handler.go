@@ -239,15 +239,15 @@ func rowToAPI(r Notification) openapi.Notification {
 		_ = json.Unmarshal(r.Payload, &payload)
 	}
 	return openapi.Notification{
-		Id:              uuid.UUID(r.ID.Bytes),
-		ActorUserRef:    r.ActorUserRef,
-		Verb:            r.Verb,
-		TargetKind:      r.TargetKind,
-		TargetId:        r.TargetID,
-		Payload:         &payload,
-		ReadAt:          readAt,
-		DeliveredAt:     r.DeliveredAt.Time,
-		CreatedAt:       r.CreatedAt.Time,
+		Id:           uuid.UUID(r.ID.Bytes),
+		ActorUserRef: r.ActorUserRef,
+		Verb:         r.Verb,
+		TargetKind:   r.TargetKind,
+		TargetId:     r.TargetID,
+		Payload:      &payload,
+		ReadAt:       readAt,
+		DeliveredAt:  r.DeliveredAt.Time,
+		CreatedAt:    r.CreatedAt.Time,
 	}
 }
 

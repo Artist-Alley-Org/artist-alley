@@ -47,8 +47,8 @@ type Config struct {
 	BaseURL string // defaults to https://api.openai.com when empty
 	Org     string // optional OpenAI-Organization header
 
-	DefaultCompletionModel  string // e.g. "gpt-4o-mini"
-	DefaultEmbeddingModel   string // e.g. "text-embedding-3-large"
+	DefaultCompletionModel    string // e.g. "gpt-4o-mini"
+	DefaultEmbeddingModel     string // e.g. "text-embedding-3-large"
 	DefaultTranscriptionModel string // e.g. "whisper-1"
 
 	// RateLimit is requests per second. Zero = no rate limiting.
@@ -62,10 +62,10 @@ const defaultBaseURL = "https://api.openai.com"
 
 // Provider implements ai.{Completion,Embedding,Transcription,Tag,Caption}Provider.
 type Provider struct {
-	cfg       Config
-	client    *openaicompat.Client
-	prompts   *ai.PromptRegistry
-	auditor   *ai.CallAuditor
+	cfg     Config
+	client  *openaicompat.Client
+	prompts *ai.PromptRegistry
+	auditor *ai.CallAuditor
 }
 
 // NewProvider constructs an OpenAI provider ready to register with

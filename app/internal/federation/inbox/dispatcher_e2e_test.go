@@ -208,10 +208,10 @@ func newPairedFixture(t *testing.T) *pairedFixture {
 	handler := inbox.NewHandler(inbox.HandlerDeps{
 		Pool: inbox.New(pool),
 		Lookup: &pairedPeerLookup{
-			peerID:   senderPeerID,
-			peerURL:  senderBaseURL,
-			keyID:    senderKeyID,
-			pubKey:   senderPub,
+			peerID:  senderPeerID,
+			peerURL: senderBaseURL,
+			keyID:   senderKeyID,
+			pubKey:  senderPub,
 		},
 		Logger:       logger,
 		LocalBaseURL: func(context.Context) string { return localBaseURL },

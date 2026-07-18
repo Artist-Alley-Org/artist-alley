@@ -22,12 +22,12 @@ func TestRFC6238_KnownVectors(t *testing.T) {
 	secret := []byte("12345678901234567890") // RFC 6238 reference
 	// (time, expected 8-digit, expected 6-digit derived by % 1e6)
 	cases := []struct {
-		t       int64
-		want6   string
+		t     int64
+		want6 string
 	}{
-		{59, "287082"},          // 94287082 % 1e6
-		{1111111109, "081804"},  // 07081804 % 1e6
-		{1111111111, "050471"},  // 14050471 % 1e6
+		{59, "287082"},         // 94287082 % 1e6
+		{1111111109, "081804"}, // 07081804 % 1e6
+		{1111111111, "050471"}, // 14050471 % 1e6
 	}
 	for _, c := range cases {
 		got := totp.Code(secret, c.t)

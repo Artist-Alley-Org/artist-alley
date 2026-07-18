@@ -5,9 +5,9 @@
 // system. The translations themselves live on the frontend (bundled
 // JSON catalogues); this package only:
 //
-//   1. Tells the frontend WHICH locales it can switch to.
-//   2. (Future) accepts uploaded community translations to be persisted
-//      in object storage and served back.
+//  1. Tells the frontend WHICH locales it can switch to.
+//  2. (Future) accepts uploaded community translations to be persisted
+//     in object storage and served back.
 //
 // For Phase 1.16 there's exactly one endpoint: `GET /i18n/locales`.
 // The list is static — computed once at package init from a hand-
