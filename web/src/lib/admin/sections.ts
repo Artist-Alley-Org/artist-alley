@@ -31,6 +31,13 @@ export interface AdminTile {
   // A read-cap holder sees exactly the tiles whose `cap` they hold, so
   // no tile 403s on click.
   cap?: string;
+  // Universally visible — the tile's page guards nothing sensitive
+  // (help, docs, about, release notes, support) and enforces no
+  // server-side cap. Distinct from an absent `cap`, which means
+  // superuser-only (#399): most cap-less tiles are unmigrated admin
+  // surfaces, NOT public. Only set `public` where the page is safe for
+  // any operator who can reach the admin shell.
+  public?: boolean;
 }
 
 export interface AdminSection {
@@ -231,11 +238,11 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     slug: 'help',
     iconKey: 'help',
     tiles: [
-      { key: 'docs',         status: 'live',   href: '/admin/help/docs' },
-      { key: 'shortcuts',    status: 'live',   href: '/admin/help/shortcuts' },
-      { key: 'about',        status: 'live',   href: '/admin/about' },
-      { key: 'release_notes', status: 'live',  href: '/admin/help/release-notes' },
-      { key: 'support',      status: 'live',   href: '/admin/help/support' },
+      { key: 'docs',         status: 'live',   href: '/admin/help/docs',          public: true },
+      { key: 'shortcuts',    status: 'live',   href: '/admin/help/shortcuts',     public: true },
+      { key: 'about',        status: 'live',   href: '/admin/about',              public: true },
+      { key: 'release_notes', status: 'live',  href: '/admin/help/release-notes', public: true },
+      { key: 'support',      status: 'live',   href: '/admin/help/support',       public: true },
     ],
   },
 ];
