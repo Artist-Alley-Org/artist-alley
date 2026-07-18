@@ -51,6 +51,9 @@ jobs:
       tag: ${{ steps.tag.outputs.value }}
 
     steps:
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -92,6 +95,9 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Clear stale git locks (persistent self-hosted workspace)
+        run: find "${GITHUB_WORKSPACE}" -type f -name '*.lock' -path '*/.git/*' -delete 2>/dev/null || true
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-notes.outputs.tag }}
