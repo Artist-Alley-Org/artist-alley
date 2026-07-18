@@ -5,6 +5,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions track the ArchivePub federation spec ([docs/protocol/archivepub.md](docs/protocol/archivepub.md))
 where applicable, otherwise note "no-spec-impact."
 
+## [v0.3.1] — 2026-07-17
+
+Admin read-cap UI + foundation cleanup. No-spec-impact.
+
+### Operator-facing changes
+
+- **Admin UI for read-cap holders.** The frontend half of v0.3.0's read
+  capabilities: the admin menu + route guard now gate **per-tile on the
+  capability each surface enforces**, so a read-only role (without
+  `system.admin`) sees and can browse the admin sections its caps permit —
+  the admin menu lights up on the public demo. Backend still enforces every
+  write.
+
+### Infrastructure / housekeeping
+
+- Repo-wide `gofmt` normalization + a `gofmt -l` CI gate.
+- `make release` target codifying the release prep (version bump, openapi
+  regen, drift check, open the promotion PR) — does not tag or toggle
+  protection.
+- Dependabot `github-actions` group split (routine bumps auto-merge; majors
+  gated); steel secondary token wired into the Alert info tone.
+- CHANGELOG + roadmap reconciled to current (they had drifted two releases
+  behind).
+
 ## [v0.3.0] — 2026-07-17
 
 Derivatives, read-only admin, responsive UI. No-spec-impact.
