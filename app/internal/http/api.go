@@ -122,6 +122,11 @@ type apiServer struct {
 	pool     *pgxpool.Pool
 	cacheReg *cache.Registry
 
+	// version is main.Version (git tag baked in via ldflags, or "dev"),
+	// set out-of-band in server.New after construction. Surfaced by
+	// GetBuildInfo for the admin About page (#406).
+	version string
+
 	auth              *auth.Handler
 	resourceType      *assettype.Handler
 	storage           *storage.Handler
@@ -2962,6 +2967,13 @@ func (s *apiServer) GetSetupStatus(ctx context.Context, req openapi.GetSetupStat
 
 func (s *apiServer) CompleteSetup(ctx context.Context, req openapi.CompleteSetupRequestObject) (openapi.CompleteSetupResponseObject, error) {
 	return s.setup.CompleteSetup(ctx, req)
+}
+
+// GetBuildInfo returns the running server version (#406). Anonymous —
+// the version is the git tag baked in via ldflags (or "dev"), which is
+// not sensitive; the admin About page renders it in place of a stub.
+func (s *apiServer) GetBuildInfo(_ context.Context, _ openapi.GetBuildInfoRequestObject) (openapi.GetBuildInfoResponseObject, error) {
+	return openapi.GetBuildInfo200JSONResponse{Version: s.version}, nil
 }
 
 // --- workflow --------------------------------------------------------------

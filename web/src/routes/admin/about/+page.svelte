@@ -1,18 +1,24 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Kenneth Blossom -->
 <script lang="ts">
-  // /admin/about — version, build info, license, contributors.
+  // /admin/about — version, license, product identity.
   //
-  // Real-ish: version comes from a compile-time constant baked into
-  // the bundle. Future-phase work pulls live build info from a
-  // /system/about backend endpoint.
+  // Version is the running server's build version (the git tag baked
+  // in via ldflags, or "dev"), fetched from GET /build-info (#406) —
+  // no longer a hardcoded stub.
 
+  import { onMount } from 'svelte';
   import { t } from '$stores/lang.svelte';
-
+  import { api } from '$api/client';
   import { site } from '$stores/site.svelte';
-  const VERSION = '0.1.0-dev';
-  const BUILD = 'phase-1.16';
-  const LICENSE = 'BSD-3-Clause';
+
+  const LICENSE = 'AGPL-3.0-only';
+  let version = $state('…');
+
+  onMount(async () => {
+    const r = await api.GET('/build-info');
+    version = r.data?.version || 'unknown';
+  });
 </script>
 
 <svelte:head><title>{t('admin.about.title')} — {site.name}</title></svelte:head>
@@ -25,10 +31,7 @@
   <dd class="font-medium text-fg">artist-alley</dd>
 
   <dt class="text-fg-muted">{t('admin.about.version')}</dt>
-  <dd class="font-mono text-fg">{VERSION}</dd>
-
-  <dt class="text-fg-muted">{t('admin.about.build')}</dt>
-  <dd class="font-mono text-fg">{BUILD}</dd>
+  <dd class="font-mono text-fg">{version}</dd>
 
   <dt class="text-fg-muted">{t('admin.about.license')}</dt>
   <dd class="text-fg">{LICENSE}</dd>

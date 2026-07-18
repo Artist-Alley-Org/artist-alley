@@ -354,6 +354,7 @@ func New(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, version str
 		})
 
 		impl = newAPIServer(pool, logger, cfg, storageSvc, sessions, limiter, auditRec, sysCfg, cacheReg, jobSvc, licState, backend.Name())
+		impl.version = version
 		// Hand the provider registry to the auth handler now that
 		// both exist. Done out-of-band rather than threading through
 		// newAPIServer's positional args — same shape as the

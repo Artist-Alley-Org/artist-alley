@@ -73,14 +73,20 @@ class AuthState {
   }
 
   /**
-   * Whether the current user can open one admin tile. `system.admin`
-   * sees everything; otherwise the tile is visible only if the user
-   * holds the exact capability its page enforces. A tile with no `cap`
-   * is superuser-only (no read alternative), so only `system.admin`
-   * sees it — never a read-only role. This is what stops a shown tile
-   * from 403-ing on click.
+   * Whether the current user can open one admin tile. Three cases:
+   *   - `public` tile (help/docs/about) → visible to anyone in the
+   *     admin shell; its page guards nothing sensitive (#399). This is
+   *     what un-hid the help section from read-cap operators.
+   *   - tile with a `cap` → visible only to holders of that capability
+   *     (and `system.admin`, which short-circuits every check).
+   *   - cap-less, non-public tile → superuser-only (#385). Most admin
+   *     tiles are unmigrated and fall here; they must NOT leak to a
+   *     read-cap holder, which is why `public` is explicit rather than
+   *     inferred from a missing `cap`.
+   * Invariant: a visible tile never 403s on click.
    */
-  canSeeTile(tile: { cap?: string }): boolean {
+  canSeeTile(tile: { cap?: string; public?: boolean }): boolean {
+    if (tile.public) return true;
     return this.can(tile.cap ?? SYSTEM_ADMIN);
   }
 
