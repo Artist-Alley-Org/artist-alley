@@ -144,13 +144,13 @@ var ErrEmissionRefused = errors.New("outbox: emission refused by sensitivity pol
 // share's sensitivity tier MANDATE encrypted transmission?
 //
 //   - public + team   → false (best-effort encryption; plaintext OK
-//                      when capabilities are missing)
+//     when capabilities are missing)
 //   - restricted +
 //     embargo         → true (encryption is required; refuse if
-//                      not available)
+//     not available)
 //   - other (unknown,
 //     future tiers)   → true (conservative default; see file-level
-//                      comment for the rationale)
+//     comment for the rationale)
 //
 // Pure function over the tier alone — no I/O, no policy
 // dispatch. Used by [ChoosePathFor] + by tests that need to

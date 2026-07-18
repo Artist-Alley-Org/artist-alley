@@ -60,7 +60,7 @@ func TestPlanChunks_ExactlyWindow_SinglePassThrough(t *testing.T) {
 
 func TestPlanChunks_InvalidArgs(t *testing.T) {
 	cases := []struct {
-		name                                 string
+		name                                string
 		totalDurationMS, windowSec, overlap int
 	}{
 		{"zero window", 60_000, 0, 5},

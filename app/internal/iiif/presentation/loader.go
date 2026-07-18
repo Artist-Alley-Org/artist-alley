@@ -247,9 +247,9 @@ func (l *Loader) loadMetadataPairs(ctx context.Context, assetID uuid.UUID, isAno
 	out := make([]MetadataPair, 0)
 	for rows.Next() {
 		var (
-			label  string
-			text   *string
-			opts   []string
+			label string
+			text  *string
+			opts  []string
 		)
 		if err := rows.Scan(&label, &text, &opts); err != nil {
 			return nil, err

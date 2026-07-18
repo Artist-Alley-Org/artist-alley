@@ -25,11 +25,11 @@ type sampleConfig struct {
 }
 
 type sampleWithSensitive struct {
-	Name            string
-	PasswordHash    string // matches "password" — pattern-stripped
-	APIKey          string // matches "apikey" — pattern-stripped
-	HiddenByTag     string `audit:"-"`
-	NormalField     int
+	Name         string
+	PasswordHash string // matches "password" — pattern-stripped
+	APIKey       string // matches "apikey" — pattern-stripped
+	HiddenByTag  string `audit:"-"`
+	NormalField  int
 }
 
 type otherType struct {

@@ -37,14 +37,14 @@ import (
 //
 // Pure-memory lookup for Can(code, InTeam(t)) — no closure walk in Go.
 type Identity struct {
-	UserRef      int64
-	Username     string
-	Fullname     *string
-	Email        *string
-	Usergroup    *int64
-	AuthMethod   string     // "session" or "token"
-	TokenID      *uuid.UUID // populated when AuthMethod=="token"
-	SessionID    *uuid.UUID // populated when AuthMethod=="session" — lets
+	UserRef    int64
+	Username   string
+	Fullname   *string
+	Email      *string
+	Usergroup  *int64
+	AuthMethod string     // "session" or "token"
+	TokenID    *uuid.UUID // populated when AuthMethod=="token"
+	SessionID  *uuid.UUID // populated when AuthMethod=="session" — lets
 	// the /account/sessions endpoint mark the row that's
 	// authenticating this request as "current" so the UI can
 	// hide its own revoke button (revoking your own current
@@ -258,7 +258,6 @@ func InvalidateUserCaps(ctx context.Context, registry *cache.Registry, userRef i
 	}
 	_ = registry.Emit(ctx, cacheDomainUserCaps, strconv.FormatInt(userRef, 10))
 }
-
 
 func (r *Resolver) sessions() *SessionManager {
 	if r.Sessions != nil {

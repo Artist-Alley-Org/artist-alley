@@ -113,19 +113,19 @@ const (
 	// disagree on the same semantic field (e.g. capture date, artist)
 	// the per-field extraction config picks which wins; both write
 	// with their own SetBy provenance.
-	FieldIPTCKeywords     CanonicalField = "iptc_keywords"      // dataset 2:25 — comma-joined free-tag set
-	FieldIPTCByline       CanonicalField = "iptc_byline"        // 2:80 — primary photographer
-	FieldIPTCBylineTitle  CanonicalField = "iptc_byline_title"  // 2:85
-	FieldIPTCCaption      CanonicalField = "iptc_caption"       // 2:120 — long-form abstract
-	FieldIPTCHeadline     CanonicalField = "iptc_headline"      // 2:105 — short summary
-	FieldIPTCCredit       CanonicalField = "iptc_credit"        // 2:110 — agency / publication
-	FieldIPTCSource       CanonicalField = "iptc_source"        // 2:115 — original supplier
-	FieldIPTCCity         CanonicalField = "iptc_city"          // 2:90
-	FieldIPTCState        CanonicalField = "iptc_state"         // 2:95 — province / state
-	FieldIPTCCountry      CanonicalField = "iptc_country"       // 2:101
-	FieldIPTCObjectName   CanonicalField = "iptc_object_name"   // 2:5  — title-of-work
-	FieldIPTCInstructions CanonicalField = "iptc_instructions"  // 2:40 — editor's notes
-	FieldIPTCCopyright    CanonicalField = "iptc_copyright"     // 2:116 — distinct from EXIF copyright
+	FieldIPTCKeywords     CanonicalField = "iptc_keywords"     // dataset 2:25 — comma-joined free-tag set
+	FieldIPTCByline       CanonicalField = "iptc_byline"       // 2:80 — primary photographer
+	FieldIPTCBylineTitle  CanonicalField = "iptc_byline_title" // 2:85
+	FieldIPTCCaption      CanonicalField = "iptc_caption"      // 2:120 — long-form abstract
+	FieldIPTCHeadline     CanonicalField = "iptc_headline"     // 2:105 — short summary
+	FieldIPTCCredit       CanonicalField = "iptc_credit"       // 2:110 — agency / publication
+	FieldIPTCSource       CanonicalField = "iptc_source"       // 2:115 — original supplier
+	FieldIPTCCity         CanonicalField = "iptc_city"         // 2:90
+	FieldIPTCState        CanonicalField = "iptc_state"        // 2:95 — province / state
+	FieldIPTCCountry      CanonicalField = "iptc_country"      // 2:101
+	FieldIPTCObjectName   CanonicalField = "iptc_object_name"  // 2:5  — title-of-work
+	FieldIPTCInstructions CanonicalField = "iptc_instructions" // 2:40 — editor's notes
+	FieldIPTCCopyright    CanonicalField = "iptc_copyright"    // 2:116 — distinct from EXIF copyright
 
 	// --- Phase 1.18.A-3: XMP (Adobe XML metadata packet) ---
 	// XMP namespaces we pull values from: dc (Dublin Core),
@@ -164,10 +164,10 @@ type Value struct {
 	Kind ValueKind
 
 	// One of the following is populated based on Kind:
-	Text   string
-	Num    float64
-	Time   time.Time
-	GPS    GPSCoord // when Kind == ValueKindGPS
+	Text string
+	Num  float64
+	Time time.Time
+	GPS  GPSCoord // when Kind == ValueKindGPS
 }
 
 // ValueKind tags the union shape of [Value].
@@ -195,7 +195,7 @@ type GPSCoord struct {
 // field-definition populated from extraction. Stored in
 // field_definition.extraction_source + .extraction_mode columns.
 type FieldExtractionConfig struct {
-	FieldID  uuid.UUID
+	FieldID uuid.UUID
 
 	// Source names the canonical extraction field this
 	// field-definition receives values from. Empty = no
@@ -272,11 +272,11 @@ var ErrLibraryPanic = errors.New("metadata: extraction library panicked")
 // needs. Kept narrow so tests can construct without spinning up
 // the full asset handler.
 type AssetRef struct {
-	ID            uuid.UUID
-	OwnerUserRef  *int64
-	OwningTeamID  *uuid.UUID
-	FileHash      string
-	MimeType      string
+	ID           uuid.UUID
+	OwnerUserRef *int64
+	OwningTeamID *uuid.UUID
+	FileHash     string
+	MimeType     string
 }
 
 // Applier writes extracted values into the field-value system.
@@ -294,11 +294,11 @@ type Applier interface {
 // as the audit-row payload; surfaced to the operator at
 // /admin/extraction-failures alongside the failure rows.
 type ApplySummary struct {
-	FieldsSet            []CanonicalField
+	FieldsSet             []CanonicalField
 	FieldsSkippedNoChange []CanonicalField // equal-value short-circuit fired
-	FieldsSkippedMode    []CanonicalField  // skip_if_set hit a populated field
-	FieldsSkippedValid   []CanonicalField  // validator rejected
-	FailureRows          []FailureRecord
+	FieldsSkippedMode     []CanonicalField // skip_if_set hit a populated field
+	FieldsSkippedValid    []CanonicalField // validator rejected
+	FailureRows           []FailureRecord
 }
 
 // AssetAttributeWriter persists asset-row attributes that come out

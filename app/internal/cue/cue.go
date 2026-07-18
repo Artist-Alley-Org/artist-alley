@@ -40,9 +40,9 @@ import (
 // Track is one parsed CUE track entry. Start is the resolved
 // offset in seconds from the beginning of the file (INDEX 01).
 type Track struct {
-	Number  int
-	Title   string
-	StartS  float64
+	Number int
+	Title  string
+	StartS float64
 }
 
 // Sheet is the parsed .cue file. File is the referenced source

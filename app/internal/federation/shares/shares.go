@@ -74,21 +74,21 @@ var (
 // outbox-dispatcher can hold + pass without going through the
 // raw sqlc row.
 type Share struct {
-	ID                  uuid.UUID
-	GrantorUserRef      int64
-	ObjectKind          federation.ShareObjectKind
-	ObjectID            uuid.UUID
-	PeerID              uuid.UUID
-	TargetUserURL       *string
-	Scope               federation.ShareScope
-	ExpiresAt           pgtype.Timestamptz
-	Notes               string
-	GrantedActivityID   uuid.UUID
-	GrantedAt           pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
-	RevokedActivityID   *uuid.UUID
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                uuid.UUID
+	GrantorUserRef    int64
+	ObjectKind        federation.ShareObjectKind
+	ObjectID          uuid.UUID
+	PeerID            uuid.UUID
+	TargetUserURL     *string
+	Scope             federation.ShareScope
+	ExpiresAt         pgtype.Timestamptz
+	Notes             string
+	GrantedActivityID uuid.UUID
+	GrantedAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevokedActivityID *uuid.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 // Active reports whether the share is currently in effect:

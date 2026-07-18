@@ -62,11 +62,11 @@ func main() {
 
 func run() error {
 	var (
-		addr        = flag.String("addr", ":8090", "HTTP listen address")
-		dataDir     = flag.String("data", "./aa-directory-data", "data directory (created if missing)")
-		operatorURL = flag.String("operator-url", "https://localhost:8090", "this directory's canonical URL")
+		addr         = flag.String("addr", ":8090", "HTTP listen address")
+		dataDir      = flag.String("data", "./aa-directory-data", "data directory (created if missing)")
+		operatorURL  = flag.String("operator-url", "https://localhost:8090", "this directory's canonical URL")
 		operatorName = flag.String("operator-name", "Local aa-directory", "human-readable operator name")
-		contact     = flag.String("contact", "", "operator contact (email / URL)")
+		contact      = flag.String("contact", "", "operator contact (email / URL)")
 		challengeTTL = flag.Duration("challenge-ttl", 1*time.Hour, "DNS-TXT challenge expiry window")
 		skipDNS      = flag.Bool("dev-skip-dns", false, "DEV ONLY: accept registrations without DNS-TXT verification")
 	)
@@ -119,13 +119,13 @@ func run() error {
 	}
 
 	srvCfg := serverConfig{
-		store:          st,
-		signingKey:     priv,
-		operatorHost:   hostOf(op.OperatorURL),
-		challengeTTL:   *challengeTTL,
-		skipDNS:        *skipDNS,
-		bearerToken:    bearer,
-		logger:         logger,
+		store:        st,
+		signingKey:   priv,
+		operatorHost: hostOf(op.OperatorURL),
+		challengeTTL: *challengeTTL,
+		skipDNS:      *skipDNS,
+		bearerToken:  bearer,
+		logger:       logger,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/operator", srvCfg.handleGetOperator)

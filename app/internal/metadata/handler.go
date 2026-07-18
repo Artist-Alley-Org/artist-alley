@@ -339,19 +339,19 @@ func (h *Handler) UpdateField(
 
 	in := req.Body
 	params := UpdateFieldDefinitionParams{
-		ID:                pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
-		Label:             in.Label,
-		Description:       in.Description,
-		Required:          in.Required,
-		Searchable:        in.Searchable,
-		AppliesTo:         appliesToOrNil(in.AppliesTo),
-		FieldSetID:        uuidFromOpenAPIPtr(in.FieldSetId),
-		ReadCapability:    in.ReadCapability,
-		WriteCapability:   in.WriteCapability,
-		DisplayOrder:      int32PtrOpt(in.DisplayOrder),
-		DisplayGroup:      in.DisplayGroup,
+		ID:                      pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true},
+		Label:                   in.Label,
+		Description:             in.Description,
+		Required:                in.Required,
+		Searchable:              in.Searchable,
+		AppliesTo:               appliesToOrNil(in.AppliesTo),
+		FieldSetID:              uuidFromOpenAPIPtr(in.FieldSetId),
+		ReadCapability:          in.ReadCapability,
+		WriteCapability:         in.WriteCapability,
+		DisplayOrder:            int32PtrOpt(in.DisplayOrder),
+		DisplayGroup:            in.DisplayGroup,
 		DeprecatedReplacementID: uuidFromOpenAPIPtr(in.DeprecatedReplacementId),
-		UpdatedByUserRef:  &id.UserRef,
+		UpdatedByUserRef:        &id.UserRef,
 	}
 	if in.Status != nil {
 		s := string(*in.Status)
@@ -518,8 +518,8 @@ func (h *Handler) ArchiveField(
 		return nil, err
 	}
 	if err := q.ArchiveFieldDefinition(ctx, ArchiveFieldDefinitionParams{
-		ID:                pgID,
-		UpdatedByUserRef:  &id.UserRef,
+		ID:               pgID,
+		UpdatedByUserRef: &id.UserRef,
 	}); err != nil {
 		return nil, fmt.Errorf("metadata: archive: %w", err)
 	}
@@ -636,12 +636,12 @@ func (h *Handler) SetAssetFieldValue(
 	}
 	newJSON, _ = valueRowToJSON(row.ValueText, row.ValueNum, row.ValueDate, row.ValueOptions, row.ValueRef, fieldRow.Type)
 	if err := qTx.AppendAssetFieldValueHistory(ctx, AppendAssetFieldValueHistoryParams{
-		AssetID:           pgAsset,
-		FieldID:           pgField,
-		OldValue:          oldJSON,
-		NewValue:          newJSON,
-		SetBy:             upsert.SetBy,
-		ChangedByUserRef:  &id.UserRef,
+		AssetID:          pgAsset,
+		FieldID:          pgField,
+		OldValue:         oldJSON,
+		NewValue:         newJSON,
+		SetBy:            upsert.SetBy,
+		ChangedByUserRef: &id.UserRef,
 	}); err != nil {
 		return nil, fmt.Errorf("metadata: append history: %w", err)
 	}
@@ -805,10 +805,10 @@ func validFieldType(t string) bool {
 // don't leak through.
 func buildUpsertParams(asset, field pgtype.UUID, fieldType string, in *openapi.AssetFieldValueWrite, userRef *int64) (UpsertAssetFieldValueParams, error) {
 	p := UpsertAssetFieldValueParams{
-		AssetID:        asset,
-		FieldID:        field,
-		SetBy:          "manual",
-		SetByUserRef:   userRef,
+		AssetID:      asset,
+		FieldID:      field,
+		SetBy:        "manual",
+		SetByUserRef: userRef,
 	}
 	if in.SetBy != nil {
 		p.SetBy = string(*in.SetBy)
@@ -997,12 +997,12 @@ func buildAssetValue(
 
 func historyRowToAPI(r AssetFieldValueHistory) openapi.FieldValueHistoryEntry {
 	e := openapi.FieldValueHistoryEntry{
-		Id:                  openapi_types.UUID(r.ID.Bytes),
-		AssetId:             openapi_types.UUID(r.AssetID.Bytes),
-		FieldId:             openapi_types.UUID(r.FieldID.Bytes),
-		ChangedAt:           r.ChangedAt.Time,
-		ChangedByUserRef:    r.ChangedByUserRef,
-		SetBy:               r.SetBy,
+		Id:               openapi_types.UUID(r.ID.Bytes),
+		AssetId:          openapi_types.UUID(r.AssetID.Bytes),
+		FieldId:          openapi_types.UUID(r.FieldID.Bytes),
+		ChangedAt:        r.ChangedAt.Time,
+		ChangedByUserRef: r.ChangedByUserRef,
+		SetBy:            r.SetBy,
 	}
 	if len(r.OldValue) > 0 && string(r.OldValue) != "null" {
 		var m map[string]any

@@ -230,10 +230,10 @@ func (h *Handler) Grant(ctx context.Context, req *http.Request, in DecideInput) 
 			expires = pgtype.Timestamptz{Time: in.ExpiresAt, Valid: true}
 		}
 		updated, err := txq.MarkRequestGranted(ctx, MarkRequestGrantedParams{
-			ID:                pgtype.UUID{Bytes: in.RequestID, Valid: true},
-			DecidedByUserRef:  &in.ApproverRef,
-			DecisionReason:    in.DecisionReason,
-			ExpiresAt:         expires,
+			ID:               pgtype.UUID{Bytes: in.RequestID, Valid: true},
+			DecidedByUserRef: &in.ApproverRef,
+			DecisionReason:   in.DecisionReason,
+			ExpiresAt:        expires,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -499,4 +499,3 @@ func (h *Handler) notifyDecision(ctx context.Context, pre ResourceRequest, in De
 		)
 	}
 }
-

@@ -19,14 +19,14 @@ import (
 // preset response or error, and records the calls it received so
 // tests can assert ordering + count.
 type stubCompletion struct {
-	name string
-	resp CompletionResponse
-	err  error
+	name  string
+	resp  CompletionResponse
+	err   error
 	calls int
 }
 
-func (s *stubCompletion) Name() string             { return s.name }
-func (s *stubCompletion) SupportsVision() bool     { return true }
+func (s *stubCompletion) Name() string         { return s.name }
+func (s *stubCompletion) SupportsVision() bool { return true }
 func (s *stubCompletion) Complete(_ context.Context, _ CompletionRequest) (CompletionResponse, error) {
 	s.calls++
 	if s.err != nil {

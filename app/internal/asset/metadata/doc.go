@@ -22,7 +22,7 @@
 // # Arc shape
 //
 //   - 1.18.A-2 (current) — images only: EXIF + ICC + orientation
-//     + per-user dedup + admin-triggered backfill + observability.
+//   - per-user dedup + admin-triggered backfill + observability.
 //   - 1.18.A-3 (next) — IPTC + XMP + raw embedded thumbnails.
 //   - 1.18.A-4 (later) — PDF metadata + video timecode + Office
 //     thumbs.

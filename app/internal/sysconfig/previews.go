@@ -44,7 +44,7 @@ const (
 // Never rename a key in place — add a new variant + retire the old
 // one — because clients cache URLs aggressively.
 type PreviewVariant struct {
-	Key     string        `json:"key"`     // "col", "preview", "screen", "hires"
+	Key     string        `json:"key"` // "col", "preview", "screen", "hires"
 	Fit     PreviewFit    `json:"fit"`
 	MaxDim  int           `json:"max_dim"` // longest-side cap (or square edge for cover)
 	Format  PreviewFormat `json:"format"`

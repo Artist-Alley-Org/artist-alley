@@ -83,7 +83,7 @@ func (h *ByImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
-				"error":   "upload_too_large",
+				"error":     "upload_too_large",
 				"max_bytes": max,
 			})
 			return

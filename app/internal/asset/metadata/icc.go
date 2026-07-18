@@ -19,7 +19,8 @@ import (
 //
 //   - JPEG: APP2 marker (0xFFE2) with payload prefix
 //     "ICC_PROFILE\x00" + chunk_seq (1 byte) + chunk_count (1 byte)
-//     + profile bytes. Profiles >64 KB span multiple APP2 chunks;
+//
+//   - profile bytes. Profiles >64 KB span multiple APP2 chunks;
 //     this function concatenates them in chunk_seq order.
 //
 //   - PNG: iCCP chunk with payload = profile_name + 0x00 +

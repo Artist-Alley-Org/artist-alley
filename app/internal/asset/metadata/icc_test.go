@@ -125,8 +125,8 @@ func buildPNGWithICC(payload []byte) []byte {
 	ihdr := []byte{
 		0, 0, 0, 1, // width 1
 		0, 0, 0, 1, // height 1
-		8,    // bit depth
-		0,    // colour type (grey)
+		8,       // bit depth
+		0,       // colour type (grey)
 		0, 0, 0, // compression, filter, interlace
 	}
 	writeChunk(&buf, "IHDR", ihdr)

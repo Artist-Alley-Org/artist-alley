@@ -49,12 +49,12 @@ func UpdateProfile(actor ActorContext, profile ProfileSnapshot) Emission {
 				LocalID: strconv.FormatInt(actor.UserRef, 10),
 			},
 			Payload: map[string]any{
-				"object_type":   "Person",
-				"display_name":  profile.DisplayName,
-				"summary":       profile.Bio, // AP convention: actor summary == bio
-				"icon":          profile.AvatarURL,
-				"location":      profile.Location,
-				"website":       profile.WebsiteURL,
+				"object_type":  "Person",
+				"display_name": profile.DisplayName,
+				"summary":      profile.Bio, // AP convention: actor summary == bio
+				"icon":         profile.AvatarURL,
+				"location":     profile.Location,
+				"website":      profile.WebsiteURL,
 			},
 		},
 	}

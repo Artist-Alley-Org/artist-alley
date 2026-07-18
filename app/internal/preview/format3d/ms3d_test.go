@@ -23,7 +23,7 @@ func synthMS3D(t *testing.T) []byte {
 	_ = binary.Write(&b, binary.LittleEndian, uint16(3))
 	verts := [][3]float32{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}
 	for _, v := range verts {
-		b.WriteByte(0)                                            // flags
+		b.WriteByte(0) // flags
 		_ = binary.Write(&b, binary.LittleEndian, v[0])
 		_ = binary.Write(&b, binary.LittleEndian, v[1])
 		_ = binary.Write(&b, binary.LittleEndian, v[2])

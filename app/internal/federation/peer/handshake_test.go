@@ -387,7 +387,7 @@ func TestFullHandshakePair_OverHTTPRoundTrip(t *testing.T) {
 	rewriteClient := func(actualURL string) *http.Client {
 		base, _ := url.Parse(actualURL)
 		return &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
 			Transport: &rewriteTransport{base: base},
 		}
 	}

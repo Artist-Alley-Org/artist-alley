@@ -73,12 +73,12 @@ func (h *Handler) ListAssetTypeAcls(
 	out := make(openapi.ListAssetTypeAcls200JSONResponse, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, openapi.AclEntry{
-			PrincipalType:     openapi.AclEntryPrincipalType(r.PrincipalType),
-			PrincipalId:       r.PrincipalID,
-			Permission:        openapi.AclEntryPermission(r.Permission),
-			GrantedAt:         r.GrantedAt.Time,
+			PrincipalType:    openapi.AclEntryPrincipalType(r.PrincipalType),
+			PrincipalId:      r.PrincipalID,
+			Permission:       openapi.AclEntryPermission(r.Permission),
+			GrantedAt:        r.GrantedAt.Time,
 			GrantedByUserRef: r.GrantedByUserRef,
-			ExpiresAt:         tsToTimePtr(r.ExpiresAt),
+			ExpiresAt:        tsToTimePtr(r.ExpiresAt),
 		})
 	}
 	return out, nil
@@ -141,12 +141,12 @@ func (h *Handler) AddAssetTypeAcl(
 	}
 
 	if err := h.queries.InsertAcl(ctx, InsertAclParams{
-		AssetTypeRef:      req.Ref,
-		PrincipalType:     pt,
-		PrincipalID:       body.PrincipalId,
-		Permission:        perm,
+		AssetTypeRef:     req.Ref,
+		PrincipalType:    pt,
+		PrincipalID:      body.PrincipalId,
+		Permission:       perm,
 		GrantedByUserRef: &id.UserRef,
-		ExpiresAt:         expires,
+		ExpiresAt:        expires,
 	}); err != nil {
 		return nil, fmt.Errorf("assettype: insert acl: %w", err)
 	}

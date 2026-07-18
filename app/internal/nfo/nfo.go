@@ -33,19 +33,19 @@ import (
 // Album mirrors the <album> XML root of a Kodi album.nfo. All
 // fields are optional — real-world .nfo files vary in completeness.
 type Album struct {
-	Title         string  // <title>
-	Artist        string  // <artist>
-	AlbumArtist   string  // <albumartist>
-	Genre         string  // <genre>
-	Year          string  // <year> (free-form; some files use full date)
-	Outline       string  // <outline> (short description)
-	Review        string  // <review>  (long description)
-	Runtime       float64 // <runtime> in MINUTES (industry convention)
-	DateAdded     string  // <dateadded> "YYYY-MM-DD HH:MM:SS" if present
-	MBAlbumID     string  // <musicbrainzalbumid>
-	MBArtistID    string  // <musicbrainzalbumartistid>
-	MBReleaseID   string  // <musicbrainzreleasegroupid>
-	Tracks        []Track
+	Title       string  // <title>
+	Artist      string  // <artist>
+	AlbumArtist string  // <albumartist>
+	Genre       string  // <genre>
+	Year        string  // <year> (free-form; some files use full date)
+	Outline     string  // <outline> (short description)
+	Review      string  // <review>  (long description)
+	Runtime     float64 // <runtime> in MINUTES (industry convention)
+	DateAdded   string  // <dateadded> "YYYY-MM-DD HH:MM:SS" if present
+	MBAlbumID   string  // <musicbrainzalbumid>
+	MBArtistID  string  // <musicbrainzalbumartistid>
+	MBReleaseID string  // <musicbrainzreleasegroupid>
+	Tracks      []Track
 }
 
 // Track mirrors each <track> child. Duration is parsed from the
@@ -65,20 +65,20 @@ type Track struct {
 // the public Album type can normalise field types (e.g. Runtime
 // → float64).
 type raw struct {
-	XMLName       xml.Name   `xml:"album"`
-	Title         string     `xml:"title"`
-	Artist        string     `xml:"artist"`
-	AlbumArtist   string     `xml:"albumartist"`
-	Genre         string     `xml:"genre"`
-	Year          string     `xml:"year"`
-	Outline       string     `xml:"outline"`
-	Review        string     `xml:"review"`
-	Runtime       string     `xml:"runtime"`
-	DateAdded     string     `xml:"dateadded"`
-	MBAlbumID     string     `xml:"musicbrainzalbumid"`
-	MBArtistID    string     `xml:"musicbrainzalbumartistid"`
-	MBReleaseID   string     `xml:"musicbrainzreleasegroupid"`
-	Tracks        []rawTrack `xml:"track"`
+	XMLName     xml.Name   `xml:"album"`
+	Title       string     `xml:"title"`
+	Artist      string     `xml:"artist"`
+	AlbumArtist string     `xml:"albumartist"`
+	Genre       string     `xml:"genre"`
+	Year        string     `xml:"year"`
+	Outline     string     `xml:"outline"`
+	Review      string     `xml:"review"`
+	Runtime     string     `xml:"runtime"`
+	DateAdded   string     `xml:"dateadded"`
+	MBAlbumID   string     `xml:"musicbrainzalbumid"`
+	MBArtistID  string     `xml:"musicbrainzalbumartistid"`
+	MBReleaseID string     `xml:"musicbrainzreleasegroupid"`
+	Tracks      []rawTrack `xml:"track"`
 }
 
 type rawTrack struct {
@@ -128,13 +128,14 @@ func ParseAlbum(data []byte) (*Album, error) {
 }
 
 // parseDuration handles the three common Kodi forms:
-//   "M:SS"      → minutes:seconds
-//   "MM:SS"     → minutes:seconds
-//   "H:MM:SS"   → hours:minutes:seconds
-//   "<number>"  → bare seconds OR bare minutes (Kodi tends to be
-//                 inconsistent; we treat bare numbers as seconds
-//                 since that's what ffprobe emits and the more
-//                 common modern convention)
+//
+//	"M:SS"      → minutes:seconds
+//	"MM:SS"     → minutes:seconds
+//	"H:MM:SS"   → hours:minutes:seconds
+//	"<number>"  → bare seconds OR bare minutes (Kodi tends to be
+//	              inconsistent; we treat bare numbers as seconds
+//	              since that's what ffprobe emits and the more
+//	              common modern convention)
 func parseDuration(s string) (float64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

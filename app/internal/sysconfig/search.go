@@ -120,13 +120,13 @@ type SearchConfig struct {
 // Sensible defaults for VisualSearchConfig. Chosen conservative for
 // public deploys; operators tune per their threat model + hardware.
 const (
-	DefaultVisualSidecarURL                 = "http://aa-clip-visual-local:8402"
-	DefaultVisualTimeoutMs                  = 5000
-	DefaultVisualMaxUploadBytes             = 10 * 1024 * 1024
-	DefaultVisualRateLimitPerMinute         = 20
-	DefaultVisualBackfillBatchSize          = 100
-	DefaultVisualBackfillRateLimitPerSecond = 5.0
-	DefaultVisualBackfillTransientRetries   = 1
+	DefaultVisualSidecarURL                  = "http://aa-clip-visual-local:8402"
+	DefaultVisualTimeoutMs                   = 5000
+	DefaultVisualMaxUploadBytes              = 10 * 1024 * 1024
+	DefaultVisualRateLimitPerMinute          = 20
+	DefaultVisualBackfillBatchSize           = 100
+	DefaultVisualBackfillRateLimitPerSecond  = 5.0
+	DefaultVisualBackfillTransientRetries    = 1
 	DefaultVisualAutoEmbedRateLimitPerSecond = 5.0
 	DefaultVisualAutoEmbedRetryCount         = 2
 	DefaultFeedbackEnabled                   = true

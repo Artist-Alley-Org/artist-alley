@@ -175,12 +175,12 @@ func writeFixtureEPUB(t *testing.T, useISBNPrefix bool, coverStyle string) strin
     <dc:language>en</dc:language>
     <dc:publisher>Test Press</dc:publisher>
     <dc:date>2026-01-01</dc:date>
-    <dc:identifier id="id">` + identifier + `</dc:identifier>
+    <dc:identifier id="id">`+identifier+`</dc:identifier>
     <dc:subject>Fiction</dc:subject>
     <dc:subject>Mystery</dc:subject>
-    ` + coverMeta + `
+    `+coverMeta+`
   </metadata>
-  <manifest>` + manifest + `</manifest>
+  <manifest>`+manifest+`</manifest>
   <spine><itemref idref="ch1"/></spine>
 </package>`)
 	add("OEBPS/ch1.xhtml", `<html><body><h1>Chapter 1</h1><p>Once upon a time…</p></body></html>`)

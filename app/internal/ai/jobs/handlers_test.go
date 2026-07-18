@@ -537,10 +537,10 @@ var _ EmbedWriter = (*stubEmbedWriter)(nil)
 // ---------------------------------------------------------------------------
 
 type stubTranscribeOrch struct {
-	got    uuid.UUID
+	got     uuid.UUID
 	gotOpts TranscribeOrchestratorOpts
-	result TranscribeOrchestratorResult
-	err    error
+	result  TranscribeOrchestratorResult
+	err     error
 }
 
 func (s *stubTranscribeOrch) TranscribeAsset(_ context.Context, id uuid.UUID, opts TranscribeOrchestratorOpts) (TranscribeOrchestratorResult, error) {

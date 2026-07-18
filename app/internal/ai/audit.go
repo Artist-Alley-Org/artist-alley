@@ -31,33 +31,33 @@ import (
 // CallRecord is the per-call shape. Aligns one-for-one with the
 // ai_provider_call columns from migration 00009.
 type CallRecord struct {
-	Provider                string
-	Model                   string
-	Concern                 Concern
-	PromptTemplate          string // free-text identifier (e.g. "tag")
-	PromptVersion           string // e.g. "v1.0"
-	AssetID                 *uuid.UUID
-	JobID                   *uuid.UUID
-	InputHash               string // SHA-256 of canonical input payload
-	InputTokens             int
-	OutputTokens            int
-	Duration                time.Duration
-	EstimatedCostUSDMicros  int64
-	Status                  CallStatus
-	ErrorMessage            string
-	ActorUserRef            *int64
+	Provider               string
+	Model                  string
+	Concern                Concern
+	PromptTemplate         string // free-text identifier (e.g. "tag")
+	PromptVersion          string // e.g. "v1.0"
+	AssetID                *uuid.UUID
+	JobID                  *uuid.UUID
+	InputHash              string // SHA-256 of canonical input payload
+	InputTokens            int
+	OutputTokens           int
+	Duration               time.Duration
+	EstimatedCostUSDMicros int64
+	Status                 CallStatus
+	ErrorMessage           string
+	ActorUserRef           *int64
 }
 
 // CallStatus mirrors the ai_provider_call.status CHECK enum.
 type CallStatus string
 
 const (
-	CallStatusSuccess         CallStatus = "success"
-	CallStatusRateLimited     CallStatus = "rate_limited"
-	CallStatusTransientError  CallStatus = "transient_error"
-	CallStatusPermanentError  CallStatus = "permanent_error"
-	CallStatusBudgetBlocked   CallStatus = "budget_blocked"
-	CallStatusPrivacyBlocked  CallStatus = "privacy_blocked"
+	CallStatusSuccess        CallStatus = "success"
+	CallStatusRateLimited    CallStatus = "rate_limited"
+	CallStatusTransientError CallStatus = "transient_error"
+	CallStatusPermanentError CallStatus = "permanent_error"
+	CallStatusBudgetBlocked  CallStatus = "budget_blocked"
+	CallStatusPrivacyBlocked CallStatus = "privacy_blocked"
 )
 
 // CallAuditor records per-call rows. Nil-safe at the call site:

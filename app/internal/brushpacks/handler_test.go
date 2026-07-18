@@ -123,11 +123,11 @@ func TestPackToAPI_RoundtripsFields(t *testing.T) {
 	packID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	stampID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	pack := BrushPack{
-		ID:        pgtype.UUID{Bytes: packID, Valid: true},
-		OwnerUserRef:  10,
-		Name:      "My Pack",
-		SourceFile: &sourceFile,
-		CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		ID:           pgtype.UUID{Bytes: packID, Valid: true},
+		OwnerUserRef: 10,
+		Name:         "My Pack",
+		SourceFile:   &sourceFile,
+		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	}
 	label := "stamp-1"
 	sj := 0.25

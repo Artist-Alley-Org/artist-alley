@@ -30,14 +30,14 @@ const svgRenderSize = 2048
 // around the smaller axis), so a portrait SVG doesn't get stretched.
 //
 // Two-tier decoder:
-//   1. oksvg + rasterx (pure Go) — covers SVG 1.1 paths, basic
-//      shapes, gradients, transforms, and most styling. Fast, no
-//      subprocess, fits the Go-native preference.
-//   2. rsvg-convert (librsvg subprocess) — fallback when oksvg can't
-//      parse the input OR produces an essentially empty image. Handles
-//      filters, complex text, full CSS, embedded raster images, and
-//      everything else oksvg gives up on. Only invoked when needed
-//      so the fast path stays fast.
+//  1. oksvg + rasterx (pure Go) — covers SVG 1.1 paths, basic
+//     shapes, gradients, transforms, and most styling. Fast, no
+//     subprocess, fits the Go-native preference.
+//  2. rsvg-convert (librsvg subprocess) — fallback when oksvg can't
+//     parse the input OR produces an essentially empty image. Handles
+//     filters, complex text, full CSS, embedded raster images, and
+//     everything else oksvg gives up on. Only invoked when needed
+//     so the fast path stays fast.
 //
 // If both fail, returns the original oksvg error so the upload is
 // rejected with a meaningful message.

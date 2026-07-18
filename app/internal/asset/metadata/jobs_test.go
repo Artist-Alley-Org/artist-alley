@@ -45,8 +45,8 @@ type stubExtractor struct {
 	err      error
 }
 
-func (s stubExtractor) Name() string                       { return "stub" }
-func (s stubExtractor) Supports(_ string) bool             { return s.supports }
+func (s stubExtractor) Name() string           { return "stub" }
+func (s stubExtractor) Supports(_ string) bool { return s.supports }
 func (s stubExtractor) Extract(_ context.Context, _ io.Reader, _ string) (Result, error) {
 	return s.result, s.err
 }

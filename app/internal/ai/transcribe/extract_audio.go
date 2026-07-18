@@ -114,12 +114,12 @@ func ExtractAudio(ctx context.Context, ffmpegBin, srcPath string, startMS, durat
 		args = append(args, "-t", formatSec(durationMS))
 	}
 	args = append(args,
-		"-vn",                  // drop video stream
-		"-ac", "1",             // mono
-		"-ar", "16000",         // 16 kHz
-		"-c:a", "pcm_s16le",    // signed 16-bit little-endian PCM
-		"-f", "wav",            // WAV container
-		"pipe:1",               // stdout
+		"-vn",      // drop video stream
+		"-ac", "1", // mono
+		"-ar", "16000", // 16 kHz
+		"-c:a", "pcm_s16le", // signed 16-bit little-endian PCM
+		"-f", "wav", // WAV container
+		"pipe:1", // stdout
 	)
 	cmd := exec.CommandContext(ctx, ffmpegBin, args...)
 	var out, errBuf bytes.Buffer

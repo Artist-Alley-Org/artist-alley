@@ -81,9 +81,9 @@ func countAuditEvents(t *testing.T, pool *pgxpool.Pool, eventType, metaKey, meta
 // about so each test reads them once at the bottom + asserts
 // without inlining the SQL.
 type outboxRowState struct {
-	status         string
-	wasEncrypted   bool
-	refusedReason  *string
+	status        string
+	wasEncrypted  bool
+	refusedReason *string
 }
 
 func readOutboxRow(t *testing.T, pool *pgxpool.Pool, activityID uuid.UUID) outboxRowState {
@@ -410,4 +410,3 @@ func (s *fixedSigner) Sign(req *http.Request, _ []byte) error {
 }
 
 func (s *fixedSigner) KeyID() string { return s.keyURL }
-

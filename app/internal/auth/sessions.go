@@ -189,9 +189,9 @@ func (m *SessionManager) IssueImpersonation(ctx context.Context, adminRef, targe
 		return "", SessionInfo{}, fmt.Errorf("auth: insert impersonation session: %w", err)
 	}
 	out := SessionInfo{
-		ID:        uuid.UUID(row.ID.Bytes),
-		UserRef:   row.UserRef,
-		CreatedAt: row.CreatedAt.Time,
+		ID:         uuid.UUID(row.ID.Bytes),
+		UserRef:    row.UserRef,
+		CreatedAt:  row.CreatedAt.Time,
 		LastUsedAt: row.LastUsedAt.Time,
 	}
 	if row.ExpiresAt.Valid {

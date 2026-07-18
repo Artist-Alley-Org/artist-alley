@@ -208,12 +208,12 @@ func (s *Service) Transition(
 
 	actor := caller.UserRef
 	if err := tq.InsertWorkflowAudit(ctx, InsertWorkflowAuditParams{
-		ResourceKind:   string(kind),
-		ResourceID:     pgResID,
-		FromStateID:    fromState,
-		ToStateID:      pgToID,
-		ActorUserRef:  &actor,
-		Note:           note,
+		ResourceKind: string(kind),
+		ResourceID:   pgResID,
+		FromStateID:  fromState,
+		ToStateID:    pgToID,
+		ActorUserRef: &actor,
+		Note:         note,
 	}); err != nil {
 		return fmt.Errorf("workflow: insert audit: %w", err)
 	}

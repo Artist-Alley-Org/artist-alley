@@ -7,7 +7,7 @@
 // signing keys, SMTP credentials (planned), OAuth client secrets,
 // any other material we will not ship to disk plaintext.
 //
-// Design
+// # Design
 //
 // AES-256-GCM with a 32-byte host master key sourced from the
 // AA_MASTER_KEY environment variable (base64-encoded). The master
@@ -37,7 +37,7 @@
 //     exist in memory for the duration of the signing operation;
 //     callers SHOULD zero the byte slice in deferred cleanup.
 //
-// Spec reference
+// # Spec reference
 //
 // See docs/spec/federation/v1.md §13 for the wire format + threat
 // model in the protocol context. The package itself is generic
@@ -99,7 +99,7 @@ var (
 )
 
 var (
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 	cipher_ cipher.AEAD // initialised by Init, read by Encrypt/Decrypt
 )
 

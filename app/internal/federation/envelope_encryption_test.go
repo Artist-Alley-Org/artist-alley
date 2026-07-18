@@ -216,11 +216,11 @@ func TestEnvelope_WithEncryptionBlock_RoundtripsThroughMarshal(t *testing.T) {
 	// round-trips through the strict-parse path that catches
 	// unknown top-level fields.
 	env := &Envelope{
-		Context:   ContextV1,
-		Type:      ActivityLike,
-		ID:        "https://a.local/activities/uuid",
-		Actor:     "https://a.local/users/alice",
-		To:        []string{"https://b.local/users/bob"},
+		Context: ContextV1,
+		Type:    ActivityLike,
+		ID:      "https://a.local/activities/uuid",
+		Actor:   "https://a.local/users/alice",
+		To:      []string{"https://b.local/users/bob"},
 		Encryption: &EncryptionBlock{
 			Algorithm:           EncryptionAlgNaClBoxV1,
 			SenderKeyID:         "https://a.local/users/alice#encryption-key",

@@ -107,12 +107,12 @@ func TestAssetLifecycle_HappyPath(t *testing.T) {
 
 	// --- 2. create asset linked to the uploaded hash ---
 	createBody := map[string]any{
-		"title":         "Test Asset",
-		"description":   "Round-trip integration test",
-		"asset_type": int64(1),
-		"file_hash":     hashHex,
-		"tags":          []string{"smoke", "test"},
-		"metadata":      map[string]any{"width": 4096, "format": "png"},
+		"title":       "Test Asset",
+		"description": "Round-trip integration test",
+		"asset_type":  int64(1),
+		"file_hash":   hashHex,
+		"tags":        []string{"smoke", "test"},
+		"metadata":    map[string]any{"width": 4096, "format": "png"},
 	}
 	createRR := postJSON(t, router, "/assets", createBody)
 	if createRR.Code != http.StatusCreated {
@@ -302,9 +302,9 @@ func TestCreateAssetWithoutFile(t *testing.T) {
 	})
 
 	rr := postJSON(t, router, "/assets", map[string]any{
-		"title":         "Draft without file",
+		"title":      "Draft without file",
 		"asset_type": int64(1),
-		"status":        "draft",
+		"status":     "draft",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: %d body=%s", rr.Code, rr.Body.String())
@@ -512,7 +512,6 @@ func (s shimImpl) SearchEpub(ctx context.Context, req openapi.SearchEpubRequestO
 	return s.assets.SearchEpub(ctx, req)
 }
 
-
 func openPool(t *testing.T, pwd string) *pgxpool.Pool {
 	t.Helper()
 	host := envOr("AA_DB_HOST", "postgres")
@@ -540,8 +539,6 @@ func envOr(key, def string) string {
 	}
 	return def
 }
-
-
 
 // --- brush packs stubs (Phase 1.21c) -------------------------------------
 func (s shimImpl) LintAsset(ctx context.Context, req openapi.LintAssetRequestObject) (openapi.LintAssetResponseObject, error) {

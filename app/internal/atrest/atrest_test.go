@@ -129,7 +129,7 @@ func TestInitMissingEnv(t *testing.T) {
 func TestInitMalformedEnv(t *testing.T) {
 	cases := []string{
 		"not-base64-at-all!@#",
-		base64.StdEncoding.EncodeToString([]byte("too-short")), // <32 bytes
+		base64.StdEncoding.EncodeToString([]byte("too-short")),         // <32 bytes
 		base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0}, 64)), // >32 bytes
 	}
 	for _, v := range cases {

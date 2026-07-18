@@ -11,6 +11,7 @@
 
   import type { AdminSection } from '$lib/admin/sections';
   import { t } from '$stores/lang.svelte';
+  import { auth } from '$stores/auth.svelte';
   import AdminIcon from './AdminIcon.svelte';
 
   interface Props {
@@ -18,6 +19,13 @@
   }
 
   let { section }: Props = $props();
+
+  // #385 — a read-cap holder lands here on a section they partly hold;
+  // show only tiles they can open. canSeeTile is true for every tile
+  // when system.admin (unchanged full view), and for a read-only role
+  // it drops both superuser-only live tiles (no 403 on click) and
+  // future tiles (whose absent cap resolves to system.admin-only).
+  const visibleTiles = $derived(section.tiles.filter((tile) => auth.canSeeTile(tile)));
 
   function tileKey(slug: string, key: string): string {
     return `admin.sections.${slug}.tiles.${key}`;
@@ -35,7 +43,7 @@
 </header>
 
 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-  {#each section.tiles as tile (tile.key)}
+  {#each visibleTiles as tile (tile.key)}
     {@const titleK = `${tileKey(section.slug, tile.key)}.title`}
     {@const blurbK = `${tileKey(section.slug, tile.key)}.blurb`}
     {#if tile.status === 'future'}

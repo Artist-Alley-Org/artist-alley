@@ -99,10 +99,10 @@ type HitMeta struct {
 // Delta describes the transition between the previous stored run
 // and the current one.
 type Delta struct {
-	Added        []uuid.UUID
-	Removed      []uuid.UUID
-	Unchanged    int
-	HashChanged  bool
+	Added       []uuid.UUID
+	Removed     []uuid.UUID
+	Unchanged   int
+	HashChanged bool
 }
 
 // Sentinels — HTTP layer maps to appropriate status codes.
