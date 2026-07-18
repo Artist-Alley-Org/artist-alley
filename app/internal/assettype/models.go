@@ -887,6 +887,30 @@ type StoragePin struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type StorageSweepFinding struct {
+	ID         pgtype.UUID        `json:"id"`
+	RunID      pgtype.UUID        `json:"run_id"`
+	Finding    string             `json:"finding"`
+	ObjectHash string             `json:"object_hash"`
+	VariantKey string             `json:"variant_key"`
+	Detail     string             `json:"detail"`
+	DetectedAt pgtype.Timestamptz `json:"detected_at"`
+	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
+}
+
+type StorageSweepRun struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Kind               string             `json:"kind"`
+	Status             string             `json:"status"`
+	Cursor             *string            `json:"cursor"`
+	ObjectsScanned     int64              `json:"objects_scanned"`
+	FindingsCount      int64              `json:"findings_count"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	Error              *string            `json:"error"`
+	TriggeredByUserRef *int64             `json:"triggered_by_user_ref"`
+}
+
 type StorageVariant struct {
 	ObjectHash  string             `json:"object_hash"`
 	VariantKey  string             `json:"variant_key"`

@@ -19,7 +19,9 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -75,7 +77,39 @@ type Backend interface {
 	// PresignPut returns a URL that lets a client upload directly to
 	// the backend. As with PresignGet, FS returns ErrUnsupported.
 	PresignPut(ctx context.Context, hash, variant string, ttl time.Duration) (string, error)
+
+	// List enumerates stored variants in lexicographic key order,
+	// returning at most limit refs plus a cursor to continue from.
+	// A returned cursor of "" means the enumeration is complete.
+	// Passing cursor "" starts from the beginning.
+	//
+	// This exists for integrity sweeps (#403): without it, orphan
+	// detection can only look DB->disk ("row exists, object missing")
+	// and never disk->DB ("object exists, nothing references it"),
+	// which is where reclaimable waste actually hides.
+	//
+	// Paginated rather than slurp-everything or callback-based on
+	// purpose: the sweep runs as a resumable job that records
+	// progress between batches, and s3 continuation tokens map onto
+	// the cursor directly.
+	//
+	// Keys that are not well-formed object paths are skipped, not
+	// reported — a sweep must never hand a delete path something it
+	// cannot attribute to an object.
+	List(ctx context.Context, cursor string, limit int) (refs []ObjectRef, next string, err error)
 }
+
+// ObjectRef is one stored variant as seen by the backend during
+// enumeration. Size comes from the backend's own listing, so it can be
+// compared against storage_variants.size_bytes without a second Stat.
+type ObjectRef struct {
+	Hash    string
+	Variant string
+	Size    int64
+}
+
+// Key returns the backend-relative key for this ref.
+func (r ObjectRef) Key() string { return ObjectPath(r.Hash, r.Variant) }
 
 // ObjectInfo is the per-variant metadata a backend can describe
 // without reading the bytes themselves.
@@ -150,4 +184,41 @@ func ValidatePair(hash, variant string) error {
 // backend so the on-disk and in-bucket layouts agree.
 func ObjectPath(hash, variant string) string {
 	return hash[0:2] + "/" + hash[2:4] + "/" + hash + "/" + variant
+}
+
+// ParseObjectPath is the inverse of [ObjectPath]: it recovers the
+// (hash, variant) pair from a backend-relative key. Enumeration (#403)
+// needs this to turn "what is on disk" back into "which object is
+// this", so orphan detection can compare against the DB.
+//
+// The layout is unambiguous even though a variant key may itself
+// contain slashes ("hls/720p/seg00006.ts"): the hash occupies exactly
+// the third segment and is a fixed-width 64-char hex string, so
+// everything after it is the variant.
+//
+// Anything that is not a well-formed object path — a stray file at the
+// backend root, a temp file, a truncated directory — is rejected rather
+// than guessed at. Callers treat that as "not ours, leave it alone",
+// which matters because the caller on the other end of this is a
+// delete path.
+func ParseObjectPath(rel string) (hash, variant string, err error) {
+	rel = strings.TrimPrefix(path.Clean("/"+strings.ReplaceAll(rel, `\`, "/")), "/")
+	parts := strings.Split(rel, "/")
+	if len(parts) < 4 {
+		return "", "", fmt.Errorf("storage: %q is not an object path", rel)
+	}
+	hash = parts[2]
+	if err := ValidateHash(hash); err != nil {
+		return "", "", fmt.Errorf("storage: %q is not an object path: %w", rel, err)
+	}
+	// The shard prefix is derived from the hash, so a mismatch means
+	// the key was not written by ObjectPath and we must not claim it.
+	if parts[0] != hash[0:2] || parts[1] != hash[2:4] {
+		return "", "", fmt.Errorf("storage: %q shard prefix does not match its hash", rel)
+	}
+	variant = strings.Join(parts[3:], "/")
+	if err := ValidateVariantKey(variant); err != nil {
+		return "", "", fmt.Errorf("storage: %q is not an object path: %w", rel, err)
+	}
+	return hash, variant, nil
 }

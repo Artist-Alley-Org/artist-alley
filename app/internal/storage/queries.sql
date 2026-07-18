@@ -127,3 +127,79 @@ SELECT
 FROM storage_objects
 GROUP BY 1
 ORDER BY object_count DESC;
+
+-- ---------------------------------------------------------------------
+-- Integrity sweeps (#403). Runs + findings; see 00007 for the shape.
+-- ---------------------------------------------------------------------
+
+-- name: CreateSweepRun :one
+INSERT INTO storage_sweep_runs (id, kind, triggered_by_user_ref)
+VALUES ($1, $2, $3)
+RETURNING id, kind, status, cursor, objects_scanned, findings_count,
+          started_at, finished_at, error, triggered_by_user_ref;
+
+-- name: AdvanceSweepRun :exec
+-- Batch checkpoint: record the resume cursor + running totals without
+-- closing the run, so a sweep survives a restart mid-scan.
+UPDATE storage_sweep_runs
+SET cursor = $2,
+    objects_scanned = objects_scanned + $3,
+    findings_count = findings_count + $4
+WHERE id = $1;
+
+-- name: FinishSweepRun :exec
+UPDATE storage_sweep_runs
+SET status = $2, error = $3, cursor = NULL, finished_at = NOW()
+WHERE id = $1;
+
+-- name: RecordSweepFinding :exec
+INSERT INTO storage_sweep_findings (id, run_id, finding, object_hash, variant_key, detail)
+VALUES ($1, $2, $3, $4, $5, $6);
+
+-- name: LatestSweepRun :one
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE kind = $1
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: ListSweepRuns :many
+SELECT id, kind, status, cursor, objects_scanned, findings_count,
+       started_at, finished_at, error, triggered_by_user_ref
+FROM storage_sweep_runs
+WHERE (sqlc.narg('kind')::TEXT IS NULL OR kind = sqlc.narg('kind')::TEXT)
+ORDER BY started_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: ListSweepFindings :many
+-- Unresolved findings for a run, newest first.
+SELECT id, run_id, finding, object_hash, variant_key, detail, detected_at, resolved_at
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND (sqlc.narg('finding')::TEXT IS NULL OR finding = sqlc.narg('finding')::TEXT)
+ORDER BY detected_at DESC, id
+LIMIT $2 OFFSET $3;
+
+-- name: CountSweepFindings :one
+SELECT COUNT(*)::BIGINT
+FROM storage_sweep_findings
+WHERE run_id = $1
+  AND (sqlc.narg('finding')::TEXT IS NULL OR finding = sqlc.narg('finding')::TEXT);
+
+-- name: ListVariantsForVerify :many
+-- Paged walk of the DB side, ordered so a sweep can resume after a
+-- (hash, variant) cursor.
+SELECT object_hash, variant_key, size_bytes
+FROM storage_variants
+WHERE (object_hash, variant_key) > ($1::TEXT, $2::TEXT)
+ORDER BY object_hash, variant_key
+LIMIT $3;
+
+-- name: VariantExists :one
+-- Re-verification probe: is this (hash, variant) still referenced?
+-- Used at ACTION time, never trusting a scan-time finding.
+SELECT EXISTS (
+    SELECT 1 FROM storage_variants
+    WHERE object_hash = $1 AND variant_key = $2
+)::BOOLEAN;
