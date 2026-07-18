@@ -2,6 +2,15 @@
 -- collections (the entity)
 -- ---------------------------------------------------------------------------
 
+-- Column ORDER in the explicit lists below is load-bearing, not style.
+-- It matches the physical column order a migrated database actually has
+-- (search_text/smart_query were added before the soft-delete columns).
+-- When a query's column list matches table order, sqlc reuses the
+-- Collection model; when it doesn't, sqlc emits a bespoke per-query Row
+-- struct and every caller that assigns to Collection stops compiling.
+-- See #420 -- app/schema.sql previously described an order migrations
+-- never produce, which is what hid this.
+
 -- name: CreateCollection :one
 INSERT INTO collections (
     owner_user_ref, name, description, visibility, membership,
@@ -9,16 +18,16 @@ INSERT INTO collections (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query;
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason;
 
 -- name: GetCollection :one
 -- Filters soft-deleted rows by default. Admin surfaces reading
 -- deleted rows use GetCollectionIncludingDeleted below.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -28,8 +37,8 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- event even after deleted_at IS NOT NULL).
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections
 WHERE id = $1;
 
@@ -47,8 +56,8 @@ UPDATE collections SET
 WHERE id = sqlc.arg('id')
 RETURNING id, owner_user_ref, name, description, visibility, membership,
           expires_at, featured, purpose, origin_server_id,
-          created_at, updated_at, deleted_at, deleted_reason,
-          search_text, smart_query;
+          created_at, updated_at, search_text, smart_query,
+          deleted_at, deleted_reason;
 
 -- name: ClearCollectionExpiresAt :exec
 -- Separate query because COALESCE can't express "explicitly set to NULL".
@@ -77,8 +86,8 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- the caller's user_ref into `exclude_owner` to drop owned rows.
 SELECT id, owner_user_ref, name, description, visibility, membership,
        expires_at, featured, purpose, origin_server_id,
-       created_at, updated_at, deleted_at, deleted_reason,
-       search_text, smart_query
+       created_at, updated_at, search_text, smart_query,
+       deleted_at, deleted_reason
 FROM collections c
 WHERE (sqlc.narg('include_deleted')::BOOLEAN IS TRUE OR deleted_at IS NULL)
   AND (sqlc.narg('owner_user_ref')::BIGINT  IS NULL OR owner_user_ref = sqlc.narg('owner_user_ref')::BIGINT)
