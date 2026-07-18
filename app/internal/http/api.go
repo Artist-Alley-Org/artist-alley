@@ -183,6 +183,7 @@ type apiServer struct {
 	metaCounter       *assetmetadata.Counter
 	metaAdmin         *assetmetadata.AdminHandler
 	jobsSvc           *jobs.Service
+	jobsAdmin         *jobs.AdminHandler
 	seedAdmin         *seed.AdminHandler
 	// Phase 1.16.B-1 — unified search foundation. Nil when boot
 	// intentionally disables /search (tests that spin up a
@@ -934,6 +935,7 @@ func newAPIServer(pool *pgxpool.Pool, logger *slog.Logger, cfg config.Config, st
 	// installs where the extract job is currently disabled (rows
 	// from prior runs stay for audit).
 	s.metaAdmin = assetmetadata.NewAdminHandler(pool)
+	s.jobsAdmin = jobs.NewAdminHandler(pool)
 
 	// Wire the social-graph seam into posts so visibility='followers'
 	// gating consults the new follows table (Phase 1.17.G2). Done
@@ -3599,6 +3601,132 @@ func metaBackfillToAPI(r assetmetadata.BackfillRunRow) openapi.MetadataBackfillR
 	if r.CancelledAt != nil {
 		t := *r.CancelledAt
 		out.CancelledAt = &t
+	}
+	return out
+}
+
+// --- jobs admin read surface (#400, v0.4.0 Sprint 0) ------------------
+//
+// All three GETs are gated on jobs.CapJobsRead (or system.admin) and
+// are strictly read-only — no requeue/cancel path exists under this cap
+// (Sprint 1, #401). Mirrors the metadata-extraction admin gate above.
+
+func (s *apiServer) jobsReadDenied(ctx context.Context) bool {
+	caller := auth.IdentityFromContext(ctx)
+	return caller == nil || (!caller.Can(jobs.CapJobsRead) && !caller.Can("system.admin"))
+}
+
+func (s *apiServer) ListJobs(ctx context.Context, req openapi.ListJobsRequestObject) (openapi.ListJobsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListJobs401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.jobsReadDenied(ctx) {
+		return openapi.ListJobs403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: jobs.CapJobsRead + " required"},
+		}, nil
+	}
+	f := jobs.ListJobsFilter{}
+	if req.Params.Status != nil {
+		v := *req.Params.Status
+		f.Status = &v
+	}
+	if req.Params.Type != nil {
+		v := *req.Params.Type
+		f.Type = &v
+	}
+	if req.Params.Limit != nil {
+		f.Limit = int32(*req.Params.Limit)
+	}
+	if req.Params.Offset != nil {
+		f.Offset = int32(*req.Params.Offset)
+	}
+	rows, total, err := s.jobsAdmin.ListJobs(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.JobSummary, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, jobSummaryToAPI(r))
+	}
+	return openapi.ListJobs200JSONResponse{Items: items, Total: total}, nil
+}
+
+func (s *apiServer) ListJobWorkers(ctx context.Context, req openapi.ListJobWorkersRequestObject) (openapi.ListJobWorkersResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListJobWorkers401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.jobsReadDenied(ctx) {
+		return openapi.ListJobWorkers403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: jobs.CapJobsRead + " required"},
+		}, nil
+	}
+	rows, err := s.jobsAdmin.ListActiveWorkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.JobWorker, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, openapi.JobWorker{
+			ClaimedBy:      r.ClaimedBy,
+			JobId:          openapi_types.UUID(r.JobID),
+			Type:           r.Type,
+			Priority:       int(r.Priority),
+			Attempts:       int(r.Attempts),
+			ClaimedAt:      r.ClaimedAt,
+			LeaseExpiresAt: r.LeaseExpiresAt,
+			LeaseStale:     r.LeaseStale,
+		})
+	}
+	return openapi.ListJobWorkers200JSONResponse{Items: items}, nil
+}
+
+func (s *apiServer) ListJobStatusCounts(ctx context.Context, req openapi.ListJobStatusCountsRequestObject) (openapi.ListJobStatusCountsResponseObject, error) {
+	if auth.IdentityFromContext(ctx) == nil {
+		return openapi.ListJobStatusCounts401JSONResponse{
+			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	if s.jobsReadDenied(ctx) {
+		return openapi.ListJobStatusCounts403JSONResponse{
+			ForbiddenJSONResponse: openapi.ForbiddenJSONResponse{Error: jobs.CapJobsRead + " required"},
+		}, nil
+	}
+	rows, err := s.jobsAdmin.StatusCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]openapi.JobStatusCount, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, openapi.JobStatusCount{Type: r.Type, Status: r.Status, Count: r.Count})
+	}
+	return openapi.ListJobStatusCounts200JSONResponse{Items: items}, nil
+}
+
+func jobSummaryToAPI(r jobs.JobRow) openapi.JobSummary {
+	out := openapi.JobSummary{
+		Id:             openapi_types.UUID(r.ID),
+		Type:           r.Type,
+		Status:         openapi.JobSummaryStatus(r.Status),
+		Priority:       int(r.Priority),
+		Attempts:       int(r.Attempts),
+		MaxAttempts:    int(r.MaxAttempts),
+		ClaimedBy:      r.ClaimedBy,
+		ClaimedAt:      r.ClaimedAt,
+		LeaseExpiresAt: r.LeaseExpiresAt,
+		LastError:      r.LastError,
+		ScheduledFor:   r.ScheduledFor,
+		EnqueuedAt:     r.EnqueuedAt,
+		StartedAt:      r.StartedAt,
+		FinishedAt:     r.FinishedAt,
+		AgeSeconds:     r.AgeSeconds,
+	}
+	if r.OriginServerID != nil {
+		id := openapi_types.UUID(*r.OriginServerID)
+		out.OriginServerId = &id
 	}
 	return out
 }

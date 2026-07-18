@@ -8438,6 +8438,97 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs by status and type
+      description: |
+        Read-only admin view of the job queue (#400). Paginated, ordered
+        priority ASC then enqueued_at ASC (the run order). Optional
+        `status` + `type` filters. Each row carries `age_seconds`
+        (NOW() - enqueued_at) so the UI needn't trust a client clock.
+        Gated on `system.jobs.read` (or `system.admin`). No write path.
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by status (pending/running/done/failed/cancelled). Omit for all.
+          schema: { type: string }
+        - name: type
+          in: query
+          required: false
+          description: Filter by job type (e.g. preview.raster). Omit for all.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: A page of jobs + the total under the same filter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/workers:
+    get:
+      operationId: listJobWorkers
+      summary: List active workers and the job each holds
+      description: |
+        One entry per running job = one busy worker (#400). Carries the
+        worker id (`claimed_by`), the held job, and lease state
+        (`lease_expires_at`, `lease_stale`). Gated on `system.jobs.read`
+        (or `system.admin`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active workers with their held jobs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobWorkerList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/jobs/status-counts:
+    get:
+      operationId: listJobStatusCounts
+      summary: Live per-type per-status job counts
+      description: |
+        Aggregate counts grouped by (type, status) for the live queue
+        dashboard (#400). The UI polls this on an interval (no SSE this
+        sprint). Gated on `system.jobs.read` (or `system.admin`).
+      tags: [admin, jobs]
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Per-(type, status) counts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatusCountList" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -13782,6 +13873,77 @@ components:
             limit/offset but obeying the error_kind + format filters.
             Powers the admin nav badge.
 
+    JobSummary:
+      type: object
+      required: [id, type, status, priority, attempts, max_attempts, age_seconds]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status:
+          type: string
+          enum: [pending, running, done, failed, cancelled]
+        priority: { type: integer }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        claimed_by: { type: string, nullable: true }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        last_error: { type: string, nullable: true }
+        origin_server_id: { type: string, format: uuid, nullable: true }
+        scheduled_for: { type: string, format: date-time, nullable: true }
+        enqueued_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        age_seconds:
+          type: integer
+          format: int64
+          description: Seconds since the job was enqueued (server-computed).
+    JobList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobSummary" }
+        total:
+          type: integer
+          format: int64
+          description: Total jobs under the same status+type filter, ignoring limit/offset.
+    JobWorker:
+      type: object
+      required: [claimed_by, job_id, type, priority, attempts, lease_stale]
+      properties:
+        claimed_by: { type: string, description: Worker id holding the job. }
+        job_id: { type: string, format: uuid }
+        type: { type: string }
+        priority: { type: integer }
+        attempts: { type: integer }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        lease_stale:
+          type: boolean
+          description: True when the lease has lapsed (RequeueStuckJobs will reclaim it).
+    JobWorkerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobWorker" }
+    JobStatusCount:
+      type: object
+      required: [type, status, count]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        count: { type: integer, format: int64 }
+    JobStatusCountList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/JobStatusCount" }
     MetadataBackfillStart:
       type: object
       description: |
