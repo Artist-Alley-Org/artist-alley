@@ -96,9 +96,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     tiles: [
       { key: 'queue',        status: 'live',   href: '/admin/jobs/queue',   cap: 'system.jobs.read' },
       { key: 'workers',      status: 'live',   href: '/admin/jobs/workers', cap: 'system.jobs.read' },
-      { key: 'kinds',        status: 'future', phase: '1.15' },
-      { key: 'failed',       status: 'future', phase: '1.15' },
-      { key: 'schedules',    status: 'future', phase: '1.15' },
+      { key: 'kinds',        status: 'live',   href: '/admin/jobs/kinds',     cap: 'system.jobs.read' },
+      { key: 'failed',       status: 'live',   href: '/admin/jobs/failed',    cap: 'system.jobs.read' },
+      { key: 'schedules',    status: 'live',   href: '/admin/jobs/schedules', cap: 'system.jobs.read' },
       { key: 'live',         status: 'live',   href: '/admin/jobs/live',    cap: 'system.jobs.read' },
       { key: 'render_farm',  status: 'future', phase: '1.16' },
     ],

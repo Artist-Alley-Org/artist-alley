@@ -5,6 +5,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -15,12 +16,19 @@ import (
 
 // CapJobsRead gates the read-only admin view of the job queue (#400),
 // so an auditor role can watch the async pipeline (jobs by status/type,
-// active workers, live counts) without the system.admin wildcard. There
-// is NO write path under this cap — requeue/cancel/concurrency-edit stay
-// system.admin (Sprint 1, #401). The gate itself lives at the HTTP layer
-// (internal/http/api.go), mirroring the metadata-extraction admin
-// surface (#356).
+// active workers, live counts) without the system.admin wildcard. The
+// MUTATING admin actions (requeue/cancel, #401) gate on system.admin at
+// the HTTP layer, mirroring the metadata-extraction admin surface
+// (#356) — reads on the read cap, writes on system.admin.
 const CapJobsRead = "system.jobs.read"
+
+// ErrJobNotFound / ErrJobNotActionable let the HTTP layer distinguish a
+// missing job (404) from one whose current status forbids the action
+// (409) — e.g. requeuing a running job, or cancelling a done one.
+var (
+	ErrJobNotFound      = errors.New("jobs: job not found")
+	ErrJobNotActionable = errors.New("jobs: job is not in a state that allows this action")
+)
 
 // AdminHandler owns the read-only admin queries for the jobs queue. The
 // worker path (Enqueue/Claim/Complete/Fail) writes rows; this handler is
@@ -161,6 +169,103 @@ func (h *AdminHandler) StatusCounts(ctx context.Context) ([]StatusCount, error) 
 		out = append(out, StatusCount{Type: r.Type, Status: r.Status, Count: r.Count})
 	}
 	return out, nil
+}
+
+// RequeueJob sends a failed/cancelled job back to the pending pool
+// (#401). Returns ErrJobNotActionable if the job exists but is running
+// or already done (the WHERE guard matched no row), ErrJobNotFound if
+// the id doesn't exist. Never touches a running job.
+func (h *AdminHandler) RequeueJob(ctx context.Context, id uuid.UUID) error {
+	pgID := pgtype.UUID{Bytes: id, Valid: true}
+	n, err := h.q.AdminRequeueJob(ctx, pgID)
+	if err != nil {
+		return fmt.Errorf("jobs.AdminHandler.RequeueJob: %w", err)
+	}
+	if n == 0 {
+		return h.classifyNoAction(ctx, pgID)
+	}
+	return nil
+}
+
+// CancelJob moves a pending/failed job to cancelled (#401). Same
+// error contract as RequeueJob. A running job cannot be cancelled this
+// sprint (cooperative running-cancel is out of scope).
+func (h *AdminHandler) CancelJob(ctx context.Context, id uuid.UUID) error {
+	pgID := pgtype.UUID{Bytes: id, Valid: true}
+	n, err := h.q.AdminCancelJob(ctx, pgID)
+	if err != nil {
+		return fmt.Errorf("jobs.AdminHandler.CancelJob: %w", err)
+	}
+	if n == 0 {
+		return h.classifyNoAction(ctx, pgID)
+	}
+	return nil
+}
+
+// classifyNoAction turns a zero-rows guarded UPDATE into the right
+// error: the job doesn't exist (404) vs. it exists but its status
+// forbade the action (409). The probe runs only on the miss path, so
+// the happy path stays one query.
+func (h *AdminHandler) classifyNoAction(ctx context.Context, id pgtype.UUID) error {
+	var exists bool
+	if err := h.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("jobs.AdminHandler.classifyNoAction: %w", err)
+	}
+	if !exists {
+		return ErrJobNotFound
+	}
+	return ErrJobNotActionable
+}
+
+// ScheduledRow is one future-dated pending job.
+type ScheduledRow struct {
+	ID           uuid.UUID
+	Type         string
+	Status       string
+	Priority     int32
+	Attempts     int32
+	MaxAttempts  int32
+	ScheduledFor *time.Time
+	EnqueuedAt   *time.Time
+	DueInSeconds int64
+}
+
+// ListScheduledJobs returns future-dated pending work, paginated, plus
+// the total (#401). Read-only — there is no scheduler to configure.
+func (h *AdminHandler) ListScheduledJobs(ctx context.Context, limit, offset int32) ([]ScheduledRow, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := h.q.AdminListScheduledJobs(ctx, AdminListScheduledJobsParams{Limit: limit, Offset: offset})
+	if err != nil {
+		return nil, 0, fmt.Errorf("jobs.AdminHandler.ListScheduledJobs: list: %w", err)
+	}
+	out := make([]ScheduledRow, 0, len(rows))
+	for _, r := range rows {
+		sr := ScheduledRow{
+			Type:         r.Type,
+			Status:       r.Status,
+			Priority:     r.Priority,
+			Attempts:     r.Attempts,
+			MaxAttempts:  r.MaxAttempts,
+			DueInSeconds: r.DueInSeconds,
+		}
+		if r.ID.Valid {
+			sr.ID = uuid.UUID(r.ID.Bytes)
+		}
+		sr.ScheduledFor = tsPtr(r.ScheduledFor)
+		sr.EnqueuedAt = tsPtr(r.EnqueuedAt)
+		out = append(out, sr)
+	}
+	total, err := h.q.AdminCountScheduledJobs(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("jobs.AdminHandler.ListScheduledJobs: count: %w", err)
+	}
+	return out, total, nil
 }
 
 func jobRowFromDB(r AdminListJobsRow) JobRow {
