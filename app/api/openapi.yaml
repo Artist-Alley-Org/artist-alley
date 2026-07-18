@@ -7324,6 +7324,28 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /build-info:
+    get:
+      operationId: getBuildInfo
+      summary: Server version / build info
+      description: |
+        Returns the running server's version string — the git tag baked
+        in at build time via `-ldflags "-X main.Version=..."`, or `dev`
+        on an untagged build. Anonymous: the version is not sensitive
+        and is useful for support, federation handshakes, and the admin
+        About page (which renders it instead of a hardcoded stub).
+      tags: [setup]
+      security: []
+      responses:
+        "200":
+          description: Build info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildInfo"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /setup/status:
     get:
       operationId: getSetupStatus
@@ -8884,6 +8906,14 @@ components:
         providers:
           type: array
           items: { $ref: "#/components/schemas/IdentityProviderSummary" }
+    BuildInfo:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Server version — the git tag baked in at build time, or "dev".
+          example: "0.3.1"
     SetupStatus:
       type: object
       required: [needs_setup, deployment, defaults]

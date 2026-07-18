@@ -935,6 +935,11 @@ func (*PanicShim) GetBrushPack(context.Context, openapi.GetBrushPackRequestObjec
 	panic("PanicShim: GetBrushPack called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetBuildInfo panics by default; test shims override.
+func (*PanicShim) GetBuildInfo(context.Context, openapi.GetBuildInfoRequestObject) (openapi.GetBuildInfoResponseObject, error) {
+	panic("PanicShim: GetBuildInfo called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // ListCollections panics by default; test shims override.
 func (*PanicShim) ListCollections(context.Context, openapi.ListCollectionsRequestObject) (openapi.ListCollectionsResponseObject, error) {
 	panic("PanicShim: ListCollections called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
