@@ -88,8 +88,8 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     iconKey: 'storage',
     tiles: [
       { key: 'backends',    status: 'future', phase: '1.19' },
-      { key: 'usage',       status: 'future', phase: '1.19' },
-      { key: 'variants',    status: 'future', phase: '1.15' },
+      { key: 'usage',       status: 'live',   href: '/admin/storage/usage',    cap: 'system.storage.read' },
+      { key: 'variants',    status: 'live',   href: '/admin/storage/variants', cap: 'system.storage.read' },
       { key: 'orphans',     status: 'future', phase: '1.19' },
       { key: 'duplicates',  status: 'future', phase: '1.15' },
       { key: 'checksums',   status: 'future', phase: '1.19' },

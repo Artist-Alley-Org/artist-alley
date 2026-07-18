@@ -490,6 +490,16 @@ func (*PanicShim) SeedCreateUser(context.Context, openapi.SeedCreateUserRequestO
 	panic("PanicShim: SeedCreateUser called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
 }
 
+// GetStorageUsage panics by default; test shims override.
+func (*PanicShim) GetStorageUsage(context.Context, openapi.GetStorageUsageRequestObject) (openapi.GetStorageUsageResponseObject, error) {
+	panic("PanicShim: GetStorageUsage called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
+// ListStorageVariantFamilies panics by default; test shims override.
+func (*PanicShim) ListStorageVariantFamilies(context.Context, openapi.ListStorageVariantFamiliesRequestObject) (openapi.ListStorageVariantFamiliesResponseObject, error) {
+	panic("PanicShim: ListStorageVariantFamilies called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
+}
+
 // GetAIConfig panics by default; test shims override.
 func (*PanicShim) GetAIConfig(context.Context, openapi.GetAIConfigRequestObject) (openapi.GetAIConfigResponseObject, error) {
 	panic("PanicShim: GetAIConfig called without override in test fixture (embed *strictservershim.PanicShim and override this method)")
