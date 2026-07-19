@@ -32,13 +32,18 @@ func chiCtxRequest(method, target, idParam string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-func TestArchiveEntry_Unauthenticated(t *testing.T) {
+// TestArchiveEntry_AnonymousIsNotAdmittedByDefault — since #415 an
+// anonymous caller is no longer rejected at the door (public-tier assets
+// are readable by anyone); the content gate decides instead. What must
+// never happen is an anonymous caller being ADMITTED to an arbitrary
+// asset, so this asserts the request does not succeed.
+func TestArchiveEntry_AnonymousIsNotAdmittedByDefault(t *testing.T) {
 	h := &ArchiveEntryHandler{}
 	req := chiCtxRequest(http.MethodGet, "/assets/x/archive/entry?path=a.txt", "x")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
+	if rr.Code == http.StatusOK {
+		t.Errorf("anonymous caller was admitted (status %d); must never be 200", rr.Code)
 	}
 }
 

@@ -12,13 +12,15 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestArchiveBundle_Unauthenticated(t *testing.T) {
+// See TestArchiveEntry_AnonymousIsNotAdmittedByDefault — same contract
+// change from #415: not rejected at the door, but never admitted.
+func TestArchiveBundle_AnonymousIsNotAdmittedByDefault(t *testing.T) {
 	h := &ArchiveBundleHandler{}
 	req := chiCtxRequest(http.MethodGet, "/assets/x/archive/bundle.zip", "x")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
+	if rr.Code == http.StatusOK {
+		t.Errorf("anonymous caller was admitted (status %d); must never be 200", rr.Code)
 	}
 }
 
