@@ -473,3 +473,46 @@ func (n *notifierRecording) Notify(_ context.Context, _ int64, _ *int64, _, _, _
 	n.calls.Add(1)
 	return nil
 }
+
+// TestSubmit_UnknownCapabilityRejected covers #434: requested_capability
+// feeds an authorisation decision, so it may only name a real
+// capability. The DB enforces this with an FK (migration 00009); this
+// asserts the handler catches it first, so a caller gets a clean error
+// naming the problem instead of a constraint violation surfacing as a
+// 500.
+//
+// Note what is deliberately NOT asserted here: that the capability is
+// REQUESTABLE. A real capability is not necessarily one a user may ask
+// for — nothing stops a request naming system.admin — and that rule
+// belongs to the grant path (ADR 0064), not to this validation.
+func TestSubmit_UnknownCapabilityRejected(t *testing.T) {
+	pool := openPoolE(t)
+	defer cleanupRequests(t, pool)
+	requester := seedUserForRequests(t, pool)
+
+	h := newHandlerE(t, pool, newAuditRec(), newNoter())
+
+	_, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+		RequesterUserRef:    requester,
+		TargetAssetID:       uuid.New(),
+		RequestedCapability: "totally.made.up",
+		Reason:              "should not be storable",
+	})
+	if err == nil {
+		t.Fatal("Submit accepted a capability that is not in the registry")
+	}
+	if !errors.Is(err, requests.ErrUnknownCapability) {
+		t.Errorf("err = %v, want ErrUnknownCapability (so the HTTP layer can map it to 400)", err)
+	}
+
+	// A real seeded capability must still work — otherwise this
+	// validation would pass by rejecting everything.
+	if _, err := h.Submit(context.Background(), nil, requests.SubmitInput{
+		RequesterUserRef:    requester,
+		TargetAssetID:       uuid.New(),
+		RequestedCapability: "posts.publish",
+		Reason:              "legitimate",
+	}); err != nil {
+		t.Errorf("Submit rejected a real capability: %v", err)
+	}
+}

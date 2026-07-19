@@ -12,6 +12,7 @@
 -- otherwise make this file differ on every regeneration.
 --
 --
+--
 -- PostgreSQL database dump
 --
 
@@ -5421,6 +5422,14 @@ ALTER TABLE ONLY public.posts
 
 ALTER TABLE ONLY public.resource_request
     ADD CONSTRAINT resource_request_decided_by_user_ref_fkey FOREIGN KEY (decided_by_user_ref) REFERENCES public."user"(ref) ON DELETE SET NULL;
+
+
+--
+-- Name: resource_request resource_request_requested_capability_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_request
+    ADD CONSTRAINT resource_request_requested_capability_fkey FOREIGN KEY (requested_capability) REFERENCES public.capabilities(code) ON DELETE RESTRICT;
 
 
 --
