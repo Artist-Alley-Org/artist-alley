@@ -334,6 +334,26 @@ func (r *Resolver) ResolveIdentity(next http.Handler) http.Handler {
 			}
 		}
 
+		// Public-mode gate (#445). Reached only when neither the token
+		// nor the cookie path resolved an identity, so an
+		// authenticated caller can never be affected by this in
+		// either toggle state — the two returns above are the only
+		// exits for them.
+		//
+		// Scoped to PublicSurfaceRoutes, not to every anonymous
+		// request. /auth/login, /setup/*, /appearance and the rest of
+		// the surface an operator needs to reach BEFORE they have an
+		// identity are outside that table and pass through here
+		// untouched. That is the constraint that ranks above the
+		// feature: a public-mode gate that can lock somebody out of
+		// their own install is worse than no public mode.
+		if !r.publicModeEnabled(ctx) && IsPublicSurface(req.URL.Path) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"authentication required"}`))
+			return
+		}
+
 		next.ServeHTTP(w, req)
 	})
 }

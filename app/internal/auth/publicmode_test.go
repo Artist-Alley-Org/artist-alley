@@ -4,6 +4,10 @@
 package auth
 
 import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
@@ -137,5 +141,134 @@ func TestPublicSurfaceCoversAnonymousOperations(t *testing.T) {
 	if found == 0 {
 		t.Fatal("scanned openapi.yaml and found no `security: []` operations at all; " +
 			"the scanner has stopped matching and this test is no longer checking anything")
+	}
+}
+
+// TestResolveIdentityPublicModeGate drives the gate through the actual
+// middleware rather than calling IsPublicSurface directly, because the
+// thing that can break is the wiring: a gate placed above the token and
+// cookie branches would reject authenticated callers too, and a gate
+// scoped to every anonymous request rather than to the public surface
+// would 401 the login endpoint.
+//
+// No pool is needed — with neither an Authorization header nor a
+// session cookie, ResolveIdentity reaches the gate without touching
+// the database.
+func TestResolveIdentityPublicModeGate(t *testing.T) {
+	cases := []struct {
+		name       string
+		publicMode func(context.Context) bool
+		path       string
+		wantStatus int
+		why        string
+	}{
+		{
+			name:       "public surface refused when the toggle is off",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/api/v1/assets",
+			wantStatus: http.StatusUnauthorized,
+			why:        "this is the feature",
+		},
+		{
+			name:       "public surface served when the toggle is on",
+			publicMode: func(context.Context) bool { return true },
+			path:       "/api/v1/assets",
+			wantStatus: http.StatusOK,
+			why:        "handler decides from here; the middleware is done",
+		},
+		{
+			name:       "login is never gated, toggle off",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/api/v1/auth/login",
+			wantStatus: http.StatusOK,
+			why:        "gating login locks the operator out with no recovery short of a DB shell",
+		},
+		{
+			name:       "setup is never gated, toggle off",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/api/v1/setup/status",
+			wantStatus: http.StatusOK,
+			why:        "a fresh install must reach the setup wizard before any identity exists",
+		},
+		{
+			name:       "public appearance is never gated, toggle off",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/api/v1/appearance",
+			wantStatus: http.StatusOK,
+			why:        "the login page cannot render without it",
+		},
+		{
+			name:       "a nil reader denies rather than publishes",
+			publicMode: nil,
+			path:       "/api/v1/assets",
+			wantStatus: http.StatusUnauthorized,
+			why:        "a dropped boot wire must fail closed",
+		},
+		{
+			name:       "IIIF at the root mount is gated too",
+			publicMode: func(context.Context) bool { return false },
+			path:       "/iiif/3/abc/full/max/0/default.jpg",
+			wantStatus: http.StatusUnauthorized,
+			why:        "otherwise a private install serves a deep-zoom image API",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &Resolver{Logger: slog.New(slog.DiscardHandler), PublicMode: c.publicMode}
+			var reached bool
+			h := r.ResolveIdentity(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.path, nil))
+			if rec.Code != c.wantStatus {
+				t.Errorf("GET %s = %d, want %d — %s", c.path, rec.Code, c.wantStatus, c.why)
+			}
+			if c.wantStatus == http.StatusUnauthorized && reached {
+				t.Errorf("GET %s reached the handler despite a 401 — the gate wrote a status but did not stop the chain", c.path)
+			}
+		})
+	}
+}
+
+// TestPublicModeGateIgnoresContextInjectedIdentity pins one specific
+// thing and is named for it, because the tempting name —
+// "...NeverAffectsAuthenticatedCallers" — would claim coverage this
+// does not have. ResolveIdentity authenticates from HEADERS; a
+// context-injected Identity is a test fixture, not a credential, and
+// the middleware must not treat it as one.
+//
+// The real "authenticated callers are unchanged in both toggle states"
+// guarantee is structural rather than asserted here: the token and
+// cookie branches both return before the gate, so an authenticated
+// request cannot reach it. Exercising that needs a live pool and a
+// real session, which is what the curl verification against a running
+// server covers.
+func TestPublicModeGateIgnoresContextInjectedIdentity(t *testing.T) {
+	r := &Resolver{Logger: slog.New(slog.DiscardHandler),
+		PublicMode: func(context.Context) bool { return false }}
+
+	// Simulate a resolved identity by pre-seeding the context, which is
+	// what the token/cookie branches do before calling next.
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := r.ResolveIdentity(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/assets", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req.WithContext(WithIdentity(req.Context(), &Identity{UserRef: 1})))
+
+	// The middleware re-resolves from headers, so a context-injected
+	// identity does NOT survive — this asserts the anonymous path, and
+	// the authenticated path is covered by the two early returns in
+	// ResolveIdentity, which are unreachable from here without a pool.
+	// What matters is that the gate did not somehow allow it through on
+	// identity grounds it never checked.
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("got %d; a context-injected identity must not be trusted by the gate — "+
+			"the middleware authenticates from headers, not from context", rec.Code)
 	}
 }
