@@ -57,12 +57,12 @@ func CanReadContent(
 	caps CapabilityChecker,
 	assetID uuid.UUID,
 ) (bool, error) {
-	// Anonymous callers never receive bytes. The binary handlers each
-	// reject anonymous before reaching here; this is defence in depth
-	// so the rule holds even if a future route forgets that guard.
-	if caller.IsAnonymous {
-		return false, nil
-	}
+	// Anonymous callers are NOT rejected outright (#415): a public-tier
+	// asset is readable by anyone, which is what public mode means.
+	// They resolve against the sensitivity tier alone and never reach
+	// the ownership comparison below — see the !IsAnonymous guard there,
+	// which stops the AnonymousCaller sentinel (int64 0) from matching
+	// an asset owned by ref 0.
 	if caps != nil && caps(SystemAdmin) {
 		return true, nil
 	}
@@ -105,6 +105,11 @@ func CanReadContent(
 		return true, nil
 
 	case "team":
+		// Anonymous callers hold no team membership by definition, and
+		// we must not run a membership lookup for the sentinel ref.
+		if caller.IsAnonymous {
+			return false, nil
+		}
 		// team_id is nullable. A team-tier asset with no team has no
 		// members, so there is nobody to admit.
 		if !teamID.Valid {

@@ -28,15 +28,21 @@ import (
 // disclose existence (ADR 0020 keeps restricted assets listed), but
 // this plane has no reason to.
 func requireContentAccess(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, assetID uuid.UUID) bool {
-	id := auth.IdentityFromContext(r.Context())
-	if id == nil {
-		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-		return false
-	}
-	ok, err := visibility.CanReadContent(
-		r.Context(), pool, visibility.NewCaller(&id.UserRef),
-		func(code string) bool { return id.Can(code) }, assetID,
+	// Anonymous is no longer rejected here (#415) — the checker decides,
+	// so there is one place that knows which tiers an anonymous caller
+	// may read. An anonymous caller carries a nil identity, so it also
+	// carries no capabilities: nil CapabilityChecker, never admin.
+	var (
+		caller visibility.Caller
+		caps   visibility.CapabilityChecker
 	)
+	if id := auth.IdentityFromContext(r.Context()); id != nil {
+		caller = visibility.NewCaller(&id.UserRef)
+		caps = func(code string) bool { return id.Can(code) }
+	} else {
+		caller = visibility.NewCaller(nil)
+	}
+	ok, err := visibility.CanReadContent(r.Context(), pool, caller, caps, assetID)
 	if err != nil || !ok {
 		// Fail closed: a lookup error is a denial, never a pass.
 		http.NotFound(w, r)
