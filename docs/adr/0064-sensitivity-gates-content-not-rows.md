@@ -84,6 +84,24 @@ because nothing checks anything. A grant-less checker is strictly better than th
 fails closed by construction. The grant path lands once `requested_capability` has a defined
 vocabulary enforced by a CHECK or enum — which is its own finding, tracked separately.
 
+### Corollary: `CanSee` is asymmetric between assets and collections (recorded 2026-07-19)
+
+A consequence of "sensitivity gates content, not rows" that is easy to get backwards, and did
+nearly produce a wrong test during PR #439:
+
+- **`CanSee(EntityAsset, <authenticated>)`** admits **any** authenticated caller to **any**
+  non-deleted asset. The authenticated asset branch of the predicate is `deleted_at IS NULL`
+  and nothing else — deliberately, per this ADR. Sensitivity is *not* consulted for rows.
+- **`CanSee(EntityCollection, <authenticated>)`** is a genuine owner-or-ACL check.
+
+So a "an authenticated non-owner is denied" test is **correct for collections and wrong for
+assets** — on the asset side it asserts the opposite of what this ADR decides, and making it
+pass would contradict ADR 0020's requirement that restricted assets stay listed. The asset-side
+equivalent worth testing is *anonymous* denial, not non-owner denial.
+
+Until the row-level story changes (Phase 1.28 blur-and-reveal, or #210), that asymmetry is the
+design, not a gap.
+
 ### Where it is enforced
 
 At the **binary plane** — the handlers listed above — because that is where bytes are served and

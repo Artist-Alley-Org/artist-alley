@@ -38,6 +38,24 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
   response cannot be used to confirm that a restricted asset exists.
 
+- **Browsing without an account now works.** Listing assets and
+  collections, and opening a single asset or collection, no longer
+  require a signed-in caller: `GET /assets`, `GET /assets/{id}`,
+  `GET /collections` and `GET /collections/{id}` serve anonymous
+  requests, with the visibility predicate deciding what comes back —
+  published, public, ready content only. Every write path still
+  requires authentication.
+  **This also closed a pre-existing hole**, which is the more important
+  half: the two detail endpoints previously checked only that *some*
+  caller was signed in and then fetched by id, so any authenticated
+  account could read any asset or collection — including another
+  user's private collection — simply by knowing its id. Both now run a
+  real visibility check, and a denial returns 404 rather than 403 so a
+  response cannot confirm that a hidden item exists.
+  One consequence to expect: a public collection's *contents* are not
+  yet anonymous, so a logged-out collection page shows its title and an
+  empty body until that lands separately.
+
 - **Anonymous visitors can now load public images.** The byte-streaming
   endpoints previously required a signed-in caller before anything else
   ran; they now defer to the same content check, which admits anonymous
