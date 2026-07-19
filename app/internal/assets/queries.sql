@@ -66,6 +66,14 @@ SET deleted_at = NOW(), deleted_reason = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListAssetsPage :many
+-- NOT THE ENFORCEMENT PATH. This query applies no visibility predicate,
+-- and nothing in production calls it: asset browse goes through
+-- ListAssetsPageGated (assets/list_page.go), which splices
+-- visibility.Predicate — sqlc's static SQL cannot take a runtime
+-- fragment (#429). It is retained because its generated row shape stays
+-- in sync with the schema, and because the parity test uses it as the
+-- oracle proving the hand-built query returns byte-identical rows for
+-- authenticated callers. Do not call it from handler code.
 -- Cursor pagination: rows newer than the cursor timestamp, plus tie-
 -- breaker on id. Filters are OR'd with NULL-checks so a single query
 -- covers all the optional-filter combinations.
