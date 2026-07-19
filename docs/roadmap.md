@@ -603,11 +603,13 @@ map to the milestones below.
   edits behind `system.admin`), storage usage + variants
   (`system.storage.read`), and integrity sweeps — orphan scan + checksum
   verification as batched job kinds (ADR 0062).
-- **v0.4.1 — storage remainder** (#22): destructive orphan cleanup (#419,
-  must re-verify at delete time), the `schema.sql` drift (#420), per-asset
-  variant drill-down (#412), jobs live concurrency reload (#408), plus
-  duplicates / reimport / backends config and the RS-parity extensions
-  (scheduled integrity windows, tiered storage, bandwidth attribution).
+- **v0.4.1 — dissolved** (2026-07-19). It was overtaken: `dev` already carried
+  v0.5.0 feature work, so a "patch" tag containing a new authorization model
+  was incoherent, and there is no hotfix-branch practice to cut one from the
+  v0.4.0 tag. The `schema.sql` drift (#420) shipped; the storage remainder
+  (#419 destructive orphan cleanup, #412 variant drill-down, #408 jobs live
+  concurrency reload, plus duplicates / reimport / backends config and the
+  RS-parity extensions) moved to **v0.6.0** under #22.
 - **v0.5.0 — public mode: anonymous browsing** (epic #413). Content is
   currently unreachable without an account — only four endpoints are
   unauthenticated. The visibility predicate **is** the enforcement path
@@ -619,13 +621,25 @@ map to the milestones below.
   contract test pins them (ADR 0063). **P0b (#429) shipped** — `ListAssetsPage` converted from
   sqlc-generated static SQL to hand-built SQL, so the predicate now reaches
   asset browse; the superadmin `include_deleted` escape waives one dimension,
-  never the predicate. Remaining: the anonymous API surface (P1 #415, now
-  unblocked), a logged-out frontend with operator
-  controls (P2 #416), and the public featured rail (P3 #417, closing #382).
-  Asset `sensitivity` remains unenforced for *authenticated* callers by
-  deliberate deferral — the rule needs a product decision (#210).
-- **v0.6.0 — Reports & Moderation** (#23 + #24).
-- **v0.7.0 — Content config & Integrations** (#21).
+  never the predicate. **P1 (#415) shipped** — anonymous callers now read
+  `public`-tier bytes (#437) and the four read operations `listAssets` /
+  `getAsset` / `listCollections` / `getCollection` (#439). That work also
+  closed a pre-existing hole: both detail endpoints previously checked only
+  that *some* caller was signed in, so any authenticated account could read
+  any asset or collection by id.
+  Remaining: the collection-contents gate (#438 — the last endpoint a public
+  collection page needs, and an open hole where any authenticated caller can
+  enumerate any collection), a logged-out frontend with operator controls
+  (P2 #416), and the public featured rail (P3 #417, closing #382), plus the
+  capability-vocabulary fix (#434) and two leftover duplicate expressions of
+  the visibility rule (#432 IIIF, #210 by-image).
+  Asset `sensitivity` is **decided and enforced on the content plane**
+  (ADR 0064): it gates bytes, never rows, so restricted assets stay listed
+  rather than vanishing. Row-level blur-and-reveal remains Phase 1.28.
+- **v0.6.0 — Reports & Moderation, plus the storage remainder** (#23 + #24 +
+  #22, with #419 / #412 / #408 / #431 and the personal-data anonymisation
+  switch #426).
+- **v0.7.0 — Content config & Integrations** (#21 + external imports #55).
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
   static binaries, Homebrew (#286).
 
