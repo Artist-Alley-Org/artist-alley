@@ -15,11 +15,12 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   anonymous callers have a defined, enforced view of content: published,
   public, ready assets and public collections/posts only. Content
   visibility is decided in exactly one place — the visibility predicate —
-  which every read path splices in (ADR 0063). **No surface is anonymous
-  yet**; this is the model and its enforcement, not an open door.
-  Authenticated behaviour is deliberately unchanged, including the
-  known gap where an authenticated caller sees assets of any sensitivity
-  (tracked separately; the rule needs a product decision).
+  which every read path splices in (ADR 0063).
+  Authenticated behaviour is deliberately unchanged. An authenticated
+  caller still *sees* assets of every sensitivity in listings — that is
+  intended, not a gap: sensitivity gates the bytes, never the rows, so
+  restricted material stays listed as a locked item rather than
+  vanishing (ADR 0020 via ADR 0064).
 - **Asset browse now goes through that same predicate.** The browse query was
   sqlc-generated static SQL, which cannot accept a runtime fragment — it was
   the one read path visibility could not reach. Converted to hand-built SQL and
@@ -36,6 +37,16 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   restricted assets remain visible as locked items rather than vanishing
   (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
   response cannot be used to confirm that a restricted asset exists.
+
+- **Anonymous visitors can now load public images.** The byte-streaming
+  endpoints previously required a signed-in caller before anything else
+  ran; they now defer to the same content check, which admits anonymous
+  callers to `public`-tier assets and nothing else. `team`, `restricted`
+  and `embargo` bytes remain unreachable without an account, across
+  every byte-serving path (originals, derivatives, HLS segments and
+  archive entries). This is the first surface where an anonymous request
+  receives real content rather than metadata — the metadata endpoints
+  are still authenticated and land separately.
 
 ### Infrastructure / housekeeping
 

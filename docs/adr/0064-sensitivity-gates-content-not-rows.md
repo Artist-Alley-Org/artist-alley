@@ -101,8 +101,20 @@ row-level story is blur-and-reveal (Phase 1.28), not exclusion.
 
 - The largest remaining visibility gap closes on the plane where it matters most: files rather
   than metadata. With self-registration available, "any authenticated caller" is a low bar.
-- Anonymous callers are unaffected — ADR 0063's anonymous predicate already restricts them to
-  `active` + `public` + `ready`, and they cannot reach the binary handlers at all.
+- ~~Anonymous callers are unaffected — ADR 0063's anonymous predicate already restricts them to
+  `active` + `public` + `ready`, and they cannot reach the binary handlers at all.~~
+  **Superseded 2026-07-19 (#415 item 5, PR #437).** The second clause was true only while the
+  binary handlers each rejected anonymous at the door, which public mode required removing.
+  Anonymous callers now *do* reach the binary plane and receive bytes for `public`-tier assets.
+  **This is the rule above applied unchanged, not a new decision** — "`public` — permitted to
+  anyone entitled to see the row" already covered anonymous once ADR 0063 made them entitled to
+  public rows. Two implementation notes worth recording, because both are load-bearing:
+  - The `team` branch needs an *explicit* anonymous deny before the membership lookup. The
+    anonymous sentinel is `user_ref` 0, so an unguarded lookup would query `WHERE user_ref = 0`
+    and could match a real row. Denying at the tier is not sufficient on its own.
+  - The ownership comparison must stay behind `!caller.IsAnonymous` for the same reason — an
+    asset owned by ref 0 would otherwise match the sentinel. That guard predates this change
+    (#436) and is what made relaxing the anonymous short-circuit a one-line edit.
 - Listing behaviour is unchanged, so no splice site moves and no caller breaks.
 - The grant path is real work reusing existing tables (`resource_request`, `team_memberships`)
   rather than new schema.
