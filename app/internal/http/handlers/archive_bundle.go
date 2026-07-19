@@ -70,6 +70,12 @@ func (h *ArchiveBundleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// #433 — sensitivity gates CONTENT. The identity guard above
+	// says WHO is asking; this says whether they may have the bytes.
+	if !requireContentAccess(w, r, h.Pool, assetID) {
+		return
+	}
+
 	hash, ext, ok, err := h.resolveHashExt(r.Context(), assetID)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
