@@ -55,8 +55,34 @@ For a caller requesting an asset's bytes (original or any derivative):
 
 - **`public`** — permitted to anyone entitled to see the row.
 - **`team`** — permitted to members of `assets.team_id` (via `team_memberships`), the owner, and `system.admin`.
-- **`restricted`** — permitted to the owner, `system.admin`, or a caller holding an **active grant**: a `resource_request` row for this asset in an approved state whose `expires_at` is in the future. (`requests.default_expiry_days.restricted = 7` already exists.)
+- **`restricted`** — permitted to the owner and `system.admin` **only**. The grant path is
+  **deferred** — see below.
+- **`embargo`** — as `restricted`, and denies by default.
 - **`embargo`** — as `restricted`. The date-based auto-lift and the per-asset allowlist are ADR 0020 Phase 1.28 machinery that does not exist yet; **until it does, embargo denies by default.** Failing closed on the strictest tier is the correct interim.
+
+### Why the grant path is deferred (amended 2026-07-19)
+
+The obvious rule — "an approved `resource_request` unlocks the bytes" — is **unsafe as the
+schema stands**, and the reason is not cosmetic:
+
+- `resource_request.requested_capability` is `type: string` in the OpenAPI schema with **no enum
+  and no pattern**, while `state` two lines below it carries a proper enum. There is **no
+  capability vocabulary at all**: zero rows exist, zero distinct values have ever been stored,
+  and the submit handler stores the field verbatim with no validation.
+- The field is **requester-controlled input**. If the content checker treats some string as
+  authorising bytes, then any account — and self-registration exists — can submit a request
+  carrying exactly that string. The only thing between that and the file is an administrator
+  clicking *grant* on a free-text value **the requester chose**.
+
+That converts a metadata field into a privilege token whose value the attacker selects, with an
+uninformed approval step. Whether it is acceptable depends on how the request flow presents that
+value to the approver — a design question about the request UX, not something a binary-plane fix
+should settle by picking a constant.
+
+**So v1 is owner + `system.admin` only.** This regresses nothing: today *no* grant unlocks bytes,
+because nothing checks anything. A grant-less checker is strictly better than the status quo, and
+fails closed by construction. The grant path lands once `requested_capability` has a defined
+vocabulary enforced by a CHECK or enum — which is its own finding, tracked separately.
 
 ### Where it is enforced
 
