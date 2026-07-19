@@ -1202,9 +1202,21 @@ func (h *Handler) DownloadAssetFile(
 	ctx context.Context,
 	req openapi.DownloadAssetFileRequestObject,
 ) (openapi.DownloadAssetFileResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	callerID := auth.IdentityFromContext(ctx)
+	if callerID == nil {
 		return openapi.DownloadAssetFile401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
+	// plane does not confirm that a restricted asset exists.
+	allowed, err := visibility.CanReadContent(ctx, h.Pool,
+		visibility.NewCaller(&callerID.UserRef),
+		func(code string) bool { return callerID.Can(code) },
+		uuid.UUID(req.Id))
+	if err != nil || !allowed {
+		return openapi.DownloadAssetFile404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))
@@ -1236,9 +1248,21 @@ func (h *Handler) DownloadAssetVariant(
 	ctx context.Context,
 	req openapi.DownloadAssetVariantRequestObject,
 ) (openapi.DownloadAssetVariantResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
+	callerID := auth.IdentityFromContext(ctx)
+	if callerID == nil {
 		return openapi.DownloadAssetVariant401JSONResponse{
 			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+		}, nil
+	}
+	// #433 — sensitivity gates CONTENT. 404 rather than 403 so this
+	// plane does not confirm that a restricted asset exists.
+	allowed, err := visibility.CanReadContent(ctx, h.Pool,
+		visibility.NewCaller(&callerID.UserRef),
+		func(code string) bool { return callerID.Can(code) },
+		uuid.UUID(req.Id))
+	if err != nil || !allowed {
+		return openapi.DownloadAssetVariant404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	hash, ok, err := h.resolveAssetFileHash(ctx, uuid.UUID(req.Id))
