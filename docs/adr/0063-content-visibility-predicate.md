@@ -134,6 +134,10 @@ The plumbing now exists to close the gap in a single branch once the rule is dec
 - The contract test is the real deliverable of this work — more than the migration.
 - Anonymous access remains unreachable in production until the anonymous API surface lands,
   so this change is behaviour-preserving on merge.
+  **That condition is now satisfied (2026-07-19).** The anonymous surface landed in two parts:
+  bytes for `public`-tier assets (#415 item 5, PR #437) and the four read operations
+  `listAssets` / `getAsset` / `listCollections` / `getCollection` (PR #439). Anonymous access is
+  live, and this predicate is what decides it.
 - The deferred sensitivity rule is a known, recorded gap rather than an oversight; it should
   be closed before any surface makes authenticated browsing broadly available to untrusted
   accounts.
