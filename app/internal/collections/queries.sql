@@ -134,6 +134,12 @@ ON CONFLICT (collection_id, asset_id) DO UPDATE SET
 DELETE FROM collection_resources WHERE collection_id = $1 AND asset_id = $2;
 
 -- name: ListCollectionResourcesPage :many
+-- NOT THE ENFORCEMENT PATH. Applies no visibility predicate; nothing in
+-- production calls it. Collection contents go through
+-- ListCollectionResourcesPageGated (resources_page.go), which splices
+-- visibility.Predicate — sqlc's static SQL cannot take a runtime
+-- fragment (#438). Retained for its generated row shape, which stays in
+-- sync with the schema. Do not call it from handler code.
 -- Returns pinned members, sorted by sort_order then added_at. Excludes
 -- expired-membership rows. Joined onto assets so the list can carry
 -- the title/thumb/type the front-end needs without an N+1.

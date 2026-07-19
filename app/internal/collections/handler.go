@@ -791,9 +791,20 @@ func (h *Handler) ListCollectionResources(
 	ctx context.Context,
 	req openapi.ListCollectionResourcesRequestObject,
 ) (openapi.ListCollectionResourcesResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
-		return openapi.ListCollectionResources401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+	// #438 — anonymous callers are admitted, and every caller now passes
+	// a real check on the PARENT collection. Before this, the handler
+	// checked only that an identity existed, so any authenticated caller
+	// could enumerate any collection's contents including ones they hold
+	// no ACL on. The row-level gate lives in the query below; both are
+	// required, because a public collection may contain non-public assets.
+	caller := collectionCaller(ctx)
+	visible, visErr := visibility.CanSee(ctx, h.Pool, visibility.EntityCollection,
+		caller, uuid.UUID(req.Id))
+	if visErr != nil || !visible {
+		// Fail closed, 404 not 403 (ADR 0064) — do not confirm the
+		// collection exists.
+		return openapi.ListCollectionResources404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
 		}, nil
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
@@ -830,12 +841,13 @@ func (h *Handler) ListCollectionResources(
 	}
 
 	fetch := limit + 1
-	rows, err := New(h.Pool).ListCollectionResourcesPage(ctx, ListCollectionResourcesPageParams{
-		CollectionID:    pgID,
-		CursorSortOrder: cursorSort,
-		CursorAddedAt:   cursorAdded,
-		RowLimit:        fetch,
-	})
+	rows, err := ListCollectionResourcesPageGated(ctx, h.Pool, caller,
+		ListCollectionResourcesPageGatedParams{
+			CollectionID:    pgID,
+			CursorSortOrder: cursorSort,
+			CursorAddedAt:   cursorAdded,
+			RowLimit:        fetch,
+		})
 	if err != nil {
 		return nil, fmt.Errorf("collections: list resources: %w", err)
 	}
