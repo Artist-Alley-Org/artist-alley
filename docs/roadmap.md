@@ -609,14 +609,20 @@ map to the milestones below.
   duplicates / reimport / backends config and the RS-parity extensions
   (scheduled integrity windows, tiered storage, bandwidth attribution).
 - **v0.5.0 — public mode: anonymous browsing** (epic #413). Content is
-  currently unreachable without an account: only four endpoints are
-  unauthenticated, `collections` and `posts` have no `public` value in their
-  visibility constraints, and the visibility predicate is not wired into the
-  main read paths — so asset sensitivity is unenforced even for signed-in
-  callers. The arc introduces a real public tier, enforces one predicate
-  everywhere (P0 #414), opens an anonymous API surface (P1 #415), ships a
-  logged-out frontend with operator controls (P2 #416), and finally the
-  public featured rail (P3 #417, closing #382).
+  currently unreachable without an account — only four endpoints are
+  unauthenticated. The visibility predicate **is** the enforcement path
+  (spliced into ~11 read sites), but it had no `public` tier to express:
+  `collections` and `posts` constrained visibility to four non-public
+  values, and the asset case was a soft-delete check and nothing more.
+  **P0a (#414) shipped** — migration 00008 adds the public tier, the three
+  anonymous cases live only in the predicate, and an entity × caller
+  contract test pins them (ADR 0063). Remaining: **P0b (#429)** converts
+  `ListAssetsPage` — sqlc-generated static SQL, the one read path a runtime
+  fragment cannot reach — to hand-built SQL, and **blocks P1**; then the
+  anonymous API surface (P1 #415), a logged-out frontend with operator
+  controls (P2 #416), and the public featured rail (P3 #417, closing #382).
+  Asset `sensitivity` remains unenforced for *authenticated* callers by
+  deliberate deferral — the rule needs a product decision (#210).
 - **v0.6.0 — Reports & Moderation** (#23 + #24).
 - **v0.7.0 — Content config & Integrations** (#21).
 - **v1.0.0 — GA:** i18n (#289) + native distribution — `.deb`/`.rpm`,
