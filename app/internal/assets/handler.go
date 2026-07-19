@@ -756,13 +756,30 @@ func jobTypeForExt(ext *string) jobs.JobType {
 // GetAsset
 // ---------------------------------------------------------------------------
 
+// callerFromContext builds the visibility caller for the request,
+// anonymous when there is no identity (#415).
+func callerFromContext(ctx context.Context) visibility.Caller {
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		return visibility.NewCaller(&id.UserRef)
+	}
+	return visibility.NewCaller(nil)
+}
+
 func (h *Handler) GetAsset(
 	ctx context.Context,
 	req openapi.GetAssetRequestObject,
 ) (openapi.GetAssetResponseObject, error) {
-	if auth.IdentityFromContext(ctx) == nil {
-		return openapi.GetAsset401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
+	// #415 — anonymous callers are admitted, but every caller (including
+	// authenticated ones) must now pass a real visibility check. Before
+	// this, ANY authenticated caller could fetch ANY asset by id: the
+	// only gate was "is there an identity". CanSee replaces that.
+	caller := callerFromContext(ctx)
+	visible, err := visibility.CanSee(ctx, h.Pool, visibility.EntityAsset, caller, uuid.UUID(req.Id))
+	if err != nil || !visible {
+		// Fail closed, and 404 rather than 403 so this does not confirm
+		// that a hidden asset exists at that id.
+		return openapi.GetAsset404JSONResponse{
+			NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "asset not found"},
 		}, nil
 	}
 	q := New(h.Pool)
@@ -1043,17 +1060,15 @@ func (h *Handler) ListAssets(
 	ctx context.Context,
 	req openapi.ListAssetsRequestObject,
 ) (openapi.ListAssetsResponseObject, error) {
+	// #415 — anonymous callers are admitted. Row visibility is already
+	// decided by the predicate inside ListAssetsPageGated, which returns
+	// only published-public rows for an anonymous caller.
 	callerID := auth.IdentityFromContext(ctx)
-	if callerID == nil {
-		return openapi.ListAssets401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
 
 	// Phase 1.55.C-1b: ?include_deleted=true is admin-only. Non-
 	// admins silently see the default filtered list.
 	var includeDeletedArg *bool
-	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && callerID.Can(auth.SuperAdminCapability) {
+	if req.Params.IncludeDeleted != nil && *req.Params.IncludeDeleted && callerID != nil && callerID.Can(auth.SuperAdminCapability) {
 		t := true
 		includeDeletedArg = &t
 	}
@@ -1147,7 +1162,7 @@ func (h *Handler) ListAssets(
 	} else {
 		// Hand-built so the visibility predicate can be spliced in
 		// (#429) — sqlc's static SQL cannot take a runtime fragment.
-		rows, err := ListAssetsPageGated(ctx, h.Pool, visibility.NewCaller(&callerID.UserRef), ListAssetsPageGatedParams{
+		rows, err := ListAssetsPageGated(ctx, h.Pool, callerFromContext(ctx), ListAssetsPageGatedParams{
 			IncludeDeleted:  includeDeletedArg,
 			OwnerUserRef:    ownerRef,
 			AssetType:       resType,

@@ -37,6 +37,7 @@ import (
 	"github.com/mscrnt/artist-alley/app/internal/cache"
 	"github.com/mscrnt/artist-alley/app/internal/openapi"
 	"github.com/mscrnt/artist-alley/app/internal/softdelete"
+	"github.com/mscrnt/artist-alley/app/internal/visibility"
 )
 
 // maxListLimit caps the per-page row count regardless of what the
@@ -329,15 +330,34 @@ func uuidPtrFromOpenAPI(p *openapi_types.UUID) *uuid.UUID {
 // GetCollection
 // ---------------------------------------------------------------------------
 
+// collectionCaller builds the visibility caller for the request,
+// anonymous when there is no identity (#415).
+func collectionCaller(ctx context.Context) visibility.Caller {
+	if id := auth.IdentityFromContext(ctx); id != nil {
+		return visibility.NewCaller(&id.UserRef)
+	}
+	return visibility.NewCaller(nil)
+}
+
 func (h *Handler) GetCollection(
 	ctx context.Context,
 	req openapi.GetCollectionRequestObject,
 ) (openapi.GetCollectionResponseObject, error) {
+	// #415 — anonymous callers are admitted, and every caller now passes
+	// a real check. Before this, ANY authenticated caller could fetch ANY
+	// collection by id; the only gate was "is there an identity".
 	id := auth.IdentityFromContext(ctx)
-	if id == nil {
-		return openapi.GetCollection401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
+	visible, visErr := visibility.CanSee(ctx, h.Pool, visibility.EntityCollection,
+		collectionCaller(ctx), uuid.UUID(req.Id))
+	if visErr != nil || !visible {
+		// Fail closed. The superadmin soft-deleted branch below is
+		// reached via the ErrNoRows path, so it stays intact for admins,
+		// who CanSee admits.
+		if id == nil || !id.Can(auth.SuperAdminCapability) {
+			return openapi.GetCollection404JSONResponse{
+				NotFoundJSONResponse: openapi.NotFoundJSONResponse{Error: "collection not found"},
+			}, nil
+		}
 	}
 	pgID := pgtype.UUID{Bytes: uuid.UUID(req.Id), Valid: true}
 	row, err := h.getByIDCached(ctx, pgID)
@@ -348,7 +368,7 @@ func (h *Handler) GetCollection(
 			// something to render). Non-admin callers stay on the
 			// 404 path — soft-deleted collections are invisible
 			// to them.
-			if id.Can(auth.SuperAdminCapability) {
+			if id != nil && id.Can(auth.SuperAdminCapability) {
 				if adminRow, adminErr := New(h.Pool).GetCollectionIncludingDeleted(ctx, pgID); adminErr == nil {
 					return openapi.GetCollection200JSONResponse(rowToAPI(adminRow)), nil
 				}
@@ -619,12 +639,9 @@ func (h *Handler) ListCollections(
 	ctx context.Context,
 	req openapi.ListCollectionsRequestObject,
 ) (openapi.ListCollectionsResponseObject, error) {
+	// #415 — anonymous callers are admitted; the predicate decides which
+	// rows they see (anonymous => public, non-deleted only).
 	id := auth.IdentityFromContext(ctx)
-	if id == nil {
-		return openapi.ListCollections401JSONResponse{
-			UnauthorizedJSONResponse: openapi.UnauthorizedJSONResponse{Error: "authentication required"},
-		}, nil
-	}
 
 	// Phase 1.55.C-1b: ?include_deleted=true is admin-only.
 	// Non-admins silently see the default filtered list.
