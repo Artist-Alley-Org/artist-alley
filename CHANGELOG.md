@@ -20,6 +20,12 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   Authenticated behaviour is deliberately unchanged, including the
   known gap where an authenticated caller sees assets of any sensitivity
   (tracked separately; the rule needs a product decision).
+- **Asset browse now goes through that same predicate.** The browse query was
+  sqlc-generated static SQL, which cannot accept a runtime fragment — it was
+  the one read path visibility could not reach. Converted to hand-built SQL and
+  gated. The superadmin-only `include_deleted` flag waives the soft-delete
+  check **and only that** — publication status, sensitivity and processing
+  state still apply, so the flag cannot drift into meaning "skip authorization".
 
 ### Infrastructure / housekeeping
 
