@@ -505,3 +505,54 @@ func (s collShim) AddCollectionResource(ctx context.Context, req openapi.AddColl
 func (s collShim) RemoveCollectionResource(ctx context.Context, req openapi.RemoveCollectionResourceRequestObject) (openapi.RemoveCollectionResourceResponseObject, error) {
 	return s.h.RemoveCollectionResource(ctx, req)
 }
+
+// TestGetCollection_NonOwnerDenied is the regression test for the hole
+// #439 closed: before visibility.CanSee was added to GetCollection, the
+// handler checked only that an identity existed and then fetched by id,
+// so ANY authenticated caller could read ANY collection — including
+// another user's private one.
+//
+// Both legs are load-bearing. The 404 proves a stranger is refused; the
+// 200 proves CanSee did not simply deny everyone, which is how a broken
+// gate would otherwise look identical to a working one.
+//
+// If the CanSee call is removed from GetCollection, the non-owner leg
+// returns 200 and this test fails. That was verified by deleting the
+// call and watching it go red.
+func TestGetCollection_NonOwnerDenied(t *testing.T) {
+	pwd := os.Getenv("AA_DB_PASSWORD")
+	if pwd == "" {
+		t.Skip("AA_DB_PASSWORD not set; integration test skipped")
+	}
+	pool := openPool(t, pwd)
+	defer pool.Close()
+
+	cleanTestCollections(t, pool)
+	t.Cleanup(func() { cleanTestCollections(t, pool) })
+
+	const ownerRef, strangerRef int64 = 720051, 720052
+	ownerRouter, _ := makeRouter(t, pool, ownerRef /*admin=*/, false)
+	strangerRouter, _ := makeRouter(t, pool, strangerRef /*admin=*/, false)
+
+	id := mustCreate(t, ownerRouter, map[string]any{
+		"name":       "ct_private_regression",
+		"visibility": "private",
+	})
+
+	// The owner must still be able to read it — otherwise a gate that
+	// denies everybody would pass the assertion below.
+	ownRR := httptest.NewRecorder()
+	ownerRouter.ServeHTTP(ownRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if ownRR.Code != http.StatusOK {
+		t.Fatalf("owner GET: status=%d want 200 body=%s", ownRR.Code, ownRR.Body.String())
+	}
+
+	// A different authenticated user, with no ACL grant, must not.
+	strRR := httptest.NewRecorder()
+	strangerRouter.ServeHTTP(strRR, httptest.NewRequest(http.MethodGet, "/collections/"+id, nil))
+	if strRR.Code != http.StatusNotFound {
+		t.Errorf("non-owner GET: status=%d want 404 — an authenticated stranger "+
+			"must not read another user's private collection (visibility.CanSee in GetCollection)",
+			strRR.Code)
+	}
+}
