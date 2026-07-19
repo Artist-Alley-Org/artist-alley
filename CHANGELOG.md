@@ -38,6 +38,20 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
   response cannot be used to confirm that a restricted asset exists.
 
+- **Access requests can no longer name a capability that doesn't exist.**
+  `requested_capability` on an asset-access request was free text stored
+  verbatim, in a field that feeds an authorisation decision — so a
+  requester could put anything at all in it. It is now constrained to
+  the real capability registry by a foreign key, and a request naming an
+  unknown capability is rejected with a clear 400 instead of failing
+  deeper in. Deleting a capability that still has outstanding requests
+  now fails loudly rather than silently discarding the record of who
+  asked for what.
+  This narrows the field rather than fully securing it: a request can
+  still name a *real* capability the requester shouldn't be able to ask
+  for. Which capabilities are legitimately requestable is decided with
+  the access-grant flow, which remains deliberately unbuilt.
+
 - **Browsing without an account now works.** Listing assets and
   collections, and opening a single asset or collection, no longer
   require a signed-in caller: `GET /assets`, `GET /assets/{id}`,
