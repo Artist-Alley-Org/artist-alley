@@ -85,6 +85,22 @@ them in step is the failure mode this project has already hit twice (a schema fi
 from its migrations; the post branch filtering a value its constraint forbade). One
 enforcement point is worth losing sqlc coverage on one query.
 
+**Update 2026-07-19 — this became a repeatable conversion, not a one-off.** `ListAssetsPage`
+converted in #429 (PR #430); `ListCollectionResourcesPage` followed in #438 (PR #442), taking
+the splice-site count from eleven to **twelve**. Both landed the same shape, and it is now the
+pattern for any read path the predicate cannot reach:
+
+- Add a hand-built `<Query>Gated` alongside the sqlc query (`assets/list_page.go`,
+  `collections/resources_page.go`), mirroring the SELECT list exactly — rows scan positionally.
+- **Delete the inline visibility clauses the predicate now subsumes.** `ListAssetsPage` shed its
+  `deleted_at IS NULL`; the resources query shed `a.deleted_at IS NULL`. Leaving one behind
+  recreates the two-expressions-of-one-rule defect this ADR exists to prevent — the same class
+  as #210 and #432.
+- **Retain the sqlc query, uncalled, for its generated row shape**, with a comment marking it as
+  not the enforcement path. This keeps the row struct in sync with the schema, at the cost of an
+  ungated query sitting in the package. That trade is only safe while nothing calls it: a
+  reviewer must confirm the sole references are comments, which was checked for #442.
+
 ## Escape hatches waive one dimension, never the predicate
 
 The asset browse endpoint has a superadmin-only `include_deleted` flag. Honouring it required

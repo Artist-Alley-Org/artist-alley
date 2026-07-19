@@ -52,6 +52,18 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   for. Which capabilities are legitimately requestable is decided with
   the access-grant flow, which remains deliberately unbuilt.
 
+- **A collection's contents are now visible to logged-out visitors —
+  and were previously readable by any signed-in account.** Listing what
+  is inside a collection applied no visibility check at all: any
+  authenticated caller could enumerate the full contents of any
+  collection by id, including collections they had no access to, and the
+  response carried titles, types and publication status for draft
+  material. The endpoint now checks the caller may see the collection,
+  and filters the contents themselves — so a public collection shows
+  only its public items to an anonymous visitor, while its owner still
+  sees everything. Public collection pages render their contents rather
+  than appearing empty.
+
 - **Browsing without an account now works.** Listing assets and
   collections, and opening a single asset or collection, no longer
   require a signed-in caller: `GET /assets`, `GET /assets/{id}`,
