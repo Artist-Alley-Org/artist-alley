@@ -238,3 +238,50 @@ func TestCanReadContent_FailsClosed(t *testing.T) {
 		}
 	})
 }
+
+// TestCanReadContent_AnonymousNeverMatchesOwnerSentinel pins the trap
+// that #415 is about to make reachable.
+//
+// AnonymousCaller is int64(0). An asset whose owner_user_ref is 0 would,
+// without the !IsAnonymous guard on the owner comparison, match an
+// anonymous caller AS ITS OWNER — at every tier, embargo included. No
+// real user has ref 0 today, so this is currently latent; it stops being
+// latent the moment #415 relaxes the anonymous short-circuit so the
+// public tier can serve bytes.
+//
+// The assertion is written against the tier resolution directly rather
+// than relying on the short-circuit, so it still means something after
+// that short-circuit is relaxed.
+func TestCanReadContent_AnonymousNeverMatchesOwnerSentinel(t *testing.T) {
+	pool := contentPool(t)
+	ctx := context.Background()
+
+	for _, tier := range []string{"restricted", "embargo", "team"} {
+		t.Run("owner_user_ref=0 at "+tier, func(t *testing.T) {
+			id := uuid.New()
+			_, err := pool.Exec(ctx, `
+				INSERT INTO assets (id, title, owner_user_ref, asset_type, sensitivity)
+				VALUES ($1,$2,0,(SELECT MIN(ref) FROM asset_types),$3)`,
+				id, "ct-sentinel-"+tier, tier)
+			if err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			t.Cleanup(func() {
+				_, _ = pool.Exec(context.Background(), `DELETE FROM assets WHERE id=$1`, id)
+			})
+
+			ok, err := CanReadContent(ctx, pool, NewCaller(nil), notAdmin, id)
+			if err != nil || ok {
+				t.Errorf("anonymous caller admitted to a %s asset with owner_user_ref=0 "+
+					"(ok=%v err=%v) — the sentinel was treated as an ownership claim", tier, ok, err)
+			}
+
+			// And the same asset must still be readable by a real owner
+			// with ref 0 is impossible, so confirm a stranger is denied
+			// too — i.e. the guard did not just break ownership wholesale.
+			if can(t, pool, ctStranger, notAdmin, id) {
+				t.Errorf("stranger admitted to a %s asset", tier)
+			}
+		})
+	}
+}
