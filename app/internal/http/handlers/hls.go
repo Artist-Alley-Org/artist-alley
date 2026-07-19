@@ -65,6 +65,12 @@ func (h *PathVariantHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid asset id"}`, http.StatusBadRequest)
 		return
 	}
+
+	// #433 — sensitivity gates CONTENT. The identity guard above
+	// says WHO is asking; this says whether they may have the bytes.
+	if !requireContentAccess(w, r, h.Pool, assetID) {
+		return
+	}
 	rest := chi.URLParam(r, "*")
 	if rest == "" {
 		http.NotFound(w, r)

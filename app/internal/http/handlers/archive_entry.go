@@ -84,6 +84,7 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"invalid asset id"}`, http.StatusBadRequest)
 		return
 	}
+
 	entryPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if entryPath == "" {
 		http.Error(w, `{"error":"missing path query parameter"}`, http.StatusBadRequest)
@@ -93,6 +94,13 @@ func (h *ArchiveEntryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// rooted inside the archive; nothing outside can ever match.
 	if strings.HasPrefix(entryPath, "/") || strings.Contains(entryPath, "..") {
 		http.Error(w, `{"error":"invalid entry path"}`, http.StatusBadRequest)
+		return
+	}
+
+	// #433 — sensitivity gates CONTENT. Placed after request-shape
+	// validation (which discloses nothing) and before any archive is
+	// opened, so no byte of a gated asset is touched.
+	if !requireContentAccess(w, r, h.Pool, assetID) {
 		return
 	}
 
