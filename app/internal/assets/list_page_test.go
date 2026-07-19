@@ -299,3 +299,43 @@ func TestListAssetsPage_IncludeDeleted(t *testing.T) {
 		}
 	})
 }
+
+// TestGetAsset_AnonymousDenied covers the CanSee call #439 added to
+// GetAsset, which shipped without a test.
+//
+// The assertion is ANONYMOUS denied, not non-owner denied. Per ADR
+// 0064's corollary the authenticated EntityAsset predicate is
+// `deleted_at IS NULL` and nothing more, so an authenticated non-owner
+// legitimately SEES a draft asset's row — a "non-owner denied" test
+// would assert the opposite of the decided design and fail. Writing
+// that is the reflexive mistake here.
+func TestGetAsset_AnonymousDenied(t *testing.T) {
+	pool := listPagePool(t)
+	seedBrowseAssets(t, pool)
+	ctx := context.Background()
+
+	var pub, draft string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM assets WHERE owner_user_ref=$1 AND status='active'
+		   AND sensitivity='public' AND processing_status='ready' AND deleted_at IS NULL LIMIT 1`,
+		listPageOwner).Scan(&pub); err != nil {
+		t.Fatalf("find public asset: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM assets WHERE owner_user_ref=$1 AND status='draft' AND deleted_at IS NULL LIMIT 1`,
+		listPageOwner).Scan(&draft); err != nil {
+		t.Fatalf("find draft asset: %v", err)
+	}
+
+	anon := visibility.NewCaller(nil)
+	pubID, draftID := uuid.MustParse(pub), uuid.MustParse(draft)
+
+	okPub, err := visibility.CanSee(ctx, pool, visibility.EntityAsset, anon, pubID)
+	if err != nil || !okPub {
+		t.Errorf("anonymous denied a public+active+ready asset (ok=%v err=%v)", okPub, err)
+	}
+	okDraft, err := visibility.CanSee(ctx, pool, visibility.EntityAsset, anon, draftID)
+	if err != nil || okDraft {
+		t.Errorf("anonymous admitted a DRAFT asset (ok=%v err=%v)", okDraft, err)
+	}
+}
