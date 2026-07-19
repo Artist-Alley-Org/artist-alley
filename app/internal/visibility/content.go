@@ -82,9 +82,21 @@ func CanReadContent(
 		return false, fmt.Errorf("visibility.CanReadContent: load asset: %w", err)
 	}
 
-	// Owner always reaches their own bytes, at any tier. owner_user_ref
-	// is nullable — a NULL owner must never match a caller.
-	if owner != nil && *owner == caller.UserRef {
+	// Owner always reaches their own bytes, at any tier.
+	//
+	// Two guards, both load-bearing:
+	//   - owner_user_ref is nullable; a NULL owner must never match.
+	//   - the caller must not be anonymous. AnonymousCaller is the
+	//     sentinel int64(0), so an anonymous caller carries UserRef 0.
+	//     Without this check, an asset with owner_user_ref = 0 would
+	//     match an anonymous caller AS ITS OWNER — at every tier,
+	//     including embargo. No user has ref 0 on any install today,
+	//     but that is data, not a structural guarantee, and #415 will
+	//     relax the anonymous short-circuit above so that the public
+	//     tier can serve bytes. When that happens this comparison
+	//     becomes reachable by anonymous callers, and this guard is
+	//     what keeps the sentinel from being an ownership claim.
+	if !caller.IsAnonymous && owner != nil && *owner == caller.UserRef {
 		return true, nil
 	}
 
