@@ -616,10 +616,11 @@ map to the milestones below.
   values, and the asset case was a soft-delete check and nothing more.
   **P0a (#414) shipped** — migration 00008 adds the public tier, the three
   anonymous cases live only in the predicate, and an entity × caller
-  contract test pins them (ADR 0063). Remaining: **P0b (#429)** converts
-  `ListAssetsPage` — sqlc-generated static SQL, the one read path a runtime
-  fragment cannot reach — to hand-built SQL, and **blocks P1**; then the
-  anonymous API surface (P1 #415), a logged-out frontend with operator
+  contract test pins them (ADR 0063). **P0b (#429) shipped** — `ListAssetsPage` converted from
+  sqlc-generated static SQL to hand-built SQL, so the predicate now reaches
+  asset browse; the superadmin `include_deleted` escape waives one dimension,
+  never the predicate. Remaining: the anonymous API surface (P1 #415, now
+  unblocked), a logged-out frontend with operator
   controls (P2 #416), and the public featured rail (P3 #417, closing #382).
   Asset `sensitivity` remains unenforced for *authenticated* callers by
   deliberate deferral — the rule needs a product decision (#210).
