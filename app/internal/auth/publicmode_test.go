@@ -209,7 +209,7 @@ func TestResolveIdentityPublicModeGate(t *testing.T) {
 			publicMode: func(context.Context) bool { return false },
 			path:       "/iiif/3/abc/full/max/0/default.jpg",
 			wantStatus: http.StatusUnauthorized,
-			why:        "otherwise a private install serves a deep-zoom image API",
+			why:        "IIIF 401s on its own today; this keeps it covered for when it is opened",
 		},
 	}
 

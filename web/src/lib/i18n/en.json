@@ -1345,7 +1345,14 @@
         "base_url": "Base URL",
         "base_url_help": "Absolute URL the site is reachable at; used in outgoing emails.",
         "save": "Save site",
-        "saved": "Site saved."
+        "saved": "Site saved.",
+        "public_title": "Public access",
+        "public_help": "When on, anyone can browse assets, collections and search without signing in. They still only ever see public-tier items \u2014 team, restricted and embargoed content stays hidden, and downloads follow the same rule. When off, every one of those pages asks visitors to sign in first.",
+        "public_toggle": "Let visitors browse without signing in",
+        "public_on": "This install is public.",
+        "public_off": "This install is private.",
+        "public_saved": "Public access updated.",
+        "public_readonly": "You do not have permission to change this."
       },
       "smtp": {
         "title": "SMTP",

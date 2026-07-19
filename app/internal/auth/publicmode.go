@@ -111,9 +111,14 @@ var PublicSurfaceRoutes = []publicRoute{
 	// purpose. Both mounts reach this gate, and the root mount is why
 	// these entries are matched without the /api/v1 prefix as well.
 	//
-	// Omitting IIIF would leave a fully anonymous image-delivery API
-	// serving a "private" install: /iiif/3/{id}/{region}/... returns
-	// pixels, and a deep-zoom viewer needs nothing else.
+	// Defence in depth rather than a live hole: verified against a
+	// running server, the IIIF handlers return their own 401 to
+	// anonymous callers even with the toggle ON, so they are not
+	// anonymous-capable today. They are listed anyway because the
+	// moment somebody opens them — which is the natural next step
+	// after opening the asset reads — the gate must already cover
+	// them. An image API that returns pixels is exactly the surface
+	// you do not want to discover was ungated after the fact.
 	{path: "/iiif/2", prefix: true, why: "IIIF Image API 2.x redirect surface"},
 	{path: "/iiif/3", prefix: true, why: "IIIF Image API 3 + Presentation manifests + content search"},
 }
