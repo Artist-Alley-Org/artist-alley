@@ -85,6 +85,31 @@ them in step is the failure mode this project has already hit twice (a schema fi
 from its migrations; the post branch filtering a value its constraint forbade). One
 enforcement point is worth losing sqlc coverage on one query.
 
+## Escape hatches waive one dimension, never the predicate
+
+The asset browse endpoint has a superadmin-only `include_deleted` flag. Honouring it required
+a way to relax the soft-delete check — and the shape of that relaxation is a security decision,
+not an implementation detail.
+
+`visibility.IncludeSoftDeleted()` drops the `deleted_at IS NULL` conjunct **and only that
+conjunct**. Publication status, sensitivity, processing state, ownership, and ACL grants all
+still apply. The rejected alternative — skipping the predicate entirely when the flag is set —
+fails in two ways:
+
+- **It fails open.** If the caller's admin gate ever regresses, a bypass design hands an
+  attacker a path with no predicate at all; the narrow waiver hands them one missing a single
+  conjunct, so an anonymous caller is still held to publication and sensitivity.
+- **It pre-installs a leak for a rule that does not exist yet.** The moment the deferred
+  authenticated sensitivity rule lands (below), a bypass would silently skip that too. The flag
+  means "also show me deleted rows"; it must be structurally unable to come to mean "skip
+  authorization."
+
+One further detail is load-bearing: the soft-delete conjunct is **not uniform across entities**
+— authenticated collections assert none at all. So the waiver is applied per branch rather than
+hoisted or globally subtracted; a global approach would silently alter fragments that never had
+the conjunct. And where waiving empties a branch entirely, it emits `AND (TRUE)` rather than an
+empty string, preserving the "every fragment begins with AND" contract each splice site relies on.
+
 ## Deliberately deferred: the authenticated sensitivity rule
 
 An authenticated non-owner can currently list assets of any `sensitivity`
