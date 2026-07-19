@@ -77,6 +77,13 @@ func (h *HTTPHandler) RequestAssetAccess(
 		Reason:              reason,
 	})
 	if err != nil {
+		if errors.Is(err, ErrUnknownCapability) {
+			return openapi.RequestAssetAccess400JSONResponse{
+				BadRequestJSONResponse: openapi.BadRequestJSONResponse{
+					Error: "unknown capability: " + req.Body.Capability,
+				},
+			}, nil
+		}
 		return nil, fmt.Errorf("requests: submit: %w", err)
 	}
 	return openapi.RequestAssetAccess201JSONResponse(rowToAPI(row)), nil
