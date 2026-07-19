@@ -160,7 +160,7 @@ Post-v0.1.2 incremental work. No-spec-impact.
   release image behind a write-blocking nginx edge, seeded from the
   Layer-A dataset, and auto-redeploys on each release.
 
-## [Unreleased] — Encryption arc (Phase 1.22.I) complete
+## [v0.1.0] — 2026-07-11 — Encryption arc (Phase 1.22.I)
 
 The full encrypted-federation arc (1.22.I-a through 1.22.I-i) is
 shipped + dogfood-validated end-to-end. ArchivePub spec at
