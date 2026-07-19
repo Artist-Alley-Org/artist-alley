@@ -27,6 +27,16 @@ Work on `dev` since v0.4.0. Nothing here is in a tagged release yet.
   check **and only that** — publication status, sensitivity and processing
   state still apply, so the flag cannot drift into meaning "skip authorization".
 
+- **Asset sensitivity is now enforced when serving files.** Previously any
+  authenticated caller could download any asset's bytes — including `draft`
+  and `restricted` material — because the byte-streaming endpoints checked
+  only that a caller was signed in. Sensitivity now gates **content**: `team`
+  assets require team membership, and `restricted`/`embargo` are limited to
+  the owner and system administrators. Listing is deliberately unchanged —
+  restricted assets remain visible as locked items rather than vanishing
+  (ADR 0064, following ADR 0020). Denials return 404 rather than 403 so a
+  response cannot be used to confirm that a restricted asset exists.
+
 ### Infrastructure / housekeeping
 
 - `app/schema.sql` refreshed from a cleanly migrated database. The
