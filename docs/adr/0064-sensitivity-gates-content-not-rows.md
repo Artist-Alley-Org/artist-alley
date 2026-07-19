@@ -69,6 +69,20 @@ schema stands**, and the reason is not cosmetic:
   and no pattern**, while `state` two lines below it carries a proper enum. There is **no
   capability vocabulary at all**: zero rows exist, zero distinct values have ever been stored,
   and the submit handler stores the field verbatim with no validation.
+  **Partly resolved 2026-07-19 (#434, PR #440).** The field is now constrained by a foreign key
+  to `capabilities(code)` (`ON DELETE RESTRICT`, migration 00009), and `Submit` rejects an
+  unknown code with a 400 before the insert. A foreign key rather than an enum on purpose:
+  `capabilities` *is* the registry every cap-seed migration writes to, so a hand-maintained list
+  would be a second vocabulary that drifts.
+  **This narrows the hole; it does not close it.** The field went from *any string the requester
+  chooses* to *any valid capability code the requester chooses* — nothing stops a request naming
+  `system.admin`. **The grant path therefore stays deferred**, and the remaining question is
+  unchanged in kind: not "is this a real capability" but "is this one a user may ask for."
+  A `capabilities.requestable` flag was considered for the same migration and **deliberately
+  declined**: the column is the cheap part, and deciding which of ~60 capabilities carry the flag
+  is the *same* decision the grant path is blocked on. Either default would assert something
+  undecided — all-false breaks the requests surface, all-true grants the premise. It belongs in
+  the change that can populate it correctly.
 - The field is **requester-controlled input**. If the content checker treats some string as
   authorising bytes, then any account — and self-registration exists — can submit a request
   carrying exactly that string. The only thing between that and the file is an administrator
